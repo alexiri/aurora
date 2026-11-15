@@ -1,0 +1,5 @@
+# Dangerous endpoints no tool offers (FIX-118), on a registered Enterprise Server host.
+- name: "refused repository deletion: DELETE /api/v3/repos/{owner}/{repo} selects no tool"
+  connection: { instance_host: github.example.com, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: DELETE, url: "https://github.example.com/api/v3/repos/example/demo" }
+  expect: { app: github-ghes }

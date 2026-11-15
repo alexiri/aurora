@@ -65,7 +65,7 @@ const C_JIRA = "c0000000-0000-4000-8000-000000000041";
 const C_IND = "c0000000-0000-4000-8000-000000000042";
 
 const tool = (id: string, name: string, group: "read" | "write", over: Partial<Tool> = {}): Tool => ({
-  id, name, group, host: "api.github.com", path: `/${id}`, methods: group === "read" ? ["GET"] : ["POST"], wildcard: false, ...over,
+  id, name, group, host: "api.github.com", path: `/${id}`, methods: group === "read" ? ["GET"] : ["POST"], connect_methods: [], scopes: [], wildcard: false, ...over,
 });
 const ghTools: Tool[] = [
   tool("get_repo", "Get a repository", "read", { path: "/repos/*/*" }),
@@ -171,6 +171,25 @@ describe("connection list (owners)", () => {
 });
 
 describe("editor", () => {
+  it("offers only the tools that apply to the connection's connect method (FIX-123, D-214)", async () => {
+    const restricted = [
+      tool("get_repo", "Get a repository", "read"),
+      tool("get_authenticated_user", "Get the connected user", "read", { connect_methods: ["token", "oauth"] }),
+      tool("list_installation_repos", "List repositories of the installation", "read", { connect_methods: ["github_app"] }),
+    ];
+    setup({ appTools: restricted });
+    routes[`GET /v1/workspaces/${WS}/connections`] = () =>
+      json(200, { items: [{ ...conn(C_GH, "github", "acme-bot"), connect_method: "github_app" }, conn(C_JIRA, "atlassian", "Jira Cloud"), conn(C_IND, "indico", "CERN Indico")] });
+    view();
+    await screen.findByRole("list", { name: "Connection grants" });
+    await openEditor("Give access to acme-bot");
+    await screen.findByRole("radiogroup", { name: "Access mode" });
+    fireEvent.click(radio("Access mode", "Custom"));
+    expect(screen.getByRole("radiogroup", { name: "Access for Get a repository" })).toBeTruthy();
+    expect(screen.getByRole("radiogroup", { name: "Access for List repositories of the installation" })).toBeTruthy();
+    expect(screen.queryByRole("radiogroup", { name: "Access for Get the connected user" })).toBeNull();
+  });
+
   it("full → custom starts with every tool on Block, groups Read and Write; Save sends allow and ask with the timeout and refreshes the views", async () => {
     setup();
     view();
@@ -310,11 +329,28 @@ describe("editor", () => {
     expect(screen.getByRole("radio", { name: "Full access" })).toBeTruthy();
   });
 
-  it("maps empty_custom to a message and keeps the dialog open", async () => {
+  it("an empty custom grant cannot be saved: Save is off until a tool is allowed or asked (FIX-067)", async () => {
+    setup({ appExtra: { app_restrictions: { custom_only: true, block_untooled: false } } });
+    view();
+    await openEditor("Give access to acme-bot");
+    const save = await screen.findByRole("button", { name: "Save access" });
+    expect(save).toHaveProperty("disabled", true);
+    expect(screen.getByText("Allow or ask at least one tool to save.")).toBeTruthy();
+    fireEvent.click(radio("Access for List issues", "Allow"));
+    expect(screen.getByRole("button", { name: "Save access" })).toHaveProperty("disabled", false);
+    expect(screen.queryByText("Allow or ask at least one tool to save.")).toBeNull();
+    fireEvent.click(radio("Access for List issues", "Block"));
+    expect(screen.getByRole("button", { name: "Save access" })).toHaveProperty("disabled", true);
+    expect(calls.some((c) => c.key.startsWith("PUT"))).toBe(false);
+  });
+
+  it("still maps a server empty_custom to a message and keeps the dialog open", async () => {
+    // Reached through the learned custom_only path: the first save is Full, refused; the form then starts empty.
     setup({ put: () => json(422, { error: { code: "grant_invalid", message: "A custom grant needs at least one tool.", details: { reason: "empty_custom" } } }) });
     view();
     await openEditor("Give access to acme-bot");
     fireEvent.click(await screen.findByRole("radio", { name: "Custom" }));
+    fireEvent.click(radio("Access for List issues", "Allow"));
     fireEvent.click(screen.getByRole("button", { name: "Save access" }));
     expect((await screen.findByRole("alert")).textContent).toContain("Allow or ask at least one tool");
     expect(screen.getByRole("dialog")).toBeTruthy();

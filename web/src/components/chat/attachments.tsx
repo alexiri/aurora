@@ -1,15 +1,21 @@
 "use client";
 
+import { useQuery } from "@tanstack/react-query";
+
 import { Badge } from "@/components/ui/badge";
 import { DownloadIcon, FileIcon, XIcon } from "@/components/ui/icons";
-import { attachmentUrl, canThumbnail, formatBytes, type Attachment } from "@/lib/api/attachments";
+import { attachmentUrl, canThumbnail, fetchAttachmentFacts, formatBytes, type Attachment } from "@/lib/api/attachments";
 import type { PurgeReason } from "@/lib/chat/transcript";
 
 const typeLabel = (contentType?: string): string => {
   const t = (contentType ?? "").split(";")[0].trim();
   if (!t) return "File";
   const sub = t.split("/")[1] ?? t;
-  return sub.replace(/^x-/, "").replace(/^vnd\..*\./, "").toUpperCase().slice(0, 12);
+  return sub
+    .replace(/^x-/, "")
+    .replace(/^vnd\..*\./, "")
+    .toUpperCase()
+    .slice(0, 12);
 };
 
 /**
@@ -32,6 +38,16 @@ export function AttachmentCard({
   purged?: PurgeReason;
 }) {
   const url = attachmentUrl(id);
+  // A person's message names its attachments by id only: ask the content route for the stored name (WEBX-7).
+  const facts = useQuery({
+    queryKey: ["attachment-facts", id],
+    queryFn: () => fetchAttachmentFacts(id),
+    enabled: !filename && !purged,
+    staleTime: Infinity,
+    retry: false,
+  });
+  filename = filename || facts.data?.filename || undefined;
+  size = size ?? facts.data?.size ?? undefined;
   const name = filename || "Attachment";
   if (purged) {
     return (
@@ -83,8 +99,7 @@ export function ComposerChip({ attachment, onRemove }: { attachment: Attachment;
         type="button"
         className="inline-flex size-11 shrink-0 items-center justify-center rounded-control text-ink hover:bg-subtle hover:text-danger-ink md:size-8"
         aria-label={`Remove ${attachment.filename}`}
-        onClick={onRemove}
-      >
+        onClick={onRemove}>
         <XIcon width={14} height={14} />
       </button>
     </li>
@@ -94,11 +109,15 @@ export function ComposerChip({ attachment, onRemove }: { attachment: Attachment;
 /** A chip for an upload in progress or one that failed (the reason is `uploadErrorMessage`). */
 export function UploadChip({ name, error }: { name: string; error?: string }) {
   return error ? (
-    <div role="alert" className="flex min-h-9 max-w-full items-center gap-2 rounded-control border border-danger-ink/30 bg-danger-soft px-2.5 py-1 text-xs text-danger-ink">
+    <div
+      role="alert"
+      className="flex min-h-9 max-w-full items-center gap-2 rounded-control border border-danger-ink/30 bg-danger-soft px-2.5 py-1 text-xs text-danger-ink">
       <span className="min-w-0 break-words">{error}</span>
     </div>
   ) : (
-    <div role="status" className="flex min-h-9 max-w-full items-center gap-2 rounded-control border border-line-strong bg-surface px-2.5 py-1 text-xs text-muted dark:bg-canvas">
+    <div
+      role="status"
+      className="flex min-h-9 max-w-full items-center gap-2 rounded-control border border-line-strong bg-surface px-2.5 py-1 text-xs text-muted dark:bg-canvas">
       <span aria-hidden="true" className="size-3.5 shrink-0 animate-spin rounded-full border-2 border-line-strong border-t-accent motion-reduce:animate-none" />
       <span className="min-w-0 truncate">Uploading {name}…</span>
     </div>

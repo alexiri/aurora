@@ -99,8 +99,30 @@ async fn serve(cfg: RelayConfig) -> std::io::Result<()> {
         );
         return Err(invalid("previews.domain mismatch with the API".into()));
     }
-    let streams = aurora_relay::stream::Streams::new();
-    let state = aurora_relay::state::State::new(api.clone(), api_domain, external_url, wake_wait);
+    // `relay.max_streams_per_user` may only lower the spec's per-user cap (docs/02).
+    let streams = aurora_relay::stream::Streams::with_limits(
+        aurora_core::limits::PREVIEW_STREAMS_PER_SHARE,
+        cfg.max_streams_per_user
+            .min(aurora_core::limits::PREVIEW_STREAMS_PER_USER),
+    );
+    // `relay.trusted_proxies` (validated at load: strict CIDRs, no /0).
+    let trusted_proxies = cfg
+        .trusted_proxies
+        .iter()
+        .map(|c| aurora_core::cidr::Cidr::parse(c))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| invalid(format!("relay.trusted_proxies: {e}")))?;
+    let state = aurora_relay::state::State::with_edge(
+        api.clone(),
+        api_domain,
+        external_url,
+        wake_wait,
+        aurora_relay::limits::GrantRate::spec(),
+        trusted_proxies,
+        aurora_relay::limits::NegativeResolves::new(
+            aurora_relay::limits::NEGATIVE_RESOLVES_PER_MIN,
+        ),
+    );
     // The 15 s validate + heartbeat cycle.
     {
         let streams = streams.clone();
@@ -113,10 +135,19 @@ async fn serve(cfg: RelayConfig) -> std::io::Result<()> {
                 let streams = streams.clone();
                 Arc::new(move |revoked| streams.revoke(&revoked))
             },
+            report: {
+                let streams = streams.clone();
+                Arc::new(move || streams.drain_report())
+            },
+            restore: {
+                let streams = streams.clone();
+                Arc::new(move |shares| streams.restore_report(shares))
+            },
         };
         tokio::spawn(aurora_relay::state::heartbeat_loop(
             api.clone(),
             hooks,
+            streams.timeouts().validate_every,
             stop_rx.clone(),
         ));
     }

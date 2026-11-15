@@ -171,11 +171,12 @@ impl Lookup for Sample<'_> {
     }
 }
 
-/// Drop control characters, collapse whitespace, cap the length.
+/// Drop control and format characters (bidi controls, zero-width: `02 §Untrusted text`),
+/// collapse whitespace, cap the length.
 fn clean(s: &str) -> String {
     let joined: String = s
         .chars()
-        .filter(|c| !c.is_control())
+        .filter(|c| !c.is_control() && !aurora_core::sanitize::is_stripped(*c))
         .collect::<String>()
         .split_whitespace()
         .collect::<Vec<_>>()
@@ -250,6 +251,17 @@ mod tests {
             claims: &claims,
             email,
         })
+    }
+
+    /// FIX-116: bidi and zero-width characters never reach a workspace name.
+    #[test]
+    fn format_characters_are_dropped() {
+        let r = render(
+            "{name}",
+            json!({"name": "Ada\u{202E}Love\u{200B}lace"}),
+            "a@x.org",
+        );
+        assert_eq!(r.name.as_deref(), Some("AdaLovelace"));
     }
 
     #[test]

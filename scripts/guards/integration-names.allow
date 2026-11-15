@@ -13,6 +13,22 @@
 # (P4-GSL) A sample `Link` header in a unit test of the host-neutral pagination parser.
 ^crates/aurora-registry/src/library\.rs$:gitlab\.example
 
+# (FIX-123, D-215) The table of built-in apps that became connect methods of another app: an upgrade
+# shim that moves the connections of installs still holding the old apps. It is the one place the
+# core names built-in packages, and it is data, not integration behaviour.
+^crates/aurora-registry/src/superseded\.rs$:.*
+
+# (P5-ASRC, D-250) The addon-source URL normaliser turns a git forge's repository page URL into the
+# raw URL of its manifest (`github.com/o/r` → `raw.githubusercontent.com/…`, a `gitlab.` host →
+# `…/-/raw/HEAD/…`): URL shaping the admin's paste needs, not integration behaviour, and it names
+# no product beyond the two raw-file URL layouts.
+^services/aurora-api/src/domains/addon_sources/manifest\.rs$:([Gg]it[Hh]ub|[Gg]it[Ll]ab)
+
+# (FIX-142) Comments in the Markdown sanitizer and its tests that cite the dialect measurements the
+# D-227/D-270 exceptions rest on (the pinned chat server's parser behaviour). Comments only: no code
+# in core names the product.
+^crates/aurora-core/src/sanitize/safe(/tests)?\.rs$:^[[:space:]]*///?.*Mattermost
+
 # Bundled top-10k common-password list (I-11) is data, not integration code.
 ^services/aurora-api/data/common-passwords\.txt$:.*
 

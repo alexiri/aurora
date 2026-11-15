@@ -2,22 +2,29 @@
 
 import { useState, type FormEvent } from "react";
 
-import { Button } from "@/components/ui/button";
+import { FormDialog } from "@/components/ui/confirm-dialog";
 import { Field, inputClass } from "@/components/ui/field";
 import { Notice } from "@/components/ui/notice";
-import { DangerZone } from "@/components/ui/section";
 import { useDeleteAgent } from "@/lib/api/agents";
 import { errorMessage } from "@/lib/api/errors";
 
-export function DeleteZone({
+/**
+ * Delete agent (D-200: opened from the page's Agent actions menu; the Delete zone under Instructions is gone). The
+ * same typed confirmation as before: the agent's handle. Only workspace owners are offered it; the API checks again.
+ */
+export function DeleteAgentDialog({
   agentId,
   handle,
   wsId,
+  open,
+  onOpenChange,
   onDeleted,
 }: {
   agentId: string;
   handle: string;
   wsId: string;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
   onDeleted: () => void;
 }) {
   const del = useDeleteAgent(wsId, agentId);
@@ -33,28 +40,28 @@ export function DeleteZone({
     }
   }
   return (
-    <DangerZone
-      id="del-agent-zone"
+    <FormDialog
+      open={open}
+      onOpenChange={(o) => {
+        if (!o) setConfirm("");
+        onOpenChange(o);
+      }}
       title="Delete this agent"
-      description={
-        <>
-          Revokes all of its credentials. Type <code className="font-mono">{handle}</code> to confirm.
-        </>
-      }
+      description="Revokes all of its credentials. This cannot be undone."
+      submitLabel={del.isPending ? "Deleting…" : "Delete agent"}
+      danger
+      busy={del.isPending}
+      submitDisabled={confirm !== handle}
+      onSubmit={(e) => void submit(e)}
     >
-      <form onSubmit={(e) => void submit(e)} className="max-w-md space-y-3">
-        <Field id="del-agent" label="Agent handle">
-          <input id="del-agent" className={inputClass} value={confirm} autoComplete="off" onChange={(e) => setConfirm(e.target.value)} />
-        </Field>
-        {del.error ? (
-          <Notice tone="danger" role="alert">
-            {errorMessage(del.error)}
-          </Notice>
-        ) : null}
-        <Button type="submit" variant="danger" disabled={del.isPending || confirm !== handle}>
-          {del.isPending ? "Deleting…" : "Delete agent"}
-        </Button>
-      </form>
-    </DangerZone>
+      <Field id="del-agent" label="Agent handle" hint={`Type ${handle} to confirm.`}>
+        <input id="del-agent" className={inputClass} value={confirm} autoComplete="off" onChange={(e) => setConfirm(e.target.value)} />
+      </Field>
+      {del.error ? (
+        <Notice tone="danger" role="alert">
+          {errorMessage(del.error)}
+        </Notice>
+      ) : null}
+    </FormDialog>
   );
 }

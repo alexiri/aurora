@@ -36,8 +36,17 @@ function findTarget(target: string): HTMLElement | null {
   return null;
 }
 
+/** Anything that takes text or arrows itself: the tour never handles keys typed there. */
+function isEditable(el: Element): boolean {
+  return el.closest("input, textarea, select, [contenteditable]:not([contenteditable='false'])") !== null;
+}
+
+/** Open dialogs and menus other than the tour's own card (which is `data-testid="tour-card"`). */
+const OTHER_OVERLAY =
+  "dialog[open], [role='dialog']:not([data-testid='tour-card']), [role='alertdialog'], [role='menu'], [role='listbox']";
+
 /**
- * Coach marks over the real navigation. Keyboard: Next (Enter or →), Back (←), Esc to leave. Focus moves to the card
+ * Coach marks over the real navigation. Keyboard: Next (→ or the Next button), Back (←), Esc to leave. Focus moves to the card
  * at every stop and returns where it was at the end. No animation, so reduced motion needs nothing. At 390 px the
  * drawer opens as the tour goes and the card sits at the bottom of the screen.
  */
@@ -120,13 +129,23 @@ export function Tour({ setNavOpen }: { setNavOpen: (open: boolean) => void }) {
     return () => el.removeAttribute("data-tour-active");
   }, [stop, narrow]);
 
-  useEffect(() => {
+  // A layout effect, not a passive one: the listener is attached in the same commit that shows the card,
+  // so the dialog is never on screen without its keys (a passive effect could run after a key was
+  // already pressed — the FIX-067 test caught that on CI).
+  useLayoutEffect(() => {
     if (!stops) return;
     const last = stops.length - 1;
     function onKey(e: KeyboardEvent) {
+      const target = e.target instanceof Element ? e.target : null;
+      // Another open dialog or menu owns the keyboard: leave its keys alone.
+      if (target?.closest(OTHER_OVERLAY)) return;
+      // Arrows move the caret in a field; never take them from there.
+      if (e.key !== "Escape" && target && isEditable(target)) return;
       if (e.key === "Escape") {
+        // Leaving with Esc is not finishing: only Done and Skip tour record the tour (docs/14 §Onboarding
+        // 3 lists Esc as the way out and the tour as replayable; a stray Esc must not retire it).
         e.preventDefault();
-        close(true);
+        close(false);
       } else if (e.key === "ArrowRight") {
         e.preventDefault();
         if (index < last) setIndex(index + 1);
@@ -155,7 +174,7 @@ export function Tour({ setNavOpen }: { setNavOpen: (open: boolean) => void }) {
         narrow ? "inset-x-4 bottom-4" : "w-80",
       )}
     >
-      <p className="text-xs font-semibold uppercase tracking-[0.06em] text-muted">
+      <p className="text-xs font-semibold uppercase tracking-label text-muted">
         Stop {index + 1} of {stops.length}
       </p>
       <h2 id="tour-title" className="mt-1 font-display text-base font-semibold">

@@ -22,8 +22,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use aurora_core::limits::{
-    PREVIEW_CHUNK, PREVIEW_CONNECT_TIMEOUT, PREVIEW_STREAM_WINDOW, TERMINAL_AWAKE_GRACE,
-    TERMINAL_CHUNK, TERMINAL_STREAM_WINDOW,
+    PREVIEW_CHUNK, PREVIEW_STREAM_WINDOW, TERMINAL_AWAKE_GRACE, TERMINAL_CHUNK,
+    TERMINAL_STREAM_WINDOW,
 };
 use aurora_protocol::common::SecretString;
 use aurora_protocol::runner::{
@@ -35,7 +35,7 @@ use aurora_protocol::supervisor::{RunnerToSupervisor, SupervisorToRunner};
 use futures::{SinkExt, StreamExt};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::{Mutex, mpsc, oneshot, watch};
+use tokio::sync::{Mutex, Semaphore, mpsc, oneshot, watch};
 use tokio_tungstenite::WebSocketStream;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::protocol::frame::CloseFrame;
@@ -126,6 +126,43 @@ pub struct StreamListener {
     routes: Arc<Mutex<Routes>>,
     /// (P4-TERM, C-620) Last keep-awake stamp per sandbox (rate limit).
     last_stamp: Arc<Mutex<HashMap<Uuid, std::time::Instant>>>,
+    /// Idle and lifetime limits of a leg (production: [`IDLE_TIMEOUT`], [`LIFETIME`]; tests
+    /// build the listener with shortened ones through [`StreamListener::with_limits`]).
+    idle: Duration,
+    lifetime: Duration,
+    bounds: Bounds,
+    /// Unauthenticated connections in flight (`Bounds::pre_auth_cap`).
+    pre_auth: Arc<Semaphore>,
+}
+
+/// Abuse bounds of the listener (FIX-092; `16 §W18`/`§W19`, `02 §Limits`). Production uses
+/// [`Bounds::default`]; tests shorten them through [`StreamListener::with_bounds`].
+#[derive(Debug, Clone)]
+pub struct Bounds {
+    /// Connections that have not finished redeeming their grant; beyond it the socket is closed.
+    pub pre_auth_cap: usize,
+    /// Total time to deliver the request head (not per read: a slow-loris sends a byte a
+    /// time).
+    pub head_deadline: Duration,
+    /// Live port streams per sandbox on this runner (the supervisor's own cap).
+    pub max_streams: usize,
+    /// Live PTYs per sandbox on this runner.
+    pub max_ptys: usize,
+    /// `pty.resize` from the browser is coalesced to the latest size and sent at most this
+    /// often.
+    pub resize_flush: Duration,
+}
+
+impl Default for Bounds {
+    fn default() -> Self {
+        Self {
+            pre_auth_cap: 256,
+            head_deadline: Duration::from_secs(10),
+            max_streams: 64,
+            max_ptys: 2,
+            resize_flush: Duration::from_millis(50),
+        }
+    }
 }
 
 #[derive(Default)]
@@ -138,10 +175,31 @@ struct Routes {
 impl StreamListener {
     /// Builds the listener over the channel server.
     pub fn new(server: ChannelServer) -> Arc<Self> {
+        Self::with_limits(server, IDLE_TIMEOUT, LIFETIME)
+    }
+
+    /// The listener with explicit leg idle and lifetime limits. Production always uses
+    /// [`StreamListener::new`]; the tests of the idle and lifetime closes (`docs/18`) pass
+    /// shortened values, so they exercise the very code path that runs in production.
+    pub fn with_limits(server: ChannelServer, idle: Duration, lifetime: Duration) -> Arc<Self> {
+        Self::with_bounds(server, idle, lifetime, Bounds::default())
+    }
+
+    /// [`StreamListener::with_limits`] plus explicit abuse bounds.
+    pub fn with_bounds(
+        server: ChannelServer,
+        idle: Duration,
+        lifetime: Duration,
+        bounds: Bounds,
+    ) -> Arc<Self> {
         Arc::new(Self {
             server,
             routes: Arc::new(Mutex::new(Routes::default())),
             last_stamp: Arc::new(Mutex::new(HashMap::new())),
+            idle,
+            lifetime,
+            pre_auth: Arc::new(Semaphore::new(bounds.pre_auth_cap)),
+            bounds,
         })
     }
 
@@ -438,9 +496,24 @@ impl StreamListener {
         terminal: bool,
         to_leg: mpsc::Sender<LegIn>,
         from_sandbox: Arc<AtomicUsize>,
-    ) -> oneshot::Receiver<u16> {
+    ) -> Option<oneshot::Receiver<u16>> {
         let (close_tx, close_rx) = oneshot::channel();
         let mut routes = self.routes.lock().await;
+        // Per-sandbox live-leg cap (FIX-092): the supervisor's own limits, enforced here too so
+        // the runner's memory is bounded however the supervisor behaves.
+        let live = routes
+            .legs
+            .values()
+            .filter(|e| e.sandbox == binding.sandbox_id && e.terminal == terminal)
+            .count();
+        let cap = if terminal {
+            self.bounds.max_ptys
+        } else {
+            self.bounds.max_streams
+        };
+        if live >= cap {
+            return None;
+        }
         routes.legs.insert(
             id,
             RouteEnd {
@@ -457,7 +530,7 @@ impl StreamListener {
                 },
             },
         );
-        close_rx
+        Some(close_rx)
     }
 
     /// Sends one unsequenced `stream.*`/`pty.*` frame to the supervisor of `(sandbox, boot)`.
@@ -590,6 +663,12 @@ pub async fn serve(
         tokio::select! {
             accepted = listener.accept() => match accepted {
                 Ok((tcp, _)) => {
+                    // Unauthenticated connections are capped (FIX-092): beyond the cap the
+                    // socket is closed at once, so idle sockets cannot exhaust descriptors.
+                    let Ok(permit) = state.pre_auth.clone().try_acquire_owned() else {
+                        tracing::warn!("stream listener pre-auth cap reached; refusing");
+                        continue;
+                    };
                     let state = state.clone();
                     let api = api.clone();
                     let tls = tls.clone();
@@ -602,7 +681,7 @@ pub async fn serve(
                             },
                             None => tcp,
                         };
-                        handle(state, api, tcp).await;
+                        handle(state, api, tcp, permit).await;
                     });
                 }
                 Err(e) => {
@@ -626,22 +705,31 @@ async fn handle(
     state: Arc<StreamListener>,
     api: watch::Receiver<Option<Arc<ApiClient>>>,
     tcp: TcpStream,
+    pre_auth: tokio::sync::OwnedSemaphorePermit,
 ) {
     let mut tcp = tcp;
     let mut buf: Vec<u8> = Vec::with_capacity(1024);
     let mut chunk = [0u8; 512];
-    let grant = loop {
-        let n = match tokio::time::timeout(PREVIEW_CONNECT_TIMEOUT, tcp.read(&mut chunk)).await {
-            Ok(Ok(0)) | Ok(Err(_)) | Err(_) => return,
-            Ok(Ok(n)) => n,
-        };
-        buf.extend_from_slice(&chunk[..n]);
-        if let Some(head) = find_header_end(&buf) {
-            break bearer_of(head);
+    // The whole head under one deadline (a byte every few seconds must not hold the socket).
+    let deadline = state.bounds.head_deadline;
+    let head = tokio::time::timeout(deadline, async {
+        loop {
+            let n = match tcp.read(&mut chunk).await {
+                Ok(0) | Err(_) => return None,
+                Ok(n) => n,
+            };
+            buf.extend_from_slice(&chunk[..n]);
+            if let Some(head) = find_header_end(&buf) {
+                return Some(bearer_of(head));
+            }
+            if buf.len() > 16 * 1024 {
+                return None;
+            }
         }
-        if buf.len() > 16 * 1024 {
-            return;
-        }
+    })
+    .await;
+    let Ok(Some(grant)) = head else {
+        return;
     };
     let Some((grant, request)) = grant else {
         let _ = tcp
@@ -659,7 +747,7 @@ async fn handle(
     } else {
         None
     };
-    open_and_serve(state, api, tcp, grant, kind, request).await;
+    open_and_serve(state, api, tcp, grant, kind, request, pre_auth).await;
 }
 
 /// Returns `Some((token, head))` from `Authorization: Bearer <token>` (case-insensitive
@@ -711,6 +799,7 @@ async fn open_and_serve(
     grant: String,
     kind: Option<&str>,
     request: http::Request<()>,
+    pre_auth: tokio::sync::OwnedSemaphorePermit,
 ) {
     let Some(api) = api.borrow().clone() else {
         http_close(&mut tcp, 503).await;
@@ -741,6 +830,8 @@ async fn open_and_serve(
             return;
         }
     };
+    // The grant was redeemed: the connection is authenticated and leaves the pre-auth cap.
+    drop(pre_auth);
     let share_id = binding.share_id;
     // ---- 2. this runner must hold the live supervisor channel of that boot (`404 not_here`)
     let r = ChannelRef {
@@ -755,12 +846,14 @@ async fn open_and_serve(
     // grant the PTY (`P4-TERM`, C-617); then complete the handshake and copy.
     let terminal = binding.port.is_none();
     if let Some(port) = binding.port {
-        let Some((stream_id, leg_rx, close_rx, from_sandbox)) =
-            open_supervisor_stream(&state, &binding, port, &r).await
-        else {
-            http_close(&mut tcp, CLOSE_REFUSED).await;
-            return;
-        };
+        let (stream_id, leg_rx, close_rx, from_sandbox) =
+            match open_supervisor_stream(&state, &binding, port, &r).await {
+                Ok(l) => l,
+                Err(code) => {
+                    http_close(&mut tcp, code).await;
+                    return;
+                }
+            };
         let Some(ws) =
             complete_handshake(tcp, &request, &state, stream_id, terminal, &binding).await
         else {
@@ -781,12 +874,14 @@ async fn open_and_serve(
     } else {
         // (P4-TERM, C-617, `16 §W19`) terminal leg: `pty.open` beside `stream.open`, tag
         // `0x02` data, keep-awake stamping; the supervisor's PTY posture is `12 §Terminal`.
-        let Some((pty_id, leg_rx, close_rx, from_sandbox)) =
-            open_supervisor_pty(&state, &binding, &r).await
-        else {
-            http_close(&mut tcp, CLOSE_REFUSED).await;
-            return;
-        };
+        let (pty_id, leg_rx, close_rx, from_sandbox) =
+            match open_supervisor_pty(&state, &binding, &r).await {
+                Ok(l) => l,
+                Err(code) => {
+                    http_close(&mut tcp, code).await;
+                    return;
+                }
+            };
         let Some(ws) = complete_handshake(tcp, &request, &state, pty_id, terminal, &binding).await
         else {
             return;
@@ -881,15 +976,28 @@ async fn release_route(
 
 /// Pre-handshake failure form: a plain HTTP status (the close-code table applies after 101).
 async fn http_close(tcp: &mut TcpStream, code: u16) {
-    let text = match code {
-        CLOSE_NOT_ALLOWED => "403 Forbidden",
-        CLOSE_NOT_FOUND => "404 Not Found",
-        CLOSE_LIMIT => "429 Too Many Requests",
-        _ => "503 Service Unavailable",
+    let (text, body) = match code {
+        CLOSE_NOT_ALLOWED => ("403 Forbidden", ""),
+        // C-617: the standard error body `not_here` (the relay re-resolves on the status).
+        CLOSE_NOT_FOUND => (
+            "404 Not Found",
+            r#"{"error":{"code":"not_here","message":"This runner does not hold that sandbox's channel."}}"#,
+        ),
+        CLOSE_LIMIT => ("429 Too Many Requests", ""),
+        _ => ("503 Service Unavailable", ""),
+    };
+    let ctype = if body.is_empty() {
+        ""
+    } else {
+        "content-type: application/json\r\n"
     };
     let _ = tcp
         .write_all(
-            format!("HTTP/1.1 {text}\r\nconnection: close\r\ncontent-length: 0\r\n\r\n").as_bytes(),
+            format!(
+                "HTTP/1.1 {text}\r\nconnection: close\r\n{ctype}content-length: {}\r\n\r\n{body}",
+                body.len()
+            )
+            .as_bytes(),
         )
         .await;
 }
@@ -902,14 +1010,17 @@ async fn open_supervisor_stream(
     binding: &PreviewStreamOpenResponse,
     port: u16,
     r: &ChannelRef,
-) -> Option<OpenedLeg> {
+) -> Result<OpenedLeg, u16> {
     let id = state.alloc_id().await;
     let (leg_tx, leg_rx) = mpsc::channel(DATA_Q);
     let from_sandbox = Arc::new(AtomicUsize::new(0));
     // Register the route before sending `stream.open` so the answer cannot race us.
-    let close_rx = state
+    let Some(close_rx) = state
         .register_route(id, binding, false, leg_tx, from_sandbox.clone())
-        .await;
+        .await
+    else {
+        return Err(CLOSE_LIMIT);
+    };
     let open = StreamOpen {
         stream_id: id,
         port,
@@ -923,7 +1034,7 @@ async fn open_supervisor_stream(
         state
             .release_stream(id, binding.sandbox_id, binding.boot_id)
             .await;
-        return None;
+        return Err(CLOSE_REFUSED);
     }
     // Wait for `stream.opened`; the leg consumes everything after. Terminal frames
     // (`stream.refused`) never reach the queue — the listener closes the route directly, which
@@ -941,12 +1052,12 @@ async fn open_supervisor_stream(
     })
     .await;
     match opened {
-        Ok(true) => Some((id, wait_rx, close_rx, from_sandbox)),
+        Ok(true) => Ok((id, wait_rx, close_rx, from_sandbox)),
         _ => {
             state
                 .release_stream(id, binding.sandbox_id, binding.boot_id)
                 .await;
-            None
+            Err(CLOSE_REFUSED)
         }
     }
 }
@@ -963,20 +1074,27 @@ async fn open_supervisor_pty(
     state: &Arc<StreamListener>,
     binding: &PreviewStreamOpenResponse,
     r: &ChannelRef,
-) -> Option<OpenedLeg> {
+) -> Result<OpenedLeg, u16> {
     let id = state.alloc_id().await;
     let (leg_tx, leg_rx) = mpsc::channel(DATA_Q);
     let from_sandbox = Arc::new(AtomicUsize::new(0));
     // Register the route before sending `pty.open` so the answer cannot race us; the leg is
     // stamped terminal so its bytes drive the keep-awake (`C-620`).
-    let close_rx = state
+    let Some(close_rx) = state
         .register_route(id, binding, true, leg_tx, from_sandbox.clone())
-        .await;
+        .await
+    else {
+        return Err(CLOSE_LIMIT);
+    };
     let open = PtyOpen {
         pty_id: id,
         window: TERMINAL_STREAM_WINDOW as u32,
         cols: 80,
         rows: 24,
+        // (FIX-138) The grant's choice (the API's redemption answer), never the browser's.
+        shell: binding.shell.unwrap_or_default(),
+        // (C-750 (4)) The models the API chose for the instance's terminal harnesses, unchanged.
+        models: binding.models.clone().map(Box::new),
     };
     if state
         .send_to_supervisor(r, RunnerToSupervisor::PtyOpen(open))
@@ -986,7 +1104,7 @@ async fn open_supervisor_pty(
         state
             .release_pty(id, binding.sandbox_id, binding.boot_id)
             .await;
-        return None;
+        return Err(CLOSE_REFUSED);
     }
     // Wait for `pty.opened`; the leg consumes everything after. `pty.refused` never reaches
     // the queue — the listener closes the route directly, which drops this receiver's sender
@@ -1004,12 +1122,12 @@ async fn open_supervisor_pty(
     })
     .await;
     match opened {
-        Ok(true) => Some((id, wait_rx, close_rx, from_sandbox)),
+        Ok(true) => Ok((id, wait_rx, close_rx, from_sandbox)),
         _ => {
             state
                 .release_pty(id, binding.sandbox_id, binding.boot_id)
                 .await;
-            None
+            Err(CLOSE_REFUSED)
         }
     }
 }
@@ -1052,20 +1170,38 @@ async fn serve_terminal_leg(
     let mut bytes_to_pty: u64 = 0;
     let mut bytes_from_pty: u64 = 0;
     tokio::pin! {
-        let idle = tokio::time::sleep(IDLE_TIMEOUT);
-        let lifetime = tokio::time::sleep(LIFETIME);
+        let idle = tokio::time::sleep(state.idle);
+        let lifetime = tokio::time::sleep(state.lifetime);
     }
     let mut ping = tokio::time::interval(PING_INTERVAL);
     ping.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut pending_resize: Option<(u16, u16)> = None;
+    let mut resize_flush = tokio::time::interval(state.bounds.resize_flush);
+    resize_flush.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let reason = loop {
         tokio::select! {
+            // The latest coalesced size; a full supervisor queue ends the leg (the supervisor
+            // is not draining).
+            _ = resize_flush.tick(), if pending_resize.is_some() => {
+                if let Some((cols, rows)) = pending_resize.take()
+                    && state
+                        .send_to_supervisor(
+                            &r,
+                            RunnerToSupervisor::PtyResize(PtyResize { pty_id, cols, rows }),
+                        )
+                        .await
+                        .is_err()
+                {
+                    break CLOSE_CHANNEL_LOST;
+                }
+            }
             // Browser → PTY direction: bytes from the WebSocket go to the supervisor (tag
             // `0x02`). The runner enforces its own send window; over-window or oversized
             // browser data is a violation (4502 after 101).
             msg = ws_stream.next() => {
                 match msg {
                     Some(Ok(Message::Binary(b))) => {
-                        idle.as_mut().reset(tokio::time::Instant::now() + IDLE_TIMEOUT);
+                        idle.as_mut().reset(tokio::time::Instant::now() + state.idle);
                         if b.len() > TERMINAL_CHUNK {
                             break CLOSE_REFUSED;
                         }
@@ -1085,23 +1221,20 @@ async fn serve_terminal_leg(
                     // `0` names "this leg's PTY" and the runner stamps its own. Anything
                     // else is ignored (bytes are never parsed as text, never logged).
                     Some(Ok(Message::Text(t))) => {
-                        idle.as_mut().reset(tokio::time::Instant::now() + IDLE_TIMEOUT);
+                        idle.as_mut().reset(tokio::time::Instant::now() + state.idle);
+                        // Coalesced to the latest size (FIX-092): the flush arm below sends it
+                        // at most once per `resize_flush`, so a flood of resizes cannot fill
+                        // the supervisor's queue.
                         if let Ok(resize) = serde_json::from_str::<PtyResize>(&t)
                             && resize.pty_id == 0
                         {
-                            let _ = state
-                                .send_to_supervisor(
-                                    &r,
-                                    RunnerToSupervisor::PtyResize(PtyResize {
-                                        pty_id,
-                                        cols: resize.cols,
-                                        rows: resize.rows,
-                                    }),
-                                )
-                                .await;
+                            pending_resize = Some((resize.cols, resize.rows));
                         }
                     }
-                    Some(Ok(Message::Pong(_) | Message::Ping(_) | Message::Frame(_))) => {}
+                    Some(Ok(Message::Pong(_) | Message::Ping(_))) => {
+                        idle.as_mut().reset(tokio::time::Instant::now() + state.idle);
+                    }
+                    Some(Ok(Message::Frame(_))) => {}
                     Some(Ok(Message::Close(_))) | Some(Err(_)) | None => break CLOSE_NORMAL,
                 }
             }
@@ -1109,7 +1242,7 @@ async fn serve_terminal_leg(
             chunk = leg_rx.recv() => {
                 match chunk {
                     Some(LegIn::Data(b)) => {
-                        idle.as_mut().reset(tokio::time::Instant::now() + IDLE_TIMEOUT);
+                        idle.as_mut().reset(tokio::time::Instant::now() + state.idle);
                         bytes_to_pty += b.len() as u64;
                         from_pty_unacked += b.len();
                         if ws_send(&mut ws_sink, Message::binary(b)).await.is_err() {
@@ -1158,7 +1291,7 @@ async fn serve_terminal_leg(
                 while let Ok(chunk) = leg_rx.try_recv() {
                     match chunk {
                         LegIn::Data(b) => {
-                            idle.as_mut().reset(tokio::time::Instant::now() + IDLE_TIMEOUT);
+                            idle.as_mut().reset(tokio::time::Instant::now() + state.idle);
                             if ws_send(&mut ws_sink, Message::binary(b)).await.is_err() {
                                 break;
                             }
@@ -1265,8 +1398,8 @@ async fn serve_leg(
     let mut bytes_to_app: u64 = 0;
     let mut bytes_from_app: u64 = 0;
     tokio::pin! {
-        let idle = tokio::time::sleep(IDLE_TIMEOUT);
-        let lifetime = tokio::time::sleep(LIFETIME);
+        let idle = tokio::time::sleep(state.idle);
+        let lifetime = tokio::time::sleep(state.lifetime);
     }
     let mut ping = tokio::time::interval(PING_INTERVAL);
     ping.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -1280,7 +1413,7 @@ async fn serve_leg(
                     Some(Ok(Message::Binary(b))) => {
                         // Reset the idle deadline (tokio ≥1.50 takes the absolute instant the
                         // sleep should fire again, not a restart of its duration).
-                        idle.as_mut().reset(tokio::time::Instant::now() + IDLE_TIMEOUT);
+                        idle.as_mut().reset(tokio::time::Instant::now() + state.idle);
                         if b.len() > PREVIEW_CHUNK {
                             break CLOSE_REFUSED;
                         }
@@ -1294,8 +1427,13 @@ async fn serve_leg(
                         }
                     }
 
-                    // Text is ignored per the spec; pongs and frames keep the connection alive.
-                    Some(Ok(Message::Text(_) | Message::Pong(_) | Message::Ping(_) | Message::Frame(_))) => {}
+                    // Text is ignored per the spec. A pong (or ping) is liveness and resets the
+                    // idle deadline (`16 §W18`: "a WebSocket's pings count"); keep-awake and
+                    // the supervisor's byte accounting stay byte-driven.
+                    Some(Ok(Message::Pong(_) | Message::Ping(_))) => {
+                        idle.as_mut().reset(tokio::time::Instant::now() + state.idle);
+                    }
+                    Some(Ok(Message::Text(_) | Message::Frame(_))) => {}
                     Some(Ok(Message::Close(_))) | Some(Err(_)) | None => break CLOSE_NORMAL,
                 }
             }
@@ -1304,7 +1442,7 @@ async fn serve_leg(
                 match chunk {
                     Some(LegIn::Data(b)) => {
                         // Same absolute-deadline reset as the relay→app arm above.
-                        idle.as_mut().reset(tokio::time::Instant::now() + IDLE_TIMEOUT);
+                        idle.as_mut().reset(tokio::time::Instant::now() + state.idle);
                         bytes_to_app += b.len() as u64;
                         from_app_unacked += b.len();
                         if ws_send(&mut ws_sink, Message::binary(b)).await.is_err() {
@@ -1353,7 +1491,7 @@ async fn serve_leg(
                 while let Ok(chunk) = leg_rx.try_recv() {
                     match chunk {
                         LegIn::Data(b) => {
-                            idle.as_mut().reset(tokio::time::Instant::now() + IDLE_TIMEOUT);
+                            idle.as_mut().reset(tokio::time::Instant::now() + state.idle);
                             if ws_send(&mut ws_sink, Message::binary(b)).await.is_err() {
                                 break;
                             }

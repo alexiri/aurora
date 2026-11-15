@@ -227,12 +227,18 @@ impl ApiClient {
         Ok(())
     }
 
-    /// Claim a bootstrap token (single use). No retry on 409/404.
+    /// Claim a bootstrap token: **one attempt** per supervisor connection (FIX-094). A retry
+    /// after a lost response would race the API's idempotence rule; instead a failed attempt
+    /// closes the connection and the supervisor re-presents the token, which the API answers
+    /// again while the boot has never held a channel (SEC-25).
     pub async fn claim(&self, token: &str) -> Result<ChannelClaimResponse, ApiError> {
         let req = ChannelClaimRequest {
             bootstrap_token: aurora_protocol::common::SecretString::new(token),
         };
-        self.call(Method::POST, "/channel/claim", Some(&req)).await
+        let (r, _) = self
+            .once(Method::POST, "/channel/claim", Some(&req), None)
+            .await?;
+        Ok(r)
     }
 
     pub async fn channel_hold(&self, r: &ChannelRef) -> Result<(), ApiError> {

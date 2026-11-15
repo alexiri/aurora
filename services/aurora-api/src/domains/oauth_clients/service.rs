@@ -253,14 +253,23 @@ pub async fn patch(
     }
     let applied = async {
         let mut tx = audit::begin(state).await?;
-        repo::update(
+        // (FIX-115) Compare-and-set on the version the caller read: a concurrent PATCH that
+        // changed the secret or the public fields since makes this one a 409, never a silent
+        // lost update; the error path below discards what this call sealed.
+        if !repo::update_cas(
             &mut *tx,
-            row.id,
+            row,
             new_public.as_ref(),
             new_ref.as_ref().map(|(_, c)| c.as_str()),
             req.enabled,
         )
-        .await?;
+        .await?
+        {
+            return Err(ApiError::conflict(
+                "conflict",
+                "The OAuth client changed since you loaded it; reload and try again.",
+            ));
+        }
         let updated = repo::get(&mut *tx, row.id)
             .await?
             .ok_or_else(|| ApiError::not_found("OAuth client not found."))?;

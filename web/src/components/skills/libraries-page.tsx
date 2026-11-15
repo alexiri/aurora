@@ -52,7 +52,7 @@ function Libraries({ slug, orgId }: { slug: string; orgId: string }) {
   const [connect, setConnect] = useState(false);
   const disabled = libs.error instanceof ApiError && libs.error.code === "skill_libraries_disabled";
   return (
-    <div className="max-w-[1160px]">
+    <div className="max-w-page">
       <PageHeader
         title="Skill libraries"
         description="Connect a git repository as a source of skills. Skills are added to an agent, a workspace or the organization, pinned to a commit and read-only."

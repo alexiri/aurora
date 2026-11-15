@@ -37,8 +37,20 @@ export function decisionTone(d: string): "accent" | "pending" | "danger" {
   return "pending";
 }
 
+/** (P5-AGENT-2) The agent filter is in the URL (`?agent=<id>`), so the agent page's "All activity" lands filtered. */
+function agentFromUrl(): string {
+  return typeof window === "undefined" ? "" : (new URLSearchParams(window.location.search).get("agent") ?? "");
+}
+
 export function ActivityView({ wsId, base }: { wsId: string; base: string }) {
-  const [agent, setAgent] = useState("");
+  const [agent, setAgentState] = useState(agentFromUrl);
+  const setAgent = (id: string) => {
+    setAgentState(id);
+    const url = new URL(window.location.href);
+    if (id) url.searchParams.set("agent", id);
+    else url.searchParams.delete("agent");
+    window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
+  };
   const [decision, setDecision] = useState("");
   const [hostInput, setHostInput] = useState("");
   const [host, setHost] = useState("");
@@ -47,7 +59,7 @@ export function ActivityView({ wsId, base }: { wsId: string; base: string }) {
   const items = q.data?.pages.flatMap((p) => p.items) ?? [];
   const byId = new Map(agents.data?.items.map((a) => [a.id, a]) ?? []);
   return (
-    <div className="max-w-[1160px] space-y-4">
+    <div className="max-w-page space-y-4">
       <PageHeader
         title="Activity"
         description="Every request your agents made through the gateway, and what the policy decided."
@@ -99,7 +111,7 @@ export function ActivityView({ wsId, base }: { wsId: string; base: string }) {
             onChange={(e) => setHostInput(e.target.value)}
           />
         </Field>
-        <Button type="submit" variant="outline" className="sm:mt-[1.625rem]">
+        <Button type="submit" variant="outline" className="sm:mt-label-offset">
           Filter
         </Button>
       </form>

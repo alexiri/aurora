@@ -2,6 +2,7 @@
 
 pub mod account;
 pub mod action_approvals;
+pub mod addon_sources;
 pub mod agent_links;
 pub mod agents;
 pub mod api_keys;
@@ -51,10 +52,12 @@ pub mod preview_relay;
 pub mod preview_shares;
 pub mod reach_grants;
 pub mod request_log;
+pub mod retention;
 pub mod runners;
 pub mod sandboxes;
 pub mod schedules;
 pub mod scim;
+pub mod search;
 pub mod secrets;
 pub mod sessions;
 pub mod skill_libraries;

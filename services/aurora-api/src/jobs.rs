@@ -2,6 +2,10 @@
 //! Idempotent jobs run everywhere; singleton jobs take an advisory lock per run.
 
 use aurora_config::AttachmentsSection;
+use aurora_core::limits::{
+    CHANNEL_LEDGER_RETENTION, RETENTION_PRUNE_BATCH, SESSION_PRUNE_GRACE,
+    WEBHOOK_DELIVERY_MAX_PER_WEBHOOK, WEBHOOK_DELIVERY_RETENTION,
+};
 use aurora_db::PgPool;
 use aurora_db::repo::{approvals, request_log};
 use chrono::Utc;
@@ -25,6 +29,7 @@ const ATTACHMENT_SWEEP_JOB: &str = "attachment_sweep";
 /// audit-log lookup in [`aurora_db::repo::scim::tokens_expiring_within`]).
 pub const SCIM_EXPIRY_SWEEP_EVERY: Duration = Duration::from_secs(24 * 3600);
 const SCIM_EXPIRY_JOB: &str = "scim_token_expiry";
+const RETENTION_PRUNE_JOB: &str = "retention_prune";
 pub const PARTITION_EVERY: Duration = Duration::from_secs(24 * 3600);
 pub const PARTITIONS_AHEAD: u32 = 2;
 const PARTITION_JOB: &str = "request_log_partitions";
@@ -92,24 +97,152 @@ pub async fn maintain_request_log(
     }
 }
 
-/// (P4-GRP-2) One SCIM token expiry-notice pass: for every live token expiring within 14 days
-/// (and again within 1 day) write a non-critical `scim_token.expiry_notice` audit row (once
-/// per token per threshold — the repo query checks the audit log). Singleton: `Ok(None)` when
-/// another replica holds the lock. Returns the number of notices written.
+/// What one daily retention-pruning pass removed (FIX-111).
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct PruneReport {
+    pub channel_inbox: u64,
+    pub channel_ops: u64,
+    pub channel_cards: u64,
+    pub link_requests: u64,
+    pub sessions: u64,
+    pub cli_logins: u64,
+    pub context_credentials: u64,
+    pub webhook_deliveries: u64,
+}
+
+/// Run one batched delete until a batch comes back short (each statement removes at most
+/// `RETENTION_PRUNE_BATCH` rows, so no lock is held for long).
+async fn drain<F, Fut>(mut one: F) -> Result<u64, aurora_db::DbError>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<u64, aurora_db::DbError>>,
+{
+    let batch = u64::try_from(RETENTION_PRUNE_BATCH).unwrap_or(u64::MAX);
+    let mut total = 0;
+    loop {
+        let n = one().await?;
+        total += n;
+        if n < batch {
+            return Ok(total);
+        }
+    }
+}
+
+/// The body of the daily retention pass (docs/05 §Background jobs "Retention pruning"):
+/// terminal channel ledger rows older than `CHANNEL_LEDGER_RETENTION` (a pending deprovision
+/// op survives), expired link requests, sessions and context credentials past
+/// `SESSION_PRUNE_GRACE`, webhook deliveries past `WEBHOOK_DELIVERY_RETENTION` or over the
+/// per-webhook cap. Used action tokens are pruned where they are consumed.
+pub async fn run_retention_prune(pool: &PgPool) -> Result<PruneReport, aurora_db::DbError> {
+    use aurora_db::repo::retention as r;
+    let ledger = CHANNEL_LEDGER_RETENTION.as_secs_f64();
+    let grace = SESSION_PRUNE_GRACE.as_secs_f64();
+    let hooks = WEBHOOK_DELIVERY_RETENTION.as_secs_f64();
+    let b = RETENTION_PRUNE_BATCH;
+    Ok(PruneReport {
+        channel_inbox: drain(|| r::prune_channel_inbox(pool, ledger, b)).await?,
+        channel_ops: drain(|| r::prune_channel_ops(pool, ledger, b)).await?,
+        channel_cards: drain(|| r::prune_channel_cards(pool, ledger, b)).await?,
+        link_requests: drain(|| r::prune_link_requests(pool, ledger, b)).await?,
+        sessions: drain(|| r::prune_sessions(pool, grace, b)).await?,
+        cli_logins: drain(|| r::prune_cli_logins(pool, grace, b)).await?,
+        context_credentials: drain(|| r::prune_context_credentials(pool, grace, b)).await?,
+        webhook_deliveries: drain(|| r::prune_webhook_deliveries_by_age(pool, hooks, b)).await?
+            + drain(|| {
+                r::prune_webhook_deliveries_over_cap(pool, WEBHOOK_DELIVERY_MAX_PER_WEBHOOK, b)
+            })
+            .await?,
+    })
+}
+
+/// The daily retention pass as a singleton: `Ok(None)` when another replica holds the lock.
+pub async fn sweep_retention_prune(
+    pool: &PgPool,
+) -> Result<Option<PruneReport>, aurora_db::DbError> {
+    aurora_db::jobs::try_singleton(pool, RETENTION_PRUNE_JOB, || run_retention_prune(pool))
+        .await?
+        .transpose()
+}
+
+/// (FIX-111) Approved reach grants past `expires_at` become `expired` (every 60 s,
+/// idempotent). Returns how many expired.
+pub async fn expire_reach_grants(pool: &PgPool) -> Result<u64, aurora_db::DbError> {
+    aurora_db::repo::reach_grants::expire_due(pool).await
+}
+
+/// (P4-GRP-2, FIX-081) One SCIM token expiry-notice pass: for every live token expiring within
+/// 14 days (and again within 1 day) write a non-critical `scim_token.expiry_notice` audit row
+/// (the in-app notice; once per token per threshold — the repo query checks the audit log) and
+/// e-mail the organization's owners and admins through the channel quota notices use (`mail`:
+/// `None` = e-mail off). Singleton: `Ok(None)` when another replica holds the lock. Returns the
+/// number of notices written.
 pub async fn sweep_scim_token_expiry(
     pool: &PgPool,
+    mail: Option<&crate::domains::attachments::sweep::QuotaMail>,
 ) -> Result<Option<usize>, aurora_core::ApiError> {
-    let ran =
-        aurora_db::jobs::try_singleton(pool, SCIM_EXPIRY_JOB, || run_scim_expiry_notices(pool))
-            .await?
-            .transpose()
-            .map_err(aurora_core::ApiError::from)?;
+    let ran = aurora_db::jobs::try_singleton(pool, SCIM_EXPIRY_JOB, || {
+        run_scim_expiry_notices(pool, mail)
+    })
+    .await?
+    .transpose()
+    .map_err(aurora_core::ApiError::from)?;
     Ok(ran)
+}
+
+/// E-mail the owners/admins of `org` that the SCIM token `name` expires (platform voice: the
+/// token name, the date and a dashboard link; never token material).
+async fn mail_scim_expiry(
+    pool: &PgPool,
+    m: &crate::domains::attachments::sweep::QuotaMail,
+    org: uuid::Uuid,
+    token_name: &str,
+    expires_at: chrono::DateTime<Utc>,
+    days: i64,
+) {
+    use crate::domains::auth::mail::Mail;
+    let Ok((org_name, slug, owners)) =
+        aurora_db::repo::approval_notify::org_owners(pool, org).await
+    else {
+        return;
+    };
+    let when = if days <= 1 {
+        "within a day"
+    } else {
+        "within 14 days"
+    };
+    let subject = format!(
+        "{}: a directory-sync token expires {when}",
+        aurora_core::sanitize::one_line(&org_name, 80)
+    );
+    let intro = format!(
+        "The provisioning token \"{}\" of {} expires on {}. Create a new token under \
+         Organization settings → Directory sync before then, or your identity provider's \
+         provisioning stops.",
+        aurora_core::sanitize::one_line(token_name, 80),
+        aurora_core::sanitize::one_line(&org_name, 80),
+        expires_at.format("%Y-%m-%d %H:%M UTC"),
+    );
+    let link = format!(
+        "{}/o/{slug}/settings/directory",
+        m.external_url.trim_end_matches('/')
+    );
+    for (_, email) in owners {
+        if let Err(e) = m
+            .mailer
+            .send(Mail::new(&email, &subject, &intro, &link))
+            .await
+        {
+            tracing::error!(error = %e, "scim token expiry e-mail failed");
+        }
+    }
 }
 
 /// The body of the SCIM token expiry-notice pass (the singleton's closure; returns the
 /// number of notices written).
-async fn run_scim_expiry_notices(pool: &PgPool) -> Result<usize, aurora_db::DbError> {
+async fn run_scim_expiry_notices(
+    pool: &PgPool,
+    mail: Option<&crate::domains::attachments::sweep::QuotaMail>,
+) -> Result<usize, aurora_db::DbError> {
     let now = Utc::now();
     let mut notices = 0;
     for days in [14i64, 1] {
@@ -138,6 +271,11 @@ async fn run_scim_expiry_notices(pool: &PgPool) -> Result<usize, aurora_db::DbEr
                 tracing::warn!(error = %e, "scim: expiry notice failed");
             } else {
                 notices += 1;
+                // The e-mail follows the audit row, so it is sent once per token and
+                // threshold (the row is what the next pass looks for).
+                if let Some(m) = mail {
+                    mail_scim_expiry(pool, m, org, &name, expires_at, days).await;
+                }
             }
         }
     }
@@ -164,16 +302,18 @@ pub async fn preview_housekeeping(pool: &PgPool) -> Result<u64, aurora_db::DbErr
         tracing::debug!(cleared, pruned, replicas, "preview housekeeping");
         cleared + pruned + replicas
     };
-    let orgs: Vec<(uuid::Uuid, String, i64)> = sqlx::query_as(
-        "SELECT o.id, o.slug, count(ps.id) FROM organizations o \
-           LEFT JOIN preview_shares ps ON ps.org_id = o.id AND ps.state = 'active' \
-         GROUP BY o.id, o.slug",
-    )
-    .fetch_all(pool)
-    .await?;
-    for (id, slug, n) in orgs {
-        metrics::gauge!("aurora_preview_shares", "org" => slug).set(n as f64);
-        tracing::trace!(org = %id, shares = n, "preview shares gauge");
+    // Labelled by `state` only (FIX-090): a tenant's slug is not a metric label.
+    let counts: Vec<(String, i64)> =
+        sqlx::query_as("SELECT state, count(*) FROM preview_shares GROUP BY state")
+            .fetch_all(pool)
+            .await?;
+    for state in ["active", "paused"] {
+        let n = counts
+            .iter()
+            .find(|(s, _)| s == state)
+            .map_or(0, |(_, n)| *n);
+        metrics::gauge!("aurora_preview_shares", "state" => state).set(n as f64);
+        tracing::trace!(state, shares = n, "preview shares gauge");
     }
     Ok(cleared)
 }
@@ -267,8 +407,16 @@ pub fn spawn(
                 Ok(_) => {}
                 Err(e) => tracing::warn!(error = %e.message(), "attachment storage sweep failed"),
             }
+            // (FIX-111) The documented retention-pruning pass shares the daily tick too.
+            match sweep_retention_prune(&rp).await {
+                Ok(Some(r)) if r != PruneReport::default() => {
+                    tracing::info!(report = ?r, "retention pruning")
+                }
+                Ok(_) => {}
+                Err(e) => tracing::warn!(error = %e, "retention pruning failed"),
+            }
             // (P4-GRP-2) SCIM token expiry notices share the daily tick as well.
-            match sweep_scim_token_expiry(&rp).await {
+            match sweep_scim_token_expiry(&rp, quota_mail.as_ref()).await {
                 Ok(Some(n)) if n > 0 => tracing::info!(notices = n, "scim token expiry notices"),
                 Ok(_) => {}
                 Err(e) => tracing::warn!(error = %e.message(), "scim token expiry sweep failed"),
@@ -290,6 +438,11 @@ pub fn spawn(
                 Ok(n) if n > 0 => tracing::info!(closed = n, "peer-task sweep"),
                 Ok(_) => {}
                 Err(e) => tracing::warn!(error = %e.message(), "peer-task sweep failed"),
+            }
+            match expire_reach_grants(&ap).await {
+                Ok(n) if n > 0 => tracing::info!(expired = n, "reach-grant expiry"),
+                Ok(_) => {}
+                Err(e) => tracing::warn!(error = %e, "reach-grant expiry failed"),
             }
         }
     });

@@ -224,6 +224,24 @@ impl Governance {
             }
             return Ok(());
         };
+        // (D-177, SEC-65, FIX-105) The sanctioned key is injected only on the endpoint's inference
+        // paths; nothing else of the host (LiteLLM management, files, images, fine-tuning) gets it.
+        // Before policy and before any credential is opened.
+        if !self.registry.path_permitted(ep_id, method, path) {
+            let provider = self
+                .registry
+                .endpoint(ep_id)
+                .map(|e| e.provider.clone())
+                .unwrap_or_default();
+            return Err(ApiError::new(
+                StatusCode::FORBIDDEN,
+                "llm_path_not_permitted",
+                format!(
+                    "The LLM key for {ep_id} is injected only on its inference paths; {path} is not one of them. An operator can list it in the endpoint's `allowed_paths`."
+                ),
+            )
+            .with_details(json!({ "provider": provider, "endpoint_id": ep_id })));
+        }
         let scope = if c.scope == Level::Workspace {
             "workspace"
         } else {

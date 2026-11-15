@@ -263,6 +263,18 @@ impl FakeCore {
         st.version += 1;
     }
 
+    /// The `config` and `credentials` the core serves for `integration`, the shape of a
+    /// `credentials.validate` payload (C-710), or `None` when it is not served.
+    pub fn validate_payload(&self, integration: Uuid, probe: bool) -> Option<Value> {
+        let st = self.st();
+        let i = st.integrations.iter().find(|i| i.id == integration)?;
+        let mut p = json!({"config": i.config, "credentials": i.credentials});
+        if probe {
+            p["mode"] = json!("probe");
+        }
+        Some(p)
+    }
+
     /// Queues a self-contained `presence.deprovision` (RFE-024, C-360/C-361) as the core
     /// does after a delete: no integration id, everything the connector needs in the payload
     /// and the integration's credentials in `credentials`. Built from the served integration

@@ -279,10 +279,18 @@ impl StreamMapper {
                 message: "the model declined to answer".into(),
             };
         }
+        let subtype = v.get("subtype").and_then(Value::as_str).unwrap_or_default();
+        // `error_max_turns`, `error_during_execution`, … are failed turns whatever `is_error`
+        // says (the pinned CLI may report them with `is_error: false`; FIX-095).
+        if !is_error && subtype.starts_with("error") {
+            return HarnessEvent::Error {
+                code: "harness_failed".into(),
+                message: trunc(&format!("the CLI ended the turn: {subtype}"), 500),
+            };
+        }
         if is_error {
             let status = v.get("api_error_status").and_then(Value::as_u64);
             let text = v.get("result").and_then(Value::as_str).unwrap_or_default();
-            let subtype = v.get("subtype").and_then(Value::as_str).unwrap_or_default();
             let (code, message) = classify_failure(status, text, subtype);
             return HarnessEvent::Error { code, message };
         }
@@ -467,6 +475,22 @@ mod tests {
             msg.starts_with("[blocked_by_policy] Blocked by policy"),
             "{msg}"
         );
+    }
+
+    #[test]
+    fn an_error_subtype_is_a_failed_turn_even_when_is_error_is_false() {
+        for subtype in ["error_max_turns", "error_during_execution"] {
+            let line = format!(
+                r#"{{"type":"result","subtype":"{subtype}","is_error":false,"result":"","session_id":"s"}}"#
+            );
+            let (_, term, _) = run(&line);
+            assert!(
+                matches!(&term, Some(HarnessEvent::Error { code, .. }) if code == "harness_failed"),
+                "{subtype}: {term:?}"
+            );
+        }
+        let ok = r#"{"type":"result","subtype":"success","is_error":false,"result":"x","session_id":"s"}"#;
+        assert!(matches!(run(ok).1, Some(HarnessEvent::Done { .. })));
     }
 
     #[test]

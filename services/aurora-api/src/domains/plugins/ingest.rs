@@ -23,6 +23,7 @@ pub enum Source {
     Builtin,
     Directory,
     Upload,
+    Addon,
 }
 
 impl Source {
@@ -31,6 +32,7 @@ impl Source {
             Self::Builtin => "builtin",
             Self::Directory => "directory",
             Self::Upload => "upload",
+            Self::Addon => "addon",
         }
     }
 }
@@ -66,6 +68,11 @@ fn reject(v: &[Violation]) -> ApiError {
     }
     ApiError::unprocessable("package_invalid", "The package is invalid.")
         .with_details(json!({"violations": violations_json(v)}))
+}
+
+/// `reject` for sibling domains (addon sources surface the same violations).
+pub fn reject_public(v: &Violation) -> ApiError {
+    reject(std::slice::from_ref(v))
 }
 
 /// Reserved hosts (09 §6): LLM endpoints, the external and service hosts,
@@ -110,10 +117,14 @@ async fn context(
     active: &[(String, Value)],
 ) -> Result<ValidationContext, ApiError> {
     let mut active_app_ids = HashMap::new();
+    let mut active_families = HashMap::new();
     for (pkg, m) in active {
         if let Ok(m) = serde_json::from_value::<Manifest>(m.clone()) {
             for a in &m.apps {
                 active_app_ids.insert(a.about.id.clone(), pkg.clone());
+                if let Some(f) = &a.about.family {
+                    active_families.insert(f.id.clone(), pkg.clone());
+                }
             }
         }
     }
@@ -121,6 +132,7 @@ async fn context(
         running_version: env!("CARGO_PKG_VERSION").to_owned(),
         reserved_hosts: reserved_hosts(state),
         active_app_ids,
+        active_families,
     })
 }
 
@@ -165,7 +177,14 @@ async fn decide(
         .into_iter()
         .map(|c| (m.package.id.clone(), c))
         .collect();
-    for (pkg, manifest) in active.iter().filter(|(p, _)| *p != m.package.id) {
+    // (FIX-123, D-215) A package this one supersedes never conflicts with it: its apps move here.
+    let retired = aurora_registry::upgrade::retired_by(&m.package.id);
+    let takes_over = !aurora_registry::upgrade::supersedes(m).is_empty();
+    for (pkg, manifest) in active
+        .iter()
+        .filter(|(p, _)| *p != m.package.id)
+        .filter(|(p, _)| !(takes_over && retired.contains(&p.as_str())))
+    {
         if let Ok(o) = serde_json::from_value::<Manifest>(manifest.clone()) {
             all.extend(claims::claims(&o).into_iter().map(|c| (pkg.clone(), c)));
         }
@@ -178,6 +197,8 @@ async fn decide(
     }
     let prev = plugins::previous_approved(&state.pool, &m.package.id).await?;
     let Some(prev) = prev else {
+        // (P5-ASRC, D-250(b)) addon packages are never auto-activated on first sight:
+        // third-party permissions always need the ordinary instance-admin approval.
         return Ok(if source == Source::Builtin && *signer == Signer::Project {
             activate
         } else {
@@ -187,11 +208,36 @@ async fn decide(
     let Ok(old) = serde_json::from_value::<Manifest>(prev.manifest) else {
         return Ok(pending("permissions_widened"));
     };
+    // (FIX-107, SEC-15, 09 §10) A version is a first install when another publisher ships it,
+    // when it is older than the highest approved version, or when the id is a built-in's and the
+    // version does not come from the built-in source.
+    if prev.publisher != m.package.publisher {
+        return Ok(pending("publisher_changed"));
+    }
+    if source != Source::Builtin && plugins::has_builtin_source(&state.pool, &m.package.id).await? {
+        return Ok(pending("builtin_id_reserved"));
+    }
+    let highest = plugins::approved_versions(&state.pool, &m.package.id)
+        .await?
+        .into_iter()
+        .filter_map(|v| semver_key(&v))
+        .max();
+    match (semver_key(&m.package.version), highest) {
+        (Some(new), Some(top)) if new < top => return Ok(pending("version_downgrade")),
+        (None, _) => return Ok(pending("version_downgrade")),
+        _ => {}
+    }
     Ok(if widens(&old, m).is_empty() {
         activate
     } else {
         pending("permissions_widened")
     })
+}
+
+/// Ordering key of a semantic version: `(major, minor, patch, is_release)` — a pre-release
+/// sorts before its release. `None` when it does not parse.
+fn semver_key(v: &str) -> Option<(u64, u64, u64, bool)> {
+    aurora_registry::manifest::parse_semver(v)
 }
 
 /// Ingest `bytes`. Archive/signature failures return 422 (413 when oversize)
@@ -202,6 +248,39 @@ pub async fn ingest(
     source: Source,
     actor: &AuditActor,
 ) -> Result<Ingested, ApiError> {
+    ingest_inner(state, bytes, source, None, actor).await
+}
+
+/// What an addon source expects of a package it lists (P5-ASRC, SEC-86): the package must be
+/// signed by **the source's own key**, carry the repo's publisher and the listed id and
+/// version, and use a package id nobody else owns.
+pub struct AddonExpect<'a> {
+    pub source: &'a aurora_db::repo::addon_sources::AddonSourceRow,
+    pub package_id: &'a str,
+    pub version: &'a str,
+}
+
+/// (P5-ASRC, C-607) Ingest an addon package: same pipeline, the row records `source = "addon"`
+/// and `source_id`; a first version is always `pending_approval`; the audit action is the
+/// security-critical `addon.ingest`, committed with the package row.
+pub async fn ingest_for_source(
+    state: &AppState,
+    bytes: &[u8],
+    expect: &AddonExpect<'_>,
+    actor: &AuditActor,
+) -> Result<PackageRow, ApiError> {
+    let out = ingest_inner(state, bytes, Source::Addon, Some(expect), actor).await?;
+    Ok(out.row)
+}
+
+async fn ingest_inner(
+    state: &AppState,
+    bytes: &[u8],
+    source: Source,
+    addon: Option<&AddonExpect<'_>>,
+    actor: &AuditActor,
+) -> Result<Ingested, ApiError> {
+    let source_id = addon.map(|a| a.source.id);
     let pkg = Package::read(bytes, &Limits::default()).map_err(|v| reject(&v))?;
     let trust = keys::trust_store(&state.pool).await?;
     // The builtin source is fail-closed (09 §10): never unsigned, and only the project key counts.
@@ -213,6 +292,19 @@ pub async fn ingest(
             "SIGNATURE",
             "built-in packages must be signed by the project key",
         )]));
+    }
+    if let Some(a) = addon {
+        // The signature must verify against the key the source published (and the admin
+        // confirmed): not the project key, not another publisher's trusted key, not unsigned.
+        let ok =
+            matches!(&signer, Signer::Trusted { key_id, .. } if *key_id == a.source.signing_key);
+        if !ok {
+            return Err(reject(&[Violation::new(
+                "signer_not_source_key",
+                "SIGNATURE",
+                "the package is not signed by the addon source's key",
+            )]));
+        }
     }
     let signer_key_id = match &signer {
         Signer::Project => signature::BUILTIN.to_owned(),
@@ -238,6 +330,37 @@ pub async fn ingest(
         }
     };
 
+    if let Some(a) = addon {
+        let bad = |code: &'static str, msg: &'static str| {
+            reject(&[Violation::new(code, "IDENTITY", msg)])
+        };
+        if publisher != a.source.publisher {
+            return Err(bad(
+                "publisher_mismatch",
+                "the package's publisher is not the addon source's publisher",
+            ));
+        }
+        if package_id != a.package_id || version != a.version {
+            return Err(bad(
+                "identity_mismatch",
+                "the package is not the id and version the manifest lists",
+            ));
+        }
+        if aurora_db::repo::addon_sources::package_id_owned_elsewhere(
+            &state.pool,
+            &package_id,
+            a.source.id,
+            &publisher,
+        )
+        .await?
+        {
+            return Err(bad(
+                "package_id_taken",
+                "the package id belongs to another source or publisher",
+            ));
+        }
+    }
+
     if let Some(row) = plugins::find_identity(&state.pool, &package_id, &version, &digest).await? {
         return Ok(Ingested {
             row,
@@ -251,20 +374,35 @@ pub async fn ingest(
         Ok(_) => validate::package(&pkg, &ctx, &trust, allow_unsigned),
         Err(v) => v.clone(),
     };
-    let decision = match (&parsed, violations.is_empty()) {
+    let mut decision = match (&parsed, violations.is_empty()) {
         (Ok(m), true) => decide(state, m, &active, source, &signer).await?,
         _ => Decision {
             status: "invalid",
             reason: Some("validation_failed"),
         },
     };
+    // (P5-ASRC, D-250(b)) Third-party code never activates on its own: not on first sight and
+    // not as an update, whatever the permissions diff says. The admin approves the version (the
+    // click is the ordinary activation: connection impact, grant conversion and claim holds
+    // are computed then); the more specific holds above keep their reasons.
+    if source == Source::Addon && decision.status == "active" {
+        decision = Decision {
+            status: "pending_approval",
+            reason: Some("addon_update"),
+        };
+    }
     let violations_v = violations_json(&violations);
     let new_id = ids::new_id();
 
     let mut tx = state.pool.begin().await.map_err(DbError::from)?;
+    // (FIX-064, SEC-67) The same exclusive compile lock every other activation path holds, taken
+    // before the impact is computed: a connection-grant writer (shared lock) either committed its
+    // `full` grant first, so it counts in `impact.converts` and holds this version for approval,
+    // or waits until this transaction — package row *and* snapshot — has committed and then
+    // sees the version's `custom_only` restriction.
+    plugins::lock_compile(&mut tx).await?;
     // C-343 (RFE-022): a major upgrade that would flip a connection to `reauth_required` is
     // never activated automatically, widening or not; it waits for an instance admin.
-    let mut decision = decision;
     if let (Ok(m), true) = (&parsed, decision.status != "invalid") {
         let impact = upgrade::compute_for(&mut tx, None, &package_id, &version, m).await?;
         if !impact.flips.is_empty() && decision.reason != Some("claim_conflict") {
@@ -299,6 +437,7 @@ pub async fn ingest(
             permissions: &permissions,
             violations: &violations_v,
             source: source.as_str(),
+            source_id,
             status: decision.status,
             status_reason: decision.reason,
             approved_now: auto,
@@ -322,18 +461,51 @@ pub async fn ingest(
         }
         plugins::put_blob(&mut *tx, &digest, "archive", bytes).await?;
     }
-    tx.commit().await.map_err(DbError::from)?;
-
-    audit::record(
-        state,
-        AuditEvent::new(actor.clone(), "plugin.ingest", Outcome::Success)
+    let mut superseded: Option<AuditEvent> = None;
+    if auto && let Ok(m) = &parsed {
+        // (FIX-123, D-215) Apps this version took over as connect methods move with it, before the
+        // snapshot is compiled (the retired package's host claims must be gone by then). The
+        // security-critical audit row commits with the move.
+        let report = super::supersede::apply(&mut tx, m, &version).await?;
+        if !report.is_empty() {
+            superseded = Some(
+                AuditEvent::new(actor.clone(), "plugin.supersede", Outcome::Success)
+                    .target("plugin_package", new_id)
+                    .metadata(json!({"package_id": package_id, "version": version,
+                        "result": report.metadata()})),
+            );
+        }
+    }
+    if auto {
+        // Activate the snapshot in the same transaction as the package row: a window between
+        // "package active" and "snapshot active" would let a `full` grant be written against the
+        // old snapshot after the conversion check above (nothing would ever convert it).
+        registry::activate_snapshot(state, &mut tx, true)
+            .await
+            .map_err(registry::flatten)?;
+    }
+    let ingest_event = |action: &'static str| {
+        AuditEvent::new(actor.clone(), action, Outcome::Success)
             .target("plugin_package", new_id)
             .metadata(json!({
                 "package_id": package_id, "version": version, "digest": digest,
-                "source": source.as_str(), "status": decision.status,
+                "source": source.as_str(), "source_id": source_id,
+                "status": decision.status,
                 "reason": decision.reason,
-            })),
-    );
+            }))
+    };
+    match &superseded {
+        Some(ev) => audit::commit_critical(tx, ev).await?,
+        // An addon package never activates on first sight, so there is no supersede row to
+        // share the transaction with: `addon.ingest` is security-critical and commits with it.
+        None if source == Source::Addon => {
+            audit::commit_critical(tx, &ingest_event("addon.ingest")).await?;
+        }
+        None => tx.commit().await.map_err(DbError::from)?,
+    }
+    if source != Source::Addon {
+        audit::record(state, ingest_event("plugin.ingest"));
+    }
     if auto {
         audit::record(
             state,

@@ -7,6 +7,10 @@ import { unwrap } from "./unwrap";
 export const approveCli = (body: { user_code: string; workspace_id: string }) =>
   unwrap(api.POST("/v1/auth/cli/approve", { body }));
 
+/** (FIX-108) What the pending login is asking for: host name, start time, coarse address. */
+export const getPendingCli = (code: string) =>
+  unwrap(api.GET("/v1/auth/cli/pending", { params: { query: { code } } }));
+
 /** `GET /v1/auth/oidc/{provider}/start` URL (a browser navigation, never a fetch). */
 export function oidcStartUrl(
   provider: string,

@@ -4,7 +4,7 @@ use crate::app::AppState;
 use crate::audit::AuditActor;
 use crate::http::auth::InstanceAdmin;
 use crate::http::error::ErrorEnvelope;
-use crate::http::json::{Json, Path};
+use crate::http::json::{Json, Path, Query};
 use aurora_core::ApiError;
 use axum::extract::State;
 use http::StatusCode;
@@ -62,18 +62,20 @@ async fn delete_runner(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// Rotate the runner token; the new `aur_` token is returned once.
+/// Rotate the runner token; the new `aur_` token is returned once and the replaced token keeps
+/// working for `grace_secs` (default 600) so the runner can be rolled (FIX-121, C-695).
 #[utoipa::path(post, path = "/admin/runners/{id}/token", operation_id = "adminRotateRunnerToken", tag = "admin",
-    params(("id" = Uuid, Path, description = "Runner id")),
-    responses((status = 200, body = RunnerWithToken), (status = 403, body = ErrorEnvelope),
-        (status = 404, body = ErrorEnvelope)),
+    params(("id" = Uuid, Path, description = "Runner id"), RotateQuery),
+    responses((status = 200, body = RunnerWithToken), (status = 400, body = ErrorEnvelope),
+        (status = 403, body = ErrorEnvelope), (status = 404, body = ErrorEnvelope)),
     security(("session" = [])))]
 async fn rotate_runner_token(
     c: InstanceAdmin,
     State(s): State<AppState>,
     Path(id): Path<Uuid>,
+    Query(q): Query<RotateQuery>,
 ) -> Result<Json<RunnerWithToken>, ApiError> {
-    let out = service::rotate(&s, id, &AuditActor::instance_admin(&c)).await?;
+    let out = service::rotate(&s, id, q.grace_secs, &AuditActor::instance_admin(&c)).await?;
     Ok(Json(out))
 }
 

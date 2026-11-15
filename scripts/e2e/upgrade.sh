@@ -137,8 +137,18 @@ EOF
     local log="$W/$1-$3.log"
     AURORA_CONFIG="$4" "$2/$3" serve >"$log" 2>&1 &
     PIDS+=("$!"); echo "$! $3 $1" >>"$W/pids"
+    [ "$3" = aurora-runner ] && RUNNER_PID=$!
   }
   stop_svcs() {
+    # The runner goes first and alone, as in a Helm rollout (the API outlives the runner pods): its
+    # clean shutdown retires its replica through the API, so the next runner owns the sandboxes at
+    # once. Killing everything together made the retire race the API's exit; the sandboxes then
+    # stayed with the dead replica until REPLICA_ONLINE_THRESHOLD (90 s) lapsed (AUDIT-004 F-1).
+    if [ -n "${RUNNER_PID:-}" ]; then
+      kill "$RUNNER_PID" 2>/dev/null
+      timeout 30 tail --pid="$RUNNER_PID" -f /dev/null 2>/dev/null
+      RUNNER_PID=
+    fi
     for p in "${PIDS[@]:-}"; do [ -n "$p" ] && kill "$p" 2>/dev/null; done
     for p in "${PIDS[@]:-}"; do [ -n "$p" ] && timeout 20 tail --pid="$p" -f /dev/null 2>/dev/null; done
     PIDS=()

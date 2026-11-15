@@ -1,0 +1,14 @@
+# Dangerous endpoints no tool offers (FIX-118): the request is classified but selects no tool, so
+# custom grants and `block_untooled` refuse it. All credentials and ids are fake.
+- name: "refused mail deletion: DELETE a message selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: DELETE, url: "https://gmail.googleapis.com/gmail/v1/users/me/messages/msg-fixture-1" }
+  expect: { app: gmail }
+- name: "refused calendar clear: POST /calendars/primary/clear selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: POST, url: "https://www.googleapis.com/calendar/v3/calendars/primary/clear" }
+  expect: { app: calendar }
+- name: "refused file deletion: DELETE a Drive file permanently selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: DELETE, url: "https://www.googleapis.com/drive/v3/files/file-fixture-1" }
+  expect: { app: drive }

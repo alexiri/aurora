@@ -1031,3 +1031,61 @@ async fn reconciles_only_when_work_response_says_reconciler() {
     assert!(reconcile_run(Some(false)).await.is_empty());
     assert!(reconcile_run(None).await.is_empty());
 }
+
+/// Counts the reports it answered (delivered), `Applied`.
+struct CountingAnswer(Arc<std::sync::atomic::AtomicUsize>);
+impl Respond for CountingAnswer {
+    fn respond(&self, req: &Request) -> ResponseTemplate {
+        let body: ReportsRequest = serde_json::from_slice(&req.body).unwrap();
+        self.0
+            .fetch_add(body.reports.len(), std::sync::atomic::Ordering::SeqCst);
+        ReportsAnswer(ReportStatus::Applied).respond(req)
+    }
+}
+
+/// FIX-094 (RUN-6): a `stopped` report in the final flush survives a transient 503 — the
+/// reporter keeps retrying after shutdown began (until `drain_timeout`) instead of dropping the
+/// batch on the first failure, which left sandboxes `stopping` until the lease expired.
+#[tokio::test]
+async fn final_flush_retries_a_503_after_shutdown_began() {
+    let server = MockServer::start().await;
+    // fast_retry gives two attempts per post; three failures span more than one post.
+    Mock::given(method("POST"))
+        .and(path("/v1/runner/reports"))
+        .respond_with(ResponseTemplate::new(503))
+        .up_to_n_times(3)
+        .mount(&server)
+        .await;
+    let delivered = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    Mock::given(method("POST"))
+        .and(path("/v1/runner/reports"))
+        .respond_with(CountingAnswer(delivered.clone()))
+        .mount(&server)
+        .await;
+    let api = Arc::new(ApiClient::new(&server.uri(), TOKEN, fast_retry()).unwrap());
+    let (_tx, rx) = watch::channel(true); // shutdown already began
+    let (sink, task) = reporter::spawn_with_drain(api, rx, Duration::from_secs(20));
+    sink.send(reporter::report(
+        Uuid::new_v4(),
+        Uuid::new_v4(),
+        Uuid::new_v4(),
+        ReportBody::SandboxStatus(aurora_protocol::runner::SandboxStatus {
+            state: SandboxState::Stopped,
+            container_ref: None,
+            reason_code: None,
+            message: None,
+            observed: None,
+            events: Vec::new(),
+        }),
+    ));
+    sink.finish();
+    tokio::time::timeout(Duration::from_secs(20), task)
+        .await
+        .expect("the flush ended")
+        .unwrap();
+    assert_eq!(
+        delivered.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "the stopped report was delivered after the 503s"
+    );
+}

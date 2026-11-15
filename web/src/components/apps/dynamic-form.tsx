@@ -4,7 +4,7 @@ import type { ReactNode } from "react";
 
 import { Field, inputClass } from "@/components/ui/field";
 import { visibleFields, type FieldValues, type FormField } from "@/lib/api/apps";
-import { safeHref } from "./markdown";
+import { safeHref } from "@/components/ui/markdown";
 
 export function FieldControl({ f, value, error, onChange }: { f: FormField; value: string; error?: string; onChange: (v: string) => void }) {
   const id = `cf-${f.name}`;

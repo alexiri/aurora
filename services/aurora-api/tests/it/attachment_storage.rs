@@ -825,3 +825,79 @@ async fn storage_breakdowns_agree_with_the_tables_and_are_authorization_checked(
             .all(|t| t["bytes"].as_i64().unwrap() > 0)
     );
 }
+
+/// FIX-126: a Storage page is a cheap read — twenty views by one admin never hit the strict
+/// `export` bucket (6/hour, burst 2), and the second view inside the bound is the same snapshot.
+#[tokio::test]
+async fn storage_pages_are_cached_and_not_export_limited() {
+    // The harness scales every bucket by 100; the real buckets apply here.
+    let f = fixture_with(|c| c.ratelimit.api.multiplier = 1.0).await;
+    let conv = f.conv("group", None).await;
+    bound(&f, conv, 1000, 0).await;
+    let ia = f.h.user("root@x.io", true).await;
+    let (_, t) = f.h.good_session(ia).await;
+    let ia_cookie = cookie(&t);
+    let mut first_at = Value::Null;
+    for i in 0..20 {
+        let (s, v) = f
+            .call(Method::GET, "/v1/admin/storage", &ia_cookie, None)
+            .await;
+        assert_eq!(s, 200, "view {i}: {v}");
+        if i == 0 {
+            first_at = v["computed_at"].clone();
+            assert!(first_at.is_string(), "{v}");
+        } else {
+            assert_eq!(v["computed_at"], first_at, "view {i} recomputed");
+        }
+    }
+    let org_url = format!("/v1/orgs/{}/storage", f.org);
+    for i in 0..20 {
+        let (s, v) = f.call(Method::GET, &org_url, &f.admin.1, None).await;
+        assert_eq!(s, 200, "org view {i}: {v}");
+    }
+}
+
+/// FIX-126: refresh recomputes (new `computed_at`, new figures) and is limited by the `export`
+/// class; an org's `used_bytes`/`notice` follow an upload at once, behind a cached snapshot.
+#[tokio::test]
+async fn refresh_recomputes_is_limited_and_org_quota_figures_stay_live() {
+    let f = fixture_with(|c| c.ratelimit.api.multiplier = 1.0).await;
+    let conv = f.conv("group", None).await;
+    bound(&f, conv, 1000, 0).await;
+    let org_url = format!("/v1/orgs/{}/storage", f.org);
+    let (_, v1) = f.call(Method::GET, &org_url, &f.admin.1, None).await;
+    assert_eq!(v1["used_bytes"], 1000);
+    assert_eq!(v1["files"], 1);
+    // Instance refresh is for instance administrators only (checked before any bucket is spent).
+    assert_eq!(
+        f.call(Method::POST, "/v1/admin/storage/refresh", &f.admin.1, None)
+            .await
+            .0,
+        403
+    );
+    // New bytes arrive: the quota figures are live, the file counts wait for a refresh.
+    bound(&f, conv, 500, 0).await;
+    let (_, v2) = f.call(Method::GET, &org_url, &f.admin.1, None).await;
+    assert_eq!(v2["used_bytes"], 1500, "live counter");
+    assert_eq!(v2["files"], 1, "cached breakdown");
+    assert_eq!(v2["computed_at"], v1["computed_at"]);
+    let refresh = format!("{org_url}/refresh");
+    let (s, v3) = f.call(Method::POST, &refresh, &f.admin.1, None).await;
+    assert_eq!(s, 200, "{v3}");
+    assert_eq!(v3["files"], 2);
+    assert_ne!(v3["computed_at"], v1["computed_at"]);
+    let (_, v4) = f.call(Method::GET, &org_url, &f.admin.1, None).await;
+    assert_eq!(v4["files"], 2);
+    // The refresh routes sit in the strict `export` class (burst 2, shared by this admin's two
+    // refresh routes: the refused instance attempt above spent one, the org refresh the other).
+    let (s, v5) = f.call(Method::POST, &refresh, &f.admin.1, None).await;
+    assert_eq!(s, 429, "{v5}");
+    // Instance side (an instance admin has their own bucket).
+    let ia = f.h.user("root@x.io", true).await;
+    let (_, t) = f.h.good_session(ia).await;
+    let (s, v) = f
+        .call(Method::POST, "/v1/admin/storage/refresh", &cookie(&t), None)
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["attachment_files"], 2);
+}

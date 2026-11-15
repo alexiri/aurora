@@ -63,12 +63,16 @@ pub async fn find_live_preview_session<'e, E: PgExecutor<'e>>(
     idle_secs: i64,
 ) -> Result<Option<PreviewSessionRow>, DbError> {
     Ok(sqlx::query_as(
-        "SELECT id, token_hash, display_prefix, share_id, user_id, session_id, \
-                created_at, last_seen_at, expires_at \
-           FROM preview_sessions \
-          WHERE token_hash = $1 \
-            AND expires_at > now() \
-            AND last_seen_at > now() - make_interval(secs => $2)",
+        // (FIX-097) The dashboard session behind the preview session must still be live: a
+        // revoked session keeps its row, so the FK cascade alone never ends preview access.
+        "SELECT p.id, p.token_hash, p.display_prefix, p.share_id, p.user_id, p.session_id, \
+                p.created_at, p.last_seen_at, p.expires_at \
+           FROM preview_sessions p \
+           JOIN sessions s ON s.id = p.session_id \
+          WHERE p.token_hash = $1 \
+            AND p.expires_at > now() \
+            AND p.last_seen_at > now() - make_interval(secs => $2) \
+            AND s.revoked_at IS NULL AND s.expires_at > now()",
     )
     .bind(token_hash)
     .bind(idle_secs)
@@ -200,6 +204,20 @@ pub async fn upsert_relay_token<'e, E: PgExecutor<'e>>(
     .fetch_one(exec)
     .await?;
     Ok(id)
+}
+
+/// Rotation (FIX-090): every relay token other than `keep` is deleted, and with it (cascade)
+/// the replicas that registered with it. The token presented at bootstrap is the only anchor.
+/// Returns how many tokens were removed.
+pub async fn delete_other_relay_tokens<'e, E: PgExecutor<'e>>(
+    exec: E,
+    keep: Uuid,
+) -> Result<u64, DbError> {
+    Ok(sqlx::query("DELETE FROM relay_tokens WHERE id <> $1")
+        .bind(keep)
+        .execute(exec)
+        .await?
+        .rows_affected())
 }
 
 pub async fn find_relay_token<'e, E: PgExecutor<'e>>(
@@ -334,7 +352,7 @@ pub async fn keep_preview_awake<'e, E: PgExecutor<'e>>(
           WHERE agent_id = $1 AND state IS NOT NULL",
     )
     .bind(agent)
-    .bind(120i64)
+    .bind(aurora_core::limits::PREVIEW_AWAKE_GRACE.as_secs() as i64)
     .execute(exec)
     .await?;
     Ok(())

@@ -56,7 +56,8 @@ test.describe("agent Previews tab", () => {
     await table.getByRole("button", { name: "npm run dev" }).click();
     const lastStart = page.getByRole("dialog", { name: "Port 3000 — last start" });
     await expect(lastStart).toContainText("ready on 3000");
-    await lastStart.getByRole("button", { name: "Close" }).click();
+    // The dialog has its footer's Close button and, since FIX-149, the × in its title row.
+    await lastStart.getByLabel("Close").click();
 
     await page.getByRole("button", { name: "Add share" }).click();
     const dlg = page.getByRole("dialog", { name: "Share a port" });
@@ -71,9 +72,9 @@ test.describe("agent Previews tab", () => {
   test("without the org switch there is no tab, and the Computer port list has no Share action", async ({ page }) => {
     await mockWith(page, { orgSettings: {} });
     await page.goto("/o/acme/w/main/agents/daneel");
-    const tabs = page.getByRole("tablist", { name: "Agent" });
-    await expect(tabs.getByRole("tab", { name: "Previews" })).toHaveCount(0);
-    await tabs.getByRole("tab", { name: "Computer" }).click();
+    // (D-200) Computer is a section; without the org switch its Previews page is not offered.
+    await page.getByRole("tablist", { name: "Agent sections" }).getByRole("tab", { name: "Computer" }).click();
+    await expect(page.getByRole("tab", { name: "Previews" })).toHaveCount(0);
     const ports = page.getByRole("table", { name: "Listening ports" });
     await expect(ports).toBeVisible();
     await expect(ports.getByRole("button", { name: /Share/ })).toHaveCount(0);
@@ -95,7 +96,8 @@ test.describe("agent Previews tab", () => {
       return route.fallback();
     });
     await page.goto("/o/acme/w/main/agents/daneel");
-    await expect(page.getByRole("tablist", { name: "Agent" }).getByRole("tab", { name: "Previews" })).toHaveCount(0);
+    await expect(page.getByRole("tablist", { name: "Agent sections" })).toBeVisible();
+    await expect(page.getByRole("tab", { name: "Previews" })).toHaveCount(0);
   });
 });
 

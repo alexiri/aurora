@@ -1,6 +1,24 @@
 Aurora {{ .Chart.AppVersion }} installed. Public URL: {{ .Values.externalUrl }}
 Upgrade order is enforced by the migrate hook (runs before any new api replica); roll api, hookhost, gateway, runner, web, connectors.
 Secrets: {{ include "aurora.secretName" . }} (generated once, never overwritten). Gateway CA: {{ include "aurora.caSecretName" . }}.
+
+`helm uninstall` leaves these in the namespace (hook-created, Helm does not delete them): the Secret {{ include "aurora.secretName" . }}
+(generated database passwords, relay token), the Secret {{ include "aurora.caSecretName" . }} (the gateway CA PRIVATE KEY) and the ConfigMap
+{{ include "aurora.fullname" . }}-config. Keep them to reinstall into this namespace with the old database volume; for a clean removal delete them:
+  kubectl -n {{ .Release.Namespace }} delete secret {{ include "aurora.secretName" . }} {{ include "aurora.caSecretName" . }}
+  kubectl -n {{ .Release.Namespace }} delete configmap {{ include "aurora.fullname" . }}-config
+(Secrets you supplied yourself are never touched by the chart.)
+{{- if and .Values.networkPolicy.enabled .Values.runner.enabled (not .Values.networkPolicy.kubeApiOpen) (not (include "aurora.kubeApiCidrs" . | fromJsonArray)) }}
+
+WARNING: the Kubernetes API server addresses are unknown (the `kubernetes` EndpointSlice in `default` could not be read), so
+the runner's and the secrets hook's egress policies carry no API rule and the runner cannot start sandboxes. Grant the installing
+identity `get` on endpointslices.discovery.k8s.io in `default`, set networkPolicy.kubeApiCidrs, or (not recommended) networkPolicy.kubeApiOpen=true.
+{{- end }}
+{{- if .Values.database.allowSharedLogin }}
+
+WARNING: database.allowSharedLogin is set: the gateway logs in with the main database login (every privilege the API
+has) instead of its own least-privilege role. Set database.gatewayRole and database.gatewayExistingSecret (docs/operator/install-helm.md, Database).
+{{- end }}
 {{- if .Values.postgres.enabled }}
 
 WARNING: postgres.enabled renders an EVALUATION-ONLY database. Its StatefulSet, Service and PVC are

@@ -362,7 +362,7 @@ async fn list_workspaces(
     let roles: std::collections::HashMap<Uuid, String> = if all {
         Default::default()
     } else {
-        workspaces::roles_of(&s.pool, c.user_id, &ids)
+        workspaces::effective_roles_of(&s.pool, c.user_id, &ids)
             .await?
             .into_iter()
             .collect()
@@ -547,27 +547,12 @@ async fn delete_workspace(
     if req.confirm != w.slug {
         return Err(service::confirmation_mismatch());
     }
-    // Self-contained deprovision ops (RFE-024): sealed first (503 when the secret store is
-    // unavailable, nothing deleted), committed with the delete, before the cascade.
-    use crate::domains::channels::deprovision::{self, Scope};
-    let mut dep = deprovision::prepare(&s, Scope::Workspace(ws)).await?;
-    let done = async {
-        let mut tx = s.pool.begin().await.map_err(aurora_db::DbError::from)?;
-        dep.enqueue(&mut tx).await?;
-        workspaces::delete(&mut *tx, ws).await?;
-        let ev = event(&c, "workspace.delete")
-            .org(a.org_id)
-            .workspace(ws)
-            .target("workspace", ws)
-            .metadata(json!({"slug": w.slug}));
-        audit::commit_critical(tx, &ev).await
-    }
-    .await;
-    if let Err(e) = done {
-        dep.rollback(&s).await;
-        return Err(e);
-    }
-    dep.committed(&s).await;
+    let ev = event(&c, "workspace.delete")
+        .org(a.org_id)
+        .workspace(ws)
+        .target("workspace", ws)
+        .metadata(json!({"slug": w.slug}));
+    service::delete_workspace(&s, a.org_id, ws, &ev).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 

@@ -8,6 +8,7 @@
 mod agents;
 mod apps;
 mod builtin;
+mod conversations;
 mod memory;
 mod messaging;
 mod registry;

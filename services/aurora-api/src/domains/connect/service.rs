@@ -15,7 +15,10 @@ use aurora_db::DbError;
 use aurora_db::repo::app_instances::{self, InstanceRow};
 use aurora_db::repo::connections::{self as repo, ConnectionRow, NewConnection};
 use aurora_db::repo::{credentials, derived_rules, gateway};
-use aurora_registry::manifest::{BodyFormat, ClientAuth, Connect, Oauth2Connect, UrlOrTemplate};
+use aurora_registry::instance::InstanceBase;
+use aurora_registry::manifest::{
+    BodyFormat, ClientAuth, Connect, FieldsConnect, Oauth2Connect, UrlOrTemplate,
+};
 use aurora_registry::snapshot::{AppEntry, OauthClientEntry, PackageEntry, Snapshot};
 use aurora_secrets::{Purpose, SealContext, SecretRef, ValueSource};
 use chrono::{DateTime, Utc};
@@ -81,8 +84,60 @@ pub struct Started {
 }
 
 pub enum Done {
-    Connected(Uuid, Vec<String>),
+    Connected(Uuid, Vec<String>, Landing),
     Redirect { url: String, cookie: String },
+}
+
+/// (FIX-149, C-842) What the callback page needs to tell the waiting dialog which flow finished
+/// (`app_id`, already known to the flow) and where to send the person if no dialog answers
+/// (the Connections tab of the flow's scope).
+pub struct Landing {
+    pub app_id: String,
+    pub connections_path: Option<String>,
+}
+
+/// A failed callback: the fixed error code, plus the landing once the flow was opened and bound
+/// to this user (an unbound or tampered flow reveals nothing, not even the app id).
+pub struct Failure {
+    pub code: &'static str,
+    pub landing: Option<Landing>,
+}
+
+impl From<&'static str> for Failure {
+    fn from(code: &'static str) -> Self {
+        Self {
+            code,
+            landing: None,
+        }
+    }
+}
+
+async fn landing(state: &AppState, flow: &Flow) -> Landing {
+    let slugs: Option<(String, Option<String>)> = match flow.workspace_id {
+        Some(ws) => sqlx::query_as(
+            "SELECT o.slug, w.slug FROM workspaces w JOIN organizations o ON o.id = w.org_id WHERE w.id = $1",
+        )
+        .bind(ws)
+        .fetch_optional(&state.pool)
+        .await
+        .ok()
+        .flatten(),
+        None => sqlx::query_scalar::<_, String>("SELECT slug FROM organizations WHERE id = $1")
+            .bind(flow.org_id)
+            .fetch_optional(&state.pool)
+            .await
+            .ok()
+            .flatten()
+            .map(|o| (o, None)),
+    };
+    let connections_path = slugs.map(|(org, ws)| match ws {
+        Some(ws) => format!("/o/{org}/w/{ws}/credentials?tab=connections"),
+        None => format!("/o/{org}/credentials?tab=connections"),
+    });
+    Landing {
+        app_id: flow.app_id.clone(),
+        connections_path,
+    }
 }
 
 struct Target {
@@ -237,7 +292,7 @@ fn redirect_allowed(
     app: &AppEntry,
     pkg: &PackageEntry,
     url: &str,
-    instance: Option<&str>,
+    instance: Option<InstanceBase<'_>>,
 ) -> bool {
     if probe::declared_host(snap, app, url, instance) {
         return true;
@@ -269,6 +324,9 @@ struct Ctx<'a> {
     /// The registered self-hosted instance being connected (D-74); `None` = `default_host` or an
     /// app without `instances`.
     instance: Option<InstanceRow>,
+    /// (FIX-133, D-240) `read` | `write` requested for the connection (validated); `None` = `write`
+    /// for a new connection, unchanged for a reconnect.
+    access: Option<String>,
 }
 
 #[derive(Default)]
@@ -292,6 +350,46 @@ enum Kind {
 }
 
 impl Ctx<'_> {
+    /// (FIX-136) The declared read scopes whose probe a pasted token passes (write scopes are never
+    /// probed; a probe that fails or errors just leaves its scope off).
+    async fn probe_declared_scopes(&self, f: &FieldsConnect, g: &Gathered) -> Vec<String> {
+        let mut out = Vec::new();
+        for s in &f.scopes {
+            let Some(p) = f.probe_scopes.get(&s.scope) else {
+                continue;
+            };
+            let r = probe::run(
+                &self.state.connect,
+                self.snap,
+                self.app,
+                p,
+                &Vars {
+                    credentials: &g.credentials,
+                    metadata: &g.metadata,
+                    tenant_host: g.tenant_host.as_deref(),
+                    fields: &g.fields,
+                    instance_host: self.instance_host(),
+                    instance_base_path: self.instance_base_path(),
+                    instance_registered: self.instance.is_some(),
+                },
+            )
+            .await;
+            if r.is_ok() {
+                out.push(s.scope.clone());
+            }
+        }
+        out
+    }
+
+    /// (FIX-133, D-240) The access the connection will have: the chosen one, else a reconnect's
+    /// current one, else `write`.
+    fn effective_access(&self) -> &str {
+        self.access
+            .as_deref()
+            .or_else(|| self.reconnect.as_ref().map(|r| r.access.as_str()))
+            .unwrap_or("write")
+    }
+
     /// The host `{instance}` stands for: the registered instance's, else the app's `default_host`.
     fn instance_host(&self) -> Option<&str> {
         match &self.instance {
@@ -304,9 +402,22 @@ impl Ctx<'_> {
         }
     }
 
-    /// The registered instance's host (the host the `{instance}` host entries apply to).
-    fn registered_host(&self) -> Option<&str> {
-        self.instance.as_ref().map(|i| i.host.as_str())
+    /// The registered instance's base path (D-231); a default-host connection has none.
+    fn instance_base_path(&self) -> Option<&str> {
+        self.instance.as_ref().and_then(|i| i.base_path.as_deref())
+    }
+
+    /// Where `{instance}` points: the registered instance's address, else the app's `default_host`.
+    fn instance_base(&self) -> Option<InstanceBase<'_>> {
+        self.instance_host()
+            .map(|h| InstanceBase::new(h, self.instance_base_path()))
+    }
+
+    /// The registered instance's address (the host and path the `{instance}` host entries apply to).
+    fn registered_base(&self) -> Option<InstanceBase<'_>> {
+        self.instance
+            .as_ref()
+            .map(|i| InstanceBase::new(&i.host, i.base_path.as_deref()))
     }
 
     fn bad(&self, k: Kind) -> ConnectErr {
@@ -323,12 +434,18 @@ impl Ctx<'_> {
             package_digest: &self.pkg.digest,
             app_id: &self.app.app_id,
             instance_host: self.instance_host(),
+            instance_base_path: self.instance_base_path(),
         }
     }
 
-    fn new_flow(&self, method: &str, client: Option<Uuid>, level: Option<String>) -> Flow {
-        Flow {
-            nonce: flow::random(16),
+    fn new_flow(
+        &self,
+        method: &str,
+        client: Option<Uuid>,
+        level: Option<String>,
+    ) -> Result<Flow, ApiError> {
+        Ok(Flow {
+            nonce: flow::random(16)?,
             app_id: self.app.app_id.clone(),
             method_id: method.to_owned(),
             scope: if self.t.ws.is_some() {
@@ -343,6 +460,7 @@ impl Ctx<'_> {
             client_id: client,
             instance_id: self.instance.as_ref().map(|i| i.id),
             access_level: level,
+            access: self.access.clone(),
             pkce_verifier: None,
             reconnect: self.reconnect.as_ref().map(|r| r.id),
             continuation: None,
@@ -350,7 +468,7 @@ impl Ctx<'_> {
             tenant_host: None,
             metadata: Map::new(),
             exp: Flow::expiry(),
-        }
+        })
     }
 
     /// Validate, probe, persist.
@@ -393,6 +511,7 @@ impl Ctx<'_> {
                     tenant_host: g.tenant_host.as_deref(),
                     fields: &g.fields,
                     instance_host: self.instance_host(),
+                    instance_base_path: self.instance_base_path(),
                     instance_registered: self.instance.is_some(),
                 },
             )
@@ -412,7 +531,14 @@ impl Ctx<'_> {
             .cloned()
             .collect();
         let row = self
-            .persist(caller, &g, &label, &Value::Object(metadata), &granted)
+            .persist(
+                caller,
+                &g,
+                &label,
+                &Value::Object(metadata),
+                &granted,
+                method.id(),
+            )
             .await?;
         Ok((row, missing))
     }
@@ -424,6 +550,7 @@ impl Ctx<'_> {
         label: &str,
         metadata: &Value,
         scopes: &[String],
+        method_id: &str,
     ) -> Result<ConnectionRow, ConnectErr> {
         let state = self.state;
         let id = self.reconnect.as_ref().map_or_else(ids::new_id, |r| r.id);
@@ -464,6 +591,8 @@ impl Ctx<'_> {
             connected_by: self.user,
             instance_id: self.instance.as_ref().map(|i| i.id),
             credential_keys: &keys,
+            connect_method: Some(method_id),
+            access: self.access.as_deref(),
         };
         let old = match self.write(caller, &n).await {
             Ok(o) => o,
@@ -510,6 +639,12 @@ impl Ctx<'_> {
             .as_ref()
             .map(|a| a.default_blocklist.clone())
             .unwrap_or_default();
+        // (FIX-109) A reconnect to a package version whose blocklist is now empty must not
+        // leave the previous version's derived block rule in force.
+        let stale_rule = hosts.is_empty() && self.reconnect.is_some();
+        if stale_rule {
+            derived_rules::delete_for_source(&mut *tx, "blocklist", n.id).await?;
+        }
         if !hosts.is_empty() {
             let rule = json!({
                 "name": format!("Blocklist: {}", self.app.about.name),
@@ -527,6 +662,8 @@ impl Ctx<'_> {
                 &rule,
             )
             .await?;
+        }
+        if !hosts.is_empty() || stale_rule {
             match n.workspace_id {
                 Some(ws) => {
                     credentials::notify_gateway_invalidate(&mut *tx, "workspace", ws).await?
@@ -544,6 +681,14 @@ impl Ctx<'_> {
             .org(n.org_id)
             .target("connection", n.id)
             .metadata(json!({"app_id": n.app_id, "package_id": n.package_id, "label": n.label}));
+        // (FIX-106, D-178 Q-R5-7) The database lane's opt-out of server certificate verification is
+        // a named, audited choice of the person who connected (shown on the connection too).
+        if n.metadata.get("tls_verification").and_then(|v| v.as_str()) == Some("off") {
+            ev = ev.metadata(json!({
+                "app_id": n.app_id, "package_id": n.package_id, "label": n.label,
+                "tls_verification": "off",
+            }));
+        }
         if let Some(ws) = n.workspace_id {
             ev = ev.workspace(ws);
         }
@@ -672,6 +817,11 @@ pub async fn start(
         .find(|c| c.id() == req.method_id)
         .ok_or_else(|| invalid("/method_id", "unknown connect method"))?;
     let instance = resolve_instance(state, app, &t, req.instance_id, reconnect.as_ref()).await?;
+    let access = match req.access.as_deref() {
+        None => None,
+        Some(a @ ("read" | "write")) => Some(a.to_owned()),
+        Some(_) => return Err(invalid("/access", "must be read or write")),
+    };
     let ctx = Ctx {
         state,
         snap: &snap,
@@ -681,13 +831,32 @@ pub async fn start(
         t,
         reconnect,
         instance,
+        access,
     };
     match method {
         Connect::Fields(f) => {
             let p = fields::parse(&f.fields, &req.fields)?;
-            let (row, missing) = ctx
-                .finalize(caller, method, Kind::Fields, from_fields(p))
-                .await?;
+            let mut g = from_fields(p);
+            // (FIX-136, D-241) The scopes the pasted token has: declared by the person, else
+            // prefilled by the method's read probes. Stored as the connection's `scopes`; the
+            // gateway trusts them only to refuse a tool the token cannot serve.
+            if !f.scopes.is_empty() {
+                g.granted = Some(match &req.scopes {
+                    Some(s) => {
+                        if let Some(bad) =
+                            s.iter().find(|x| !f.scopes.iter().any(|d| &d.scope == *x))
+                        {
+                            return Err(invalid(
+                                "/scopes",
+                                &format!("`{bad}` is not a scope of this connect method"),
+                            ));
+                        }
+                        s.clone()
+                    }
+                    None => ctx.probe_declared_scopes(f, &g).await,
+                });
+            }
+            let (row, missing) = ctx.finalize(caller, method, Kind::Fields, g).await?;
             Ok(connected(row, missing, &snap))
         }
         Connect::Oauth2(o) => start_oauth(&ctx, o, &req).await,
@@ -703,7 +872,7 @@ pub async fn start(
                 &h.id,
                 client.as_ref().map(|c| c.id),
                 req.access_level.clone(),
-            );
+            )?;
             if h.authorize {
                 let sealed = flow
                     .seal(state)
@@ -719,7 +888,7 @@ pub async fn start(
                     .authorize(&ctx.call(), input)
                     .await
                     .map_err(|e| ConnectErr::Hook(e.0))?;
-                if !redirect_allowed(&snap, app, pkg, &out.url, ctx.registered_host()) {
+                if !redirect_allowed(&snap, app, pkg, &out.url, ctx.registered_base()) {
                     return Err(ConnectErr::Hook("hook returned a disallowed URL".into()));
                 }
                 flow.continuation = out.continuation;
@@ -731,7 +900,15 @@ pub async fn start(
                     cookie: Some(flow::cookie(&cookie, flow::cookie_ttl())),
                 });
             }
-            let input = exchange_input(&ctx, &h.id, json!({"form": kv(&p.raw)}), &cf, None, &cx);
+            // (FIX-133) The reserved `aurora_access` key tells the hook what the connection may
+            // do so it can narrow the token it mints (vendor-enforced); it is set here after the
+            // form was validated, so a user-supplied value never reaches the guest.
+            let mut form = p.raw.clone();
+            form.insert(
+                "aurora_access".into(),
+                Value::String(ctx.effective_access().to_owned()),
+            );
+            let input = exchange_input(&ctx, &h.id, json!({"form": kv(&form)}), &cf, None, &cx);
             match state
                 .connect
                 .hooks
@@ -810,7 +987,7 @@ fn continue_to(
     url: String,
     continuation: String,
 ) -> Result<(String, String), ConnectErr> {
-    if !redirect_allowed(ctx.snap, ctx.app, ctx.pkg, &url, ctx.registered_host()) {
+    if !redirect_allowed(ctx.snap, ctx.app, ctx.pkg, &url, ctx.registered_base()) {
         return Err(ConnectErr::Hook("hook returned a disallowed URL".into()));
     }
     flow.continuation = Some(continuation);
@@ -877,20 +1054,20 @@ async fn start_oauth(
             "tenant host is not allowed for this app",
         ));
     }
-    let authorize = oauth_url(&ce.authorize_url, tenant.as_deref(), ctx.instance_host())
+    let authorize = oauth_url(&ce.authorize_url, tenant.as_deref(), ctx.instance_base())
         .ok_or_else(|| {
             invalid(
                 "/fields",
                 "a tenant host is required for this connect method",
             )
         })?;
-    if oauth_url(&ce.token_url, tenant.as_deref(), ctx.instance_host()).is_none() {
+    if oauth_url(&ce.token_url, tenant.as_deref(), ctx.instance_base()).is_none() {
         return Err(invalid(
             "/fields",
             "a tenant host is required for this connect method",
         ));
     }
-    let mut flow = ctx.new_flow(&o.id, Some(client.id), level.map(|l| l.id.clone()));
+    let mut flow = ctx.new_flow(&o.id, Some(client.id), level.map(|l| l.id.clone()))?;
     flow.scopes = o.default_scopes.clone();
     flow.tenant_host = tenant;
     flow.metadata = parsed.metadata;
@@ -899,7 +1076,7 @@ async fn start_oauth(
         params.extend(l.authorize_params.clone());
     }
     if ce.pkce {
-        let v = flow::random(32);
+        let v = flow::random(32)?;
         params.insert("code_challenge".into(), flow::challenge(&v));
         params.insert("code_challenge_method".into(), "S256".into());
         flow.pkce_verifier = Some(v);
@@ -932,23 +1109,34 @@ pub async fn callback(
     caller: &Caller,
     q: &HashMap<String, String>,
     cookie: Option<&str>,
-) -> Result<Done, &'static str> {
+) -> Result<Done, Failure> {
     const BAD: &str = "oauth_state_invalid";
     let (param, cookie) = q.get("state").map(String::as_str).zip(cookie).ok_or(BAD)?;
     let pf = Flow::open(state, param).ok_or(BAD)?;
     let flow = Flow::open(state, cookie).ok_or(BAD)?;
     if pf.nonce != flow.nonce || flow.user_id != caller.user_id {
-        return Err(BAD);
+        return Err(BAD.into());
     }
     if q.contains_key("error") {
-        return Err("oauth_exchange_failed");
+        return Err(Failure {
+            code: "oauth_exchange_failed",
+            landing: Some(landing(state, &flow).await),
+        });
     }
-    run_callback(state, caller, q, flow).await.map_err(|e| {
-        if let ConnectErr::Api(a) = &e {
-            tracing::warn!(code = a.code(), "connect callback failed");
+    let land = landing(state, &flow).await;
+    match run_callback(state, caller, q, flow).await {
+        Ok(Done::Connected(id, missing, _)) => Ok(Done::Connected(id, missing, land)),
+        Ok(other) => Ok(other),
+        Err(e) => {
+            if let ConnectErr::Api(a) = &e {
+                tracing::warn!(code = a.code(), "connect callback failed");
+            }
+            Err(Failure {
+                code: e.code(),
+                landing: Some(land),
+            })
         }
-        e.code()
-    })
+    }
 }
 
 async fn run_callback(
@@ -1003,6 +1191,7 @@ async fn run_callback(
         t,
         reconnect,
         instance,
+        access: flow.access.clone(),
     };
     let client_row = match flow.client_id {
         Some(id) => aurora_db::repo::oauth_clients::get(&state.pool, id).await?,
@@ -1066,7 +1255,14 @@ async fn run_callback(
         Connect::Fields(_) => return Err(ConnectErr::Exchange),
     };
     let (row, missing) = ctx.finalize(caller, method, kind, g).await?;
-    Ok(Done::Connected(row.id, missing))
+    Ok(Done::Connected(
+        row.id,
+        missing,
+        Landing {
+            app_id: flow.app_id.clone(),
+            connections_path: None,
+        },
+    ))
 }
 
 /// Resolve an OAuth endpoint: fixed URLs as-is; templates render with the tenant host and must
@@ -1074,11 +1270,11 @@ async fn run_callback(
 fn oauth_url(
     u: &UrlOrTemplate,
     tenant: Option<&str>,
-    instance_host: Option<&str>,
+    instance: Option<InstanceBase<'_>>,
 ) -> Option<String> {
     match u {
         UrlOrTemplate::Url(u) if u.contains(aurora_registry::manifest::INSTANCE_HOST) => {
-            probe::instance_url(u, instance_host?)
+            probe::instance_url(u, instance?)
         }
         UrlOrTemplate::Url(u) => Some(u.clone()),
         UrlOrTemplate::Templated(z) => {
@@ -1107,7 +1303,7 @@ async fn token_exchange(
     {
         return Err(ConnectErr::Exchange);
     }
-    let url = oauth_url(&ce.token_url, tenant, ctx.instance_host()).ok_or(ConnectErr::Exchange)?;
+    let url = oauth_url(&ce.token_url, tenant, ctx.instance_base()).ok_or(ConnectErr::Exchange)?;
     let url = env.prepare(&url).map_err(|_| ConnectErr::Exchange)?;
     // A registered instance is dialled through the guard that honours `gateway.allowed_private`.
     let http = if ctx.instance.is_some() {

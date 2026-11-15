@@ -303,6 +303,9 @@ pub struct PublishRequest {
 pub struct RollbackRequest {
     /// Generation number to copy.
     pub generation: i32,
+    /// (FIX-109) The draft revision the caller last read: rollback replaces the current draft,
+    /// so a draft a colleague saved since is not discarded silently (409 `stale_revision`).
+    pub expect_revision: i64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]

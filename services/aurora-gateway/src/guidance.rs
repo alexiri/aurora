@@ -81,12 +81,45 @@ pub fn method_override_refused() -> ApiError {
     )
 }
 
+/// 421 `host_mismatch`: a tenant- or instance-bound connection used on the wrong host, or (D-231)
+/// on its instance's host but outside the registration's base path (`expected_base_url` then names
+/// where to send the request).
+pub fn host_mismatch(expected_host: &str, base_path: Option<&str>) -> ApiError {
+    let (message, details) = match base_path {
+        Some(b) => {
+            let url = format!("https://{expected_host}{b}");
+            (
+                format!("This connection is bound to {url}; send the request there."),
+                json!({ "expected_host": expected_host, "expected_base_url": url }),
+            )
+        }
+        None => (
+            format!("This connection is bound to {expected_host}; send the request to that host."),
+            json!({ "expected_host": expected_host }),
+        ),
+    };
+    ApiError::new(StatusCode::MISDIRECTED_REQUEST, "host_mismatch", message).with_details(details)
+}
+
 pub fn ambiguous_path() -> ApiError {
     ApiError::new(
         StatusCode::BAD_REQUEST,
         "ambiguous_path",
         "The request path contains dot segments, encoded slashes, backslashes or NUL and cannot be interpreted unambiguously.",
     )
+}
+
+/// (FIX-106) 429: the credential (or the gateway) holds as many tunnels as it may.
+pub fn tunnel_limit(scope: &str) -> ApiError {
+    ApiError::rate_limited(
+        5,
+        if scope == "total" {
+            "The gateway holds as many tunnels as it allows. Retry shortly."
+        } else {
+            "This credential already holds as many concurrent tunnels as it may. Close one or retry shortly."
+        },
+    )
+    .with_details(json!({ "limit": "concurrent_tunnels", "scope": scope }))
 }
 
 pub fn upstream_timeout() -> ApiError {

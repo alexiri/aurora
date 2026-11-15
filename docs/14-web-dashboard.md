@@ -25,11 +25,32 @@ Phase: **0**. App: `web/` (Next.js App Router, TypeScript strict). Port 4100.
   `Referrer-Policy: same-origin`, host pin (only the configured external host
   serves the UI). (`'wasm-unsafe-eval'` exists for the Terminal tab's WASM
   instantiation — wterm's Ghostty core, phase 4, P4-TERM, D-161; it enables
-  nothing else.)
+  nothing else.) Styles: `style-src 'self' 'nonce-…'` for stylesheets and
+  `<style>` elements, plus `style-src-attr 'unsafe-inline'` so the terminal's
+  DOM renderer can colour cells through `style` attributes (D-176, FIX-098;
+  a style attribute cannot run script, and `img-src`/`connect-src` keep it
+  from loading anything from another origin).
 - Untrusted text (model output, plugin text, platform names, labels) is
-  rendered with the markdown renderer in safe mode (no raw HTML, links show
-  their target, `rel="noopener noreferrer nofollow"`); never
-  `dangerouslySetInnerHTML`.
+  rendered with the one Markdown renderer (`components/ui/markdown.tsx`, FIX-137,
+  D-227): **it renders like github.com** — CommonMark 0.31, GFM (tables, task
+  lists, strikethrough, extended autolinks), footnotes, alerts, emoji
+  shortcodes, highlighted code with a language label and Copy, math, heading
+  anchors and GitHub's raw-HTML allowlist — **except**: an image from another
+  origin is a link ("🖼 alt"), never loaded (same-origin attachments are
+  inline); only `http`, `https`, `mailto` and same-origin relative links are
+  links (any other scheme is its label as text); a link whose label looks like
+  a URL or domain of another host gets "→ host"; raw HTML outside the
+  allowlist is dropped (its text kept; a `<script>`'s content goes with it);
+  KaTeX runs with `trust: false`; a ```` ```mermaid ```` block is shown as a
+  code block (D-245: Mermaid's SVG carries an inline `<style>` that the CSP
+  forbids, and loosening `style-src` is out). External links carry
+  `rel="noopener noreferrer nofollow"` and the full URL as their tooltip. Tables
+  and code blocks scroll inside themselves (never the page). Math, the
+  highlighter and emoji are lazy chunks loaded only for messages that use them.
+  Output is React elements (parse → hast → sanitize → React); never
+  `dangerouslySetInnerHTML` (the theme script of I-41 is the sole exception). A
+  streaming reply holds back an unfinished table row; an unclosed fence is a
+  code block until it closes.
 - (phase 2, RFE-017) The generated client treats 429 as retryable: it waits for
   `retry-after` (cap 30 s, jittered) for idempotent reads and shows a non-blocking
   "You're going fast — retrying in Ns" toast; non-idempotent writes are **not**
@@ -37,6 +58,31 @@ Phase: **0**. App: `web/` (Next.js App Router, TypeScript strict). Port 4100.
   "too many open tabs/streams" instead of reconnecting in a loop.
 - A "new version available" banner appears when `/v1/instance.version` differs
   from the build's version.
+- (phase 5, FIX-146, D-232, C-732, SEC-88) **Error reference.** The API client keeps the
+  `x-request-id` header of every failed response on its error (`ApiError`). Error toasts and error
+  states show it as "Reference: <first 8 chars>…" with a button that copies the full id, built from
+  the existing primitives (both themes, no horizontal scroll at 390 px). Network failures with no
+  response show no reference.
+- (phase 5, FIX-146, D-232(h)) **Browser tracing**, off unless the deployment enables it:
+  - The root layout reads `AURORA_TRACING_SAMPLE_RATIO` at request time (the chart renders it only
+    when an OTLP endpoint is set, `23`) and hands it to a client provider. Absent, nothing loads and
+    nothing is sent. Present, the OpenTelemetry web SDK (`@opentelemetry/api`,
+    `@opentelemetry/sdk-trace-web`, the OTLP/HTTP JSON exporter; **no zone.js**) is loaded with a
+    dynamic import into its own lazy chunk, never in the main bundle.
+  - Spans: `navigate {route template}` per App Router navigation, ending at the first commit of the
+    new page (template rebuilt from the pathname and `useParams` as `[param]` segments, never ids);
+    `{METHOD} {schemaPath}` per API call, from an `openapi-fetch` middleware that injects
+    `traceparent` (same-origin `/v1` only; the few raw `fetch` calls for uploads and streams use the
+    same helper); `stream connect {template}` per transcript stream (re)connect; action spans
+    `action send_message`, `action approval_decide` and `action app_connect` (at least), the roots
+    that make "click → turn → gateway" one trace; `browser.error` for unhandled errors, rejections and
+    error-boundary catches with `exception.type` and `exception.stacktrace` (frames only, query
+    strings stripped, ≤ `TELEMETRY_STACKTRACE_MAX`) and, for an `ApiError`, `aurora.error_code` —
+    **never the exception message**.
+  - The browser applies the sampling rule of C-732 (7) with that ratio (one shared vector fixture with
+    Rust) and exports only sampled spans, same-origin, to `POST /v1/telemetry/traces`, so the CSP keeps
+    `connect-src 'self'`. Nothing goes to a collector directly; the API rebuilds every span before
+    exporting it.
 - Copy lint: a test forbids platform/app names in core UI copy (they must come
   from API data) and a list of discouraged phrases.
 - Accessibility: WCAG 2.1 AA target; keyboard reachable dialogs and menus.
@@ -191,8 +237,27 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
   content, inside the shell.
 - **Page header** on every shell page: breadcrumb (org/workspace/section
   links), title, one-line description where the page has one, primary actions
-  right-aligned (wrapping on narrow screens). Content max width is 1160 px, or
-  880 px for single-column pages such as Approvals.
+  right-aligned (wrapping on narrow screens). **Page widths are theme tokens**,
+  never arbitrary values: `max-w-page` (1160 px) for list and detail pages,
+  `max-w-page-narrow` (880 px) for single-column pages such as Approvals; the
+  agent page uses neither (FIX-129: the full content width). The shell's
+  `<main>` has no max width of its own (owner 2026-11-14): each page sets its
+  width, so a page without one spans the whole content area. Other one-off sizes
+  that recur are tokens too: `tracking-label`/`text-label` (caps labels),
+  `max-w-bubble`/`max-w-chat-card`/`max-w-chat-notice` and `rounded-*-tail`
+  (chat), `layout-aside-sm|md|lg` (a fixed aside next to a fluid column from
+  `md`), `sm:mt-label-offset` (aligns a button with the input of the field
+  beside it). `web/tests/arbitrary-values.test.ts` fails on any other
+  arbitrary Tailwind value (`[12px]`, `[80%]`, `[min(…)]`) except the few on its
+  commented allow-list.
+- **Lists follow their cursors** (`docs/05` list convention, FIX-117): the API pages
+  at 50 by default and 200 at most, so a dashboard list that must be complete
+  (pickers, approvals, keys, members, organizations, connections, conversations)
+  reads every page through the shared `fetchAllPages` (`lib/api/paging.ts`, ceiling
+  10 pages) and shows `MoreNotShown` if the ceiling was hit; lists that can be
+  longer use an infinite query with "Load more". A picker with more than eight
+  options gets a text filter (`PickerFilter`: "add by name or e-mail"). A
+  conversation deep link outside the loaded pages is fetched by id.
 
 **Components** (`web/src/components/ui/`):
 - **Button**: `primary` (ink), `outline`, `approve` (accent), `ghost`,
@@ -206,7 +271,8 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
 - **Card**.
 - **Tabs**: segmented style for page-level views such as Approvals
   Pending/Actions/History, and underline style for the agent page's tab strip
-  (scrolls horizontally on narrow screens).
+  (FIX-129: it never scrolls sideways; `overflow="menu"` moves the tabs that do
+  not fit into a trailing **More ▾** menu, the selected tab is always shown).
 - **Field**: label, hint and error text linked by `aria-describedby`;
   `aria-invalid` sets the error border.
 - **Avatar**: initial on a tinted tile when there is no image.
@@ -217,6 +283,63 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
 - **AuroraMark** (`variant`: auto, which follows the theme, plus light, dark,
   mono-ink and mono-white).
 - **AuroraLogo** (`layout`: horizontal or stacked; follows the theme).
+- (phase 5, P5-CHAT-0, D-228) Primitives of the messaging client (**Agent chat**
+  below; boards on the "Agent page redesign" canvas, section "Chat as a messaging
+  client (P5-CHAT)"). Each is in `web/src/components/ui/` and in the Aurora design
+  system's component list; the lane named in brackets adds it, a later lane reuses it.
+  - **Toolbar**, **ToolbarButton**, **ToolbarSeparator** [P5-CHAT-2]: a
+    `role="toolbar"` row with roving focus (one Tab stop; Left/Right, Home and End
+    move; `aria-orientation="horizontal"`). A ToolbarButton is a 32 px square ghost
+    icon button (44 px below 768 px; a text label is allowed, as the phone's
+    **Reply**), radius 6 px, `ink-2` icon, `subtle` on hover and focus; with
+    `pressed` it is a toggle (`aria-pressed`, `accent-soft` fill, `accent-ink`
+    content). The separator is a 1 × 20 px `line` rule. Below 768 px a toolbar
+    that does not fit scrolls horizontally inside itself (never the page). Used by
+    the message actions, the formatting row and the `Aa` toggle.
+  - **Tooltip** and **Kbd** [P5-CHAT-2]: an in-house tooltip (no new dependency)
+    above its trigger, shown on pointer hover after 500 ms and at once on keyboard
+    focus, hidden by Esc, `role="tooltip"` linked by `aria-describedby`; `primary`
+    fill, `on-primary` text, 12/16, radius 6 px, `shadow-pop`. An optional
+    `shortcut` renders as `Kbd`. A tooltip never carries the control's only name.
+    **Kbd** is a key cap: JetBrains Mono 11 px, 1 px `line-strong` border (on a
+    tooltip: `muted`), radius 4 px, 0 × 4 px padding. The shortcut is written for
+    the platform (`Ctrl+B`; `⌘B` on macOS).
+  - **SuggestionList** [P5-CHAT-3, or P5-CHAT-4 part B if it lands first]: the
+    listbox of a combobox attached to an `input` or `textarea`
+    (`aria-controls`, `aria-activedescendant`; focus stays in the field). Up/Down
+    move, Enter (and Tab where the owner allows it) chooses, Esc closes; optional
+    caps group labels and a footer hint line of `Kbd`s. A pop-over surface
+    (`surface`, `line` border, radius 8 px, `shadow-pop`, 4 px padding); rows at
+    least 36 px (44 px below 768 px), the active row `subtle`. Used by the emoji
+    suggestions and the search box.
+  - **EmojiPicker** [P5-CHAT-3]: on `Popover` (P5-AGENT-2), 312 px wide: a search
+    field ("Search emoji"), category tabs (`role="tablist"`: Frequently used,
+    Smileys and people, Animals and nature, Food and drink, Activities, Travel and
+    places, Objects, Symbols, Flags), caps section labels, an 8-column grid of
+    34 px emoji buttons (44 px below 768 px) named by the emoji's name, and a
+    footer showing the hovered or focused emoji with its `:shortcode:`. Arrow keys
+    move in the grid; Enter inserts; Esc closes and returns focus to the trigger.
+    "Frequently used" is kept per browser (storage failures ignored).
+  - **DropZone** [P5-CHAT-3]: wraps a region; while files (not text) are dragged
+    over it, an overlay covers the region: a `surface` backdrop at 90 % opacity,
+    then a 2 px dashed `accent` frame inset 12 px (radius 14 px) holding a 48 px
+    `accent-soft` circle with `UploadIcon`, a title (16/600 Space Grotesk) and a
+    12 px `ink-2` line. `onFiles` receives the dropped files; leaving or Esc
+    removes the overlay.
+  - **FilterChip** [P5-CHAT-4 part B]: a removable pill, at least 28 px high
+    (44 px target below 768 px), `subtle` with a `line-strong` border: the key in
+    mono `muted` (`from:`), the value 600 `ink`, and a 24 px remove button named
+    "Remove filter <key> <value>".
+  - **HighlightedText** [P5-CHAT-4 part B]: renders a plain string and a list of
+    `[start, end)` UTF-16 ranges as text with `<mark>` (`accent-soft` fill,
+    `accent-ink` text, 600, radius 3 px). Ranges out of bounds, overlapping or
+    unsorted are dropped, never thrown; the string is never parsed as HTML or
+    Markdown.
+  - **Icons** (`ui/icons.tsx`, same 24 grid, 1.75 stroke): `ReplyIcon`,
+    `ArrowDownIcon` [P5-CHAT-2]; `BoldIcon`, `ItalicIcon`, `StrikethroughIcon`,
+    `HeadingIcon`, `CodeIcon`, `CodeBlockIcon`, `QuoteIcon`, `ListIcon`,
+    `ListOrderedIcon`, `ListTodoIcon`, `TableIcon`, `SmileIcon`, `UploadIcon`,
+    `ImageIcon`, `AlertCircleIcon` [P5-CHAT-3].
 
 **Screens.**
 - **Workspace Overview** (IA below):
@@ -244,23 +367,120 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
   A batch group header carries "Approve all N" / "Deny all". The "already
   decided" conflict renders inline as a `pending` notice and disables both
   buttons.
-- **Agent page**: header with a 44 px avatar, then name, `@handle`,
+- **Agent page** (phases 2–4): header with a 44 px avatar, then name, `@handle`,
   kind/default badges and a sandbox-state pill on one wrapping line, with the
-  header actions (Freeze) on the right; an underline tab strip below it.
+  header actions (Freeze) on the right; an underline tab strip below it (FIX-129:
+  the page uses the full content width, not a 896 px column — long-form panels
+  such as Instructions keep a readable width inside themselves; the tab strip
+  collapses what does not fit into **More**, so neither the page nor the strip
+  scrolls sideways at 390, 768, 1280 or 1920 px).
+  Replaced in phase 5 by **Agent page (phase 5)** below.
   (FIX-025, D-158) The pill never sits on "Sandbox starting" forever: while
   starting it says "Sandbox starting" (with the live phase on the Computer
   tab); on a failed start it reads "Sandbox failed" with the sanitised reason
   (message and code) as the pill's tooltip, and the Computer tab holds the
   full start attempt plus **Retry now** (FIX-029, D-160, C-615).
+- **Agent page (phase 5)** (P5-AGENT-2, D-200, D-201; design: the "Agent page
+  redesign" canvas, boards "Chosen · Rail expanded", "Chosen · Rail collapsed"
+  and "A · Phone"; its "New conversation" button is not part of the design).
+  - **Header**, one row of about 56 px from 768 px up (it does not wrap; the
+    chat card below fills the rest of the window height); on a phone one
+    compact row (back arrow, 32 px avatar, name with the state under it, the
+    44 px Status and Agent actions buttons) with the section switcher as a
+    44 px-tall strip under it, like the board "A · Phone": 40 px avatar; "Agents /" breadcrumb above
+    the name (20 px Space Grotesk 600) and `@handle` (mono, `muted`); for a hosted
+    agent the sandbox state as a `StatusDot` (labels and failure tooltip as in
+    the FIX-025 rule above); on the right the **section switcher** (segmented
+    `Tabs`, label "Agent sections") and the **Agent actions** menu (`MoreIcon`,
+    accessible name "Agent actions"): Freeze / Unfreeze (same confirm dialog and
+    permission as before) and "Delete agent…" (the existing delete flow and
+    typed confirmation, `can_own`). The kind and Default badges move to the
+    rail's About part; a BYO agent (no rail) keeps them in the header. A frozen
+    agent's banner stays full width under the header.
+  - **Sections**, in this order: **Chat** (hosted only) · **Behaviour**
+    (Instructions, Memory, Skills, Evals) · **Triggers** (Schedules, Webhooks, Channels,
+    Peers) · **Computer** (Computer, Terminal, Previews, (phase 5, P4-SSH) SSH; BYO: Computer: Connect) ·
+    **Access**. Pages keep today's availability rules (Terminal and Previews only
+    where enabled; BYO has only Instructions, Computer: Connect and Access); a
+    section with no available page is hidden; a section with several pages shows
+    them as a segmented `Tabs` row under the header. The URL keeps
+    `?tab=<page>` with the existing page ids, so `?tab=access`, `?tab=instructions`
+    (C-506) and `?c=<id>` open what they open today; the section is derived from
+    the page. A hosted agent opens on Chat, a BYO agent on Instructions. The
+    Delete zone under Instructions is removed (Delete is in Agent actions).
+  - (phase 5, P4-NARR, D-279, C-852) **Show progress in chat** is a switch on the agent's **Channels**
+    page (Triggers section), bound to `narration_cards` (off by default). Help text: "Posts one message
+    per reply that lists the steps the agent takes, updated as they run and removed when the answer
+    arrives. Chat platforms that can edit messages only. In shared channels the card shows step names,
+    not details." The dashboard's own chat is unchanged. Shared primitives only.
+  - (phase 5, P4-EVAL, D-289, C-873) **Evals** is a page of the Behaviour section (`?tab=evals`), hosted agents only (no tab for BYO agents or a caller without `can_use`). It has three parts, in this order, all with shared primitives only (`DataTable`, `Dialog`, `ConfirmDialog`, `Field`, `Badge`, `Meter`, `Notice`, `Tabs`, `Card`, `Section`; add a missing primitive to `web/src/components/ui`, never a one-off style): **Questions** (a `DataTable` of position, question, expected-answer kind and a short expected summary; add and edit in a `Dialog` with the kind selector, a character counter at `EVAL_QUESTION_CHARS`, the number and tolerance for `numeric`, the text for `text`, the criteria for `judged`; the 100-question cap is explained, not hidden; on a phone the table becomes a stacked list with the same fields); **Judge** (the granted LLM keys the caller may see and a model field, saved by `can_own` only, with the other callers' control disabled and explained; every refusal of C-872 is an inline `Notice`); **Runs** (a list of status `Badge`, `Meter` for progress, pass rate, trigger and starter; "Start run" disabled with its reason while a run is active or the daily cap is reached; a run page with the results table (outcome `Badge`, question, the answer excerpt for `can_use` viewers, the reason in words, refused writes as a count), the regression `Notice` (C-871, counts only) and the fingerprint diff against the previous run as a two-column table of changed fields with truncated hashes and a copy action). Eval schedules are a `DataTable` with a dialog for the cron field and a plain-language preview, and "Run now" starts a run. Copy is plain English without emoji: the help text for the `ANSWER:` line and for refused writes says what the agent is told. Both themes; 390 px with no horizontal scroll; results and expected answers are never kept in `localStorage`, the URL or a cache outside the query cache (an unsent question draft may use `sessionStorage`).
+  - **Chat panel**, from 768 px: conversation list (232 px) · thread · status
+    rail, in one card; the page still does not scroll at 1280×800 (the list,
+    transcript and rail scroll inside). The conversation list keeps its filter,
+    Active/Archived switch and rows; for approvers a row whose conversation has a
+    pending approval shows "Waiting on you" (`pending` dot) instead of its kind
+    line. The thread is unchanged; the inline approval card carries an anchor the
+    rail can link to.
+  - **Status rail** (D-201): five parts, in this order, each with a fixed icon:
+    - **Needs you** (`CheckCircleIcon`), approvers only: pending gateway approvals
+      (`GET …/approvals?status=pending&agent_id=`, C-700) and action approvals
+      (`GET …/action-approvals?status=pending&agent_id=`) of this agent, soonest
+      expiry first, refreshed on `approvals/stream` events. Each item: the
+      conversation's title, the summary, "N left" (tabular) and the mono request
+      line. An item of the open conversation shows "Show in conversation" (scrolls
+      to and focuses the inline card); others show Approve and Deny (409
+      `already_decided` → "Already decided." and a refresh). More than five → a
+      link "N more on Approvals".
+    - **Doing now** (`ActivityIcon`): each conversation with an `active_turn`
+      ("<title> · working", selects it), plus, for the open conversation, the
+      running tool from its stream; none → "Idle".
+    - **Recent tool calls** (`WrenchIcon`): the last five request-log rows of the
+      agent (`GET …/activity?agent_id=&limit=5`): decision `Badge` (Allow, Held,
+      Deny; an `error_code` reads "Failed"), `tool_id` or method and host in
+      mono, latency; link "All activity" to the workspace Activity page filtered
+      to the agent. Refetched when a turn ends and every 30 s while visible.
+    - **Computer** (`MonitorIcon`): the sandbox state (same labels and tooltip as
+      the header), "Open computer" (Computer section) and, where the Terminal page
+      is available, "Terminal".
+    - **About** (`BookIcon`): kind and Default badges, the agent's brief, "Edit
+      instructions" (Behaviour › Instructions).
+  - **Rail states.** Expanded: 288 px, heading "Status" and a collapse button
+    ("Collapse status panel"). Collapsed: a 56 px strip with an expand button
+    ("Expand status panel") and the five icons; state on the icons: Needs you a
+    `pending-ink` count, Doing now an `accent` dot while any turn runs, Recent
+    tool calls a `danger-ink` dot when one of the five was denied or failed,
+    Computer a dot in the sandbox state's tone; every icon's accessible name says
+    the state in words. The Needs you icon opens a pop-over (`Popover`
+    primitive) with the same items and "Open the status panel"; the other icons
+    expand the rail at their part. The choice is stored per browser (as the
+    theme, never sent to the API); unset, the rail starts expanded at a viewport
+    of 1440 px or more and collapsed below. The expanded rail **pushes** the
+    thread aside, as on the board, at a window width of 1100 px or more (so at
+    1280 px the thread narrows to about 440 px); **below a 1100 px window
+    width** it overlays the thread instead (focus-trapped, Esc closes). Owner,
+    2026-11-14 (it was: below a 1024 px chat-panel width, which made the rail
+    overlay at 1280 px).
+  - **Below 768 px**: no rail. Under the header, approvers with pending items see
+    a full-width `pending` banner "N approvals waiting" (44 px), and the header
+    has a "Status" button; both open the five parts in a sheet (`Dialog`). The
+    list/thread two-view behaviour of **Agent chat** is unchanged.
 - **Agent chat** (D-102, task P2-UI-5; mock-ups `Agent.html`, `AgentDark.html`,
   `AgentPhone.html`). The chat is a messaging layout. It is not a stack of
-  cards, banners and button rows.
+  cards, banners and button rows. (Phase 5, D-228: a messaging client in the
+  Mattermost mould — reply to a message, Markdown formatting, files, drafts,
+  permalinks, search — inside the **Agent page (phase 5)** panel. Design: the
+  "Agent page redesign" canvas, section "Chat as a messaging client (P5-CHAT)",
+  boards "P5-CHAT · Reply", "· Formatting", "· Files", "· Navigation",
+  "· Search" and "· Phone", each with a Dark tweak. Where a board and this
+  text disagree, this text wins.)
   - **Layout.** One `ChatPanel` card fills the rest of the viewport height
     (at least 560 px). The page itself does not scroll, down to a 1280×800
     window. For that, the Chat tab (only) uses a compact agent header: a
     32 px avatar, the name, `@handle` and badges on one line, and Freeze in
     the header's overflow menu ("Agent actions", same confirm dialog and
-    permission). The other tabs keep the full header. The conversation list
+    permission). The other tabs keep the full header. (Phase 5, D-200: every
+    section uses the one-line header of **Agent page (phase 5)**, and the panel
+    gains the status rail.) The conversation list
     and the transcript scroll inside the panel, and the composer stays pinned
     to the bottom of the thread.
     - From 768 px the panel has two panes: the list (272–320 px, `line`
@@ -272,8 +492,10 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
   - **Conversation list** (`ConversationList`, `ConversationRow`):
     - The pane has the heading "Conversations", a filter input and a
       segmented **Active / Archived** switch (`archived=false|true`). The
-      filter matches titles in the loaded list on the client; there is no
-      search API.
+      filter matches titles in the loaded list on the client. (Phase 5,
+      P5-CHAT-4, C-727: the filter becomes a search box, placeholder "Search",
+      that still filters titles as you type and searches message text on Enter;
+      see **Message search** below.)
     - A row is at least 56 px high. It shows a round 36 px kind tile (one
       icon and tint per `kind`: direct, group, schedule, webhook, watch, peer,
       api), the title (`title`, or a kind label such as "Direct chat"), the
@@ -319,15 +541,82 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
     - Agent turns are left-aligned, with a 32 px avatar aligned to the top of
       the meta line. The bubble is `subtle`, with a 14 px radius, a 4 px
       top-left corner and a maximum width of 80 % (as person bubbles).
-    - Bubbles render markdown in safe mode. In a person's message a single
+    - Bubbles render Markdown like github.com with D-227's exceptions (see
+      the safety rules above). In a person's message a single
       typed newline stays a line break. Inline code and code blocks sit on
-      `surface` (dark: `canvas`) with a `line` border, and code blocks scroll
-      horizontally inside themselves.
+      `surface` (dark: `canvas`) with a `line` border, and code blocks and
+      tables scroll horizontally inside themselves (keyboard-focusable
+      regions); alerts use the note/tip/important/warning/caution tokens.
+    - (Phase 5, P5-CHAT-2, D-228, C-725; board "P5-CHAT · Reply".) **Quote
+      strip.** A message whose `turn.queued` payload has `reply_to` shows a strip
+      directly above its bubble, on the bubble's side, at most as wide as a
+      bubble: `canvas` fill, 1 px `line` border, radius 10 px, 6 × 10 px padding;
+      `ReplyIcon` (`muted`); a 12 px line with the author (`author_label`, 600
+      `ink`) and the original's time; then the `excerpt` at 13/20 `ink-2`,
+      clamped to two lines. The excerpt is rendered by the chat renderer
+      (FIX-137, D-227) in its **compact mode**, which has no interactive
+      content: links and footnote references are plain text, task-list boxes
+      are the characters ☐ and ☑, images are their alt text, block code is shown
+      as inline code. For a file (`attachment`) the excerpt is the file name (and
+      caption), after a `FileIcon`. The whole strip is one link to the
+      original's permalink (`?c=<conversation>&m=<seq>`): click or Enter jumps
+      to the original in place (**Jump and highlight**, below); a modified click
+      follows the link as any link does. Its accessible name starts "In reply to
+      <author>, <time>". A payload of `{ seq, redacted: true }` shows a static
+      strip instead: dashed `line-strong` border, `ReplyIcon`, "Original message
+      redacted" in `muted`; it is not a link.
+    - A queued follow-up that replies shows `ReplyIcon` and the author before
+      its text in the dashed **Queued follow-ups** row.
+    - (Phase 5, P5-CHAT-2; board "P5-CHAT · Navigation".) **Jump and
+      highlight.** Opening a permalink (`?c=<conversation>&m=<seq>`) or a quote
+      strip selects the conversation, loads older history pages until the
+      message is loaded (bounded by the history API's paging; reaching the
+      conversation's start without it shows the neutral notice "That message is
+      not available."; a redacted target shows the same notice), scrolls it to
+      the middle of the transcript, moves focus to it (`tabindex="-1"`) and
+      highlights it for 2 s: an `accent-soft` band behind the whole message row
+      (12 px wider than the column on each side, radius 8 px; an agent bubble
+      inside it turns `surface`), then fades over 300 ms (removed at once under
+      `prefers-reduced-motion`). A permalink to a conversation the person cannot
+      see shows the usual not-found state; nothing about the message leaks.
+    - (Phase 5, P5-CHAT-2; board "P5-CHAT · Navigation".) **Jump to latest.**
+      While the transcript is scrolled more than one screen above the bottom, a
+      pill floats 16 px above the composer, centred: 36 px high (44 px below
+      768 px), `surface`, 1 px `line` border, fully rounded, `shadow-pop`,
+      `ArrowDownIcon` and "Jump to latest" (13/600), followed by "· N new" in
+      `accent-ink` once N durable messages (person, door, agent text, agent
+      files) have arrived since the person scrolled up. Clicking it scrolls to
+      the bottom and hides it. While it shows, the transcript does not follow new
+      messages (the person is reading history); at the bottom it follows them as
+      before. The `role="log"` live region keeps announcing new messages either
+      way.
   - **Message actions.** Hovering or focusing a message shows a small toolbar
     (`surface`, `line` border) at the bubble's top corner. It holds Copy
     message and a "More message actions" menu with Redact…, which opens the
     existing redact dialog. On touch screens, tapping a message shows the
     toolbar.
+    (Phase 5, P5-CHAT-2, D-228, C-725; board "P5-CHAT · Reply":) the toolbar is
+    a `Toolbar` (`shadow-pop`, 2 px padding) 22 px above the bubble's outer top
+    corner, holding **Reply** (`ReplyIcon`, tooltip "Reply" + `R`), **Copy
+    message** (`CopyIcon`) and **More message actions** (`MoreIcon`), whose `Menu`
+    holds **Copy link** (`LinkIcon`), a separator, then **Redact…** in
+    `danger-ink`.
+    - Which messages have which actions: agent messages (`text`), person
+      messages and messages from other doors (`turn.queued`: schedule, webhook,
+      peer, API) have all four; a file the agent sent (`attachment`) has Reply
+      and More (its card keeps Download; there is nothing to copy). Tool groups,
+      approval cards, notices, turn errors, redacted rows, the typing row and a
+      message the API has not yet given a `seq` have no Reply and no Copy link.
+      Reply is shown only where the composer is (not on another member's
+      read-only direct conversation); Copy link is shown wherever the message
+      is; Redact keeps today's permission.
+    - Keyboard: a message is focusable and focusing it shows its toolbar; with a
+      message focused, `R` replies (a single-key shortcut that works only while
+      that message has focus, WCAG 2.1.4). Copy link writes
+      `<origin>/o/<org>/w/<ws>/agents/<handle>?c=<conversation id>&m=<seq>` to the
+      clipboard and confirms with "Link copied" in a polite live region.
+    - Below 768 px a tap shows the toolbar under the bubble with 44 px buttons,
+      Reply carrying its text label (board "P5-CHAT · Phone").
   - **Tool calls.**
     - A turn's consecutive tool and gateway calls fold into one
       `ToolCallGroup`: a `<details>` row reading "Used N tools · total
@@ -361,6 +650,36 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
       the name, the size and a Remove button. An upload in progress shows its
       progress. A failed upload is a `danger` chip with the reason, for
       example "Upload failed: quota reached".
+    - (Phase 5, P5-CHAT-3, D-228(c), C-726; board "P5-CHAT · Files".) **Adding
+      files.** Three ways, all into the same chips: the Attach button (the
+      browser's file chooser, `multiple`, no `accept` or `capture`, so a phone
+      offers whatever it offers: photo library, camera, files; Aurora draws no
+      sheet of its own), **drop** anywhere on the thread pane (transcript and
+      composer: a `DropZone` with the title "Drop files to attach to this
+      message" and the line "Up to 10 files, 10 MB each", from
+      `ATTACH_IN_COUNT` and `ATTACH_IN_FILE_MAX`; while it shows, the composer
+      border is `accent`), and **paste** of files or images from the clipboard
+      in the text field (a pasted image without a name is called `Pasted image
+      <YYYY-MM-DD> <HH.MM>.<ext>` in the browser's local time; other files keep
+      their names). Several files at once in each case. There is no drop target
+      and no paste of files where there is no composer.
+    - Chips (40 px rows, wrapping): an image shows its thumbnail (a local object
+      URL, revoked when the chip goes); a file shows a `FileIcon` tile. Uploading:
+      the name, the percentage (tabular) and a `Meter` (`role="progressbar"`),
+      with "Cancel upload of <name>". Failed: `danger-soft` fill, `danger-ink`
+      border, `AlertCircleIcon` tile, the name and the reason in `danger-ink`
+      (`role="alert"`), and Remove; a file over 10 MB or past the tenth fails
+      at once without uploading ("Upload failed: larger than 10 MB", "Upload
+      failed: at most 10 files per message"); a network failure adds **Retry**.
+      Failed files are never sent; their chips stay after Send until removed.
+    - **Files-only message** (C-726). Send is enabled with at least one uploaded
+      file and no text; the placeholder with chips reads "Add a message, or
+      send the files on their own…". While any upload is in progress Send is
+      disabled and the hint line reads "Waiting for N upload(s)…". In the
+      transcript a files-only message has no bubble: its file cards (240 px
+      wide, `surface`, `line` border, the bubble's radius and tail corner) stack
+      on the sender's side under the meta line, with a quote strip above them
+      when the message replies.
   - **Live activity.** While a turn runs, a typing row (`role="status"`)
     shows the agent avatar and a `subtle` bubble holding three dots and the
     activity line, such as "Waiting for approval" or "Reading report.md".
@@ -394,8 +713,158 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
     - The placeholder is "Message <agent>…", or "Add a follow-up…" while a
       turn runs.
     - At 390 px the composer is a single row of Attach, text field, Stop and
-      Send, each 44 px.
+      Send, each 44 px. (Phase 5: two rows, see **Composer (phase 5)**.)
     - Icon-only buttons carry an `aria-label`.
+  - **Composer (phase 5)** (P5-CHAT-2 for the reply bar, P5-CHAT-3 for the rest;
+    D-228(b)–(d); boards "P5-CHAT · Reply", "P5-CHAT · Formatting", "P5-CHAT ·
+    Files", "P5-CHAT · Phone"). The box keeps its border and radius (border
+    `accent` while the text field has focus or files are dragged over the
+    pane). Inside it, top to bottom: the **reply bar**, the attachment chips,
+    the text field (or the preview), the **formatting row** when shown, then
+    the action row: Attach, the `Aa` toggle, the hint line, Stop (while a turn
+    runs) and Send.
+    - **Reply bar** (C-725). Choosing Reply on a message puts a bar at the top
+      of the box: `subtle` fill, radius 8 px, `ReplyIcon`, "Replying to
+      <author> · <time>" (12 px, the author 600 `ink`), the original's text
+      clamped to two lines (13/20 `ink-2`, the renderer's compact mode; for a
+      file its name), and a ToolbarButton "Cancel reply" (`XIcon`). Focus moves
+      to the text field. Esc in the text field (with no suggestion list open) or
+      ✕ cancels; Reply on another message replaces the target. Send carries
+      `reply_to: { seq }` (a new turn or a follow-up alike) and clears the bar. A
+      422 `reply_target_invalid`, or an `event.redacted` for the target while
+      the bar is open, turns the excerpt into "You can't reply to that message
+      any more" (`danger-ink`), keeps the text, and blocks Send until the bar is
+      cancelled.
+    - **Formatting row** (`Aa`). `Aa` is a ToolbarButton toggle named
+      "Formatting" (`aria-pressed`) that shows or hides the row; the choice is
+      kept per browser (as the theme, never sent to the API, storage failures
+      ignored); unset, the row shows from 768 px and is hidden below. The row is
+      a `line`-topped strip: the **Write / Preview** switch (segmented `Tabs`,
+      label "Message view") then a `Toolbar` named "Formatting" with, in
+      order: Bold, Italic, Strikethrough, Heading | Link, Code, Code block |
+      Quote, Bulleted list, Numbered list, Task list | Table, Emoji (the bars
+      are ToolbarSeparators). Each button's accessible name is the action and
+      its shortcut ("Bold (Ctrl+B)"), with `aria-keyshortcuts`, and its
+      tooltip shows the same with a `Kbd`.
+    - **What the buttons insert** (Markdown, D-228(b); undoable with the
+      browser's undo): with a selection they wrap it; without, they insert a
+      placeholder and select it. Bold `**text**`, Italic `_text_`,
+      Strikethrough `~~text~~`, Code `` `code` `` (a selection over several
+      lines becomes a code block), Link `[text](url)` (with a selection: the
+      selection becomes the text and `url` is selected), Code block a fenced
+      block on its own lines with the caret inside, Heading `### ` at the start
+      of the line, Quote `> `, Bulleted `- `, Numbered `1. ` (`2. `… on
+      following lines), Task `- [ ] ` at the start of each selected line,
+      Table a two-column template (`| Column 1 | Column 2 |`, the delimiter row
+      and one empty row), Emoji opens the `EmojiPicker`. Applying an inline
+      button to a selection already wrapped in the same markers removes them.
+    - **Shortcuts** (in the text field; ⌘ on macOS): Ctrl+B bold, Ctrl+I
+      italic, Ctrl+Shift+X strikethrough, Ctrl+K link, Ctrl+E code,
+      Ctrl+Shift+7 numbered list, Ctrl+Shift+8 bulleted list, Ctrl+Shift+.
+      quote. They work whether or not the row is shown.
+    - **Enter**: Enter sends; Shift+Enter inserts a new line; Ctrl/Cmd+Enter
+      always sends. Exceptions: while an IME composition is in progress Enter
+      belongs to the IME; while a suggestion list is open Enter chooses; when the
+      caret is inside an unclosed ```` ``` ```` fence Enter inserts a new line
+      and the hint line reads "Enter for a new line · Ctrl+Enter to send";
+      Shift+Enter on a list item continues the list (`- `, the next number,
+      `- [ ] `), and on an empty item removes its marker and ends the list.
+      The hint line stays hidden below 768 px.
+    - **Write / Preview.** Preview replaces the text field with the draft
+      rendered by the chat renderer (FIX-137, D-227, the person-message
+      line-break rule), at the text field's height (2–8 lines, then it scrolls
+      inside itself), with `tabindex="0"` and `role="tabpanel"`. In Preview the
+      formatting buttons are disabled and Send still works. Typing a shortcut
+      or choosing Write returns to the text field with the caret where it was.
+    - **Smart paste** (plain text only; HTML on the clipboard is ignored):
+      pasting a single `http`, `https` or `mailto` URL over selected text makes
+      `[selection](url)`; pasting tab-separated rows (at least two rows of at
+      least two cells with the same count, as a spreadsheet copies) makes a
+      Markdown table with the first row as the header, `|` escaped as `\|` in
+      cells; everything else is pasted as text.
+    - **Emoji.** Typing `:` and two letters at the start of a word (not after
+      a letter or digit, so `10:30` does not trigger; not inside code) opens a
+      `SuggestionList` of up to 8 emoji whose shortcode starts with, then
+      contains, the letters (the glyph, then the `:shortcode:` in mono with the
+      typed part 700); Enter or Tab replaces the typed `:xx` with the Unicode
+      character, Esc closes. The `EmojiPicker` from the row inserts at the caret
+      and returns focus to the text field. Both insert the character, never the
+      shortcode (the renderer shows shortcodes as emoji too, D-227).
+    - **Drafts.** Per conversation, the text, the reply target (seq, author,
+      time, excerpt) and the uploaded-but-unsent attachments (id, name, size,
+      type) are kept in browser storage under a key that includes the signed-in
+      user's id and the conversation id; restored when the person returns
+      (reload included), cleared on Send and on sign-out; storage failures are
+      ignored (the composer works without it). If the API refuses a restored
+      attachment as no longer pending (swept after `ATTACH_PENDING_TTL`), its
+      chip is removed, a neutral `Notice` says "N attached files expired.
+      Attach them again.", and the text is kept.
+    - **Stop and Send** are unchanged except as above: Send is enabled with text
+      or at least one uploaded file (C-726) and no upload in progress.
+    - **Below 768 px** (board "P5-CHAT · Phone"): the composer has two rows,
+      the text field (16 px text, so phones do not zoom) and under it Attach,
+      `Aa`, then Stop and Send at the end, every control 44 px. The formatting
+      row sits between them as a strip that scrolls horizontally inside itself
+      (Write / Preview stays at its start, 44 px high); the reply bar's ✕ is
+      44 px; the emoji picker and suggestion lists span the composer's width.
+      Nothing scrolls the page sideways at 390 px.
+  - **Message search** (phase 5, P5-CHAT-4 part B, D-229, C-727; board
+    "P5-CHAT · Search").
+    - The list pane's filter is a search box (`type="search"`, label "Search
+      conversations and messages", placeholder "Search", `SearchIcon`, a Clear
+      button once it holds text). Typing filters the loaded list by title, as
+      before, and opens a `SuggestionList` under the box: first "Search
+      messages for “<text>”" (Enter), then "Conversations" (titles that match,
+      which select the conversation), then "Narrow the search" (`from:` me,
+      agent or others; `in:` a conversation; `has:file`; `after:`, `before:`,
+      `on:` a date) and a footer line: `"exact phrase"`, `-word` to exclude,
+      `OR` between words. `/` (while focus is in the chat panel and not in a
+      text field) or Ctrl/Cmd+F (while focus is in the chat panel) focuses the
+      box; Esc clears it and returns to the conversation list.
+    - **Syntax to parameters** (the API gets parameters, never the raw syntax):
+      `from:me` / `from:agent` / `from:others` → `author`; `in:` opens a
+      suggestion list of conversation titles and the chosen one becomes
+      `conversation_id`; `has:file` → `has=file`; `after:D` and `before:D`
+      (`YYYY-MM-DD`, a day in the browser's time zone) → `after` / `before` as
+      RFC 3339 instants of that local midnight; `on:D` → both, for that one day;
+      the rest is `q`. A completed filter leaves the box and becomes a
+      `FilterChip` under it; Backspace in an empty box removes the last chip.
+      An unknown filter stays a word of `q`.
+    - **Scope**: a `Segmented` "Search in" under the chips, **This agent**
+      (default; sends `agent_id`) or **All agents** (the workspace; result rows
+      then name the agent).
+    - **Results** replace the conversation list while a search is active, and
+      the pane widens from 232 px to 320 px (the thread narrows; the rail is
+      unchanged). Above them: "N results" (`role="status"`; "N+ results" while
+      `next_cursor` is set) and a sort select, **Newest first** (`sort=recent`)
+      or **Best match** (`relevance`); when `index_complete` is false, a muted
+      line with `ClockIcon`: "Older messages are still being indexed". Each
+      result is a link row (radius 8 px, 8 px padding): the conversation's
+      28 px kind tile, its title (600) and the time (as conversation rows), an
+      "Archived" `Badge` when archived; the author's label (12 px `muted`;
+      "File" after it for an `attachment` hit); the `snippet` through
+      `HighlightedText` with `highlights` (13/19 `ink-2`, three lines). More
+      pages load as the list scrolls (`next_cursor`).
+    - **Opening a result** navigates to `?c=<conversation>&m=<seq>`, which jumps
+      to and highlights the message (**Jump and highlight**); the result stays
+      selected (`subtle`, `aria-current`) and the results stay until the search
+      is cleared.
+    - **States**: `Loading` in the pane while the first page loads; no results:
+      "No messages match “<text>”." with "Try fewer words, or search All
+      agents."; an error: the compact `ErrorState` with Retry; 422
+      `search_query_invalid` as a field error under the box (`too_long`:
+      "Searches are limited to 200 characters."; `too_many_terms`: "Use at most
+      12 words."; `empty` cannot be sent).
+    - **Below 768 px**: the box and chips head the list view; results replace
+      the list; opening a result switches to the thread view, whose Back button
+      returns to the results.
+  - **Accessibility (phase 5)**: the formatting row and message actions are
+    `toolbar`s with roving focus; `Aa` is a toggle button; Write / Preview is a
+    tab list; every suggestion list is a combobox listbox with
+    `aria-activedescendant`; quote strips are links named "In reply to …";
+    the highlighted message receives focus; drop is never the only way to
+    attach (Attach and paste do the same). axe finds nothing on the boards'
+    states in either theme, at 1280 px and 390 px.
   - **Empty conversation.** The middle of the transcript shows the agent's
     large avatar, "Start a conversation with <name>" and the agent's brief
     when it has one, and the composer has focus. There is no dashed
@@ -423,15 +892,20 @@ here, add it here and document it.
 | Data table | `DataTable`, `Th`, `Td` | For columns of comparable data. The wrapper scrolls inside itself at 390 px, so the page never scrolls horizontally. Always give `caption`. |
 | Form | `Form`, `FormSection`, `FormActions`, `Field`, `inputClass` | `Field` links label, hint and error to the control; `FormSection` is a fieldset with a heading; `FormActions` is the submit row. Frontend validation is UX only. |
 | Checkbox | `CheckboxField` | A checkbox with its label and optional hint; use it for boolean settings instead of a bare `<input type="checkbox">`. |
+| Setting | `SettingField` | (phase 5, SET-1) One instance setting (`§Instance administration`, Settings): label, hint, the control (built from `Field`, `CheckboxField` or a list editor) and a source `Badge` — "Helm", "Dashboard" or "Default". **Locked** (source Helm): the effective value as read-only text, the note "Configured in Helm (`<helm key>`)" and no control. **Dashboard**: a ghost **Reset to default** action naming the default. Its `id` is the key, so `#<key>` links scroll to it. |
+| Permission groups | `PermissionGroups`, `GrantForm`, `ScopeGroups` (in `web/src/components/grants`) | (phase 5, FIX-147, D-233) The one way to choose permissions anywhere. `PermissionGroups` is the grouped list: rows grouped Read / Write, a group-wide `Segmented` control (no option checked and "(mixed)" for assistive technology when the rows differ) and a `Segmented` control per row. `GrantForm` is the controlled grant editor built on it (Full / Custom, Allow / Ask / Block, ask timeout, inert tools, the `custom_only` and `block_untooled` notes); `ScopeGroups` is the same list with On / Off rows for provider scopes. No other component renders an app's tools or scopes as a checkbox list (a unit test guards it); add to these, do not build a second one. |
 | Danger zone | `DangerZone` | Destructive actions (delete an organization or account) in a `danger`-bordered card at the bottom of a page: heading, explanation, then the form. |
 | States | `Loading`, `EmptyState`, `ErrorState` | Every list/query shows one of the three. |
 | Notice | `Notice` (`neutral`, `accent`, `pending`, `danger`) | Inline callout for conflicts, warnings, errors and info. Use `role="alert"` after an action, `role="status"` otherwise. |
-| Dialogs | `ConfirmDialog`, `FormDialog`, `Dialog` | Confirmation (with `danger` for destructive confirms) and a dialog around a form. Focus is trapped and returned by Radix. |
+| Popover | `Popover`, `PopoverTrigger`, `PopoverContent` (`ui/popover.tsx`, Radix) | (phase 5, P5-AGENT-2) A small non-modal panel anchored to a control (the status rail's Needs-you items). Esc closes it and returns focus to the trigger; use `Menu` for a list of commands and `Dialog` when the content needs the whole screen. |
+| Dialogs | `ConfirmDialog`, `FormDialog`, `Dialog` | Confirmation (with `danger` for destructive confirms) and a dialog around a form. Focus is trapped and returned by Radix. Width comes from `DialogContent`'s `size` prop (`sm` 28 rem default, `md` 34, `lg` 40, `xl` 48, `2xl` 56; always capped at the viewport minus a gutter), never a class. A hand-rolled `role="alertdialog"` is not allowed: use `ConfirmDialog`. (Phase 5, FIX-149, D-272) **Every dialog has a close icon**: `DialogContent` renders a × button (`aria-label="Close"`, `XIcon`, at least a 44 px target on touch) at the right of its title row. The title row stays visible while the body scrolls. Escape and a click on the scrim still dismiss. A view is shown on top of a page only as a `Dialog`, never as a page opened in another browser window (`window.open` is reserved for an OAuth provider's sign-in, C-842, and the terminal's owner-requested **Open in new window**, FIX-138; guard test). |
 | Badges and dots | `Badge`, `StatusDot` | Status pills and dots. They always carry text; tone is `neutral`, `accent`, `pending` or `danger`. |
-| Tabs | `Tabs` (`segmented`, `underline`) | Page-level views and the agent page strip. The strip scrolls within itself at 390 px. |
+| Tabs | `Tabs` (`segmented`, `underline`) | Page-level views and the agent page strip. The agent page strip uses `overflow="menu"` (FIX-129): tabs that do not fit (measured with a `ResizeObserver`) collapse into a trailing **More ▾** menu button (`aria-haspopup="menu"`, `aria-expanded`, Enter/Space opens, Escape closes); the selected tab is always shown (it replaces the last visible tab if it lives in the menu); arrow keys, Home and End still move across every tab; `?tab=` addressing is unchanged. The other strips (`scroll`, the default) scroll within themselves. |
 | Buttons | `Button` (`primary`, `outline`, `approve`, `ghost`, `danger`) | Primary actions use `size="lg"` (44 px); others are at least 36 px. |
 | Auth layout | `AuthCard` | Split layout with the dark brand panel, for every public auth view. |
-| Chat | `ChatPanel`, `ConversationList` + `ConversationRow`, `MessageGroup`, `ToolCallGroup`, `Composer` (in `web/src/components/chat`) | The agent Chat tab (see **Agent chat** above): a fixed-height panel with the list pane and the thread pane, sender-grouped bubbles, folded tool calls and a pinned composer. Inline approvals reuse the approval card in a compact variant. |
+| Chat | `ChatPanel`, `ConversationList` + `ConversationRow`, `MessageGroup`, `ToolCallGroup`, `Composer` (in `web/src/components/chat`) | The agent Chat tab (see **Agent chat** above): a fixed-height panel with the list pane and the thread pane, sender-grouped bubbles, folded tool calls and a pinned composer. Inline approvals reuse the approval card in a compact variant. (Phase 5, P5-CHAT: `QuoteStrip`, `ReplyBar`, `JumpToLatest`, the formatting row and drafts under `components/chat/composer/`, and `components/chat/search/`, built from the phase-5 primitives listed under **Components**.) |
+| Composer tools | `Toolbar` + `ToolbarButton`, `Tooltip` + `Kbd`, `SuggestionList`, `EmojiPicker`, `DropZone` | (phase 5, P5-CHAT) Any row of icon actions is a `Toolbar`; any shortcut is shown with `Kbd` in a `Tooltip`; any typed-ahead choice under a field is a `SuggestionList`; a file drop target is a `DropZone`. |
+| Search results | `FilterChip`, `HighlightedText` | (phase 5, P5-CHAT-4) Active filters as removable chips; server-highlighted plain-text snippets, never HTML. |
 
 ## Information architecture
 
@@ -450,13 +924,42 @@ connects), `/setup-error` (missing required configuration reported by
 
 ### Account (`/account/*`)
 Profile, password *(phase 0 only)*, sessions (sign out others), API keys
-(personal workspace keys), chat platform links, DM defaults, delete account
+(personal workspace keys), (phase 5) SSH keys, chat platform links, DM defaults, delete account
 (phase 1: asks for a fresh OIDC sign-in first, `04 §OIDC`). (phase 4, P4-GRP-1) Profile
 lists the person's groups per organization (read-only) and the effective role with its
-source. (phase 4, RFE-011b) **Notifications**: the in-tab notification and e-mail switches
-and the Web Push device list (*Key flows*). (phase 4, P4-IDP-1) **Roles from your
+source. (phase 5 (D-138, moved from phase 4), RFE-011b) **Notifications**: the in-tab notification and e-mail switches
+and the Web Push device list (*Key flows*) — (P4-011B spec batch, C-836) one section of the Profile
+page, where the in-tab and e-mail switches already live; no new route. (phase 4, P4-IDP-1) **Roles from your
 sign-in**: each IdP role value and what it granted. (phase 4, P4-ONB-2) "Show the tour
 again" and "Show the getting-started guide again".
+
+(phase 5, P4-UTOK, D-281..D-284, C-853..C-855) **Send as me** (under the chat platform links): one
+`ResourceTable` row per token: integration, platform user label, a status pill (`active`, `invalid`,
+`revoked`), the agents granted (chips), last used, and actions. **Add token**: a `Dialog` with one
+masked input (never echoed, never shown again) and the help text "In Mattermost, open Profile › Security ›
+Personal Access Tokens and create one. Aurora stores it sealed and uses it only to post as you, after
+you approve each post." Refusals render inline in plain language: "This token belongs to another
+account" (`user_token_mismatch`), "Mattermost rejected this token" (`user_token_invalid`), "You can keep
+at most 5 tokens" (`user_token_limit`). **Grant agents** is a `Dialog` with one switch per agent you can
+use. **Revoke** is a `ConfirmDialog`: "Agents stop posting as you and pending posts are cancelled." A
+`send_as_me` approval appears on your Approvals page with the full text and the decision controls; no
+other person sees its decide control. Empty state: "Agents post as themselves unless you add a token."
+At 390 px the rows stack. Shared primitives only.
+
+(phase 5, P4-SSH-1/2, D-239, C-795) **SSH keys** (`/account/ssh`), shown only when `/v1/instance`
+reports `features.ssh`. A `ResourceTable` of the person's keys — name, `SHA256:` fingerprint (mono,
+truncated in the middle with the full value in a tooltip and a copy button), added, last used —
+with Rename and Delete (a `ConfirmDialog` that says open sessions using the key end within 30 s).
+**Add key**: a `Dialog` with a name field and a monospace textarea for one `ssh-ed25519 AAAA…` line,
+the help text "Paste the contents of `~/.ssh/id_ed25519.pub`. Only ed25519 keys are accepted; the
+private key never leaves your computer." and the command to create one (`ssh-keygen -t ed25519`);
+422/409 errors render inline under the field in plain language ("This is not an ed25519 public key",
+"You already added this key", "You can add at most 10 keys"). Adding and deleting need the dashboard
+session (an API key cannot). Under the table, **Active SSH sessions** (P4-SSH-2): agent, key, coarse
+address, opened, last activity, with **Disconnect** (`DELETE /v1/ssh-sessions/{id}`; the row shows
+"Disconnecting…" until it disappears). Empty states: "No SSH keys yet" with the Add key action; no
+sessions → the section is hidden. Mobile (390 px): the tables collapse to stacked rows (the shared
+`ResourceTable` pattern), the fingerprint wraps.
 
 ### Organization (`/o/<org>/*`) — owners/admins unless noted
 - **Workspaces** (all members: those they can access; owners/admins: all).
@@ -504,9 +1007,10 @@ again" and "Show the getting-started guide again".
   (read-only), and a table of the org's shares (agent, workspace, port, state, last accessed)
   with a link to each agent. Turning it off asks for confirmation ("Existing links stop working
   until you turn it back on") and is audited.
-- **Apps**: app availability posture and allow-list.
-- **Instances** (`/o/<org>/instances`, phase 2, D-74): the org's registered self-hosted app instances plus the read-only instance-wide ones; owners/admins register (app, host, label), disable/enable and delete (the confirm says its connections are disabled and its OAuth clients removed). The connect dialog of an instance-bound app shows an instance picker (default host first), and OAuth clients can be bound to an instance.
+- **Apps**: the per-app availability list (FIX-130). The toggles are shown only while the org's app posture is `restricted`; while it is `open` the page says "Every app is available — change in Governance" with a link. The posture itself moved to Governance › Apps; both screens save through the same `PUT /v1/orgs/{org}/app-availability` (the posture with the allow-list as it currently is), each with its own Save. Owners and admins only.
+- **Self-hosted apps** (`/o/<org>/instances`, phase 2, D-74; renamed from "Instances", FIX-132: one term in the navigation, titles, empty states and help — "Register your own GitLab, GitHub Enterprise Server, Indico … so people can connect to it"; the route and the API names stay): the org's registered self-hosted app instances plus the read-only instance-wide ones; a refused host names its holder (static claim → app and package, LLM endpoint, Aurora's own address, registration → app and scope; never another organization's name to an organization admin); owners/admins register (app, host, label), disable/enable and delete (the confirm says its connections are disabled and its OAuth clients removed). The connect dialog of an instance-bound app shows an instance picker (default host first, then the package's **built-in** instances — Sentry's US and EU regions — then a "Registered servers" group), and OAuth clients can be bound to an instance. (Phase 5, FIX-134, D-243, C-742) A package's built-in (preset) instance is listed on the org and admin Self-hosted apps pages with a **Built in** badge and no Disable/Delete/Make instance-wide actions. (Phase 5, FIX-145, D-231, C-731) **Path**: the registration form has an optional **Path** field after Host, hint "Only if the app is served under a path, for example /jira for https://its.cern.ch/jira". A full URL pasted or typed into Host is split on the client into host and path (scheme, query and fragment dropped); a URL that also has a port or userinfo is left as typed so the server's `instance_host_invalid` explains. The server normalizes and validates (`instance_base_path_invalid` shown on the Path field with a static message). The path cannot be changed after registration (no Path field on edit). Everywhere a registration is shown — the org and admin Self-hosted apps lists, the connect dialog's instance picker, a connection's instance line, and the delete/disable/promote confirmations — it is named by its `base_url` (`https://its.cern.ch/jira`), not the bare host. A host refused because another registration's path overlaps names the holder's `base_url` when present. The failed host check (FIX-144's probe messages) ends its 404 and same-host redirect texts with "If {App} is served under a path, such as https://{host}/jira, enter it in Path."
 - **Governance** (`08 §11`; phase 3, RFE-013: a **BYO agent tokens** setting "maximum age (days)", empty = never expire, shown locked with "enforced by instance" when the instance value is lower, plus a stale/expiring token list with Regenerate shortcuts; phase 2, RFE-025: a **BYO agents** panel — posture selector limited to values not below the instance floor, default source CIDR list, org default "require context credentials"; shown locked with "enforced by instance" when `byo.enabled = false`):
+  - *Apps* (FIX-130; owners and admins; its own tab and its own Save, not part of "Save governance"): the **app posture** — Open (every active app can be connected) or Restricted (only the apps listed as available) — with its explanation and a link "Choose available apps →" to Org › Apps.
   - *Model access*: per instance endpoint — permitted or not, key scopes
     (organization / workspace), origin narrowing (e.g. Anthropic organization
     and workspace ids, LiteLLM teams), model allow-list; LLM posture
@@ -528,6 +1032,21 @@ again" and "Show the getting-started guide again".
   automatically by verified email"** (default off; shown only when the
   connector offers `email_verified`), with the trust warning of `13 §5.9`;
   toggling it needs a confirm dialog.
+  (FIX-127, D-195(g), C-711..C-714) **Mattermost as one guided path.** *Empty and blocked
+  states* come from `GET /v1/connector-availability`: `not_added` → "An instance administrator
+  needs to add Mattermost first" with their names (and, for a viewer who is also an instance
+  admin, an inline **Add Mattermost** in a dialog — the Admin one-click flow); `waiting_for_host`
+  → "Waiting for the connector host — the operator must start it"; `disabled` → "Mattermost is
+  disabled — an instance administrator can enable it"; `needs_approval` → "…needs an instance
+  administrator's approval". No state is a dead end: each names who acts next. *Connecting* is a
+  three-step stepper replacing the single dialog (same form-field components): (1) server URL
+  and bot token, setup guide collapsible → **Check** runs the probe; (2) **Team** is a select
+  filled from the probe (one team: preselected), the optional admin token with its explanation
+  (private replies and `/aurora`), the probe `warnings` as notices; (3) **Connect** (the
+  existing synchronous create). The **done screen** says "Mattermost is connected as @bot in
+  <team>" and offers three buttons: **Attach an agent** (workspaces the viewer can own or use,
+  shared presence by default, the existing attach route), **Link your Mattermost account**
+  (`/account/channels`), **Open a DM with @bot** (`https://<server>/<team>/messages/@<bot>`).
 - **Skill libraries** (`/o/<org>/skills/libraries`, phase 4, P4-GSL, D-148; org owners/admins; a tab of
   the org Skills page): a table (label, repository `owner/name`, ref, path, status chip with the sanitized
   last error and "Reconnect" link when the connection needs it, last checked, skills in use by tier,
@@ -553,7 +1072,9 @@ again" and "Show the getting-started guide again".
   say hello), agents, pending approvals, recent activity. (phase 4, P4-ONB-2) The
   checklist becomes the **getting-started guide** of `§Onboarding` (same component,
   collapsed to one line once complete).
-- **Agents** list → **agent page** tabs:
+- **Agents** list → **agent page** tabs (phase 5, D-200: grouped into the sections
+  Chat · Behaviour · Triggers · Computer · Access of **Agent page (phase 5)**; each
+  page below keeps its content and `?tab=` id):
   - **Chat** — (phase 2, RFE-010) per-conversation menu: Archive, Delete (typed
     confirmation; explains that platform copies and agent memory remain), Export
     (JSON / zip), and per-message **Redact** (reason, "also reset the agent's
@@ -586,7 +1107,7 @@ again" and "Show the getting-started guide again".
     app update"), and the plugin approval screen shows the "N agent grants will be converted"
     banner next to the reconnect banner. Grants: connections (full / custom with allow/ask/block per
     tool, read/write groups, wildcard umbrellas only where valid, inert-tool
-    flags), secrets, LLM keys; "effective" view with org-ceiling explanations.
+    flags; the editor is the shared `GrantForm`, also used by "Give agents access"), secrets, LLM keys; "effective" view with org-ceiling explanations.
     (phase 4, FIX-021, D-136) For hosted agents, a **Model readiness** section
     (owners) from `GET /v1/agents/{a}/model-readiness`: each granted LLM key
     with "Ready" or its reason in words and the fix as a link (`08 §Model
@@ -596,6 +1117,14 @@ again" and "Show the getting-started guide again".
     editor above is FIX-022: specified since phase 0, not yet built.)
   - **Channels** — presences (attach dedicated/shared per integration
     capabilities; status; re-attach/detach), space bindings, reach requests.
+    (FIX-127, D-195(g), C-713/C-714) One integration is preselected. After attaching, a **Next steps**
+    panel offers "Talk to it: DM @bot" (link) and "Add it to a channel: invite @bot, then bind
+    here" with an **Add to a channel** picker (`GET /v1/integrations/{id}/spaces?mine=true`: spaces
+    you are in; each shows whether the bot is present; the picker says "Invite @bot to a private channel to see it here"; listen mode `mentions` by default →
+    `POST /v1/agents/{agent}/space-bindings`) — or, as the alternative, `@bot bind <handle>` in the
+    channel. A `409 bot_not_in_space` shows its hint; `link_required` links to `/account/channels`.
+    The empty state is "Attach this agent to Mattermost" with the integration picker, or, when the
+    org has none, who can create one (a link for org admins).
   - **Memory** — list, editor with revisions, restore, redact, search; banner
     "Memories in this workspace are written in <Language>".
   - **Skills** — editor with file tree, executable bit, size meter. (phase 3, RFE-020) Lists the agent's **effective** skills with a tier badge (Agent / Workspace / Organization) and, for shadowing, "overrides the Workspace skill of the same name" / "overridden by …"; workspace and org skills open read-only here with a link to where they are edited.
@@ -645,7 +1174,8 @@ again" and "Show the getting-started guide again".
     because…" shows "Preview in use". No horizontal scroll at 390 px (rows collapse to cards, the
     URL wraps), both themes, tokens and primitives only.
   - **Computer** — sandbox state, "awake because…" reasons, processes,
-    restart; (FIX-025, D-158, C-584) a **Last start attempt** section when the
+    restart; (FIX-138, owner 2026-11-14) a **Terminal** card with the terminal's **Shell**
+    control (see Terminal) where the Terminal page exists; (FIX-025, D-158, C-584) a **Last start attempt** section when the
     sandbox has one: when it started, the last phase and detail the runner
     reported (`claimed`, `waiting_capacity`, `provisioning`, `scheduling`,
     `creating`, `booting`…), the elapsed time to the runner's last progress
@@ -678,19 +1208,85 @@ again" and "Show the getting-started guide again".
     non-`can_use` caller never sees the tab, a frozen agent shows the freeze banner and no
     terminal. A parked sandbox shows "Waking…" (the open is the wake demand) and the terminal
     attaches on ready. The pane is **wterm** with the **Ghostty core** (`@wterm/ghostty`,
-    vendored, the ~400 KB WASM served same-origin as a hashed static asset with
-    `Content-Type: application/wasm`): DOM rendering (native text selection, browser find,
+    vendored, the 599,368-byte WASM served same-origin as a version-named static asset,
+    `ghostty-vt-<version>.wasm`, with `Content-Type: application/wasm`; its sha256 is
+    recorded in `scripts/guards/ghostty-wasm.sha256` and a guard fails when the file or the
+    pinned package drifts from it): DOM rendering (native text selection, browser find,
     screen-reader access — the reason for this core), IME composition, OSC 8 links, 24-bit
     color, alternate screen, dirty-row rendering; themes are CSS custom properties mapped to
     the dashboard tokens (both themes). Resize uses the pane's measured cell geometry and
     sends `pty.resize`; a dropped WebSocket reconnects with backoff and a visible state
-    ("Reconnecting…"); session end states (frozen, parked, stopped, runner without terminal
+    ("Reconnecting…", with its attempt count; four attempts, twelve while the sandbox wakes —
+    the C-621 wake budget). The close code decides first: 4403, 4404, 4409, 4504 and a
+    shell's 1000 end the pane with their reason even while waking; 1006, 4502 and 4503 retry
+    whether or not the close frame was clean. While not connected the pane says "Not
+    connected" and keystrokes are not sent (nor queued); session end states (frozen, parked, stopped, runner without terminal
     support) render as notices, never silent closes. wterm never touches the clipboard
     automatically: selection copy is the browser's own; an application's OSC 52 write shows a
     "Copy to clipboard" confirmation (wterm's `onClipboardWrite`). Keystrokes leave the tab as
     UTF-8 **Binary** WebSocket frames, at most one 16 KiB `TERMINAL_CHUNK` each (a paste is
     chunked); Text frames are resize-control only (FIX-054, `16 §W19`). An open session keeps the
     sandbox awake ("awake because…" says "Terminal in use") up to the 4 h cap.
+    (Phase 5, FIX-138, web half) **Pane size and scrolling:** the pane has a bounded height (at
+    least 18 rem, otherwise the viewport minus the page chrome; 60 % of the viewport below
+    768 px), so `autoResize` derives a fixed grid and output scrolls inside the pane's
+    scrollback (5,000 lines), never by growing the page. The view follows the cursor; once the
+    person has scrolled up it stays put and a **Jump to latest** button appears. (Owner
+    2026-11-14) While a full-screen app (`claude`, `vim`, `less`: the alternate screen) runs, the
+    pane is pinned to the app's screen and does not scroll (that screen has no history, though
+    the shell's history is still rendered above it) and Jump to latest is hidden; the wheel goes
+    to the app — as mouse reports when it asked for them, otherwise as up/down arrow keys
+    (alternate scroll, as Ghostty and xterm do). **Keyboard:** Tab
+    belongs to the shell (completion); Esc, then Tab (within 1.5 s) leaves the terminal for the
+    next control and says "Left the terminal." (WCAG 2.1.2); the page says so beside the pane.
+    **Open in new window** (`window.open`, `noopener,noreferrer`) opens
+    `/o/<org>/w/<ws>/agents/<agent>/terminal`: no app chrome, a title bar ("<agent> — Terminal",
+    also the document title) and a pane that fills the window. It is a second, independent shell
+    over the same cookie, route and single-use grant as the tab; it counts against the sandbox's
+    leg cap (4409 reads "The sandbox's terminal session limit was reached.").
+    (FIX-138, D-246) **Shell:** a two-option control (bash | zsh, default bash) in the
+    **Terminal** card of the **Computer** page, under the Computer state card, shown only where
+    the Terminal page exists (owner 2026-11-14: moved off the Terminal page, which only names
+    where it is chosen; it applies at once),
+    remembered per browser and agent (`localStorage` key `aurora.terminal.shell.<agent id>`; a
+    server-side preference would need a table for one enum). It applies to the next session — the
+    open one keeps running — and travels as `?shell=zsh` on the WebSocket (`05`; bash is the
+    default and sends no query). If the image lacks the chosen shell the pane prints the
+    supervisor's one-line fallback notice (`12 §Terminal`).
+    (FIX-138 item 1b, D-247) `claude` and `codex` typed in the pane run the image's wrappers
+    (`12 §Terminal`): they reach the LLM through the gateway with the placeholder credential and
+    their own state under `/workspace/.aurora/terminal`; a harness the instance does not enable
+    prints "not enabled on this instance". The pane carries no hint line for them (the web does
+    not know which harnesses an image holds; the wrapper's message is the answer).
+  - **SSH** (phase 5, P4-SSH-1/2, D-239, C-795) — a page of the **Computer** section beside Terminal
+    and Previews (`?tab=ssh`), with the same availability rule as Terminal but on `features.ssh`:
+    hosted agents only, `can_use`, hidden for BYO agents and non-`can_use` callers; a frozen agent shows
+    the freeze banner and no instructions. Content, top to bottom, all from `GET /v1/ssh` and the
+    agent:
+    1. **Connect with SSH** (`Card`): "Use the Aurora CLI" — `aurora ssh <agent id>` in a `CodeBlock`
+       with a copy button, and one line on installing the CLI and signing in (`aurora login`). Below it
+       "Or use plain ssh": the steps (1) add your key on **Account › SSH keys** (a link; when the person
+       has no key, this step is a `Notice` with the link and the rest is disabled), (2) **Get a
+       certificate** — a button that picks the key (a `Select` of the person's keys when there are
+       several) and calls `POST /v1/agents/{agent}/ssh-certificate`, then offers the certificate as a
+       download named `id_ed25519-cert.pub` and states "valid for 15 minutes; get a new one to
+       reconnect later" (the TTL from `cert_ttl_secs`), (3) the command
+       `ssh -o CertificateFile=~/Downloads/id_ed25519-cert.pub -i ~/.ssh/id_ed25519 -p <port> <agent id>@<host>`
+       in a `CodeBlock`. A 429 reads "Too many certificates for this agent in the last hour; try again
+       at HH:MM".
+    2. **Host key** (`Card`): the `known_hosts` lines in a `CodeBlock` with copy, the fingerprints
+       (`SHA256:…`) and one sentence: "Check that ssh shows this fingerprint the first time you
+       connect, or add the line above to `~/.ssh/known_hosts`." No live terminator → a `Notice`
+       "SSH is enabled but no SSH server is running; ask your administrator."
+    3. **What works**: interactive shell, remote commands, `sftp` and `scp`; port forwarding, agent
+       forwarding and X11 are not available (use **Previews** for web apps). Sessions end after 10
+       minutes without activity or after 4 hours, and when you lose access to the agent.
+    4. **Open sessions on this agent** (P4-SSH-2): the caller's own, or everyone's for `can_own`
+       (person, key, coarse address, opened, last activity, **Disconnect**). An open session keeps the
+       sandbox awake while it carries bytes ("awake because…" says "SSH session in use") up to the 4 h
+       cap.
+    The status rail's Computer part adds "SSH" beside "Terminal" where the page is available. Every
+    `CodeBlock` wraps at 390 px instead of scrolling the page (it scrolls inside itself).
   - **Activity** — request log filtered to the agent.
 - **Approvals** — pending gateway holds and action approvals (live via SSE),
   history; batch actions. (phase 2, RFE-012) The page, the sidebar counter and the
@@ -700,7 +1296,7 @@ again" and "Show the getting-started guide again".
 - **Credentials** — (phase 2, P2-DBL-2: a connection of a database app (`Connection.database`, C-230) shows a neutral `Notice` under its row with the libpq service name and `psql service=<name> -c 'select 1'`, and says that a name shared by two granted connections gets the id prefix) (phase 3, RFE-022: a connection in `reauth_required` because of a plugin major upgrade shows the reason and a Reconnect button) tabs: Apps (catalogue → connect window), Connections,
   Secrets (generic; reference-mode secrets when a reference-capable store is
   configured), LLM keys (provider/endpoint picker from `/v1/llm/providers`),
-  OAuth clients, agent-proposed secrets awaiting a value. (phase 4, P4-LLM) The LLM key
+  OAuth clients, agent-proposed secrets awaiting a value. (phase 5 (D-138, moved from phase 4), P4-LLM) The LLM key
   form adapts to the provider's auth mode from `/v1/llm/providers`: one password field
   (`api_key`), three fields for AWS (access key id, secret access key, optional session
   token, with the note that only the account id is shown afterwards and that the key
@@ -709,7 +1305,16 @@ again" and "Show the getting-started guide again".
   project and service-account e-mail). Endpoints with static model lists (Azure OpenAI,
   Vertex) say "models are configured by your administrator". A request refused with
   `llm_path_not_permitted` appears in the request log and agent Computer tab as "Blocked:
-  not a model-inference call". The LLM key form
+  not a model-inference call". (phase 5, P4-LLM spec batch, D-260, D-261, C-811) For Bedrock
+  the form offers the auth modes as a `RadioGroup` with **Assume a role (recommended)** first:
+  role ARN, source access key id and secret, optional session length, and a `CodeBlock` with the
+  organization's external id and a trust-policy snippet that requires it ("Copy"); then
+  "Access keys" and "Bedrock API key". For Azure OpenAI: "Resource key" or "Microsoft Entra
+  application" (tenant id, client id, client secret). After saving, the page shows the verified
+  account (AWS account and role, Entra tenant and application) and never a secret field again.
+  Each endpoint in the picker shows which harnesses it serves ("Works with Claude Code",
+  "Works with Codex"); an endpoint that serves none of the agent's harnesses says "No enabled
+  harness speaks this endpoint's API — use a LiteLLM endpoint to translate". The LLM key form
   offers only endpoints and scopes the governance permits, explains the
   required account ("Keys must belong to the corporate Anthropic
   organization"), shows the verified account after saving, and offers
@@ -727,10 +1332,15 @@ again" and "Show the getting-started guide again".
     created, the form is replaced by a step "Give agents access" listing the
     agents the caller can grant (workspace scope: the workspace's agents; org
     scope: grouped by the workspaces the caller owns), nothing preselected,
-    with "Give access" and "Skip". For a connection it grants full access; for
-    a `custom_only` app it first asks for the allowed tools (all others
-    blocked) and applies that custom grant to each selected agent. Agents that
-    already had access are shown as such. Errors name the agent.
+    with "Give access" and "Skip". (Phase 5, FIX-147, D-233) For a connection the step
+    shows the **same grant form as the agent's Access tab** (`GrantForm`): **Full access** is
+    preselected, **Custom** offers Allow / Ask / Block per tool, grouped Read and Write with a
+    group-wide setter ("Allow all Read" in one click) and the approval timeout; a `custom_only`
+    app starts on Custom with every tool blocked and no Full option. The chosen grant (`mode`,
+    `allow_tools`, `ask_tools`, `ask_timeout_secs`) is applied to each selected agent. Agents
+    that already had access are shown as such with an **Edit** button that opens that agent's
+    own grant editor (the bulk call never changes an existing grant, C-504). Errors name the
+    agent.
   - Every credential row has an **Access** action (owners): the agents that
     have it (`GET …/grants`), "Remove" per agent (agent-side `DELETE`) and the
     same add picker.
@@ -760,20 +1370,93 @@ again" and "Show the getting-started guide again".
   **Freeze workspace**; frozen workspaces and orgs show a banner on every page.
 
 ### Instance administration (`/admin/*`, instance admins only)
+(phase 5, P5-ADMDEL, D-234) **Organizations** (`/admin/orgs`): a `DataTable` of every
+organization — name, slug, members, workspaces, agents, created, state badges ("Frozen",
+"No owner") — with a row **Actions** menu: Freeze / Unfreeze (as before), **Workspaces**
+and **Delete organization…**. **Workspaces** opens `/admin/orgs/<id>`: the organization's
+counts and a table of its workspaces (name, slug, "Personal" badge, agents, created), each
+with **Delete workspace…**. Both deletes use a danger `FormDialog`: it names what goes
+("Deletes the organization Acme with its 4 workspaces, 12 agents and 30 members'
+access. Conversations, credentials and settings are deleted; the audit log and usage
+records are kept. This cannot be undone."), asks for the slug typed exactly, and on 412
+`reauth_required` runs the same re-authentication step as account deletion, then
+retries once. On success the list refreshes and a status notice names what was
+deleted. The ownerless-organization banner (FIX-050) links to the organization's row.
+No content of an organization is shown anywhere on these pages (`04 §Instance admins`).
+
+(phase 5, SPEC-SETTINGS, D-236..D-238, C-770..C-784; not built yet: SET-1 the shell, SET-2..SET-5
+and FIX-124 the sections) **Settings** (`/admin/settings`): the instance settings of `15 §Instance
+settings`, one page per section, grouped under **Settings** in the admin navigation: Governance,
+LLM endpoints, Sign-in, Email, Secret stores (FIX-124, `/admin/secret-stores`), Agents & sandboxes,
+Approvals, Retention & storage, Skills, Directory sync, Previews, Terminal, Limits
+(`/admin/settings/<section>`, the section id with `-` for `_`).
+- **Index** (`/admin/settings`): a `Section` per settings section with its description, the number
+  of keys configured in Helm and set in the dashboard, the last change (who, when) and a link; a
+  `Notice` (`neutral`) when keys are locked: "N settings are configured in Helm and cannot be
+  changed here. To manage one here, remove it from your Helm values and upgrade: it keeps its
+  current value." with a disclosure listing each key and its Helm key (dismissed per viewer in
+  local storage). Actions: **Export** (YAML, or JSON from a menu) and **Import…** (`FormDialog`
+  `xl`: paste or choose a file, then a per-section diff table from the dry run, keys that would be
+  ignored because Helm sets them to the same value, and errors; **Apply** is enabled only without
+  errors and runs the re-authentication step on 412).
+- **Section page**: `PageHeader` (title, one-line description, last change), then the section's
+  settings in `FormSection`s, each through the **`SettingField`** primitive (below). One
+  `FormActions` row: **Save** (primary) and **Discard changes**. Save first calls the preview
+  route: when it reports loosening keys or affected organizations, a `ConfirmDialog` lists them
+  ("This allows more than before: … — affects 3 organizations: Acme, Physics, Beams") before the
+  PUT; otherwise it saves directly. 409 `stale_revision` shows a `Notice` ("Someone changed these
+  settings meanwhile") with **Reload** (the typed values are kept until reload); 409
+  `setting_locked` reloads the page (Helm changed under it); 412 runs the same
+  re-authentication step as account deletion and retries once; 422 errors land on their fields,
+  and an error on a key of another section names it with a link. A success shows a status notice
+  "Saved. Applied to every replica within seconds."
+- **Keyed lists** (OIDC providers, secret stores, LLM endpoints, rate-limit class overrides) are an
+  `ItemList` of entries, each with a source `Badge` ("Managed by Helm" for locked entries, which open
+  read-only), edited in a `FormDialog`; an id already used by a Helm entry is shown as an error on
+  the dialog's id field (`entry_id_in_helm`); **whole lists** (allow-lists, CIDRs, harnesses) are one field edited as
+  a list, locked as a whole.
+- (phase 5, P4-LLM spec batch, D-260, D-262, C-811) **LLM endpoints**: the endpoint dialog shows
+  the chosen provider's own fields (OpenAI organization/project; Azure resource URL and
+  deployment names; Bedrock region and optional VPC endpoint URL; Vertex project and location;
+  compatible base URL, auth header and models path) and hides `allowed_paths` for Bedrock and
+  Vertex. Each row shows the harnesses the endpoint serves as `Badge`s and, when it serves none,
+  a `Notice` ("No enabled harness speaks this API. Put a LiteLLM endpoint in front to translate.").
+  A row marked `needs_allowed_private` shows a warning `Badge` "Private address not allowed" with a
+  link to Limits › `gateway.allowed_private`; the preview's `endpoint_resolves_private` warning
+  appears in the save confirmation; `http_needs_private_host` and `endpoint_host_claimed` land on
+  the base URL field.
+- **Secrets** are write-only fields: "Set" / "Not set" with **Replace…** and **Remove**; the value
+  is never shown, and the page never receives it.
+- **Org pages**: "enforced by instance" hints (governance, BYO, retention) name the setting; for an
+  instance admin they link to it (`/admin/settings/<section>#<key>`), for everyone else they read
+  "Set by the instance administrator".
+- Every page: tokens only, both themes, no horizontal scroll at 390 px (a `SettingField` stacks its
+  label, control and source below 768 px).
+
+The **Identity** page (P4-IDP-1, read-only) becomes the editable **Sign-in** section (SET-4); the
+read-only sign-up mode on **Sign-up & placement** links to it.
 Overview (versions, gateways, hook hosts, runners, connectors, active snapshot
 hash; phase 2, RFE-006: frozen orgs with an instance-admin freeze/unfreeze action; RFE-015: a **Storage** page — blob/attachment bytes per org, big-table sizes; phase 4, P4-S3: the active blob backend, bytes and counts per backend, and for `s3` the bucket, prefix, health ("reachable" / "unreachable since …"), encryption and versioning state — never credentials; an unreachable store shows a banner and uploads show "Attachment storage is temporarily unavailable, try again in a moment" instead of the quota text; an expired chip is unchanged), Users, **Plugins** (installed packages, upload, pending approvals with a
 permissions review screen showing publisher, version, signer, hooks, egress per
 hook, context variables, host claims, and the diff against the previously
-approved version; (phase 5, P5-GUIDE-3, C-648, SEC-90) an **Agent guide** section per app, on the
+approved version; (phase 5, P5-GUIDE-3, C-648, SEC-117) an **Agent guide** section per app, on the
 package page and in the review: the summary, the essentials and the guide files with their sizes,
 each marked added / changed / removed against the active version, under the sentence "Agents that
 use this app can read this text. It is written by the publisher."; a file opens in the shared
 preformatted viewer as plain text, never rendered as Markdown or HTML, long lines scrolling inside
 the viewer only (`24 §9`); reject/disable/uninstall with orphan warnings), **Host
-claims** (conflicts and winners), **Trusted keys**, **Connectors** (provision,
+claims** (conflicts and winners), **Trusted keys**, **Audit** (FIX-125, C-638: `/admin/audit`, the instance audit log — rows without an organization by default, a scope toggle "Instance / All organizations" with an organization filter and column, action-prefix, security-critical, and from/to date filters; the table and filter bar are the shared `AuditPanel` that the org audit page also uses), **Addon sources** (phase 5,
+P5-ASRC, D-250: third-party app-package repositories at `/admin/addon-sources` —
+list with key fingerprint and check status, add with a preview/trust review of the
+repo's signing key before anything is registered, "Check now", per-source schedule
+(`6h…1mo`, `never` = manual only), remove (refused while packages are active; the
+confirm states that packages stay), and a re-confirm flow when a repo's signing key
+changed: old and new fingerprint side by side, the trusted key is updated in the same
+audited transaction; the plugins list gains the source name, "Update available"
+badges and a "Check for updates" button), **Connectors** (provision,
 token rotation, manifest approval with capability/setup-field diff; (phase 4, P4-MCON) see
 below), **Runners**
-(provision, token, replicas, capacity; FIX-025, D-158, C-586: each runner has a
+(capacity table per runner — backend, running sandboxes of the declared limit, live replicas, version, last seen — and a **Rotate token** action with a grace period for the old token and a one-time copy of the new one; FIX-121, D-211, C-694/C-695; **provisioning (adding and removing runners) is Helm/CLI, not the dashboard**; FIX-025, D-158, C-586: each runner has a
 **Start failures** section listing the recent failures (30 days) with the time,
 code (`10 §Failure semantics`), sanitised human reason, the start attempt's last
 phase, the elapsed seconds and the pod's Warning events — so a production
@@ -781,9 +1464,13 @@ phase, the elapsed seconds and the pod's Warning events — so a production
 kubectl commands as the fallback in `15`/operator docs; FIX-029, D-160, C-614:
 each row names the agent and clicking it opens a **Start diagnostics** drawer
 with that agent's failure history (the C-614 route), so an admin can tell
-"this agent keeps failing" from "the runner is failing everyone"), **Instances** (instance-wide app instances, D-74), **OAuth clients** (instance-level).
+"this agent keeps failing" from "the runner is failing everyone"), **Self-hosted apps** (`/admin/instances`, D-74, FIX-132: every registration, instance-wide and per-organization, with an Organization column and filter; **Make instance-wide** on an organization's registration, with a confirmation, audited `app_instance.promote`; the registration error offers the same action when an organization already registered the host, and links an instance admin to Host claims for a static claim; phase 5, FIX-145: the same Path field and `base_url` display as the org page), **OAuth clients** (instance-level).
 (phase 4, P4-PRV-2) a **Previews** line when `previews.enabled`: relay replicas
 (`GET /v1/admin/relays`), the domain, share count and a "no relay seen" warning.
+(phase 5, P4-SSH-2) an **SSH** line when `features.ssh`: terminator replicas (`GET
+/v1/admin/terminators`: version, host-key fingerprint, open sessions, last seen), a "no SSH server
+seen" warning, and a warning when live replicas present **different** host keys (a half-finished
+host-key rotation: clients will see a host-key mismatch).
 (phase 4, P4-ONB-1, D-140) **Sign-up & placement** (`04 §New-user placement`): sign-up
 mode shown read-only (config); placement mode; default org (pick or create); shared
 workspaces with roles; personal workspace on/off, role, name template with a live
@@ -803,6 +1490,8 @@ count and the remediation — restore an owner in the dashboard or run the repai
 operator docs — because the gateway refuses every credential of such an organization.
 
 #### Admin: connectors (phase 4, P4-MCON, `13 §3.1`)
+(FIX-120, C-690..C-692) Below the cards the page has **Connector hosts**: a table of connector-host tokens (name, bound connector types, status `active`/`refused`/`revoked`, last used) with Revoke, and a form that issues a token for a name and a list of types, shown once in the one-time dialog; a notice says when the shared bootstrap token is refused.
+
 The Connectors page lists every connector as a card: icon and name, **Managed** or
 **Self-hosted** badge, status chip (`Waiting for the connector host` / `Running` /
 `Error` with the host's message / `Needs approval` / `Disabled`), the number of integrations,
@@ -819,6 +1508,16 @@ and for managed ones the hosts reporting it. The primary action is **Add connect
    placeholders, `secret` as password inputs, `generated_secret` as a read-only "Generated
    automatically" line. Validation errors from the API map to their fields.
 4. **Add**: one request (C-451). A 409 `stale_manifest` reloads the type and returns to step 2.
+
+(FIX-127, D-195(g), D-219) **One-click add.** A type whose `instance_setup` fields are all
+optional or generated (Mattermost) is added from the choose step with a single **Add** button: the
+review summary (capabilities, public callbacks, publisher, signature) sits inline above it, and the
+settings form is collapsed under **Advanced** (fields flagged `advanced: true`, C-715, always
+there; with no required field nothing else is shown). A type with a required field keeps the
+three steps. There is **no auto-add**: adding exposes public callback endpoints and approves a
+manifest, so it stays an explicit instance-admin act (built-in *app packages* auto-activate;
+connectors do not). To make that findable, Admin › Setup and Overview show a **"Mattermost is
+available — add it"** callout when a built-in type is announced and not added (`added: false`).
 
 A managed connector's detail view has **Settings** (same form; a set secret shows "Set ·
 updated <date>" with **Replace** and, if optional, **Clear**; generated secrets have
@@ -907,12 +1606,59 @@ At first sign-in the user lands on a **Welcome** page in the workspace placement
 
 ## Key flows
 
+- **App families** (phase 5, FIX-135, D-242, C-744): apps that declare `about.family` are **one tile** in the Apps tab (named by the family, connection counts summed, Details opens the hosted member); the connect dialog of a family opens with **"Where does your <family> run?"** (ChoiceCards: the hosted variant, then each active registered server of the family's instance-bound apps as "<variant> · <label>" with its address; a notice with a **Register a server…** link to Admin › Self-hosted apps for instance admins, or "ask an administrator" for others), then the chosen app's own methods and form with the server already selected (no second instance picker). Everywhere else an app is named — connections, grant dialogs, availability, OAuth clients, instances — "<family> · <variant>" through `appDisplayName` / `AppName` (`web/src/lib/api/app-name.ts`); a test fails if one of those surfaces stops importing it.
 - **Connect window**: opened as a popup from the Apps tab; renders the app's
   connect methods (fields with help links, selects with warnings, `show_when`
   conditions, file and JSON-file imports), the requested scopes with names and
   access levels, the connect note and setup guide; OAuth methods redirect; the
+  (Phase 5, FIX-149, D-272, C-842 — **supersedes "popup", "redirect" and "posts to the opener"
+  above**) **Connect dialog, not a window.** Connect (Apps tab) and Reconnect (Connections tab)
+  open the connect form as a `Dialog` (`size="lg"`) on the page itself, like Details; nothing
+  of the dashboard opens in another browser window. A deep link
+  (`…/credentials?tab=apps&connect=<app>`) opens the Apps tab with the dialog open, and the old
+  `…/apps/<app>/connect` route only redirects there. An OAuth method's **Continue to sign in**
+  opens the provider's sign-in page in a separate window with no handle on the dashboard (no
+  `opener`). Meanwhile the dialog says "Waiting for you to sign in to <App>…" and offers
+  **Open the sign-in window again** and **Cancel**. The callback page reports the result over a
+  same-origin `BroadcastChannel` (C-842). The dialog then continues with missing scopes and
+  **Give agents access**, or shows the error. A sign-in window closed without a result returns
+  the dialog to the form.
+  The text below predates FIX-149: read "window" as this dialog;
   callback page posts a message to the opener (`{type: "aurora:connected",
-  connection_id}`) and closes.
+  connection_id}`) and closes. (FIX-123, D-195(a), D-214) **One app per service:** an app with
+  several connect methods opens on **"How do you want to connect?"**, a radio group of cards (the
+  shared `ChoiceCards` primitive) showing each method's `label`, its `description` (what it is,
+  when to use it) and a **Recommended** badge on the `recommended` one, which is preselected (a
+  method without a label shows its kind: "Sign in", "Access token or keys"). A reconnect opens on
+  the method the connection was made with (`Connection.connect_method`). Choosing a method shows
+  only that method's form. The grant editors offer only the tools that apply to the connection's
+  method (`Tool.connect_methods`; a connection with no recorded method hides nothing). One
+  catalogue tile per service: GitHub and AWS list no separate GitHub App / assume-role app.
+  (Phase 5, FIX-147) **Requested scopes** are the shared `ScopeGroups` (`PermissionGroups` with
+  On / Off rows): grouped Read / Write by `scope.access`, a group-wide On / Off and a control per
+  scope, not a flat checkbox list.
+  (Phase 5, FIX-136, D-241, C-741) **Permissions follow the token.** For a `fields` method that
+  declares scopes the window asks **"Which scopes did you give this token?"** (`Segmented`: *Detect
+  read scopes* — the default where the method has read probes — or *I will tick them*, a
+  `ScopeGroups` list); the Connections card shows the declared scopes "as you declared" with
+  **Edit scopes** (`PATCH scopes`). `GrantForm` (Access tab and Give agents access) takes the tools
+  the connection's known scopes cannot serve out of its groups and lists them in a collapsed
+  **"Not available with this connection's token (n)"** section with "Needs <scope>"; they cannot
+  be selected. Unknown scopes hide nothing.
+
+  (Phase 5, FIX-133, D-240, C-740) For an app that has write tools, every connect method also asks
+  **"What may agents do with this connection?"** (`ChoiceCards`): **Read only** (Recommended,
+  preselected: "Agents can look things up but never change anything: Aurora blocks every write
+  operation, whatever the token or the grants allow") or **Read and write**; the choice is sent as
+  `access`. A reconnect does not ask (it keeps the connection's value). Apps with only read tools
+  do not ask. The Connections list shows a **Read-only** badge and a **Make read-only** /
+  **Allow writes** button (`PATCH access`); the agent's grant editor for a read-only connection
+  starts with the note "Read-only connection: Aurora blocks every write tool through it, whatever
+  you choose below." Each method's description says what the vendor enforces itself (GitHub App
+  installation tokens and fine-grained personal access tokens can be read-only at GitHub; a
+  classic OAuth app's `repo` scope cannot) while Aurora's block applies to all of them.
+  Tokens only, both themes, no horizontal scroll at 390 px (`ws-app-connect` in the axe and narrow
+  route suites).
 - **Approval notifications (phase 2, RFE-011a)**: `approvals/stream` drives (1) the
   sidebar/tab-title counter "(N) Aurora" and (2) an optional **browser
   notification** — Account → "Notify me in this browser when an approval needs me"
@@ -923,7 +1669,7 @@ At first sign-in the user lands on a **Welcome** page in the workspace placement
   focuses the tab at the Approvals page. This is **not** Web Push: it needs an open
   tab. Account also has the "E-mail me approvals
   nobody is watching" switch (`approval_email`).
-- **Web Push (phase 4, RFE-011b, D-134, SEC-75, SEC-76)**: shown only when `GET /v1/push/config`
+- **Web Push (phase 5 (D-138, moved from phase 4), RFE-011b, D-134, SEC-75, SEC-76)**: shown only when `GET /v1/push/config`
   says `available` (the operator set `push.enabled`). **Account → Notifications** gets a
   **"Notify this device when an approval needs me, even when Aurora is closed"** card built from the
   shared patterns (section card, toggle, list rows, `Badge`, dialogs): the control needs a user
@@ -940,7 +1686,12 @@ At first sign-in the user lands on a **Welcome** page in the workspace placement
   where Web Push exists only for a site added to the Home Screen: the page shows that instruction and
   the app serves a static `/manifest.webmanifest` (`display: standalone`, icons from the brand
   folder, no tokens). On every dashboard load the page compares the device's `vapid_key_id` with
-  `config` and, if the key was rotated, re-subscribes silently and removes the old registration;
+  `config` and, if the key was rotated, re-subscribes silently and removes the old registration
+  ((P4-011B spec batch, D-266(c)(d), C-836) precisely: only in a browser holding the local opt-in
+  marker; it compares the browser subscription's `applicationServerKey` with
+  `config.vapid_public_key`, and when the server no longer lists this browser for the current
+  session it re-binds it with `rebind: true` — a 404 clears the marker and shows the opt-in card
+  again, so a different person signing in never inherits the device);
   **signing out** removes this device's subscription first (best effort; the server-side session
   binding ends delivery regardless, `07 §Web Push`). The in-tab notification above keeps working and
   is what a user with the tab open sees (the server does not push to a user with a live watcher).
@@ -954,7 +1705,13 @@ At first sign-in the user lands on a **Welcome** page in the workspace placement
     close, accept `data.url` **only** if it is a same-origin path starting with `/o/` (no scheme, no
     `//`, no backslash) else go to `/`, focus an existing Aurora window and navigate it, else open one.
     `pushsubscriptionchange` does nothing (the page re-syncs on its next load).
-- **Parked approvals (phase 4, RFE-011b)**: the Approvals page, the inline approval in the chat
+    (P4-011B spec batch, D-267(a), C-835, SEC-102) It is registered **only** by the Turn-on
+    gesture (never on page load for a person who has not opted in) and unregistered when this
+    browser's registration is removed; it also has no `importScripts` and no `clients.claim`, and a
+    web test fails if the file gains any of `fetch` listeners, `caches`, `importScripts` or network
+    calls. The CSP of `proxy.ts` gains `worker-src 'self'` and `manifest-src 'self'`; nothing else
+    loosens. Notification texts are C-835's. Offline caching is out of scope.
+- **Parked approvals (phase 5 (D-138, moved from phase 4), RFE-011b)**: the Approvals page, the inline approval in the chat
   and the workspace overview mark a parked approval with a **"Parked"** chip and the line "The agent
   has stopped waiting. If you approve, it will be told and can repeat this exact request once within
   <N> minutes", with the deadline countdown (`pending-soft` tokens like any pending item); the
@@ -963,6 +1720,14 @@ At first sign-in the user lands on a **Welcome** page in the workspace placement
   revoked grant (freeze) shows "Revoked". The transcript shows `approval.pending` with the chip and
   the platform follow-up message (door chip "Approval") when the agent resumes. Held approvals look
   as before. Everything follows §Visual design (tokens, primitives, both themes, 390 px).
+  (P4-011B spec batch, D-264, D-265(d), C-836) The "Approval" chip is derived from the follow-up's
+  door `{ kind: "system", ref: "approval:…" }`; a parked approval abandoned by a revocation shows
+  "No longer needed", a revoked grant "Revoked" with the cause from its notice. The rule editor's
+  and the grant dialog's *Approval timeout* take their bounds from `GET /v1/policy/approval-limits`
+  and, while parking is on, add the hint "Above <threshold> the agent stops waiting and is told when
+  you decide (up to <max>)"; simulate and the effective view show "parks" or "clamped to <max>".
+  Admin › Approvals renders the `approvals.park.*` settings through SET-5's section form; Admin ›
+  Overview shows "Web Push: off \| on (generated key, N devices) \| on (operator key)".
 - **Policy editor**: draft/publish ("Apply changes"), drag reorder with
   stale-revision detection, identity and target pickers (apps/tools from the
   catalogue, connections, secrets, network patterns), conditions, modifiers,

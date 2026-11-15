@@ -46,16 +46,14 @@ fn bearer(headers: &http::HeaderMap) -> Option<&str> {
         .filter(|t| !t.is_empty())
 }
 
-/// Local + shared take for one charge; `Err` is the 429 to answer.
-async fn take(
-    state: &AppState,
-    charges: &[Charge],
-    management: bool,
-) -> Result<(), (ScimError, Option<Charge>)> {
+/// Local + shared take for one charge; `Err` is the answer. On `Err` no token stays charged:
+/// a local refusal never consumed one, and `take_shared` refunds on a store refusal or
+/// `Closed`. Callers must not refund again.
+async fn take(state: &AppState, charges: &[Charge], management: bool) -> Result<(), ScimError> {
     if let Err(r) = state.api_limiter.take(charges) {
         metrics::counter!("aurora_api_rate_limited_total", "class" => r.class, "scope" => r.scope)
             .increment(1);
-        return Err((ScimError::rate_limited(r.retry_after_secs), None));
+        return Err(ScimError::rate_limited(r.retry_after_secs));
     }
     let class = if management {
         state.counters.management()
@@ -75,39 +73,24 @@ async fn take(
                     "scope" => r.scope
                 )
                 .increment(1);
-                (ScimError::rate_limited(r.retry_after_secs), None)
+                ScimError::rate_limited(r.retry_after_secs)
             }
             // A `closed` class refuses with 503 (never a 429: an outage is not a rate).
-            Err(api) => (
-                ScimError::new(
-                    axum::http::StatusCode::SERVICE_UNAVAILABLE,
-                    super::error::ScimType::None,
-                    api.message().to_owned(),
-                ),
-                None,
+            Err(api) => ScimError::new(
+                axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                super::error::ScimType::None,
+                api.message().to_owned(),
             ),
         });
     }
     Ok(())
 }
 
-fn refund(state: &AppState, charges: &[Charge]) {
-    state.api_limiter.refund(charges);
-}
-
 /// Axum middleware for the `/scim/v2` router (inside the client-IP layer). Resolves the
 /// bearer far enough to find its bucket: a *rejected* bearer is limited per IP instead.
 pub async fn middleware(State(state): State<AppState>, req: Request, next: Next) -> Response {
     let headers = req.headers().clone();
-    let scim_on = state.config.scim.enabled;
-    let Some(tok) = bearer(&headers) else {
-        // No bearer at all: the 401 is answered by the extractor (identical body). Without a
-        // credential there is no bucket; the per-IP limits of the unauthenticated surface are
-        // the rejected-bearer bucket only when a bearer was presented, so nothing is charged.
-        return next.run(req).await;
-    };
-    let _ = tok;
-    if !scim_on {
+    if !state.config.scim.enabled {
         // The whole surface is 404 while the instance switch is off; no buckets apply.
         return next.run(req).await;
     }
@@ -124,17 +107,40 @@ pub async fn middleware(State(state): State<AppState>, req: Request, next: Next)
             };
             match take(&state, &[charge(token_key(row.id))], true).await {
                 Ok(()) => {
+                    let method = req.method().as_str().to_owned();
+                    let resource = resource_label(req.uri().path());
+                    let live = row.is_live(chrono::Utc::now());
+                    let org = row.org_id;
                     let mut res = next.run(req).await;
+                    // The per-org error log (`/scim/status` `errors`): authenticated requests
+                    // only (the token's org is known; the 401 and the 429 are not logged: the
+                    // 401 has no org and both are counted by metrics). Best effort, sanitized
+                    // (method, resource kind, status, scimType: no body, token, detail or
+                    // id), and bounded by the token bucket above.
+                    let status = res.status().as_u16();
+                    if live && status >= 400 && status != 401 && status != 429 {
+                        let scim_type = res
+                            .extensions()
+                            .get::<super::error::ScimTypeMark>()
+                            .and_then(|m| m.0);
+                        super::management::record_scim_error(
+                            &state,
+                            org,
+                            &method,
+                            resource,
+                            i64::from(status),
+                            scim_type,
+                        )
+                        .await;
+                    }
                     // Remember the resolved token for the extractor (it re-reads; the row may
                     // have died in between, which the extractor then reports).
                     res.extensions_mut().insert(row);
                     res
                 }
-                Err((e, _)) => {
-                    // The local pre-filter already refused; the shared take may have consumed.
-                    refund(&state, &[charge(token_key(row.id))]);
-                    e.into_response()
-                }
+                // `take` already settled the bucket: a local refusal charged nothing, a store
+                // refusal or `Closed` was refunded once by `take_shared`.
+                Err(e) => e.into_response(),
             }
         }
         RateResolve::Rejected => {
@@ -149,16 +155,27 @@ pub async fn middleware(State(state): State<AppState>, req: Request, next: Next)
             };
             match take(&state, &[charge(rejected_key(&ip))], false).await {
                 Ok(()) => next.run(req).await,
-                Err((e, _)) => {
-                    refund(&state, &[charge(rejected_key(&ip))]);
-                    e.into_response()
-                }
+                Err(e) => e.into_response(),
             }
         }
         // A database failure while resolving: let the handler/extractor answer (500/401), not
         // the limiter.
         RateResolve::Error => next.run(req).await,
     }
+}
+
+/// The resource kind of a `/scim/v2` path (`Users`, `Groups`, …): never an id.
+fn resource_label(path: &str) -> &'static str {
+    path.split('/')
+        .find_map(|s| match s {
+            "Users" => Some("Users"),
+            "Groups" => Some("Groups"),
+            "ServiceProviderConfig" => Some("ServiceProviderConfig"),
+            "ResourceTypes" => Some("ResourceTypes"),
+            "Schemas" => Some("Schemas"),
+            _ => None,
+        })
+        .unwrap_or("")
 }
 
 enum RateResolve {

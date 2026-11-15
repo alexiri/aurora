@@ -89,6 +89,41 @@ pub(crate) fn replace_prefixed_segment(path: &mut String, prefix: &str, enc: &st
     *path = segs.join("/");
 }
 
+/// Shortest injected value that is searched for in a response; shorter ones would match by
+/// chance.
+const ECHO_MIN: usize = 4;
+
+/// (FIX-104, SEC-01) The forms of every injected value that ended up in the request URL (path or
+/// query, raw or percent-encoded): an upstream that echoes the URL must not hand them back to the
+/// agent. Values that are not in the URL (headers, bodies) are not searched for.
+pub(crate) fn url_needles<'a>(
+    values: impl IntoIterator<Item = &'a [u8]>,
+    path: &str,
+    query: Option<&str>,
+) -> Vec<Vec<u8>> {
+    let url = format!("{path}?{}", query.unwrap_or(""));
+    let mut out: Vec<Vec<u8>> = Vec::new();
+    for v in values.into_iter().filter(|v| v.len() >= ECHO_MIN) {
+        let enc = utf8_percent_encode(&String::from_utf8_lossy(v), ENC).to_string();
+        let raw = String::from_utf8_lossy(v).into_owned();
+        if url.contains(&enc) || url.contains(&raw) {
+            for n in [v.to_vec(), enc.into_bytes()] {
+                if !out.contains(&n) {
+                    out.push(n);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Whether `hay` contains any of `needles`.
+pub(crate) fn echoes(needles: &[Vec<u8>], hay: &[u8]) -> bool {
+    needles
+        .iter()
+        .any(|n| !n.is_empty() && hay.windows(n.len()).any(|w| w == n.as_slice()))
+}
+
 pub fn apply(cand: &SecretCand, value: &[u8], t: Target<'_>) -> Result<(), InjectError> {
     match &cand.injection {
         Injection::Llm(l) => {
@@ -175,6 +210,7 @@ mod tests {
             scope: Level::Workspace,
             kind: SecretKind::Generic,
             path: None,
+            claim_port: None,
             injection: Injection::Recipe(r),
             vref: SecretRef::ext("m", "p", None, "1").unwrap(),
             version: 1,

@@ -9,7 +9,7 @@ use aurora_db::DbError;
 use aurora_db::repo::invitations::{self as repo, NewInvitation};
 use aurora_db::repo::{members, orgs, users, workspaces};
 use axum::http::StatusCode;
-use sqlx::PgConnection;
+use sqlx::{PgConnection, PgPool};
 use uuid::Uuid;
 
 fn limit_reached() -> ApiError {
@@ -94,7 +94,7 @@ pub async fn create(
         return Err(already_member());
     }
     if let Some(cap) = max_members(&settings) {
-        let used = repo::count_active_members(&mut *tx, org).await?
+        let used = repo::count_seats(&mut *tx, org).await?
             + repo::count_pending_except(&mut *tx, org, &email).await?;
         if used + 1 > cap {
             return Err(limit_reached());
@@ -211,7 +211,7 @@ pub async fn accept(
             "This invitation was sent to a different email address.",
         ));
     }
-    let bound = accept_in_tx(&mut tx, &user, &inv).await?;
+    let bound = accept_in_tx(&mut tx, &state.pool, &user, &inv).await?;
     let org_row = orgs::get(&mut *tx, inv.org_id, user_id)
         .await?
         .ok_or_else(|| ApiError::internal("Organization missing."))?;
@@ -229,6 +229,7 @@ pub async fn accept(
 /// duplicate-membership failure skips that invitation (it stays pending for an explicit accept).
 pub async fn accept_pending_for_email(
     tx: &mut PgConnection,
+    pool: &PgPool,
     user: &users::UserRow,
 ) -> Result<usize, ApiError> {
     let pending = repo::lock_pending_by_email(&mut *tx, &user.email).await?;
@@ -239,7 +240,7 @@ pub async fn accept_pending_for_email(
             .execute(&mut *tx)
             .await
             .map_err(DbError::from)?;
-        match accept_in_tx(&mut *tx, user, inv).await {
+        match accept_in_tx(&mut *tx, pool, user, inv).await {
             Ok(_) => {
                 // RFE-008: the JIT acceptance is audited in the sign-in transaction; a failed
                 // audit write fails the sign-in (nothing is accepted).
@@ -279,39 +280,49 @@ pub async fn accept_pending_for_email(
 
 async fn accept_in_tx(
     tx: &mut PgConnection,
+    pool: &PgPool,
     user: &users::UserRow,
     inv: &repo::AcceptRow,
 ) -> Result<Vec<Uuid>, ApiError> {
     if members::get(&mut *tx, inv.org_id, user.id).await?.is_some() {
         return Err(already_member());
     }
+    // (FIX-080) The org lock first — the lock every SCIM writer takes — so the directory
+    // state read below cannot change before the membership is inserted, and the seat count
+    // cannot move; the membership is re-read under it.
+    repo::lock_org(&mut *tx, inv.org_id)
+        .await?
+        .ok_or_else(|| ApiError::not_found("Organization not found."))?;
+    if members::get(&mut *tx, inv.org_id, user.id).await?.is_some() {
+        return Err(already_member());
+    }
     // (P4-GRP-2, SEC-73) SCIM gate on acceptance: a `removed` or `suspended` directory link
     // refuses (deprovisioned people are not re-admitted by an invitation), and an `exclusive`
-    // org admits only people with an `active` link. The gate runs before the seat-cap check.
-    // Denied, not cancelled: the invitation stays pending for when the directory state (or the
-    // org setting) changes.
-    let gate = crate::domains::scim::gates::admission_gate(&mut *tx, inv.org_id, user.id).await?;
-    if let Some(reason) = gate.reason() {
-        crate::domains::scim::gates::audit_denied(
-            &mut *tx,
+    // org admits only people with an `active` link; then the seat cap. Denied, not cancelled:
+    // the invitation stays pending for when the directory state (or the org setting) changes.
+    // The route answers an error (and the sign-in path abandons a savepoint), so the denied
+    // row is written on its own connection to survive.
+    if let Some(reason) =
+        crate::domains::scim::gates::admit_new_member(&mut *tx, inv.org_id, user.id).await?
+    {
+        crate::domains::scim::gates::audit_denied_detached(
+            pool,
             inv.org_id,
             user.id,
             "invitation",
             reason,
         )
         .await?;
-        return Err(forbidden(
-            "scim_refused",
-            "This organization is managed by your directory; ask your administrator.",
-        ));
-    }
-    let (_, settings) = repo::lock_org(&mut *tx, inv.org_id)
-        .await?
-        .ok_or_else(|| ApiError::not_found("Organization not found."))?;
-    if let Some(cap) = max_members(&settings)
-        && repo::count_active_members(&mut *tx, inv.org_id).await? + 1 > cap
-    {
-        return Err(limit_reached());
+        return Err(
+            if reason == crate::domains::scim::gates::MEMBER_LIMIT_REASON {
+                limit_reached()
+            } else {
+                forbidden(
+                    "scim_refused",
+                    "This organization is managed by your directory; ask your administrator.",
+                )
+            },
+        );
     }
     members::insert(&mut *tx, inv.org_id, user.id, &inv.role).await?;
     let mut bound = repo::workspaces_in_org(&mut *tx, inv.org_id, &inv.workspace_ids).await?;

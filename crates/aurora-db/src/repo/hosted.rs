@@ -328,6 +328,9 @@ pub async fn session_of(
 }
 
 /// `session` report: ignored when the epoch is stale or the conversation is another agent's.
+/// (FIX-097) A session reference this report replaces is queued for purge in the same
+/// transaction: deletion purges only the current reference, so a superseded one would
+/// otherwise stay readable in the agent's home (SEC-47).
 pub async fn set_session(
     conn: &mut PgConnection,
     conversation: Uuid,
@@ -335,19 +338,26 @@ pub async fn set_session(
     session_ref: &str,
     epoch: i64,
 ) -> Result<bool, DbError> {
-    Ok(sqlx::query(
-        "UPDATE conversations SET harness_session_ref = $3, harness_session_epoch = $4,
+    let row: Option<(Option<String>,)> = sqlx::query_as(
+        "UPDATE conversations c SET harness_session_ref = $3, harness_session_epoch = $4,
              updated_at = now()
-         WHERE id = $1 AND agent_id = $2 AND harness_session_epoch <= $4",
+         FROM (SELECT id, harness_session_ref AS old FROM conversations
+                WHERE id = $1 AND agent_id = $2 AND harness_session_epoch <= $4 FOR UPDATE) o
+         WHERE c.id = o.id RETURNING o.old",
     )
     .bind(conversation)
     .bind(agent)
     .bind(session_ref)
     .bind(epoch)
-    .execute(conn)
-    .await?
-    .rows_affected()
-        > 0)
+    .fetch_optional(&mut *conn)
+    .await?;
+    let Some((old,)) = row else {
+        return Ok(false);
+    };
+    if let Some(old) = old.filter(|o| !o.is_empty() && o != session_ref) {
+        super::lifecycle::enqueue_purge(&mut *conn, agent, Some(conversation), &old).await?;
+    }
+    Ok(true)
 }
 
 /// `memory/index.md` lines: `(key, title, description, first content line)`.
@@ -510,6 +520,10 @@ pub struct SteerCand {
     pub conversation_id: Uuid,
     pub text: String,
     pub speaker_label: String,
+    /// (C-725) The event the follow-up quotes.
+    pub reply_to_seq: Option<i64>,
+    /// (C-726) Files bound to the follow-up.
+    pub n_files: i64,
     pub sandbox_id: Uuid,
     pub boot_id: Uuid,
 }
@@ -523,6 +537,9 @@ pub async fn steer_candidates(
 ) -> Result<Vec<SteerCand>, DbError> {
     Ok(sqlx::query_as(&format!(
         "SELECT f.id AS followup_id, t.id AS turn_id, t.conversation_id, f.text, f.speaker_label,
+                f.reply_to_seq,
+                (SELECT count(*) FROM attachments a WHERE a.turn_id = f.id
+                    AND a.direction = 'in' AND a.purged_at IS NULL) AS n_files,
                 s.id AS sandbox_id, s.boot_id
          FROM turns f JOIN turns t ON t.id = f.parent_turn_id
            JOIN sandboxes s ON s.agent_id = t.agent_id
@@ -655,17 +672,30 @@ pub async fn touch_progress(conn: &mut PgConnection, turn: Uuid) -> Result<bool,
         > 0)
 }
 
-/// Active (`queued`) hosted turns that have not reached a sandbox yet, for the `no_model_key`
-/// check before any start.
-pub async fn queued_hosted_turns(
+/// (FIX-115) Hosted agents with a `queued` turn that has not reached a sandbox yet, oldest first,
+/// for the `no_model_key` / harness check before any start: one row per agent
+/// `(agent, oldest queued turn's created_at)`, keyset-paged after `after`. Turns are
+/// per-agent facts here, so sixteen queued turns of one agent that cannot start no longer hide
+/// the turn of another agent behind them.
+pub async fn queued_hosted_agents(
     conn: &mut PgConnection,
+    after: Option<(DateTime<Utc>, Uuid)>,
     limit: i64,
-) -> Result<Vec<(Uuid, Uuid, Uuid)>, DbError> {
+) -> Result<Vec<(Uuid, DateTime<Utc>)>, DbError> {
+    let (ts, agent) = match after {
+        Some((t, a)) => (Some(t), Some(a)),
+        None => (None, None),
+    };
     Ok(sqlx::query_as(
-        "SELECT t.id, t.conversation_id, t.agent_id FROM turns t JOIN agents a ON a.id = t.agent_id
+        "SELECT t.agent_id, min(t.created_at) AS first_at
+         FROM turns t JOIN agents a ON a.id = t.agent_id
          WHERE t.role = 'turn' AND t.status = 'queued' AND a.kind = 'hosted'
-         ORDER BY t.created_at LIMIT $1",
+         GROUP BY t.agent_id
+         HAVING $1::timestamptz IS NULL OR (min(t.created_at), t.agent_id) > ($1, $2)
+         ORDER BY first_at, t.agent_id LIMIT $3",
     )
+    .bind(ts)
+    .bind(agent)
     .bind(limit)
     .fetch_all(conn)
     .await?)
@@ -1107,6 +1137,10 @@ pub struct HomeAppConn {
     pub connection_id: Uuid,
     pub app_id: String,
     pub label: String,
+    /// The registered instance's host when the connection is bound to one (D-74).
+    pub instance_host: Option<String>,
+    /// (FIX-145, D-231) The registered instance's base path.
+    pub instance_base_path: Option<String>,
 }
 
 /// Active connections the agent holds a grant on, stable order.
@@ -1115,8 +1149,10 @@ pub async fn home_app_connections(
     agent: Uuid,
 ) -> Result<Vec<HomeAppConn>, DbError> {
     Ok(sqlx::query_as(
-        "SELECT c.id AS connection_id, c.app_id, c.label
+        "SELECT c.id AS connection_id, c.app_id, c.label, ai.host AS instance_host,
+                ai.base_path AS instance_base_path
          FROM grants g JOIN app_connections c ON c.id = g.connection_id
+         LEFT JOIN app_instances ai ON ai.id = c.instance_id
          WHERE g.agent_id = $1 AND c.status = 'active'
          ORDER BY c.app_id, g.created_at, g.id",
     )

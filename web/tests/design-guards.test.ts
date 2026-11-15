@@ -85,6 +85,23 @@ describe("token guard", () => {
   });
 });
 
+// (FIX-149, D-272) A view on top of a page is a `Dialog`, never a dashboard page in another browser window. The only
+// `window.open` calls are the OAuth provider's sign-in window and the terminal's owner-requested "Open in new window"
+// (FIX-138: a full standalone terminal page in a new tab, `noopener`); `window.opener` and `window.close` appear nowhere.
+describe("window guard", () => {
+  const WINDOW_OPEN_ALLOWED = new Set(["lib/api/apps.ts", "components/agents/terminal-tab.tsx"]);
+  it("opens windows only in the sign-in helper and the terminal's Open in new window", () => {
+    expect(offenders(/\bwindow\.open\s*\(/, WINDOW_OPEN_ALLOWED)).toEqual([]);
+  });
+  it("keeps each allowed call to exactly one call site", () => {
+    const count = (path: string) => (readFileSync(join(SRC, path), "utf8").match(/\bwindow\.open\s*\(/g) ?? []).length;
+    expect(count("lib/api/apps.ts")).toBe(1);
+  });
+  it("never refers to window.opener or window.close", () => {
+    expect(offenders(/\bwindow\.(opener|close)\b/)).toEqual([]);
+  });
+});
+
 describe("inline-style guard", () => {
   it("has no style= prop or attribute anywhere in web/src (the production CSP blocks it)", () => {
     expect(offenders(STYLE_ATTR)).toEqual([]);

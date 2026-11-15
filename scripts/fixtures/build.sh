@@ -46,7 +46,7 @@ pack() { # <name> -> dist/<name>.aurora-plugin ; honours the `mutate` file
     *) "$AURORA" plugin build "$STAGE/$name" --out "$out" --key "$KEY" >/dev/null ;;
   esac || return 1
   case "$mode" in
-    tamper|symlink|traversal|unknown-path|duplicate) $PY mutate "$out" "$mode" ;;
+    tamper|symlink|traversal|unknown-path|duplicate|corrupt|entry-type|manifest-not-utf8) $PY mutate "$out" "$mode" ;;
     drop-wasm) $PY mutate "$out" "$mode" && "$AURORA" plugin sign "$out" --key "$KEY" >/dev/null ;;
   esac
 }

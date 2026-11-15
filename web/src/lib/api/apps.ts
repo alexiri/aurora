@@ -1,9 +1,10 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 
 import { api, ApiError } from "./client";
+import { fetchAllPages, PAGE_LIMIT } from "./paging";
 import type { components } from "./schema";
 import { unwrap } from "./unwrap";
 
@@ -30,21 +31,32 @@ export const appKeys = {
   connections: (s: CredScope) => ["connections", s.kind, "id" in s ? s.id : ""] as const,
   clients: (s: CredScope) => ["oauth-clients", s.kind, "id" in s ? s.id : ""] as const,
   availability: (org: string) => ["app-availability", org] as const,
-  instances: (s: InstanceScope) => ["app-instances", s.kind, "id" in s ? s.id : ""] as const,
+  instances: (s: InstanceScope) =>
+    ["app-instances", s.kind, "id" in s ? s.id : "", s.kind === "instance" ? `${s.all ?? false}:${s.org ?? ""}` : ""] as const,
 };
 
-/** Where app instances are listed/registered: an organization (its own and the instance-wide ones) or instance-wide. */
-export type InstanceScope = { kind: "organization"; id: string } | { kind: "instance" };
+/**
+ * Where self-hosted apps (app instances, D-74) are listed/registered: an organization (its own and the
+ * instance-wide ones) or instance-wide. `all` (the admin list, FIX-132) also lists every organization's
+ * registrations, optionally of one `org`.
+ */
+export type InstanceScope = { kind: "organization"; id: string } | { kind: "instance"; all?: boolean; org?: string };
 
-/** Self-hosted app instances (D-74): instance-wide and the org's own for an org scope. */
+/** Self-hosted apps (D-74): instance-wide and the org's own for an org scope. */
 export function useAppInstances(scope: InstanceScope | undefined) {
   return useQuery({
     queryKey: scope ? appKeys.instances(scope) : ["app-instances", "none"],
     queryFn: () =>
       scope!.kind === "organization"
         ? unwrap(api.GET("/v1/orgs/{org}/app-instances", { params: { path: { org: scope!.id } } }))
-        : unwrap(api.GET("/v1/admin/app-instances")),
+        : unwrap(
+            api.GET("/v1/admin/app-instances", {
+              params: { query: { scope: scope!.all ? "all" : undefined, org: scope!.org || undefined } },
+            }),
+          ),
     enabled: !!scope,
+    // Changing the admin list's organization filter keeps the table (and the filter) on screen.
+    placeholderData: keepPreviousData,
     retry: false,
   });
 }
@@ -56,6 +68,16 @@ export function useCreateAppInstance(scope: InstanceScope) {
       scope.kind === "organization"
         ? unwrap(api.POST("/v1/orgs/{org}/app-instances", { params: { path: { org: scope.id } }, body }))
         : unwrap(api.POST("/v1/admin/app-instances", { body })),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["app-instances"] }),
+  });
+}
+
+/** Make an organization's registration instance-wide (instance admin, FIX-132). */
+export function usePromoteAppInstance() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      unwrap(api.POST("/v1/admin/app-instances/{id}/promote", { params: { path: { id } } })),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["app-instances"] }),
   });
 }
@@ -157,9 +179,19 @@ export function useConnections(scope: CredScope & { kind: "workspace" | "organiz
   return useQuery({
     queryKey: appKeys.connections(scope),
     queryFn: () =>
-      scope.kind === "workspace"
-        ? unwrap(api.GET("/v1/workspaces/{ws}/connections", { params: { path: { ws: scope.id } } }))
-        : unwrap(api.GET("/v1/orgs/{org}/connections", { params: { path: { org: scope.id } } })),
+      fetchAllPages((cursor) =>
+        scope.kind === "workspace"
+          ? unwrap(
+              api.GET("/v1/workspaces/{ws}/connections", {
+                params: { path: { ws: scope.id }, query: { limit: PAGE_LIMIT, cursor } },
+              }),
+            )
+          : unwrap(
+              api.GET("/v1/orgs/{org}/connections", {
+                params: { path: { org: scope.id }, query: { limit: PAGE_LIMIT, cursor } },
+              }),
+            ),
+      ),
     retry: false,
   });
 }
@@ -167,7 +199,7 @@ export function useConnections(scope: CredScope & { kind: "workspace" | "organiz
 export function usePatchConnection(scope: CredScope & { kind: "workspace" | "organization" }) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, ...body }: { id: string; status?: "active" | "disabled"; label?: string }) =>
+    mutationFn: ({ id, ...body }: { id: string; status?: "active" | "disabled"; label?: string; access?: "read" | "write"; scopes?: string[] }) =>
       unwrap(api.PATCH("/v1/connections/{id}", { params: { path: { id } }, body })),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: appKeys.connections(scope) });
@@ -267,31 +299,69 @@ export function connectApp(app: string, body: ConnectRequest): Promise<ConnectRe
   return unwrap(api.POST("/v1/apps/{app}/connect", { params: { path: { app } }, body }));
 }
 
-export const CONNECT_MESSAGE = "aurora:connected";
+// ---- OAuth sign-in window and its result channel (D-272, C-842) ----
 
-/** Accept only same-origin `aurora:connected` messages; returns the connection id. */
-export function parseConnectedMessage(ev: { origin: string; data: unknown }, origin: string): string | null {
-  if (ev.origin !== origin) return null;
-  const d = ev.data;
-  if (typeof d !== "object" || d === null) return null;
-  const { type, connection_id } = d as Record<string, unknown>;
-  return type === CONNECT_MESSAGE && typeof connection_id === "string" ? connection_id : null;
+export const CONNECT_CHANNEL = "aurora-connect";
+
+/** What the OAuth callback page reports on the channel (ids and scope names; nothing secret). */
+export type ConnectChannelMessage =
+  | { type: "connected"; appId: string; connectionId: string; missingScopes: string[] }
+  | { type: "failed"; appId: string | null; error: string };
+
+/** Accept only the callback page's two message shapes; anything else (including our own acks) is null. */
+export function parseConnectMessage(data: unknown): ConnectChannelMessage | null {
+  if (typeof data !== "object" || data === null) return null;
+  const d = data as Record<string, unknown>;
+  if (d.type === "aurora:connected" && typeof d.app_id === "string" && typeof d.connection_id === "string") {
+    const missing = Array.isArray(d.missing_scopes) ? d.missing_scopes.filter((s): s is string => typeof s === "string") : [];
+    return { type: "connected", appId: d.app_id, connectionId: d.connection_id, missingScopes: missing };
+  }
+  if (d.type === "aurora:connect-failed" && typeof d.error === "string") {
+    return { type: "failed", appId: typeof d.app_id === "string" ? d.app_id : null, error: d.error };
+  }
+  return null;
 }
 
-/** Listens for the popup's `aurora:connected` message. */
-export function useConnectedListener(onConnected: (connectionId: string) => void) {
+/** Tell the callback page a dialog took its result, so the page closes itself. */
+export function ackConnect(ack: { connectionId?: string; error?: string }): void {
+  try {
+    const ch = new BroadcastChannel(CONNECT_CHANNEL);
+    ch.postMessage({
+      type: "aurora:connect-ack",
+      ...(ack.connectionId ? { connection_id: ack.connectionId } : {}),
+      ...(ack.error ? { error: ack.error } : {}),
+    });
+    ch.close();
+  } catch {
+    // No BroadcastChannel: the page stays and shows its link.
+  }
+}
+
+/** Listens for the callback page's result on the channel. Every dashboard tab uses it to refresh its lists. */
+export function useConnectChannel(onMessage: (m: ConnectChannelMessage) => void) {
   useEffect(() => {
-    const handler = (ev: MessageEvent) => {
-      const id = parseConnectedMessage(ev, window.location.origin);
-      if (id) onConnected(id);
+    if (typeof BroadcastChannel === "undefined") return;
+    const ch = new BroadcastChannel(CONNECT_CHANNEL);
+    ch.onmessage = (ev: MessageEvent) => {
+      const m = parseConnectMessage(ev.data);
+      if (m) onMessage(m);
     };
-    window.addEventListener("message", handler);
-    return () => window.removeEventListener("message", handler);
-  }, [onConnected]);
+    return () => ch.close();
+  }, [onMessage]);
 }
 
-export function openConnectWindow(url: string): Window | null {
-  return window.open(url, "aurora-connect", "popup=yes,width=560,height=760");
+/**
+ * The OAuth provider's sign-in page is the one thing opened in a separate window. Call this synchronously in the click
+ * handler (an `about:blank` window is not blocked by popup blockers), then {@link navigateSignIn} once the redirect URL is known.
+ */
+export function openSignInWindow(): Window | null {
+  return window.open("about:blank", "aurora-sign-in", "popup=yes,width=560,height=760");
+}
+
+/** The provider's page must not get a handle on the dashboard window (reverse tabnabbing, WEBC-3). */
+export function navigateSignIn(w: Window, url: string): void {
+  Reflect.set(w, "opener", null);
+  w.location.replace(url);
 }
 
 // ---- pure form helpers (unit tested) ----
@@ -344,9 +414,12 @@ export function defaultValues(fields: FormField[]): FieldValues {
   return out;
 }
 
-export function connectWindowPath(org: string, ws: string, app: string, reconnectId?: string): string {
-  const base = `/o/${org}/w/${ws}/apps/${encodeURIComponent(app)}/connect`;
-  return reconnectId ? `${base}?reconnect=${encodeURIComponent(reconnectId)}` : base;
+/** The connect deep link (I-29, C-842): the Apps tab with the Connect dialog open, or the Connections tab with Reconnect open. */
+export function connectDeepLink(org: string, ws: string, app: string, reconnectId?: string | null): string {
+  const base = `/o/${org}/w/${ws}/credentials`;
+  return reconnectId
+    ? `${base}?tab=connections&reconnect=${encodeURIComponent(reconnectId)}`
+    : `${base}?tab=apps&connect=${encodeURIComponent(app)}`;
 }
 
 /** Toggle an allow-list entry (app, workspace-or-null). */

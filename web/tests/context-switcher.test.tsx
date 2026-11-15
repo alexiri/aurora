@@ -111,7 +111,8 @@ describe("organization selector", () => {
     world("/admin/users", {});
     // The admin nav list still shows below the selectors (assert before the menu opens:
     // while it is open the modal menu hides the rest of the page).
-    expect(screen.getByRole("link", { name: "Users" }).getAttribute("aria-current")).toBe("page");
+    // (FIX-099) The nav appears once `/v1/me` says this is an instance admin.
+    expect((await screen.findByRole("link", { name: "Users" })).getAttribute("aria-current")).toBe("page");
     expect(within(screen.getByTestId("org-selector")).getByText("All organizations")).toBeInTheDocument();
     expect(screen.queryByTestId("workspace-selector")).toBeNull();
     await open("org-selector");
@@ -163,6 +164,20 @@ describe("workspace selector", () => {
     const all = await item("All workspaces…");
     expect(all.getAttribute("href")).toBe("/o/acme");
     expect(all.className).not.toContain("font-semibold");
+  });
+});
+
+// FIX-099 (WEBA-11): the admin navigation is for instance admins; a member on an /admin path gets none.
+describe("admin navigation", () => {
+  it("is rendered for an instance admin on /admin/setup", async () => {
+    world("/admin/setup", {}, true);
+    expect(await screen.findByRole("navigation", { name: "Administration" })).toBeTruthy();
+  });
+
+  it("is not rendered for a signed-in member on /admin/setup", async () => {
+    world("/admin/setup", {}, false);
+    await screen.findByRole("button", { name: /Alex/ });
+    expect(screen.queryByRole("navigation", { name: "Administration" })).toBeNull();
   });
 });
 

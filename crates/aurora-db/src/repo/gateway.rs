@@ -179,25 +179,40 @@ pub async fn can_use<'e, E: PgExecutor<'e>>(
 }
 
 /// (P4-GRP-1, D-131, SEC-71) The ids of the groups **of `org`** that contain `user` (an active
-/// member only), at most `GROUPS_PER_USER` (100): the speaker's principals beyond the agent id
-/// (`06 §Credential authentication`). One indexed query per credential resolution. Callers
-/// pass it only for a speaker that holds `can_use`; a request without a speaker has none.
+/// member only): the speaker's principals beyond the agent id (`06 §Credential
+/// authentication`). One indexed query per credential resolution. Callers pass it only for a
+/// speaker that holds `can_use`; a request without a speaker has none.
+///
+/// Never truncates: a truncated set would make a **block** rule on a group past the cut not
+/// match (fail open). More than `GROUPS_PER_USER` (100) rows (only possible if the cap was
+/// bypassed) is an `Err`, and the caller must refuse the request.
 pub async fn speaker_group_ids<'e, E: PgExecutor<'e>>(
     exec: E,
     org: Uuid,
     user: Uuid,
 ) -> Result<Vec<Uuid>, DbError> {
-    Ok(sqlx::query_scalar(
+    let ids: Vec<Uuid> = sqlx::query_scalar(
         "SELECT gm.group_id FROM group_members gm \
          JOIN org_members m ON m.org_id = gm.org_id AND m.user_id = gm.user_id \
               AND m.status = 'active' \
          WHERE gm.org_id = $1 AND gm.user_id = $2 \
-         ORDER BY gm.group_id LIMIT 100",
+         ORDER BY gm.group_id LIMIT 101",
     )
     .bind(org)
     .bind(user)
     .fetch_all(exec)
-    .await?)
+    .await?;
+    if ids.len() > super::groups::GROUPS_PER_USER as usize {
+        // The ids and names stay out of the log; the caller refuses the request.
+        tracing::error!(
+            user_id = %user, org_id = %org,
+            "speaker is in more groups than the per-user limit: refusing to resolve a truncated principal set"
+        );
+        return Err(DbError::Other(sqlx::Error::Protocol(
+            "speaker is in more than the per-user group limit".into(),
+        )));
+    }
+    Ok(ids)
 }
 
 pub async fn register_instance<'e, E: PgExecutor<'e>>(
@@ -667,6 +682,13 @@ pub struct AppConnectionRow {
     pub tenant_host: Option<String>,
     /// The registered app instance (D-74): the connection is injected only on its host.
     pub instance_id: Option<Uuid>,
+    /// (FIX-123, D-214) The `connect[]` method the connection was made with; null = unknown.
+    pub connect_method: Option<String>,
+    /// (FIX-133, D-240) `read` | `write`: a `read` connection allows only the app's read tools.
+    pub access: String,
+    /// (FIX-136, D-241) The scopes the connection has (granted by OAuth, or declared for a pasted
+    /// token); empty = unknown.
+    pub scopes: Vec<String>,
 }
 
 /// An `active` app instance visible to an org, as the gateway needs it (D-74).
@@ -675,6 +697,8 @@ pub struct InstanceHostRow {
     pub id: Uuid,
     pub app_id: String,
     pub host: String,
+    /// (FIX-145, D-231) The path the app is served under on `host`; null = the host root.
+    pub base_path: Option<String>,
 }
 
 /// `active` instances visible to the organization (instance-wide and its own).
@@ -683,7 +707,7 @@ pub async fn visible_instances(
     org_id: Uuid,
 ) -> Result<Vec<InstanceHostRow>, DbError> {
     Ok(sqlx::query_as::<_, InstanceHostRow>(
-        "SELECT id, app_id, host FROM app_instances \
+        "SELECT id, app_id, host, base_path FROM app_instances \
          WHERE status = 'active' AND (org_id IS NULL OR org_id = $1) ORDER BY host, id",
     )
     .bind(org_id)
@@ -702,7 +726,7 @@ pub async fn app_connections(
 ) -> Result<Vec<AppConnectionRow>, DbError> {
     Ok(sqlx::query_as::<_, AppConnectionRow>(
         "SELECT id, workspace_id, app_id, label, status, credentials_ref, credentials_version, \
-                credentials_expires_at, metadata, tenant_host, instance_id \
+                credentials_expires_at, metadata, tenant_host, instance_id, connect_method, access, scopes \
          FROM app_connections \
          WHERE org_id = $1 AND (workspace_id IS NULL OR workspace_id = $2) \
            AND app_id = ANY($3) AND status IN ('active', 'disabled', 'reauth_required') \
@@ -726,7 +750,7 @@ pub async fn app_connection_by_id(
 ) -> Result<Option<AppConnectionRow>, DbError> {
     Ok(sqlx::query_as::<_, AppConnectionRow>(
         "SELECT id, workspace_id, app_id, label, status, credentials_ref, credentials_version, \
-                credentials_expires_at, metadata, tenant_host, instance_id \
+                credentials_expires_at, metadata, tenant_host, instance_id, connect_method, access, scopes \
          FROM app_connections \
          WHERE id = $1 AND org_id = $2 AND (workspace_id IS NULL OR workspace_id = $3)",
     )
@@ -747,7 +771,7 @@ pub async fn app_connection_in_org(
 ) -> Result<Option<AppConnectionRow>, DbError> {
     Ok(sqlx::query_as::<_, AppConnectionRow>(
         "SELECT id, workspace_id, app_id, label, status, credentials_ref, credentials_version, \
-                credentials_expires_at, metadata, tenant_host, instance_id \
+                credentials_expires_at, metadata, tenant_host, instance_id, connect_method, access, scopes \
          FROM app_connections WHERE id = $1 AND org_id = $2",
     )
     .bind(id)

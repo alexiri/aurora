@@ -59,7 +59,52 @@ pub async fn suite(store: Arc<dyn CounterStore>) {
     peek_has_no_side_effect(store.clone()).await;
     bucket_burst_refill_and_all_or_nothing(store.clone()).await;
     keys_large_and_unicode(store.clone()).await;
+    refusal_reports_the_longest_wait(store.clone()).await;
     store.health().await.expect("health");
+}
+
+/// Two exhausted units with different time left: every backend reports the one with the
+/// longest `retry_after`, whatever the order in the call (the key sorting first is the short one).
+async fn refusal_reports_the_longest_wait(store: Arc<dyn CounterStore>) {
+    let n = ns();
+    let (short, long, fine) = (format!("{n}:a-min"), format!("{n}:b-day"), format!("{n}:c"));
+    let minute = |key: &str| WindowUnit {
+        period: Period::Minute,
+        ..unit(key, 1, 1)
+    };
+    let day = |key: &str| WindowUnit {
+        period: Period::Day,
+        ..unit(key, 1, 1)
+    };
+    assert!(
+        store
+            .fixed_window_consume(&[minute(&short), day(&long)])
+            .await
+            .expect("fill")
+            .is_allowed()
+    );
+    for units in [
+        vec![minute(&short), day(&long), unit(&fine, 5, 1)],
+        vec![unit(&fine, 5, 1), day(&long), minute(&short)],
+    ] {
+        let v = store.fixed_window_consume(&units).await.expect("refused");
+        let Verdict::Refused { key, retry_after } = v else {
+            panic!("both units are exhausted");
+        };
+        assert_eq!(key, long, "the unit that frees last is reported");
+        assert!(
+            retry_after > Duration::from_secs(60) && retry_after <= Duration::from_secs(86_400),
+            "{retry_after:?}"
+        );
+    }
+    assert_eq!(
+        store
+            .fixed_window_peek(&[probe(&fine)])
+            .await
+            .expect("peek"),
+        vec![0],
+        "the refusal consumed nothing"
+    );
 }
 
 async fn concurrent_consume_never_exceeds_limit(store: Arc<dyn CounterStore>) {
@@ -500,6 +545,34 @@ async fn memory_rollover_uses_the_injected_clock() {
 
 // ---- postgres ------------------------------------------------------------------------
 
+/// Overlapping multi-key takes in different orders must never deadlock (or error): each task
+/// takes the same keys in its own rotation of the call order, with new keys each round too.
+#[sqlx::test(migrator = "aurora_db::MIGRATOR")]
+async fn postgres_overlapping_bucket_takes_never_deadlock(pool: aurora_db::PgPool) {
+    let store: Arc<dyn CounterStore> = Arc::new(PgCounterStore::new(pool));
+    let n = ns();
+    let keys: Vec<String> = (0..6).map(|i| format!("{n}:k{i}")).collect();
+    let mut tasks = Vec::new();
+    for t in 0..24usize {
+        let (s, keys) = (store.clone(), keys.clone());
+        tasks.push(tokio::spawn(async move {
+            for round in 0..15usize {
+                let mut ks: Vec<&String> = keys.iter().collect();
+                ks.rotate_left((t + round) % keys.len());
+                if t % 2 == 1 {
+                    ks.reverse();
+                }
+                let takes: Vec<BucketTake> =
+                    ks.iter().take(4).map(|k| take(k, 1, 1_000_000)).collect();
+                s.bucket_take(&takes).await.expect("no deadlock, no error");
+            }
+        }));
+    }
+    for t in tasks {
+        t.await.expect("join");
+    }
+}
+
 #[sqlx::test(migrator = "aurora_db::MIGRATOR")]
 async fn postgres(pool: aurora_db::PgPool) {
     let store: Arc<dyn CounterStore> = Arc::new(PgCounterStore::new(pool.clone()));
@@ -539,14 +612,19 @@ async fn postgres(pool: aurora_db::PgPool) {
     let n = aurora_db::counters::prune(&pool, 5000)
         .await
         .expect("prune");
-    assert_eq!(n, 2);
+    // At least the two inserted dead rows. Rows the suite wrote earlier may have expired for real
+    // meanwhile (a bucket lives 60 s past its TAT and `rollover_real_clock` sleeps up to a minute),
+    // and pruning them is correct; the live keys below must survive.
+    assert!(n >= 2, "{n}");
     let left: (i64, i64) = sqlx::query_as(
-        "SELECT (SELECT count(*) FROM rate_limit_windows), (SELECT count(*) FROM rate_limit_buckets)",
+        "SELECT (SELECT count(*) FROM rate_limit_windows WHERE key = $1), \
+                (SELECT count(*) FROM rate_limit_buckets WHERE key = $1)",
     )
+    .bind(&live)
     .fetch_one(&pool)
     .await
     .expect("count");
-    assert!(left.0 >= 1 && left.1 >= 1, "live rows are kept");
+    assert_eq!(left, (1, 1), "live rows are kept");
     let dead: i64 = sqlx::query_scalar(
         "SELECT (SELECT count(*) FROM rate_limit_windows WHERE key = 'dead') \
               + (SELECT count(*) FROM rate_limit_buckets WHERE key = 'dead')",
@@ -583,10 +661,14 @@ async fn postgres(pool: aurora_db::PgPool) {
 
 // ---- redis ---------------------------------------------------------------------------
 
+/// (FIX-101) `None` skips (gate unset outside CI); with `CI=true` and the gate unset `require_or_skip`
+/// panics, so the Redis backend cannot silently drop out of the equivalence claim (SEC-62).
+#[allow(clippy::expect_used)]
 fn redis_addr() -> Option<String> {
-    (std::env::var("AURORA_TEST_REDIS").is_ok_and(|v| v == "1"))
-        .then(|| std::env::var("AURORA_TEST_REDIS_ADDR").ok())
-        .flatten()
+    aurora_testkit::require_or_skip("AURORA_TEST_REDIS").then(|| {
+        std::env::var("AURORA_TEST_REDIS_ADDR")
+            .expect("AURORA_TEST_REDIS is set: AURORA_TEST_REDIS_ADDR (rediss:// or redis://host:port) must be too")
+    })
 }
 
 fn redis_store(addr: &str, prefix: &str) -> aurora_counters::redis_store::RedisStore {
@@ -672,4 +754,113 @@ async fn redis_keys_expire_and_errors_are_unavailable() {
     ] {
         assert!(matches!(r, Err(CounterError::Unavailable(_))), "{r:?}");
     }
+}
+
+/// FIX-087 / SEC-62: a stored value that is not a number is `Unavailable`, never "under the
+/// limit" (the scripts used to read it as zero or a full bucket).
+#[tokio::test]
+async fn redis_garbage_values_are_unavailable() {
+    let Some(addr) = redis_addr() else {
+        eprintln!("skipped: set AURORA_TEST_REDIS=1 and AURORA_TEST_REDIS_ADDR (docs/18)");
+        return;
+    };
+    let prefix = format!("{}:", ns());
+    let store = redis_store(&addr, &prefix);
+    let client = redis::Client::open(addr.as_str()).expect("client");
+    let mut c = client
+        .get_multiplexed_async_connection()
+        .await
+        .expect("conn");
+    // Window keys are `<prefix>w:<key>:<period s>:<window start ms>`; poison whatever the
+    // store wrote for `x` by consuming first, then overwriting every key under the prefix.
+    store
+        .fixed_window_consume(&[unit("x", 5, 1)])
+        .await
+        .expect("seed window");
+    store
+        .bucket_take(&[take("x", 1000, 1)])
+        .await
+        .expect("seed bucket");
+    let keys: Vec<String> = redis::cmd("KEYS")
+        .arg(format!("{prefix}*"))
+        .query_async(&mut c)
+        .await
+        .expect("keys");
+    assert_eq!(keys.len(), 2, "{keys:?}");
+    for k in &keys {
+        let _: () = redis::cmd("SET")
+            .arg(k)
+            .arg("abc")
+            .query_async(&mut c)
+            .await
+            .expect("poison");
+    }
+    for r in [
+        store.fixed_window_peek(&[probe("x")]).await.map(|_| ()),
+        store
+            .fixed_window_consume(&[unit("x", 5, 1)])
+            .await
+            .map(|_| ()),
+        store.bucket_take(&[take("x", 1000, 1)]).await.map(|_| ()),
+    ] {
+        assert!(matches!(r, Err(CounterError::Unavailable(_))), "{r:?}");
+    }
+}
+
+/// FIX-087: a user limited to the ACL documented in `docs/15` runs the whole conformance body.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn redis_documented_acl_runs_the_scripts() {
+    let Some(addr) = redis_addr() else {
+        eprintln!("skipped: set AURORA_TEST_REDIS=1 and AURORA_TEST_REDIS_ADDR (docs/18)");
+        return;
+    };
+    let prefix = format!("{}:", ns());
+    let user = format!(
+        "acl{}",
+        ns().replace(|c: char| !c.is_ascii_alphanumeric(), "")
+    );
+    let client = redis::Client::open(addr.as_str()).expect("client");
+    let mut admin = client
+        .get_multiplexed_async_connection()
+        .await
+        .expect("conn");
+    let _: () = redis::cmd("ACL")
+        .arg("SETUSER")
+        .arg(&user)
+        .arg("on")
+        .arg(">pw-fix087")
+        .arg(format!("~{prefix}*"))
+        .arg("-@all")
+        .arg("+evalsha")
+        .arg("+script|load")
+        .arg("+get")
+        .arg("+set")
+        .arg("+incrby")
+        .arg("+pexpire")
+        .arg("+ping")
+        .arg("+time")
+        .query_async(&mut admin)
+        .await
+        .expect("acl setuser");
+    let store: Arc<dyn CounterStore> = Arc::new(
+        aurora_counters::redis_store::RedisStore::new(
+            &aurora_counters::redis_store::RedisOptions {
+                address: addr.clone(),
+                allow_plaintext: false,
+                username: Some(user.clone()),
+                password: Some("pw-fix087".to_owned()),
+                ca_file: None,
+                db: 0,
+                key_prefix: prefix,
+            },
+        )
+        .expect("redis store"),
+    );
+    suite(store).await;
+    let _: () = redis::cmd("ACL")
+        .arg("DELUSER")
+        .arg(&user)
+        .query_async(&mut admin)
+        .await
+        .expect("acl deluser");
 }

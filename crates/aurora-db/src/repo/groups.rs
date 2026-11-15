@@ -414,23 +414,87 @@ pub struct SyncChange {
     pub added: bool,
 }
 
+/// What one sync did: the changes, and per org the number of matching IdP-linked groups that
+/// were **not** joined because the user was at `GROUPS_PER_USER`.
+#[derive(Debug, Clone, Default)]
+pub struct SyncOutcome {
+    pub changes: Vec<SyncChange>,
+    pub cap_skipped: Vec<(Uuid, i64)>,
+}
+
+/// Delete `user`'s `source = 'idp'` rows in `org` (FIX-083, SEC-71): called in the transaction
+/// that moves the person's org membership out of `active` (suspension), so access the IdP
+/// grants never survives a suspension and a reactivation cannot resurrect it; the next
+/// sign-in puts back whatever the claim then says. Returns `(group, provider, claim value)`
+/// of every row removed. The caller audits and notifies.
+pub async fn delete_idp_rows_of_member(
+    conn: &mut PgConnection,
+    org: Uuid,
+    user: Uuid,
+) -> Result<Vec<(Uuid, String, String)>, DbError> {
+    Ok(sqlx::query_as(
+        "DELETE FROM group_members gm USING groups g \
+          WHERE gm.group_id = g.id AND gm.org_id = $1 AND gm.user_id = $2 \
+            AND gm.source = 'idp' \
+         RETURNING gm.group_id, g.idp_provider, g.idp_value",
+    )
+    .bind(org)
+    .bind(user)
+    .fetch_all(&mut *conn)
+    .await?)
+}
+
 /// Sets `user`'s memberships in `provider`'s IdP-linked groups to exactly the groups whose
 /// `idp_value` is in `values` (the validated claim), only in orgs where the user is an
-/// **active member**: it never creates a membership. Returns the added/removed rows (kept rows
-/// only get `synced_at` refreshed). Rows of other sources and other providers are untouched.
+/// **active member**: it never creates a membership and never touches the rows of an org where
+/// the user is not active (their IdP rows are deleted when the membership leaves `active`,
+/// [`delete_idp_rows_of_member`], so none are left to survive a reactivation). Returns the
+/// added/removed rows (kept rows only get `synced_at` refreshed). Rows of other sources and
+/// other providers are untouched. `GROUPS_PER_USER` holds: existing memberships are kept, new
+/// ones are added in group-id order until the cap and the excess is skipped; a group already
+/// at `GROUP_MEMBERS_MAX` takes nobody (FIX-083, skipped and reported the same way; see
+/// [`sync_idp_memberships_report`]).
 pub async fn sync_idp_memberships(
     conn: &mut PgConnection,
     user: Uuid,
     provider: &str,
     values: &[String],
 ) -> Result<Vec<SyncChange>, DbError> {
+    Ok(sync_idp_memberships_report(conn, user, provider, values)
+        .await?
+        .changes)
+}
+
+/// [`sync_idp_memberships`] plus the per-org count of groups skipped at the cap. Takes the org
+/// lock ([`lock_org`], in org-id order, before any group row lock) of every org with a group of
+/// this provider the user is an active member of, so the cap cannot race the dashboard add.
+pub async fn sync_idp_memberships_report(
+    conn: &mut PgConnection,
+    user: Uuid,
+    provider: &str,
+    values: &[String],
+) -> Result<SyncOutcome, DbError> {
+    let orgs: Vec<Uuid> = sqlx::query_scalar(
+        "SELECT DISTINCT g.org_id FROM groups g \
+           JOIN org_members om ON om.org_id = g.org_id AND om.user_id = $1 \
+                AND om.status = 'active' \
+          WHERE g.source = 'idp' AND g.idp_provider = $2 ORDER BY g.org_id",
+    )
+    .bind(user)
+    .bind(provider)
+    .fetch_all(&mut *conn)
+    .await?;
+    for org in orgs {
+        lock_org(&mut *conn, org).await?;
+    }
+    // Only orgs where the user is an active member: a suspended member's rows stay.
     let removed: Vec<(Uuid, Uuid, String)> = sqlx::query_as(
         "DELETE FROM group_members gm USING groups g \
           WHERE gm.group_id = g.id AND gm.user_id = $1 AND gm.source = 'idp' \
             AND g.idp_provider = $2 \
-            AND NOT (g.idp_value = ANY($3) AND EXISTS ( \
-                  SELECT 1 FROM org_members om WHERE om.org_id = g.org_id \
-                     AND om.user_id = $1 AND om.status = 'active')) \
+            AND NOT (g.idp_value = ANY($3)) \
+            AND EXISTS (SELECT 1 FROM org_members om WHERE om.org_id = g.org_id \
+                     AND om.user_id = $1 AND om.status = 'active') \
          RETURNING gm.group_id, g.org_id, g.idp_value",
     )
     .bind(user)
@@ -438,22 +502,58 @@ pub async fn sync_idp_memberships(
     .bind(values)
     .fetch_all(&mut *conn)
     .await?;
-    let upserted: Vec<(Uuid, Uuid, String, bool)> = sqlx::query_as(
-        "INSERT INTO group_members (group_id, org_id, user_id, source, synced_at) \
-         SELECT g.id, g.org_id, $1, 'idp', now() FROM groups g \
+    sqlx::query(
+        "UPDATE group_members gm SET synced_at = now() FROM groups g \
+          WHERE gm.group_id = g.id AND gm.user_id = $1 AND g.source = 'idp' \
+            AND g.idp_provider = $2 AND g.idp_value = ANY($3) \
+            AND EXISTS (SELECT 1 FROM org_members om WHERE om.org_id = g.org_id \
+                     AND om.user_id = $1 AND om.status = 'active')",
+    )
+    .bind(user)
+    .bind(provider)
+    .bind(values)
+    .execute(&mut *conn)
+    .await?;
+    let upserted: Vec<(Uuid, Uuid, String)> = sqlx::query_as(
+        "WITH cand AS ( \
+             SELECT g.id, g.org_id, g.idp_value, \
+                    row_number() OVER (PARTITION BY g.org_id ORDER BY g.id) AS rn \
+               FROM groups g \
+               JOIN org_members om ON om.org_id = g.org_id AND om.user_id = $1 \
+                    AND om.status = 'active' \
+              WHERE g.source = 'idp' AND g.idp_provider = $2 AND g.idp_value = ANY($3) \
+                AND NOT EXISTS (SELECT 1 FROM group_members x \
+                                 WHERE x.group_id = g.id AND x.user_id = $1) \
+                AND (SELECT count(*) FROM group_members z WHERE z.group_id = g.id) < $5) \
+         INSERT INTO group_members (group_id, org_id, user_id, source, synced_at) \
+         SELECT c.id, c.org_id, $1, 'idp', now() FROM cand c \
+          WHERE c.rn <= $4 - (SELECT count(*) FROM group_members y \
+                               WHERE y.org_id = c.org_id AND y.user_id = $1) \
+         ON CONFLICT (group_id, user_id) DO NOTHING \
+         RETURNING group_id, org_id, (SELECT idp_value FROM groups WHERE id = group_id)",
+    )
+    .bind(user)
+    .bind(provider)
+    .bind(values)
+    .bind(GROUPS_PER_USER)
+    .bind(GROUP_MEMBERS_MAX)
+    .fetch_all(&mut *conn)
+    .await?;
+    let cap_skipped: Vec<(Uuid, i64)> = sqlx::query_as(
+        "SELECT g.org_id, count(*) FROM groups g \
            JOIN org_members om ON om.org_id = g.org_id AND om.user_id = $1 \
                 AND om.status = 'active' \
           WHERE g.source = 'idp' AND g.idp_provider = $2 AND g.idp_value = ANY($3) \
-         ON CONFLICT (group_id, user_id) DO UPDATE SET synced_at = now() \
-         RETURNING group_id, org_id, \
-                   (SELECT idp_value FROM groups WHERE id = group_id), (xmax = 0)",
+            AND NOT EXISTS (SELECT 1 FROM group_members x \
+                             WHERE x.group_id = g.id AND x.user_id = $1) \
+          GROUP BY g.org_id ORDER BY g.org_id",
     )
     .bind(user)
     .bind(provider)
     .bind(values)
     .fetch_all(&mut *conn)
     .await?;
-    let mut out: Vec<SyncChange> = removed
+    let mut changes: Vec<SyncChange> = removed
         .into_iter()
         .map(|(group_id, org_id, idp_value)| SyncChange {
             group_id,
@@ -462,18 +562,20 @@ pub async fn sync_idp_memberships(
             added: false,
         })
         .collect();
-    out.extend(
+    changes.extend(
         upserted
             .into_iter()
-            .filter(|u| u.3)
-            .map(|(group_id, org_id, idp_value, _)| SyncChange {
+            .map(|(group_id, org_id, idp_value)| SyncChange {
                 group_id,
                 org_id,
                 idp_value,
                 added: true,
             }),
     );
-    Ok(out)
+    Ok(SyncOutcome {
+        changes,
+        cap_skipped,
+    })
 }
 
 /// Does any IdP-linked group name `provider`? (orphan warning at startup.)
@@ -791,21 +893,28 @@ pub struct ImpactWorkspace {
 /// `admin`): the users who would lose **all** access (after counting direct bindings, their org
 /// role and every *other* group), the enabled creator-anchored schedules and webhooks that
 /// would stop firing, and the live personal API keys confined to the workspace.
+///
+/// With `unbind_workspace`, only that workspace is considered and only its binding is taken
+/// away: a group that maps to `admin` keeps reaching it (nothing is lost), and a workspace the
+/// group is not bound to is omitted.
 pub async fn impact(
     conn: &mut PgConnection,
     group: &GroupRow,
     remove_member: Option<Uuid>,
+    unbind_workspace: Option<Uuid>,
 ) -> Result<Vec<ImpactWorkspace>, DbError> {
     let workspaces: Vec<(Uuid, String, String)> = sqlx::query_as(
         "SELECT w.id, w.name, w.slug FROM workspaces w \
           WHERE w.org_id = $1 AND ($2::text = 'admin' OR EXISTS (\
                 SELECT 1 FROM group_workspace_access b \
                  WHERE b.group_id = $3 AND b.workspace_id = w.id)) \
+            AND ($4::uuid IS NULL OR (w.id = $4 AND $2::text <> 'admin')) \
           ORDER BY w.name, w.id",
     )
     .bind(group.org_id)
     .bind(group.org_role.as_deref().unwrap_or(""))
     .bind(group.id)
+    .bind(unbind_workspace)
     .fetch_all(&mut *conn)
     .await?;
     let mut out = Vec::new();

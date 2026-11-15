@@ -1222,3 +1222,167 @@ async fn session_purge_is_delivered_live_and_in_the_home_sync_and_completed_by_t
     );
     assert!(r.work().await.iter().all(|i| i["kind"] != "session.purge"));
 }
+
+/// (FIX-097 3) Two session references reported in one epoch: the second replaces the first in
+/// the row, and deleting the conversation purges both, not only the current one.
+#[tokio::test]
+async fn a_superseded_session_reference_is_purged_with_the_current_one() {
+    let r = crate::hosted::rig().await;
+    let lv = r.boot("daneel").await;
+    let d = r.deliver().await;
+    let turn = d["turn_id"].as_str().unwrap().to_owned();
+    assert_eq!(
+        r.report(&lv, json!({"kind": "turn.started", "turn_id": turn}))
+            .await,
+        "applied"
+    );
+    for sref in ["sess-one", "sess-two"] {
+        assert_eq!(
+            r.report(&lv, json!({"kind": "session", "conversation_id": lv.conv, "session_ref": sref, "epoch": 0})).await,
+            "applied"
+        );
+    }
+    let queued = |sref: &'static str| {
+        let pool = r.h.pool().clone();
+        let agent = lv.agent;
+        async move {
+            sqlx::query_scalar::<_, i64>(
+                "SELECT count(*) FROM session_purges WHERE agent_id = $1 AND session_ref = $2 AND done_at IS NULL",
+            )
+            .bind(agent)
+            .bind(sref)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        }
+    };
+    assert_eq!(
+        queued("sess-one").await,
+        1,
+        "the replaced reference is queued at once"
+    );
+    assert_eq!(queued("sess-two").await, 0, "the current one is not");
+    assert_eq!(
+        r.report(
+            &lv,
+            json!({"kind": "turn.result", "turn_id": turn, "status": "done"})
+        )
+        .await,
+        "applied"
+    );
+    let (s, v) = r
+        .user_call(
+            Method::DELETE,
+            &format!("/v1/conversations/{}", lv.conv),
+            None,
+        )
+        .await;
+    assert_eq!(s, 204, "{v}");
+    assert_eq!(queued("sess-one").await, 1, "queued once, not twice");
+    assert_eq!(
+        queued("sess-two").await,
+        1,
+        "deletion purges the current reference"
+    );
+}
+
+/// (FIX-097 2) Deleting an account deletes the person's direct conversations through the
+/// conversation-deletion path: the harness session file is queued for purge and a content-free
+/// `conversation.delete` audit row is written (the SQL cascade does neither).
+#[tokio::test]
+async fn account_deletion_purges_direct_conversations_through_the_lifecycle_path() {
+    let f = fixture().await;
+    let direct = f.conv("direct", Some(f.bob.0)).await;
+    f.turn(direct, Some(f.bob.0), SECRET).await;
+    sqlx::query("UPDATE conversations SET harness_session_ref = 'sess-bob' WHERE id = $1")
+        .bind(direct)
+        .execute(f.h.pool())
+        .await
+        .unwrap();
+    // A group conversation is not deleted with the account.
+    let group = f.conv("group", None).await;
+    let sid: Uuid = sqlx::query_scalar("SELECT id FROM sessions WHERE user_id = $1")
+        .bind(f.bob.0)
+        .fetch_one(f.h.pool())
+        .await
+        .unwrap();
+    sqlx::query("UPDATE sessions SET reauth_at = now() WHERE id = $1")
+        .bind(sid)
+        .execute(f.h.pool())
+        .await
+        .unwrap();
+    let (s, v) = f.call(Method::DELETE, "/v1/me", &f.bob.1, None).await;
+    assert_eq!(s, 204, "{v}");
+    assert_eq!(
+        f.count("SELECT count(*) FROM conversations WHERE id = $1", direct)
+            .await,
+        0
+    );
+    assert_eq!(
+        f.count("SELECT count(*) FROM conversations WHERE id = $1", group)
+            .await,
+        1
+    );
+    let purge: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM session_purges WHERE agent_id = $1 AND session_ref = 'sess-bob' AND done_at IS NULL",
+    )
+    .bind(f.agent)
+    .fetch_one(f.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(purge, 1, "the harness session file is queued for purge");
+    let rows = f.audit("conversation.delete").await;
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!(rows[0]["conversation_ids"], json!([direct]));
+    assert_eq!(rows[0]["reason"], "account_deleted");
+    assert!(!rows[0].to_string().contains(SECRET));
+}
+
+/// (FIX-097 7, docs/04 §Freeze) Retention is suspended for a frozen workspace, agent or
+/// organization and resumes at unfreeze.
+#[tokio::test]
+async fn retention_sweep_skips_frozen_scopes_and_resumes_at_unfreeze() {
+    let f = fixture().await;
+    sqlx::query("UPDATE organizations SET settings = jsonb_set(settings, '{retention}', '{\"conversations_days\": 30}') WHERE id = $1").bind(f.org).execute(f.h.pool()).await.unwrap();
+    let old = f.conv("group", None).await;
+    f.turn(old, Some(f.alice.0), "old").await;
+    age(&f, old, 100).await;
+    let sweep = || async {
+        aurora_api::domains::conversations::lifecycle::sweep_retention(f.h.pool(), None)
+            .await
+            .unwrap()
+    };
+    for (table, id) in [
+        ("workspaces", f.ws),
+        ("agents", f.agent),
+        ("organizations", f.org),
+    ] {
+        sqlx::query(&format!(
+            "UPDATE {table} SET frozen_at = now(), frozen_reason = 'x', frozen_authority = 'org_admin' WHERE id = $1"
+        ))
+        .bind(id)
+        .execute(f.h.pool())
+        .await
+        .unwrap();
+        assert_eq!(sweep().await, 0, "frozen {table}");
+        assert_eq!(
+            f.count("SELECT count(*) FROM conversations WHERE id = $1", old)
+                .await,
+            1,
+            "frozen {table}"
+        );
+        sqlx::query(&format!(
+            "UPDATE {table} SET frozen_at = NULL, frozen_reason = NULL, frozen_authority = NULL WHERE id = $1"
+        ))
+        .bind(id)
+        .execute(f.h.pool())
+        .await
+        .unwrap();
+    }
+    assert_eq!(sweep().await, 1, "swept after the unfreeze");
+    assert_eq!(
+        f.count("SELECT count(*) FROM conversations WHERE id = $1", old)
+            .await,
+        0
+    );
+}

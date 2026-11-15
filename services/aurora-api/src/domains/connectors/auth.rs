@@ -44,9 +44,43 @@ fn check_protocol(parts: &Parts) -> Result<(), ApiError> {
     Ok(())
 }
 
+/// A live connector-host token (FIX-120, D-189): `type_ids = None` is the shared bootstrap token,
+/// which acts for every connector type; any other token acts only for its bound types.
+#[derive(Debug, Clone)]
+pub struct HostAuth {
+    pub id: Uuid,
+    pub type_ids: Option<Vec<String>>,
+}
+
+impl HostAuth {
+    /// May this token act for connectors of `type_id`?
+    pub fn allows(&self, type_id: &str) -> bool {
+        self.type_ids
+            .as_ref()
+            .is_none_or(|t| t.iter().any(|x| x == type_id))
+    }
+}
+
+/// The token behind an `auh_` bearer, or `None` when it is unknown, revoked, or the shared
+/// bootstrap token on an instance that has per-host tokens (that token is refused from then on).
+pub async fn host_auth(st: &AppState, tok: &str) -> Result<Option<HostAuth>, ApiError> {
+    let Some(t) = connector_hosts::find_token(&st.pool, &token::hash(tok)).await? else {
+        return Ok(None);
+    };
+    if t.type_ids.is_none() && connector_hosts::bound_tokens_exist(&st.pool).await? {
+        return Ok(None);
+    }
+    connector_hosts::touch_token(&st.pool, t.id).await?;
+    Ok(Some(HostAuth {
+        id: t.id,
+        type_ids: t.type_ids,
+    }))
+}
+
 /// C-458: a connector host's `auh_` token plus `Aurora-Connector: <id>` acts as connector `<id>`,
-/// only when that connector is `managed` and not `disabled`. Every refusal is the same 401 as an
-/// unknown `aun_` token, so nothing reveals which connectors exist.
+/// only when that connector is `managed`, not `disabled`, and (FIX-120) of a type the token is
+/// bound to. Every refusal is the same 401 as an unknown `aun_` token, so nothing reveals which
+/// connectors exist.
 async fn delegated(parts: &Parts, st: &AppState, tok: &str) -> Result<ConnectorRow, ApiError> {
     let refuse = || ApiError::unauthenticated("Unknown connector token.");
     let id = parts
@@ -54,12 +88,11 @@ async fn delegated(parts: &Parts, st: &AppState, tok: &str) -> Result<ConnectorR
         .get(HDR_CONNECTOR)
         .and_then(|v| v.to_str().ok())
         .ok_or_else(refuse)?;
-    if !connector_hosts::token_exists(&st.pool, &token::hash(tok)).await? {
-        return Err(refuse());
-    }
+    let auth = host_auth(st, tok).await?.ok_or_else(refuse)?;
     connectors::get(&st.pool, id)
         .await?
         .filter(|r| r.managed && r.status != "disabled")
+        .filter(|r| auth.allows(r.type_id.as_deref().unwrap_or(&r.id)))
         .ok_or_else(refuse)
 }
 

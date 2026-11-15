@@ -636,6 +636,45 @@ async fn sec_84_oversize_responses_are_cut_and_the_credential_never_appears() {
     assert!(!v.to_string().contains("127.0.0.1"));
 }
 
+/// FIX-065: headers and part of the body arrive, then the connection is reset — never a 200
+/// carrying a truncated file (the API would hash and ingest it).
+#[tokio::test]
+async fn a_body_cut_short_by_the_upstream_is_502_library_upstream_not_a_partial_success() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let fx = start().await;
+    let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = l.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        loop {
+            let Ok((mut s, _)) = l.accept().await else {
+                return;
+            };
+            let mut buf = [0u8; 4096];
+            let _ = s.read(&mut buf).await;
+            let _ = s
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 1000\r\n\r\n{\"sha\":\"abc",
+                )
+                .await;
+            let _ = s.flush().await;
+            // Close with data announced but not sent: the body ends in an error.
+            drop(s);
+        }
+    });
+    let cut = Arc::new(LibraryFetch {
+        port,
+        ..clone_fetch(&fx.fetch)
+    });
+    let (s, v) = fx
+        .post_via(
+            cut,
+            true,
+            fx.req("resolve_ref", json!({"repo": "acme/skills", "ref": "main"})),
+        )
+        .await;
+    assert_eq!((s, code(&v)), (502, "library_upstream"), "{v}");
+}
+
 fn clone_fetch(f: &Arc<LibraryFetch>) -> LibraryFetch {
     LibraryFetch {
         ring: f.ring.clone(),
@@ -724,6 +763,65 @@ async fn an_instance_bound_app_reads_the_apps_default_host() {
     assert_eq!(v["status"], 200);
     assert_eq!(
         fx.git.requests()[0].authorization.as_deref(),
+        Some(format!("Bearer {TOKEN}").as_str())
+    );
+}
+
+/// (D-231) A library read on a registered instance served under a base path goes to
+/// `<base_path><template path>`: the template path is the app path.
+#[tokio::test]
+async fn a_registered_instance_with_a_base_path_is_read_under_it() {
+    let fx = start_with(|token_url| {
+        snapshot(
+            vec![app(
+                "forge",
+                Some(library_block("{instance}")),
+                Value::Null,
+                Some(json!({"label": "Forge host", "default_host": null, "probe": null})),
+            )],
+            vec![],
+            vec![json!({
+                "host": "{instance}", "path_prefix": null, "app_id": "forge", "claim_status": "active",
+                "tenant": null, "rewrite_host": null,
+                "inject": [{"bearer": "{credentials.access_token}"}], "finalize": null,
+                "transform": null, "intercept": null, "passthrough": []
+            })],
+            token_url,
+        )
+    })
+    .await;
+    // The loopback fake git host stands in for the registered host (the real CHECK refuses IP
+    // literals, which only matters for this test's scratch database).
+    sqlx::query("ALTER TABLE app_instances DROP CONSTRAINT app_instances_host_ck")
+        .execute(fx.db.pool())
+        .await
+        .unwrap();
+    let inst = Uuid::now_v7();
+    sqlx::query("INSERT INTO app_instances (id, org_id, package_id, app_id, host, base_path, label) VALUES ($1,NULL,'pkg','forge','127.0.0.1','/git-host','F')")
+        .bind(inst)
+        .execute(fx.db.pool())
+        .await
+        .unwrap();
+    sqlx::query("UPDATE app_connections SET instance_id = $1 WHERE id = $2")
+        .bind(inst)
+        .bind(fx.conn)
+        .execute(fx.db.pool())
+        .await
+        .unwrap();
+    let (s, _) = fx
+        .post(
+            true,
+            fx.req("resolve_ref", json!({"repo": "acme/skills", "ref": "main"})),
+        )
+        .await;
+    let seen = fx.git.requests();
+    assert!(!seen.is_empty(), "status {s}");
+    assert_eq!(
+        seen[0].target, "/git-host/repos/acme/skills/commits/main",
+        "the request goes to the registration's address"
+    );
+    assert_eq!(
+        seen[0].authorization.as_deref(),
         Some(format!("Bearer {TOKEN}").as_str())
     );
 }

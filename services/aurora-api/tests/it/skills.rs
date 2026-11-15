@@ -344,6 +344,9 @@ async fn file_paths_and_executable_bit() {
         "sp%20ace",
         "SKILL.md",
         "dir/skill.MD",
+        // (FIX-110) SKILL.md in any segment, not only the last.
+        "skill.md/x",
+        "a/SKILL.MD/b",
         "caf%C3%A9",
     ] {
         let (s, v) = r.raw_put(&r.cookie, &format!("{uri}/{bad}"), b"x").await;
@@ -594,6 +597,81 @@ async fn skill_tools_via_tool_calls() {
     let o = r.booted("t2").await;
     let v = r.tool(&o, "skill_get", json!({"name": "mine"})).await;
     assert_eq!(v["ok"], false);
+}
+
+/// (FIX-110) An agent has at most 50 skills of its own and a skill at most 50 files: the 51st of
+/// each is refused (409) and writes no row, through the route and through `skill_create`.
+#[tokio::test]
+async fn skill_and_file_counts_are_capped() {
+    let r = rig().await;
+    let b = r.booted("capped").await;
+    sqlx::query(
+        "INSERT INTO skills (id, org_id, agent_id, name, description, body, enabled, created_by_kind)
+         SELECT gen_random_uuid(), $1, $2, 'bulk-' || n, 'd', 'b', true, 'user'
+         FROM generate_series(1, 49) n",
+    )
+    .bind(r.org)
+    .bind(b.agent)
+    .execute(r.h.pool())
+    .await
+    .unwrap();
+    let a = b.agent;
+    let (s, v) = r
+        .user(
+            Method::POST,
+            &format!("/v1/agents/{a}/skills"),
+            Some(json!({"name": "fiftieth", "description": "d", "body": "b"})),
+        )
+        .await;
+    assert_eq!(s, 201, "{v}");
+    let skill = v["id"].as_str().unwrap().to_owned();
+    let (s, v) = r
+        .user(
+            Method::POST,
+            &format!("/v1/agents/{a}/skills"),
+            Some(json!({"name": "fifty-first", "description": "d", "body": "b"})),
+        )
+        .await;
+    assert_eq!((s, code(&v)), (409, Some("skill_limit_reached")), "{v}");
+    let v = r
+        .tool(
+            &b,
+            "skill_create",
+            json!({"name": "by-the-agent", "description": "d", "body": "b"}),
+        )
+        .await;
+    assert_eq!(v["ok"], false, "{v}");
+    let n: i64 = sqlx::query_scalar("SELECT count(*) FROM skills WHERE agent_id = $1")
+        .bind(a)
+        .fetch_one(r.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(n, 50);
+
+    // Files: 50 fit, the 51st is refused; replacing an existing path is not a new file.
+    sqlx::query(
+        "INSERT INTO skill_files (skill_id, path, content) SELECT $1::uuid, 'f' || n, 'x'::bytea
+         FROM generate_series(1, 50) n",
+    )
+    .bind(&skill)
+    .execute(r.h.pool())
+    .await
+    .unwrap();
+    let uri = format!("/v1/skills/{skill}/files");
+    let (s, v) = r.raw_put(&r.cookie, &format!("{uri}/f51"), b"x").await;
+    assert_eq!(
+        (s, code(&v)),
+        (409, Some("skill_files_limit_reached")),
+        "{v}"
+    );
+    let (s, v) = r.raw_put(&r.cookie, &format!("{uri}/f7"), b"y").await;
+    assert_eq!(s, 200, "{v}");
+    let n: i64 = sqlx::query_scalar("SELECT count(*) FROM skill_files WHERE skill_id = $1::uuid")
+        .bind(&skill)
+        .fetch_one(r.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(n, 50);
 }
 
 #[tokio::test]

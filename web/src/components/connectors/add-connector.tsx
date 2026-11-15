@@ -12,6 +12,7 @@ import { ItemList, ListRow, Section } from "@/components/ui/section";
 import { visibleFields } from "@/lib/api/apps";
 import { ApiError } from "@/lib/api/client";
 import {
+  isOneClick,
   setupFields,
   useConnectorTypes,
   useCreateManagedConnector,
@@ -21,22 +22,29 @@ import {
 
 import { ManifestSummary } from "./manifest-views";
 import { ConnectorError, ConnectorIcon, UnsignedBadge, settingErrors } from "./shared";
-import { requiredErrors, typedValue } from "./setup-values";
+import { OneClickRow } from "./one-click-add";
+import { shortDescription } from "./short-description";
+import { requiredErrors, splitSettings } from "./setup-values";
 
 type Step = "choose" | "review" | "settings";
 
-/** First line of a setup guide as plain text, for the type card. */
-export function shortDescription(md: string | null | undefined): string {
-  const line = (md ?? "").split("\n").map((l) => l.trim()).find((l) => l && !l.startsWith("#")) ?? "";
-  const text = line.replace(/\[([^\]]*)\]\([^)]*\)/g, "$1").replace(/[*_`>]/g, "").trim();
-  return text.length > 160 ? `${text.slice(0, 157)}…` : text;
-}
-
-function TypeList({ items, onPick }: { items: ConnectorType[]; onPick: (t: ConnectorType) => void }) {
+function TypeList({
+  items,
+  onPick,
+  onAdded,
+  onStale,
+}: {
+  items: ConnectorType[];
+  onPick: (t: ConnectorType) => void;
+  onAdded: (id: string) => void;
+  onStale: () => void;
+}) {
   return (
     <ItemList aria-label="Connector types">
       {items.map((t) => {
         const desc = shortDescription(t.setup_guide_md);
+        // (D-219) Nothing to type: review inline and add with one button.
+        if (!t.added && isOneClick(t)) return <OneClickRow key={t.type_id} type={t} onAdded={onAdded} onStale={onStale} />;
         return (
           <ListRow
             key={t.type_id}
@@ -136,14 +144,7 @@ function SettingsStep({
     const missing = requiredErrors(shown, values, (f) => (values[f.name] ?? "") !== "");
     setErrors(missing);
     if (Object.keys(missing).length) return;
-    const settings: Record<string, unknown> = {};
-    const secrets: Record<string, string> = {};
-    for (const f of shown) {
-      const v = values[f.name] ?? "";
-      if (v === "" || f.type === "generated_secret") continue;
-      if (f.type === "secret") secrets[f.name] = v;
-      else settings[f.name] = typedValue(f, v);
-    }
+    const { settings, secrets } = splitSettings(shown, values);
     const body: CreateConnectorRequest = {
       id: type.type_id,
       approve_manifest_digest: type.manifest_digest,
@@ -217,9 +218,13 @@ function SettingsStep({
 export function AddConnectorFlow({
   onSelfHosted,
   onAdded,
+  only,
 }: {
-  onSelfHosted: () => void;
+  /** Omit to hide the self-hosted path (the org dialog). */
+  onSelfHosted?: () => void;
   onAdded: (id: string) => void;
+  /** Offer just this connector type (the org dialog's inline "Add Mattermost"). */
+  only?: string;
 }) {
   const q = useConnectorTypes();
   const [step, setStep] = useState<Step>("choose");
@@ -256,9 +261,11 @@ export function AddConnectorFlow({
       title="Choose a connector type"
       description="Types offered by the running connector host."
       actions={
-        <Button variant="ghost" size="sm" onClick={onSelfHosted}>
-          Self-hosted connector (advanced)
-        </Button>
+        onSelfHosted ? (
+          <Button variant="ghost" size="sm" onClick={onSelfHosted}>
+            Self-hosted connector (advanced)
+          </Button>
+        ) : undefined
       }
     >
       {q.isPending ? (
@@ -269,7 +276,9 @@ export function AddConnectorFlow({
         <NoHost />
       ) : (
         <TypeList
-          items={q.data.items}
+          items={only ? q.data.items.filter((t) => t.type_id === only) : q.data.items}
+          onAdded={onAdded}
+          onStale={() => void q.refetch()}
           onPick={(t) => {
             setTypeId(t.type_id);
             setValues({});

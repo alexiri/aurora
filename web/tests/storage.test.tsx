@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { AdminStorageView } from "@/components/account/admin-storage-view";
@@ -39,7 +39,7 @@ describe("storage pages (RFE-015)", () => {
     mockFetch({
       "GET /v1/orgs/o1/storage": {
         org_id: "o1", used_bytes: 10 * MIB, quota_bytes: 10 * MIB, notice: "full", files: 3, purged_files: 1,
-        attachments_days: null, attachments_days_effective: null,
+        attachments_days: null, attachments_days_effective: null, computed_at: new Date().toISOString(),
         by_workspace: [{ workspace_id: "w1", workspace_slug: "w", workspace_name: "Main", direction: "out", files: 3, bytes: 10 * MIB }],
       },
       "GET /v1/orgs/o1/retention": {
@@ -61,12 +61,52 @@ describe("storage pages (RFE-015)", () => {
         blob_bytes: 2 * MIB, blob_count: 2, attachment_bytes: 2 * MIB, attachment_files: 2, purged_files: 0,
         orgs: [{ org_id: "o1", slug: "acme", name: "Acme", attachment_bytes: 2 * MIB, files: 2, quota_bytes: null }],
         tables: [{ table: "blobs", bytes: 3 * MIB }],
+        computed_at: new Date().toISOString(),
       },
     });
     wrap(<AdminStorageView />);
     expect(await screen.findByText("Acme")).toBeInTheDocument();
     expect(screen.getByText("Unlimited")).toBeInTheDocument();
     expect(screen.getByText("blobs")).toBeInTheDocument();
+    // FIX-126: the figures are a snapshot; the page says how old and offers a refresh.
+    expect(screen.getByText(/updated just now/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Refresh" })).toBeEnabled();
+  });
+
+  it("refreshes the snapshot, and a 429 shows the wait instead of a page error", async () => {
+    const stale = new Date(Date.now() - 5 * 60_000).toISOString();
+    const fresh = new Date().toISOString();
+    const body = (at: string, files: number) => ({
+      blob_bytes: 0, blob_count: 0, attachment_bytes: 0, attachment_files: files, purged_files: 0,
+      orgs: [], tables: [], computed_at: at,
+    });
+    let posts = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: Request | string | URL) => {
+        const req = input instanceof Request ? input : null;
+        const method = req?.method ?? "GET";
+        if (method === "POST") {
+          posts += 1;
+          if (posts === 1) return json(200, body(fresh, 7));
+          return new Response(JSON.stringify({ error: { code: "rate_limited", message: "slow" } }), {
+            status: 429,
+            headers: { "content-type": "application/json", "retry-after": "1800" },
+          });
+        }
+        return json(200, body(stale, 1));
+      }),
+    );
+    wrap(<AdminStorageView />);
+    expect(await screen.findByText(/updated 5 min ago/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    expect(await screen.findByText(/updated just now/i)).toBeInTheDocument();
+    expect(await screen.findByText("7 files")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    expect(await screen.findByRole("status")).toHaveTextContent(/refresh is limited; try again in (30|31) min/i);
+    expect(screen.getByRole("button", { name: "Refresh" })).toBeDisabled();
+    // The page itself stays: no error state.
+    expect(screen.getByText(/updated just now/i)).toBeInTheDocument();
   });
 
   it("explains a quota refusal on upload", () => {

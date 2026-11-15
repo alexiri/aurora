@@ -53,6 +53,9 @@ struct State {
     deletes: Vec<(String, String, Option<u64>)>,
     creates: Vec<(String, String)>,
     secret_bodies: Vec<Value>,
+    /// (FIX-094) Fault injection: `(kind, method, named)` → the next `n` such requests answer
+    /// `status` (5xx) instead of being served; `named` is a GET of one object (vs a list).
+    faults: BTreeMap<(String, String, bool), (usize, u16)>,
 }
 
 #[derive(Clone, Default)]
@@ -90,6 +93,16 @@ impl Fake {
         f.put("services", "aurora-gateway", core_service("10.1.0.1"));
         f.put("services", "aurora-runner", core_service("10.1.0.2"));
         f
+    }
+
+    /// The next `n` requests of `method` on `kind` (a named GET when `named`, else a list or a
+    /// create) answer `status`.
+    fn fail_next(&self, kind: &str, method: &str, named: bool, n: usize, status: u16) {
+        self.0
+            .lock()
+            .unwrap()
+            .faults
+            .insert((kind.into(), method.into(), named), (n, status));
     }
 
     fn put(&self, kind: &str, name: &str, v: Value) {
@@ -135,6 +148,16 @@ impl Fake {
         let expected_ns = if *kind == "services" { CORE } else { NS };
         assert_eq!(*ns, expected_ns, "{kind} must live in {expected_ns}");
         let mut st = self.0.lock().unwrap();
+        // (FIX-094) Injected apiserver faults (a 5xx for the next n matching requests).
+        if let Some((left, status)) =
+            st.faults
+                .get_mut(&(kind.to_string(), method.to_string(), !rest.is_empty()))
+            && *left > 0
+        {
+            *left -= 1;
+            let status = *status;
+            return status_body(status, "ServiceUnavailable", "injected fault");
+        }
         // (FIX-025) events: list filtered by the field selector's involvedObject terms.
         if *kind == "events" {
             let fields = query
@@ -557,6 +580,64 @@ async fn unschedulable_times_out_and_cleans_up() {
         1,
         "the home stays"
     );
+}
+
+/// (FIX-094 LIFE-10) One 503 on the pod GET while the start waits does not fail the start and
+/// does not delete the pod; the next poll reads it and the start succeeds.
+#[tokio::test]
+async fn a_503_on_the_pod_get_does_not_fail_or_delete_a_starting_pod() {
+    let fake = Fake::with(Behaviour::UnschedulableFor(2));
+    fake.fail_next("pods", "GET", true, 3, 503);
+    let b = backend(&fake, 4, Duration::from_secs(30));
+    let holds = Holds::default();
+    let req = request(Uuid::now_v7(), Uuid::now_v7());
+    b.start(&req, &holds)
+        .await
+        .expect("a transient apiserver error must not end the start");
+    assert_eq!(fake.names("pods").len(), 1, "the pod was not deleted");
+    assert!(
+        fake.0
+            .lock()
+            .unwrap()
+            .deletes
+            .iter()
+            .all(|(kind, _, _)| kind != "pods"),
+        "no pod delete was issued"
+    );
+}
+
+/// (FIX-094 LIFE-10) A 503 on the pod *list* at the start of an attempt is retried too.
+#[tokio::test]
+async fn a_503_on_the_pod_list_is_retried() {
+    let fake = Fake::with(Behaviour::Run);
+    fake.fail_next("pods", "GET", false, 2, 503);
+    let b = backend(&fake, 4, Duration::from_secs(30));
+    b.start(&request(Uuid::now_v7(), Uuid::now_v7()), &Holds::default())
+        .await
+        .expect("the list is retried");
+}
+
+/// (FIX-094 RUN-5) A `Lost` home claim is classified at once as `home_volume_unbound`, not
+/// waited out to the start deadline with a generic reason.
+#[tokio::test]
+async fn a_lost_home_claim_is_home_volume_unbound() {
+    let fake = Fake::with(Behaviour::PvcUnbound);
+    let req = request(Uuid::now_v7(), Uuid::now_v7());
+    fake.put(
+        "persistentvolumeclaims",
+        &req.spec.home_ref,
+        json!({"apiVersion": "v1", "kind": "PersistentVolumeClaim",
+               "metadata": {"name": req.spec.home_ref, "labels": {"aurora.managed": "true"}},
+               "spec": {"accessModes": ["ReadWriteOnce"], "volumeName": "pv-gone",
+                        "resources": {"requests": {"storage": "5Gi"}}},
+               "status": {"phase": "Lost"}}),
+    );
+    let b = backend(&fake, 4, Duration::from_secs(600));
+    let started = std::time::Instant::now();
+    let err = b.start(&req, &Holds::default()).await.unwrap_err();
+    assert!(started.elapsed() < Duration::from_secs(5), "failed fast");
+    assert_eq!(err.reason_code(), "home_volume_unbound", "{err:?}");
+    assert!(err.sanitized_message().contains("Lost"), "{err:?}");
 }
 
 #[tokio::test]

@@ -6,6 +6,7 @@ use super::template::{self, Lookup, Sample, TokenClaims};
 use crate::app::AppState;
 use crate::audit::{self, AuditActor, AuditEvent, Outcome};
 use crate::domains::grants::service as grants;
+use crate::domains::scim::gates;
 use crate::domains::tenancy::service as tenancy;
 use crate::http::auth::Caller;
 use aurora_core::{ApiError, FieldError};
@@ -55,7 +56,8 @@ pub enum OpenPlan {
     Placed,
     /// `none`, or `shared_org` whose default org is gone: only invitation, role claim or JIT admit.
     Closed,
-    /// Nothing saved and no organization exists: only instance admins may sign in yet.
+    /// Nothing saved on a fresh instance (FIX-116: even after an administrator's own sign-in
+    /// created an organization): only instance admins may sign in until a placement is saved.
     SetupPending,
 }
 
@@ -65,7 +67,7 @@ pub async fn open_plan(
 ) -> Result<OpenPlan, aurora_db::DbError> {
     Ok(match repo::get(&mut *conn).await? {
         None => {
-            if !privileged && repo::org_count(&mut *conn).await? == 0 {
+            if !privileged && repo::setup_pending(&mut *conn).await? {
                 OpenPlan::SetupPending
             } else {
                 OpenPlan::OwnOrg
@@ -119,7 +121,22 @@ pub async fn apply_signin(
     let Some(org_id) = row.default_org_id else {
         return Ok(());
     };
-    let member = members::get(&mut **tx, org_id, user.id).await?;
+    let mut member = members::get(&mut **tx, org_id, user.id).await?;
+    if member.is_none() && created {
+        // (FIX-080, SEC-73) Placement creates a membership like JIT and invitations do, so it
+        // passes the same admission gate and seat cap, under the org lock (taken first, the
+        // membership re-read under it).
+        aurora_db::repo::groups::lock_org(tx, org_id).await?;
+        member = members::get(&mut **tx, org_id, user.id).await?;
+        if member.is_none()
+            && let Some(reason) = gates::admit_new_member(tx, org_id, user.id).await?
+        {
+            // The person signs in without this membership (nothing else of the placement
+            // applies without it); the denied row goes on its own connection.
+            gates::audit_denied_detached(&state.pool, org_id, user.id, "placement", reason).await?;
+            return Ok(());
+        }
+    }
     match member {
         None if created => {
             members::insert(&mut **tx, org_id, user.id, &row.default_org_role).await?;
@@ -174,7 +191,7 @@ async fn place_in_shared_workspaces(
             continue;
         };
         if ws.org_id != org_id
-            || repo::personal_owner_of(&mut **tx, ws.id).await?.is_some()
+            || repo::is_personal(&mut **tx, ws.id).await?
             || !matches!(s.role.as_str(), "member" | "approver")
         {
             tracing::warn!("placement: shared workspace {} is not usable", ws.id);
@@ -251,6 +268,13 @@ async fn ensure_personal_workspace(
     let starters: Vec<Starter> =
         serde_json::from_value(row.starter_grants.clone()).unwrap_or_default();
     for s in starters {
+        // Each starter runs in a savepoint inside the shared sign-in transaction: a refusal
+        // (even one that was a failed statement) is rolled back to here and skipped, and the
+        // transaction stays usable for the audit row and the rest of the placement.
+        sqlx::query("SAVEPOINT starter_grant")
+            .execute(&mut **tx)
+            .await
+            .map_err(aurora_db::DbError::from)?;
         let res = match s.kind.as_str() {
             "secret" => grants::grant_secret_as_system(tx, state, &agent, s.id, actor())
                 .await
@@ -261,16 +285,34 @@ async fn ensure_personal_workspace(
             _ => Err(ApiError::not_found("Unknown credential kind.")),
         };
         match res {
-            Ok(Some(mut ev)) => {
-                ev.metadata["starter"] = json!(true);
-                audit_tx(tx, ev).await?;
+            Ok(w) => {
+                sqlx::query("RELEASE SAVEPOINT starter_grant")
+                    .execute(&mut **tx)
+                    .await
+                    .map_err(aurora_db::DbError::from)?;
+                if let Some(mut ev) = w {
+                    ev.metadata["starter"] = json!(true);
+                    audit_tx(tx, ev).await?;
+                }
             }
-            Ok(None) => {}
-            // A credential that was deleted or disabled since the admin saved must not lock
-            // people out: skip it and leave a trail.
+            // A server-side failure (database, internal) is not a refusal: it propagates and
+            // the sign-in fails with its real cause instead of being logged as a skipped grant.
+            Err(e) if e.status().is_server_error() => return Err(e),
+            // A credential that was deleted or disabled since the admin saved, or an app that
+            // became `custom_only` after the starter was saved, must not lock people out: skip
+            // it and leave a trail with the real reason.
             Err(e) => {
+                sqlx::query("ROLLBACK TO SAVEPOINT starter_grant")
+                    .execute(&mut **tx)
+                    .await
+                    .map_err(aurora_db::DbError::from)?;
+                let reason = if e.code() == "full_grant_forbidden" {
+                    "full_grant_forbidden"
+                } else {
+                    "credential_unavailable"
+                };
                 tracing::warn!(
-                    "placement: starter grant {} {} skipped: {e:?}",
+                    "placement: starter grant {} {} skipped ({reason}): {e:?}",
                     s.kind,
                     s.id
                 );
@@ -281,7 +323,7 @@ async fn ensure_personal_workspace(
                         .workspace(ws.id)
                         .target("agent", agent.id)
                         .metadata(json!({"starter": true, "kind": s.kind, "id": s.id,
-                                         "reason": "credential_unavailable"})),
+                                         "reason": reason})),
                 )
                 .await?;
             }
@@ -509,7 +551,7 @@ pub async fn put(
             .await?
             .filter(|w| Some(w.org_id) == org_id)
             .ok_or_else(|| bad(&path, "not a workspace of the default organization"))?;
-        if repo::personal_owner_of(&mut *tx, ws.id).await?.is_some() {
+        if repo::is_personal(&mut *tx, ws.id).await? {
             return Err(bad(
                 &path,
                 "a personal workspace cannot be shared with everyone",

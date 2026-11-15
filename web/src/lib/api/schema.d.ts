@@ -21,6 +21,114 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/admin/addon-sources": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List addon sources (instance administrators). */
+        get: operations["adminListAddonSources"];
+        put?: never;
+        /**
+         * Register a source (TOFU: the manifest's signing key becomes a trusted key, C-593) and ingest
+         *     what it lists; every package waits for the ordinary approval.
+         */
+        post: operations["adminCreateAddonSource"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/addon-sources/check-all": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Check every source (C-596: per-source outcomes, a failure never blocks the others). */
+        post: operations["adminCheckAllAddonSources"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/addon-sources/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Preview a manifest before registering (C-592): fetch and parse only, nothing is stored. */
+        post: operations["adminPreviewAddonSource"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/addon-sources/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One addon source (from its last accepted manifest, not a live fetch). */
+        get: operations["adminGetAddonSource"];
+        put?: never;
+        post?: never;
+        /** Remove a source (refused while its packages are active; packages stay, C-597). */
+        delete: operations["adminDeleteAddonSource"];
+        options?: never;
+        head?: never;
+        /** Edit the check schedule (C-594). */
+        patch: operations["adminUpdateAddonSource"];
+        trace?: never;
+    };
+    "/v1/admin/addon-sources/{id}/check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Check one source now (the shared poll path with `trigger = manual`, C-596). */
+        post: operations["adminCheckAddonSource"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/addon-sources/{id}/confirm-key": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Re-confirm a changed signing key (C-595): updates the source and its trusted key. */
+        post: operations["adminConfirmAddonSourceKey"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/admin/agents/{agent}/start-failures": {
         parameters: {
             query?: never;
@@ -45,12 +153,94 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List instance-wide app instances (instance admin). */
+        /**
+         * List app instances (instance admin): the instance-wide ones, or with `scope=all` every
+         *     organization's too.
+         */
         get: operations["listInstanceAppInstances"];
         put?: never;
         /** Register an instance-wide app instance (instance admin). */
         post: operations["createInstanceAppInstance"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/app-instances/{id}/promote": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Make an organization's registration instance-wide (instance admin, FIX-132): one transaction
+         *     moves it to `org_id = NULL`; its connections keep resolving, other organizations then see it
+         *     too. Audited as `app_instance.promote` (security-critical).
+         */
+        post: operations["promoteAppInstance"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/audit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Instance audit log (instance administrators): instance-level rows, or every row. */
+        get: operations["listInstanceAudit"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/connector-host-tokens": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Connector-host tokens (C-690): the shared bootstrap token and every per-host token with its
+         *     bound connector types, last use and state.
+         */
+        get: operations["adminListConnectorHostTokens"];
+        put?: never;
+        /**
+         * Issue a connector-host token bound to connector types (C-691); shown once. From the first bound
+         *     token on, the shared bootstrap token is refused.
+         */
+        post: operations["adminIssueConnectorHostToken"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/connector-host-tokens/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Revoke a connector-host token (C-692): its next call is 401. */
+        delete: operations["adminRevokeConnectorHostToken"];
         options?: never;
         head?: never;
         patch?: never;
@@ -238,6 +428,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/admin/orgs/{org}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One organization's operator row (instance administrators; counts, no content). */
+        get: operations["adminGetOrg"];
+        put?: never;
+        post?: never;
+        /**
+         * Delete any organization with everything in it (instance administrators; recent re-auth,
+         *     typed slug). Runs the owner delete's services; allowed while frozen; shows no content.
+         */
+        delete: operations["adminDeleteOrg"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/admin/orgs/{org}/freeze": {
         parameters: {
             query?: never;
@@ -269,6 +480,23 @@ export interface paths {
         put?: never;
         /** Lift an organization freeze (instance administrators). */
         post: operations["adminUnfreezeOrg"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/orgs/{org}/workspaces": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One organization's workspaces (instance administrators; metadata only). */
+        get: operations["adminListOrgWorkspaces"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -547,7 +775,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Rotate the runner token; the new `aur_` token is returned once. */
+        /**
+         * Rotate the runner token; the new `aur_` token is returned once and the replaced token keeps
+         *     working for `grace_secs` (default 600) so the runner can be rolled (FIX-121, C-695).
+         */
         post: operations["adminRotateRunnerToken"];
         delete?: never;
         options?: never;
@@ -583,6 +814,26 @@ export interface paths {
         get: operations["adminStorage"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/storage/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Recompute the instance storage snapshot now (FIX-126; instance administrators; the strict
+         *     `export` rate class).
+         */
+        post: operations["refreshAdminStorage"];
         delete?: never;
         options?: never;
         head?: never;
@@ -656,6 +907,26 @@ export interface paths {
         head?: never;
         /** Grant/revoke instance-admin, disable/enable a user. */
         patch: operations["adminPatchUser"];
+        trace?: never;
+    };
+    "/v1/admin/workspaces/{ws}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete any workspace (instance administrators; recent re-auth, typed slug). Runs the
+         *     owner delete's services; shows no content.
+         */
+        delete: operations["adminDeleteWorkspace"];
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/v1/agent-links/{id}/policy": {
@@ -1296,7 +1567,11 @@ export interface paths {
         /** Space bindings of an agent (`can_own`). */
         get: operations["listAgentSpaceBindings"];
         put?: never;
-        post?: never;
+        /**
+         * Bind an agent to a space from the dashboard (C-713, `can_own`): only a space the caller's
+         *     linked chat account is a member of and the shared bot is already in.
+         */
+        post: operations["createAgentSpaceBinding"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1454,7 +1729,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Server-sent events `approval` (`created` | `decided` | `expired`), no SSE ids (C-10). */
+        /** Server-sent events `approval` (`created` | `decided` | `expired` | `abandoned`), no SSE ids (C-10). */
         get: operations["streamApprovals"];
         put?: never;
         post?: never;
@@ -1640,6 +1915,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/auth/cli/pending": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** What a pending login is asking for: host name, start time, coarse address (session only). */
+        get: operations["getPendingCliLogin"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/auth/cli/token": {
         parameters: {
             query?: never;
@@ -1782,6 +2074,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/channel-links/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The chat account a sign-in link token would bind (FIX-112). Session only. */
+        get: operations["previewChannelLink"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/connections/{id}": {
         parameters: {
             query?: never;
@@ -1820,6 +2129,26 @@ export interface paths {
          *     all-or-nothing; an existing grant is returned `existing` and not modified.
          */
         post: operations["grantConnectionToAgents"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/connector-availability": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Per connector type: is it usable, and if not, what is missing and which instance admins to
+         *     ask (C-712). No secrets or settings.
+         */
+        get: operations["getConnectorAvailability"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -2101,7 +2430,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** What deleting the group (or, with `remove_member`, removing that member) would take away. */
+        /**
+         * What deleting the group (or, with `remove_member`, removing that member; with
+         *     `unbind_workspace`, removing its binding to that workspace) would take away.
+         */
         get: operations["groupImpact"];
         put?: never;
         post?: never;
@@ -2234,6 +2566,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/integrations/{id}/spaces": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Spaces the caller is in and the bot is in (C-714). */
+        get: operations["listMyIntegrationSpaces"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/invitations/accept": {
         parameters: {
             query?: never;
@@ -2319,6 +2668,28 @@ export interface paths {
         head?: never;
         /** Update display name and/or default organization. */
         patch: operations["patchMe"];
+        trace?: never;
+    };
+    "/v1/me/api-key": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Revoke the API key this request is authenticated with (C-720; `aurora logout`).
+         * @description Only the presenting key is touched; a session caller gets 400 `not_an_api_key`. Revoking a
+         *     key that is already revoked answers 401 before reaching the handler (the key no longer
+         *     authenticates).
+         */
+        delete: operations["revokeMyApiKey"];
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/v1/me/api-keys": {
@@ -2433,7 +2804,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** OAuth callback: HTML page posting `aurora:connected` to the opener, or `error=<code>`. */
+        /**
+         * OAuth callback: HTML page posting `aurora:connected` on the `aurora-connect` BroadcastChannel, or
+         *     `aurora:connect-failed` and `error=<code>` (C-842).
+         */
         get: operations["oauthCallback"];
         put?: never;
         post?: never;
@@ -2589,6 +2963,27 @@ export interface paths {
          *     (C-33). 409 `tenant_already_bound`, 422 `credentials_invalid`, 503 `connector_unavailable`.
          */
         post: operations["createChannelIntegration"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/orgs/{org}/channel-integrations:probe": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Probe credentials before creating an integration (C-711): returns the choices a connector
+         *     offers for fields such as a team. Nothing is stored. 422 `credentials_invalid`,
+         *     `probe_unsupported`, 503 `connector_unavailable`.
+         */
+        post: operations["probeChannelIntegration"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2899,6 +3294,69 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/orgs/{org}/scim": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** `GET /v1/orgs/{org}/scim` — `{ available, enabled, email_domains, exclusive, base_url }`. */
+        get: operations["getScimSettings"];
+        /**
+         * `PUT /v1/orgs/{org}/scim` — owner + recent re-auth; validates domains (422
+         *     `scim_domain_invalid` / `scim_domain_not_allowed` / `scim_domains_required` when
+         *     enabling); 409 `scim_unavailable` while the instance switch is off.
+         */
+        put: operations["putScimSettings"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/orgs/{org}/scim/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * `GET /v1/orgs/{org}/scim/status` — the Directory sync page payload: last request, counts
+         *     by state, group count, and the last `SCIM_ERROR_LOG` sanitized errors.
+         */
+        get: operations["getScimStatus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/orgs/{org}/scim/tokens": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** `GET /v1/orgs/{org}/scim/tokens` — the org's tokens without material. */
+        get: operations["listScimTokens"];
+        put?: never;
+        /**
+         * `POST /v1/orgs/{org}/scim/tokens` — the `aud_` token **once**; 409 `scim_unavailable`
+         *     (instance off) / 422 `scim_token_limit_reached` (org off, limit); 412 `reauth_required`.
+         */
+        post: operations["createScimToken"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/orgs/{org}/secrets": {
         parameters: {
             query?: never;
@@ -2990,6 +3448,26 @@ export interface paths {
         get: operations["getOrgStorage"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/orgs/{org}/storage/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Recompute the organization's storage snapshot now (FIX-126; org `owner`/`admin`; the strict
+         *     `export` rate class).
+         */
+        post: operations["refreshOrgStorage"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3224,6 +3702,23 @@ export interface paths {
         put?: never;
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/scim/tokens/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** `DELETE /v1/scim/tokens/{id}` — idempotent, effective at once; critical audit. */
+        delete: operations["revokeScimToken"];
         options?: never;
         head?: never;
         patch?: never;
@@ -3989,6 +4484,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/workspaces/{ws}/messages/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Search the messages of a workspace. */
+        get: operations["searchMessages"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/workspaces/{ws}/oauth-clients": {
         parameters: {
             query?: never;
@@ -4294,19 +4806,118 @@ export interface components {
         ActionDecisionBody: {
             decision: components["schemas"]["ActionDecision"];
         };
+        AddonEntry: {
+            description: string;
+            id: string;
+            name: string;
+            /** @description Newest first. */
+            versions: components["schemas"]["AddonVersion"][];
+        };
+        AddonRepoInfo: {
+            contact?: string | null;
+            description: string;
+            homepage?: string | null;
+            name: string;
+        };
+        /** @description `GET /v1/admin/addon-sources[/{id}]`, C-590. */
+        AddonSource: {
+            addon_count: number;
+            addons: components["schemas"]["AddonEntry"][];
+            /** Format: date-time */
+            check_failed_at?: string | null;
+            /** @description Sanitized, at most 200 characters. */
+            check_failed_reason?: string | null;
+            contact?: string | null;
+            /** Format: date-time */
+            created_at: string;
+            homepage?: string | null;
+            /** Format: uuid */
+            id: string;
+            key_description?: string | null;
+            /** @description `sha256:<12 hex>` of the manifest-published signing key. */
+            key_fingerprint: string;
+            /** Format: date-time */
+            last_checked_at?: string | null;
+            manifest_digest: string;
+            name: string;
+            /** @description Only while `status = signing_key_changed`. */
+            new_key_fingerprint?: string | null;
+            publisher: string;
+            removed_upstream: components["schemas"]["RemovedUpstream"][];
+            /** @description `ok` | `check_failed` | `signing_key_changed`. */
+            status: string;
+            /** @description `6h` | `12h` | `1d` | `1w` | `2w` | `1mo` | `never`. */
+            update_interval: string;
+            /** Format: date-time */
+            updated_at: string;
+            /** @description The resolved manifest URL. */
+            url: string;
+        };
+        AddonSourceCheckAll: {
+            items: components["schemas"]["AddonSourceCheckResult"][];
+        };
+        /** @description One source's check, C-596. */
+        AddonSourceCheckResult: {
+            check_failed_reason?: string | null;
+            failed_versions: components["schemas"]["FailedVersion"][];
+            ingested: components["schemas"]["PluginPackage"][];
+            /** Format: uuid */
+            source_id: string;
+            /** @description `updated` | `up_to_date` | `failed`. */
+            status: string;
+        };
+        AddonSourceList: {
+            items: components["schemas"]["AddonSource"][];
+        };
+        /** @description `POST /v1/admin/addon-sources/preview`, C-592: what registering would trust and ingest. */
+        AddonSourcePreview: {
+            addons: components["schemas"]["AddonEntry"][];
+            key_description?: string | null;
+            key_fingerprint: string;
+            /** @description Packages registering would ingest now (not yet on this instance). */
+            packages_new: number;
+            publisher: string;
+            repo: components["schemas"]["AddonRepoInfo"];
+            /** @description The normalized manifest URL that would be stored. */
+            url: string;
+        };
+        /** @description One version of one addon as the manifest lists it, with this instance's install state. */
+        AddonVersion: {
+            /** @description False while `min_core` is above the running core (listed, not ingestable). */
+            ingestable: boolean;
+            /** @description The active version of this package on the instance, else the newest ingested one. */
+            installed_version?: string | null;
+            min_core?: string | null;
+            /** @description `core_too_new` when not ingestable. */
+            not_ingestable_reason?: string | null;
+            /** @description This version is semver-newer than the newest ingested one. */
+            update_available: boolean;
+            version: string;
+        };
         /** @description `GET /v1/admin/identity` (C-511): the Helm-configured role mapping, read-only, no secrets. */
         AdminIdentity: {
             providers: components["schemas"]["IdentityProvider"][];
         };
         /** @description One organization in the instance-admin list (operator view: no org data). */
         AdminOrg: {
+            /** Format: int64 */
+            agent_count: number;
             /** Format: date-time */
             created_at: string;
             frozen?: null | components["schemas"]["Frozen"];
             /** Format: uuid */
             id: string;
+            /**
+             * Format: int64
+             * @description Active members.
+             */
+            member_count: number;
             name: string;
+            /** @description (C-733) No active owner. */
+            ownerless: boolean;
             slug: string;
+            /** Format: int64 */
+            workspace_count: number;
         };
         /** @description Attachment bytes of one org in the instance breakdown. */
         AdminOrgStorage: {
@@ -4336,6 +4947,7 @@ export interface components {
              *     banner or the operator docs. `None`-absent on responses serialised before this field.
              */
             ownerless_orgs?: components["schemas"]["OwnerlessOrg"][];
+            previews?: null | components["schemas"]["OverviewPreviews"];
         };
         /** @description `GET /admin/storage` (API_CONTRACTS C-172). */
         AdminStorage: {
@@ -4353,6 +4965,11 @@ export interface components {
             blob_bytes: number;
             /** Format: int64 */
             blob_count: number;
+            /**
+             * Format: date-time
+             * @description When these figures were computed (FIX-126); the page offers a refresh.
+             */
+            computed_at: string;
             /** @description Top 50 orgs by attachment bytes. */
             orgs: components["schemas"]["AdminOrgStorage"][];
             /** Format: int64 */
@@ -4371,6 +4988,18 @@ export interface components {
             instance_admin_idp_value?: string | null;
             /** Format: date-time */
             last_login_at?: string | null;
+        };
+        /** @description One workspace of an organization in the instance-admin view: metadata only (C-733). */
+        AdminWorkspace: {
+            /** Format: int64 */
+            agent_count: number;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: uuid */
+            id: string;
+            name: string;
+            personal: boolean;
+            slug: string;
         };
         Agent: {
             /** @description Root-relative public path of the avatar (`/v1/public/avatars/{key}`), or null. */
@@ -4552,6 +5181,7 @@ export interface components {
             connection_count: number;
             credentials: components["schemas"]["CredentialInfo"][];
             description: string;
+            family?: null | components["schemas"]["AppFamily"];
             has_dark_icon: boolean;
             hosts: components["schemas"]["HostInfo"][];
             instances?: null | components["schemas"]["AppInstances"];
@@ -4565,9 +5195,31 @@ export interface components {
             serves_library: boolean;
             tools: components["schemas"]["Tool"][];
         };
+        /**
+         * @description `about.family` of an app (C-744): the catalogue and every picker show one product, named
+         *     "<name> · <variant_label>" wherever an app is named.
+         */
+        AppFamily: {
+            id: string;
+            /** @description The app is served by registered self-hosted servers (it declares `instances`). */
+            instance_bound: boolean;
+            /** @description The product name, the same on every member. */
+            name: string;
+            /** @description This app's deployment (its host, "Self-hosted", "Data Center"), unique within the family. */
+            variant_label: string;
+        };
         /** @description A self-hosted app instance: a host an admin registered for one app (C-240, D-74). */
         AppInstance: {
             app_id: string;
+            /** @description (C-731, D-231) The path the app is served under on `host` (`/wiki`); `null` = the host root. */
+            base_path?: string | null;
+            /** @description `https://<host><base_path>`: how the registration is named everywhere. */
+            base_url: string;
+            /**
+             * @description (C-742, D-243) A preset instance the app's package ships (a vendor's region host): built
+             *     in, read-only, and offered to everyone.
+             */
+            builtin: boolean;
             /**
              * Format: int64
              * @description Connections bound to this instance.
@@ -4585,6 +5237,9 @@ export interface components {
              * @description `null` = instance-wide.
              */
             org_id?: string | null;
+            /** @description Name and slug of `org_id` (`null` for an instance-wide registration). */
+            org_name?: string | null;
+            org_slug?: string | null;
             package_id: string;
             /** @description `active` | `disabled`. */
             status: string;
@@ -4629,6 +5284,7 @@ export interface components {
             /** Format: int64 */
             connection_count: number;
             description: string;
+            family?: null | components["schemas"]["AppFamily"];
             has_dark_icon: boolean;
             name: string;
             package_id: string;
@@ -4700,7 +5356,7 @@ export interface components {
         /** @description SSE `data:` payload of `event: approval` (C-10). */
         ApprovalEvent: {
             approval: components["schemas"]["Approval"];
-            /** @description `created` | `decided` | `expired` */
+            /** @description `created` | `decided` | `expired` | `abandoned` */
             event: string;
             notice?: null | components["schemas"]["ApprovalNotice"];
         };
@@ -4961,7 +5617,16 @@ export interface components {
         ConditionOn: "body";
         /** @enum {string} */
         ConditionOp: "contains" | "not_contains" | "equals";
+        ConfirmKeyRequest: {
+            /** @description The new fingerprint the admin saw (echoed back). */
+            new_key_fingerprint: string;
+        };
         ConfirmLinkRequest: {
+            /**
+             * @description The platform user the confirm page showed (`LinkPreview.platform_user_ref`); the request is
+             *     refused (422 `link_reference_mismatch`) when it is not the token's chat account.
+             */
+            platform_user_ref: string;
             /** @description The `aui_…` token from the sign-in link. */
             token: string;
         };
@@ -4974,10 +5639,24 @@ export interface components {
             callback?: string | null;
             client_key?: string | null;
             default_scopes: string[];
+            /** @description One or two sentences: what the method is and when to use it. */
+            description?: string | null;
             fields: components["schemas"]["FormField"][];
             id: string;
             /** @description `oauth2` | `fields` | `hook`. */
             kind: string;
+            /**
+             * @description (FIX-123, D-214) Short name for the connect window's "How do you want to connect?"
+             *     chooser; `null` = the window falls back to the kind.
+             */
+            label?: string | null;
+            /**
+             * @description (FIX-136) For a `fields` method: the read scopes whose probe prefills the declaration
+             *     ("Which scopes did you give this token?"); the others are asked without a prefill.
+             */
+            probe_scopes: string[];
+            /** @description The chooser preselects this method and badges it "Recommended" (at most one per app). */
+            recommended: boolean;
             scopes: components["schemas"]["ScopeInfo"][];
         };
         ConnectNote: {
@@ -4985,6 +5664,12 @@ export interface components {
             url?: string | null;
         };
         ConnectRequest: {
+            /**
+             * @description (FIX-133, D-240) `read` | `write`: a `read` connection allows only the app's read tools
+             *     (the gateway enforces it). Absent = `write` for a new connection; a reconnect keeps the
+             *     connection's current value.
+             */
+            access?: string | null;
             access_level?: string | null;
             fields?: {
                 [key: string]: string;
@@ -5007,6 +5692,12 @@ export interface components {
             reconnect_connection_id?: string | null;
             /** @description `organization` | `workspace`. */
             scope: string;
+            /**
+             * @description (FIX-136, D-241) For a `fields` method that declares scopes: the scopes the pasted token
+             *     has ("Which scopes did you give this token?"). Absent = prefilled by the method's read
+             *     probes. Each must be one of the method's scopes.
+             */
+            scopes?: string[] | null;
             /** Format: uuid */
             workspace_id?: string | null;
         };
@@ -5028,8 +5719,18 @@ export interface components {
         };
         /** @description A connection. Credentials are never returned (SEC-12). */
         Connection: {
+            /**
+             * @description (FIX-133, D-240) `read` | `write`: a `read` connection allows only the app's read tools
+             *     (the gateway blocks write tools and untooled requests through it, whatever the grants say).
+             */
+            access: string;
             app_id: string;
             app_version: string;
+            /**
+             * @description (FIX-123, D-214) The `connect[]` method id the connection was made with; `null` when
+             *     unknown (rows older than the column of an app with several methods).
+             */
+            connect_method?: string | null;
             connected_by?: null | components["schemas"]["ConnectedBy"];
             /** Format: date-time */
             created_at: string;
@@ -5141,6 +5842,19 @@ export interface components {
         ConnectorAdminList: {
             items: components["schemas"]["ConnectorAdmin"][];
         };
+        ConnectorAvailability: {
+            /** @description The connector's id when one exists. */
+            connector_id?: string | null;
+            icon_url?: string | null;
+            name: string;
+            setup_state: components["schemas"]["ConnectorSetupState"];
+            type_id: string;
+        };
+        ConnectorAvailabilityList: {
+            /** @description Display names only, at most 10. */
+            instance_admins: components["schemas"]["InstanceAdminName"][];
+            items: components["schemas"]["ConnectorAvailability"][];
+        };
         ConnectorHostInfo: {
             /** Format: uuid */
             instance_id: string;
@@ -5171,6 +5885,11 @@ export interface components {
             /** Format: date-time */
             updated_at?: string | null;
         };
+        /**
+         * @description Where a connector type stands for an org admin who wants to use it (C-712).
+         * @enum {string}
+         */
+        ConnectorSetupState: "active" | "not_added" | "waiting_for_host" | "disabled" | "needs_approval";
         /** @enum {string} */
         ConnectorStatus: "awaiting_registration" | "pending_approval" | "active" | "disabled";
         /** @description Returned once on rotation. */
@@ -5313,6 +6032,12 @@ export interface components {
              */
             state: string;
         };
+        CreateAddonSourceRequest: {
+            /** @description `6h|12h|1d|1w|2w|1mo|never`; default: `plugins.addon_sources.update_interval`. */
+            update_interval?: string | null;
+            /** @description The repo URL or the direct manifest URL (https); the normalized manifest URL is stored. */
+            url: string;
+        };
         CreateAgentRequest: {
             brief?: string | null;
             effort?: string | null;
@@ -5331,9 +6056,22 @@ export interface components {
         };
         CreateAppInstanceRequest: {
             app_id: string;
+            /**
+             * @description (C-731, D-231) Only if the app is served under a path: `/wiki` for
+             *     `https://its.cern.ch/wiki`. Normalized (`/wiki/` = `/wiki`, `""` and `/` = none); cannot be
+             *     changed later.
+             */
+            base_path?: string | null;
             /** @description A lower-case DNS name: no port, path, userinfo or IP literal. */
             host: string;
             label: string;
+        };
+        /** @description `POST /agents/{agent}/space-bindings` (C-713). */
+        CreateBindingRequest: {
+            /** Format: uuid */
+            integration_id: string;
+            listen?: null | components["schemas"]["Listen"];
+            space_ref: string;
         };
         CreateConnectorRequest: {
             /** @description Managed (required): the manifest digest the administrator reviewed. */
@@ -5489,6 +6227,11 @@ export interface components {
              */
             name?: string | null;
         };
+        CreateToken: {
+            /** Format: int32 */
+            expires_in_days?: number | null;
+            name: string;
+        };
         CreateTrustedKeyRequest: {
             name: string;
             /** @description Base64 ed25519 public key. */
@@ -5538,6 +6281,19 @@ export interface components {
             api_key: components["schemas"]["ApiKey"];
             /** @description The token; shown only in this response. */
             key: string;
+        };
+        /** @description A newly created token: the only time its material (`token`) is returned. */
+        CreatedScimToken: {
+            /** Format: date-time */
+            created_at: string;
+            display_prefix: string;
+            /** Format: date-time */
+            expires_at: string;
+            /** Format: uuid */
+            id: string;
+            name: string;
+            /** @description The `aud_` token, shown once; never stored in cleartext. */
+            token: string;
         };
         CredentialInfo: {
             name: string;
@@ -5735,6 +6491,11 @@ export interface components {
              */
             purged_attachments: components["schemas"]["PurgedAttachment"][];
         };
+        FailedVersion: {
+            package_id: string;
+            reason: string;
+            version: string;
+        };
         Features: {
             channels: boolean;
             hosted: boolean;
@@ -5787,6 +6548,13 @@ export interface components {
              */
             effective_frozen: boolean;
             frozen?: null | components["schemas"]["Frozen"];
+            /**
+             * @description What a `freeze` call did: `frozen` (it was not frozen), `escalated` (it was frozen by a
+             *     lower authority; the record now carries the caller's authority, reason and identity) or
+             *     `unchanged` (already frozen by an equal or higher authority: nothing changed). `null`
+             *     after `unfreeze`.
+             */
+            outcome?: string | null;
         };
         /** @description Which library skill to add (`10 §Git skill library`). */
         FromLibrary: {
@@ -5972,6 +6740,31 @@ export interface components {
             message?: string | null;
             state: components["schemas"]["HostState"];
         };
+        HostTokenInfo: {
+            /** Format: date-time */
+            created_at: string;
+            /** Format: uuid */
+            id: string;
+            /** Format: date-time */
+            last_used_at?: string | null;
+            /** @description `null` for the shared bootstrap token. */
+            name?: string | null;
+            /** @description First characters of the token (never enough to use it). */
+            prefix?: string | null;
+            /** Format: date-time */
+            revoked_at?: string | null;
+            /** @description `active` | `revoked` | `refused` (the shared bootstrap token once a bound token exists). */
+            state: string;
+            /** @description `null` for the shared bootstrap token, which is not bound. */
+            type_ids?: string[] | null;
+        };
+        HostTokenIssued: components["schemas"]["HostTokenInfo"] & {
+            /** @description `auh_…`, shown once. */
+            token: string;
+        };
+        HostTokenList: {
+            items: components["schemas"]["HostTokenInfo"][];
+        };
         Identity: {
             /** Format: uuid */
             id: string;
@@ -6082,10 +6875,18 @@ export interface components {
             pattern: string;
             replacement: string;
         };
+        InstanceAdminName: {
+            name: string;
+        };
         /** @description (phase 3, RFE-013) The instance level of the agent-token maximum age. */
         InstanceAgentTokens: {
             /** Format: int32 */
             max_age_days?: number | null;
+        };
+        /** @description An audit row with the organization it concerns (instance view). */
+        InstanceAuditEntry: components["schemas"]["AuditEntry"] & {
+            /** @description Slug of `org_id` (`null` for instance-level rows). */
+            org_slug?: string | null;
         };
         /** @description (phase 2, RFE-025) The instance level of BYO governance (`[byo]`). */
         InstanceByo: {
@@ -6145,6 +6946,10 @@ export interface components {
         };
         /** @description The registered self-hosted instance a connection is bound to (C-243). */
         InstanceRef: {
+            /** @description (C-731, D-231) The path the app is served under on `host`; `null` = the host root. */
+            base_path?: string | null;
+            /** @description `https://<host><base_path>`. */
+            base_url: string;
             host: string;
             /** Format: uuid */
             id: string;
@@ -6187,6 +6992,12 @@ export interface components {
             display_name: string;
             /** Format: uuid */
             id: string;
+        };
+        IssueHostTokenRequest: {
+            /** @description 1–80 characters, unique among live tokens (for example the Deployment's name). */
+            name: string;
+            /** @description The connector types this host may register, poll and report for (1–64). */
+            type_ids: string[];
         };
         KeyOwner: {
             display_name: string;
@@ -6325,6 +7136,21 @@ export interface components {
         };
         /** @enum {string} */
         LinkPolicy: "ask" | "allow" | "blocked";
+        /** @description `GET /channel-links/preview?token=`: the chat account a sign-in link would bind (docs/13 §5.9). */
+        LinkPreview: {
+            connector_id: string;
+            /** Format: date-time */
+            expires_at: string;
+            /** Format: uuid */
+            integration_id: string;
+            /** @description What the platform called the person when the link was requested, if known. */
+            platform_display_name?: string | null;
+            /** @description The email the platform asserted, if any (a hint, never an authorization). */
+            platform_email_hint?: string | null;
+            /** @description The platform's reference for the person (what the confirm request repeats). */
+            platform_user_ref: string;
+            tenant_label: string;
+        };
         LinkSelf: {
             /** Format: uuid */
             agent_id: string;
@@ -6394,11 +7220,7 @@ export interface components {
             name: string;
         };
         MeMembership: {
-            /**
-             * @description (phase 4, P4-GRP-1) The effective org role: the strongest of `role` and the `org_role` of
-             *     the caller's groups, only while the membership is active (`role` stays the direct role).
-             */
-            effective_role: components["schemas"]["OrgRole"];
+            effective_role?: null | components["schemas"]["OrgRole"];
             org: components["schemas"]["OrgSummary"];
             role: components["schemas"]["OrgRole"];
             /** @description Where the effective role comes from: `direct`, or `group` with the group. */
@@ -6462,7 +7284,7 @@ export interface components {
             state: string;
         };
         /** @enum {string} */
-        MemberStatus: "active" | "suspended";
+        MemberStatus: "active" | "suspended" | "pending";
         MembersBatchRequest: {
             add?: string[];
             remove?: string[];
@@ -6540,6 +7362,17 @@ export interface components {
         };
         Models: {
             items: components["schemas"]["ModelItem"][];
+        };
+        MySpace: {
+            /** @description Always true: `spaces.list` is the bot's own view (C-714). */
+            bot_present: boolean;
+            /** @description `channel` or `private`. */
+            kind: string;
+            label: string;
+            space_ref: string;
+        };
+        MySpacesList: {
+            items: components["schemas"]["MySpace"][];
         };
         NamedRef: {
             /** Format: uuid */
@@ -6796,11 +7629,16 @@ export interface components {
             attachments_days_effective?: number | null;
             by_workspace: components["schemas"]["WorkspaceStorage"][];
             /**
+             * Format: date-time
+             * @description When the file counts and the breakdown were computed (FIX-126).
+             */
+            computed_at: string;
+            /**
              * Format: int64
              * @description Files that hold bytes.
              */
             files: number;
-            /** @description `clear` (< 80 %) | `warning` (≥ 80 %) | `full` (≥ 100 %). */
+            /** @description `clear` (< 80 %) | `warning` (≥ 80 %) | `full` (≥ 100 %); from the live counter. */
             notice: string;
             /** Format: uuid */
             org_id: string;
@@ -6816,7 +7654,7 @@ export interface components {
             quota_bytes?: number | null;
             /**
              * Format: int64
-             * @description Counter of non-purged attachment bytes.
+             * @description Counter of non-purged attachment bytes (live, never cached).
              */
             used_bytes: number;
         };
@@ -6837,6 +7675,19 @@ export interface components {
             agent: components["schemas"]["AgentRef"];
             /** Format: uuid */
             skill_id: string;
+        };
+        /**
+         * @description (FIX-148, C-841) `previews` of `GET /v1/admin/overview`: the relay replicas the API has
+         *     seen (the rows of `GET /v1/admin/relays`: last seen within 15 minutes).
+         */
+        OverviewPreviews: {
+            /**
+             * Format: date-time
+             * @description Newest `last_seen_at` among them; absent with no replica.
+             */
+            last_seen_at?: string | null;
+            /** Format: int64 */
+            relay_replicas: number;
         };
         /** @description (FIX-050, C-630) One ownerless organization of the admin overview. */
         OwnerlessOrg: {
@@ -6887,13 +7738,24 @@ export interface components {
         };
         Page_AdminOrg: {
             items: {
+                /** Format: int64 */
+                agent_count: number;
                 /** Format: date-time */
                 created_at: string;
                 frozen?: null | components["schemas"]["Frozen"];
                 /** Format: uuid */
                 id: string;
+                /**
+                 * Format: int64
+                 * @description Active members.
+                 */
+                member_count: number;
                 name: string;
+                /** @description (C-733) No active owner. */
+                ownerless: boolean;
                 slug: string;
+                /** Format: int64 */
+                workspace_count: number;
             }[];
             next_cursor?: string | null;
         };
@@ -6910,6 +7772,20 @@ export interface components {
                 /** Format: date-time */
                 last_login_at?: string | null;
             })[];
+            next_cursor?: string | null;
+        };
+        Page_AdminWorkspace: {
+            items: {
+                /** Format: int64 */
+                agent_count: number;
+                /** Format: date-time */
+                created_at: string;
+                /** Format: uuid */
+                id: string;
+                name: string;
+                personal: boolean;
+                slug: string;
+            }[];
             next_cursor?: string | null;
         };
         Page_Agent: {
@@ -6995,6 +7871,15 @@ export interface components {
         Page_AppInstance: {
             items: {
                 app_id: string;
+                /** @description (C-731, D-231) The path the app is served under on `host` (`/wiki`); `null` = the host root. */
+                base_path?: string | null;
+                /** @description `https://<host><base_path>`: how the registration is named everywhere. */
+                base_url: string;
+                /**
+                 * @description (C-742, D-243) A preset instance the app's package ships (a vendor's region host): built
+                 *     in, read-only, and offered to everyone.
+                 */
+                builtin: boolean;
                 /**
                  * Format: int64
                  * @description Connections bound to this instance.
@@ -7012,6 +7897,9 @@ export interface components {
                  * @description `null` = instance-wide.
                  */
                 org_id?: string | null;
+                /** @description Name and slug of `org_id` (`null` for an instance-wide registration). */
+                org_name?: string | null;
+                org_slug?: string | null;
                 package_id: string;
                 /** @description `active` | `disabled`. */
                 status: string;
@@ -7119,8 +8007,18 @@ export interface components {
         };
         Page_Connection: {
             items: {
+                /**
+                 * @description (FIX-133, D-240) `read` | `write`: a `read` connection allows only the app's read tools
+                 *     (the gateway blocks write tools and untooled requests through it, whatever the grants say).
+                 */
+                access: string;
                 app_id: string;
                 app_version: string;
+                /**
+                 * @description (FIX-123, D-214) The `connect[]` method id the connection was made with; `null` when
+                 *     unknown (rows older than the column of an app with several methods).
+                 */
+                connect_method?: string | null;
                 connected_by?: null | components["schemas"]["ConnectedBy"];
                 /** Format: date-time */
                 created_at: string;
@@ -7250,6 +8148,13 @@ export interface components {
                 synced_at?: string | null;
                 user: components["schemas"]["UserRef"];
             }[];
+            next_cursor?: string | null;
+        };
+        Page_InstanceAuditEntry: {
+            items: (components["schemas"]["AuditEntry"] & {
+                /** @description Slug of `org_id` (`null` for instance-level rows). */
+                org_slug?: string | null;
+            })[];
             next_cursor?: string | null;
         };
         Page_Invitation: {
@@ -7430,11 +8335,20 @@ export interface components {
                 permissions: components["schemas"]["PluginPermissions"];
                 publisher: string;
                 signer: components["schemas"]["PluginSigner"];
-                /** @description `builtin` | `directory` | `upload`. */
+                /** @description `builtin` | `directory` | `upload` | `addon` (P5-ASRC). */
                 source: string;
+                /**
+                 * Format: uuid
+                 * @description (P5-ASRC, C-600) the addon source row for `source = "addon"`.
+                 */
+                source_id?: string | null;
+                /** @description (P5-ASRC, C-600) the addon source's name at read time (never stored). */
+                source_name?: string | null;
                 /** @description `pending_approval` | `active` | `superseded` | `rejected` | `disabled` | `invalid`. */
                 status: string;
                 status_reason?: string | null;
+                /** @description (P5-ASRC, C-600) a manifest version of the same package is newer than this row. */
+                update_available?: boolean;
                 version: string;
                 violations: components["schemas"]["PluginViolation"][];
                 widenings: components["schemas"]["PluginWidening"][];
@@ -7821,7 +8735,15 @@ export interface components {
             listen?: null | components["schemas"]["Listen"];
         };
         PatchConnectionRequest: {
+            /** @description (FIX-133, D-240) `read` | `write`; whoever can manage the connection may change it. */
+            access?: string | null;
             label?: string | null;
+            /**
+             * @description (FIX-136, D-241) Replace the scopes the connection has: only for a connection made with a
+             *     `fields` method that declares scopes (a pasted token's scopes are declared by the person, an
+             *     OAuth connection's are what the provider granted), each one of that method's scopes.
+             */
+            scopes?: string[] | null;
             /** @description `active` | `disabled`. */
             status?: string | null;
         };
@@ -7992,6 +8914,25 @@ export interface components {
         };
         PendingList: {
             items: components["schemas"]["Approval"][];
+        };
+        /** @description (FIX-108) The pending login as the approving session sees it. */
+        PendingResponse: {
+            /** @description Coarse address the request came from (IPv4 /24, IPv6 /48); absent when unknown. */
+            address?: string | null;
+            /** Format: date-time */
+            expires_at: string;
+            /** @description The host name the CLI gave (sanitized, **unverified**: anyone can claim any name). */
+            hostname: string;
+            /**
+             * Format: int32
+             * @description Lifetime of the key an approval creates, in days; absent = it never expires.
+             */
+            key_expires_in_days?: number | null;
+            /**
+             * Format: date-time
+             * @description When the login was started.
+             */
+            requested_at: string;
         };
         PendingUpdateLibrary: {
             /** Format: uuid */
@@ -8168,11 +9109,20 @@ export interface components {
             permissions: components["schemas"]["PluginPermissions"];
             publisher: string;
             signer: components["schemas"]["PluginSigner"];
-            /** @description `builtin` | `directory` | `upload`. */
+            /** @description `builtin` | `directory` | `upload` | `addon` (P5-ASRC). */
             source: string;
+            /**
+             * Format: uuid
+             * @description (P5-ASRC, C-600) the addon source row for `source = "addon"`.
+             */
+            source_id?: string | null;
+            /** @description (P5-ASRC, C-600) the addon source's name at read time (never stored). */
+            source_name?: string | null;
             /** @description `pending_approval` | `active` | `superseded` | `rejected` | `disabled` | `invalid`. */
             status: string;
             status_reason?: string | null;
+            /** @description (P5-ASRC, C-600) a manifest version of the same package is newer than this row. */
+            update_available?: boolean;
             version: string;
             violations: components["schemas"]["PluginViolation"][];
             widenings: components["schemas"]["PluginWidening"][];
@@ -8327,6 +9277,9 @@ export interface components {
         };
         /** @enum {string} */
         PresenceStatus: "pending_setup" | "active" | "disabled" | "needs_attention";
+        PreviewAddonSourceRequest: {
+            url: string;
+        };
         PreviewCreatedBy: {
             /** Format: uuid */
             id?: string | null;
@@ -8390,6 +9343,25 @@ export interface components {
         PreviewsInfo: {
             domain?: string | null;
             enabled: boolean;
+        };
+        ProbeChoice: {
+            label: string;
+            value: string;
+        };
+        /** @description `POST /orgs/{org}/channel-integrations:probe` body (C-711): the create shapes. */
+        ProbeIntegrationRequest: {
+            config?: Record<string, never>;
+            connector_id: string;
+            /** @description Write-only: used once, never stored or logged. */
+            credentials: Record<string, never>;
+        };
+        ProbeIntegrationResponse: {
+            /** @description Per setup field that declares `choices: "from_validate"`. */
+            choices: {
+                [key: string]: components["schemas"]["ProbeChoice"][];
+            };
+            tenant_label?: string | null;
+            warnings: string[];
         };
         PublishRequest: {
             /** Format: int64 */
@@ -8467,6 +9439,11 @@ export interface components {
              */
             conversations_days?: number | null;
         };
+        PutSettings: {
+            email_domains?: string[] | null;
+            enabled?: boolean | null;
+            exclusive?: boolean | null;
+        };
         RateLimit: {
             /** Format: int32 */
             count: number;
@@ -8476,6 +9453,12 @@ export interface components {
         ReachDecision: "approve" | "block";
         ReachDecisionRequest: {
             decision: components["schemas"]["ReachDecision"];
+            /**
+             * Format: int32
+             * @description (FIX-111) Approve only: the grant expires this many seconds from now (60 s to 365 days)
+             *     and then needs a new approval; without it a grant does not expire.
+             */
+            expires_in?: number | null;
             listen?: null | components["schemas"]["Listen"];
             /** Format: int64 */
             revision: number;
@@ -8547,6 +9530,11 @@ export interface components {
             streams_open: number;
             version: string;
         };
+        /** @description A version this instance ingested from the source that the manifest no longer lists. */
+        RemovedUpstream: {
+            package_id: string;
+            version: string;
+        };
         Replica: {
             advertised_host: string;
             /** Format: uuid */
@@ -8567,6 +9555,14 @@ export interface components {
             /** Format: date-time */
             last_seen_at: string;
             version: string;
+        };
+        /**
+         * @description The event a message replies to (C-725): the `seq` of a `text`, `turn.queued` or `attachment`
+         *     event of the same conversation.
+         */
+        ReplyToRef: {
+            /** Format: int64 */
+            seq: number;
         };
         RequestLogEntry: {
             /** Format: uuid */
@@ -8671,6 +9667,12 @@ export interface components {
         };
         RollbackRequest: {
             /**
+             * Format: int64
+             * @description (FIX-109) The draft revision the caller last read: rollback replaces the current draft,
+             *     so a draft a colleague saved since is not discarded silently (409 `stale_revision`).
+             */
+            expect_revision: number;
+            /**
              * Format: int32
              * @description Generation number to copy.
              */
@@ -8739,9 +9741,17 @@ export interface components {
             last_registered_at?: string | null;
             /** Format: int64 */
             live_replicas: number;
-            /** Format: int64 */
+            /**
+             * Format: int64
+             * @description The declared capacity limit (`capabilities.max_sandboxes`); `null` = none declared.
+             */
             max_sandboxes?: number | null;
             name: string;
+            /**
+             * Format: date-time
+             * @description (FIX-121, C-695) While a rotation's grace lasts: when the replaced token stops working.
+             */
+            previous_token_expires_at?: string | null;
             replicas: components["schemas"]["Replica"][];
             /** Format: int64 */
             running_sandboxes: number;
@@ -8895,6 +9905,65 @@ export interface components {
             /** Format: uuid */
             turn_id?: string | null;
         };
+        /** @description One recent sanitized SCIM error (never a token or another user's e-mail). */
+        ScimErrorEntry: {
+            /** Format: date-time */
+            at: string;
+            method: string;
+            resource: string;
+            scim_type?: string | null;
+            /** Format: int64 */
+            status: number;
+        };
+        /** @description The org's directory-sync settings (C-472). */
+        ScimSettings: {
+            /** @description The instance switch (`scim.enabled`). */
+            available: boolean;
+            /** @description `<external url>/scim/v2`. */
+            base_url: string;
+            email_domains: string[];
+            enabled: boolean;
+            /** @description Directory-managed membership: only people the directory provisioned are admitted. */
+            exclusive: boolean;
+        };
+        /** @description The Directory sync status card. */
+        ScimStatus: {
+            enabled: boolean;
+            errors: components["schemas"]["ScimErrorEntry"][];
+            /** Format: int64 */
+            groups: number;
+            /** Format: date-time */
+            last_request_at?: string | null;
+            users: components["schemas"]["ScimUserCounts"];
+        };
+        /** @description One provisioning token without its material. */
+        ScimTokenInfo: {
+            /** Format: date-time */
+            created_at: string;
+            display_prefix: string;
+            /** Format: date-time */
+            expires_at: string;
+            /** @description Live and expiring within 14 days. */
+            expiring: boolean;
+            /** Format: uuid */
+            id: string;
+            /** Format: date-time */
+            last_used_at?: string | null;
+            name: string;
+            revoked: boolean;
+        };
+        ScimTokenList: {
+            tokens: components["schemas"]["ScimTokenInfo"][];
+        };
+        /** @description Link counts by state. */
+        ScimUserCounts: {
+            /** Format: int64 */
+            active: number;
+            /** Format: int64 */
+            removed: number;
+            /** Format: int64 */
+            suspended: number;
+        };
         ScopeInfo: {
             /** @description `read` | `write`. */
             access: string;
@@ -8908,6 +9977,44 @@ export interface components {
         ScopeTrace: {
             considered: components["schemas"]["TraceEntry"][];
             verdict?: null | components["schemas"]["SimVerdict"];
+        };
+        SearchAgent: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+        };
+        SearchAuthor: {
+            /** @description `person` | `agent` | `other` */
+            kind: string;
+            label: string;
+        };
+        SearchConversation: {
+            archived: boolean;
+            /** Format: uuid */
+            id: string;
+            kind: string;
+            title?: string | null;
+        };
+        SearchItem: {
+            agent: components["schemas"]["SearchAgent"];
+            /** Format: date-time */
+            at: string;
+            author: components["schemas"]["SearchAuthor"];
+            conversation: components["schemas"]["SearchConversation"];
+            /** @description `[start, end)` offsets into `snippet`, in UTF-16 code units. */
+            highlights: number[][];
+            /** Format: int64 */
+            seq: number;
+            /** @description Plain text (at most 300 characters), never markup. */
+            snippet: string;
+            /** @description `turn.queued` | `text` | `attachment` */
+            type: string;
+        };
+        SearchResponse: {
+            /** @description `false` while the index of older messages is still being built. */
+            index_complete: boolean;
+            items: components["schemas"]["SearchItem"][];
+            next_cursor?: string | null;
         };
         Secret: {
             /** Format: date-time */
@@ -8990,7 +10097,9 @@ export interface components {
         };
         SendMessage: {
             attachment_ids?: string[];
-            text: string;
+            reply_to?: null | components["schemas"]["ReplyToRef"];
+            /** @description May be empty or absent when `attachment_ids` is non-empty (C-726). */
+            text?: string;
         };
         SetDmDefaultRequest: {
             /** Format: uuid */
@@ -9433,6 +10542,8 @@ export interface components {
             stale: boolean;
         };
         Tool: {
+            /** @description (FIX-123, D-214) Connect method ids the tool works with; empty = every method. */
+            connect_methods: string[];
             description?: string | null;
             /** @description `push` | `fetch`. */
             git?: string | null;
@@ -9445,6 +10556,8 @@ export interface components {
             methods: string[];
             name: string;
             path: string;
+            /** @description (FIX-136, D-241) Scope ids (any of) the tool needs; empty = no requirement. */
+            scopes: string[];
             wildcard: boolean;
         };
         TraceEntry: {
@@ -9502,6 +10615,10 @@ export interface components {
         };
         /** @enum {string} */
         UncredentialedDefault: "none" | "block";
+        UpdateAddonSourceRequest: {
+            /** @description `6h|12h|1d|1w|2w|1mo|never`. */
+            update_interval: string;
+        };
         UpdateScheduleRequest: {
             /** @description `creator` | `workspace`; changing it needs `can_own` and is audited (RFE-021). */
             anchor?: string | null;
@@ -9738,6 +10855,15 @@ export interface operations {
                     "application/json": components["schemas"]["ActionApproval"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -9763,7 +10889,578 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminListAddonSources: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AddonSourceList"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminCreateAddonSource: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateAddonSourceRequest"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AddonSource"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminCheckAllAddonSources: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AddonSourceCheckAll"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminPreviewAddonSource: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PreviewAddonSourceRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AddonSourcePreview"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminGetAddonSource: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Addon source id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AddonSource"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminDeleteAddonSource: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Addon source id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminUpdateAddonSource: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Addon source id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateAddonSourceRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AddonSource"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminCheckAddonSource: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Addon source id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AddonSourceCheckResult"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminConfirmAddonSourceKey: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Addon source id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConfirmKeyRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AddonSource"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -9793,6 +11490,15 @@ export interface operations {
                     "application/json": components["schemas"]["AgentStartFailures"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -9809,6 +11515,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
         };
     };
     listInstanceAppInstances: {
@@ -9817,6 +11532,10 @@ export interface operations {
                 app_id?: string;
                 limit?: number;
                 cursor?: string;
+                /** @description `instance` (default): instance-wide only; `all`: every registration, organizations' too. */
+                scope?: string;
+                /** @description Only this organization's registrations (implies `all`). */
+                org?: string;
             };
             header?: never;
             path?: never;
@@ -9833,8 +11552,26 @@ export interface operations {
                     "application/json": components["schemas"]["Page_AppInstance"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Forbidden */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -9875,6 +11612,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Forbidden */
             403: {
                 headers: {
@@ -9886,6 +11632,315 @@ export interface operations {
             };
             /** @description app_not_instance_bound, instance_host_invalid, instance_host_conflict or instance_probe_failed */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    promoteAppInstance: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description App instance id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Promoted */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppInstance"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description instance_already_wide or instance_host_shared */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    listInstanceAudit: {
+        parameters: {
+            query?: {
+                limit?: number;
+                cursor?: string;
+                /** @description `instance` (default): rows without an organization; `all`: every row, orgs included. */
+                scope?: string;
+                /** @description Only this organization's rows (implies `scope=all`). */
+                org?: string;
+                /** @description Action prefix, e.g. `plugin.` or `trusted_key.create`. */
+                action?: string;
+                actor_id?: string;
+                critical?: boolean;
+                /** @description Inclusive lower bound on `created_at` (RFC 3339). */
+                since?: string;
+                /** @description Exclusive upper bound on `created_at` (RFC 3339). */
+                until?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_InstanceAuditEntry"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminListConnectorHostTokens: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostTokenList"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminIssueConnectorHostToken: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["IssueHostTokenRequest"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostTokenIssued"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminRevokeConnectorHostToken: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Token id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -9912,7 +11967,25 @@ export interface operations {
                     "application/json": components["schemas"]["ConnectorTypeList"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -9939,7 +12012,25 @@ export interface operations {
                     "application/json": components["schemas"]["ConnectorAdminList"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -9970,6 +12061,15 @@ export interface operations {
                     "application/json": components["schemas"]["ConnectorWithToken"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -9987,6 +12087,15 @@ export interface operations {
                 };
             };
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -10023,6 +12132,15 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -10040,6 +12158,15 @@ export interface operations {
                 };
             };
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -10073,6 +12200,15 @@ export interface operations {
                     "application/json": components["schemas"]["ConnectorAdmin"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -10090,6 +12226,15 @@ export interface operations {
                 };
             };
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -10132,6 +12277,15 @@ export interface operations {
                     "application/json": components["schemas"]["ConnectorAdmin"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -10149,6 +12303,15 @@ export interface operations {
                 };
             };
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -10178,6 +12341,15 @@ export interface operations {
                     "application/json": components["schemas"]["ConnectorToken"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -10187,6 +12359,15 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -10213,7 +12394,25 @@ export interface operations {
                     "application/json": components["schemas"]["HostClaimConflictList"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -10255,6 +12454,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -10272,6 +12480,15 @@ export interface operations {
                 };
             };
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -10298,7 +12515,25 @@ export interface operations {
                     "application/json": components["schemas"]["AdminIdentity"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -10329,8 +12564,26 @@ export interface operations {
                     "application/json": components["schemas"]["Page_OAuthClient"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Forbidden */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -10371,6 +12624,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Forbidden */
             403: {
                 headers: {
@@ -10382,6 +12644,15 @@ export interface operations {
             };
             /** @description conflict */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -10414,7 +12685,164 @@ export interface operations {
                     "application/json": components["schemas"]["Page_AdminOrg"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminGetOrg: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization id */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminOrg"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminDeleteOrg: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization id */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConfirmRequest"];
+            };
+        };
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -10456,6 +12884,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -10465,6 +12902,15 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -10494,6 +12940,15 @@ export interface operations {
                     "application/json": components["schemas"]["FreezeResult"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -10503,6 +12958,75 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminListOrgWorkspaces: {
+        parameters: {
+            query?: {
+                /** @description Page size, 1..=200 (default 50). */
+                limit?: number;
+                cursor?: string;
+            };
+            header?: never;
+            path: {
+                /** @description Organization id */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_AdminWorkspace"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -10529,7 +13053,25 @@ export interface operations {
                     "application/json": components["schemas"]["AdminOverview"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -10556,7 +13098,25 @@ export interface operations {
                     "application/json": components["schemas"]["PlacementView"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -10595,7 +13155,25 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -10625,6 +13203,15 @@ export interface operations {
                     "application/json": components["schemas"]["PlacementChoices"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -10634,6 +13221,15 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -10676,7 +13272,25 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -10716,7 +13330,25 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -10755,6 +13387,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -10772,6 +13413,15 @@ export interface operations {
                 };
             };
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -10801,6 +13451,15 @@ export interface operations {
                     "application/json": components["schemas"]["PluginPackage"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -10810,6 +13469,15 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -10840,6 +13508,15 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -10857,6 +13534,15 @@ export interface operations {
                 };
             };
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -10890,6 +13576,15 @@ export interface operations {
                     "application/json": components["schemas"]["PluginApproval"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -10907,6 +13602,15 @@ export interface operations {
                 };
             };
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -10940,6 +13644,15 @@ export interface operations {
                     "application/json": components["schemas"]["PluginPackage"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -10957,6 +13670,15 @@ export interface operations {
                 };
             };
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -10990,6 +13712,15 @@ export interface operations {
                     "application/json": components["schemas"]["PluginPackage"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -11007,6 +13738,15 @@ export interface operations {
                 };
             };
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -11040,6 +13780,15 @@ export interface operations {
                     "application/json": components["schemas"]["PluginPackage"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -11057,6 +13806,15 @@ export interface operations {
                 };
             };
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -11083,6 +13841,15 @@ export interface operations {
                     "application/json": Record<string, never>;
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -11092,6 +13859,15 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -11118,7 +13894,25 @@ export interface operations {
                     "application/json": components["schemas"]["RelayReplicaList"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -11145,7 +13939,25 @@ export interface operations {
                     "application/json": components["schemas"]["RunnerList"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -11176,6 +13988,15 @@ export interface operations {
                     "application/json": components["schemas"]["RunnerWithToken"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -11193,6 +14014,15 @@ export interface operations {
                 };
             };
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -11220,6 +14050,15 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -11237,6 +14076,15 @@ export interface operations {
                 };
             };
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -11266,6 +14114,15 @@ export interface operations {
                     "application/json": components["schemas"]["RunnerStartFailures"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -11282,11 +14139,26 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
         };
     };
     adminRotateRunnerToken: {
         parameters: {
-            query?: never;
+            query?: {
+                /**
+                 * @description Seconds the replaced token keeps working so the runner can be rolled (0 to 86400,
+                 *     default 600; 0 refuses the old token at once).
+                 */
+                grace_secs?: number;
+            };
             header?: never;
             path: {
                 /** @description Runner id */
@@ -11304,6 +14176,23 @@ export interface operations {
                     "application/json": components["schemas"]["RunnerWithToken"];
                 };
             };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -11313,6 +14202,15 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -11339,7 +14237,25 @@ export interface operations {
                     "application/json": components["schemas"]["SetupStatus"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -11366,7 +14282,69 @@ export interface operations {
                     "application/json": components["schemas"]["AdminStorage"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    refreshAdminStorage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminStorage"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -11398,7 +14376,25 @@ export interface operations {
                     "application/json": components["schemas"]["Page_TrustedKey"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -11437,6 +14433,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -11446,6 +14451,15 @@ export interface operations {
                 };
             };
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -11473,6 +14487,15 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -11482,6 +14505,15 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -11513,7 +14545,25 @@ export interface operations {
                     "application/json": components["schemas"]["Page_AdminUser"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -11547,6 +14597,15 @@ export interface operations {
                     "application/json": components["schemas"]["AdminUser"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -11564,6 +14623,98 @@ export interface operations {
                 };
             };
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminDeleteWorkspace: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                ws: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConfirmRequest"];
+            };
+        };
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -11597,6 +14748,15 @@ export interface operations {
                     "application/json": components["schemas"]["AgentLink"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -11607,6 +14767,15 @@ export interface operations {
             };
             /** @description stale_revision */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -11645,6 +14814,15 @@ export interface operations {
             };
             /** @description byo_disabled */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -11721,6 +14899,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
         };
     };
     getAgent: {
@@ -11744,8 +14931,26 @@ export interface operations {
                     "application/json": components["schemas"]["Agent"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -11774,8 +14979,26 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -11819,6 +15042,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Forbidden */
             403: {
                 headers: {
@@ -11830,6 +15062,15 @@ export interface operations {
             };
             /** @description Not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -11860,7 +15101,25 @@ export interface operations {
                     "image/png": number[];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -11895,6 +15154,15 @@ export interface operations {
                     "application/json": components["schemas"]["Agent"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -11913,6 +15181,15 @@ export interface operations {
             };
             /** @description avatar_invalid */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -11941,7 +15218,25 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -11976,6 +15271,15 @@ export interface operations {
                     "application/json": components["schemas"]["Agent"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Forbidden */
             403: {
                 headers: {
@@ -11996,6 +15300,15 @@ export interface operations {
             };
             /** @description not_byo | byo_cidr_invalid | byo_cidr_outside_default */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -12026,6 +15339,15 @@ export interface operations {
                     "application/json": components["schemas"]["ContainerConfig"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description hosted_agent_token_hidden */
             403: {
                 headers: {
@@ -12037,6 +15359,15 @@ export interface operations {
             };
             /** @description Not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -12081,7 +15412,25 @@ export interface operations {
                     "application/json": components["schemas"]["Page_Conversation"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -12133,6 +15482,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -12142,6 +15500,15 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -12171,7 +15538,25 @@ export interface operations {
                     "application/json": components["schemas"]["Conversation"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -12217,8 +15602,26 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -12260,6 +15663,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -12269,6 +15681,15 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -12299,6 +15720,15 @@ export interface operations {
                     "application/json": components["schemas"]["GrantsResponse"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Forbidden */
             403: {
                 headers: {
@@ -12310,6 +15740,15 @@ export interface operations {
             };
             /** @description Not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -12346,6 +15785,15 @@ export interface operations {
                     "application/json": components["schemas"]["ConnectionGrant"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Forbidden */
             403: {
                 headers: {
@@ -12366,6 +15814,15 @@ export interface operations {
             };
             /** @description grant_invalid (details.reason: empty_custom | tool_in_both | unknown_tool) */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -12396,6 +15853,15 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Forbidden */
             403: {
                 headers: {
@@ -12407,6 +15873,15 @@ export interface operations {
             };
             /** @description Not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -12439,6 +15914,15 @@ export interface operations {
                     "application/json": components["schemas"]["SecretGrant"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Forbidden */
             403: {
                 headers: {
@@ -12450,6 +15934,15 @@ export interface operations {
             };
             /** @description Agent, or secret not in the agent's workspace or org */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -12480,6 +15973,15 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Forbidden */
             403: {
                 headers: {
@@ -12491,6 +15993,15 @@ export interface operations {
             };
             /** @description Not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -12520,7 +16031,25 @@ export interface operations {
                     "application/json": components["schemas"]["AgentLinkList"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -12550,7 +16079,25 @@ export interface operations {
                     "application/json": components["schemas"]["Page_Memory"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -12592,6 +16139,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -12609,6 +16165,15 @@ export interface operations {
                 };
             };
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -12649,7 +16214,25 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -12681,7 +16264,25 @@ export interface operations {
                     "application/json": components["schemas"]["Memory"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -12725,6 +16326,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -12734,6 +16344,15 @@ export interface operations {
                 };
             };
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -12764,7 +16383,25 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -12800,6 +16437,15 @@ export interface operations {
                     "application/json": components["schemas"]["Memory"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -12809,6 +16455,15 @@ export interface operations {
                 };
             };
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -12840,7 +16495,25 @@ export interface operations {
                     "application/json": components["schemas"]["Page_MemoryRevision"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -12873,6 +16546,15 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -12882,6 +16564,15 @@ export interface operations {
                 };
             };
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -12911,6 +16602,15 @@ export interface operations {
                     "application/json": components["schemas"]["ModelReadiness"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -12921,6 +16621,15 @@ export interface operations {
             };
             /** @description Not found, not hosted, or not visible */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -12950,7 +16659,25 @@ export interface operations {
                     "application/json": components["schemas"]["ModelOptions"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -12993,7 +16720,25 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -13023,7 +16768,25 @@ export interface operations {
                     "application/json": components["schemas"]["PresenceOptionList"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -13053,7 +16816,25 @@ export interface operations {
                     "application/json": components["schemas"]["PresenceList"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -13087,6 +16868,15 @@ export interface operations {
                     "application/json": components["schemas"]["Presence"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -13104,6 +16894,15 @@ export interface operations {
                 };
             };
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -13149,7 +16948,25 @@ export interface operations {
                     "application/json": components["schemas"]["PreviewShareList"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -13181,6 +16998,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PreviewShare"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
             404: {
@@ -13215,6 +17041,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
         };
     };
     listAgentReach: {
@@ -13242,7 +17077,25 @@ export interface operations {
                     "application/json": components["schemas"]["Page_ReachGrant"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -13272,7 +17125,25 @@ export interface operations {
                     "application/json": components["schemas"]["SandboxView"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -13302,7 +17173,25 @@ export interface operations {
                     "application/json": components["schemas"]["SandboxView"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -13332,6 +17221,15 @@ export interface operations {
                     "application/json": components["schemas"]["SandboxView"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -13349,6 +17247,15 @@ export interface operations {
                 };
             };
             423: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -13378,7 +17285,25 @@ export interface operations {
                     "application/json": components["schemas"]["Page_Schedule"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -13420,6 +17345,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -13429,6 +17363,15 @@ export interface operations {
                 };
             };
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -13458,6 +17401,15 @@ export interface operations {
                     "application/json": components["schemas"]["PendingLibraryUpdates"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -13467,6 +17419,15 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -13496,7 +17457,25 @@ export interface operations {
                     "application/json": components["schemas"]["Page_Skill"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -13538,6 +17517,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -13547,6 +17535,15 @@ export interface operations {
                 };
             };
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -13576,6 +17573,15 @@ export interface operations {
                     "application/json": components["schemas"]["EffectiveSkills"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -13585,6 +17591,15 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -13614,6 +17629,15 @@ export interface operations {
                     "application/json": components["schemas"]["SpaceBindingList"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -13623,6 +17647,99 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    createAgentSpaceBinding: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent id */
+                agent: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateBindingRequest"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SpaceBinding"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -13652,7 +17769,25 @@ export interface operations {
                     "application/json": components["schemas"]["AgentStartFailures"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -13683,6 +17818,15 @@ export interface operations {
                     "application/json": components["schemas"]["AgentToken"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description hosted_agent_token_hidden | byo_not_permitted | byo_disabled */
             403: {
                 headers: {
@@ -13694,6 +17838,15 @@ export interface operations {
             };
             /** @description Not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -13723,6 +17876,15 @@ export interface operations {
                     "application/json": components["schemas"]["FreezeResult"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -13732,6 +17894,15 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -13761,7 +17932,25 @@ export interface operations {
                     "application/json": components["schemas"]["Page_Webhook"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -13803,6 +17992,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -13812,6 +18010,15 @@ export interface operations {
                 };
             };
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -13840,6 +18047,15 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -13849,6 +18065,15 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -13877,6 +18102,15 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Forbidden */
             403: {
                 headers: {
@@ -13888,6 +18122,15 @@ export interface operations {
             };
             /** @description Not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -13931,6 +18174,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Forbidden */
             403: {
                 headers: {
@@ -13942,6 +18194,15 @@ export interface operations {
             };
             /** @description Not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -13975,7 +18236,25 @@ export interface operations {
                     "application/json": components["schemas"]["BatchDecided"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -14006,6 +18285,15 @@ export interface operations {
                 };
             };
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -14048,6 +18336,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
         };
     };
     decideApproval: {
@@ -14074,6 +18371,15 @@ export interface operations {
                     "application/json": components["schemas"]["Approval"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -14091,6 +18397,15 @@ export interface operations {
                 };
             };
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -14121,8 +18436,26 @@ export interface operations {
                     "application/json": components["schemas"]["AppList"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Workspace not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -14156,8 +18489,26 @@ export interface operations {
                     "application/json": components["schemas"]["AppDetail"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -14201,6 +18552,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description app_unavailable / forbidden */
             403: {
                 headers: {
@@ -14237,6 +18597,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
         };
     };
     getAppGuide: {
@@ -14260,8 +18629,26 @@ export interface operations {
                     "text/markdown": string;
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -14304,8 +18691,26 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -14334,6 +18739,15 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -14343,6 +18757,15 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -14373,6 +18796,15 @@ export interface operations {
                     "application/octet-stream": number[];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -14383,6 +18815,15 @@ export interface operations {
             };
             /** @description attachment_purged */
             410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -14451,6 +18892,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -14460,6 +18910,70 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    getPendingCliLogin: {
+        parameters: {
+            query: {
+                /** @description The `ABCD-EFGH` code shown by the CLI. */
+                code: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PendingResponse"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -14517,6 +19031,15 @@ export interface operations {
                 content?: never;
             };
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -14652,7 +19175,25 @@ export interface operations {
                     "application/json": components["schemas"]["RevokedResponse"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -14682,6 +19223,15 @@ export interface operations {
                     "application/json": components["schemas"]["ChannelIntegration"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -14691,6 +19241,15 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -14718,6 +19277,15 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -14727,6 +19295,15 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -14760,6 +19337,15 @@ export interface operations {
                     "application/json": components["schemas"]["ChannelIntegration"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -14777,6 +19363,15 @@ export interface operations {
                 };
             };
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -14827,6 +19422,15 @@ export interface operations {
                     "application/json": components["schemas"]["Page_UserLink"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -14836,6 +19440,15 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -14867,6 +19480,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["UserLink"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
             403: {
@@ -14901,6 +19523,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
         };
     };
     confirmChannelLink: {
@@ -14924,6 +19555,15 @@ export interface operations {
                     "application/json": components["schemas"]["UserLink"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -14941,6 +19581,79 @@ export interface operations {
                 };
             };
             410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    previewChannelLink: {
+        parameters: {
+            query: {
+                /** @description The `aui_…` token from the sign-in link. */
+                token: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LinkPreview"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -14971,6 +19684,15 @@ export interface operations {
                     "application/json": components["schemas"]["Connection"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Forbidden */
             403: {
                 headers: {
@@ -14982,6 +19704,15 @@ export interface operations {
             };
             /** @description Not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -15010,6 +19741,15 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Forbidden */
             403: {
                 headers: {
@@ -15021,6 +19761,15 @@ export interface operations {
             };
             /** @description Not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -15064,6 +19813,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Forbidden */
             403: {
                 headers: {
@@ -15084,6 +19842,15 @@ export interface operations {
             };
             /** @description invalid_state */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -15114,6 +19881,15 @@ export interface operations {
                     "application/json": components["schemas"]["ConnectionGrantList"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Forbidden */
             403: {
                 headers: {
@@ -15125,6 +19901,15 @@ export interface operations {
             };
             /** @description Not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -15168,6 +19953,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Forbidden (details.agent_id) */
             403: {
                 headers: {
@@ -15188,6 +19982,51 @@ export interface operations {
             };
             /** @description grant_invalid, as the agent-side route (details.agent_id) */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    getConnectorAvailability: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConnectorAvailabilityList"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -15222,6 +20061,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
         };
     };
     getConnectorIcon: {
@@ -15245,7 +20093,25 @@ export interface operations {
                     "image/png": number[];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -15275,7 +20141,25 @@ export interface operations {
                     "application/json": components["schemas"]["Conversation"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -15304,6 +20188,15 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -15322,6 +20215,15 @@ export interface operations {
             };
             /** @description conversation_active */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -15351,6 +20253,15 @@ export interface operations {
                     "application/json": components["schemas"]["Conversation"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -15360,6 +20271,15 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -15401,6 +20321,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -15419,6 +20348,15 @@ export interface operations {
             };
             /** @description attachment_quota_exceeded */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -15448,7 +20386,25 @@ export interface operations {
                     "application/json": components["schemas"]["Conversation"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -15483,7 +20439,25 @@ export interface operations {
                     "application/json": components["schemas"]["EventsPage"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -15527,6 +20501,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -15536,6 +20519,15 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -15577,6 +20569,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -15595,6 +20596,15 @@ export interface operations {
             };
             /** @description export_too_large */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -15639,6 +20649,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -15655,8 +20674,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description hosted_disabled, idempotency_key_invalid, idempotency_key_reused (details.turn_id | details.followup_id) */
+            /** @description hosted_disabled, idempotency_key_invalid, idempotency_key_reused (details.turn_id | details.followup_id), reply_target_invalid (details.reason: not_found | not_replyable | redacted) */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -15688,7 +20716,25 @@ export interface operations {
                     "text/event-stream": components["schemas"]["TranscriptEvent"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -15718,6 +20764,15 @@ export interface operations {
                     "application/json": components["schemas"]["Conversation"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -15727,6 +20782,15 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -15752,6 +20816,24 @@ export interface operations {
                 };
                 content: {
                     "application/x-pem-file": string;
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
             /** @description gateway_ca_unavailable */
@@ -15783,6 +20865,24 @@ export interface operations {
                     "application/json": components["schemas"]["InstanceGovernance"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
         };
     };
     getGroup: {
@@ -15805,6 +20905,15 @@ export interface operations {
                     "application/json": components["schemas"]["Group"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -15814,6 +20923,15 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -15842,6 +20960,15 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -15859,6 +20986,15 @@ export interface operations {
                 };
             };
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -15900,6 +21036,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -15932,6 +21077,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
         };
     };
     groupImpact: {
@@ -15939,6 +21093,11 @@ export interface operations {
             query?: {
                 /** @description Show what removing only this member would take away. */
                 remove_member?: string | null;
+                /**
+                 * @description Show what removing the group's binding to only this workspace would take away
+                 *     (nothing when the group maps to `admin`, which keeps reaching every workspace).
+                 */
+                unbind_workspace?: string | null;
             };
             header?: never;
             path: {
@@ -15957,6 +21116,15 @@ export interface operations {
                     "application/json": components["schemas"]["GroupImpact"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -15966,6 +21134,15 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -16000,6 +21177,15 @@ export interface operations {
                     "application/json": components["schemas"]["Page_GroupMember"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -16009,6 +21195,15 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -16038,6 +21233,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MembersBatchResult"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
             403: {
@@ -16072,6 +21276,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
         };
     };
     deleteGroupMember: {
@@ -16095,6 +21308,15 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -16112,6 +21334,15 @@ export interface operations {
                 };
             };
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -16153,6 +21384,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -16178,6 +21418,15 @@ export interface operations {
                 };
             };
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -16212,6 +21461,15 @@ export interface operations {
                     "application/json": components["schemas"]["Page_GroupBinding"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -16221,6 +21479,15 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -16245,6 +21512,24 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HarnessList"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
         };
@@ -16353,6 +21638,92 @@ export interface operations {
             };
         };
     };
+    listMyIntegrationSpaces: {
+        parameters: {
+            query?: {
+                /** @description Must be `true`. */
+                mine?: boolean | null;
+                query?: string | null;
+                /** @description 1..=50, default 25. */
+                limit?: number | null;
+            };
+            header?: never;
+            path: {
+                /** @description Integration id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MySpacesList"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     acceptInvitation: {
         parameters: {
             query?: never;
@@ -16372,6 +21743,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AcceptInvitationResponse"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
             403: {
@@ -16407,6 +21787,15 @@ export interface operations {
                 };
             };
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -16464,6 +21853,15 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -16473,6 +21871,15 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -16503,8 +21910,26 @@ export interface operations {
                     "application/json": components["schemas"]["LlmProviders"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -16539,6 +21964,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
         };
     };
     deleteMe: {
@@ -16557,6 +21991,15 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -16574,6 +22017,15 @@ export interface operations {
                 };
             };
             412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -16612,7 +22064,68 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    revokeMyApiKey: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Revoked */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -16660,6 +22173,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
         };
     };
     listMyChannelLinks: {
@@ -16677,6 +22199,24 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["UserLinkList"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
         };
@@ -16699,7 +22239,25 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -16726,6 +22284,24 @@ export interface operations {
                     "application/json": components["schemas"]["DmDefaultList"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
         };
     };
     setDmDefault: {
@@ -16749,6 +22325,15 @@ export interface operations {
                     "application/json": components["schemas"]["DmDefault"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -16758,6 +22343,15 @@ export interface operations {
                 };
             };
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -16785,6 +22379,15 @@ export interface operations {
                 };
             };
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -16831,6 +22434,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
         };
     };
     deleteOauthClient: {
@@ -16852,6 +22464,15 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Forbidden */
             403: {
                 headers: {
@@ -16872,6 +22493,15 @@ export interface operations {
             };
             /** @description client_in_use */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -16915,6 +22545,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Forbidden */
             403: {
                 headers: {
@@ -16926,6 +22565,15 @@ export interface operations {
             };
             /** @description Not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -16992,6 +22640,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
         };
     };
     createOrg: {
@@ -17023,6 +22680,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -17032,6 +22698,15 @@ export interface operations {
                 };
             };
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -17061,7 +22736,25 @@ export interface operations {
                     "application/json": components["schemas"]["Org"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -17102,6 +22795,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -17111,6 +22813,15 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -17152,6 +22863,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -17169,6 +22889,15 @@ export interface operations {
                 };
             };
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -17215,6 +22944,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Forbidden */
             403: {
                 headers: {
@@ -17226,6 +22964,15 @@ export interface operations {
             };
             /** @description Not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -17260,6 +23007,15 @@ export interface operations {
                     "application/json": components["schemas"]["Page_ApiKey"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -17269,6 +23025,15 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -17310,6 +23075,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -17319,6 +23093,15 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -17349,6 +23132,15 @@ export interface operations {
                     "application/json": components["schemas"]["AppAvailability"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Forbidden */
             403: {
                 headers: {
@@ -17360,6 +23152,15 @@ export interface operations {
             };
             /** @description Not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -17403,6 +23204,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Forbidden */
             403: {
                 headers: {
@@ -17414,6 +23224,15 @@ export interface operations {
             };
             /** @description Not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -17448,8 +23267,26 @@ export interface operations {
                     "application/json": components["schemas"]["Page_AppInstance"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -17493,6 +23330,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Forbidden */
             403: {
                 headers: {
@@ -17513,6 +23359,15 @@ export interface operations {
             };
             /** @description app_not_instance_bound, instance_host_invalid, instance_host_conflict or instance_probe_failed */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -17550,6 +23405,15 @@ export interface operations {
                     "application/json": components["schemas"]["Page_AuditEntry"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -17559,6 +23423,15 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -17593,6 +23466,15 @@ export interface operations {
                     "application/json": components["schemas"]["Page_ChannelIntegration"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -17602,6 +23484,15 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -17635,6 +23526,15 @@ export interface operations {
                     "application/json": components["schemas"]["ChannelIntegration"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -17660,6 +23560,99 @@ export interface operations {
                 };
             };
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    probeChannelIntegration: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization id */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProbeIntegrationRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProbeIntegrationResponse"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -17712,6 +23705,15 @@ export interface operations {
                     "application/json": components["schemas"]["Page_Connection"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Forbidden */
             403: {
                 headers: {
@@ -17723,6 +23725,15 @@ export interface operations {
             };
             /** @description Not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -17764,6 +23775,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -17773,6 +23793,15 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -17803,6 +23832,15 @@ export interface operations {
                     "application/json": components["schemas"]["GovernanceDocument"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Forbidden */
             403: {
                 headers: {
@@ -17814,6 +23852,15 @@ export interface operations {
             };
             /** @description Not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -17857,6 +23904,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Forbidden */
             403: {
                 headers: {
@@ -17893,6 +23949,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
         };
     };
     getOrgEffectiveGovernance: {
@@ -17916,8 +23981,26 @@ export interface operations {
                     "application/json": components["schemas"]["EffectiveGovernance"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -17956,6 +24039,15 @@ export interface operations {
                     "application/json": components["schemas"]["Page_Group"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -17965,6 +24057,15 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -18006,6 +24107,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -18031,6 +24141,15 @@ export interface operations {
                 };
             };
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -18064,6 +24183,15 @@ export interface operations {
                     "application/json": components["schemas"]["Page_Invitation"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -18073,6 +24201,15 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -18114,6 +24251,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -18139,6 +24285,15 @@ export interface operations {
                 };
             };
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -18172,6 +24327,15 @@ export interface operations {
                     "application/json": components["schemas"]["Page_Member"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -18181,6 +24345,15 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -18217,6 +24390,15 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -18234,6 +24416,15 @@ export interface operations {
                 };
             };
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -18269,6 +24460,15 @@ export interface operations {
                     "application/json": components["schemas"]["Member"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -18286,6 +24486,15 @@ export interface operations {
                 };
             };
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -18317,6 +24526,15 @@ export interface operations {
                     "application/json": components["schemas"]["Offboarding"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -18326,6 +24544,15 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -18359,6 +24586,15 @@ export interface operations {
                     "application/json": components["schemas"]["Page_OAuthClient"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Forbidden */
             403: {
                 headers: {
@@ -18370,6 +24606,15 @@ export interface operations {
             };
             /** @description Not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -18413,6 +24658,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Forbidden */
             403: {
                 headers: {
@@ -18433,6 +24687,15 @@ export interface operations {
             };
             /** @description conflict */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -18463,6 +24726,15 @@ export interface operations {
                     "application/json": components["schemas"]["PolicyDocument"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Forbidden */
             403: {
                 headers: {
@@ -18474,6 +24746,15 @@ export interface operations {
             };
             /** @description Not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -18517,6 +24798,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Forbidden */
             403: {
                 headers: {
@@ -18553,6 +24843,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
         };
     };
     listOrgPolicyGenerations: {
@@ -18581,6 +24880,15 @@ export interface operations {
                     "application/json": components["schemas"]["Page_PolicyGenerationSummary"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Forbidden */
             403: {
                 headers: {
@@ -18592,6 +24900,15 @@ export interface operations {
             };
             /** @description Not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -18626,6 +24943,15 @@ export interface operations {
                     "application/json": components["schemas"]["PolicyDocument"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Forbidden */
             403: {
                 headers: {
@@ -18646,6 +24972,15 @@ export interface operations {
             };
             /** @description stale_revision */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -18680,6 +25015,15 @@ export interface operations {
                     "application/json": components["schemas"]["PolicyDocument"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Forbidden */
             403: {
                 headers: {
@@ -18691,6 +25035,15 @@ export interface operations {
             };
             /** @description Not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -18721,6 +25074,15 @@ export interface operations {
                     "application/json": components["schemas"]["PolicyWarnings"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Forbidden */
             403: {
                 headers: {
@@ -18732,6 +25094,15 @@ export interface operations {
             };
             /** @description Not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -18761,6 +25132,15 @@ export interface operations {
                     "application/json": components["schemas"]["Retention"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -18770,6 +25150,15 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -18811,6 +25200,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -18829,6 +25227,359 @@ export interface operations {
             };
             /** @description retention_invalid | retention_above_instance_maximum */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    getScimSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization id */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScimSettings"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    putScimSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization id */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PutSettings"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScimSettings"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    getScimStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization id */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScimStatus"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    listScimTokens: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization id */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScimTokenList"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    createScimToken: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization id */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateToken"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CreatedScimToken"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -18866,6 +25617,15 @@ export interface operations {
                     "application/json": components["schemas"]["Page_Secret"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Forbidden */
             403: {
                 headers: {
@@ -18877,6 +25637,15 @@ export interface operations {
             };
             /** @description Not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -18920,6 +25689,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description llm_key_not_permitted */
             403: {
                 headers: {
@@ -18949,6 +25727,15 @@ export interface operations {
             };
             /** @description see workspace create */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -18987,6 +25774,15 @@ export interface operations {
                     "application/json": components["schemas"]["Page_SkillLibrary"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -18996,6 +25792,15 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -19037,6 +25842,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -19069,6 +25883,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
         };
     };
     listOrgSkillLibraryUpdates: {
@@ -19091,6 +25914,15 @@ export interface operations {
                     "application/json": components["schemas"]["PendingLibraryUpdates"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -19100,6 +25932,15 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -19129,7 +25970,25 @@ export interface operations {
                     "application/json": components["schemas"]["Page_Skill"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -19171,6 +26030,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -19188,6 +26056,15 @@ export interface operations {
                 };
             };
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -19217,6 +26094,15 @@ export interface operations {
                     "application/json": components["schemas"]["OrgStorage"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -19226,6 +26112,70 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    refreshOrgStorage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization id */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrgStorage"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -19255,6 +26205,15 @@ export interface operations {
                     "application/json": components["schemas"]["FreezeResult"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -19264,6 +26223,15 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -19298,7 +26266,25 @@ export interface operations {
                     "application/json": components["schemas"]["Page_Workspace"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -19340,6 +26326,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -19357,6 +26352,15 @@ export interface operations {
                 };
             };
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -19384,7 +26388,25 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -19419,6 +26441,15 @@ export interface operations {
                     "application/json": components["schemas"]["Presence"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -19428,6 +26459,15 @@ export interface operations {
                 };
             };
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -19465,7 +26505,25 @@ export interface operations {
                     "application/json": components["schemas"]["PreviewShare"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -19494,7 +26552,25 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -19528,6 +26604,15 @@ export interface operations {
                     "application/json": components["schemas"]["PreviewShare"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -19545,6 +26630,15 @@ export interface operations {
                 };
             };
             423: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -19572,6 +26666,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PreviewStartAccepted"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
             404: {
@@ -19629,7 +26732,25 @@ export interface operations {
                     "image/png": number[];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -19663,6 +26784,15 @@ export interface operations {
                     "application/json": components["schemas"]["ReachGrant"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -19680,6 +26810,15 @@ export interface operations {
                 };
             };
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -19709,7 +26848,25 @@ export interface operations {
                     "application/json": components["schemas"]["ResolveResponse"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -19739,7 +26896,25 @@ export interface operations {
                     "application/json": components["schemas"]["Schedule"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -19768,7 +26943,25 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -19810,7 +27003,25 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -19844,6 +27055,15 @@ export interface operations {
                     "application/json": components["schemas"]["Schedule"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -19861,6 +27081,15 @@ export interface operations {
                 };
             };
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -19890,6 +27119,15 @@ export interface operations {
                     "application/json": components["schemas"]["ScheduleRun"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -19906,6 +27144,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
         };
     };
     listScheduleRuns: {
@@ -19913,6 +27160,8 @@ export interface operations {
             query?: {
                 /** @description Page size (default 50, max 200). */
                 limit?: number | null;
+                /** @description Opaque cursor from a previous response's `next_cursor`. */
+                cursor?: string | null;
             };
             header?: never;
             path: {
@@ -19931,7 +27180,79 @@ export interface operations {
                     "application/json": components["schemas"]["Page_ScheduleRun"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    revokeScimToken: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Token id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -19959,6 +27280,24 @@ export interface operations {
                     "application/json": components["schemas"]["SecretStores"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
         };
     };
     getSecret: {
@@ -19982,6 +27321,15 @@ export interface operations {
                     "application/json": components["schemas"]["Secret"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Forbidden */
             403: {
                 headers: {
@@ -19993,6 +27341,15 @@ export interface operations {
             };
             /** @description Not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -20021,6 +27378,15 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Forbidden */
             403: {
                 headers: {
@@ -20032,6 +27398,15 @@ export interface operations {
             };
             /** @description Not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -20075,6 +27450,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Forbidden */
             403: {
                 headers: {
@@ -20111,6 +27495,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
         };
     };
     acceptSecretProposal: {
@@ -20138,6 +27531,15 @@ export interface operations {
                     "application/json": components["schemas"]["Secret"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Forbidden */
             403: {
                 headers: {
@@ -20158,6 +27560,15 @@ export interface operations {
             };
             /** @description not_proposed */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -20188,6 +27599,15 @@ export interface operations {
                     "application/json": components["schemas"]["SecretGrantViewList"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Forbidden */
             403: {
                 headers: {
@@ -20199,6 +27619,15 @@ export interface operations {
             };
             /** @description Not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -20242,6 +27671,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Forbidden (details.agent_id) */
             403: {
                 headers: {
@@ -20253,6 +27691,15 @@ export interface operations {
             };
             /** @description Agent or secret not found (details.agent_id) */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -20283,6 +27730,15 @@ export interface operations {
                     "application/json": components["schemas"]["Models"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Forbidden */
             403: {
                 headers: {
@@ -20294,6 +27750,15 @@ export interface operations {
             };
             /** @description Not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -20331,6 +27796,15 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Forbidden */
             403: {
                 headers: {
@@ -20351,6 +27825,15 @@ export interface operations {
             };
             /** @description not_proposed */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -20394,6 +27877,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Forbidden / llm_key_not_permitted */
             403: {
                 headers: {
@@ -20414,6 +27906,15 @@ export interface operations {
             };
             /** @description as create */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -20453,6 +27954,15 @@ export interface operations {
                     "application/json": components["schemas"]["VerifyResult"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Forbidden */
             403: {
                 headers: {
@@ -20473,6 +27983,15 @@ export interface operations {
             };
             /** @description llm_key_invalid | llm_endpoint_unreachable | not_llm_secret */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -20502,6 +28021,15 @@ export interface operations {
                     "application/json": components["schemas"]["SkillLibrary"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -20511,6 +28039,15 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -20539,6 +28076,15 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -20548,6 +28094,15 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -20589,6 +28144,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -20621,6 +28185,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
         };
     };
     refreshSkillLibrary: {
@@ -20641,6 +28214,15 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
             };
             403: {
                 headers: {
@@ -20700,6 +28282,15 @@ export interface operations {
                     "application/json": components["schemas"]["LibraryCatalogue"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -20717,6 +28308,15 @@ export interface operations {
                 };
             };
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -20759,6 +28359,15 @@ export interface operations {
                     "application/json": components["schemas"]["LibrarySkillContent"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -20768,6 +28377,15 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -20805,7 +28423,25 @@ export interface operations {
                     "application/json": components["schemas"]["Skill"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -20834,6 +28470,15 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -20843,6 +28488,15 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -20884,6 +28538,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -20901,6 +28564,15 @@ export interface operations {
                 };
             };
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -20947,6 +28619,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -20964,6 +28645,15 @@ export interface operations {
                 };
             };
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -20994,6 +28684,15 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -21003,6 +28702,15 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -21032,7 +28740,25 @@ export interface operations {
                     "application/json": components["schemas"]["SkillLibraryInfo"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -21062,6 +28788,15 @@ export interface operations {
                     "application/json": components["schemas"]["Skill"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -21079,6 +28814,15 @@ export interface operations {
                 };
             };
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -21114,6 +28858,15 @@ export interface operations {
                     "application/json": components["schemas"]["Skill"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -21146,6 +28899,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
         };
     };
     rejectSkillLibraryUpdate: {
@@ -21169,6 +28931,15 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -21186,6 +28957,15 @@ export interface operations {
                 };
             };
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -21213,6 +28993,15 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -21222,6 +29011,15 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -21255,6 +29053,15 @@ export interface operations {
                     "application/json": components["schemas"]["SpaceBinding"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -21264,6 +29071,15 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -21293,6 +29109,15 @@ export interface operations {
                     "application/json": components["schemas"]["Turn"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -21303,6 +29128,15 @@ export interface operations {
             };
             /** @description turn_finished */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -21344,6 +29178,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -21353,6 +29196,15 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -21382,6 +29234,15 @@ export interface operations {
                     "application/json": components["schemas"]["Turn"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -21392,6 +29253,15 @@ export interface operations {
             };
             /** @description turn_finished */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -21419,6 +29289,15 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -21428,6 +29307,15 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -21457,7 +29345,25 @@ export interface operations {
                     "application/json": components["schemas"]["Webhook"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -21486,7 +29392,25 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -21528,7 +29452,25 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -21562,6 +29504,15 @@ export interface operations {
                     "application/json": components["schemas"]["Webhook"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -21586,6 +29537,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
         };
     };
     listWebhookDeliveries: {
@@ -21593,6 +29553,8 @@ export interface operations {
             query?: {
                 /** @description Page size (default 50, max 200). */
                 limit?: number | null;
+                /** @description Opaque cursor from a previous response's `next_cursor`. */
+                cursor?: string | null;
             };
             header?: never;
             path: {
@@ -21611,7 +29573,25 @@ export interface operations {
                     "application/json": components["schemas"]["Page_WebhookDelivery"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -21641,7 +29621,25 @@ export interface operations {
                     "application/json": components["schemas"]["WebhookWithUrl"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -21671,7 +29669,25 @@ export interface operations {
                     "application/json": components["schemas"]["Workspace"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -21712,6 +29728,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -21721,6 +29746,15 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -21762,6 +29796,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -21771,6 +29814,15 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -21807,6 +29859,15 @@ export interface operations {
                     "application/json": components["schemas"]["AccessList"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -21816,6 +29877,15 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -21851,6 +29921,15 @@ export interface operations {
                     "application/json": components["schemas"]["GroupAccessBinding"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -21868,6 +29947,15 @@ export interface operations {
                 };
             };
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -21898,6 +29986,15 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -21907,6 +30004,15 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -21942,6 +30048,15 @@ export interface operations {
                     "application/json": components["schemas"]["AccessBinding"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -21959,6 +30074,15 @@ export interface operations {
                 };
             };
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -21995,6 +30119,15 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -22012,6 +30145,15 @@ export interface operations {
                 };
             };
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -22055,6 +30197,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -22064,6 +30215,15 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -22101,7 +30261,25 @@ export interface operations {
                     "application/json": components["schemas"]["Page_RequestLogEntry"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -22148,6 +30326,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Forbidden */
             403: {
                 headers: {
@@ -22159,6 +30346,15 @@ export interface operations {
             };
             /** @description Not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -22194,8 +30390,26 @@ export interface operations {
                     "application/json": components["schemas"]["Page_Agent"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -22239,6 +30453,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description byo_not_permitted | byo_disabled */
             403: {
                 headers: {
@@ -22275,6 +30498,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
         };
     };
     listWorkspaceApiKeys: {
@@ -22302,6 +30534,15 @@ export interface operations {
                     "application/json": components["schemas"]["Page_ApiKey"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -22311,6 +30552,15 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -22352,6 +30602,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -22368,6 +30627,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
         };
     };
     listApprovals: {
@@ -22375,6 +30643,8 @@ export interface operations {
             query?: {
                 /** @description `pending` | `approved` | `denied` | `expired` | `abandoned` */
                 status?: string;
+                /** @description (C-700) Only this agent's approvals; an unknown or foreign agent yields an empty page. */
+                agent_id?: string;
                 limit?: number;
                 cursor?: string;
             };
@@ -22395,6 +30665,15 @@ export interface operations {
                     "application/json": components["schemas"]["Page_Approval"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -22404,6 +30683,15 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -22441,6 +30729,15 @@ export interface operations {
                     "application/json": components["schemas"]["Page_AuditEntry"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -22450,6 +30747,15 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -22491,6 +30797,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -22508,6 +30823,15 @@ export interface operations {
                 };
             };
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -22544,6 +30868,15 @@ export interface operations {
                     "application/json": components["schemas"]["Page_Connection"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Forbidden */
             403: {
                 headers: {
@@ -22555,6 +30888,15 @@ export interface operations {
             };
             /** @description Not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -22596,6 +30938,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -22605,6 +30956,15 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -22636,6 +30996,15 @@ export interface operations {
                     "application/json": components["schemas"]["Offboarding"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -22645,6 +31014,111 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    searchMessages: {
+        parameters: {
+            query: {
+                /**
+                 * @description Words (the last one prefix-matched), `"phrases"`, `-word` to exclude, `OR` between terms.
+                 *     1-200 characters, at most 12 terms.
+                 */
+                q: string;
+                agent_id?: string;
+                conversation_id?: string;
+                /** @description `me` | `agent` | `others` */
+                author?: string;
+                /** @description `file` */
+                has?: string;
+                /** @description RFC 3339 or `YYYY-MM-DD` (UTC); half-open `[after, before)`. */
+                after?: string;
+                before?: string;
+                /** @description `include` (default) | `exclude` | `only` */
+                archived?: string;
+                /** @description `recent` (default) | `relevance` */
+                sort?: string;
+                /** @description 1-50, default 20. */
+                limit?: number;
+                cursor?: string;
+            };
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                ws: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SearchResponse"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description search_query_invalid (details.reason: empty | too_long | too_many_terms) */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description search_timeout */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -22678,6 +31152,15 @@ export interface operations {
                     "application/json": components["schemas"]["Page_OAuthClient"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Forbidden */
             403: {
                 headers: {
@@ -22689,6 +31172,15 @@ export interface operations {
             };
             /** @description Not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -22732,6 +31224,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Forbidden */
             403: {
                 headers: {
@@ -22752,6 +31253,15 @@ export interface operations {
             };
             /** @description conflict */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -22782,6 +31292,15 @@ export interface operations {
                     "application/json": components["schemas"]["PolicyDocument"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Forbidden */
             403: {
                 headers: {
@@ -22793,6 +31312,15 @@ export interface operations {
             };
             /** @description Not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -22836,6 +31364,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Forbidden */
             403: {
                 headers: {
@@ -22872,6 +31409,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
         };
     };
     listWorkspacePolicyGenerations: {
@@ -22900,6 +31446,15 @@ export interface operations {
                     "application/json": components["schemas"]["Page_PolicyGenerationSummary"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Forbidden */
             403: {
                 headers: {
@@ -22911,6 +31466,15 @@ export interface operations {
             };
             /** @description Not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -22945,6 +31509,15 @@ export interface operations {
                     "application/json": components["schemas"]["PolicyDocument"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Forbidden */
             403: {
                 headers: {
@@ -22965,6 +31538,15 @@ export interface operations {
             };
             /** @description stale_revision */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -22999,6 +31581,15 @@ export interface operations {
                     "application/json": components["schemas"]["PolicyDocument"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Forbidden */
             403: {
                 headers: {
@@ -23010,6 +31601,15 @@ export interface operations {
             };
             /** @description Not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -23053,6 +31653,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Forbidden */
             403: {
                 headers: {
@@ -23064,6 +31673,15 @@ export interface operations {
             };
             /** @description Workspace or agent not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -23094,6 +31712,15 @@ export interface operations {
                     "application/json": components["schemas"]["PolicyWarnings"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Forbidden */
             403: {
                 headers: {
@@ -23105,6 +31732,15 @@ export interface operations {
             };
             /** @description Not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -23142,6 +31778,15 @@ export interface operations {
                     "application/json": components["schemas"]["Page_Secret"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Forbidden */
             403: {
                 headers: {
@@ -23153,6 +31798,15 @@ export interface operations {
             };
             /** @description Not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -23196,6 +31850,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description llm_key_not_permitted */
             403: {
                 headers: {
@@ -23225,6 +31888,15 @@ export interface operations {
             };
             /** @description llm_host_requires_llm_key | llm_key_invalid | llm_key_wrong_organization | llm_key_unverifiable | llm_endpoint_unreachable | reference_not_permitted */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -23263,6 +31935,15 @@ export interface operations {
                     "application/json": components["schemas"]["PendingLibraryUpdates"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -23272,6 +31953,15 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -23301,6 +31991,15 @@ export interface operations {
                     "application/json": components["schemas"]["Page_Skill"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -23310,6 +32009,15 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -23351,6 +32059,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -23383,6 +32100,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
         };
     };
     unfreezeWorkspace: {
@@ -23405,6 +32131,15 @@ export interface operations {
                     "application/json": components["schemas"]["FreezeResult"];
                 };
             };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -23414,6 +32149,15 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };

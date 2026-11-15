@@ -390,8 +390,8 @@ struct VaultEnv {
 }
 
 fn vault_env() -> Option<VaultEnv> {
-    if std::env::var("AURORA_TEST_VAULT").as_deref() != Ok("1") {
-        eprintln!("skipped: set AURORA_TEST_VAULT=1 (and the Vault dev server variables)");
+    // (FIX-140, D-198) unset: SKIPPED outside CI, a panic under CI=true.
+    if !aurora_testkit::require_or_skip("AURORA_TEST_VAULT") {
         return None;
     }
     std::env::var("AURORA_TEST_VAULT_TOKEN").expect("AURORA_TEST_VAULT_TOKEN must be set");

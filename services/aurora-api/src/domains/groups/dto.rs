@@ -313,6 +313,9 @@ pub struct AccessList {
 pub struct ImpactQuery {
     /// Show what removing only this member would take away.
     pub remove_member: Option<Uuid>,
+    /// Show what removing the group's binding to only this workspace would take away
+    /// (nothing when the group maps to `admin`, which keeps reaching every workspace).
+    pub unbind_workspace: Option<Uuid>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]

@@ -39,6 +39,11 @@ pub fn installed_databases(raw: &[u8]) -> Vec<PgDatabase> {
 }
 
 const AURORA_DIR: &str = ".aurora";
+/// (FIX-114) Bounds of the reads of files in the agent-writable `.aurora` directory: a staged
+/// part (the wire bound is 200 KiB per part, a sync stages several) and the installed render
+/// inputs.
+const STAGED_READ_MAX: u64 = 8 * 1024 * 1024;
+const RENDER_INPUTS_READ_MAX: u64 = 8 * 1024 * 1024;
 const SYNC_DIR: &str = ".aurora/sync";
 
 #[derive(Debug, thiserror::Error)]
@@ -240,10 +245,12 @@ impl HomeProjector {
             }
             HomeSyncKind::RenderInputs => {
                 let path = self.sync_dir().join("render_inputs.json");
-                let mut merged: Map<String, Value> = fs::read(&path)
-                    .ok()
-                    .and_then(|b| serde_json::from_slice(&b).ok())
-                    .unwrap_or_default();
+                let mut merged: Map<String, Value> =
+                    crate::harvest::read_bounded(&path, STAGED_READ_MAX)
+                        .ok()
+                        .flatten()
+                        .and_then(|b| serde_json::from_slice(&b).ok())
+                        .unwrap_or_default();
                 for v in entries {
                     if let Value::Object(o) = v {
                         merged.extend(o.clone());
@@ -253,8 +260,9 @@ impl HomeProjector {
             }
             HomeSyncKind::Tools => {
                 let path = self.sync_dir().join("tools.json");
-                let mut all: Vec<Value> = fs::read(&path)
+                let mut all: Vec<Value> = crate::harvest::read_bounded(&path, STAGED_READ_MAX)
                     .ok()
+                    .flatten()
                     .and_then(|b| serde_json::from_slice(&b).ok())
                     .unwrap_or_default();
                 all.extend(entries.iter().cloned());
@@ -262,8 +270,9 @@ impl HomeProjector {
             }
             HomeSyncKind::Manifest => {
                 let path = self.sync_dir().join("manifest.json");
-                let mut all: Vec<String> = fs::read(&path)
+                let mut all: Vec<String> = crate::harvest::read_bounded(&path, STAGED_READ_MAX)
                     .ok()
+                    .flatten()
                     .and_then(|b| serde_json::from_slice(&b).ok())
                     .unwrap_or_default();
                 for v in entries {
@@ -352,7 +361,11 @@ impl HomeProjector {
                     continue;
                 }
                 let intact = rel.file_name().is_some_and(|n| n == INDEX_FILE)
-                    || fs::read_to_string(&p).is_ok_and(|t| verify(&t));
+                    || crate::harvest::read_bounded(&p, crate::harvest::MEMORY_FILE_READ_MAX)
+                        .ok()
+                        .flatten()
+                        .and_then(|b| String::from_utf8(b).ok())
+                        .is_some_and(|t| verify(&t));
                 if intact {
                     let _ = fs::remove_file(&p);
                 }
@@ -381,9 +394,10 @@ impl HomeProjector {
     /// Re-renders instruction files from the installed render inputs (boot and every sync).
     pub fn render_installed(&self) -> Result<(), HomeError> {
         let path = self.cfg.root.join(AURORA_DIR).join("render_inputs.json");
-        let raw = match fs::read(&path) {
-            Ok(b) => b,
-            Err(_) => return Ok(()),
+        // (FIX-114) Bounded read: the agent's uid owns this directory.
+        let raw = match crate::harvest::read_bounded(&path, RENDER_INPUTS_READ_MAX) {
+            Ok(Some(b)) => b,
+            _ => return Ok(()),
         };
         let inputs: RenderInputs = serde_json::from_slice(&raw)?;
         if let Some(port) = self.cfg.pg {

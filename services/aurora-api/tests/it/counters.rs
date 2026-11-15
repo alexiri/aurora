@@ -392,3 +392,29 @@ async fn postgres_backend_from_configuration_shares_the_limit() {
     .unwrap();
     assert_eq!(leaked, 0);
 }
+
+/// FIX-087: a webhook refused with most of its window left answers the real wait, not a
+/// 10-second clamp.
+#[tokio::test]
+async fn webhook_refusal_retry_after_is_not_clamped_to_ten_seconds() {
+    let h = Harness::new().await;
+    // A clock pinned at the start of a minute: the window has 60 s left.
+    let store = Arc::new(MemoryStore::with_clock(Arc::new(|| {
+        1_800_000_000_000 / 60_000 * 60_000
+    })));
+    let state = h.state.clone().with_counters(ApiCounters::for_store(
+        store as Arc<dyn CounterStore>,
+        ClassPolicy::Local,
+        ClassPolicy::Local,
+        breaker(),
+    ));
+    let hook = Uuid::now_v7();
+    aurora_api::http::counters::check_webhook(&state, hook, 1)
+        .await
+        .expect("the first delivery is allowed");
+    let refused = aurora_api::http::counters::check_webhook(&state, hook, 1)
+        .await
+        .expect_err("the second is refused");
+    let wait = refused.retry_after_secs().expect("retry-after");
+    assert!(wait > 10, "retry-after must be the real wait, got {wait}");
+}

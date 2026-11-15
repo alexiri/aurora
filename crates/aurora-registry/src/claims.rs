@@ -86,33 +86,47 @@ pub fn rule_fingerprint(key: &str, r: &HostRule) -> String {
 /// The static host a rule claims: its own host, or for an `{instance}` rule the app's
 /// `instances.default_host` (none without one: instance hosts are registered, not claimed).
 pub fn static_host<'a>(app: &'a App, r: &'a HostRule) -> Option<&'a str> {
-    if r.matcher.host == INSTANCE_HOST {
-        app.instances.as_ref()?.default_host.as_deref()
+    static_hosts(app, r).next()
+}
+
+/// Every static host a rule claims: [`static_host`], then for an `{instance}` rule each preset
+/// instance's host (FIX-134, D-243: presets are static claims like `default_host`).
+pub fn static_hosts<'a>(app: &'a App, r: &'a HostRule) -> impl Iterator<Item = &'a str> {
+    let (own, ins) = if r.matcher.host == INSTANCE_HOST {
+        (None, app.instances.as_ref())
     } else {
-        Some(&r.matcher.host)
-    }
+        (Some(r.matcher.host.as_str()), None)
+    };
+    own.into_iter().chain(ins.into_iter().flat_map(|i| {
+        i.default_host
+            .as_deref()
+            .into_iter()
+            .chain(i.presets.iter().map(|p| p.host.as_str()))
+    }))
 }
 
 pub fn claims(m: &Manifest) -> Vec<Claim> {
     m.apps
         .iter()
         .flat_map(|a| {
-            a.hosts.iter().filter_map(|r| {
-                let host = static_host(a, r)?;
-                let key = claim_key(host, r.matcher.path_prefix.as_deref());
-                Some(Claim {
-                    app_id: a.about.id.clone(),
-                    host_pattern: HostPattern::lenient(host).as_str().to_owned(),
-                    path_prefix: r
-                        .matcher
-                        .path_prefix
-                        .clone()
-                        .filter(|p| !p.is_empty())
-                        .unwrap_or_else(|| "/".to_owned()),
-                    fingerprint: rule_fingerprint(&key, r),
-                    claim_key: key,
+            a.hosts
+                .iter()
+                .flat_map(|r| static_hosts(a, r).map(move |host| (r, host)))
+                .map(|(r, host)| {
+                    let key = claim_key(host, r.matcher.path_prefix.as_deref());
+                    Claim {
+                        app_id: a.about.id.clone(),
+                        host_pattern: HostPattern::lenient(host).as_str().to_owned(),
+                        path_prefix: r
+                            .matcher
+                            .path_prefix
+                            .clone()
+                            .filter(|p| !p.is_empty())
+                            .unwrap_or_else(|| "/".to_owned()),
+                        fingerprint: rule_fingerprint(&key, r),
+                        claim_key: key,
+                    }
                 })
-            })
         })
         .collect()
 }

@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use aurora_policy::HostPattern;
 
 use crate::Violation;
-use crate::manifest::{Manifest, UrlOrTemplate};
+use crate::manifest::{Ldap, Manifest, UrlOrTemplate};
 use crate::package::{HOOKS_WASM, Package};
 use crate::signature::{TrustStore, verify};
 
@@ -17,6 +17,8 @@ pub struct ValidationContext {
     pub reserved_hosts: Vec<HostPattern>,
     /// app id -> id of the active package that owns it.
     pub active_app_ids: HashMap<String, String>,
+    /// (FIX-135, D-242) family id -> id of the active package whose apps declare it.
+    pub active_families: HashMap<String, String>,
 }
 
 /// Full validation: signature, manifest rules (REG-001), wildcard superset,
@@ -42,7 +44,9 @@ pub fn package(
     out.extend(super::wildcard::wildcards(&m));
     super::params_rules::fixtures(&m, pkg, &mut out);
     zones(&m, &mut out);
+    host_claims(&m, &mut out);
     reserved_claims(&m, ctx, &mut out);
+    token_endpoints(&m, ctx, &mut out);
     egress(&m, ctx, &mut out);
     hooks_wasm(&m, pkg, &mut out);
     for (i, a) in m.apps.iter().enumerate() {
@@ -56,6 +60,17 @@ pub fn package(
                     "app id `{}` is already used by package `{owner}`",
                     a.about.id
                 ),
+            ));
+        }
+        // (FIX-135) All members of a family are in one package.
+        if let Some(f) = &a.about.family
+            && let Some(owner) = ctx.active_families.get(&f.id)
+            && *owner != m.package.id
+        {
+            out.push(Violation::new(
+                "family_foreign_package",
+                format!("/apps/{i}/about/family/id"),
+                format!("family `{}` already belongs to package `{owner}`", f.id),
             ));
         }
     }
@@ -89,6 +104,39 @@ pub fn zone_too_broad(zone: &str) -> bool {
         return zone == "*" || zone.contains('*');
     };
     !suffix.is_empty() && psl::domain(suffix.as_bytes()).is_none() || suffix.is_empty()
+}
+
+/// (FIX-104, SEC-17) A wildcard in a host claim must leave a registrable domain (public-suffix
+/// check, as for zones) to its right: a claim on a public suffix (a shared hosting domain such as
+/// a PSL private-section entry) would let an approved package have a connection's credential
+/// injected on any tenant of that domain; `s3.*.<registrable domain>` is fine. Exact hosts and the `{instance}` placeholder are not wildcards.
+pub fn host_claim_too_broad(claim: &str) -> bool {
+    let host = match claim.rsplit_once(':') {
+        Some((h, p)) if !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()) => h,
+        _ => claim,
+    };
+    let Some((_, after)) = host.rsplit_once('*') else {
+        return false;
+    };
+    let suffix = after.trim_start_matches('.');
+    suffix.is_empty() || psl::domain(suffix.as_bytes()).is_none()
+}
+
+fn host_claims(m: &Manifest, out: &mut Vec<Violation>) {
+    for (i, a) in m.apps.iter().enumerate() {
+        for (j, h) in a.hosts.iter().enumerate() {
+            if host_claim_too_broad(&h.matcher.host) {
+                out.push(Violation::new(
+                    "zone_too_broad",
+                    format!("/apps/{i}/hosts/{j}/match/host"),
+                    format!(
+                        "host claim `{}` has a wildcard that does not leave a registrable domain to its right",
+                        h.matcher.host
+                    ),
+                ));
+            }
+        }
+    }
 }
 
 fn zones(m: &Manifest, out: &mut Vec<Violation>) {
@@ -172,6 +220,20 @@ fn reserved_claims(m: &Manifest, ctx: &ValidationContext, out: &mut Vec<Violatio
                 format!("`{d}` overlaps a reserved host"),
             ));
         }
+        for (j, p) in a
+            .instances
+            .iter()
+            .flat_map(|x| x.presets.iter())
+            .enumerate()
+        {
+            if HostPattern::parse(&p.host).is_ok_and(|h| is_reserved(&h, ctx)) {
+                out.push(Violation::new(
+                    "reserved_host",
+                    format!("/apps/{i}/instances/presets/{j}/host"),
+                    format!("`{}` overlaps a reserved host", p.host),
+                ));
+            }
+        }
         for (j, h) in a.hosts.iter().enumerate() {
             let mut claims = vec![(
                 h.matcher.host.as_str(),
@@ -187,6 +249,10 @@ fn reserved_claims(m: &Manifest, ctx: &ValidationContext, out: &mut Vec<Violatio
                 ));
             }
             for (host, path) in claims {
+                // (D-251) The one reserved-host exception: an LDAP app's own synthetic host.
+                if a.ldap.is_some() && host.eq_ignore_ascii_case(&Ldap::host_of(&a.about.id)) {
+                    continue;
+                }
                 if HostPattern::parse(host).is_ok_and(|p| is_reserved(&p, ctx)) {
                     out.push(Violation::new(
                         "reserved_host",
@@ -194,6 +260,78 @@ fn reserved_claims(m: &Manifest, ctx: &ValidationContext, out: &mut Vec<Violatio
                         format!("`{host}` overlaps a reserved host"),
                     ));
                 }
+            }
+        }
+    }
+}
+
+/// (FIX-107, SEC-17) Static token and authorize endpoints lie on a claimed host or a host listed
+/// in `permissions.token_hosts`, and never on a reserved one: the gateway and the API post the
+/// client secret and every refresh token to the token endpoint.
+fn token_endpoints(m: &Manifest, ctx: &ValidationContext, out: &mut Vec<Violation>) {
+    let mut allowed: Vec<HostPattern> = m
+        .apps
+        .iter()
+        .flat_map(|a| &a.hosts)
+        .filter_map(|h| HostPattern::parse(&h.matcher.host).ok())
+        .collect();
+    for (i, h) in m.permissions.token_hosts.iter().enumerate() {
+        let path = format!("/permissions/token_hosts/{i}");
+        let bare = h.to_ascii_lowercase();
+        match HostPattern::parse(&bare) {
+            Ok(p) if !bare.contains(['*', ':']) => {
+                if private_ip(&bare) || bare == "localhost" || bare.ends_with(".localhost") {
+                    out.push(Violation::new(
+                        "token_host_private",
+                        path,
+                        format!("token host `{h}` is private or local"),
+                    ));
+                } else if is_reserved(&p, ctx) {
+                    out.push(Violation::new(
+                        "token_host_reserved",
+                        path,
+                        format!("token host `{h}` overlaps a reserved host"),
+                    ));
+                }
+                allowed.push(p);
+            }
+            _ => out.push(Violation::new(
+                "host_pattern_invalid",
+                path,
+                "a token host is an exact host name (no wildcard, no port)",
+            )),
+        }
+    }
+    for (i, c) in m.oauth_clients.iter().enumerate() {
+        for (key, u) in [
+            ("authorize_url", &c.authorize_url),
+            ("token_url", &c.token_url),
+        ] {
+            let UrlOrTemplate::Url(u) = u else { continue };
+            let Some(host) = crate::diff::static_url_host(u) else {
+                continue;
+            };
+            let path = format!("/oauth_clients/{i}/{key}");
+            if private_ip(&host) || host == "localhost" || host.ends_with(".localhost") {
+                out.push(Violation::new(
+                    "token_host_private",
+                    path,
+                    format!("{key} host `{host}` is private or local"),
+                ));
+            } else if HostPattern::parse(&host).is_ok_and(|p| is_reserved(&p, ctx)) {
+                out.push(Violation::new(
+                    "token_host_reserved",
+                    path,
+                    format!("{key} host `{host}` overlaps a reserved host"),
+                ));
+            } else if !allowed.iter().any(|p| p.matches(&host, 443)) {
+                out.push(Violation::new(
+                    "token_host_unclaimed",
+                    path,
+                    format!(
+                        "{key} host `{host}` is neither a claimed host nor listed in permissions.token_hosts"
+                    ),
+                ));
             }
         }
     }

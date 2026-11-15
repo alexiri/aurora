@@ -29,11 +29,14 @@ export function ConversationRow({
   selected,
   now,
   onSelect,
+  waiting = false,
 }: {
   conversation: Conversation;
   selected: boolean;
   now: Date;
   onSelect: () => void;
+  /** (P5-AGENT-2) For approvers: the conversation has a pending approval ("Waiting on you" replaces the kind line). */
+  waiting?: boolean;
 }) {
   const memberDirect = c.kind === "direct" && !!c.direct_user;
   const kind = KIND[c.kind] ?? KIND.api;
@@ -43,11 +46,7 @@ export function ConversationRow({
       type="button"
       onClick={onSelect}
       aria-current={selected ? "true" : undefined}
-      className={cn(
-        "flex min-h-14 w-full items-center gap-3 rounded-control px-2.5 py-2 text-left hover:bg-subtle",
-        selected && "bg-subtle",
-      )}
-    >
+      className={cn("flex min-h-14 w-full items-center gap-3 rounded-control px-2.5 py-2 text-left hover:bg-subtle", selected && "bg-subtle")}>
       {memberDirect ? (
         <Avatar name={c.direct_user?.display_name || "?"} tintKey={c.direct_user?.id} size={36} />
       ) : (
@@ -57,7 +56,11 @@ export function ConversationRow({
       )}
       <span className="min-w-0 flex-1">
         <span className={cn("block truncate text-sm text-ink", selected ? "font-semibold" : "font-medium")}>{conversationTitle(c)}</span>
-        {isWorking(c) ? (
+        {waiting ? (
+          <StatusDot tone="pending" className="whitespace-nowrap text-pending-ink">
+            Waiting on you
+          </StatusDot>
+        ) : isWorking(c) ? (
           <StatusDot tone="accent" className="text-accent-ink">
             Working
           </StatusDot>
@@ -87,7 +90,10 @@ export function ConversationList({
   now,
   status,
   className,
+  waitingIds,
 }: {
+  /** (P5-AGENT-2) Ids of conversations with a pending approval, for approvers only (omit for everyone else). */
+  waitingIds?: ReadonlySet<string>;
   groups: ListGroups;
   /** The selected conversation id, or `null` when none is picked. */
   selectedId: string | null;
@@ -103,7 +109,16 @@ export function ConversationList({
 }) {
   const { mine, others, memberDirects } = groups;
   const rows = (items: Conversation[]) =>
-    items.map((c) => <ConversationRow key={c.id} conversation={c} selected={selectedId === c.id} now={now} onSelect={() => onSelect(c.id)} />);
+    items.map((c) => (
+      <ConversationRow
+        key={c.id}
+        conversation={c}
+        selected={selectedId === c.id}
+        now={now}
+        onSelect={() => onSelect(c.id)}
+        waiting={waitingIds?.has(c.id) ?? false}
+      />
+    ));
   const empty = !mine && others.length === 0 && memberDirects.length === 0;
   return (
     <nav aria-label="Conversations" className={cn("flex min-h-0 flex-col gap-3 p-3", className)}>
@@ -130,7 +145,11 @@ export function ConversationList({
         onValueChange={(v) => onArchivedChange(v === "archived")}
         className="w-full [&>button]:flex-1 [&>button]:justify-center [&>button]:min-h-11 md:[&>button]:min-h-9"
       />
-      <div role="tabpanel" id={`chat-list-panel-${archived ? "archived" : "active"}`} aria-labelledby={`chat-list-tab-${archived ? "archived" : "active"}`} className="-mx-1 min-h-0 flex-1 space-y-0.5 overflow-y-auto px-1">
+      <div
+        role="tabpanel"
+        id={`chat-list-panel-${archived ? "archived" : "active"}`}
+        aria-labelledby={`chat-list-tab-${archived ? "archived" : "active"}`}
+        className="-mx-1 min-h-0 flex-1 space-y-0.5 overflow-y-auto px-1">
         {status}
         {empty && !status ? (
           <p className="px-2 py-3 text-sm text-muted">
@@ -141,7 +160,7 @@ export function ConversationList({
         {rows(others)}
         {memberDirects.length > 0 ? (
           <div role="group" aria-label="Other members' direct chats" className="space-y-0.5 pt-3">
-            <p className="px-2.5 pb-1 text-[11px] font-semibold uppercase tracking-[0.06em] text-muted">Other members&apos; direct chats</p>
+            <p className="px-2.5 pb-1 text-label font-semibold uppercase tracking-label text-muted">Other members&apos; direct chats</p>
             {rows(memberDirects)}
           </div>
         ) : null}

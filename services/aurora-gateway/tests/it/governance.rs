@@ -129,6 +129,8 @@ impl LogWriter for Capture {
 struct Counters {
     verifies: AtomicUsize,
     messages: AtomicUsize,
+    /// Requests to any other path (FIX-105: management and storage routes).
+    other: AtomicUsize,
 }
 
 fn org_of(key: &str) -> &'static str {
@@ -147,6 +149,13 @@ async fn mock(
         .headers()
         .get("x-api-key")
         .and_then(|v| v.to_str().ok())
+        .or_else(|| {
+            // LiteLLM keys travel as `Authorization: Bearer`.
+            req.headers()
+                .get("authorization")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.strip_prefix("Bearer "))
+        })
         .unwrap_or("")
         .to_owned();
     let mut r = Response::new(Full::new(Bytes::from(format!("key={key}"))));
@@ -175,7 +184,9 @@ async fn mock(
                     .insert("anthropic-organization-id", o.parse().unwrap());
             }
         }
-        _ => {}
+        _ => {
+            c.other.fetch_add(1, Ordering::SeqCst);
+        }
     }
     Ok(r)
 }
@@ -189,6 +200,9 @@ struct Opts {
     /// Keys held by Aurora: (stored key, workspace scoped, stored origin).
     secrets: Vec<(&'static str, bool, Option<Value>)>,
     known_hosts: Vec<String>,
+    /// (FIX-105) `Some(allowed_paths)`: the endpoint is a LiteLLM one (`central`) instead of
+    /// Anthropic's, with those operator-declared extra paths.
+    litellm: Option<Vec<String>>,
 }
 
 fn doc() -> Value {
@@ -209,6 +223,7 @@ impl Default for Opts {
             instance_models: vec![],
             secrets: vec![("sk-good", true, Some(verified("org_ok")))],
             known_hosts: vec![],
+            litellm: None,
         }
     }
 }
@@ -280,9 +295,23 @@ async fn start(o: Opts) -> Env {
             workspace_id: ws_scoped.then_some(w.ws),
             name: format!("key{i}"),
             kind: "llm".into(),
-            llm_provider: Some("anthropic".into()),
+            llm_provider: Some(
+                if o.litellm.is_some() {
+                    "litellm"
+                } else {
+                    "anthropic"
+                }
+                .into(),
+            ),
             llm_auth_mode: Some("api_key".into()),
-            llm_endpoint_id: Some("anthropic".into()),
+            llm_endpoint_id: Some(
+                if o.litellm.is_some() {
+                    "central"
+                } else {
+                    "anthropic"
+                }
+                .into(),
+            ),
             host_pattern: llm_addr.to_string(),
             path_pattern: None,
             injection: json!({}),
@@ -304,28 +333,43 @@ async fn start(o: Opts) -> Env {
         });
     }
     let src = Arc::new(Src(Mutex::new(rows), Mutex::new(policy)));
-    let cfg = LlmSection {
-        enabled_providers: vec!["anthropic".into()],
-        provider_preference: vec![],
-        endpoints: vec![LlmEndpoint {
-            id: "anthropic".into(),
-            provider: "anthropic".into(),
-            allowed_models: o.instance_models.clone(),
-            key_origin: Some(aurora_config::KeyOrigin {
-                method: "provider_account".into(),
-                allowed_organization_ids: vec!["org_ok".into()],
+    let cfg = match &o.litellm {
+        Some(paths) => LlmSection {
+            enabled_providers: vec!["litellm".into()],
+            provider_preference: vec![],
+            endpoints: vec![LlmEndpoint {
+                id: "central".into(),
+                provider: "litellm".into(),
+                base_url: Some(format!("http://{llm_addr}")),
+                allowed_paths: paths.clone(),
                 ..Default::default()
-            }),
-            ..Default::default()
-        }],
+            }],
+        },
+        None => LlmSection {
+            enabled_providers: vec!["anthropic".into()],
+            provider_preference: vec![],
+            endpoints: vec![LlmEndpoint {
+                id: "anthropic".into(),
+                provider: "anthropic".into(),
+                allowed_models: o.instance_models.clone(),
+                key_origin: Some(aurora_config::KeyOrigin {
+                    method: "provider_account".into(),
+                    allowed_organization_ids: vec!["org_ok".into()],
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }],
+        },
     };
-    let llm = Arc::new(
+    let llm = Arc::new(if o.litellm.is_some() {
+        aurora_llm::ProviderRegistry::from_config(&cfg).unwrap()
+    } else {
         aurora_llm::ProviderRegistry::from_config_with_anthropic_base(
             &cfg,
             &format!("http://{llm_addr}"),
         )
-        .unwrap(),
-    );
+        .unwrap()
+    });
     let gcfg = aurora_config::Governance {
         allowed_key_scopes: vec!["organization".into(), "workspace".into()],
         llm_minimum_posture: o.llm_min,
@@ -363,7 +407,8 @@ async fn start(o: Opts) -> Env {
             holds: None,
             touch_pool: None,
         })
-        .with_governance(gov.clone()),
+        .with_governance(gov.clone())
+        .with_insecure_loopback_injection(true),
     );
     let gw = ca::generate("gw").unwrap();
     let pl = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -860,4 +905,68 @@ async fn backstop_counts_missing_headers_without_refusing() {
     let r = msg(&env, "", &hello()).await;
     assert_eq!(r.status, 200);
     assert_eq!(env.gov.header_missing_total(), 1);
+}
+
+/// (D-177, SEC-65, FIX-105) A sanctioned LiteLLM key is injected on the inference routes only:
+/// the management API and the other OpenAI routes are refused before policy and before any
+/// credential is opened; an operator-listed path is admitted.
+#[tokio::test]
+async fn litellm_key_is_injected_only_on_inference_paths() {
+    let env = start(Opts {
+        doc: json!({"llm": {"endpoints": {"central": {"allowed": true}}}}),
+        litellm: Some(vec!["/health/*".into(), "/model/info".into()]),
+        secrets: vec![("sk-good", true, None)],
+        ..Opts::default()
+    })
+    .await;
+    // The six inference routes and the model list pass, with the key injected.
+    for (method, path) in [
+        ("POST", "/v1/chat/completions"),
+        ("POST", "/v1/completions"),
+        ("POST", "/v1/responses"),
+        ("POST", "/v1/embeddings"),
+        ("POST", "/v1/messages"),
+        ("POST", "/v1/messages/count_tokens"),
+        ("POST", "/openai/v1/chat/completions"),
+        ("GET", "/v1/models"),
+        ("GET", "/v1/models/gpt-x"),
+        ("GET", "/health/liveliness"),
+        ("GET", "/model/info"),
+    ] {
+        let r = request(&env, env.llm, method, path, "", b"{\"model\":\"m\"}").await;
+        assert_eq!(r.status, 200, "{method} {path}: {}", r.body);
+        // (`/v1/models` answers the model list, not the key.)
+        assert!(
+            path == "/v1/models" || r.body.contains("key=sk-good"),
+            "{method} {path}: {}",
+            r.body
+        );
+    }
+    // The store goes down: a refused path must not even try to open the credential.
+    env.mem.set_unavailable(true);
+    let other_before = env.counters.other.load(Ordering::SeqCst);
+    for (method, path) in [
+        ("POST", "/key/generate"),
+        ("POST", "/user/new"),
+        ("GET", "/team/list"),
+        ("POST", "/v1/images/generations"),
+        ("GET", "/v1/files"),
+        ("POST", "/v1/fine_tuning/jobs"),
+        ("GET", "/v1/chat/completions"),
+        ("GET", "/model/info/extra"),
+    ] {
+        let r = request(&env, env.llm, method, path, "", b"{}").await;
+        assert_eq!(r.status, 403, "{method} {path}: {}", r.body);
+        assert!(
+            has(&r, "llm_path_not_permitted"),
+            "{method} {path}: {}",
+            r.body
+        );
+        assert!(!r.body.contains("sk-good"), "{}", r.body);
+    }
+    assert_eq!(
+        env.counters.other.load(Ordering::SeqCst),
+        other_before,
+        "nothing reached the endpoint"
+    );
 }

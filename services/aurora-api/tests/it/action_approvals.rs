@@ -407,6 +407,60 @@ async fn blocked_side_refuses_messages() {
     assert_eq!(links["items"][0]["peer"]["policy"], "blocked");
 }
 
+/// (FIX-110, docs/07 §Agent links, RFE-012) Consenting to cross-workspace messaging (`allow`)
+/// needs `can_approve`: a plain workspace member gets 403 `approver_required`, an approver 200;
+/// the restricting policies (`blocked`, `ask`) stay with `can_use`.
+#[tokio::test]
+async fn link_allow_needs_an_approver_but_blocking_does_not() {
+    let c = cross().await;
+    c.send("hello").await;
+    let m = c.rig.h.user("m@x.io", false).await;
+    c.rig.h.member(c.rig.org, m, "member", "active").await;
+    c.rig.h.bind_ws(c.rig.ws1, m, "member").await;
+    let (_, tok) = c.rig.h.good_session(m).await;
+    let member = Person {
+        id: m,
+        cookie: cookie(&tok),
+    };
+    let (_, links) = c
+        .rig
+        .get(&c.rig.p, &format!("/v1/agents/{}/links", c.a))
+        .await;
+    let id = links["items"][0]["id"].as_str().unwrap().to_owned();
+    let uri = format!("/v1/agent-links/{id}/policy");
+    let (s, v) = c
+        .rig
+        .put(
+            &member,
+            &uri,
+            json!({"agent_id": c.a, "policy": "allow", "revision": 0}),
+        )
+        .await;
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (403, Some("approver_required")),
+        "{v}"
+    );
+    let (s, v) = c
+        .rig
+        .put(
+            &member,
+            &uri,
+            json!({"agent_id": c.a, "policy": "blocked", "revision": 0}),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let (s, v) = c
+        .rig
+        .put(
+            &c.rig.p,
+            &uri,
+            json!({"agent_id": c.a, "policy": "allow", "revision": 1}),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+}
+
 #[tokio::test]
 async fn policy_update_is_confined_to_own_side_and_checks_revision() {
     let c = cross().await;

@@ -268,6 +268,60 @@ pub async fn catalogue(s: &AppState) -> Result<ConnectorInfoList, ApiError> {
     })
 }
 
+/// `GET /v1/connector-availability` (C-712, D-218): per connector type announced by a live host
+/// plus per unannounced connector row, how far it is from usable, and the instance admins' names.
+pub async fn availability(s: &AppState) -> Result<ConnectorAvailabilityList, ApiError> {
+    let (_, types) = managed::live_catalogue(s).await?;
+    let rows = connectors::list(&s.pool).await?;
+    let state_of = |r: &ConnectorRow| match r.status.as_str() {
+        "active" => ConnectorSetupState::Active,
+        "disabled" => ConnectorSetupState::Disabled,
+        "pending_approval" => ConnectorSetupState::NeedsApproval,
+        _ => ConnectorSetupState::WaitingForHost,
+    };
+    let icon =
+        |r: &ConnectorRow| (r.status == "active").then(|| format!("/v1/connectors/{}/icon", r.id));
+    let mut items: Vec<ConnectorAvailability> = Vec::new();
+    for t in &types {
+        let row = rows
+            .iter()
+            .find(|r| r.id == t.type_id || r.type_id.as_deref() == Some(&t.type_id));
+        items.push(ConnectorAvailability {
+            type_id: t.type_id.clone(),
+            name: t.manifest.about.name.clone(),
+            icon_url: row.and_then(icon),
+            setup_state: row.map_or(ConnectorSetupState::NotAdded, state_of),
+            connector_id: row.map(|r| r.id.clone()),
+        });
+    }
+    for r in &rows {
+        let announced = types
+            .iter()
+            .any(|t| t.type_id == r.id || r.type_id.as_deref() == Some(&t.type_id));
+        if announced {
+            continue;
+        }
+        let state = state_of(r);
+        items.push(ConnectorAvailability {
+            type_id: r.type_id.clone().unwrap_or_else(|| r.id.clone()),
+            name: r.display_name.clone(),
+            icon_url: icon(r),
+            setup_state: state,
+            connector_id: Some(r.id.clone()),
+        });
+    }
+    items.sort_by(|a, b| a.name.cmp(&b.name).then_with(|| a.type_id.cmp(&b.type_id)));
+    let instance_admins = aurora_db::repo::users::instance_admin_names(&s.pool, 10)
+        .await?
+        .into_iter()
+        .map(|name| InstanceAdminName { name })
+        .collect();
+    Ok(ConnectorAvailabilityList {
+        items,
+        instance_admins,
+    })
+}
+
 /// Sanitized PNG icon of an `active` connector (validated at registration).
 pub async fn icon(s: &AppState, id: &str) -> Result<Vec<u8>, ApiError> {
     let not_found = || ApiError::not_found("Connector icon not found.");

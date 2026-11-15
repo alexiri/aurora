@@ -67,6 +67,9 @@ pub async fn append_durable_event(
     .bind(payload)
     .execute(&mut *conn)
     .await?;
+    // (P5-CHAT-4) The message search row is written in the transaction that appends the event;
+    // this is the only insert path of durable events.
+    super::search::index_event(&mut *conn, conversation_id, seq, turn_id, ty, payload).await?;
     bus::notify(
         &mut *conn,
         Channel::Conversation,
@@ -104,6 +107,59 @@ pub async fn notify_delta<'e, E: PgExecutor<'e>>(
     payload: &serde_json::Value,
 ) -> Result<(), BusError> {
     bus::notify(exec, Channel::Delta, payload).await
+}
+
+/// One event as a quote target (C-725): the event, its turn's speaker kind (for `turn.queued`),
+/// and whether it was redacted.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct ReplyTargetRow {
+    pub seq: i64,
+    #[sqlx(rename = "type")]
+    pub ty: String,
+    pub payload: serde_json::Value,
+    pub created_at: DateTime<Utc>,
+    pub redacted_at: Option<DateTime<Utc>>,
+    /// `turns.speaker_kind` of the event's turn (`person` | `bot` | `agent` | `system`).
+    pub speaker_kind: Option<String>,
+}
+
+/// The event `(conversation_id, seq)` as a quote target; `None` when it does not exist.
+pub async fn reply_target<'e, E: PgExecutor<'e>>(
+    exec: E,
+    conversation_id: Uuid,
+    seq: i64,
+) -> Result<Option<ReplyTargetRow>, DbError> {
+    Ok(sqlx::query_as(
+        "SELECT e.seq, e.type, e.payload, e.created_at, e.redacted_at, t.speaker_kind
+         FROM transcript_events e LEFT JOIN turns t ON t.id = e.turn_id
+         WHERE e.conversation_id = $1 AND e.seq = $2",
+    )
+    .bind(conversation_id)
+    .bind(seq)
+    .fetch_optional(exec)
+    .await?)
+}
+
+/// Redaction cascade (C-725): every `turn.queued` payload that quotes `seq` becomes
+/// `reply_to: { seq, redacted: true }`. Runs in the redaction's transaction.
+pub async fn redact_quotes_of(
+    conn: &mut PgConnection,
+    conversation_id: Uuid,
+    seq: i64,
+) -> Result<Vec<i64>, DbError> {
+    Ok(sqlx::query_scalar(
+        "UPDATE transcript_events e
+            SET payload = jsonb_set(e.payload, '{reply_to}',
+                jsonb_build_object('seq', $2::bigint, 'redacted', true))
+          WHERE e.conversation_id = $1 AND e.type = 'turn.queued' AND e.redacted_at IS NULL
+            AND e.payload ? 'reply_to'
+            AND e.turn_id IN (SELECT id FROM turns WHERE conversation_id = $1 AND reply_to_seq = $2)
+          RETURNING e.seq",
+    )
+    .bind(conversation_id)
+    .bind(seq)
+    .fetch_all(&mut *conn)
+    .await?)
 }
 
 /// The durable `text` events of a turn (its answer), in order.

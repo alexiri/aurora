@@ -13,11 +13,11 @@ done when its tests exist, pass in CI, and the security invariants it touches
 | **Service** | one service in-process with real Postgres and mocks for its neighbours (API with fake runner/connector clients; gateway with mock upstreams and a stub hook host) | `aurora-testkit`, `wiremock` | every PR |
 | **Contract** | OpenAPI document vs handlers; JSON Schemas of every wire type vs checked-in schemas; dashboard client regenerated without drift | schema diff | every PR |
 | **Conformance** | harness adapters, connectors, plugin packages against their contracts | `tests/conformance/*` | every PR (fake implementations); env-gated for live ones |
-| **End-to-end: gateway** | real gateway + API + hook host + Postgres + fixture plugins + mock upstreams/OAuth providers, black-box over the proxy port; CI-only strict front doors (pinned nginx + haproxy containers between the gateway and the mock upstream, TEST-021 tier 2: `AURORA_E2E_FRONTDOOR`, skipped when unset) | `tests/e2e-gateway` | every PR |
-| **End-to-end: hosted** | real API, gateway, hook host, runner (podman backend), sandbox image with the `fake` harness, fake connector | `tests/e2e-hosted` | every PR on Linux CI with podman; nightly on Kubernetes (kind with a NetworkPolicy CNI) |
+| **End-to-end: gateway** | real gateway + API + hook host + Postgres + fixture plugins + mock upstreams/OAuth providers, black-box over the proxy port; CI-only strict front doors (pinned nginx + haproxy containers between the gateway and the mock upstream, TEST-021 tier 2: `AURORA_E2E_FRONTDOOR`; CI runs `gateway.sh` with `FRONTDOOR=1` and `FRONTDOOR_HAPROXY=1`, and with `CI=true` a `SKIPPED:` line fails the script, FIX-101) | `tests/e2e-gateway` | every PR |
+| **End-to-end: hosted** | real API, gateway, hook host, runner (podman backend), sandbox image with the `fake` harness, fake connector | `tests/e2e-hosted` | every PR on Linux CI with podman (the chromium scenarios, SEC-41, need the full sandbox image and run in the nightly `hosted-full` job; the PR job declares that one exception in `AURORA_E2E_ALLOW_SKIPPED`); channels (`scripts/e2e/channels.sh`, SEC-18/19/20) in the nightly `channels` job; nightly on Kubernetes (kind with a NetworkPolicy CNI) |
 | **Dashboard** | component tests; Playwright flows against the host-process stack (`scripts/e2e/m1.sh`, default) or the kind dev stack (`m1.sh --kind`; phase 1, OPS-017: kind replaces the compose stack) | vitest, Playwright | every PR |
 | **Live** | `claude-code` adapter against a configured LiteLLM/Anthropic endpoint through the gateway; Mattermost connector against a Mattermost container (phase 1) | env-gated | nightly |
-| **Performance** | gateway overhead and throughput; due-work poll cost with 1 000 agents | criterion, k6 | nightly |
+| **Performance** | gateway overhead and throughput; due-work poll cost with 1 000 agents | criterion, k6 | **manual, on an idle machine** (FIX-101: no workflow runs it; the owner's rule is that performance budgets are measured only while no lane builds or tests, and a shared CI runner never is that machine) |
 
 ## Required suites (non-exhaustive, by area)
 
@@ -321,7 +321,8 @@ done when its tests exist, pass in CI, and the security invariants it touches
   with the supervisor's real `HomeProjector` (which seals the trailer) and scans with the
   real `Harvester`: an unmodified projection is not harvested, and an appended line, a
   changed body under the old trailer, an altered digest and a removed trailer each are. It
-  lives in `aurora-api` because that crate already depends on `aurora-supervisor`.
+  lives in `aurora-api` because it needs the API's test harness; `aurora-supervisor` is a
+  dev-dependency of `aurora-api` only (VEL-007).
 - (P2-TEST-1) **Running hosted e2e next to another run.** Every name and address of
   `scripts/e2e/hosted.sh` derives from `AURORA_E2EH_PREFIX` (default `aurora-e2eh`:
   networks `<prefix>-sbx`/`-db`, containers `-pg`/`-dbtarget`/`-anchor`, image
@@ -427,7 +428,7 @@ done when its tests exist, pass in CI, and the security invariants it touches
 - **Key privacy**: after running the sign-in and message flows with known e-mails and IPs, no stored key (Postgres rows, Redis `KEYS`) contains an e-mail, an IP, a token or a secret; two replicas with the same signing key derive identical hashes.
 - **Performance**: the gateway budgets (`## Performance budgets`) are asserted on `memory` only; the `postgres` and `redis` backends add one round-trip to requests matching a rate-limited rule — measure when the machine is idle and record the number next to the budget, do not gate on it.
 
-### S3-compatible blob store (phase 4, P4-S3, D-120, SEC-63)
+### S3-compatible blob store (phase 5 (D-138, moved from phase 4), P4-S3, D-120, SEC-63)
 - **Conformance** (`crates/aurora-blobstore/tests/it/conformance.rs`, one body over both backends): put/get/delete round trip with SHA-256 and size, overwrite refused (`If-None-Match`), get of a missing key, `list(prefix)` paging, 25 MiB object, concurrent puts. The `s3` run uses a **MinIO container pinned by digest** (gated `AURORA_TEST_S3=1`, started by the e2e script and CI like the Vault dev server; `MINIO_KMS_SECRET_KEY` set so SSE-S3 works) and, for failure cases, an in-process **mock S3** (throttling 503, 500, timeouts, a missing object, a server that ignores `x-amz-server-side-encryption`, a versioned bucket, Object Lock, wrong checksum).
 - **Startup probe**: each refusal of `15 §S3-compatible blob store` (unconfirmed SSE, versioned bucket without the flag, Object Lock, missing bucket, refused credentials, plaintext remote endpoint, inline key, invalid prefix, unknown backend) fails with a message naming the key; `sse = "none"` starts with a warning; a loopback `http://` MinIO starts.
 - **API on the `s3` backend** (`api/it/attachments_s3.rs`, the existing attachment tests re-run with the backend switched): upload, download, 410 after purge, quota (422 before the put, no overshoot under concurrent uploads), retention purge, delete one, conversation/workspace/org delete removes the objects, export zip, connector `file.fetch`, `send_file`; **store unavailable** (mock): upload 503 `blob_store_unavailable` with no row and an unchanged usage counter, download 503 (never 404/410), delete leaves an orphan the sweep removes, `readyz` unchanged, `aurora_blob_store_up` 0; checksum or `Content-Length` mismatch → 502 `blob_store_corrupt`; upload concurrency cap → 503 `blob_store_busy`; **no pre-signed URL**: no response, redirect, header, log line or audit row contains `X-Amz-Signature`, `X-Amz-Credential` or the endpoint host.
@@ -437,7 +438,7 @@ done when its tests exist, pass in CI, and the security invariants it touches
 - **Default unchanged**: with no `blobs.*` config every existing attachment test passes untouched; an existing `aurora.toml` and Helm values render and start.
 - **e2e** (`scripts/e2e/` MinIO suite, gated): real stack, attachments through the dashboard API and a hosted turn (inbox delivery and `send_file`) on the `s3` backend; run when the machine is otherwise idle.
 
-### Additional LLM providers (phase 4, P4-LLM, D-121, SEC-64, SEC-65)
+### Additional LLM providers (phase 5 (D-138, moved from phase 4), P4-LLM, D-121, SEC-64, SEC-65)
 - **Mock upstreams** (`aurora-testkit`, one per provider; no live network in CI): OpenAI/compatible (list, chat, responses, SSE), Azure (v1 routes, `api-key`), Bedrock runtime (SigV4-**verifying**: recomputes the signature from a known secret; event-stream responses) plus control plane and STS, Vertex (prediction routes, SSE) plus a token endpoint (verifies the RS256 JWT: `iss`, `scope`, `aud`, `exp`, signature against the test key). Each mock records what it received so tests assert the credential that arrived and what did not.
 - **Per provider** (`crates/aurora-llm/tests/it/<provider>.rs`, gateway tests `gw/it/llm_<provider>.rs`): registry entry, config validation and every startup refusal of `15` (unknown key, credential-named key, non-https, bad region/location/project, empty `models` for Azure/Vertex, duplicate id), host reservation and exact-host Default Rule carve-out, model listing and its fallback, key validation (`llm_key_invalid`), key-origin verification and the response backstop with foreign accounts (OpenAI headers, STS account, service-account project), injection (agent-supplied `Authorization`, `api-key`, `x-api-key`, `X-Amz-*`, `x-goog-*`, `OpenAI-*` removed and replaced; SigV4 against AWS test vectors and the verifying mock; token mint, cache TTL, single-flight under concurrency, re-mint at skew, mint failure → `credential_unavailable` with nothing forwarded; `token_uri` pinning), streaming passthrough byte-for-byte with first-byte latency not delayed (SSE and event stream), `model_from_request` for every location form (body, percent-decoded Bedrock id/ARN, Vertex path, truncated body → refused under an allow-list), body above `LLM_SIGN_BODY_MAX`.
 - **Path corpus** (SEC-65): allowed routes pass; refused: Bedrock guardrail/async-invoke/control-plane host, Vertex other project or location and non-prediction routes, OpenAI files/fine-tuning/admin, Azure management paths, compatible-endpoint admin routes (with the derived set and with `allowed_paths = ["/**"]`); the check applies only where Aurora injects (an agent's own key under `open` is unchanged); `litellm` and `anthropic` unchanged.
@@ -447,6 +448,8 @@ done when its tests exist, pass in CI, and the security invariants it touches
 - **Sandbox isolation** (e2e-hosted with mock endpoints): a Bedrock and a Vertex turn through claude-code with the "skip auth" environment; seeded AWS secret and service-account private key found nowhere in the sandbox, transcripts, logs, request log or metrics; `client_env` contains no key-looking value.
 - **Live suites** (`AURORA_TEST_LIVE_OPENAI=1`, `…_AZURE`, `…_BEDROCK`, `…_VERTEX`, `…_COMPAT`; not in CI): one real model call and listing per provider through a real gateway, used to pin the header, error-type and client-variable details the spec leaves to "pinned in the provider".
 - **Default unchanged**: with the default `enabled_providers` the registry, `/v1/llm/providers` and every phase-0 provider test are untouched.
+
+- (phase 5, P4-LLM spec batch, D-260..D-262, SEC-97, SEC-98, C-814) **Mint service** (`gw/it/llm_mint.rs`): the three minted modes against verifying mocks in `aurora-testkit` (`llm::sts` checks the SigV4 of `AssumeRole` with the source key and records `RoleArn`, `ExternalId`, `RoleSessionName`, `DurationSeconds`; `llm::entra` checks the client-credentials form and issues a JWT with `tid`/`appid`; `llm::google_token` as above); single-flight, skew, failure hold, eviction, invalidation, `mint_rejected` vs `mint_unavailable`; Bedrock `aws_assume_role` inference signed with the session key and `X-Amz-Security-Token` (verifying runtime mock), never the source key; `ExternalId` differs between two seeded orgs. **Anthropic path set** and **`allowed_paths` semantics** (adds for the five key providers, refused for `bedrock`/`vertex` at start and on a settings PUT). **No translation**: a byte-for-byte body and stream comparison for one request per dialect; an `openai_chat`-only endpoint is `no_shared_dialect` for both shipped harnesses in model readiness. **Endpoint destinations** (SEC-98, after SET-3): Helm vs dashboard endpoint on a private address, metadata and link-local never implicit, `http_needs_private_host`, `endpoint_host_claimed`, `endpoint_resolves_private`, reload revokes the pass, endpoint test per provider (C-803) obeys the guard. **Test hosts**: every gateway and e2e test reaches fixed hosts only through `llm.dev_upstream_overrides`; a config with the override and without `insecure_loopback_injection`, or with a non-loopback target, refuses to start. **Harness reach** (e2e-hosted, mock upstreams): a Codex turn on `openai`, on `azure_openai` (`api_key` and `azure_entra`) and on an `openai_compatible` endpoint declaring `openai_responses`; a claude-code turn on `bedrock` with each of the three auth modes and on `vertex`; the sandbox environment is identical across a provider's auth modes.
 
 ### Harness adapters (phase 4, P4-HAR, D-122, SEC-66)
 - **Conformance**: `tests/conformance/harness` gains `codex`: CI runs it against a mock **Responses/chat upstream** in `aurora-testkit` (SSE, tool call, error injection: 401, 429, `insufficient_quota`, 5xx) through a real gateway; an env-gated variant (`AURORA_TEST_HARNESS_CODEX_LIVE=1`) runs it against a real OpenAI endpoint. Same cases as every adapter plus: steer refusal (`steer = false`, follow-up becomes a separate turn).
@@ -484,14 +487,14 @@ done when its tests exist, pass in CI, and the security invariants it touches
 
 ### SCIM (phase 4, P4-GRP-2, D-132, D-135, SEC-72, SEC-73)
 - **Conformance** (`api/it/scim_protocol.rs` plus an in-repo Rust SCIM test client built from the RFC 7644 examples; an external validator such as the Microsoft SCIM validator is run by hand against a staging instance before a release and is not a CI gate): discovery documents; `POST/GET/PUT/PATCH/DELETE` for Users and Groups; filter subset and `invalidFilter` for everything else; `startIndex`/`count`/`count=0`, stable ordering, empty page past the end, `count` clamping; PATCH `add`/`replace`/`remove` with and without `path`, `emails[type eq "work"].value`, case-insensitive `op`, `active` as boolean and `"False"`, atomicity (one bad operation applies none), `SCIM_MAX_PATCH_OPS`; unsupported attributes (`roles`, `password`) → 400; SCIM error format and `Content-Type: application/scim+json`; `406`/`415`/`413`.
-- **Recorded IdP traffic** (`api/it/scim_idp_replay.rs`, fixtures `tests/fixtures/scim/{entra,okta,keycloak}/*.json`, request/response pairs reconstructed from each vendor's documented provisioning behaviour with synthetic tenants and users, no real data): initial sync (probe `GET filter`, `POST`, `409` → `PATCH`), attribute updates, deactivate/reactivate, group create and member churn, a token rotation mid-sync, a repeated `POST` after a lost response. Replay asserts final state and the exact statuses the IdPs rely on.
+- **Recorded IdP traffic** (`api/it/scim_idp_replay.rs`, fixtures `services/aurora-api/tests/fixtures/scim/{entra,okta,keycloak}/*.json`, request/response pairs reconstructed from each vendor's documented provisioning behaviour with synthetic tenants and users, no real data): initial sync (probe `GET filter`, `POST`, `409` → `PATCH`), attribute updates, deactivate/reactivate, group create and member churn, a token rotation mid-sync, a repeated `POST` after a lost response. Replay asserts final state and the exact statuses the IdPs rely on.
 - **Auth and scope** (SEC-72, `scim_auth.rs`, `scim_scope.rs`): `/scim/v2` is 404 with `scim.enabled = false` and 401 (identical body) for no token, malformed, unknown, revoked, expired, other-prefix (`auk_`, `aug_`) and org-disabled tokens; an `aud_` token on `/v1/**` is 401 and a session cookie on `/scim/v2` is ignored; token lifecycle (owner only, session only, recent re-authentication, hash only in the database, shown once, expiry cap, five-token limit, expiry notice and audit rows 14 d and 1 d before); org A's token cannot read, filter or write org B's users and groups (404, never 403); manual groups invisible; no way to set a role, create an owner or admin, or mutate an owner (PUT/PATCH/DELETE → 403, last-owner untouched); e-mail domain allow-list and instance allow-list; seat limit; per-token rate limit and 429 with `retry-after`, bad-token IP limit; body, operation, member and page limits; audit coverage scan for the new actions and forced audit failure (nothing applied, 503); token never appears in any response, log line or audit row.
 - **Linking and deprovisioning** (SEC-73, `scim_link.rs`, `scim_deprovision.rs`): a SCIM user is pre-provisioned unverified and cannot act before sign-in; the OIDC sign-in with the verified e-mail (and with a trusted-domain e-mail, D-118) binds it, an unverified claim or a matching `externalId` alone does not; a signed-in user's `users.email`/`display_name` are unchanged by SCIM updates; an existing user is linked without touching their row; the full effects matrix of `04 §SCIM` for suspend and remove (membership, sessions rule with one and with two orgs, key revocation including after reactivation, running speaker turns `user_deprovisioned`, group-derived access, automations disabled at fire time and listed in the offboarding view, pending invitations cancelled); JIT and invitation acceptance refused for a suspended or removed link, allowed again after the IdP re-provisions; reactivation only when `suspended_by_scim`; `exclusive` mode; owner untouched; the person's other org is unaffected.
 - **Groups through SCIM** (`scim_groups.rs`): SCIM groups appear in `/v1` as `source = scim` with read-only name and members (`group_managed_by_scim`), members must be this org's links, removed links rejected, `PUT` replaces atomically with one audit row per change, deleting in the IdP deletes bindings, the effect on access and gateway identities is that of `## Groups`.
 - **Dashboard** (`web/tests`): Directory sync page (hidden when the instance switch is off, owner only, token shown once, expiry banner, status card), Members "Directory" badges and the offboarding BYO list; both themes, 390 px.
 - **Edge**: the Helm Ingress/HTTPRoute renderings include `/scim/v2` only with `scim.enabled` (edge-routes guard).
 
-### Approval park-and-resume and Web Push (phase 4, RFE-011b, D-133, D-134, SEC-74, SEC-75, SEC-76)
+### Approval park-and-resume and Web Push (phase 5 (D-138, moved from phase 4), RFE-011b, D-133, D-134, SEC-74, SEC-75, SEC-76)
 - **Parking decision** (`gw/it/approval_park.rs`, real Postgres, mock upstream): with parking off the hold is byte-for-byte the phase 2 behaviour (existing suite unchanged); each eligibility condition has a positive and a negative case — timeout at, above and below `threshold_secs`; BYO, boot-token and conversation-less requests held and clamped; body at and over `max_body_bytes`, chunked/streamed and upgrade requests held; a verdict that differs without a speaker (a `user` or `group` rule) held; per-agent pending and hourly caps → 403 `approval_limit_reached`. A parked request is answered 403 `approval_parked` with `x-should-retry: false` and `details`, **nothing is forwarded upstream** (mock upstream sees zero requests), no row for the body, and an identical repeat returns the same `approval_id` and creates nothing.
 - **Grants** (`gw/it/approval_grants.rs`): approval → `resume_state = ready`; the identical retry in the resume window is consumed and forwarded exactly once (32 concurrent retries → exactly one forwarded, the rest get a new approval/park); fingerprint sensitivity — each of agent, conversation, method, host, port, path, query (value and order), one byte of body, rule, credential, tool changes the fingerprint and the retry is not matched; the window end (`resume_state = expired`); a policy change between approval and retry to `block` (blocked), to `allow` (allowed, grant unused), to another requiring rule or credential (not matched); a retry from another conversation of the same agent not matched; consumption before refresh and forwarding (a forced upstream or refresh failure still leaves the grant consumed); deny cooldown → `manual_approval_denied`; a deadline expiry of a parked approval (`05` job) with no gateway involved; the stale-holder sweep and SIGTERM never abandon a parked approval; a freeze abandons pending and revokes ready; a database outage parks and consumes nothing (SEC-54 still holds).
 - **API** (`api/it/approval_park.rs`): decide approve/deny/expire for parked approvals under the same decider matrix (RFE-012, RFE-009, groups); the system follow-up (steered into a running origin turn, else a queued system turn; none for a frozen agent or an expiry; text platform-composed, canary strings in the request path/title do not appear beyond the sanitized summary); `approval.pending/decided/expired` transcript events and DTO fields (`parked`, `resume_state`, never fingerprint or salt); the stall exemption does **not** apply to parked approvals while it still applies to held ones; cards for parked approvals settle in all four outcomes; critical audit rows for decisions; the reminder is sent once and only without a live watcher.
@@ -500,6 +503,7 @@ done when its tests exist, pass in CI, and the security invariants it touches
 - **SSRF** (`api/it/web_push_ssrf.rs`): registration refuses http, userinfo, IP literals, private/loopback/link-local/metadata addresses, non-allow-listed and look-alike hosts, over-long URLs; a send re-validates (an allow-list change takes effect), a host that resolves to a private address (DNS rebinding after registration), a redirect and a slow or oversized response are all refused or bounded; startup refuses an empty or invalid `push.allowed_endpoint_hosts`; with `push.enabled = false` no outbound call is ever made (network-denied test).
 - **Dashboard and service worker** (`web/tests`): the Notifications card states (unsupported, insecure origin, permission denied, iOS Home Screen note, registered, paused, not receiving, key rotated → silent re-subscribe), the gesture requirement, sign-out removes the device; the service worker (unit tests in a service-worker test environment) shows the generic notification for a malformed or unknown-version payload, builds text only from the fixed fields, `notificationclick` navigates only to a same-origin path starting with `/o/` and falls back to `/` for `//evil`, `https://…`, `javascript:`, backslashes, and has no `fetch` handler; parked chips and sentences on the Approvals page, chat and overview; both themes, 390 px.
 - **e2e** (extension of `scripts/e2e/`, owned by its lane; the browser-push leg uses the mock push service and headless Chrome's push emulation): a rule with a 2-hour timeout and parking on → the agent is refused `approval_parked`, ends its turn, the sandbox parks, the approver approves from a card, the system follow-up wakes the agent and the identical request succeeds exactly once.
+- **P4-011B spec batch additions** (D-264..D-267, C-820..C-839; briefs P4-011B-1..5): **gateway** — the C-821 fingerprint vectors; a long-timeout request to a governed LLM endpoint is held and clamped, never parked; `approvals.park.enabled` turned off (settings notify) with a `ready` grant → the identical retry is still consumed exactly once, and a new long-timeout request is held; request-log rows carry `approval_parked`, `approved` + `resumed`, `approval_id` on holds, `rate_limited` + `approval_limit_reached`. **API** — each FIX-084 access-removal event, agent deletion, conversation deletion and an epoch bump (harness switch, `reset_session`) abandon pending parked rows and revoke ready grants in their own transaction (notice, card edit, no turn; a later identical retry is not matched); a batch decision over three parked approvals of one conversation writes one follow-up listing three lines, door `{ kind: "system", ref: "approval:…" }`, in the deciding transaction (a forced failure after the decision rolls both back); the reminder e-mail claims `stage = 'reminder'` once across two replicas; settings writes refuse `park_threshold_above_hold_max` / `park_max_below_hold_max`; `GET /v1/policy/approval-limits` follows a settings change live; rule authoring bounds follow the switch. **Web Push** — sign-out, sign-out-others, admin revocation and deactivation delete the session's rows; `rebind: true` re-binds the caller's endpoint and is 404 for another person's (nothing moves); `Topic` differs per device for one approval and contains no approval id; sealed rows use the `inline` store with Vault as the default store (Vault mock sees no call); startup refuses `push.dev_endpoint_overrides` with a non-loopback target or external URL. **Service worker** (SEC-102) — the source test and Playwright checks of `17`; the browser leg delivers pushes to the registered worker with Chromium's DevTools `ServiceWorker.deliverPushMessage` (Playwright `newCDPSession`) and asserts the shown notification (title, body, tag) and the click navigation; delivery through a real push service is a manual release check.
 
 ### Port previews (phase 4, P4-PRV-1, P4-PRV-2, D-144..D-147, SEC-80..SEC-82, SEC-85)
 - **Shares, API** (`api/it/previews.rs`, real Postgres, `fake` runner): off by default (no
@@ -556,7 +560,13 @@ done when its tests exist, pass in CI, and the security invariants it touches
   chunked, HTTP keep-alive over one stream, WebSocket echo, server-sent events, slow-loris, idle/lifetime
   timeouts, per-share/sandbox/user stream limits, daily byte quota; wake wait (parked sandbox → 503 page with
   refresh after 45 s; success when the port starts in time), start-command exit page, uniform 404/423 pages,
-  resolve cache (15 s) and revalidation closing streams.
+  resolve cache (15 s) and revalidation closing streams. Where they live (FIX-072/073): `relay
+  tests/limits.rs` (per-share and per-user stream caps, 429/`4409`, `preview_quota` refusal, grant
+  rate, byte report; the shared quota counter and its two-replica case are `api it/preview_auth.rs
+  quota::*`), `tests/behaviour.rs` (slow-loris, plain/upgraded idle, lifetime, SSE, ranges,
+  keep-alive, WebSocket `Origin`, revocation within `PREVIEW_AUTH_CACHE`, wake-wait page, start-command
+  exit page; time limits shortened through `Streams::with_timeouts`), `tests/big_body.rs` (1 GiB
+  in a flat resident set).
 - **Streams** (`run` and `sup` crates, the W6 mock): `stream.open` for an unshared port, a reserved
   port, with an empty list, after the share was removed → refused; connect only to loopback (a share whose
   port is bound only on another interface fails, no other address is tried); credit accounting (a sender never
@@ -594,8 +604,12 @@ done when its tests exist, pass in CI, and the security invariants it touches
   bounds hold under a hostile fast writer, tag `0x02` framing beside a concurrent W18
   `0x01` stream), `pty.refused` reasons (`limit`, `disabled`), environment probe — no
   `AURORA_*` variable, no boot-document trace in the PTY's `/proc/self/environ` (SEC-34
-  probe), idle/lifetime closes, `shutdown` closes everything, an older supervisor ignores
-  `pty.*` frames harmlessly.
+  probe), `shutdown` closes every PTY (`pty_leak::shutdown_closes_every_pty`; FIX-073 made the
+  supervisor do it). **Idle and lifetime closes are the runner's** (`stream_listener.rs`; the
+  supervisor's `pty.rs` has no timers): `run it/leg_limits.rs`
+  `terminal_leg_closes_4504_when_idle` / `_at_its_lifetime` with shortened limits
+  (`StreamListener::with_limits`), and `older_supervisor_ignoring_pty_open_ends_in_a_clean_refusal`
+  (an older supervisor never answers `pty.open`; the dial is refused pre-101 and the PTY released).
 - **Dashboard** (`web/tests`): tab gating (off/BYO/no-`can_use` hidden; frozen banner),
   "Waking…" → attach, resize round trip sends `pty.resize`, reconnect notice, session-end
   notices, both themes, the CSP render test asserts `'wasm-unsafe-eval'` present and nothing
@@ -603,6 +617,37 @@ done when its tests exist, pass in CI, and the security invariants it touches
 - **kind e2e**: terminal round trip on a running sandbox (`echo aurora-terminal` output
   asserted), freeze closes the session, a parked sandbox wakes on open; `kind.sh` env
   overrides (own cluster; ask the coordinator first).
+
+### SSH access (phase 5, P4-SSH-1, P4-SSH-2, D-239, SEC-92..SEC-96)
+- **API, keys and certificates** (`api it/ssh_keys.rs`, `it/ssh_cert.rs`; P4-SSH-1): key parsing
+  (canonical form rebuilt, comment dropped, options/certificates/RSA/ECDSA/private-key pastes refused,
+  `SHA256:` fingerprint equal to `ssh-keygen -lf`), per-user uniqueness and limit, session-only writes,
+  critical audit rows; the mint auth matrix of SEC-93; certificate fields parsed back with the `ssh-key`
+  crate and verified against the CA public key; `ssh_mint_counters` exact under concurrency from two
+  pools; `GET /v1/ssh` shape; every route 404 while `ssh.enabled` is off.
+- **API, sessions** (`api it/ssh_sessions.rs`; P4-SSH-2): the terminator plane auth (`aut_` only, 401
+  uniform), session open matrix and caps, channel grants (single-use, TTL, stale boot, closed session),
+  heartbeat revocation causes, close exactly once against a concurrent sweep, wake demand on a parked
+  sandbox within the shared budget, keep-awake `kind: "ssh"` stamping and the cap, list/disconnect
+  authority (own, `can_own`, other → 404).
+- **Terminator** (`aurora-terminator` tests, a real `russh` client in-process and a stub API): SEC-92
+  auth matrix with byte-identical refusals; pre-auth limits; channel/request allow-list of `16 §W20`
+  (each refused kind opens nothing downstream); `exit-status`/`exit-signal`, EOF and close ordering;
+  heartbeat failure → close-all; idle and lifetime with shortened limits.
+- **Runner** (`run it/ssh_legs.rs`): `auz_` redemption (`kind: "ssh"`; `aux_`/`auy_` never open an exec
+  and vice versa), first-frame `exec.open` deadline, frame validation (unknown tag/kind → 4502),
+  `SSH_CHANNELS_PER_SANDBOX` cap, W6 reconnect closes every exec 4503, older supervisor → 4502,
+  keep-awake stamps.
+- **Supervisor** (`sup` exec tests): the three modes, stdin EOF, stdout/stderr separation without a
+  tty, exit status and signal, env allow-list and the SEC-34 probe, `sftp-server` path fixed and
+  `unsupported` without it, fd-leak probe (FIX-059 posture), credit bounds under a hostile writer.
+- **Dashboard** (`web/tests`): Account › SSH keys (add, inline errors, delete confirm, sessions list and
+  disconnect), the agent's SSH page gating and instructions, certificate download, 390 px layout.
+- **kind e2e** (`scripts/e2e/ssh.sh`, own lock like the other e2e suites): enable SSH, register a key,
+  `aurora ssh <agent> -- echo aurora-ssh` and plain `ssh` with a downloaded certificate (output asserted),
+  `ssh host 'exit 7'` → 7, `sftp` put/get round trip and `scp` (both protocols) of a 5 MiB file
+  with checksums, `-L`/`-R`/`-A`/`-X` refused while the shell works, a wrong pinned host key refused by
+  the client, a parked sandbox wakes on connect, freeze closes the session within 35 s.
 
 ### Git skill library (phase 4, P4-GSL, D-148, D-149, SEC-83, SEC-84)
 - **Fake git host** in the test kit (`tests/kit`): serves a GitHub-shaped and a GitLab-shaped API (ref
@@ -640,7 +685,7 @@ done when its tests exist, pass in CI, and the security invariants it touches
   remove confirms, update review (full diff, disabled approve for non-authority with explanation), repository text
   rendered as data (an HTML/markdown/URL payload is inert), no horizontal scroll at 390 px, both themes.
 
-### App guides on demand (phase 5, P5-GUIDE-1..5, D-170..D-172, SEC-90, SEC-91)
+### App guides on demand (phase 5, P5-GUIDE-1..5, D-170..D-172, SEC-117, SEC-91)
 - **Fixture packages** (`plugins/fixtures`): `fixture-guide` (`09 §13`) and one
   `fixture-invalid-agent-guide-*` package per linter rule of `24 §3` (unlisted file, missing file,
   reserved name, bad name, not text, file too large, summary required), each with its line in
@@ -789,6 +834,23 @@ done when its tests exist, pass in CI, and the security invariants it touches
   assertions. Selectors change only where the copy or structure changed by
   design, and no assertion is removed to make a test pass.
 
+### Live narration cards (phase 5, P4-NARR, D-279, D-280, C-846..C-852, SEC-111)
+- **Projector** (`api/it/narration.rs`, a scripted turn with fake tool events): one card per turn created in place of the receipt; steps added and updated from `tool.started`/`tool.finished`; `NARR_MAX_STEPS` cut with "N earlier"; the card collapsed (D-286: one closing update with the collapsed content of C-847, no delete op) at answer post, at failed turn and at stalled turn, the closing update retried after `rate_limited` and never superseded, a collapsed card not counted toward `NARR_CARDS_PER_SPACE`; restart mid-turn resumes the same card (no second `narr:<turn_id>` post).
+- **Privacy** (SEC-111): no `activity`, `thinking.delta` or `text.delta` content in any card write; a shared-space card carries names only, a `direct` one carries the sanitized summary; canary argument and canary secret absent from every card write and from the connector request log.
+- **Budget** (`NARR_MIN_INTERVAL`, `NARR_SPACE_UPDATES_PER_MINUTE`, `NARR_CARDS_PER_SPACE`): bursts of tool events coalesce; the space cap holds under two concurrent turns; a third turn in a full space gets no card and its answer is unchanged; `rate_limited` drops the update and never retries it.
+- **Connector** (Mattermost, `20 §Rendering`; pinned dev server): a card with `@here`, `@all`, `<@user:…>`, a group mention and a bare URL in a label produces no notification and no link preview (checked against the server's notification and preview data); the card fits `message_max_chars` at the cap.
+- **Degradation**: a connector without `edits` gets no card and the receipt of `13 §4.5`; `forbidden` on a card write leaves the turn running and the answer posted.
+- **Dashboard**: vitest for the Channels switch (default off, PATCH on change, error inline); Playwright at 390 px and both themes for the help text.
+
+### User tokens (phase 5, P4-UTOK, D-281..D-284, C-853..C-859, SEC-112, SEC-113)
+- **Add and verify** (`api/it/user_tokens.rs`, the connector mocked for verify): a token of the caller's own link → 201 and `active`; another platform user → 422 `user_token_mismatch`; rejected → 422 `user_token_invalid`; limit 5 → 409; store unavailable → 503 with nothing stored; the token absent from responses, audit rows, captured logs and the request-log body (canary token).
+- **Custody** (SEC-112): the per-op copy exists from the send's claim to its terminal state and is then null with no store version left; a claim after revoke finds no copy and fails the op `credential_revoked`; the gateway, runner and sandbox fixtures carry no `user_token` purpose (static check plus boot-document snapshot).
+- **Eligibility** (SEC-113): the matrix of C-856 — another speaker in a shared channel, scheduled, webhook, watch, peer, system, dashboard and API turns, a grant of another agent, an inactive token or link — each refused with its code and no approval row; the owner's own DM and the owner's own thread succeed to the approval step.
+- **Approval**: a decision by another approver, even one with `can_approve`, refused; there is no `allow` route (route-table test); expiry sends nothing; `USER_TOKEN_PENDING_MAX` refuses the sixth pending send; revoke during a pending approval → rejected `credential_revoked` and no `message.post` reaches the connector.
+- **Connector** (`aurora-connector-mattermost`, mock platform): only `GET /api/v4/users/me` (verify) and `POST /api/v4/posts` (send) carry a person's token; the footer is present and the post has no `ephemeral` or file; `401` → `credential_dead` and the token `invalid` with the presence untouched.
+- **Audit**: one `user_token.send` row per send (no text, no token, no platform user id by value); the `user_token.revoke` row is critical; the cascade rows (deletion of owner, agent, integration) each appear once.
+- **e2e (live, gated)**: against the pinned Mattermost dev server: add a personal token, grant an agent, the owner's DM turn asks for a post in a channel, the owner approves in the dashboard, the post appears under the owner's account with the footer; a second person's turn in the same channel cannot trigger it; revoke, then the same request is refused.
+
 ### Architecture guards (CI scripts)
 - No app/platform names in core paths (SEC-33).
 - Dependency graph: `aurora-gateway` and `aurora-api` do not depend on
@@ -796,6 +858,22 @@ done when its tests exist, pass in CI, and the security invariants it touches
 - Edge configuration covers all route prefixes (`15`).
 - Every table in `03` exists in migrations and vice versa (schema introspection
   diff against a machine-readable extract of `03`).
+- **A guard must not pass vacuously (FIX-068).** The Helm guards (`edge-routes`, `hook-policies`,
+  `sandbox-network`, `dev-gateway-address`, `no-dev-idp-in-release`) **fail** when `helm` is missing
+  (`scripts/guards/lib.sh` `require_helm`); the only opt-out is `AURORA_GUARDS_SKIP_HELM=1` on a box
+  without helm, and it is ignored when `CI=true`. Render output is captured before it is grepped
+  (`out=$(helm template …)`; `grep -q … <<<"$out"`): `helm … | grep -q` under `pipefail` is green exactly
+  when the forbidden resource rendered (SIGPIPE). `hook-policies` also fails if it inspected no pre-upgrade
+  hook Job with a `serviceAccountName`, and on a `matchExpressions` operator it cannot evaluate.
+
+### Evals (phase 5, P4-EVAL, D-289..D-294, C-860..C-874, SEC-114..SEC-116)
+- **Questions and settings** (`api/it/evals_questions.rs`, P4-EVAL-1): each kind's create and every invalid shape (422); the 100-question cap; `version` bumps; `can_use` visibility (404 without it); judge key refusals (`eval_judge_not_granted`, `eval_judge_not_usable`, `eval_judge_not_permitted`) and `can_own` for the change; the fingerprint's canonical field list and hash stability (unit tests); BYO → 422 `eval_not_supported`. **SEC-116**: a canary expected answer absent from audit metadata, the request log and the sandbox boot document.
+- **Runs** (`api/it/evals_runs.rs`, P4-EVAL-2): three questions → three `eval` conversations with `source_event_id = eval:<run>:<pos>`; ordered results; lease expiry mid-run resumes without a duplicate turn or result; one active run (409), the daily cap (429), a frozen agent (423 at start, `cancelled` mid-run); scoring of numeric (exact, tolerance), text (normalised), a missing `ANSWER:` line (`fail`), a failed, timed-out or cancelled turn (`error`, `not_scored`).
+- **Side-effect refusal** (SEC-114, `api/it/evals_refusal.rs` and `gateway` ITs): a canary write in an eval turn is refused with `eval_read_only` at the gateway and at each platform write tool, creates no approval and increments `refused_writes`; the same write in a normal conversation is unchanged; a read-only app tool runs; the tool registry exposes no eval route to the agent (snapshot); `channels/mirror.rs`: an eval conversation is never mirrored.
+- **Judge** (SEC-115, `api/it/evals_judge.rs` with a mock provider, P4-EVAL-3): input is the question, criteria and that turn's answer only (canaries absent); strict `{verdict, rationale}` output, prose and extra keys → `judge_unparseable`; revoked grant, refused endpoint and inactive key send no request; an unreachable judge → `judge_unavailable` with a second healthy provider never called; hanging judge → `judge_timeout`; `max_tokens` fixed; usage summed on the run and `turns.usage` unchanged; grep over captured logs and audit rows finds no key value.
+- **Schedules and notices** (`api/it/evals_schedules.rs`, P4-EVAL-2): fire through the due-work arm; frozen → `skipped_frozen` with no run; active run → `skipped_busy`; five failures → `failures`; the creator's lost access and the anchor rule; intervals below one hour → 422; the regression notice at a 10-point drop, not at 9, suppressed when `regression_notify` is off, counts only in the body (SEC-116).
+- **Retention** (SEC-116): a run older than `EVAL_RUN_RETENTION` and its eval conversations are deleted through the normal path, the session purge recorded.
+- **Dashboard** (P4-EVAL-4): vitest for the question dialog's validation, the judge control's disabled states, the cap message and the fingerprint diff; Playwright at 390 px and 1280 px in both themes, no horizontal scroll, axe clean at serious and critical levels; the page is absent for BYO agents and for callers without `can_use`.
 
 ## Performance budgets (gateway)
 
@@ -920,9 +998,15 @@ hatch, not the loop).
 plan lists each added crate and the dependency that pulled it in), so a change
 in `aurora-core`, `aurora-db` or `aurora-protocol` can no longer pass while
 `aurora-api` or `aurora-gateway` stop compiling; the e2e crates are never
-pulled in. Tests stay on the directly touched crates, plus `aurora-db` and
-`aurora-api` when `crates/aurora-db/migrations/**` changed (migrations change
-behaviour everywhere). Tests run under `cargo nextest` when it is installed
+pulled in. Tests stay on the directly touched crates, plus `aurora-db`,
+`aurora-api` and the **reverse-dependency closure of `aurora-testkit`** (gateway,
+supervisor, …: they build their databases from the same migrator) when
+`crates/aurora-db/migrations/**` changed (migrations change behaviour
+everywhere); `plugins/**` and `scripts/fixtures/**` select `aurora-api` (the
+`connect::` tests run against built fixtures); a change under `deploy/`,
+`images/`, `.github/`, `scripts/` or `justfile` runs
+`bash scripts/guards/run-all.sh` (the guards read the chart, the images and the
+workflows; FIX-103). Tests run under `cargo nextest` when it is installed
 (same tests as `cargo test`, one process each; **doctests are skipped** —
 run `cargo test --doc -p <crate>` or `just test` for them), else `cargo test`.
 Inner-loop clippy drops `--all-features` unless a touched crate defines
@@ -933,7 +1017,17 @@ The gate prints one line when `target/` exceeds 60 GB (`just clean-stale`);
 it never deletes anything. Test databases are cloned from a migration
 template (VEL-003) whose provenance stamp is a `COMMENT ON DATABASE`, so a
 clone has exactly the schema of the `AURORA_TEST_TEMPLATE_DB=0` path (a
-testkit test asserts it); `AURORA_TEST_POOL_SIZE` overrides the per-`TestDb`
+testkit test asserts it). **Leaked databases (FIX-103):** a killed run leaves its
+`aurora_test_<uuid>` databases (`Drop` never ran); the testkit reaps those with no
+connection older than two hours (the v7 uuid carries the creation time) once per test
+process, and `just clean-testkit` says how to trigger it. Clones hold the advisory lock
+`aurora_test_reap` **shared** while `CREATE DATABASE … TEMPLATE` runs; reaps (leaked
+databases, other migration sets' templates) hold it **exclusive** and skip when it cannot
+be had, so a reap never drops a template under a clone (its own key, not the template
+build lock, which a builder of another migration set holds for a whole migration run).
+`scripts/e2e/llm.sh` is a **manual** gate (live-gated, not in CI): it rebuilds the
+sandbox images on every run unless `SKIP_IMAGE_BUILD=1`.
+`AURORA_TEST_POOL_SIZE` overrides the per-`TestDb`
 pool (default 5 — 2 starves 20 `aurora-api` tests, see
 `docs/ops/build-performance.md` §7).
 
@@ -951,10 +1045,10 @@ runs) is what a push hands to CI.
 1. `fmt`, `clippy -D warnings`, `cargo deny` (licenses, advisories), pnpm lint
    and type-check.
 2. Unit + database + service + contract tests.
-3. Build images (multi-arch on main; amd64 on PRs).
+3. Build images (**amd64 only** today, on PRs and on main; multi-arch is not built — FIX-101 corrected the claim).
 4. e2e-gateway, e2e-hosted (podman), dashboard Playwright on the host-process stack (phase 1, OPS-017: was compose; `m1.sh --kind` runs it against the kind dev stack).
 5. Architecture guards.
-6. Nightly: Kubernetes e2e on kind, live suites, performance. The kind run
+6. Nightly: Kubernetes e2e on kind, live suites, the full-image hosted scenarios and the channel e2e (no performance run: see the table — performance is manual, on an idle machine). The kind run
    (`scripts/e2e/kind.sh`) ends with two value-only `helm upgrade` legs
    (OPS-024: `web.replicas` 1 → 2 → 1 against the installed release), which prove
    the pre-upgrade hook path — hooks run under the previous release's policies,
@@ -967,6 +1061,31 @@ runs) is what a push hands to CI.
 doctests run in `rust-build` (nextest skips them). `rust-lint`, `rust-deny`, `web` and `guards` are
 separate jobs. Actions are SHA-pinned and on Node 24; runners are pinned to `ubuntu-24.04`.
 `e2e-gateway` (`scripts/e2e/gateway.sh`) and `e2e-hosted` (`AURORA_TEST_PODMAN=1 scripts/e2e/hosted.sh`, rootless podman, sandbox image cached with `actions/cache`) are separate jobs after `rust-build`, parallel to the shards; both compile in-job via their scripts. If `e2e-hosted` cannot run on GitHub runners (user-namespace limits), it becomes a local and nightly gate. See `docs/ops/build-performance.md`.
+
+**Skip policy (FIX-101).** A suite the specifications cite as evidence must run in CI or fail there; it may
+not pass by skipping (REVIEW-5 pattern 2).
+- Rust suites that need a service (podman, Redis) name a gate variable and call
+  `aurora_testkit::require_or_skip("<GATE>")` first: gate set → run; gate unset and `CI` not `true` → print
+  `SKIPPED:` and return; gate unset and `CI=true` → **panic**. The nextest `ci` profile keeps those suites out of
+  the shards (`default-filter`), and the CI job `gated-suites` runs them with their gates: the pinned Redis
+  service (`AURORA_TEST_REDIS`, `AURORA_TEST_REDIS_ADDR`: the counters conformance suite and FIX-087's
+  documented-ACL case, SEC-62) and the runner's podman tests (`AURORA_TEST_PODMAN`, SEC-26), each requiring a
+  non-zero passed count. (The Vault suites still skip silently outside their own `vault` job; converting them is
+  left open.)
+- The e2e scripts (`gateway.sh`, `hosted.sh`, `channels.sh`) run through `scripts/e2e/lib-skip.sh`: with `CI=true`
+  a `SKIPPED:` line anywhere in the output fails the script, unless the job declares an exception in
+  `AURORA_E2E_ALLOW_SKIPPED` (a regex, commented in the workflow). `scripts/guards/e2e-skip.sh` self-tests it.
+- Playwright: the **mocked** project runs on every push in the `web` job, the **production-build** project
+  (`AURORA_E2E_PROD=1 pnpm e2e:prod`, port 4110, the only place the real CSP applies) in the same job; the
+  real-stack specs share one stack and run in the nightly `first-run` job and the kind scripts.
+- Schema guard (`crates/aurora-db/tests/it/schema_matches_spec.rs`): compares table and column **names**, and, for
+  every column `docs/03` types, the declared **type and nullability** with the migrated catalog (`udt_name`,
+  `is_nullable`). It does **not** compare constraints, indexes, defaults, checks, foreign keys or partitions; the
+  `KNOWN_TYPE_DRIFT` list may only shrink.
+- Permission matrix (`permission_matrix.rs`): a denial row answered 400/422 (validation before authorisation) is
+  INCONCLUSIVE and fails unless it is on the commented `ACCEPTED_INCONCLUSIVE` list in that file.
+- Plugin fixtures: every manifest/archive/hooks rule code has an invalid fixture in
+  `plugins/fixtures/expected-invalid.txt` (`bash scripts/fixtures/build.sh` prints the count; 57 passed at FIX-101).
 
 **Caching (VTL-001).** Every compiling CI job runs
 [mozilla-actions/sccache-action](https://github.com/mozilla-actions/sccache-action) (SHA-pinned)

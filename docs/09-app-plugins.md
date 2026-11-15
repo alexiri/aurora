@@ -62,7 +62,10 @@ the compiled-in project key (publisher `aurora`) or a non-revoked
 `package.publisher`.
 
 Unsigned packages are refused unless `plugins.allow_unsigned = true` (dev only;
-the dashboard shows a standing warning banner to instance admins).
+the API logs a warning at startup). (FIX-107, D-187) **`key_id` is the canonical
+standard-base64 (padded) encoding of the 32-byte public key**, or `builtin`; any other
+spelling of the same key (URL-safe, unpadded) is `signature_malformed`, so revocation and
+`enable` can compare key ids as strings. A migration rewrote older rows.
 
 ## 3. Manifest contract v1 (`plugin.yaml`)
 
@@ -93,6 +96,11 @@ permissions:
 ```
 Host claims are derived from `apps[].hosts` and shown alongside.
 
+(FIX-115) **Hook-based connects report no requested scopes**: `requested_scopes` stays
+empty and `missing_scopes` is always empty for them; the hook reports what was granted.
+`app_connections.source_connection_id` is reserved (nothing writes it yet); deletion
+handles one level of children until it is used.
+
 ### 3.3 `oauth_clients` (shared by the package's apps)
 ```yaml
 oauth_clients:
@@ -100,6 +108,9 @@ oauth_clients:
     authorize_url: https://accounts.google.com/o/oauth2/v2/auth
     token_url: https://oauth2.googleapis.com/token
     # authorize_url may be templated the same way (S-14)
+    # (FIX-107, SEC-17) Static token and authorize endpoints lie on a claimed host or a host
+    # listed in `permissions.token_hosts` (exact hosts, never reserved or private); a new token
+    # endpoint host is a widening and is shown at approval.
     # or tenant-derived: token_url: { template: "https://{connection.tenant_host}/oauth/token", zone: "*.zendesk.com" }
     pkce: true                    # S256
     client_auth: body             # body | basic
@@ -127,7 +138,22 @@ about:
   web_hosts: [mail.google.com]          # hosts allowed in approval links
   connect_note: { text: "An admin must enable API access first.", url: https://… }   # optional
   label_hint: "Account email"
+  family: { id: github, name: GitHub, variant_label: github.com }   # optional, phase 5 (D-242)
 ```
+
+**`family`** (phase 5, FIX-135, D-242, C-744, manifest contract 1, additive). Apps of **one
+package** that are the same product in different deployments (GitHub on github.com and on a
+GitHub Enterprise Server; Jira Cloud and Data Center) declare the same `family`. It is
+presentation only: the apps stay separate (own hosts, tools, token kinds, SEC-04/SEC-59 and the
+gateway unchanged). The catalogue shows **one tile per family**, the connect window asks where the
+product runs (the hosted variant, then each registered server of the family's instance-bound apps),
+and every list, picker, grant dialog and approval names the app "<family name> · <variant_label>"
+(a registered server adds its address). Linter: `id` is a lower-case slug
+(`family_id_invalid`); `name` and `variant_label` are non-empty (`family_label_empty`); every
+member of a family has the same `name` (`family_name_mismatch`), `variant_label` is unique in the
+family (`family_variant_duplicate`), at most one member is not instance-bound
+(`family_two_hosted`), and a family id is not used by another active package
+(`family_foreign_package`).
 
 #### `credentials` and `metadata`
 ```yaml
@@ -164,6 +190,34 @@ metadata:                       # stored in clear, non-secret
     - { name: subdomain, label: Host, type: text, store: tenant_host, required: true, placeholder: "acme.zendesk.com" }
   probe: { … }                  # optional, names the account
 ```
+**Tool scopes (FIX-136, D-241, C-741).** `tools[].scopes: [scope ids]` (any of; absent = no
+requirement) names the scopes a tool needs; each must be declared by one of the app's connect
+methods (`oauth2` `scopes`, or a `fields` method's new `scopes`), else `tool_scope_unknown`. A
+`fields` method may declare `scopes: [{ scope, name, access }]` (the scopes a pasted token may
+carry; the connect form asks "Which scopes did you give this token?", stored as the connection's
+`scopes`, editable later) and `probe_scopes: { <scope>: { method: GET, url } }` (a read probe per
+**read** scope, prefilling the declaration with the ones the token passes; write scopes are never
+probed, `probe_scope_write`; duplicates `duplicate_scope`; unknown scope `probe_scope_unknown`;
+non-GET `probe_scope_method`). The gateway refuses a tool whose scopes the connection's **known**
+scopes lack with `tool_scope_missing` (`07 §Tool scopes`); unknown (empty) scopes refuse nothing.
+No new column: `app_connections.scopes` already holds them (`03`).
+
+**Read only (FIX-133, D-240, C-740).** Independent of any method's `access_levels`, a connection's
+`access` (`read` | `write`) is Aurora's: for an app with a `tools.read`/`tools.write` split every
+connect method's window asks Read only / Read and write, and the gateway lets only `tools.read`
+items through a `read` connection (`07 §Read-only connections`). A method can additionally make its
+**credential** read-only where the vendor allows it (the `aurora_access` hook key, §8.2); the
+package's `docs/setup.md` says per method what the vendor enforces and what Aurora enforces.
+
+`scopes: []` with `default_scopes: []` is valid: the authorization request then carries no `scope`
+parameter and the connection has no scopes (FIX-133: a **GitHub App's user authorization**, whose
+permissions come from the app's registration, is the package's `oauth_app` method, with its own
+`oauth_clients` entry `github-app` on the same endpoints as the OAuth app, and an own
+`token: oauth2_refresh` for the 8-hour expiring user token with its rotating refresh token). A
+probe `metadata` pointer written `header:<name>` stores that response header (at most 500
+characters, nothing when absent) instead of a JSON field: the personal-token probe keeps a classic
+token's `X-OAuth-Scopes` as `token_scopes`, shown on the connection.
+
 `fields` on `oauth2` exist so a **first** connect with a templated `authorize_url`/`token_url`
 can take `connection.tenant_host` from the form. The host is validated (`tenant` zone, DNS
 name only: no IP literal, userinfo, port or path) **before** the authorize redirect or any
@@ -208,6 +262,39 @@ response cap. Failure → 422 `connect_probe_failed` with the upstream status.
   authorize: true               # call connect.authorize to obtain the redirect URL
   fields: []                    # optional form collected first and passed to the hook
 ```
+
+**Several methods of one app: one app per service** (FIX-123, D-195(a), D-214). Ways to
+authenticate to the same service are **methods of one app**, not separate apps (a GitHub App
+installation and an OAuth login are two methods of `github`; an assumed role and an access
+key pair are two methods of `aws-keys`). Every method (any `kind`) accepts, all optional:
+
+```yaml
+- id: github_app
+  kind: hook
+  label: GitHub App                 # ≤ 60 characters, the chooser's name for the method
+  description: "An app installed on the repositories you choose …"   # ≤ 400, one or two sentences:
+                                    # what it is, when to use it
+  recommended: true                 # the chooser preselects it and badges it "Recommended"; at most one
+  token: { kind: hook, max_lifetime_secs: 3600 }   # overrides the app's `token` for connections made with this method
+```
+
+- **`token` per method.** A connection made with a method that declares `token` uses it; one made
+  with a method that does not (and a connection with no recorded method, `app_connections.
+  connect_method` null) uses the app's `token` (default `static`). The gateway's refresh and mint
+  paths, and every other reader of the token kind, resolve it per connection:
+  `AppEntry::token_for(connect_method)`.
+- **`credentials` are the union** of what the methods produce; a credential a method does not
+  produce is declared `optional: true`. The linter (§6) checks that a required credential read by
+  host templates is produced by every `fields` and `oauth2` method (a `hook` method's output is
+  not visible to the manifest). The rule applies only to an app in which a method declares its own
+  `token`, so a package written before the key stays valid.
+- **`tools[].connect_methods: [method ids]`** (the brief's `tools[].methods`; `methods` is the
+  HTTP methods) restricts a tool to connections made with those methods: it is hidden from pickers
+  and ignored by classification for connections of other methods (a tool with no list applies to
+  every method; a connection with no recorded method hides nothing).
+- The connect window asks "How do you want to connect?" when an app has more than one method,
+  showing `label`, `description` and a **Recommended** badge; a reconnect keeps the connection's
+  method unless the person picks another.
 
 Server-owned values are never taken from client input: templates and hooks
 read them from **context variables** listed in `permissions.context`:
@@ -263,30 +350,90 @@ oauth_clients:
 - `{instance}` stands for a whole host only (never part of a host or a path),
   and only in an app that declares `instances`. With `default_host`, every
   `{instance}` entry also applies to that host as an ordinary static claim.
+  Manifests and the linter are unchanged by base paths (below): `{instance}`
+  stays a whole host in every manifest.
+- (phase 5, D-243, FIX-134) **Preset instances.** `instances.presets: [{ host, label }]`
+  lists hosts the package ships as ready-made instances next to `default_host`
+  (Sentry: `us.sentry.io` "US region", `de.sentry.io` "EU region (DE)" beside
+  `sentry.io`). Each is a plain lower-case DNS name inside a registrable domain
+  (not a public suffix), distinct from `default_host` and from the other
+  presets, with a non-empty label; lint codes `instance_preset_invalid`,
+  `instance_preset_not_registrable`, `instance_preset_duplicate`,
+  `instance_preset_label_empty`. A preset host is a static claim of the app's
+  `{instance}` rules exactly like `default_host` (the §7 conflict rules are
+  unchanged). When a version that declares presets activates, the API seeds one
+  **built-in** instance-wide `app_instances` row per preset (`builtin = true`,
+  `03`) in the activation transaction; it is offered in every connect window
+  and listed (read-only, "Built in") on Admin › Self-hosted apps, and a
+  connection to it is an ordinary instance connection: injected only on that
+  exact host (SEC-59). Nobody can rename, disable, promote or delete it
+  (`instance_builtin`), and a registration cannot reuse its host.
 - An **app instance** (`03 app_instances`) is a host registered for one app by
-  an admin: instance-wide by an instance admin, or for one organization by its
+  an admin, optionally with a **base path** (phase 5, D-231, FIX-145):
+  instance-wide by an instance admin, or for one organization by its
   owners/admins (`05 §App instances`). Registration is the trust decision
   about where that app's credentials may be sent; members never type a host.
 - At registration the host MUST be a DNS name in lower case: no IP literal,
   userinfo, port or path, and not under `aurora.internal`. It MUST NOT equal or
-  fall under a static claim of any active package (another app's host), a
-  governed LLM host (`08 §6`), or another registered instance of the same scope
-  (`instance_host_conflict`). The optional `probe` runs through the gateway's
+  fall under a static claim of any active package (another app's host) or a
+  governed LLM host (`08 §6`), and MUST NOT be one of Aurora's own addresses;
+  these checks are per host and ignore the base path, so a path never gets
+  around them (`instance_host_conflict`). The optional `probe` runs through the gateway's
   destination guard. A private address is reachable only where the operator
   allows it (`gateway.allowed_private`, `06`).
+- (phase 5, D-231) **Base path.** A registration may carry a base path for an
+  app served under a path (`https://its.cern.ch/jira`: host `its.cern.ch`, base
+  path `/jira`). Validation (`instance_base_path_invalid`, pointer `/base_path`):
+  it starts with `/`; it has 1–8 segments; each segment is 1–64 characters from
+  `[A-Za-z0-9._~-]` and is neither `.` nor `..`; the total length is ≤ 128.
+  Normalization before validation: a trailing `/` is dropped, and `""` or `/`
+  means no base path (`null`). Case is kept (paths are case-sensitive). The base
+  path cannot be changed after registration, like the host (register again
+  instead). `default_host` never has a base path: it stays a bare host.
+- **Registrations that share a host.** Two registrations visible to each other
+  (instance-wide and any organization's, or two of one organization) on the same
+  host conflict (`instance_host_conflict`, `kind: instance`) when their base
+  paths **overlap**: either is `null`, they are equal, or one is a segment
+  prefix of the other (`/jira` overlaps `/jira/x`, not `/jira2`). Disjoint base
+  paths on one host may be registered, for one app or different apps (Jira DC at
+  `/jira`, Confluence DC at `/confluence`). Promoting an organization's
+  registration to instance-wide (`instance_host_shared`) uses the same overlap
+  rule. The per-host lock taken while checking is unchanged.
+- **`{instance}` resolution** (D-231(b)). For a registration with a base path,
+  every `https://{instance}/…` the core resolves (registration probe, connect
+  probes, OAuth authorize/token URLs, token refresh, `token.mint`, `library`
+  fetch) is `https://<host><base_path>/…`, built by one resolver in
+  `aurora-registry`; no other code substitutes `{instance}` itself. Hook
+  `permissions.egress` `{instance}` stays the host (egress is checked per host);
+  the hook host request also carries `instance_base_path` (C-249, C-731).
 - A connection of an instance-bound app records its `instance_id` (or none for
-  `default_host`). The gateway injects it **only** on that instance's host,
-  exactly as a tenant-bound connection only on its `tenant_host` (SEC-04, SEC-59).
+  `default_host`). The gateway injects it **only** on that instance's host and,
+  when the instance has a base path, only under it (the path equals the base path
+  or starts with base path + `/`), exactly as a tenant-bound connection only on
+  its `tenant_host` (SEC-04, SEC-59).
+- (phase 5, D-231(c)) **Matching under a base path.** A request belongs to a
+  registration when its host equals the instance host and its path, normalized
+  as for tool matching (`06 §Per-request pipeline` step 3), is the base path or
+  starts with base path + `/`; a registration without a base path matches every
+  path. Among several matches the longest base path wins. Everything the
+  manifest decides uses the **app path**, the path with the base path removed
+  (`hosts[].match.path_prefix`, tool `path`, `{path.N}` in approval templates,
+  `params` conditions), so manifests work unchanged. The upstream request, the
+  audit `path` and the approval display keep the **full** path. A request to the
+  host outside every registered base path matches no instance and nothing is
+  injected (fail closed, as for an unknown host). This supersedes D-92(e) and
+  P2-CAT-7 G7 ("an instance is a bare host") for registered instances.
   A connection without an instance stands for `default_host`: `{instance}`
   resolves to that host in every gateway path (token refresh/exchange, hook
   egress, injection guard), it is injected only there, never on a registered
   instance's host (D-86).
 - OAuth: each self-hosted instance has its own OAuth application, so the client
   is a BYOC client bound to the instance (`app_oauth_clients.instance_id`); the
-  templated URLs resolve to that instance's host and MUST be https.
+  templated URLs resolve to that instance's host and base path and MUST be https.
 - Registered instance hosts are claims for `§7`: a package activated later
   whose static claim overlaps a registered instance host needs an instance-admin
-  decision like any other conflict.
+  decision like any other conflict, whatever the instance's base path (static
+  claims stay host-level).
 - Deleting an instance disables its connections (`status_reason:
   instance_deleted`) and its OAuth clients; nothing is injected on its host again.
 
@@ -304,6 +451,9 @@ token:
   reauth_codes: [invalid_grant] # token endpoint errors meaning "user must reconnect"
 ```
 `hook` means `token.mint` produces fresh credential fields plus an expiry.
+A connect method may carry its own `token` (`connect[]`, FIX-123): it overrides this one for
+connections made with that method, so one app can offer an OAuth login (`oauth2_refresh`) and a
+minted installation token (`hook`) side by side.
 
 #### `tools` (permission catalogue)
 ```yaml
@@ -318,7 +468,8 @@ tools:
       - { id: create_issue, name: Create issue, host: api.github.com, path: /graphql, methods: [POST], graphql: mutation }
       - { id: push, name: Push code, host: github.com, path: "/*/*/**", methods: [GET, POST], git: push }
 ```
-`description` optional; tool ids are immutable; renaming = remove + add.
+`description` optional; `connect_methods` optional (a list of the app's `connect[]` ids, §3.4
+`connect[]`); tool ids are immutable; renaming = remove + add.
 
 **Which tool a request is.** A request is classified as the **first** catalogue tool that matches
 its host, method and path: `read` items are tried before `write` items, each in declaration order.
@@ -358,7 +509,16 @@ with `Action=DescribeInstances`, STS with `Action=GetCallerIdentity`), AWS JSON 
   **truncated beyond the buffer** (`CONDITION_BODY_BUFFER`), the condition is **unknown, the tool
   does not match**, and classification continues down the catalogue (typically reaching the generic
   write tool of the same endpoint, or `tool = None`). Doubt therefore never produces a `read`
-  classification. The linter requires, for every tool with `params`, fixtures for the positive case
+  classification. (FIX-085) A condition also treats as doubt (no match, and the request is untooled):
+  **a raw `;`** anywhere in the query string or form body (some servers split pairs on it, so one
+  `Action` for the gateway may be two for the upstream; `%3B` is exact and stays an ordinary
+  character); **two parameters whose names differ only in case** (`ACTION` beside `Action`: a
+  server that folds case sees one parameter given twice), and a lone case variant of the name
+  (`ACTION=...` is not the parameter and is not read as absent either); and, for a
+  `json_pointer` rule condition (`07`), **a key repeated on the way to the pointer** in the JSON
+  body (the parsers disagree on which copy wins), which makes the condition unknown for allow and
+  restrictive rules alike. A `form` condition requires the tool to list body methods (the linter
+  refuses a tool with no `methods`, or only `GET`/`HEAD`). The linter requires, for every tool with `params`, fixtures for the positive case
   and for each of: other value, missing, repeated, query/body conflict, wrong content type,
   truncated body.
 - **Query conditions and a body.** Servers merge the query and an urlencoded body, so a `query`
@@ -405,7 +565,15 @@ Sources: `path` (`segment` index, 1-based over `/`-split path), `query`
 `proxy-*`, `x-api-key`, or any header injected by a mechanism), `body`
 (`steps`). Steps are core **decoders**: `json` (pointer), `form` (field name),
 `graphql` (`operation_name` | `field_names`), `base64url`, `base64`,
-`mime_header` (name), `mime_text` (first text/plain part, clamped). Link
+`mime_header` (name; every header of that name, joined), `mime_text` (first text/plain part,
+clamped). (FIX-118, D-188) `json` accepts `*` as a path segment (every element of an array,
+scalar leaves joined with `, `: `/message/toRecipients/*/emailAddress/address`), `json_count`
+(pointer: the number of elements of that array, `0` when absent), `json_text` (pointer: every
+`text`/`content` string below it, joined with spaces — Atlassian document format, Notion rich
+text) and `mime_attachments` (the number of attachments of a message). **A summary of a request
+that sends content to people outside the workspace (mail, calendar invitations, public issues and
+pages) lists every recipient and shows a clamped preview of the content; packages use a
+`summarize` hook where a template cannot.** Link
 templates may use `{request.host}`, `{path.N}`, `{query.name}`, `{field.Label}`
 and must resolve to https on a host in `hosts` or `about.web_hosts`.
 
@@ -425,7 +593,7 @@ agent:
 proxy and CA variables, LLM client variables). Stub paths are relative to the
 home and confined to it.
 
-(phase 5, P5-GUIDE-1, D-171, SEC-90) **Agent guide.** `agent` gains two optional keys, additive
+(phase 5, P5-GUIDE-1, D-171, SEC-117) **Agent guide.** `agent` gains two optional keys, additive
 in contract 1 (`24 §3` is normative):
 ```yaml
 agent:
@@ -463,13 +631,23 @@ must change. For apps whose credential is far broader than their catalogue (Indi
   (`07 §Grants and their compilation`). Custom grants (allow / ask / block per tool;
   new tools arrive blocked; unmatched requests blocked) are the only way to use the
   app. Requires at least one tool in the catalogue (linter error `custom_only_without_tools`).
+  **`custom_only: true` implies `block_untooled`** (FIX-085): the tools "are the only way to
+  use the app", so a request that matches none is blocked before any rule, a hand-written
+  `network` allow for the host included. A manifest that sets `custom_only` with `block_untooled`
+  false or absent is refused (`custom_only_needs_block_untooled`); the evaluator applies the
+  implication itself, so a snapshot built before the rule is just as strict.
 - `block_untooled` — whatever grants exist, a request on which the app's connection
   would be the winning credential but **no catalogue tool matches** (`tool = None`) is
   blocked (403 `blocked_by_policy`, `details.reason = "app_untooled_blocked"`), and
-  no hand-written rule can allow it. With `custom_only` it is already implied for custom
-  grants; the flag matters for packages that keep `full` available but want it to cover
+  no hand-written rule can allow it. With `custom_only` it is implied; the flag matters
+  for packages that keep `full` available but want it to cover
   *catalogued* tools only (a `full` grant then means "every tool the catalogue names,
   including future ones", never "anything the token can do").
+- **The one credentialed request outside the tools** is the skill-library fetch (D-148,
+  `§3.4 library`): the gateway's own request for a package's declared `library` templates,
+  bounded by those approved templates (exact host, path and method); policy and grants do not
+  apply to it, and neither flag changes it. Nothing else a connection's credential signs is
+  exempt from `custom_only`.
 
 Both are properties of the manifest the instance admin approves (shown in the
 permissions review, `§10`), not of a grant, so a user cannot switch them off.
@@ -499,7 +677,7 @@ library:                                  # optional, per app: "this app is a gi
     path: "/repos/{repo}/git/blobs/{blob}"
     content: "$.content"
     encoding: "$.encoding"                # base64 | raw (a `raw` endpoint returns the bytes themselves)
-  required_access: read                   # the connection should be read-only (the dashboard warns otherwise)
+  required_access: read                   # the only accepted value (anything else is refused by the linter); the connection should be read-only
 ```
 Optional, per app; **absent = the app cannot serve a library** (no existing package changes). The
 block is **data, not code**: three GET request templates, a ref grammar and JSON-path extractors
@@ -540,10 +718,39 @@ database: { engine: postgres }
 ```
 Marks a database app reached through the gateway database lane (`21`); its
 credentials must include `host`, `port`, `dbname`, `user`, `password`,
-optional `sslmode`, `ca_pem`. Its tools match the synthetic host `*.db.aurora.internal` (path
+optional `sslmode`, `ca_pem` (and, in connection metadata, the audited opt-out `tls_verification = off` of server certificate verification under `require`, `06 §Database lane`). Its tools match the synthetic host `*.db.aurora.internal` (path
 `/read`, `/write`, `/ddl`, `/admin`, method `POST`); the linter accepts that host without a
 `hosts[]` entry (P2-DBL-2, C-233). Fixtures send a SQL body to `https://<uuid>.db.aurora.internal/`
 and expect a `class` and `tool` (`plugins/builtin/postgresql/tests`).
+
+#### `ldap` (phase 5, D-251)
+```yaml
+ldap:
+  server: xldap.cern.ch            # exact public DNS name (no IP literal, wildcard, port, *.internal)
+  port: 636                        # LDAPS; default 636
+  base_dn: "DC=cern,DC=ch"         # every search is confined to this subtree
+  attributes: [uid, mail, displayName]   # 1..64 plain names; the only attributes a request may name
+  max_entries: 50                  # 1..500, default 50
+hosts:
+  - match: { host: <app id>.ldap.aurora.internal }
+    inject: []
+```
+Marks an app reached through the gateway LDAP lane (`06 §LDAP lane`): anonymous, read-only
+searches over LDAPS. Linter rules: the server is a plain public DNS name whose last label is not
+numeric and that does not end `.internal`/`.local`/`.localhost` (`ldap_server_invalid`); port
+1..65535 (`ldap_port_invalid`); `base_dn` 1..256 characters without control characters
+(`ldap_base_dn_invalid`); `attributes` 1..64 names of letters, digits and `-` starting with a
+letter — no `*`, `+`, options or binary markers (`ldap_attributes_invalid`); `max_entries` 1..500
+(`ldap_max_entries_invalid`); no `database` section beside it (`ldap_database_exclusive`); **no
+declared credentials** (`ldap_credentials_declared`); exactly one `hosts[]` entry, for
+`<app id>.ldap.aurora.internal` (`ldap_host_missing`, `ldap_host_foreign`) with an empty `inject`
+(`ldap_host_inject`) — the one host under `*.aurora.internal` a package may claim; tools are
+ordinary tools on that host (`POST /search`). The `connect` flow is `kind: fields` with
+`fields: []` (nothing to enter). The block is copied into the snapshot's `apps[].ldap` (`§9`) and
+is part of what an admin approves: **adding or changing it widens permissions** unless it is the
+same server, port and base with a subset of the attributes and no larger `max_entries`
+(`Widening::Directory`, `§10`). Fixtures send `POST https://<app id>.ldap.aurora.internal/search`
+and expect a `tool` (`plugins/addons/cern-phonebook/tests`).
 
 ## 4. Template substitution
 
@@ -614,20 +821,30 @@ if any of:
   `summarize: hook`); `egress` for `approval.summarize`; egress hosts that are
   reserved or private;
 - a claim on a **reserved host** (LLM provider hosts, the instance's own
-  external host, internal service hosts, `*.aurora.internal`); (phase 4, P4-LLM) this
+  external host, internal service hosts, `*.aurora.internal`); (phase 5 (D-138, moved from phase 4), P4-LLM) this
   includes any claim whose pattern **matches** an exact configured LLM endpoint host
   (Bedrock `bedrock-runtime.<region>.amazonaws.com`, Vertex `<location>-aiplatform.googleapis.com`,
   an Azure resource host), so a package can never obtain a second, ungoverned way to
-  inject on those hosts; the built-in AWS packages (`s3.*`, `ec2.*`) are unaffected;
+  inject on those hosts; the built-in AWS packages (`s3.*`, `ec2.*`) are unaffected
+  ((phase 5, P4-LLM spec batch, D-261) Bedrock credentials, including assume-role, are LLM
+  secrets and never `aws-keys` connections; the gateway's LLM mint reuses the `aws_sigv4`
+  finalizer and the AssumeRole shape of D-95, not the package or its hook);
 - unknown mechanism or decoder;
 - (phase 4, P4-GRANTS) `grants` with unknown keys or non-boolean values, `custom_only` on an
-  app with no tools (`custom_only_without_tools`); a tool `params` list that is empty, longer
+  app with no tools (`custom_only_without_tools`), `custom_only` without `block_untooled`
+  (`custom_only_needs_block_untooled`, FIX-085); a tool `params` list that is empty, longer
   than 4, has an unknown `source` or header name, a `match` without exactly one of `equals` /
   `in` / `prefix`, an over-long or non-conforming value, a `prefix` shorter than 4 characters, a
-  `form` condition on a tool whose methods are all `GET`/`HEAD`, or a `params` tool declared
+  `form` condition on a tool that lists no methods or only `GET`/`HEAD` (it must list the
+  methods that carry a body), or a `params` tool declared
   **after** a broader tool that would shadow it (the linter proves the order by testing the
-  tool's own first example against the earlier tools); a group wildcard carrying `params`; a
-  `params` tool missing any of the required fixtures (`§3.4 tools`);
+  tool's own first example against the earlier tools; (FIX-085) a `params` tool also shadows a
+  later `params` tool when every condition of the earlier one is implied by a condition of the
+  later one on the same source and name: `equals` within `equals` / `in` / a prefix of it, `in`
+  within a superset, `prefix` within a shorter-or-equal prefix); a group wildcard carrying
+  `params`; a `params` tool missing any of the required fixtures (`§3.4 tools`), where the
+  `positive` fixture counts only if the tool's conditions really hold for the request it
+  describes (a claim is not a match);
 - (phase 4, P4-GSL) `library` violating the rules of `§3.4 library` (`library_host_not_exact`,
   `library_no_credential`, `library_path_placeholder`, `library_repo_pattern`, `library_json_path`, `library_method`,
   unknown keys or non-conforming values), or `library` on an app without a credential that can
@@ -645,6 +862,14 @@ if any of:
   (`agent_guide_not_text`); more than `AGENT_GUIDE_FILES_MAX` files, a file over
   `AGENT_GUIDE_FILE_MAX`, an app over `AGENT_GUIDE_APP_MAX` (`agent_guide_too_many_files`,
   `agent_guide_file_too_large`, `agent_guide_app_too_large`);
+- (FIX-123, D-214) connect methods: a duplicate method id (`duplicate_connect_method`), a `label`
+  over 60 or a `description` over 400 characters, blank or with control characters
+  (`method_text_invalid`), more than one `recommended` (`recommended_multiple`), a
+  `tools[].connect_methods` entry that names no method (`tool_method_unknown`), a method `token` whose
+  `client` is not declared (`unknown_oauth_client`; a method `token` of `kind: hook` counts for
+  `permissions.hooks` like the app's), and, for an app whose methods use `token`, a required credential
+  that host templates read and a `fields` or `oauth2` method does not produce
+  (`method_credential_unproduced`);
 - `env` or stub paths violating the rules above.
 
 A host **conflict** with another active package is not a rejection: the package
@@ -664,10 +889,26 @@ connections show "not injecting on <host> (lost to <app>)". Decisions survive
 upgrades while `claim_fingerprint` is unchanged; a changed claim requires a new
 decision. Reversing a decision is allowed and audited.
 
+**A credential is injected only into a request that leaves over TLS to the port the claim
+names (443 when it names none)** (FIX-104, D-180, SEC-04). A request to a claimed host over
+plain HTTP, or on another port, is handled as an uncredentialed request to that destination
+and is subject to policy as such. A registered instance host (below) is claimed the same
+way: TLS to the claimed port. **A wildcard in a host claim must leave a registrable domain
+to its right** (public-suffix check, as for zones, SEC-17): `*.herokuapp.com` and
+`*.github.io` are refused with `zone_too_broad`, `s3.*.amazonaws.com` is accepted.
+
+(FIX-123, D-195(a)) The built-in packages never conflict with each other: ways to authenticate to one
+service are connect methods of one app (`§3.4 connect[]`), so a fresh instance starts with one GitHub
+and one AWS app and no host-claim decision to make. A package that a present package supersedes
+(`§10`) is not offered to the admin as a conflict.
+
 (phase 2, D-74) A registered app instance host (`§3.4 Instance-bound hosts`) is
 a claim of its app. Registration refuses a host that conflicts with an existing
 static claim; a static claim activated later that overlaps a registered
-instance host is a conflict decided as above.
+instance host is a conflict decided as above. (phase 5, D-231) Both checks are
+per host: an instance's base path never narrows the claim it is compared with,
+so a static claim on the host refuses a registration with any base path.
+Registrations among themselves follow the overlap rule of `§3.4`.
 
 ## 8. Hooks
 
@@ -750,6 +991,13 @@ declared; `tenant-host` must fall in the declared zone; `continue.url` must be
 https on a declared host or an `oauth_clients` authorize host; summaries are
 clamped to `SUMMARY_LIMITS`.
 
+**Reserved key `aurora_access` (FIX-133, D-240).** A hook learns the connection's access
+(`read` | `write`, §3.4, `07`) without any WIT change: the API adds `aurora_access` to the
+`connect.exchange` form after validating it, and the gateway adds it to the `token.mint` metadata
+(overriding anything stored under that name). A hook that can narrow its credential (GitHub App
+installation tokens) does so for `read` and treats any value but `write` as `read`. Field names
+starting with `aurora_` are reserved (`field_name_reserved`), so a user cannot supply the key.
+
 ### 8.3 The hook host (`aurora-hookhost`)
 
 - Stateless internal service (port 4104), no database access and no encryption
@@ -758,10 +1006,15 @@ clamped to `SUMMARY_LIMITS`.
   `GET /internal/v1/registry/blobs/{digest}` (internal secret), refreshing on a
   60 s poll of the active hash (it does not hold a DB connection).
 - Endpoint: `POST /internal/v1/hooks/{hook}` with
-  `{ "package_id", "package_digest", "app_id", "input": <hook input as JSON> }`
+  `{ "package_id", "package_digest", "app_id", "input": <hook input as JSON>,
+  "instance_host"?, "instance_base_path"? }`
   → `{ "ok": <output> }` or `{ "error": { "code", "message" } }`. Auth:
   `Authorization: Bearer <internal secret>`. The egress allow-list is taken
-  from the snapshot, never from the caller.
+  from the snapshot, never from the caller. `instance_host` (C-249) is what
+  `{instance}` in `permissions.egress` resolves to (absent = nothing);
+  `instance_base_path` (phase 5, C-731, D-231) is the connection's registered
+  base path (absent = none). Egress stays checked per host: the base path
+  neither narrows nor widens it.
 - Runtime: wasmtime with the component model; modules compiled once per
   digest; a **fresh `Store` and instance per call**; memory limit
   `HOOK_MEMORY`; epoch interruption enforcing `HOOK_WALL` (15 s for connect and
@@ -773,7 +1026,14 @@ clamped to `SUMMARY_LIMITS`.
   host.
 - `log`: redacted (credential-looking values masked), ≤100 lines per call,
   ≤1 KiB each, emitted with package/app ids.
-- Metrics per package/hook: calls, errors, duration, fuel/epoch kills.
+- Metrics per package/hook: calls, errors, duration, epoch kills (the runtime uses epoch
+  interruption and the memory limit; it does not meter fuel).
+- (FIX-107, D-187) A cold module pull and compile is single-flight per digest and holds no
+  lock another digest or the snapshot refresh needs; the `connect.authorize` URL host must be
+  one the package declared (egress for `connect.authorize` / `connect.exchange`, a claimed
+  host of the app, or an OAuth client's authorize host); a hook call fails (`internal`) when
+  the OS random source cannot be read; `plugin.yaml` is at most `PACKAGE_MANIFEST_MAX`
+  (256 KiB, `manifest_too_large`) and the decompressed package at most 4 × `PACKAGE_MAX`.
 - Runs as its own process (second isolation layer). Replicas: any number.
 
 ## 9. Registry snapshot
@@ -822,6 +1082,7 @@ snapshot carrying them and keeps the previous one (`06 §Registry snapshot loadi
 | `builtin` | Packages under `/usr/share/aurora/plugins` in the API image (phase 2 catalogue; phase 0 ships none). Signed with the project key; activated automatically on first sight and on upgrade **unless permissions widened** relative to the previously approved version. |
 | `directory` | `plugins.dir` scanned at startup and every 60 s. |
 | `upload` | `POST /v1/admin/plugins` (multipart). |
+| `addon` | (phase 5, P5-ASRC, D-250) ingested from a registered addon source (`09 §10` above; format doc `22-addon-repos.md`): the repo's manifest lists versions, the poll job or "Check now" ingests newer ones; the first version of every addon package is `pending_approval` — third-party permissions are never auto-activated; a version whose `min_core` exceeds the running core is listed but not ingested. |
 
 States: `pending_approval` → `active` (→ `superseded` by a newer active version)
 | `rejected` | `disabled` | `invalid`.
@@ -830,7 +1091,13 @@ States: `pending_approval` → `active` (→ `superseded` by a newer active vers
   context variable, new host claim, new reserved-adjacent zone) require
   instance-admin approval. Upgrades with an identical or narrower permission
   set activate automatically; the previous version stays active until the new
-  one is.
+  one is. (FIX-107, D-187) A version is **also a first install** — and needs
+  instance-admin approval, with the reason shown on the approval screen — when its
+  `package.publisher` differs from the installed package's (`publisher_changed`),
+  when it is lower than the highest approved version of that id
+  (`version_downgrade`), or when the package id belongs to the built-in source and the
+  version does not (`builtin_id_reserved`). Widening includes a new static token-endpoint
+  host or `permissions.token_hosts` entry (SEC-17).
 - **Trust revocation**: revoking a key disables every package it signed; their
   connections stop injecting and show why; nothing is deleted.
 - **App ids and tool ids are immutable**; credential fields may only be added
@@ -840,7 +1107,10 @@ States: `pending_approval` → `active` (→ `superseded` by a newer active vers
   Phase 0–2 left this undefined (connections would simply fail at injection time
   with `credential_unavailable`). A *major upgrade* is an activation of version
   *N.x* superseding a previously active *M.y* of the same package with `N > M`
-  (semver major). Upgrades are **not refused** while connections exist (unlike app
+  (semver major). (FIX-107, SEC-57) **The check below runs for every version that
+  supersedes an active one, not only for majors**: a minor that renames or repurposes a
+  required credential field is held (`breaks_connections`) and flips the failing
+  connections on approval exactly as a major does. Upgrades are **not refused** while connections exist (unlike app
   removal). In the **same transaction as the activation**:
   1. For every app of the package present in the new version, every live
      `app_connections` row of that app (any org, any scope; statuses `active` and
@@ -895,6 +1165,33 @@ States: `pending_approval` → `active` (→ `superseded` by a newer active vers
   `pending_approval` (reason `converts_grants`) like `breaks_connections`, never auto-activated.
   Activation that introduces `block_untooled` converts nothing (the evaluator applies it at
   once). A later version that drops either flag converts nothing back: custom grants stay custom.
+- (FIX-134, D-243) **Superseded apps of the same package.** The table also lists apps that became
+  **preset instances** or the **registered instances** of another app of their own package
+  (`sentry-us` → `sentry` on `us.sentry.io`, `sentry-de` → `sentry` on `de.sentry.io`,
+  `sentry-self-hosted` → `sentry`). The same activation step seeds the presets first, moves the old
+  app's connections (the region ones are bound to the preset's instance row; `connect_method`,
+  credentials, scopes and grants stay) and registrations, and retires nothing at package level.
+  **Upgrade path for an install with `sentry` 1.0.x:** 2.0.0 does not widen permissions (every host
+  was claimed already) and breaks no connection, so it activates by itself; the step runs in
+  that transaction. A conflict or a held version waits for approval as usual. Rerunning is a no-op.
+- (FIX-123, D-195(a), D-215) **Superseded apps.** A built-in app that became a **connect method of
+  another app** is listed in the API's table of superseded apps (`github-app` → `github`/`github_app`,
+  `github-app-ghes` → `github-ghes`/`github_app`, `aws-role` → `aws-keys`/`assume_role`). In the
+  **same transaction as the activation** of a version that contains the target app with that
+  method (approval of `github` 2.0.0 or `aws-keys` 2.0.0, §10 widening applies as usual: the new
+  hooks and egress need one instance-admin approval), the API: (1) moves every `app_connections` row
+  of the old app (any status, any scope) to the target app, package and version with
+  `connect_method` set; connection ids, `credentials_ref`, scopes, metadata and the connection's
+  grants and rules are untouched, and tool ids carry over unchanged because the merged apps keep
+  the old tool ids; (2) moves `app_instances` (a registration of the old GHES app merges into an
+  existing one of the same org and host, whose id the connections then reference),
+  `skill_libraries.app_id` and `org_app_availability` (an org that had the old app available gets
+  the target available); (3) deletes the `host_claim_decisions` between the old and the new
+  package (no longer meaningful); (4) disables the old package (`status_reason: superseded_by_<package>`)
+  when it is active, so its apps leave the snapshot; (5) writes one `plugin.supersede` audit row with
+  counts per app and a dry-run-equivalent count in the upgrade log. Idempotent: a run with nothing
+  to move changes nothing. History (`request_log`, `approvals`) keeps the old app id. A later
+  re-enable of the retired package is refused (`superseded`).
 - **Removing an app** (upgrade without it, or uninstall) with live connections
   is refused unless `force`; forced removal marks connections `orphaned`.
 - **New tools arrive blocked** in custom grants; removed tools make referencing
@@ -902,7 +1199,7 @@ States: `pending_approval` → `active` (→ `superseded` by a newer active vers
 - Each connection records `app_version` for diagnostics.
 - (phase 5, P5-GUIDE-1, D-171) A change of `agent.summary`, `agent.instructions` or of an agent
   guide file is **not a widening**: the text is untrusted data that gives the package no
-  capability (SEC-90). It is shown and audited instead: the permissions review has an **Agent
+  capability (SEC-117). It is shown and audited instead: the permissions review has an **Agent
   guide** section that marks what changed against the active version (`24 §9`), and
   `plugin.approve` / the system row `plugin.activate` carry
   `agent_guide_changed: [app_id, …]` in their metadata. Activation needs no extra step: the new
@@ -978,7 +1275,13 @@ Fixture file format (`tests/*.yaml`):
 `expect.upstream.headers_absent` (D-86) lists header names (case-insensitive) that the upstream
 request must not carry, whether injected by the package or sent by the client. In a case without a
 `connection.instance_host`, the connection of an instance-bound app is its default-host connection
-(`{instance}` is the app's `default_host`). (phase 4, P4-GRANTS) `request.body_truncated: true` says
+(`{instance}` is the app's `default_host`). (phase 5, D-231, C-731) `connection.instance_base_path`
+(optional, next to `instance_host`, normalized and validated as at registration, `§3.4
+Instance-bound hosts`) gives the registered instance a base path: requests in the case use the full
+URL (`https://its.cern.ch/jira/rest/api/2/myself`), the expected `app`/`tool` and `{path.N}` in
+summaries are matched on the app path (`/rest/api/2/myself`), `expect.upstream.url` is the full URL,
+and a request on the host outside the base path is injected with nothing. `{instance}` URLs of the
+case (refresh `request_url`, cassette entries) resolve to host + base path. (phase 4, P4-GRANTS) `request.body_truncated: true` says
 the body is longer than the gateway's condition buffer (the classifier then sees a truncated
 prefix; a fixture cannot carry 256 KiB), and `expect.no_tool: true` says the app matches but no
 catalogue tool does; the `params` fixtures of `§3.4 tools` use both.
@@ -992,6 +1295,7 @@ the network and the database are replaced by the recording.
 - name: refresh after a stale 401
   connection:
     instance_host: gitlab.example.com        # the registered instance (omit for the default-host connection)
+    # instance_base_path: /gitlab            # (phase 5, D-231) optional base path of that instance
     credentials: { access_token: "tok-old", refresh_token: "refresh-1" }
     oauth_client: { client_id: "client-fixture", client_secret: "secret-fixture" }   # fake fields of the registered OAuth client
   request: { method: GET, url: "https://gitlab.example.com/api/v4/user" }

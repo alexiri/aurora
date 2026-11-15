@@ -9,6 +9,7 @@ import { DataTable, Td, Th } from "@/components/ui/data-table";
 import { Field, inputClass } from "@/components/ui/field";
 import { IdpRoleBadge } from "@/components/identity/idp-role-badge";
 import { Notice } from "@/components/ui/notice";
+import { matchesFilter, PickerFilter } from "@/components/ui/picker-filter";
 import { Section } from "@/components/ui/section";
 import { cn } from "@/lib/utils";
 import {
@@ -45,13 +46,16 @@ function AddBinding({
   const put = usePutAccess(wsId);
   const [user, setUser] = useState("");
   const [role, setRole] = useState<Role>("member");
+  const [filter, setFilter] = useState("");
 
   // Plain org members cannot list members (403): hide the picker entirely.
   if (members.isPending || members.isError) return null;
-  const candidates = members.data.items.filter((m) => !bound.has(m.user_id));
-  if (candidates.length === 0) {
+  const all = members.data.items.filter((m) => !bound.has(m.user_id));
+  if (all.length === 0) {
     return <p className="text-sm text-ink-2">Every active org member already has access.</p>;
   }
+  // Long lists get a name/e-mail filter; the picked person stays listed while the filter changes.
+  const candidates = all.filter((m) => m.user_id === user || matchesFilter(filter, m.display_name, m.email));
   return (
     <Section id="acc-add" title="Add access" description="Give an organization member a role in this workspace." card>
       <form
@@ -63,6 +67,7 @@ function AddBinding({
           put.mutate({ user, role }, { onSuccess: () => setUser("") });
         }}
       >
+        <PickerFilter id="acc-add-filter" label="Find by name or e-mail" count={all.length} value={filter} onChange={setFilter} />
         <Field id="acc-add-user" label="Organization member">
           <select
             id="acc-add-user"
@@ -90,7 +95,7 @@ function AddBinding({
             <option value="owner">owner</option>
           </select>
         </Field>
-        <Button type="submit" disabled={!user || put.isPending} className="sm:mt-[1.625rem]">
+        <Button type="submit" disabled={!user || put.isPending} className="sm:mt-label-offset">
           Add
         </Button>
         {put.error ? (

@@ -235,9 +235,10 @@ async fn s1_dm_answer_and_gateway_approval_from_card() {
     f.dm("U1", "[[say: hello from daneel]]").await;
     w.turn_done(1, 120).await;
     let m = f.wait_text(DM, "hello from daneel", 30).await;
+    // FIX-128: a 1:1 DM with the shared bot carries no "Agent · via Bot" line.
     assert!(
-        m["text"].as_str().unwrap().contains("Daneel"),
-        "shared-bot attribution on the first post: {m}"
+        !m["text"].as_str().unwrap().contains("via"),
+        "no attribution line in a 1:1 DM: {m}"
     );
 
     // A request held by the gateway shows up as a card in the same thread.
@@ -435,13 +436,16 @@ async fn s3_verified_email_autolink_vs_signin_link() {
         .api
         .post(
             "/v1/channel-links/confirm",
-            json!({"token": "aui_notarealtoken"}),
+            json!({"token": "aui_notarealtoken", "platform_user_ref": "U2"}),
         )
         .await;
     assert_eq!(s, 410, "bogus token: {v}");
     let (s, v) = w
         .api
-        .post("/v1/channel-links/confirm", json!({"token": u2_link}))
+        .post(
+            "/v1/channel-links/confirm",
+            json!({"token": u2_link, "platform_user_ref": "U2"}),
+        )
         .await;
     assert!(s == 200 || s == 201, "confirm: {s} {v}");
     let method: String = sqlx::query_scalar(
@@ -455,14 +459,20 @@ async fn s3_verified_email_autolink_vs_signin_link() {
     // Single use.
     let (s, v) = w
         .api
-        .post("/v1/channel-links/confirm", json!({"token": u2_link}))
+        .post(
+            "/v1/channel-links/confirm",
+            json!({"token": u2_link, "platform_user_ref": "U2"}),
+        )
         .await;
     assert_eq!(s, 410, "link reuse: {v}");
     // The first link request (for U1) was superseded by the auto-link; confirming it is
     // idempotent for the same user and must not create a second link.
     let (s, _) = w
         .api
-        .post("/v1/channel-links/confirm", json!({"token": link_msg}))
+        .post(
+            "/v1/channel-links/confirm",
+            json!({"token": link_msg, "platform_user_ref": "U1"}),
+        )
         .await;
     assert!(s == 200 || s == 201 || s == 410, "{s}");
     assert_eq!(w.count(links).await, 2);

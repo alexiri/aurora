@@ -10,6 +10,44 @@ notes where the shipped artifacts do not follow them yet.
 2. Back up Postgres, the keyring, the signing key and the gateway CA ([backups.md](backups.md)).
 3. Check the current state: `curl -i https://<external-url>/v1/instance`, and the pods are healthy.
 4. Choose the new version. Set `image.tag` (default: the chart appVersion, `0.1.0`).
+5. **External database: give the gateway its own login first** (FIX-106, D-178 Q-R5-11, D-182). From
+   this release the chart refuses to render with an external database (`postgres.enabled: false`, the
+   default) unless the gateway has its own least-privilege role: create the role and a Secret with key
+   `AURORA_DATABASE_URL` that logs in as it, then set `database.gatewayRole` and
+   `database.gatewayExistingSecret` (`aurora-api migrate` grants the role exactly what the gateway needs,
+   [install-helm.md](install-helm.md) §Database, `03 §Gateway database role grants`). Or, knowingly, set
+   `database.allowSharedLogin: true` to keep the gateway on the main login as before. The refusal happens
+   while Helm renders, so nothing in the cluster changes until one of the two is set.
+6. **Configuration that is now refused** (FIX-116). The API, runner and connector host refuse at startup
+   (and the chart at render time): `plugins.allow_unsigned`, `hosted.allow_fake_harness`,
+   `runner.dev_allow_external_network`, `connector_host.test_types` and `ratelimit.api.enabled = false`
+   unless `server.external_url` is a loopback origin; credentials (`user:password@`) inside
+   `email.smtp_url` or `gateway.egress_proxy` (move the SMTP password to `AURORA_SMTP_PASSWORD`, set
+   `email.smtp_username`); `scim.token_max_days` above 730; `previews.session_ttl_secs`/`session_idle_secs`
+   above their defaults or zero; `approvals.timeout_secs` below 60; `hosted.background_cap_secs` above a
+   week; `relay.request_body_max_bytes` above 100 MiB. Log-only mail no longer logs sign-in or invitation
+   links (set `email.log_links = true` in development only).
+7. **Lock levels of two phase-4 migrations** (REVIEW-5 PLAT-10). `20261130000001_groups.sql` and
+   `20261127000001_skill_libraries.sql` validate constraints and build indexes inside the migration
+   transaction, which takes `ACCESS EXCLUSIVE` on the touched tables for the duration. On a large instance
+   run them in a maintenance window (or ahead of the roll with `aurora-api migrate`); they cannot be
+   changed after the fact because they have already shipped.
+8. **New migration `20261201000060_instance_setup.sql`** adds the `instance_setup` marker. An instance that
+   already has organizations or a saved placement is not "pending": its behaviour is unchanged. A fresh
+   instance stays closed to ordinary users until a placement is saved, even after an administrator has
+   signed in.
+9. **One app per service: approve the new `github` and `aws-keys` once** (FIX-123, D-195(a), D-214..D-216).
+   The GitHub App and the assumed IAM role are now connect methods of `github` / `github-ghes` and
+   `aws-keys` (the packages `github-app` and `aws-role` are no longer shipped). The new versions (2.0.0)
+   add hooks and egress hosts the old packages already used, which is a permission widening: after the
+   upgrade each waits in *Admin, Plugins* for one instance-administrator approval (until then the old
+   packages keep working). Approving moves every connection of the old apps to the new app in the same
+   transaction (connection ids, stored credentials, grants and history are kept; GitHub Enterprise Server
+   instances, skill libraries and app availability follow), deletes the host-claim decisions between the
+   old pairs and disables the old package (`superseded_by_<package>`, one audit row `plugin.supersede`).
+   Rerunning changes nothing; nothing needs reconnecting. The migration `20261201000110_connection_connect_method.sql`
+   adds `app_connections.connect_method` and fills it where the package version had a single method; the
+   others read as unknown (the app's token, no tool hidden) until the connection is reconnected.
 
 ## Rules that make a rolling upgrade safe
 
@@ -20,7 +58,7 @@ notes where the shipped artifacts do not follow them yet.
 - **Wire contracts.** The API supports runner, connector and supervisor protocol versions N and
   N−1. Plugin manifest contracts N and N−1 are supported. Registry snapshots use "newest contract
   wins" (docs/09 §9).
-- **Rolling order** (docs/15): **migrate → api → hookhost → gateway → runner → web → connectors.**
+- **Rolling order** (docs/15): **migrate → api → hookhost → gateway → runner → relay (when `relay.enabled`) → web → connectors.**
   Gateways and runners of the previous version keep working during the roll.
 
 ## Order
@@ -100,6 +138,14 @@ was recorded) it stays `false` while the sandbox still runs the old image (found
 `scripts/e2e/upgrade.sh`). Until the boot image is recorded, restart agents after an image upgrade
 without waiting for the flag; `GET /v1/agents/{agent}/sandbox` shows the runner's image, not the
 sandbox's.
+
+**(FIX-109) Policy path matching ignores one trailing `/`.** A rule path `/v1/users` now also
+matches the request `/v1/users/` (and the reverse). For **block** and approval rules this
+tightens: requests with the slash variant that used to slip past are now stopped. For **allow**
+rules it loosens by exactly that slash variant (the request `/v1/users/` is now allowed where
+`/v1/users` was). Review allow rules on endpoints whose slash form means something else
+(rare); the policy simulator shows the new answers. Rollback of a policy now needs the draft
+revision (`expect_revision`): custom API clients that call `…/policy/rollback` must send it.
 
 ## After the upgrade
 

@@ -6,35 +6,38 @@ import { DataTable, Td, Th } from "@/components/ui/data-table";
 import { PageHeader } from "@/components/ui/page-header";
 import { ItemList, ListRow, Section } from "@/components/ui/section";
 import { formatBytes } from "@/lib/api/attachments";
-import { useAdminStorage } from "@/lib/api/org";
+import { StorageFreshness } from "@/components/storage-freshness";
+import { useAdminStorage, useRefreshAdminStorage } from "@/lib/api/org";
 
 /** Instance storage (RFE-015): blob and attachment bytes, the top orgs and the big tables. */
 export function AdminStorageView() {
   const q = useAdminStorage();
+  const refresh = useRefreshAdminStorage();
   if (q.isPending) return <Loading />;
   if (q.isError) return <ErrorState error={q.error} onRetry={() => q.refetch()} />;
   const s = q.data;
   return (
-    <div className="max-w-[1160px] space-y-6">
+    <div className="max-w-page space-y-6">
       <PageHeader
         title="Storage"
         description="Where the database disk goes: attachment blobs, per organization, and the largest tables."
         className="mb-6"
       />
+      <StorageFreshness computedAt={s.computed_at} refresh={refresh} />
       <Card>
         <dl className="grid gap-4 sm:grid-cols-3">
           <div>
-            <dt className="text-xs font-semibold uppercase tracking-[0.06em] text-muted">Blob bytes</dt>
+            <dt className="text-xs font-semibold uppercase tracking-label text-muted">Blob bytes</dt>
             <dd className="mt-1 font-display text-2xl font-semibold tabular-nums text-ink">{formatBytes(s.blob_bytes)}</dd>
             <dd className="text-xs text-muted">{s.blob_count} blobs</dd>
           </div>
           <div>
-            <dt className="text-xs font-semibold uppercase tracking-[0.06em] text-muted">Attachment bytes</dt>
+            <dt className="text-xs font-semibold uppercase tracking-label text-muted">Attachment bytes</dt>
             <dd className="mt-1 font-display text-2xl font-semibold tabular-nums text-ink">{formatBytes(s.attachment_bytes)}</dd>
             <dd className="text-xs text-muted">{s.attachment_files} files</dd>
           </div>
           <div>
-            <dt className="text-xs font-semibold uppercase tracking-[0.06em] text-muted">Expired or deleted</dt>
+            <dt className="text-xs font-semibold uppercase tracking-label text-muted">Expired or deleted</dt>
             <dd className="mt-1 font-display text-2xl font-semibold tabular-nums text-ink">{s.purged_files}</dd>
             <dd className="text-xs text-muted">rows kept, bytes gone</dd>
           </div>

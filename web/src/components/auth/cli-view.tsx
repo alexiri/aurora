@@ -1,13 +1,13 @@
 "use client";
 
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { usePathname, useSearchParams } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
 
 import { ErrorState, Loading } from "@/components/states";
 import { Button } from "@/components/ui/button";
 import { Field, inputClass } from "@/components/ui/field";
-import { approveCli } from "@/lib/api/auth";
+import { approveCli, getPendingCli } from "@/lib/api/auth";
 import { useSession } from "@/lib/api/queries";
 import { isUnauthorized, loginUrl } from "@/lib/auth/use-unauthorized-redirect";
 
@@ -23,6 +23,15 @@ export function CliView() {
   const m = useMutation({
     mutationFn: (workspace_id: string) =>
       approveCli({ user_code: code.trim().toUpperCase(), workspace_id }),
+  });
+
+  // (FIX-108) What the code is asking for, once it has the shape of a code.
+  const normalized = code.trim().toUpperCase();
+  const pending = useQuery({
+    queryKey: ["cli-login-pending", normalized],
+    queryFn: () => getPendingCli(normalized),
+    enabled: session.isSuccess && /^[A-Z0-9]{4}-?[A-Z0-9]{4}$/.test(normalized),
+    retry: false,
   });
 
   const unauth = isUnauthorized(session.error);
@@ -102,6 +111,30 @@ export function CliView() {
               ))}
             </select>
           </Field>
+          {pending.data ? (
+            <div className="space-y-2" data-testid="cli-pending">
+              <dl className="grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1 rounded-control border border-line bg-subtle p-3 text-sm">
+                <dt className="text-ink-2">Requested by</dt>
+                <dd className="min-w-0 break-words font-mono">{pending.data.hostname}</dd>
+                <dt className="text-ink-2">Started</dt>
+                <dd>{new Date(pending.data.requested_at).toLocaleString()}</dd>
+                <dt className="text-ink-2">Address</dt>
+                <dd className="font-mono">{pending.data.address ?? "unknown"}</dd>
+              </dl>
+              <Notice>
+                Approving creates an API key that acts as you, in the workspace you choose
+                {pending.data.key_expires_in_days
+                  ? `, and expires in ${pending.data.key_expires_in_days} days`
+                  : ", and does not expire"}
+                . The host name is whatever the program reported; only approve a login you started
+                yourself.
+              </Notice>
+            </div>
+          ) : pending.isError ? (
+            <p role="alert" className="text-sm text-danger-ink">
+              This code was not found or has expired. Start again from your terminal.
+            </p>
+          ) : null}
           <Button type="submit" size="lg" className="w-full" disabled={m.isPending || !code.trim()}>
             {m.isPending ? "Authorizing…" : "Authorize"}
           </Button>

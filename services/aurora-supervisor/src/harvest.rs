@@ -9,6 +9,20 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use aurora_core::limits::MEMORY_CONTENT_MAX;
+
+/// (FIX-114) Largest memory file the harvest reads (four times the content limit, in bytes —
+/// generous for multi-byte text); a bigger file is skipped with a notice.
+pub const MEMORY_FILE_READ_MAX: u64 = 4 * MEMORY_CONTENT_MAX as u64;
+
+/// Read at most `max` bytes of `path`: `Ok(None)` when the file is larger (never read whole).
+pub fn read_bounded(path: &std::path::Path, max: u64) -> std::io::Result<Option<Vec<u8>>> {
+    use std::io::Read as _;
+    let mut buf = Vec::new();
+    std::fs::File::open(path)?
+        .take(max + 1)
+        .read_to_end(&mut buf)?;
+    Ok((buf.len() as u64 <= max).then_some(buf))
+}
 use aurora_protocol::common::Validate;
 use aurora_protocol::runner::MemoryWrite;
 use sha2::{Digest, Sha256};
@@ -174,8 +188,25 @@ impl Harvester {
         names.sort();
         let mut out = Vec::new();
         for name in names {
-            let Ok(text) = std::fs::read_to_string(self.dir.join(&name)) else {
-                continue;
+            // (FIX-114) The agent writes these files: never read one whole before checking its
+            // size (a multi-gigabyte file would kill the supervisor on the memory limit).
+            let text = match read_bounded(&self.dir.join(&name), MEMORY_FILE_READ_MAX) {
+                Ok(Some(b)) => match String::from_utf8(b) {
+                    Ok(t) => t,
+                    Err(_) => continue,
+                },
+                Ok(None) => {
+                    let digest = format!("oversized:{name}");
+                    if self.uploaded.get(&name) != Some(&digest) {
+                        self.notice(format!(
+                            "memory file `{name}` was not saved: it is larger than {} KiB",
+                            MEMORY_FILE_READ_MAX / 1024
+                        ));
+                        self.uploaded.insert(name, digest);
+                    }
+                    continue;
+                }
+                Err(_) => continue,
             };
             if verify(&text) {
                 self.uploaded.remove(&name);

@@ -60,6 +60,13 @@ fn decision_event(c: &Caller, row: &ApprovalRow, decision: Decision, batch: bool
 /// Seam for M4/M6: append `approval.decided` transcript events and update channel cards.
 fn after_decision(_s: &AppState, _row: &ApprovalRow) {}
 
+fn already_decided() -> ApiError {
+    ApiError::conflict(
+        "already_decided",
+        "This approval has already been resolved.",
+    )
+}
+
 pub async fn decide(
     s: &AppState,
     c: &Caller,
@@ -88,6 +95,10 @@ pub async fn decide(
     // RFE-012 (D-55, SEC-28): only `can_approve` decides; a plain member gets 403.
     crate::http::auth::require_approve(&auth)?;
     let mut tx = audit::begin(s).await?;
+    // (FIX-109, 07 §Approval deadlines) A decision after the deadline is refused and the
+    // approval is expired in this same transaction (committed even though the answer is 409),
+    // whether or not the 10 s sweep has run yet.
+    let expired = approvals::expire_if_overdue(&mut tx, id).await?;
     let row = approvals::decide(
         &mut tx,
         id,
@@ -95,13 +106,13 @@ pub async fn decide(
         c.user_id,
         via(c),
     )
-    .await?
-    .ok_or_else(|| {
-        ApiError::conflict(
-            "already_decided",
-            "This approval has already been resolved.",
-        )
-    })?;
+    .await?;
+    let Some(row) = row else {
+        if expired {
+            tx.commit().await.map_err(aurora_db::DbError::from)?;
+        }
+        return Err(already_decided());
+    };
     // RFE-008: the decision commits with its audit row, or does not happen.
     audit::commit_critical(tx, &decision_event(c, &row, decision, false)).await?;
     after_decision(s, &row);
@@ -124,6 +135,9 @@ pub async fn decide_batch(
         return Err(ApiError::not_found("Batch not found."));
     }
     let mut tx = audit::begin(s).await?;
+    // (FIX-109) Overdue members of the batch are expired here, not decided.
+    let expired =
+        approvals::expire_overdue_of_batch(&mut tx, c.user_id, org, ws, agent_id, batch_id).await?;
     let rows = approvals::decide_batch(
         &mut tx,
         c.user_id,
@@ -135,6 +149,11 @@ pub async fn decide_batch(
         via(c),
     )
     .await?;
+    if rows.is_empty() && expired > 0 {
+        // Nothing left to decide: the batch ran out of time. The expiry commits; the call is 409.
+        tx.commit().await.map_err(aurora_db::DbError::from)?;
+        return Err(already_decided());
+    }
     // RFE-008: every decided row commits with its audit row (all or nothing).
     let events: Vec<AuditEvent> = rows
         .iter()

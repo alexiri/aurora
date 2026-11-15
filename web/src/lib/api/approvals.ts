@@ -3,8 +3,10 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 
+import { ACTION_POLL_MS, actionApprovalKeys } from "./action-approvals";
 import { api, ApiError } from "./client";
 import { useWorkspace } from "./queries";
+import { fetchAllPages, PAGE_LIMIT } from "./paging";
 import { setRateNotice } from "./rate-limit";
 import type { components } from "./schema";
 import { unwrap } from "./unwrap";
@@ -23,12 +25,18 @@ export const approvalKeys = {
   all: (ws: string) => ["approvals", ws] as const,
   pending: (ws: string) => ["approvals", ws, "pending"] as const,
   history: (ws: string, status: string) => ["approvals", ws, "history", status] as const,
+  /** (P5-AGENT-2) Prefix of every agent-scoped pending list in the workspace. */
+  agentPending: (ws: string) => ["approvals", ws, "agent-pending"] as const,
   activity: (ws: string, agent: string, decision: string, host: string) =>
     ["activity", ws, agent, decision, host] as const,
+  /** (P5-AGENT-2) The rail's last few request-log rows of one agent. */
+  recentActivity: (ws: string, agent: string) => ["activity", ws, "recent", agent] as const,
 };
 
 export interface PendingData {
   items: Approval[];
+  /** More pending approvals exist than the pages read (the ceiling of `fetchAllPages`). */
+  truncated?: boolean;
 }
 
 /** Pure reducer: apply an SSE event to the pending list. */
@@ -37,9 +45,9 @@ export function applyApprovalEvent(data: PendingData | undefined, evt: ApprovalE
   const { approval } = evt;
   const rest = data.items.filter((a) => a.id !== approval.id);
   if (evt.event === "created" && approval.status === "pending") {
-    return { items: [...rest, approval].sort((a, b) => a.created_at.localeCompare(b.created_at)) };
+    return { ...data, items: [...rest, approval].sort((a, b) => a.created_at.localeCompare(b.created_at)) };
   }
-  return { items: rest };
+  return { ...data, items: rest };
 }
 
 export function parseApprovalEvent(raw: string): ApprovalEvent | null {
@@ -53,12 +61,15 @@ export function parseApprovalEvent(raw: string): ApprovalEvent | null {
 }
 
 async function fetchPending(wsId: string): Promise<PendingData> {
-  const page = await unwrap(
-    api.GET("/v1/workspaces/{ws}/approvals", {
-      params: { path: { ws: wsId }, query: { status: "pending", limit: 200 } },
-    }),
+  // Every pending approval is decidable from the dashboard, so every page is read (FIX-117).
+  const all = await fetchAllPages((cursor) =>
+    unwrap(
+      api.GET("/v1/workspaces/{ws}/approvals", {
+        params: { path: { ws: wsId }, query: { status: "pending", limit: PAGE_LIMIT, cursor } },
+      }),
+    ),
   );
-  return { items: [...page.items].sort((a, b) => a.created_at.localeCompare(b.created_at)) };
+  return { items: [...all.items].sort((a, b) => a.created_at.localeCompare(b.created_at)), truncated: all.truncated };
 }
 
 /** Phase 2, RFE-012 (D-55): `can_approve` = effective workspace role owner or approver. */
@@ -69,6 +80,56 @@ export function useCanApprove(wsId: string | undefined): boolean {
 
 export function usePendingApprovals(wsId: string, enabled = true) {
   return useQuery({ queryKey: approvalKeys.pending(wsId), queryFn: () => fetchPending(wsId), enabled: !!wsId && enabled, retry });
+}
+
+/**
+ * (P5-AGENT-2, C-700) One agent's pending gateway approvals (`GET …/approvals?status=pending&agent_id=`), every
+ * page. Kept live by `useApprovalsStream` (which refetches this key on each event).
+ */
+export function useAgentPendingApprovals(wsId: string, agentId: string, enabled = true) {
+  return useQuery({
+    queryKey: [...approvalKeys.agentPending(wsId), agentId] as const,
+    queryFn: () =>
+      fetchAllPages((cursor) =>
+        unwrap(
+          api.GET("/v1/workspaces/{ws}/approvals", {
+            params: { path: { ws: wsId }, query: { status: "pending", agent_id: agentId, limit: PAGE_LIMIT, cursor } },
+          }),
+        ),
+      ),
+    enabled: !!wsId && !!agentId && enabled,
+    retry,
+  });
+}
+
+/** (P5-AGENT-2) One agent's pending action approvals; the stream carries gateway holds only, so this polls while visible. */
+export function useAgentPendingActionApprovals(wsId: string, agentId: string, enabled = true) {
+  return useQuery({
+    queryKey: [...actionApprovalKeys.all(wsId), "agent-pending", agentId] as const,
+    queryFn: () =>
+      fetchAllPages((cursor) =>
+        unwrap(
+          api.GET("/v1/workspaces/{ws}/action-approvals", {
+            params: { path: { ws: wsId }, query: { status: "pending", agent_id: agentId, limit: PAGE_LIMIT, cursor } },
+          }),
+        ),
+      ),
+    enabled: !!wsId && !!agentId && enabled,
+    refetchInterval: ACTION_POLL_MS,
+    retry: false,
+  });
+}
+
+/** (P5-AGENT-2) The agent's last `limit` request-log rows; refetched every 30 s while the page is visible. */
+export function useAgentRecentActivity(wsId: string, agentId: string, limit = 5) {
+  return useQuery({
+    queryKey: approvalKeys.recentActivity(wsId, agentId),
+    queryFn: () =>
+      unwrap(api.GET("/v1/workspaces/{ws}/activity", { params: { path: { ws: wsId }, query: { agent_id: agentId, limit } } })),
+    enabled: !!wsId && !!agentId,
+    refetchInterval: 30_000,
+    retry: false,
+  });
 }
 
 /** Subscribes to the approvals SSE stream, keeping the pending cache live (C-10: refetch on reconnect). */
@@ -90,11 +151,16 @@ export function useApprovalsStream(wsId: string): { live: boolean } {
       // A refused connection (e.g. 429 too_many_streams) is CLOSED, not retried by the browser.
       if (es.readyState === EventSource.CLOSED) setRateNotice({ kind: "streams" });
     };
+    // (FIX-099, C-10) The server's `resync` frame: notifications may have been missed (a lagged receiver, a bus
+    // reconnect) — refetch rather than keep decided or expired approvals as pending.
+    es.addEventListener("resync", () => void qc.invalidateQueries({ queryKey: approvalKeys.all(wsId) }));
     es.addEventListener("approval", (e) => {
       const evt = parseApprovalEvent((e as MessageEvent<string>).data);
       if (!evt || evt.approval.workspace_id !== wsId) return;
       qc.setQueryData<PendingData>(approvalKeys.pending(wsId), (d) => applyApprovalEvent(d, evt));
       if (evt.event !== "created") void qc.invalidateQueries({ queryKey: [...approvalKeys.all(wsId), "history"] });
+      // (P5-AGENT-2) The agent page's status rail reads its own agent-scoped list (C-700): refetch it on every event.
+      void qc.invalidateQueries({ queryKey: approvalKeys.agentPending(wsId) });
     });
     return () => es.close();
   }, [qc, wsId]);
@@ -103,7 +169,7 @@ export function useApprovalsStream(wsId: string): { live: boolean } {
 
 function removeFromPending(qc: QueryClient, wsId: string, ids: (string | undefined)[]) {
   qc.setQueryData<PendingData>(approvalKeys.pending(wsId), (d) =>
-    d ? { items: d.items.filter((a) => !ids.includes(a.id)) } : d,
+    d ? { ...d, items: d.items.filter((a) => !ids.includes(a.id)) } : d,
   );
 }
 

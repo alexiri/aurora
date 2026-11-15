@@ -70,8 +70,11 @@ pub async fn org_insert<'e, E: PgExecutor<'e>>(
     role: &str,
     source: &str,
 ) -> Result<(), DbError> {
+    // (FIX-140) Like every membership insert, this clears the FIX-108 removal marker: only JIT
+    // consults it; a role claim is the provider's explicit grant (docs/04 §JIT step 4).
     sqlx::query(
-        "INSERT INTO org_members (org_id, user_id, role, idp_role, idp_source)
+        "WITH cleared AS (DELETE FROM org_member_removals WHERE org_id = $1 AND user_id = $2)
+         INSERT INTO org_members (org_id, user_id, role, idp_role, idp_source)
          VALUES ($1, $2, $3, $3, $4)",
     )
     .bind(org)

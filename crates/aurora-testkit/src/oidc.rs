@@ -46,6 +46,8 @@ pub struct Claims {
     /// Seconds ago the user authenticated. `Some(n)` always emits `auth_time = now - n`; `None`
     /// emits `auth_time = now` only when the authorize request carried `max_age`.
     pub auth_time_ago: Option<i64>,
+    /// (FIX-108) Never emit `auth_time` (an IdP that ignores `max_age`); wins over the above.
+    pub omit_auth_time: bool,
     /// (P4-IDP-1) Extra claims placed in the ID token, e.g. `{"cern_roles": ["aurora-admins"]}`
     /// (the configurable roles claim). A nested path is written as nested JSON.
     pub extra: serde_json::Map<String, Value>,
@@ -64,6 +66,7 @@ impl Default for Claims {
             exp_in: 300,
             aud: None,
             auth_time_ago: None,
+            omit_auth_time: false,
             extra: serde_json::Map::new(),
             userinfo_extra: serde_json::Map::new(),
         }
@@ -474,10 +477,12 @@ async fn token(
         "iat": now, "exp": now + c.exp_in,
         "nonce": c.nonce.clone().unwrap_or(pending.nonce),
     });
-    if let Some(ago) = c.auth_time_ago {
-        payload["auth_time"] = json!(now - ago);
-    } else if pending.max_age_requested {
-        payload["auth_time"] = json!(now);
+    if !c.omit_auth_time {
+        if let Some(ago) = c.auth_time_ago {
+            payload["auth_time"] = json!(now - ago);
+        } else if pending.max_age_requested {
+            payload["auth_time"] = json!(now);
+        }
     }
     if let Some(v) = &c.email {
         payload["email"] = json!(v);

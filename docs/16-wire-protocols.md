@@ -18,15 +18,16 @@ implementation repo and checked in (CI fails on drift).
 | W8 | Connector contract | connector → API `/v1/connector` | `aun_` + replica | `13` |
 | W9 | Hook host | API/gateway → hookhost :4104; hookhost → API :4111 | internal secret (ring from phase 2, `08 §4`) | `09` |
 | W10 | Platform callbacks | chat platform → connector | connector-defined | `20` |
-| W11 | Upstream | gateway → internet | guarded resolver; (phase 4, P4-LLM) LLM providers add gateway-side SigV4 (Bedrock) and gateway-minted OAuth2 access tokens (Vertex), `08 §Phase 4 providers` | `06` |
+| W11 | Upstream | gateway → internet | guarded resolver; (phase 5 (D-138, moved from phase 4), P4-LLM) LLM providers add gateway-side SigV4 (Bedrock) and gateway-minted OAuth2 access tokens (Vertex), `08 §Phase 4 providers`; (phase 5, P4-LLM spec batch, D-261) and gateway-minted Entra tokens (Azure) and STS `AssumeRole` sessions (Bedrock), from one mint service at pinned token endpoints | `06` |
 | W12 | CLI / BYO | CLI → API; BYO agent → gateway | API key / agent token | `05`, `08` |
 | W13 | Counter backend (phase 4, P4-CNT) | API, gateway → Postgres or Redis | database role / Redis ACL user over TLS | `15 §Shared rate-limit counters` |
-| W14 | Blob store (phase 4, P4-S3) | API → S3-compatible bucket | SigV4 with workload identity or env keys, over TLS | `10 §Attachments`, `15 §S3-compatible blob store` |
+| W14 | Blob store (phase 5 (D-138, moved from phase 4), P4-S3) | API → S3-compatible bucket | SigV4 with workload identity or env keys, over TLS | `10 §Attachments`, `15 §S3-compatible blob store` |
 | W15 | SCIM 2.0 (phase 4, P4-GRP-2) | IdP → API `/scim/v2` | `aud_` bearer per org | this doc, `04 §SCIM` |
-| W16 | Web Push (phase 4, RFE-011b) | API → browser push service (FCM, Mozilla, Apple, WNS) | VAPID (RFC 8292) JWT signed by the instance key | this doc, `07 §Web Push` |
+| W16 | Web Push (phase 5 (D-138, moved from phase 4), RFE-011b) | API → browser push service (FCM, Mozilla, Apple, WNS) | VAPID (RFC 8292) JWT signed by the instance key | this doc, `07 §Web Push` |
 | W17 | Relay plane (phase 4, P4-PRV-2) | relay → API `/v1/relay`; runner → API `/v1/runner/preview-streams/*` | `aul_` + replica; `aur_` + replica | this doc, `04 §Preview access` |
 | W18 | Preview byte streams (phase 4, P4-PRV-2) | relay → runner :4108 (WebSocket per stream); runner ↔ supervisor (stream frames on W6) | stream grant `aux_` (single use); the authenticated W6 channel | this doc, `11`, `12` |
 | W19 | Terminal streams (phase 4, P4-TERM) | browser → API `/v1/agents/{agent}/terminal` (WebSocket); API → runner :4108 (grant redemption); runner ↔ supervisor (`pty.*` frames on W6) | terminal grant `auy_` (single use); the authenticated W6 channel | this doc, `11`, `12` |
+| W20 | SSH access (phase 5, P4-SSH-2, D-239) | SSH client → terminator (SSH, certificate-only); terminator → API `/v1/terminator`; terminator → runner :4108 (one WebSocket per SSH channel); runner ↔ supervisor (`exec.*` frames on W6) | OpenSSH user certificate; `aut_` + replica; channel grant `auz_` (single use); the authenticated W6 channel | this doc, `04 §SSH access`, `11 §SSH access`, `12 §SSH channels` |
 
 ## Cross-cutting conventions
 
@@ -40,6 +41,7 @@ implementation repo and checked in (CI fails on drift).
 | Time | the API's database clock is truth; timestamps from runners, supervisors and connectors are informational only. |
 | Untrusted text | sanitized at the boundary where it enters platform voice. |
 | Secrets in logs | never; URLs only in redacted form. |
+| Trace context | (phase 5, FIX-146, D-232, C-732, SEC-88) HTTP calls between Aurora services carry W3C `traceparent` (and `tracestate` when present), injected by the one outgoing-call helper; receivers adopt it parent-based only on internal listeners and the machine planes (`/v1/runner/*`, `/v1/connector-host/*`, `/v1/relay/*`). Calls to upstream apps, LLM providers, IdPs and chat platforms never carry an Aurora `traceparent`. The supervisor channel (W6) and everything a sandbox sends carry no trace context and are never adopted; work on a turn is parented by `turns.trace_context` (W5 work items below). |
 
 ---
 
@@ -50,10 +52,10 @@ All requests: `Authorization: Bearer aur_…`; after registration also
 
 | Call | Request → Response |
 |------|--------------------|
-| `POST /register` | `{ version, backend, capabilities: RunnerCapabilities (optional `image`: the runner's `runner.image`, which the API reports as the sandbox image and uses in `sandbox.start` specs; optional `held_awake_ceiling`: the runner's `runner.held_awake_ceiling`, used for eviction, default `max(1, max_sandboxes − 1)`; optional `defaults: { cpu_millis, memory_mib, pids, home_gib }`: the runner's `runner.sandbox_cpus × 1000`, `sandbox_memory_mib`, `sandbox_pids`, `home_gib`, the API's resource-profile default, absent from older runners; optional `stream_tls`: the stream listener speaks TLS, default false — the API derives the endpoint scheme it hands the relay from it, `§W18`), advertised_host }` → `{ runner_id, replica_id, protocol: 1, config: { poll_wait_secs, reconcile_interval_secs, orphan_grace_secs, idle_stop_secs } }` |
+| `POST /register` | `{ version, backend, capabilities: RunnerCapabilities (optional `image`: the runner's `runner.image`, which the API reports as the sandbox image and uses in `sandbox.start` specs; optional `held_awake_ceiling`: the runner's `runner.held_awake_ceiling`, used for eviction, default `max(1, max_sandboxes − 1)`; optional `defaults: { cpu_millis, memory_mib, pids, home_gib }`: the runner's `runner.sandbox_cpus × 1000`, `sandbox_memory_mib`, `sandbox_pids`, `home_gib`, the API's resource-profile default, absent from older runners; optional `stream_tls`: the stream listener speaks TLS, default false — the API derives the endpoint scheme it hands the relay from it, `§W18`), advertised_host }` → `{ runner_id, replica_id, protocol: 1, config: { poll_wait_secs, reconcile_interval_secs, orphan_grace_secs, idle_stop_secs } }`; `advertised_host` is a host name or an IP literal (`[v6]` in brackets) with an optional port and nothing else — a scheme, path, userinfo, query or whitespace is refused with 400 `invalid_request` (the relay dials it with a live stream grant, FIX-090) |
 | `POST /work` | `{ wait_secs ≤ 25, capacity: { running, max } }` → `{ items: [WorkItem], reconciler: bool }` (also the heartbeat; `reconciler` is true only for the oldest live replica of this runner, computed at poll time — spec fix S-08) |
 | `POST /reports` | `{ reports: [Report] }` (≤ 200, ≤ 1 MiB) → `{ results: [{ report_id, status: "applied"|"duplicate"|"fenced"|"invalid", detail? }] }` |
-| `POST /channel/claim` | `{ bootstrap_token }` → `{ sandbox_id, boot_id }` or 409 `bootstrap_spent` / 404 |
+| `POST /channel/claim` | `{ bootstrap_token }` → `{ sandbox_id, boot_id }` or 409 `bootstrap_spent` / 404; idempotent for the same `(sandbox, boot)` while the boot has never held a channel (`channel_held_at` is NULL), spent afterwards (SEC-25) |
 | `POST /channel/hold` | `{ sandbox_id, boot_id }` → `{ ok }` (records `channel_replica_id`; also used after HMAC-session reconnects) |
 | `POST /channel/release` | `{ sandbox_id, boot_id }` |
 | `POST /tool-calls` | `ToolCall` → `ToolResult` (synchronous, ≤ `TOOL_CALL_TIMEOUT`) |
@@ -74,7 +76,12 @@ runner when it registers; open vocabulary, absent = none).
 
 ### Work items
 
-All carry `{ item_id, kind, sandbox_id, boot_id }`.
+All carry `{ item_id, kind, sandbox_id, boot_id }`. (phase 5, FIX-146, D-232, C-732 (3)) Items
+that concern a turn also carry `trace_context?: string`: the W3C traceparent
+`00-<32 hex>-<16 hex>-<2 hex>` read from the turn's `turns.trace_context` (`03`), absent when the
+column is NULL. The runner records its dispatch and sandbox-start spans for that turn as children of
+it and treats an absent or malformed value as none (no error, a new root under the sampling rule).
+It is never forwarded to the supervisor or the sandbox. Additive: an older runner ignores the field.
 
 | Kind | Body |
 |------|------|
@@ -91,7 +98,7 @@ All carry `{ item_id, kind, sandbox_id, boot_id }`.
 | `preview.start` | (phase 4, P4-PRV-1, D-145) `{ share_id }` — ask the supervisor to start the share's command on demand (`11 §Port previews`); the runner forwards `preview.start { port }` on the supervisor channel and the supervisor resolves the command from its own share list |
 
 `ModelChoice`: `{ provider, endpoint_id, base_url, dialect, model, effort,
-client_env: [[k,v]] }`. (phase 4, P4-LLM) `provider` and `dialect` are open
+client_env: [[k,v]] }`. (phase 5 (D-138, moved from phase 4), P4-LLM) `provider` and `dialect` are open
 vocabularies: `provider` gains `openai`, `azure_openai`, `bedrock`, `vertex`,
 `openai_compatible`; `dialect` gains `anthropic_bedrock` and `anthropic_vertex`
 (`openai_chat` and `openai_responses` already exist). A supervisor that does not know
@@ -133,11 +140,20 @@ are dropped.
 
 ## W6 — Supervisor channel (WebSocket)
 
-- URL: `ws://<runner>:4105/v1/supervisor`; first message from the supervisor:
+- URL: `ws://<runner>:4105/v1/supervisor` — `ws://` only until TLS is implemented (FIX-114:
+  the supervisor refuses a `wss://` `runner_url` at boot, because the WebSocket client has
+  no TLS support); first message from the supervisor:
   `{ "hello": { "protocol": 1, "bootstrap_token": "aup_…" } }` or
   `{ "hello": { "protocol": 1, "session": { "sandbox_id", "boot_id", "issued_at", "mac" } } }`.
   Answer: `{ "welcome": { "session": {…new…}, "resume_from": <last acked seq> } }`
   or close with code 4401 (unauthorized) / 4409 (spent).
+- A bootstrap token admits one supervisor connection. Re-presenting it is accepted only while the boot
+  has never held a channel (the first admission did not complete: the claim's answer was lost, or the
+  runner closed 1013 before the welcome); once a channel was held it is spent (4409). The runner makes
+  one `channel/claim` attempt per connection, and when the claim succeeded but `channel/hold` fails with
+  a retryable error it admits the connection with the welcome and retries the hold in the background
+  (FIX-094). The supervisor port admits at most 256 unadmitted connections per runner replica (further
+  ones are closed at once) and gives each `hello_timeout` (10 s) for the upgrade and the hello.
 - Frames: JSON text messages `{ "seq": u64, "ack": u64, "kind": string, "body": {} }`,
   each ≤ `WS_FRAME_MAX`. `seq` is per direction and per connection lineage
   (survives reconnects within a boot); receivers apply each seq at most once
@@ -173,14 +189,18 @@ Unknown kinds are logged and dropped.
 
 ```
 harness ──MCP stdio──► mcp-bridge ──unix socket (JSON lines)──► supervisor
-   ──tool.call {call_id, conversation_id, turn_id?, tool, args}──► runner
+   ──tool.call {call_id, conversation_id, turn_id, tool, args}──► runner
    ──POST /v1/runner/tool-calls {sandbox_id, boot_id, …}──► API tool registry
 ```
 
-`ToolCall`: `{ sandbox_id, boot_id, call_id, conversation_id, turn_id?, tool,
+`ToolCall`: `{ sandbox_id, boot_id, call_id, conversation_id, turn_id, tool,
 args }`. The API verifies: the boot is current; the conversation belongs to the
-sandbox's agent; when `turn_id` is set it is an active turn of that
-conversation; the tool is available for the agent. `ToolResult`: `{ call_id,
+sandbox's agent; (FIX-110) `turn_id` is **required** and must be an active
+turn of that conversation of the calling agent — a call without one is refused
+`no_active_turn` (403), and the supervisor refuses before sending when no turn
+is running, so a process left behind by an earlier turn cannot act, unattributed,
+later; an effectively frozen agent's own calls are refused (423 `frozen`); the
+tool is available for the agent. `ToolResult`: `{ call_id,
 ok: true, content: [{ type: "text", text } | { type: "json", value }] }` or
 `{ call_id, ok: false, error: { code, message } }`. Local tools (`process_*`)
 never leave the supervisor.
@@ -208,6 +228,12 @@ Callers treat transport errors and timeouts as `credential_unavailable`
 -- <cmd>` (container config applied to a child process), `approvals watch`
 (long-poll, interactive approve/deny), `plugin …` (`09 §12`), `admin …`
 (instance-admin helpers: plugins, runners, connectors).
+(FIX-118, D-188) The CLI talks to `https://` unless the host is loopback (`login --url` and
+`AURORA_URL` refuse `http://` elsewhere); a login to a different server drops the stored agent
+tokens of the previous one; `run --forward` requires a per-run secret from the child (proxy
+basic auth, checked before any upstream connection); server-supplied strings are printed with
+control characters stripped; `logout` revokes the API key (and stored agent tokens) or says
+that it did not.
 
 ---
 
@@ -224,7 +250,7 @@ every transport failure is `Unavailable` and is handled by the class policy
 
 ---
 
-## W14 — Blob store (phase 4, P4-S3)
+## W14 — Blob store (phase 5 (D-138, moved from phase 4), P4-S3)
 
 The API speaks the S3 REST API (`PutObject` with `x-amz-checksum-sha256`, the configured
 `x-amz-server-side-encryption` and `If-None-Match: *`, `GetObject`, `DeleteObject`,
@@ -331,7 +357,7 @@ an already-present/absent member are idempotent and succeed.
 
 ---
 
-## W16 — Web Push (phase 4, RFE-011b)
+## W16 — Web Push (phase 5 (D-138, moved from phase 4), RFE-011b)
 
 Semantics, payload and key handling: `07 §Web Push`. The wire is the standard Web Push protocol
 and Aurora owns only what it sends:
@@ -340,14 +366,17 @@ and Aurora owns only what it sends:
 |------|------|
 | Request | `POST <endpoint>` over TLS to a host in `push.allowed_endpoint_hosts`, resolved through the guarded resolver, no redirects followed, body `Content-Encoding: aes128gcm` (RFC 8291; record size 4096; per-message ephemeral key and salt; `auth` and `p256dh` from the subscription), `Content-Length` ≤ the push service's 4 096-byte limit (Aurora's plaintext is ≤ `PUSH_PAYLOAD_MAX`, 1 KiB) |
 | Authorization | `Authorization: vapid t=<JWT>, k=<application server public key>` (RFC 8292): ES256, claims `aud` = the endpoint's origin, `exp` ≤ now + 1 h (never the 24 h maximum), `sub` = `push.vapid.subject`; the key is the one named by the subscription's `vapid_key_id` |
-| Headers | `TTL` (remaining approval time capped at `PUSH_TTL_MAX`, ≥ 60 s), `Urgency: high` for `approval.pending` and `approval.reminder`, `normal` for digest and test, `Topic` (≤ 32 URL-safe characters, derived from the approval id, so a newer push for the same approval replaces the older one) |
+| Headers | `TTL` (remaining approval time capped at `PUSH_TTL_MAX`, ≥ 60 s), `Urgency: high` for `approval.pending` and `approval.reminder`, `normal` for digest and test, `Topic` (32 URL-safe characters, so a newer push for the same approval replaces the older one; (P4-011B spec batch, D-266(e), C-832) the first 32 base64url characters of SHA-256(subscription id ‖ approval id), or of SHA-256(subscription id ‖ "digest") for a digest: the push service learns neither the approval id nor which pushes to one person's devices concern the same approval) |
 | Payload (plaintext JSON, `v: 1`) | `{ v, type, approval_id?, workspace_id?, expires_at?, parked?, url?, count?, agent?, workspace? }`; no other field may be added without a version bump; `agent`/`workspace` present only when the subscription has `show_details`; **never** a title, summary, rule name, host, path, method, query, body, token, credential, approve/deny link, e-mail address or user name (`07 §Web Push`) |
 | Responses | 201 success; 404/410 → delete the subscription; 400/403/413 → failure (a 403 after a rotation is a key mismatch); 429/5xx → retry with backoff, at most 3 tries in 60 s; any other status → failure; bodies of responses are logged only as a status and a truncated, sanitized reason |
 | Client side | the service worker of `14` receives the decrypted payload, shows a notification and on click opens a same-origin path; it never calls the API |
 
 Conformance: the RFC 8291 Appendix A and RFC 8292 examples are test vectors for the encryption and
 the JWT; a mock push service in the test kit verifies VAPID, decrypts with a test subscription key
-pair and asserts the payload invariants (`18 §Approval park-and-resume and Web Push`).
+pair and asserts the payload invariants (`18 §Approval park-and-resume and Web Push`). (P4-011B spec
+batch, D-267(b), C-839) The mock is reached only through the development key
+`push.dev_endpoint_overrides` (loopback targets on a loopback instance); the request it receives is
+byte-for-byte what a push service would receive, including the JWT `aud` of the real origin.
 
 ---
 
@@ -363,7 +392,7 @@ in `relay_tokens`, like `auh_`); it opens **only** these routes. The relay needs
 | Call | Request → Response |
 |------|--------------------|
 | `POST /register` | `{ version }` → `{ replica_id, protocol: 1, config: { previews_domain, auth_cache_secs, wake_wait_secs, limits: { … } } }`; the relay refuses to serve if its own `previews.domain` differs from the API's |
-| `POST /resolve` | `{ label, session_hash?: hex(SHA-256 of the cookie token), wait_secs?: ≤ 45, navigation: bool }` → `{ decision: "allow"\|"login"\|"deny", reason?, share?: { id, port }, route?: { sandbox: "running"\|"waking"\|"stopped"\|"unavailable", listening: bool, start: "none"\|"starting"\|"exited"\|"limited", runner_endpoint?, retry_after_secs? } }`. `deny` reasons are the **uniform** `not_found` (unknown label, previews or org off, no access, paused-for-others is not distinguished from "no such preview" for a caller without a valid session; with a valid session of the share: `paused` 403, `frozen` 423, `wake_limited` 429, `unreachable` 502); a stopped sandbox sets the wake demand (`11 §Port previews`); `wait_secs` long-polls until `listening` or the timeout |
+| `POST /resolve` | `{ label, session_hash?: hex(SHA-256 of the cookie token), wait_secs?: ≤ 45, navigation: bool }` → `{ decision: "allow"\|"login"\|"deny", reason?, share?: { id, port }, route?: { sandbox: "running"\|"waking"\|"stopped"\|"unavailable", listening: bool, start: "none"\|"starting"\|"exited"\|"limited", runner_endpoint?, retry_after_secs? } }`. `deny` reasons are the **uniform** `not_found` (unknown label, previews or org off, no access, paused-for-others is not distinguished from "no such preview" for a caller without a valid session; with a valid session of the share: `paused` 403, `frozen` 423, `wake_limited` 429, `unreachable` 502); a stopped sandbox sets the wake demand (`11 §Port previews`), **recorded at most once per request, however long the long-poll runs** (and not at all while a demand of the current `PREVIEW_WAKE_WINDOW` is outstanding); **over the wake budget the answer is `deny` `wake_limited` with `retry_after_secs`**; `wait_secs` long-polls until `listening` or the timeout, and only while a wake or a start is under way (a running sandbox with nothing starting answers at once) |
 | `POST /grants/redeem` | `{ grant, label, nonce }` → `{ token: "auv_…", expires_at, idle_secs }` (shown once) or 400 `grant_invalid` (`04 §Preview access`) |
 | `POST /streams` | `{ label, session_hash }` → `{ grant: "aux_…", expires_in: 30, runner_endpoint }` — mints one **stream grant** bound to (share, sandbox, boot, port) after the same checks as `resolve`; 409 `not_running` |
 | `POST /validate` | `{ sessions: [{ label, session_hash }] ≤ 500 }` → `{ revoked: [{ label, session_hash }] }`, the entries that no longer pass; the relay closes their streams with close code 4403 |
@@ -371,8 +400,13 @@ in `relay_tokens`, like `auh_`); it opens **only** these routes. The relay needs
 
 Machine-plane conventions apply (typed bodies, bounded batches, idempotent where repeated);
 the relay-plane routes are exempt from the management rate limiter and have their own per-replica
-class (`PREVIEW_API_RATE`, 100 req/s/replica, burst 200). An unknown, expired or malformed `aul_`
-is 401 with the same body for every cause.
+class (`PREVIEW_API_RATE`, 100 req/s/replica, burst 200): a live `aul_` is charged to that class only,
+keyed by the registered replica (by the token before registration). An unknown, expired, rotated-away
+or malformed `aul_` is 401 with the same body for every cause and is charged like any rejected bearer.
+**Rotation** (FIX-090): the token presented at bootstrap is the only valid anchor — bootstrapping with
+a new token deletes every other `relay_tokens` row and its replicas, so the old `aul_` answers 401.
+The relay retries `validate` and `report` with backoff on 429 and 5xx and answers a visitor's request with
+a try-later page (503, `Retry-After`) when `resolve` fails the same way, never a bare 502.
 
 ### Runner plane additions (`/v1/runner`)
 
@@ -426,9 +460,14 @@ bytes were *written onward* (to the loopback socket or the leg-1 WebSocket), at 
 one chunk at a time, so one stream cannot starve the channel. With at most
 `PREVIEW_STREAMS_PER_SANDBOX` (64) streams the bytes in flight per sandbox are bounded by
 `64 × 128 KiB = 8 MiB` per direction; a credit that would exceed a window, a data frame beyond the window, an unknown
-`stream_id`, a second `stream.open` for a live id or a data frame on a closed stream is a protocol
-violation: the receiver sends `stream.close { reason: "error" }` for that stream (and a supervisor
-that sees repeated violations closes the channel with 4400).
+`stream_id` or a second `stream.open` for a live id is a protocol
+violation: the receiver sends `stream.close { reason: "error" }` for that stream. Data for a stream
+id this side closed, or was told closed, in the current channel connection is dropped silently and is
+not a violation (a legal close race). A violation is data beyond the window or for an id never
+opened. **Four violations within 60 s** on one channel connection close it with 4400; the count
+resets when the connection changes. A supervisor's stream and PTY pumps never wait on a peer
+(an app that stopped reading, a program that stopped reading its stdin): they hand data to
+per-stream queues with `try_send` and a stream whose queue is full is closed with `error`.
 
 **Allow-list, enforced at both ends (SEC-82).**
 1. **Runner**: the port and sandbox of every stream come from the API's answer to the stream grant
@@ -444,9 +483,50 @@ another; a compromised runner cannot make the supervisor dial a port that is not
 agent cannot add to the list.
 
 **Limits** (`02 §Limits`): concurrent streams per share 32, per sandbox 64, per user and per relay
-replica 64; idle 120 s for a plain HTTP stream, 600 s for an upgraded one (a WebSocket's pings count);
-lifetime 4 h; connect 10 s; response header timeout 60 s; request body 100 MiB; bytes per share per day
-(`PREVIEW_BYTES_PER_SHARE_DAY`, 5 GiB, then 429 `preview_quota` until the next UTC day). WebSockets
+replica 64 (**the relay's caps count per replica**: with N relay replicas an operator should expect up
+to N × the cap in total; the runner and supervisor caps below are the global bound per sandbox); idle 120 s for a plain HTTP stream, 600 s for an upgraded one (a WebSocket's pings count);
+lifetime 4 h; connect 10 s; response header timeout 60 s (an app that has not sent its response head
+by then gets 504 and the stream is closed); request body 100 MiB, counted as the bytes stream, so a
+chunked upload past it gets 413 and the leg is closed; bytes per share per day
+(`PREVIEW_BYTES_PER_SHARE_DAY`, 5 GiB, then 429 `preview_quota` until the next UTC day).
+**The relay's pump never awaits a peer** (FIX-088): every send toward the runner or toward the viewer
+is raced against revocation and the idle and lifetime timers, so a viewer that stopped reading or a
+runner that stopped reading cannot hold a stream open past revocation (SEC-81: ≤ 15 s); the closing
+`Close` frame to the runner is bounded to 2 s and the stream slot is released whether or not it was
+taken. The relay asks the app to close after each plain exchange (`Connection: close` on the
+forwarded head; an upgrade is exempt) and ends a response that is cut short (malformed chunk framing,
+or a leg that ends before the terminal chunk or the declared `Content-Length`) with a transport error
+toward the browser, never a clean end.
+**Runner-side bounds** (FIX-092): the stream listener closes a connection that has not delivered its
+whole request head within 10 s (a total deadline, not a per-read one) and holds at most 256
+unauthenticated connections per runner replica (further ones are closed at once; a connection leaves the
+count when its grant is redeemed). The runner caps live legs per sandbox at the supervisor's own limits
+(64 streams, 2 PTYs; 429 beyond). A leg's idle clock resets on any byte **or ping/pong** from the peer, but
+only bytes stamp keep-awake, so an idle open tab does not hold a sandbox awake. The runner's outbound queue
+per supervisor connection is bounded: when the supervisor stops reading, the offending leg (for a sequenced
+frame, the connection — the replay buffer redelivers on reconnect) is closed instead of queued without
+limit. `pty.resize` from the browser is coalesced to the latest size.
+**Enforcement** (FIX-072, C-636/C-637): the relay reserves a per-share and a per-user slot (per replica;
+`relay.max_streams_per_user` may lower the per-user value) before it asks the API for a stream grant and
+releases it on every exit; over a cap a plain request answers 429 `preview_streams_limit` and a WebSocket
+upgrade is accepted and closed `4409`. Grant redemptions at `/_aurora/grant` are limited to
+`PREVIEW_GRANT_RATE` (30/min per client address, 10/min per share; fixed window per replica) with 429
+`grant_rate_limited` and `Retry-After`; the check runs only for a request that carries a well-formed
+state cookie (a request without one never reaches the API and spends no budget). The **client address**
+is the socket peer, or — when the peer is inside `relay.trusted_proxies` (same semantics and default
+as `server.trusted_proxies`, FIX-090) — the rightmost untrusted `X-Forwarded-For` entry; the same
+address is the outbound `X-Forwarded-For`. The relay also caps the **negative resolves** per client
+address (30/min): past it, a request whose credential is not already cached is answered locally
+(login redirect, or 401 for a subrequest) without asking the API, so a flood of random cookies cannot
+spend the relay plane's rate class. The daily quota is one **shared counter per share and UTC day**
+(`aurora-counters`, class `management`; does not fail open — `local` counts per API replica, so under
+`local` the effective limit is up to replicas × the limit; `closed` answers 503 `counter_unavailable`): relays add the bytes they moved (both directions, batched per stream in
+units of ≥ 64 KiB and sent with each 15 s heartbeat) and `resolve` answers `deny`/`preview_quota` once the
+counter reaches the limit, so the relay answers 429 with `Retry-After` to the next UTC midnight. A stream
+that has started may finish its response; no new stream opens. The quota can be exceeded by at most what the
+relays move between two heartbeats plus the 15 s resolve cache plus responses already open. Refusals count in
+`aurora_relay_refused_total{reason}` (`share_streams`, `user_streams`, `quota`, `grant_rate_address`,
+`grant_rate_share`; no ids in labels). WebSockets
 are carried as ordinary upgraded streams: the relay forwards the `Upgrade` handshake over the stream
 after checking `Origin` (`04 §Preview access`) and then relays bytes; it does not inspect frames.
 
@@ -472,7 +552,7 @@ runner increasing per channel connection, interleaved round-robin):
 
 | Direction | Frame | Body |
 |---|---|---|
-| runner → supervisor | `pty.open` | `{ pty_id: u32, window: bytes, cols: u16, rows: u16 }` |
+| runner → supervisor | `pty.open` | `{ pty_id: u32, window: bytes, cols: u16, rows: u16, shell?: "bash"\|"zsh" }` — (FIX-138) `shell` is the person's enumerated choice carried from the grant (the redemption answer of `/preview-streams/open` gains `shell`); absent = `bash`; the supervisor maps it to a fixed binary (`12 §Terminal`) |
 | supervisor → runner | `pty.opened` / `pty.refused` | `{ pty_id, window }` / `{ pty_id, reason: "disabled"\|"limit"\|"error" }` |
 | runner → supervisor | `pty.resize` | `{ pty_id, cols, rows }` |
 | both | `pty.close` | `{ pty_id, reason: "eof"\|"hangup"\|"idle"\|"lifetime"\|"channel_lost"\|"error", bytes_in?, bytes_out? }` |
@@ -481,12 +561,17 @@ runner increasing per channel connection, interleaved round-robin):
 Credit-based flow control exactly as W18 (`TERMINAL_STREAM_WINDOW` 128 KiB per
 direction per PTY, credit returned after the bytes were written onward, at
 least every `window/4`, control frames never blocked, round-robin one chunk at
-a time; a violation closes that PTY with `pty.close { reason: "error" }`).
+a time; a violation closes that PTY with `pty.close { reason: "error" }`; data for a PTY id closed on
+this connection is dropped silently, and four violations within 60 s on one connection close the
+channel with 4400, exactly as W18).
 A W6 reconnect ends every PTY (leg 1 closes 4503, nothing is resumed); a
 supervisor that does not know the kinds ignores them (the runner's `pty.open`
 times out 5 s → 4502): harmless. Limits: `TERMINALS_PER_SANDBOX` 2,
 `TERMINALS_PER_AGENT` 4, `TERMINALS_PER_USER` 2 (per API replica), idle 600 s
-(pings count), lifetime 4 h per session. Terminal bytes are never logged or
+(pings count: the API pings the browser every 20 s and any frame from it, a pong included, resets the
+idle clock, which the API enforces with 4504), lifetime 4 h per session. A browser text message above
+256 bytes (a `pty.resize` is a few dozen) closes the leg 4502 without being forwarded, and a write toward
+the browser or the runner that stalls for 30 s ends the leg and frees its slot. Terminal bytes are never logged or
 stored; the supervisor's PTY posture (environment minus every `AURORA_*`
 variable and the boot document, agent uid, `/workspace`, `TIOCSWINSZ` resize)
 is `12 §Terminal`, the wake/keep-awake semantics `11 §Web terminal`.
@@ -500,3 +585,109 @@ browser → runner is the `pty.resize` control (`{"kind":"pty.resize",
 "pty_id":0,...}` — the runner stamps the leg's real id); any other Text is
 ignored, never parsed as bytes (C-619). In the other direction the PTY's
 output rides Binary frames end to end.
+
+## W20 — SSH access (phase 5, P4-SSH-1, P4-SSH-2, D-239, SEC-92..SEC-96)
+
+Four hops: the SSH protocol between the client and `aurora-terminator`; the terminator plane
+(`05 §Terminator plane`, C-794); leg 1, terminator → runner :4108, one WebSocket per SSH channel;
+leg 2, `exec.*` frames on W6. Legs 1 and 2 are W18/W19's machinery (listener, grant pattern, credit
+windows, chunking, close codes, violation counting) with an **exec target**; this section owns only
+the differences. Off unless `ssh.enabled`.
+
+**SSH protocol (terminator, `russh`).**
+- *Transport*: SSH-2 only; host key `ssh-ed25519` (from `AURORA_SSH_HOST_KEY`, the same key on every
+  replica); key exchange `curve25519-sha256` (and `@libssh.org`), `sntrup761x25519-sha512@openssh.com`
+  where the library offers it; ciphers `chacha20-poly1305@openssh.com`, `aes256-gcm@openssh.com`,
+  `aes128-gcm@openssh.com`; MACs only for non-AEAD ciphers (none offered); no SHA-1, CBC, DSA or RSA.
+  Server keepalive every 30 s (keeps load-balancer idle timers from cutting a session); identification
+  string `SSH-2.0-aurora` without a version number.
+- *Authentication*: the only method advertised and accepted is `publickey` with an OpenSSH **user
+  certificate** of type `ssh-ed25519-cert-v01@openssh.com`. In the *query* phase (no signature) the
+  terminator answers OK only when the whole certificate law passes offline: CA signature by one of the
+  `ca_public_keys` of its registration, type `user`, inside the validity window (60 s skew),
+  principal list exactly `[<username>]` and the username a UUID, **no critical options**, the key id
+  in the `aurora:u=…:k=…:a=…:w=…` shape. In the *signature* phase the library verifies possession of
+  the certified key; only then does the terminator call `POST /v1/terminator/sessions`, and
+  authentication succeeds only if the API answers 201. Every other outcome — plain keys, `password`,
+  `keyboard-interactive`, `hostbased`, a failing certificate, an API refusal or error — is the same
+  `USERAUTH_FAILURE` listing `publickey` only, after the same 1 s delay, no banner (hint-free). The
+  `none` probe is answered without counting; `SSH_AUTH_ATTEMPTS` (6) other attempts end the connection.
+- *Pre-auth limits* (per replica): `SSH_PREAUTH_MAX` (256) unauthenticated connections in total and
+  `SSH_PREAUTH_PER_IP` (8) per client address, `SSH_CONNECT_RATE` (30/min, burst 10) per address,
+  `SSH_AUTH_TIMEOUT` (20 s) from accept to success; a refusal closes the socket without a message.
+  The client address is the socket peer (the chart's LoadBalancer keeps it with
+  `externalTrafficPolicy: Local`, `15 §SSH access`).
+- *Channels* (D-239(g)): only `session` channels, at most `SSH_CHANNELS_PER_SESSION` (4) at once. On a
+  session channel the terminator accepts `pty-req` (needs `permit-pty` in the certificate; `term` ≤ 64
+  printable ASCII, cols/rows 1…1000, terminal modes ignored), `env` (`LANG`, `LC_*` only, ≤ 16 of
+  ≤ 256 bytes; other names get a failure reply), `window-change`, and exactly one of `shell`, `exec`
+  (`SSH_EXEC_COMMAND_MAX`, no NUL), `subsystem sftp`. Refused with a failure reply: `x11-req`,
+  `auth-agent-req@openssh.com`, `signal`, `break`, any other subsystem or request. Refused channel opens
+  (`SSH_MSG_CHANNEL_OPEN_FAILURE`, `administratively prohibited`): `direct-tcpip` (`-L`, `-D`),
+  `direct-streamlocal@openssh.com`, `x11`, `auth-agent@openssh.com`, every unknown type. Refused global
+  requests: `tcpip-forward` and `cancel-tcpip-forward` (`-R`), `streamlocal-forward@openssh.com`;
+  `keepalive@openssh.com` gets the standard failure reply; `no-more-sessions@openssh.com` is honoured.
+- *Ending*: the child's exit status becomes `exit-status` (or `exit-signal` with the signal name),
+  then `EOF` and `CLOSE`; a leg that ends before an exit status is `relay_error` (`exit-status` 255 and
+  a one-line stderr notice). Notices are written to the channel's extended data (stderr) and the
+  terminator waits for the client's `CHANNEL_CLOSE` (or 2 s) before `DISCONNECT`, so OpenSSH prints
+  them (the banner/goodbye ordering of OneCLI `docs/11`).
+
+**Terminator plane** (routes in `05 §Terminator plane`). `register` is repeated after any 401 or restart;
+`config` in the register and heartbeat answers carries `ca_public_keys` (the active CA key and
+`ssh.ca.previous_public_keys`), so a CA rotation reaches the terminators within one heartbeat. The
+terminator sends the heartbeat every `SSH_HEARTBEAT` (30 s) with every session it holds (≤ 500 per call,
+batched); after `SSH_HEARTBEAT_FAILURES` (3) consecutive failures it closes every session
+(`lease_expired`, they have expired server-side anyway) and refuses new authentications until a
+heartbeat succeeds. The terminator reports `close` once per session with its reason; the API's
+guarded transition makes a second close, a sweep close or a heartbeat revocation a no-op.
+
+**Leg 1, terminator → runner.** `GET /v1/preview-stream` on the runner's stream listener, `Authorization:
+Bearer auz_…` — the prefix selects the kind, as `auy_` does. The runner redeems the grant (`POST
+/v1/runner/preview-streams/open { kind: "ssh", grant }` → `{ sandbox_id, boot_id, window, idle_secs,
+max_lifetime_secs }`; 403 `grant_invalid`; 409 `not_current` when the boot is stale, the agent frozen,
+`ssh.enabled` off or the grant's session no longer open and lease-current), checks it holds the
+sandbox's channel for that boot (404 `not_here`), and completes the handshake (101). The terminator's
+**first message** must then be one Text frame, within 5 s (else close 4504):
+`{"kind":"exec.open","mode":"shell"|"exec"|"sftp","command"?:string,"tty"?:{"term","cols","rows"},"env":{…}}`
+(≤ 12 KiB); the runner allocates the `pty_id`, sends leg 2's `exec.open`, and answers
+`{"kind":"exec.opened"}` or closes 4502 (refused, unsupported, timeout) / 4409 (limit). After that:
+
+| Frame on leg 1 | Direction | Meaning |
+|---|---|---|
+| Binary `[0x02][payload ≤ 16 KiB]` | both | stdin (terminator → runner); stdout or the PTY's output (runner → terminator) |
+| Binary `[0x03][payload ≤ 16 KiB]` | runner → terminator | stderr (only without `tty`) |
+| Text `{"kind":"pty.resize","cols","rows"}` | terminator → runner | `window-change` (coalesced to the latest size) |
+| Text `{"kind":"exec.eof"}` | terminator → runner | the client sent `EOF` on stdin |
+| Text `{"kind":"exec.exit","status"?:int,"signal"?:string}` | runner → terminator | the child ended; a `1000` close follows |
+
+Any other Text frame, a Text frame over 256 bytes after `exec.open`, or a Binary frame with another tag
+closes the leg 4502 without forwarding. Close codes, ping/pong, the 30 s stalled-write rule and
+backpressure are W18 leg 1's; the runner refreshes keep-awake on bytes only (`POST
+/v1/runner/terminal/keep-awake { sandbox_id, kind: "ssh" }` → `ssh_active_until`, at most one per
+`SSH_AWAKE_GRACE` per sandbox; an older API ignores `kind` and stamps the terminal column, harmless).
+
+**Leg 2, runner ↔ supervisor — `exec.*` frames on W6**, beside `pty.*` and `stream.*` (same conventions:
+outside seq/ack, control as JSON text `{ seq: 0, ack: 0 }`, one id space with `pty.*`, data as binary,
+interleaved round-robin, credit with `pty.credit` exactly as W19):
+
+| Direction | Frame | Body |
+|---|---|---|
+| runner → supervisor | `exec.open` | `{ pty_id: u32, window: bytes, mode: "shell"\|"exec"\|"sftp", command?: string, tty?: { term, cols: u16, rows: u16 }, env: { name: value } }` |
+| supervisor → runner | `exec.opened` / `exec.refused` | `{ pty_id, window }` / `{ pty_id, reason: "disabled"\|"limit"\|"unsupported"\|"error" }` |
+| runner → supervisor | `pty.resize` | as W19 (only for an exec with `tty`) |
+| runner → supervisor | `exec.eof` | `{ pty_id }` — close the child's stdin |
+| supervisor → runner | `exec.exit` | `{ pty_id, status?: i32, signal?: string }` — exactly one, before `pty.close { reason: "eof" }` |
+| both | `pty.credit`, `pty.close` | as W19 |
+| both | binary data | `[0x02][pty_id: u32 BE][payload ≤ 16 KiB]` stdin/stdout/PTY; `[0x03][pty_id: u32 BE][payload ≤ 16 KiB]` stderr (supervisor → runner only); both count against the one window of that `pty_id` |
+
+A W6 reconnect ends every exec (leg 1 closes 4503); a supervisor that does not know `exec.*` ignores it
+(the runner's `exec.open` times out 5 s → 4502). Supervisor semantics: `12 §SSH channels`. Channel bytes
+and commands are never logged or stored at any hop (byte totals only).
+
+**Allow-list at every hop (SEC-95).** The terminator accepts only the channel types and requests above;
+the API mints a grant only for a lease-current open session that passes `can_ssh`, bound to (session,
+agent, sandbox, boot); the runner takes sandbox and boot only from the API's answer and sends `exec.open`
+only on that boot's channel; the supervisor accepts only the three modes, its fixed `sftp-server` path
+and the `LANG`/`LC_*` environment. No hop dials a TCP port or a socket for SSH: forwarding does not exist
+below the terminator either.

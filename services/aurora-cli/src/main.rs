@@ -106,6 +106,12 @@ fn load() -> Result<(Config, std::path::PathBuf)> {
     Ok((Config::load(&p)?, p))
 }
 
+/// The same server: equal after dropping a trailing `/` and ignoring case (scheme and host).
+fn same_server(a: &str, b: &str) -> bool {
+    a.trim_end_matches('/')
+        .eq_ignore_ascii_case(b.trim_end_matches('/'))
+}
+
 fn default_hostname() -> Option<String> {
     std::env::var("HOSTNAME")
         .ok()
@@ -138,12 +144,14 @@ async fn real_main() -> Result<i32> {
                     .map_err(|_| anyhow!("pass --url <external_url> (or set AURORA_URL)"))?,
             };
             let url = url.trim_end_matches('/').to_string();
+            // https:// (or loopback) only: refused here, before any request is made.
             let client = Client::new(&url, None)?;
             let host = hostname.or_else(default_hostname);
             let st = client.auth_cli_start(host.as_deref()).await?;
             println!(
                 "Open {} and enter the code:\n\n    {}\n",
-                st.verification_url, st.user_code
+                aurora_client::clean(&st.verification_url),
+                aurora_client::clean(&st.user_code)
             );
             println!("Waiting for approval...");
             let t = client
@@ -154,7 +162,22 @@ async fn real_main() -> Result<i32> {
                     Duration::from_secs(st.expires_in),
                 )
                 .await?;
-            let agents = Config::load(&path).map(|c| c.agents).unwrap_or_default();
+            // Stored agent tokens belong to the server that issued them: a login to a different
+            // server drops them instead of sending them to the new URL later (FIX-118, PKG-6).
+            let agents = match Config::load(&path) {
+                Ok(c) if same_server(&c.url, &url) => c.agents,
+                Ok(c) => {
+                    if !c.agents.is_empty() {
+                        println!(
+                            "Dropped {} stored agent token(s) of {}.",
+                            c.agents.len(),
+                            aurora_client::clean(&c.url)
+                        );
+                    }
+                    Default::default()
+                }
+                Err(_) => Default::default(),
+            };
             Config {
                 url,
                 api_key: t.api_key,
@@ -164,14 +187,48 @@ async fn real_main() -> Result<i32> {
             .save(&path)?;
             println!(
                 "Logged in to workspace {}/{}",
-                t.workspace.org_slug, t.workspace.slug
+                aurora_client::clean(&t.workspace.org_slug),
+                aurora_client::clean(&t.workspace.slug)
             );
             Ok(0)
         }
         Cmd::Logout => {
             let p = config::default_path()?;
+            let stored = Config::load(&p).ok();
+            // Revoke the key server-side first (C-720), then delete the file, and say truthfully
+            // what happened (FIX-118 item 7, FIX-140).
+            let revoked = match &stored {
+                Some(c) => Some(match Client::new(&c.url, Some(c.api_key.clone())) {
+                    Ok(client) => client.revoke_my_api_key().await,
+                    Err(e) => Err(e),
+                }),
+                None => None,
+            };
             match std::fs::remove_file(&p) {
-                Ok(()) => println!("Logged out."),
+                Ok(()) => {
+                    println!("Logged out: the local credentials file is deleted.");
+                    if let (Some(c), Some(r)) = (stored, revoked) {
+                        let url = aurora_client::clean(&c.url);
+                        match r {
+                            Ok(()) => println!("The API key was revoked on {url}."),
+                            Err(e) if e.status() == Some(401) => println!(
+                                "The API key was already invalid on {url} (expired or revoked)."
+                            ),
+                            Err(e) => println!(
+                                "Could not revoke the API key on {url} ({}): it stays valid until \
+                                 it expires (90 days after login by default); revoke it there \
+                                 (Workspace, API keys) if the file may have been copied.",
+                                aurora_client::clean(&e.to_string())
+                            ),
+                        }
+                        if !c.agents.is_empty() {
+                            println!(
+                                "{} stored agent token(s) were dropped locally, not revoked on {url}.",
+                                c.agents.len()
+                            );
+                        }
+                    }
+                }
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => println!("Not logged in."),
                 Err(e) => return Err(e.into()),
             }
@@ -184,12 +241,14 @@ async fn real_main() -> Result<i32> {
                 .await?;
             println!(
                 "user:      {}",
-                me.user.email.as_deref().unwrap_or(&me.user.id)
+                aurora_client::clean(me.user.email.as_deref().unwrap_or(&me.user.id))
             );
             println!("url:       {}", cfg.url);
             println!(
                 "workspace: {}/{} ({})",
-                cfg.workspace.org_slug, cfg.workspace.slug, cfg.workspace.id
+                aurora_client::clean(&cfg.workspace.org_slug),
+                aurora_client::clean(&cfg.workspace.slug),
+                aurora_client::clean(&cfg.workspace.id)
             );
             Ok(0)
         }
@@ -204,7 +263,13 @@ async fn real_main() -> Result<i32> {
                 } else {
                     "-"
                 };
-                println!("{:<24} {:<7} {:<14} {}", a.handle, a.kind, tok, a.name);
+                println!(
+                    "{:<24} {:<7} {:<14} {}",
+                    aurora_client::clean(&a.handle),
+                    aurora_client::clean(&a.kind),
+                    tok,
+                    aurora_client::clean(&a.name)
+                );
             }
             Ok(0)
         }

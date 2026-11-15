@@ -121,9 +121,21 @@ pub struct CreateApiConversation {
 
 #[derive(Deserialize, ToSchema)]
 pub struct SendMessage {
+    /// May be empty or absent when `attachment_ids` is non-empty (C-726).
+    #[serde(default)]
     pub text: String,
     #[serde(default)]
     pub attachment_ids: Vec<Uuid>,
+    /// (C-725) Quote an earlier event of this conversation.
+    #[serde(default)]
+    pub reply_to: Option<ReplyToRef>,
+}
+
+/// The event a message replies to (C-725): the `seq` of a `text`, `turn.queued` or `attachment`
+/// event of the same conversation.
+#[derive(Deserialize, ToSchema, Clone, Copy)]
+pub struct ReplyToRef {
+    pub seq: i64,
 }
 
 #[derive(Deserialize, IntoParams)]

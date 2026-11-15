@@ -20,6 +20,8 @@ pub const SECURITY_CRITICAL_ACTIONS: &[&str] = &[
     "connector.updated",
     "admin.connector_delete",
     "admin.connector_rotate",
+    "admin.connector_host_token_issue",
+    "admin.connector_host_token_revoke",
     "admin.runner_create",
     "admin.runner_delete",
     "admin.runner_rotate",
@@ -29,6 +31,8 @@ pub const SECURITY_CRITICAL_ACTIONS: &[&str] = &[
     "api_key.revoke",
     "app_instance.create",
     "app_instance.delete",
+    // (FIX-132) an org registration made instance-wide: widens who can connect to the host
+    "app_instance.promote",
     "app_instance.update",
     "cli_login.approve",
     "cli_login.consume",
@@ -61,8 +65,16 @@ pub const SECURITY_CRITICAL_ACTIONS: &[&str] = &[
     "plugin.enable",
     "plugin.host_claim.decide",
     "plugin.reject",
+    // (FIX-123, D-215) Moves connections of a superseded app to the app that replaced it.
+    "plugin.supersede",
     "trusted_key.create",
     "trusted_key.revoke",
+    // Addon sources (phase 5, P5-ASRC, D-250, SEC-86)
+    "addon.ingest",
+    "addon_source.add",
+    "addon_source.check",
+    "addon_source.remove",
+    "addon_source.update",
     // Approval decisions
     "action_approval.decide",
     "agent_link.policy",
@@ -79,6 +91,8 @@ pub const SECURITY_CRITICAL_ACTIONS: &[&str] = &[
     "member.add",
     "member.remove",
     "member.update",
+    // (FIX-108, D-143, SEC-78) a user admitted to a closed instance by the IdP's role mapping
+    "user.admit_by_claim",
     "user.delete",
     "workspace_access.remove",
     "workspace_access.set",
@@ -119,6 +133,9 @@ pub const SECURITY_CRITICAL_ACTIONS: &[&str] = &[
     "org.update",
     "retention.update",
     "workspace.delete",
+    // (P5-ADMDEL, D-234) an instance admin deletes an organization or a workspace
+    "admin.org.delete",
+    "admin.workspace.delete",
     // Channels
     "channel_integration.autolink_disable",
     "channel_integration.autolink_enable",

@@ -9,6 +9,26 @@ use aurora_api::http::ratelimit::Quota;
 use aurora_core::token::{self, TokenPrefix};
 use aurora_testkit::TestDb;
 use aurora_testkit::oidc::MockIdp;
+
+/// The whole text exposition of the process-wide recorder (installed on first use).
+pub fn metrics_text() -> String {
+    use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
+    static H: std::sync::OnceLock<PrometheusHandle> = std::sync::OnceLock::new();
+    H.get_or_init(|| PrometheusBuilder::new().install_recorder().unwrap())
+        .render()
+}
+
+/// Value of one counter series (`name` plus its exact label text, e.g.
+/// `aurora_scim_requests_total{outcome="ok"}`) in the process-wide Prometheus recorder, 0 when
+/// the series does not exist yet. The recorder is global to the `it` binary and installed once
+/// here; counters only grow, so tests assert on deltas.
+pub fn counter_value(series: &str) -> f64 {
+    metrics_text()
+        .lines()
+        .find(|l| l.starts_with(series) && l[series.len()..].starts_with(' '))
+        .and_then(|l| l.split_whitespace().last()?.parse().ok())
+        .unwrap_or(0.0)
+}
 use axum::Router;
 use axum::body::Body;
 use axum::extract::{Path, State};
@@ -118,6 +138,19 @@ impl Harness {
     /// Back to "nothing saved" (a fresh instance that behaves as before D-140).
     pub async fn unsave_placement(&self) {
         sqlx::query("DELETE FROM instance_placement")
+            .execute(self.pool())
+            .await
+            .unwrap();
+        // A fresh instance: the setup gate (FIX-116) is pending until a placement is saved.
+        sqlx::query("UPDATE instance_setup SET placement_pending = true")
+            .execute(self.pool())
+            .await
+            .unwrap();
+    }
+
+    /// An instance that existed before the setup gate (FIX-116): nothing saved, not pending.
+    pub async fn mark_upgraded_instance(&self) {
+        sqlx::query("UPDATE instance_setup SET placement_pending = false")
             .execute(self.pool())
             .await
             .unwrap();

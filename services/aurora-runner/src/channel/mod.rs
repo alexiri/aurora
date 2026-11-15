@@ -23,7 +23,7 @@ use hmac::{Hmac, Mac};
 use serde_json::{Value, json};
 use sha2::Sha256;
 use tokio::net::TcpListener;
-use tokio::sync::{Semaphore, mpsc, watch};
+use tokio::sync::{Notify, Semaphore, mpsc, watch};
 use uuid::Uuid;
 
 use crate::api::ApiClient;
@@ -41,7 +41,19 @@ pub struct ChannelSettings {
     /// Interval between `channel/hold` retries while the API is unreachable.
     pub hold_retry: Duration,
     pub max_unacked_bytes: usize,
+    /// Depth of one connection's outbound queue (FIX-092): a supervisor that stops reading
+    /// fills it and the offending leg (stream traffic) or the connection (sequenced frames,
+    /// which the replay buffer redelivers) is closed — runner memory stays bounded.
+    pub out_queue: usize,
+    /// One write toward the supervisor may not stall longer than this.
+    pub write_timeout: Duration,
+    /// Connections that have not yet been admitted (FIX-094): beyond this the accepted socket
+    /// is closed at once. Each also has `hello_timeout` for handshake plus hello.
+    pub preauth_cap: usize,
 }
+
+/// Default [`ChannelSettings::out_queue`]: frames, not bytes (each ≤ 16 KiB of data).
+pub const OUT_QUEUE: usize = 512;
 
 impl ChannelSettings {
     pub fn new(session_key: [u8; 32]) -> Self {
@@ -53,6 +65,9 @@ impl ChannelSettings {
             ack_interval: ACK_INTERVAL,
             hold_retry: Duration::from_secs(5),
             max_unacked_bytes: MAX_UNACKED_BYTES,
+            out_queue: OUT_QUEUE,
+            write_timeout: Duration::from_secs(30),
+            preauth_cap: 256,
         }
     }
 }
@@ -67,7 +82,10 @@ pub(crate) struct Upload {
 
 struct Conn {
     id: u64,
-    tx: mpsc::UnboundedSender<ConnMsg>,
+    tx: mpsc::Sender<ConnMsg>,
+    /// Fired when a sequenced frame could not be queued: the connection ends and the replay
+    /// buffer redelivers on the supervisor's reconnect.
+    kill: Arc<Notify>,
 }
 
 /// One message on the current W6 connection: a sequenced replay-buffered text frame, or
@@ -99,21 +117,24 @@ pub(crate) struct Session {
     pub sandbox_id: Uuid,
     pub boot_id: Uuid,
     max_unacked: usize,
+    out_queue: usize,
     st: Mutex<State>,
 }
 
 pub(crate) struct Attached {
     pub conn_id: u64,
     pub resume_from: u64,
-    pub rx: mpsc::UnboundedReceiver<ConnMsg>,
+    pub rx: mpsc::Receiver<ConnMsg>,
+    pub kill: Arc<Notify>,
 }
 
 impl Session {
-    fn new(sandbox_id: Uuid, boot_id: Uuid, max_unacked: usize) -> Self {
+    fn new(sandbox_id: Uuid, boot_id: Uuid, max_unacked: usize, out_queue: usize) -> Self {
         Self {
             sandbox_id,
             boot_id,
             max_unacked,
+            out_queue,
             st: Mutex::default(),
         }
     }
@@ -169,7 +190,11 @@ impl Session {
         st.unacked_bytes += text.len();
         st.unacked.push_back((seq, text.clone()));
         if let Some(c) = &st.conn {
-            let _ = c.tx.send(ConnMsg::Text(text));
+            // Never waits: a full queue means the supervisor stopped reading. The frame is
+            // in the replay buffer, so the connection ends and the reconnect redelivers it.
+            if c.tx.try_send(ConnMsg::Text(text)).is_err() {
+                c.kill.notify_one();
+            }
         }
         Ok(())
     }
@@ -178,24 +203,23 @@ impl Session {
     /// replay, never acked, never back-pressured by the replay buffer. Fails while
     /// disconnected (streams die with the channel anyway).
     pub(crate) fn push_stream_frame(&self, frame_text: String) -> Result<(), HubError> {
-        let st = self.lock();
-        match &st.conn {
-            Some(c) => {
-                c.tx.send(ConnMsg::StreamFrame(frame_text))
-                    .map_err(|_| HubError::NotConnected)
-            }
-            None => Err(HubError::NotConnected),
-        }
+        self.push_msg(ConnMsg::StreamFrame(frame_text))
     }
 
     /// (P4-PRV-2, W18) One binary data message to the supervisor.
     pub(crate) fn push_stream_data(&self, data: Vec<u8>) -> Result<(), HubError> {
+        self.push_msg(ConnMsg::StreamData(data))
+    }
+
+    /// Queues stream traffic without waiting; `Backlog` when the supervisor is not draining
+    /// (FIX-092: the caller closes the offending leg).
+    fn push_msg(&self, msg: ConnMsg) -> Result<(), HubError> {
         let st = self.lock();
         match &st.conn {
-            Some(c) => {
-                c.tx.send(ConnMsg::StreamData(data))
-                    .map_err(|_| HubError::NotConnected)
-            }
+            Some(c) => c.tx.try_send(msg).map_err(|e| match e {
+                mpsc::error::TrySendError::Full(_) => HubError::Backlog,
+                mpsc::error::TrySendError::Closed(_) => HubError::NotConnected,
+            }),
             None => Err(HubError::NotConnected),
         }
     }
@@ -213,17 +237,24 @@ impl Session {
     /// Make a new connection current (dropping any previous one) and queue the replay.
     pub(crate) fn attach(&self) -> Attached {
         let mut st = self.lock();
-        let (tx, rx) = mpsc::unbounded_channel();
+        // The replay (bounded by the unacked byte budget) fits beside the stream-traffic depth.
+        let (tx, rx) = mpsc::channel(self.out_queue + st.unacked.len());
         for (_, text) in &st.unacked {
-            let _ = tx.send(ConnMsg::Text(text.clone()));
+            let _ = tx.try_send(ConnMsg::Text(text.clone()));
         }
         st.next_conn += 1;
         let conn_id = st.next_conn;
-        st.conn = Some(Conn { id: conn_id, tx });
+        let kill = Arc::new(Notify::new());
+        st.conn = Some(Conn {
+            id: conn_id,
+            tx,
+            kill: kill.clone(),
+        });
         Attached {
             conn_id,
             resume_from: st.recv_seq,
             rx,
+            kill,
         }
     }
 
@@ -253,6 +284,8 @@ pub(crate) struct Shared {
     events_rx: Mutex<Option<mpsc::Receiver<HubEvent>>>,
     /// Bounds concurrent plane calls (tool/memory/upload).
     pub plane: Semaphore,
+    /// Unadmitted connections (`ChannelSettings::preauth_cap`).
+    preauth: Arc<Semaphore>,
     /// (P4-PRV-2, W18) The relay-facing stream listener, when opened; supervisors' stream
     /// traffic is routed here.
     pub streams: streams_cell::StreamsCell,
@@ -365,7 +398,12 @@ impl Shared {
             Some(s) if s.boot_id == boot => Some(s.clone()),
             Some(_) if !replace => None,
             _ => {
-                let s = Arc::new(Session::new(sandbox, boot, self.settings.max_unacked_bytes));
+                let s = Arc::new(Session::new(
+                    sandbox,
+                    boot,
+                    self.settings.max_unacked_bytes,
+                    self.settings.out_queue,
+                ));
                 map.insert(sandbox, s.clone());
                 Some(s)
             }
@@ -453,8 +491,10 @@ impl ChannelServer {
         let (events, rx) = mpsc::channel(256);
         let (api, _) = watch::channel(None);
         let (previews_on, _) = watch::channel(false);
+        let preauth = Arc::new(Semaphore::new(settings.preauth_cap));
         Self(Arc::new(Shared {
             settings,
+            preauth,
             api,
             sessions: Mutex::default(),
             locks: Mutex::default(),
@@ -472,8 +512,14 @@ impl ChannelServer {
             tokio::select! {
                 accepted = listener.accept() => match accepted {
                     Ok((tcp, _)) => {
+                        // A sandbox can open sockets without ever speaking: the unadmitted
+                        // ones are capped (the socket is dropped) and time-boxed in `handle`.
+                        let Ok(permit) = self.0.preauth.clone().try_acquire_owned() else {
+                            tracing::warn!("channel pre-auth connection cap reached; refusing");
+                            continue;
+                        };
                         let shared = self.0.clone();
-                        tokio::spawn(conn::handle(shared, tcp));
+                        tokio::spawn(conn::handle(shared, tcp, permit));
                     }
                     Err(e) => {
                         tracing::warn!(error = %e, "channel accept failed");
@@ -570,4 +616,57 @@ impl ChannelHub for ChannelServer {
 
 async fn stopped(rx: &mut watch::Receiver<bool>) {
     let _ = rx.wait_for(|v| *v).await;
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod tests {
+    use super::*;
+
+    fn session(out_queue: usize) -> Session {
+        Session::new(Uuid::new_v4(), Uuid::new_v4(), MAX_UNACKED_BYTES, out_queue)
+    }
+
+    /// FIX-092: a supervisor that never drains its connection cannot grow the runner's queue:
+    /// stream traffic beyond the depth is refused (`Backlog`, the caller closes the leg) and
+    /// nothing is queued past the bound.
+    #[test]
+    fn stream_traffic_beyond_the_queue_depth_is_refused() {
+        let s = session(4);
+        let mut a = s.attach();
+        for _ in 0..4 {
+            s.push_stream_data(vec![0; 16]).unwrap();
+        }
+        assert!(matches!(
+            s.push_stream_data(vec![0; 16]),
+            Err(HubError::Backlog)
+        ));
+        assert!(matches!(
+            s.push_stream_frame("{}".into()),
+            Err(HubError::Backlog)
+        ));
+        let mut n = 0;
+        while a.rx.try_recv().is_ok() {
+            n += 1;
+        }
+        assert_eq!(n, 4, "the queue never held more than its depth");
+        // Draining frees the room again.
+        assert!(s.push_stream_data(vec![0; 16]).is_ok());
+    }
+
+    /// FIX-092: a sequenced frame that cannot be queued ends the connection (the replay buffer
+    /// redelivers it on the reconnect) instead of growing the queue.
+    #[tokio::test]
+    async fn a_sequenced_frame_that_does_not_fit_kills_the_connection() {
+        let s = session(1);
+        let a = s.attach();
+        s.push_stream_data(vec![0; 16]).unwrap(); // fills the queue
+        s.push("x", json!({}), true).unwrap(); // buffered for replay, not queued
+        tokio::time::timeout(Duration::from_secs(1), a.kill.notified())
+            .await
+            .expect("the connection must be told to end");
+        // The frame is still in the replay buffer for the next connection.
+        let b = s.attach();
+        assert_eq!(b.rx.len(), 1);
+    }
 }

@@ -98,13 +98,21 @@ External identities linked to a user (OIDC).
 | org_id | uuid FK→organizations (cascade) | pk part |
 | user_id | uuid FK→users (cascade) | pk part |
 | role | text CHECK in (`owner`,`admin`,`member`) | |
-| status | text CHECK in (`active`,`suspended`) default `active` | suspended = non-member for every check |
+| status | text CHECK in (`active`,`suspended`,`pending`) default `active` | suspended = non-member for every check. (phase 4, D-175, FIX-082) `pending` = prepared by SCIM for an existing account: counts against the seat cap, can be placed in SCIM groups, confers nothing (non-member for every check) and becomes `active` only in that person's next verified OIDC sign-in |
 | idp_role | text null CHECK in (`owner`,`admin`,`member`) | (phase 4, P4-IDP-1, D-139) the role the IdP claims give; `null` = no claim-sourced role. `role` stays the effective role (the stronger of this and `base_role`) |
 | idp_source | text null | `idp:<provider>:<value>` of the claim value behind `idp_role`; `null` exactly when `idp_role` is `null` |
 | base_role | text null CHECK in (`owner`,`admin`,`member`) | the role the other sources gave before a claim raised it; restored when the claim goes; `null` when the claim created the row (the row goes with the claim) |
 
 Invariant: every org has ≥1 active `owner` (enforced by the service; the last
 owner cannot be demoted or removed).
+
+### `org_member_removals`
+(FIX-108, D-183) The removal marker: an admin removed this user from this org, so OIDC JIT provisioning does not restore the membership. Written by the admin removal, deleted in the same statement by the next `org_members` insert for the pair (invitation acceptance, admin add, role-claim sync, SCIM pending placement; FIX-140 closed the gap for role-claim sync). Only JIT consults it: an IdP role claim is the provider's explicit grant and is not blocked by it.
+| Column | Type | Notes |
+|---|---|---|
+| org_id | uuid FK→organizations (cascade) | pk part |
+| user_id | uuid FK→users (cascade) | pk part |
+| removed_at | timestamptz not null default now() | |
 
 ### `invitations`
 | Column | Type | Notes |
@@ -138,6 +146,7 @@ owner cannot be demoted or removed).
 | frozen_reason | text null | (phase 2, RFE-006) |
 | frozen_authority | text null CHECK in (`workspace_owner`,`org_admin`,`instance_admin`) | (phase 2, RFE-006) |
 | personal_owner_user_id | uuid null FK→users (set null) | (phase 4, P4-ONB-1, D-140, SEC-79) the user this personal workspace was created for; unique per (`org_id`, user) (partial index); the only way sign-in finds a personal workspace |
+| personal | boolean not null default false | (phase 4, FIX-097) sticky marker: set with `personal_owner_user_id` and kept when that id is nulled by the user's deletion; a personal workspace is never offered as a shared workspace (readers treat a row with an owner id as personal too) |
 
 ### `instance_placement`
 (phase 4, P4-ONB-1, D-140) The instance admin's new-user placement (`04 §New-user placement`). At most one row; no row = unsaved (behaves as `personal_org` under `open`).
@@ -153,6 +162,13 @@ owner cannot be demoted or removed).
 | name_template | text not null | `{variable}` text; `\|` separates the fallback chain (`04 §New-user placement`) |
 | starter_grants | jsonb not null default `[]` | `[{ kind: secret|connection, id }]`, org-scope credentials of the default org |
 | updated_by | uuid null FK→users (set null) | `updated_at` is implicit (`§Conventions`) |
+
+### `instance_setup`
+(FIX-116, REVIEW-5 PLAT-4) The persisted fresh-instance gate of `04 §New-user placement`. One row, written by the migration.
+| Column | Type | Notes |
+|---|---|---|
+| singleton | boolean pk default true CHECK (singleton) | one row |
+| placement_pending | boolean not null | `true` when the migration found no organization and no saved placement (an instance installed with this release); cleared by the first saved placement (same statement as the `instance_placement` upsert) and never set again. Existing instances start `false` |
 
 ### `user_onboarding`
 (phase 4, P4-ONB-2, D-141) Per-user onboarding progress: Welcome seen, dismissed guides, tour. Only what cannot be computed is stored; guide step completion is derived from real state (model readiness, grants, conversations) and never stored.
@@ -271,6 +287,7 @@ Device-style CLI login.
 | workspace_id | uuid null FK→workspaces (cascade) | chosen at approval |
 | api_key_id | uuid null FK→api_keys (cascade) | minted on consume (nothing reversible is stored), token returned once; spec fix S-04 |
 | hostname | text null | sanitized client hostname from `POST /v1/auth/cli` (key name `CLI on <hostname>`); spec fix S-04 |
+| requested_addr | text null | (FIX-108) coarse address of the `POST /v1/auth/cli` request (IPv4 /24, IPv6 /48), shown on the approval screen; start time = `created_at` |
 | expires_at | timestamptz | 10 min |
 
 ### `audit_log` — *no FKs*
@@ -290,7 +307,7 @@ Device-style CLI login.
 | ip | inet null | |
 | metadata | jsonb not null default `{}` | never contains secret values |
 | critical | boolean not null default false | (phase 2, RFE-008) true for `outcome = success` rows of the security-critical set (`04 §Audit`); derived from the action by the insert, never set by callers |
-| index | (org_id, created_at desc), (workspace_id, created_at desc), (org_id, critical, created_at desc) | |
+| index | (org_id, created_at desc), (workspace_id, created_at desc), (org_id, critical, created_at desc); (FIX-125) (created_at desc, id desc) and the same partial `WHERE org_id IS NULL` for the instance audit list | |
 
 Audit writes are best-effort and never fail the action (logged on failure). (phase 2, RFE-008) Except for the **security-critical set** of `04 §Audit`, whose rows are written in the same transaction as the change and make the action fail if they cannot be written.
 
@@ -333,11 +350,13 @@ Audit writes are best-effort and never fail the action (logged on failure). (pha
 | label | text not null | sanitized; auto-filled from probe metadata |
 | status | text CHECK in (`active`,`reauth_required`,`disabled`,`orphaned`) | |
 | status_reason | text null (≤ 300 chars) | open vocabulary; a plugin major upgrade sets `plugin_major_upgrade: <package> <old> -> <new>; missing: <names>` (`09 §10`, ≤300 chars) |
+| connect_method | text null | (FIX-123, D-195, D-214) id of the manifest `connect[]` method that created or last reconnected the connection; the gateway's refresh/mint paths use that method's `token` (falling back to the app's), tools restricted by `connect_methods` apply by it. Null = unknown (rows older than the column, where the package had several methods): the app's `token`, no tool hidden. Backfilled by migration `000110` from the recorded package version's single method |
+| access | text not null default `write` CHECK in (`read`,`write`) | (FIX-133, D-240, C-740) `read` = the gateway allows only the app's `read` tools through this connection and blocks write tools and untooled requests before any rule (`07 §Read-only connections`). Chosen at connect time or changed by `PATCH`; existing rows are `write`; a reconnect without a value keeps it. Migration `20261201000160` |
 | credentials_ref | text not null | SecretRef of the credential JSON (fields per manifest `credentials`) |
 | credential_keys | text[] null | (phase 3, RFE-022) **names** (never values) of the fields present in the sealed credential JSON; maintained by the API/gateway wherever credentials are sealed (connect, reconnect, refresh, mint). Null = unknown (legacy rows: the upgrade check derives the names from the manifest of the row's `app_version`, else fails closed). Used by the plugin major-upgrade check (`09 §10`). The gateway role's column-level `UPDATE` list includes it |
 | credentials_version | bigint not null default 1 | CAS authority for refresh/mint writes |
 | credentials_expires_at | timestamptz null | access-token expiry (refresh trigger) |
-| scopes | text[] not null default `{}` | granted scopes |
+| scopes | text[] not null default `{}` | granted scopes; (FIX-136, D-241) for a connection made with a `fields` method that declares scopes: the scopes the person declared (or the read probes found) for the pasted token, editable; the gateway refuses a tool needing others only when this is non-empty |
 | requested_scopes | text[] not null default `{}` | scopes requested at authorize time; `missing_scopes = requested_scopes − scopes` (I-33) |
 | metadata | jsonb not null default `{}` | non-secret, plugin-declared keys only |
 | tenant_host | text null | for tenant-bound hosts |
@@ -374,7 +393,9 @@ Audit writes are best-effort and never fail the action (logged on failure). (pha
 | label | text not null | 1–120 characters |
 | status | text CHECK in (`active`,`disabled`) default `active` | `disabled` stops injection without deleting |
 | created_by | uuid null FK→users (set null) | |
-| unique | (org_id, app_id, host) nulls not distinct | a host is additionally unique across scopes that can see each other (instance-wide vs any org); enforced by the API in the creating transaction |
+| base_path | text null | (phase 5, FIX-145, D-231, C-731) the path the app is served under on `host` (`/jira` for `https://its.cern.ch/jira`); null = served at the host root. Stored normalized (trailing `/` dropped; `""` and `/` stored as null; case kept). Set at registration and never updated (immutable like `host`). Every `{instance}` URL of the registration resolves to `https://<host><base_path>`, and the gateway injects the registration's connections only under it (`09 §3.4 Instance-bound hosts`, SEC-59). CHECK `app_instances_base_path_ck` mirrors the API validation (`instance_base_path_invalid`): starts with `/`, 1–8 segments of 1–64 characters from `[A-Za-z0-9._~-]`, no `.` or `..` segment, no trailing `/`, ≤ 128 characters |
+| builtin | boolean not null default false | (phase 5, FIX-134, D-243, C-742) `true` for a **preset instance**: seeded from the manifest's `instances.presets` (`09 §3.4`) in the activation transaction of the package version that declares it (`org_id` null, `label` and `host` from the manifest, `created_by` null). Read-only to everyone: no PATCH, DELETE or promote (`409 instance_builtin`); a version that drops a preset deletes its row when nothing uses it, else disables it. CHECK `app_instances_builtin_scope_ck`: builtin ⇒ `org_id` null. Migration `20261201000161` |
+| unique | (org_id, app_id, host, base_path) nulls not distinct | one app may be registered twice on one host in one scope under disjoint base paths. A host with overlapping base paths (either null, equal, or one a segment prefix of the other) is additionally refused across scopes that can see each other (instance-wide vs any org); enforced by the API in the creating transaction under the per-host lock (`instance_host_conflict`) — a unique key cannot express the prefix rule |
 | index | (host); (org_id) | |
 
 ---
@@ -393,6 +414,32 @@ Audit writes are best-effort and never fail the action (logged on failure). (pha
 
 The project's built-in publisher key (`aurora`) is compiled in and never stored.
 
+### `addon_sources` (phase 5, P5-ASRC, D-250; third-party app-package repositories)
+| Column | Type | Notes |
+|---|---|---|
+| id | uuid pk | |
+| name | text not null | manifest `repo.name` |
+| url | text unique not null | the resolved manifest URL (https, normalized at registration; never the pasted repo URL) |
+| homepage | text null | manifest `repo.homepage` |
+| contact | text null | manifest `repo.contact` (https or mailto) |
+| publisher | text not null | the package publisher all addons of the repo use |
+| signing_key | text not null | the manifest-published ed25519 key, base64 — the trust anchor of the source |
+| key_fingerprint | text not null | sha256 of the key, `sha256:<12 hex>`; shown prominently at registration and re-confirm |
+| new_key_fingerprint | text null | the new fingerprint while `status = signing_key_changed` |
+| manifest_digest | text not null | sha256 of the last accepted manifest bytes; polls compare before parsing |
+| manifest | jsonb not null | the last accepted manifest as parsed (repo info, addons, versions): the dashboard reads it, never the live source; "removed upstream" is derived from it |
+| update_interval | text not null default `1d` CHECK in (`6h`,`12h`,`1d`,`1w`,`2w`,`1mo`,`never`) | the instance setting `plugins.addon_sources.update_interval` seeds it; `never` = manual checks only |
+| status | text not null default `ok` CHECK in (`ok`,`check_failed`,`signing_key_changed`) | `check_failed` keeps serving the last known state |
+| check_failed_at, check_failed_reason | timestamptz null, text null (≤ 200) | sanitized reason; never a URL query or body text |
+| last_checked_at | timestamptz null | |
+| next_check_at | timestamptz not null default now() | due work for the poll job (interval + jitter + failure backoff) |
+| check_lease_until, lease_owner | timestamptz null, uuid null | the per-source lease of the poll job (`ADDON_LEASE`); a manual check takes the same lease |
+| created_by | uuid FK→users (set null) | instance admin |
+| index | (next_check_at) where status <> `signing_key_changed` | poll job claim set |
+
+Registration (TOFU) creates the row and a `trusted_keys` row for `signing_key` in one audited
+transaction; key re-confirm updates both (`09 §10`, SEC-86).
+
 ### `plugin_packages`
 | Column | Type | Notes |
 |---|---|---|
@@ -405,7 +452,8 @@ The project's built-in publisher key (`aurora`) is compiled in and never stored.
 | signer_key_id | text not null | `builtin` or `trusted_keys.id` |
 | manifest | jsonb not null | parsed manifest |
 | permissions | jsonb not null | normalized permissions block |
-| source | text CHECK in (`builtin`,`directory`,`upload`) | |
+| source | text CHECK in (`builtin`,`directory`,`upload`,`addon`) | (phase 5, P5-ASRC) gains `addon`: an app package ingested from an addon source (D-250) |
+| source_id | uuid null FK→addon_sources (set null) | (phase 5, P5-ASRC) the addon source row for `source = addon`; null otherwise |
 | status | text CHECK in (`pending_approval`,`active`,`superseded`,`rejected`,`disabled`,`invalid`) | |
 | status_reason | text null | open vocabulary; (phase 3, RFE-022) gains the value `breaks_connections`: a major upgrade held in `pending_approval` because it would set connections to `reauth_required` (`09 §10`); no schema change |
 | violations | jsonb not null default '[]' | validation violations for status invalid; spec fix S-05 |
@@ -537,7 +585,7 @@ Rules compiled from grants and app blocklists; always live (not drafted).
 | path | text not null | redacted (query values masked) |
 | app_id | text null | |
 | tool_id | text null | |
-| connection_id | uuid null | |
+| connection_id | uuid null | the app connection whose credential the held request would use (set by the gateway; null for a generic secret); no FK, history survives. Revoking the grant or disabling/deleting the connection abandons the pending row (`07 §Lifecycle`) |
 | rule_logical_id | uuid null | |
 | rule_name | text null | |
 | summary | jsonb not null | `ApprovalSummary` (`09 §Approval summaries`) |
@@ -597,8 +645,10 @@ Rules compiled from grants and app blocklists; always live (not drafted).
 | context_label | text null | (phase 2, RFE-025) label of the BYO context credential (a labelled `aurora run`), ≤128, sanitized (`08 §11.9`) |
 | speaker_user_id | uuid null | (phase 2, RFE-005) the request identity's speaker (no FK, ledger table); lets operators see which person's turn caused a request |
 
-Partitions are created ahead by the API (next 2 months) and dropped after
-`REQUEST_LOG_RETENTION`.
+Partitions are created ahead by the API (next 2 months); rows are deleted when older than
+`retention.request_log_days` (default 30), checked daily: whole partitions past the period are
+dropped, aged rows of the oldest kept partition and of the default partition are deleted in
+bounded batches (FIX-111).
 
 ### `rate_limit_windows` (phase 4, P4-CNT, D-119; shared fixed-window counters)
 `UNLOGGED` table (counters are not a system of record: a Postgres crash or a failover to a standby that lacks unlogged data resets windows, which at worst grants one extra window of quota and is listed in `17` residual risks). Used only when `ratelimit.counters.backend = postgres` (`15 §Shared rate-limit counters`); the migration creates it whatever the backend is (empty, no cost).
@@ -685,7 +735,7 @@ Pruning: the API's `counters_prune` due-work arm (every 60 s, any replica, `FOR 
 | name | text not null | display name and the identity the agent states |
 | kind | text CHECK in (`byo`,`hosted`) | immutable |
 | is_default | bool not null default false | the workspace's Daneel; partial unique (workspace_id) WHERE is_default |
-| harness | text null | hosted: adapter id (`claude-code`) |
+| harness | text null | hosted: adapter id (`claude-code`; phase 4, P4-HAR: also `codex`, an open vocabulary validated against `hosted.enabled_harnesses` on write) |
 | model_provider | text null | stamped with the provider of `model_id` (`08 §Model selection`) |
 | model_endpoint_id | text null | LLM endpoint id from configuration |
 | model_id | text null | provider's model id; null ⇒ endpoint/provider default |
@@ -742,7 +792,7 @@ Invariant: at most one non-revoked `agent` credential per agent.
 | title | text null | |
 | origin_conversation_id | uuid null FK→conversations (set null) | where reports go (schedule/webhook/peer) |
 | harness_session_ref | text null | opaque, adapter-owned |
-| harness_session_epoch | bigint not null default 0 | bumped to force a fresh session |
+| harness_session_epoch | bigint not null default 0 | bumped to force a fresh session (phase 4, P4-HAR: on every conversation of an agent when its harness changes; `harness_session_ref` is also cleared and a `session_purges` row is queued per old session, `12`) |
 | last_seq | bigint not null default 0 | incremented atomically per durable event |
 | app_turn_streak | int not null default 0 | bot-authored consecutive turns |
 | last_activity_at | timestamptz not null | churn column |
@@ -764,6 +814,7 @@ Invariant: at most one non-revoked `agent` credential per agent.
 | speaker_label | text not null | sanitized, denormalized |
 | text | text not null | ≤ `TURN_TEXT_MAX` |
 | source_event_id | text null | partial unique (conversation_id, source_event_id); (phase 3, RFE-018) value convention, no schema change: turns and follow-ups created by `POST …/messages` with an `Idempotency-Key` store `api:<user_id>:<key>` (≤ 170 chars); connector event ids starting with `api:` are rejected (`13`); promoted turns keep null (`10 §Turns`) |
+| reply_to_seq | bigint null | (phase 5, P5-CHAT-1, D-228, C-725) the `transcript_events.seq` of the earlier `text`, `turn.queued` or `attachment` event of the same conversation this message quotes; no FK (events are not keyed rows a turn may point at), validated at insert under the conversation lock; copied onto the turn a follow-up is promoted into. Partial index `turns_reply_to_idx (conversation_id, reply_to_seq) WHERE reply_to_seq IS NOT NULL` finds the quoting turns for the redaction cascade. Migration `20261201000171_turn_reply_to.sql` |
 | abort_requested_at | timestamptz null | |
 | send_now_requested_at | timestamptz null | |
 | error_code | text null | open vocabulary |
@@ -779,6 +830,9 @@ Invariant: at most one non-revoked `agent` credential per agent.
 | boot_id | uuid null | boot that ran it |
 | last_event_n | int not null default 0 | highest applied supervisor event number (`16 §W5` idempotency) |
 | partial unique | (conversation_id) WHERE role=`turn` AND status IN (`queued`,`dispatched`,`running`) | one active turn per conversation |
+
+(phase 5, FIX-146, D-232) `turns.trace_context` is specified under §Planned changes; it moves into
+this table with its migration `20261201000150_turn_trace_context.sql`.
 
 ### `turn_answer_buffers`
 | Column | Type | Notes |
@@ -796,6 +850,33 @@ Invariant: at most one non-revoked `agent` credential per agent.
 | payload | jsonb not null | bounded (≤64 KiB serialized) |
 | redacted_at | timestamptz null | set when the payload was replaced by the redaction marker `{ "redacted": true, "redacted_at", "redacted_by", "reason"? }` (≤64 KiB bound unchanged); phase 2, RFE-010 |
 | redacted_by_user_id | uuid null FK→users (set null) | phase 2, RFE-010 |
+
+### `transcript_search`
+(phase 5, P5-CHAT-4, D-229) One row per searchable durable event, written in the transaction that appends it (`transcript::append_durable_event` is the only insert path). Migration `20261201000172_transcript_search.sql`.
+| Column | Type | Notes |
+|---|---|---|
+| conversation_id, seq | uuid, bigint | pk; FK→`transcript_events (conversation_id, seq)` on delete cascade (conversation delete and retention purge cascade) |
+| workspace_id, agent_id | uuid FK (cascade) | copied at insert |
+| type | text CHECK in (`turn.queued`,`text`,`attachment`) | |
+| author_kind | text CHECK in (`agent`,`person`,`other`) | `person`/`other` from the turn's `speaker_kind` |
+| author_label | text not null default '' | the turn's `speaker_label` (agent rows use the agent's name at read) |
+| speaker_user_id | uuid null | the turn's speaker (`author=me`) |
+| has_file | bool | an `attachment`, or a `turn.queued` with attachments |
+| at | timestamptz | the event's `created_at` |
+| body | text, ≤ 32 KiB | `turn.queued` text + attachment file names; agent `text` as plain text (D-227 Markdown reduced: code kept, link text and URLs kept); `attachment` file name + caption. Control characters replaced; the rest of a longer message is not searchable |
+| doc | tsvector | `setweight(to_tsvector(<workspace memory_language>, body), 'A') ‖ setweight(to_tsvector('simple', body), 'B')`; a later change of the workspace language does not re-index (exact words keep working) |
+
+Indexes: GIN `doc`; btree `(workspace_id, at desc)` and `(agent_id, at desc)`. Redaction deletes the row in its transaction. The filename row of a purged attachment stays (the name was said in the conversation). Not indexed: tool events, approvals, notices, errors, thinking, deltas.
+
+### `transcript_search_backfill`
+One row: the resumable backfill's progress (`10 §Search`). `complete` is the route's `index_complete`.
+| Column | Type | Notes |
+|---|---|---|
+| singleton | bool pk default true CHECK (singleton) | one row only |
+| cursor_conversation | uuid null | last `(conversation_id, seq)` indexed, in key order |
+| cursor_seq | bigint null | |
+| complete | bool not null default false | set by the job when a batch comes back short |
+| indexed | bigint not null default 0 | rows the backfill wrote (log counter) |
 
 ### `session_purges`
 Pending deletions of harness session files after a conversation delete or a `reset_session` redaction (phase 2, RFE-010; `12 §Session purge`).
@@ -838,6 +919,14 @@ Transactional counter of an org's attachment bytes (phase 2, RFE-015; `10 §Atta
 |---|---|---|
 | org_id | uuid pk FK→organizations (cascade) | |
 | attachment_bytes | bigint not null default 0 | sum of `size_bytes` of the org's rows that hold bytes (`updated_at` is implicit, `§Conventions`) |
+
+### `storage_snapshots`
+(FIX-126) The cached numbers behind the Storage pages, shared by every API replica. Rewritten by the daily attachment sweep, by a read that finds the snapshot missing or older than `STORAGE_SNAPSHOT_MAX_AGE`, and by the Refresh routes; one writer at a time (advisory lock). The live org counter (`org_storage_usage`) is never cached: quota notices stay exact.
+| Column | Type | Notes |
+|---|---|---|
+| scope | text pk | `instance`, or an organization id (text) |
+| payload | jsonb not null | the figures of the page (instance breakdown, or the org's file counts and per-workspace breakdown) |
+| computed_at | timestamptz not null default now() | when the figures were computed; returned by the routes |
 
 ### `blobs`
 Phase 0 blob backend (`postgres`).
@@ -936,9 +1025,18 @@ other workspace); `skill_files` is unchanged.
 | last_error | text null | sanitized, ≤ 200 chars, never a token or a URL with credentials |
 | refresh_lease_until, lease_owner | timestamptz null, uuid null | the per-library lease of the refresh job (`LIBRARY_LEASE`) |
 | check_requested_at | timestamptz null | the last "Check now" (at most once per `LIBRARY_CHECK_NOW_INTERVAL`, 429 `library_check_too_soon`) (D-154) |
+| head_epoch | integer not null default 0 | bumped whenever an add clears `last_head_sha`; a refresh writes its head only if the epoch is the one it read (compare-and-set; FIX-096) |
 | created_by_user_id | uuid null FK→users (set null) | |
 | unique | (org_id, label) (`skill_libraries_label_uq`) | |
 | index | (org_id); (next_refresh_at) where status in (active, error, over_budget) | |
+
+### `skill_library_heads` (FIX-096, D-178 Q-R5-3, D-210; heads browse and add accept)
+| Column | Type | Notes |
+|---|---|---|
+| library_id | uuid FK→skill_libraries (cascade) | pk part |
+| commit_sha | text | pk part; a commit the library's ref pointed at (recorded by refresh, browse, create, patch) |
+| seen_at | timestamptz not null default now() | the newest 20 per library are kept (`HEADS_KEPT`) |
+| index | (library_id, seen_at desc) | |
 
 ### `skill_library_updates` (phase 4, P4-GSL, D-148; proposed updates)
 | Column | Type | Notes |
@@ -1066,6 +1164,8 @@ skills and, with them, their updates; deleting an org deletes its libraries.
 | name | text unique not null | |
 | token_hash | bytea unique | `aur_` |
 | installation_fingerprint | text not null | sha256(token) hex prefix; labels infra objects |
+| previous_token_hash | bytea null unique | (FIX-121, D-211) the token a rotation replaced, accepted until `previous_token_expires_at`; set together with it, one at most |
+| previous_token_expires_at | timestamptz null | end of the rotation grace; past it the previous token is refused (and the pair may be cleared) |
 | backend | text null | declared at registration |
 | capabilities | jsonb null | `RunnerCapabilities` (`16`) |
 | last_registered_at | timestamptz null | |
@@ -1096,6 +1196,7 @@ skills and, with them, their updates; deleting an org deletes its libraries.
 | home_ref | text null | |
 | bootstrap_token_hash | bytea null | `aup_`; single use |
 | bootstrap_used_at | timestamptz null | |
+| channel_held_at | timestamptz null | the first `channel/hold` of the current boot; NULL until the supervisor's channel was admitted, reset by every new boot. A bootstrap token may be re-presented (idempotent claim) while it is NULL, then it is spent (FIX-094, SEC-25) |
 | stop_reason | text null CHECK in (`idle`,`cap`,`evict`,`restart`,`delete`,`failure`,`frozen`) | `frozen` (phase 2, RFE-006): agent effectively frozen (`11`) |
 | stop_requested_at | timestamptz null | |
 | restart_requested_at | timestamptz null | |
@@ -1188,12 +1289,19 @@ the agent's own generation; a share change bumps `agents.home_sync_generation`.
 | version | text not null | |
 | types | jsonb not null | `[{type_id, manifest, manifest_digest}]` with verified signatures only |
 | last_seen_at | timestamptz not null | heartbeat (`register`); churn column; rows older than 24 h are pruned |
+| token_id | uuid null fk → connector_host_tokens (set null) | (FIX-120) the bound token that registered this instance; null for an instance registered with the shared bootstrap token. Another token may not register, poll or report as it |
 
 ### `connector_host_tokens`
 | Column | Type | Notes |
 |---|---|---|
 | id | uuid pk | |
-| token_hash | bytea unique not null | `auh_`, from `AURORA_BOOTSTRAP_CONNECTOR_HOST_TOKEN` |
+| token_hash | bytea unique not null | `auh_`, from `AURORA_BOOTSTRAP_CONNECTOR_HOST_TOKEN` (shared, unbound) or issued per host |
+| name | text null CHECK 1–80 chars | (FIX-120) the issued token's name; unique among live tokens (`connector_host_tokens_name_idx`); null for the bootstrap token |
+| prefix | text null | display prefix of an issued token (never enough to use it) |
+| type_ids | text[] null CHECK 1–64 entries | (FIX-120) the connector types the token is bound to; **null = the shared bootstrap token** (unbound; refused once a live bound token exists) |
+| created_by | uuid null fk → users (set null) | the instance admin who issued it |
+| last_used_at | timestamptz null | churn column; written at most once a minute per token |
+| revoked_at | timestamptz null | set by revoke; a revoked token is 401 on its next call |
 
 ### `connector_host_status`
 | Column | Type | Notes |
@@ -1290,6 +1398,8 @@ presence-level ownership).
 | expires_at | timestamptz | 30 min |
 | used_at | timestamptz null; user_id uuid null | |
 | platform_email_hint | citext null | (phase 1, RFE-001) email the platform asserted for the person; only pre-fills the sign-in (`login_hint`) and the confirm page; never authorizes |
+| platform_display_name | text null | (FIX-112) the person's display name on the platform when the request was made; shown on the confirm page, never authorizes |
+| index | | `(integration_id, platform_user_ref, created_at desc)`: the "at most one prompt per 10 minutes per person" lookup |
 
 ### `thread_links`
 | Column | Type | Notes |
@@ -1379,6 +1489,7 @@ Posted interactive messages, so they can be updated/settled.
 | post_op_id | uuid not null | |
 | space_ref, thread_ref | text not null | |
 | message_ref | text null | filled from the op result |
+| addressee_ref | text null | (FIX-112) the platform user a card was DMed to; survives `space_ref` being replaced by the learned DM channel, and is what the DM-menu click is checked against |
 | state | text CHECK in (`posting`,`posted`,`settled`,`failed`) | |
 
 ### `action_token_uses`
@@ -1413,7 +1524,7 @@ The gateway then connects as that role and nothing else (Helm: `database.gateway
 The grants are:
 `SELECT` on identity/tenancy tables it needs (`organizations`, `workspaces`,
 `workspace_access`, `org_members`, `users` (id, email, disabled_at only via a
-view `gateway_users`), `api_keys`), `agents`, `gateway_credentials`, `secrets`,
+view `gateway_users`)), `agents`, `gateway_credentials`, `secrets`,
 `app_connections`, `app_oauth_clients`, `app_instances`, (phase 4, P4-GRP-1) `groups`,
 `group_members`, `group_workspace_access`, `grants`, `derived_rules`,
 `policy_generations`, `policy_rules`, `registry_snapshots`, `plugin_packages`
@@ -1426,7 +1537,7 @@ the gateway reads the hold's `status`; FIX-016); `INSERT` on
 credentials_expires_at, status, status_reason, reauth_required_at,
 last_used_at, updated_at, credential_keys)` on `app_connections` (`updated_at` is set by credential
 rotation and `reauth_required`, FIX-016; `credential_keys` by every reseal, RFE-022); `UPDATE (last_used_at, origin)` on `secrets`; `UPDATE (last_used_at)` on
-`gateway_credentials`; (phase 4, P4-CNT) `SELECT, INSERT, UPDATE` on `rate_limit_windows` (never `DELETE`, nothing on `rate_limit_buckets`);
+`gateway_credentials`; (phase 4, P4-CNT) `SELECT, INSERT, UPDATE` on `rate_limit_windows` (never `DELETE`, nothing on `rate_limit_buckets`); nothing on `api_keys` (no gateway query reads it; FIX-106 — `migrate` revokes the grant earlier releases made);
 `EXECUTE` on `pg_advisory_lock` family; `LISTEN` is implicit.
 
 ---
@@ -1441,29 +1552,24 @@ headings and a different header so that the extractor ignores it. A migration
 for a planned change lands with its phase; the corresponding rows move into the
 tables above in the same change (and this section shrinks).
 
-#### `attachments` (S3 blob backend)
+#### `attachments` (S3 blob backend; phase 5, D-138)
 | Planned column | Type | Notes | Phase |
 |---|---|---|---|
-| blob_backend | (existing column) | gains the value **`s3`** next to `postgres` (the Notes of §6 say `postgres (phase 0)`); no schema change. A row's bytes live in the backend it names, so both can coexist and `aurora-api blobs migrate` moves rows one by one (`10 §Attachments`) | 4 (P4-S3) |
-| blob_key | (existing column) | for `s3` rows: `attachments/<org_id>/<attachment_id>` (the object key is `<blobs.s3.prefix>` + this); for `postgres` rows unchanged. Cleared on purge, as today | 4 (P4-S3) |
-| failure_reason | (existing open vocabulary) | gains `blob_store_unavailable` (a connector file could not be stored) | 4 (P4-S3) |
+| blob_backend | (existing column) | gains the value **`s3`** next to `postgres` (the Notes of §6 say `postgres (phase 0)`); no schema change. A row's bytes live in the backend it names, so both can coexist and `aurora-api blobs migrate` moves rows one by one (`10 §Attachments`) | 5 (P4-S3, D-138) |
+| blob_key | (existing column) | for `s3` rows: `attachments/<org_id>/<attachment_id>` (the object key is `<blobs.s3.prefix>` + this); for `postgres` rows unchanged. Cleared on purge, as today | 5 (P4-S3, D-138) |
+| failure_reason | (existing open vocabulary) | gains `blob_store_unavailable` (a connector file could not be stored) | 5 (P4-S3, D-138) |
 
 `blobs` (the Postgres backend table), `agents.avatar_blob_key` (avatars) and `plugin_blobs` are unchanged and stay in Postgres. No new table: S3 state is the bucket. The `attachments` index on `blob_key` serves the S3 orphan sweep (rows are looked up by `(blob_backend, blob_key)`). `GET /v1/admin/storage` reports bytes and counts **per backend** from `attachments` (never by listing the bucket).
 
-#### `secrets` (LLM providers of phase 4)
+#### `secrets` (additional LLM providers; phase 5, D-138)
 | Planned column | Type | Notes | Phase |
 |---|---|---|---|
-| llm_provider | (existing open vocabulary) | gains `openai`, `azure_openai`, `bedrock`, `vertex`, `openai_compatible` (`08 §Phase 4 providers`); no schema change | 4 (P4-LLM) |
-| llm_auth_mode | (existing open vocabulary) | gains `aws_sigv4` (sealed JSON `{ access_key_id, secret_access_key, session_token? }`) and `gcp_service_account` (sealed service-account key JSON); `api_key` is unchanged | 4 (P4-LLM) |
-| injection | (existing jsonb `InjectionRecipe`) | gains the LLM-only kinds `header`, `aws_sigv4 { region, service }`, `gcp_service_account_token { scope }`; fixed by the provider, read-only | 4 (P4-LLM) |
-| origin | (existing jsonb) | for `bedrock` `organization_id` is the AWS account id; for `vertex` `workspace_id` is the GCP project id and `user_id` the service-account e-mail; for `openai` the organization and project of the key (`08 §Phase 4 providers`) | 4 (P4-LLM) |
+| llm_provider | (existing open vocabulary) | gains `openai`, `azure_openai`, `bedrock`, `vertex`, `openai_compatible` (`08 §Phase 4 providers`); no schema change | 5 (P4-LLM, D-138) |
+| llm_auth_mode | (existing open vocabulary) | gains `aws_sigv4` (sealed JSON `{ access_key_id, secret_access_key, session_token? }`) and `gcp_service_account` (sealed service-account key JSON); `api_key` is unchanged; (P4-LLM spec batch, D-261) also `aws_assume_role` (sealed JSON `{ access_key_id, secret_access_key, role_arn, session_duration_secs? }`) and `azure_entra` (sealed JSON `{ tenant_id, client_id, client_secret }`) | 5 (P4-LLM, D-138) |
+| injection | (existing jsonb `InjectionRecipe`) | gains the LLM-only kinds `header`, `aws_sigv4 { region, service }`, `gcp_service_account_token { scope }`; (D-261) `aws_assume_role { region, service }`, `entra_token { scope }`; fixed by the provider and auth mode, read-only | 5 (P4-LLM, D-138) |
+| origin | (existing jsonb) | for `bedrock` `organization_id` is the AWS account id (with `aws_assume_role` the **role's** account, `user_id` the role ARN); for `vertex` `workspace_id` is the GCP project id and `user_id` the service-account e-mail; for `openai` the organization and project of the key; (D-261) for `azure_openai` with `azure_entra` `organization_id` is the Entra tenant id and `user_id` the application (client) id (`08 §Phase 4 providers`) | 5 (P4-LLM, D-138) |
 
-#### `grants`, `plugin_packages` (app-level grant restrictions)
-| Planned column | Type | Notes | Phase |
-|---|---|---|---|
-| grants.mode | (existing) | no schema change: a `full` row for a `custom_only` app cannot be written (`07`); activation of a package that introduces `custom_only` rewrites existing `full` rows to `custom` with `allow_tools` = the whole catalogue (`09 §10`) | 4 (P4-GRANTS) |
-| plugin_packages.status_reason | (existing open vocabulary) | gains `converts_grants`: an upgrade held in `pending_approval` because it would convert full grants | 4 (P4-GRANTS) |
-| registry snapshot `apps[].grants` | `{ custom_only, block_untooled }` booleans, in the snapshot JSON only | no table; copied from the manifest (`09 §9`). Tool entries may also carry `params` (Q8, `09 §3.4`) | 4 (P4-GRANTS) |
+(P4-LLM spec batch, D-260..D-262) **No migration**: the provider, auth-mode and recipe vocabularies are open text/jsonb, minted credentials live only in gateway memory, and endpoints are instance settings (`instance_settings`, SET-1). Migration numbers `20261201000210..219` stay reserved for P4-LLM lanes and are unused unless a lane finds a need (it then adds the row here first). The gateway reads `organizations.external_id` for `aws_assume_role` under its existing `SELECT` on `organizations`.
 
 (P4-GRP-1 landed `groups`, `group_members` and `group_workspace_access`: see §1. P4-GRP-2 landed `groups.external_id`, `scim_tokens` and `scim_users`: see §1.)
 
@@ -1471,62 +1577,244 @@ tables above in the same change (and this section shrinks).
 
 `effective_access(user, workspace)` is one statement: the user's `org_members` row (active), the maximum of `org_members.role` and `groups.org_role` over the user's groups, the direct `workspace_access` row, and the maximum role over `group_workspace_access ⋈ group_members` for the workspace, returning the strongest role and the list of sources (`04 §Groups`). The gateway database role gains `SELECT` on `groups`, `group_members` and `group_workspace_access` (the speaker's group set is resolved at credential resolution, `06 §Credential authentication`); it never writes them. The `workspace_access` table, its CHECK and the `can_*` meaning are unchanged: a deployment without groups reads the same rows as before.
 
-#### `approvals` (park and resume; phase 4)
+#### `turns` (request tracing; phase 5, FIX-146, D-232)
 | Planned column | Type | Notes | Phase |
 |---|---|---|---|
-| parked | bool not null default false | true for a parked approval: nobody holds the request (`07 §Park and resume`); excluded from the stale-holder sweep and from the stall exemption | 4 (RFE-011b) |
-| fp_salt | bytea null | 16 random bytes; set iff `parked` | 4 (RFE-011b) |
-| fingerprint | bytea null | `SHA-256(fp_salt ‖ canonical request)` (32 bytes), canonical form in `07`; never the request itself | 4 (RFE-011b) |
-| resume_state | text null CHECK in (`ready`,`consumed`,`expired`,`revoked`) | null while `pending`/`denied`/`expired`; `ready` from approval until the window ends; consumed by exactly one request (compare-and-set) | 4 (RFE-011b) |
-| resume_expires_at | timestamptz null | `decided_at + approvals.park.resume_window_secs` | 4 (RFE-011b) |
-| consumed_at | timestamptz null | | 4 (RFE-011b) |
-| resume_turn_id | uuid null | the system follow-up/turn queued at approval (tracing only; no FK, history survives) | 4 (RFE-011b) |
-| indexes | `(agent_id, conversation_id) WHERE resume_state = 'ready'`; `(resume_expires_at) WHERE resume_state = 'ready'`; `(agent_id, conversation_id) WHERE parked AND status = 'pending'` | grant lookup, resume-window expiry, pending-per-agent limits and de-duplication | 4 (RFE-011b) |
+| trace_context | text null CHECK (trace_context ~ `'^00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$'`) | the W3C `traceparent` of the span that inserted the turn (`repo/turns.rs` insert, from the current span's context; NULL when there is no valid one). Written only by the API at insert and never updated; never taken from a sandbox or supervisor (SEC-88). Read by the runner plane (work items carry it, `16 §W5`, C-732 (3)), the API's supervisor-report and channel-event handling for the turn, and the gateway with the identity of the turn's context credential, so their spans are children of the turn's context. Child turns (`parent_turn_id`, peer tasks) are inserted under the parent turn's context. Migration `20261201000150_turn_trace_context.sql` | 5 (FIX-146, D-232) |
 
-The gateway database role's column-level `SELECT (id, status, gateway_instance_id)` on `approvals` gains `agent_id, conversation_id, parked, fp_salt, fingerprint, resume_state, resume_expires_at, method, host, path, rule_logical_id` and `UPDATE` stays as granted (it consumes with `resume_state`, `consumed_at`); it never writes `fingerprint`/`fp_salt` of a row it did not insert. Pending approval stays a closed `status` vocabulary: the resume lifecycle is `resume_state`, not a new status.
+The gateway reads the turn through `gateway_credentials.turn_id` and its database role has no grant
+on `turns` today (§Gateway database role grants), and gets none: the value is **copied onto the
+context credential at mint** (`gateway_credentials.trace_context`, same CHECK, same migration block
+`000150..159`), which the gateway already reads (coordinator 2026-11-14, FIX-146 step 0 review).
 
-#### `approval_push_claims` (new table)
+#### `approvals` (park and resume; phase 5, D-138)
 | Planned column | Type | Notes | Phase |
 |---|---|---|---|
-| approval_id | uuid | gateway or action approval id; pk part (no FK: history survives) | 4 (RFE-011b) |
-| user_id | uuid FK→users (cascade) | pk part | 4 (RFE-011b) |
-| stage | text CHECK in (`initial`,`reminder`) | pk part | 4 (RFE-011b) |
-| kind | text CHECK in (`gateway`,`action`) | | 4 (RFE-011b) |
-| delivery | text CHECK in (`push`,`batch`,`digest`) | its own push; folded into the push of its `batch_id`; folded into the hourly digest (`PUSH_PER_USER_HOUR`) | 4 (RFE-011b) |
-| sent_at | timestamptz not null default now() | insert-on-conflict claim, idempotent across replicas; pruned daily with the other notification claims; index `(user_id, sent_at)` | 4 (RFE-011b) |
+| parked | bool not null default false | true for a parked approval: nobody holds the request (`07 §Park and resume`); excluded from the stale-holder sweep and from the stall exemption | 5 (RFE-011b, D-138) |
+| fp_salt | bytea null | 16 random bytes; set iff `parked` | 5 (RFE-011b, D-138) |
+| fingerprint | bytea null | `SHA-256(fp_salt ‖ canonical request)` (32 bytes), canonical form in `07`; never the request itself | 5 (RFE-011b, D-138) |
+| resume_state | text null CHECK in (`ready`,`consumed`,`expired`,`revoked`) | null while `pending`/`denied`/`expired`; `ready` from approval until the window ends; consumed by exactly one request (compare-and-set) | 5 (RFE-011b, D-138) |
+| resume_expires_at | timestamptz null | `decided_at + approvals.park.resume_window_secs` | 5 (RFE-011b, D-138) |
+| consumed_at | timestamptz null | | 5 (RFE-011b, D-138) |
+| resume_turn_id | uuid null | the system follow-up/turn queued at approval (tracing only; no FK, history survives) | 5 (RFE-011b, D-138) |
+| indexes | `(agent_id, conversation_id) WHERE resume_state = 'ready'`; `(resume_expires_at) WHERE resume_state = 'ready'`; `(agent_id, conversation_id) WHERE parked AND status = 'pending'` | grant lookup, resume-window expiry, pending-per-agent limits and de-duplication | 5 (RFE-011b, D-138) |
 
-#### `webpush_vapid_keys` (new table; instance-wide)
+The gateway database role's column-level `SELECT (id, status, gateway_instance_id)` on `approvals` gains `agent_id, conversation_id, parked, fp_salt, fingerprint, resume_state, resume_expires_at, method, host, path, rule_logical_id` and `UPDATE` stays as granted (it consumes with `resume_state`, `consumed_at`); it never writes `fingerprint`/`fp_salt` of a row it did not insert. Pending approval stays a closed `status` vocabulary: the resume lifecycle is `resume_state`, not a new status. (P4-011B spec batch, D-265) Migration `20261201000220_approval_park.sql` (block `000220..229`, P4-011B-1) adds these columns, the CHECK `(parked = (fp_salt IS NOT NULL)) AND (parked = (fingerprint IS NOT NULL))`, the three partial indexes and the gateway role's column grants (`SELECT` on the listed columns, `UPDATE (resume_state, consumed_at)` added to its existing `UPDATE` columns); `resume_state` moves to `revoked` by the API only (C-826).
+
+#### `request_log` (approval references; phase 5, P4-011B, D-265(a))
 | Planned column | Type | Notes | Phase |
 |---|---|---|---|
-| id | uuid pk | the `vapid_key_id` of subscriptions | 4 (RFE-011b) |
-| public_key | text not null | base64url, 65-byte uncompressed P-256 point; the application server key | 4 (RFE-011b) |
-| private_ref | text not null | SecretRef, purpose `webpush.vapid` (`08 §1`); owner id = this id, org = nil UUID; never returned | 4 (RFE-011b) |
-| status | text CHECK in (`active`,`retired`) | exactly one `active` (partial unique index) | 4 (RFE-011b) |
-| created_at / retired_at | timestamptz | `retired_at` set at rotation; destroyed after `PUSH_VAPID_RETIRE` or when unreferenced | 4 (RFE-011b) |
+| approval_id | uuid null | the approval a request was held, parked or resumed under (no FK, ledger table); set by every hold, park and grant consumption (C-827) | 5 (P4-011B) |
+| resumed | bool not null default false | true when a parked approval's grant was consumed by this request | 5 (P4-011B) |
+| decision | (existing CHECK) | gains `approval_parked` (a parked refusal and its identical repeats) | 5 (P4-011B) |
+
+Migration `20261201000221_request_log_approval.sql` (P4-011B-1) adds both columns to the partitioned parent (inherited by every partition) and replaces the decision CHECK with the widened one. The gateway role's existing `INSERT` on `request_log` covers the new columns.
+
+#### `approval_notifications` (reminder stage; phase 5, P4-011B, D-265(b))
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| stage | text not null default `initial` CHECK in (`initial`,`reminder`) | pk part: the primary key becomes `(approval_id, user_id, stage)`; the parked reminder e-mail (`07 §Park and resume`) is its own idempotent claim | 5 (P4-011B) |
+
+Migration `20261201000222_approval_notification_stage.sql` (P4-011B-2): add the column (existing rows become `initial`), drop and re-create the primary key.
+
+#### `approval_push_claims` (new table; phase 5, D-138)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| approval_id | uuid | gateway or action approval id; pk part (no FK: history survives) | 5 (RFE-011b, D-138) |
+| user_id | uuid FK→users (cascade) | pk part | 5 (RFE-011b, D-138) |
+| stage | text CHECK in (`initial`,`reminder`) | pk part | 5 (RFE-011b, D-138) |
+| kind | text CHECK in (`gateway`,`action`) | | 5 (RFE-011b, D-138) |
+| delivery | text CHECK in (`push`,`batch`,`digest`) | its own push; folded into the push of its `batch_id`; folded into the hourly digest (`PUSH_PER_USER_HOUR`) | 5 (RFE-011b, D-138) |
+| sent_at | timestamptz not null default now() | insert-on-conflict claim, idempotent across replicas; pruned daily with the other notification claims; index `(user_id, sent_at)` | 5 (RFE-011b, D-138) |
+
+#### `webpush_vapid_keys` (new table; instance-wide; phase 5, D-138)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| id | uuid pk | the `vapid_key_id` of subscriptions | 5 (RFE-011b, D-138) |
+| public_key | text not null | base64url, 65-byte uncompressed P-256 point; the application server key | 5 (RFE-011b, D-138) |
+| private_ref | text not null | SecretRef, purpose `webpush.vapid` (`08 §1`); owner id = this id, org = nil UUID; never returned | 5 (RFE-011b, D-138) |
+| status | text CHECK in (`active`,`retired`) | exactly one `active` (partial unique index) | 5 (RFE-011b, D-138) |
+| created_at / retired_at | timestamptz | `retired_at` set at rotation; destroyed after `PUSH_VAPID_RETIRE` or when unreferenced | 5 (RFE-011b, D-138) |
 
 Absent when the operator supplies the key through `push.vapid.private_key_env` (nothing is stored). The gateway role has no access.
 
-#### `push_subscriptions` (new table)
+#### `push_subscriptions` (new table; phase 5, D-138)
 | Planned column | Type | Notes | Phase |
 |---|---|---|---|
-| id | uuid pk | | 4 (RFE-011b) |
-| user_id | uuid not null FK→users (cascade) | at most `PUSH_SUBSCRIPTIONS_PER_USER` (10) | 4 (RFE-011b) |
-| session_id | uuid not null FK→sessions (cascade) | the session that registered it; delivery only while that session is live (`07 §Web Push`) | 4 (RFE-011b) |
-| vapid_key_id | uuid null FK→webpush_vapid_keys (restrict) | null with an operator-managed key | 4 (RFE-011b) |
-| endpoint_hash | bytea unique not null | SHA-256 of the endpoint URL; one row per endpoint (re-registration under another user moves the row) | 4 (RFE-011b) |
-| endpoint_host | text not null | for the allow-list check and metrics; not secret | 4 (RFE-011b) |
-| secret_ref | text not null | SecretRef, purpose `webpush.subscription`, owner id = this id: sealed JSON `{ endpoint, p256dh, auth }` — the endpoint URL and keys are send capabilities and are never stored in clear or returned | 4 (RFE-011b) |
-| label | text not null | ≤ 80, sanitized, user-visible (e.g. "Firefox on Linux") | 4 (RFE-011b) |
-| show_details | bool not null default false | include agent and workspace names in the notification (`07 §Web Push`) | 4 (RFE-011b) |
-| paused_at | timestamptz null | | 4 (RFE-011b) |
-| expires_at | timestamptz null | the browser's `expirationTime` when given | 4 (RFE-011b) |
-| failure_count | int not null default 0 | consecutive; 5 sets `disabled_at` | 4 (RFE-011b) |
-| disabled_at | timestamptz null | | 4 (RFE-011b) |
-| last_success_at, last_failure_at | timestamptz null | churn columns | 4 (RFE-011b) |
-| created_at | timestamptz not null default now() | | 4 (RFE-011b) |
-| index | `(user_id)`, `(session_id)` | delivery and cascade | 4 (RFE-011b) |
+| id | uuid pk | | 5 (RFE-011b, D-138) |
+| user_id | uuid not null FK→users (cascade) | at most `PUSH_SUBSCRIPTIONS_PER_USER` (10) | 5 (RFE-011b, D-138) |
+| session_id | uuid not null FK→sessions (cascade) | the session that registered it; delivery only while that session is live (`07 §Web Push`) | 5 (RFE-011b, D-138) |
+| vapid_key_id | uuid null FK→webpush_vapid_keys (restrict) | null with an operator-managed key | 5 (RFE-011b, D-138) |
+| endpoint_hash | bytea unique not null | SHA-256 of the endpoint URL; one row per endpoint (re-registration under another user moves the row) | 5 (RFE-011b, D-138) |
+| endpoint_host | text not null | for the allow-list check and metrics; not secret | 5 (RFE-011b, D-138) |
+| secret_ref | text not null | SecretRef, purpose `webpush.subscription`, owner id = this id: sealed JSON `{ endpoint, p256dh, auth }` — the endpoint URL and keys are send capabilities and are never stored in clear or returned | 5 (RFE-011b, D-138) |
+| label | text not null | ≤ 80, sanitized, user-visible (e.g. "Firefox on Linux") | 5 (RFE-011b, D-138) |
+| show_details | bool not null default false | include agent and workspace names in the notification (`07 §Web Push`) | 5 (RFE-011b, D-138) |
+| paused_at | timestamptz null | | 5 (RFE-011b, D-138) |
+| expires_at | timestamptz null | the browser's `expirationTime` when given | 5 (RFE-011b, D-138) |
+| failure_count | int not null default 0 | consecutive; 5 sets `disabled_at` | 5 (RFE-011b, D-138) |
+| disabled_at | timestamptz null | | 5 (RFE-011b, D-138) |
+| last_success_at, last_failure_at | timestamptz null | churn columns | 5 (RFE-011b, D-138) |
+| created_at | timestamptz not null default now() | | 5 (RFE-011b, D-138) |
+| index | `(user_id)`, `(session_id)` | delivery and cascade | 5 (RFE-011b, D-138) |
 
-The gateway role has no access to any of these tables. Rows of revoked or expired sessions are removed by the daily session pruning (the foreign key cascades).
+The gateway role has no access to any of these tables. Rows of revoked or expired sessions are removed by the daily session pruning (the foreign key cascades). (P4-011B spec batch, D-266(c)) Sign-out, "sign out other sessions", an administrator's revocation and deactivation delete the session's `push_subscriptions` rows in the revoking transaction (the cascade only covers deleted session rows). The sealed secrets (`webpush.vapid`, `webpush.subscription`) are always in the `inline` store (D-266(b)). Migration `20261201000223_web_push.sql` (P4-011B-3) creates `webpush_vapid_keys`, `push_subscriptions` and `approval_push_claims` together; the partial unique index `webpush_vapid_keys (status) WHERE status = 'active'` enforces one active key.
+
+#### `app_instances` (base path; phase 5, FIX-145, D-231) — now in `§app_instances`
+Migration `20261201000140_app_instance_base_path.sql` (block `000140..149`) adds the column null
+(existing rows keep `null`: they are served at the host root, today's behaviour). The `(host)`
+index still serves the conflict check and the gateway's instance lookup. The gateway role already
+has table-level `SELECT` on `app_instances` (`§Gateway database role grants`), so it reads
+`base_path` without a new grant (instance selection, `06 §MITM lane: connect-time resolution`).
+
+#### `instance_settings` (new table; instance-wide; phase 5, SET-1, D-236)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| section | text pk CHECK (section ~ `'^[a-z][a-z_]{0,31}$'`) | the section id (`governance`, `llm`, `sign_in`, `email`, `secrets`, `agents`, `approvals`, `retention`, `skills`, `scim`, `previews`, `terminal`, `limits`; C-770). The vocabulary is the application's registry, not a CHECK, so a section added later needs no migration; a row the running release does not know is ignored with a warning (written by a newer release) | 5 (SET-1, D-236) |
+| schema_version | int not null default 1 | shape version of `value` for this section. A release that changes a section's shape converts the stored rows in its own migration; readers ignore keys they do not know (D-238(c)) | 5 (SET-1, D-236) |
+| value | jsonb not null default `'{}'` CHECK (jsonb_typeof(value) = 'object') | flat object `{ "<dotted key>": <value> }` of stored values: dashboard-edited values and, for keys the configuration currently sets, the mirrored configuration value (D-236(c)). Keyed lists are stored whole under their key (`"auth.oidc_providers": [ { "id": …, … } ]`). A secret field is `{ "$secret": { "ref": "<SecretRef>", "owner": "<uuid>", "updated_at": "<RFC 3339>" } }`: purpose `instance_setting`, always the `inline` store, org = nil UUID, owner = the field's own id (`08 §1`); never plaintext. Size ≤ `SETTINGS_SECTION_BYTES_MAX` (checked by the service; 413 `settings_too_large`) | 5 (SET-1, D-236) |
+| generation | bigint not null default 0 | bumped by every write, including Helm mirroring and CLI resets; writes are `UPDATE … WHERE section = $1 AND generation = $2` (409 `stale_revision` on no row), or an insert of generation 1 that conflicts on the key | 5 (SET-1, D-236) |
+| updated_by | uuid null FK→users (set null) | the instance admin of the last dashboard write; null for system writes (mirroring, CLI) | 5 (SET-1, D-236) |
+| updated_by_label | text null | denormalized actor label (the admin's e-mail, `system`, or `cli`) so the page can name the writer after the user row is gone | 5 (SET-1, D-236) |
+
+`created_at`/`updated_at` follow §Conventions. Rows are created on the first write to a section (no
+row = nothing stored: every key is `helm` or `default`). The table holds no plaintext secret, so the
+**gateway database role gets `SELECT`** on it (it reads the `governance`, `llm`, `approvals`,
+`limits` and `secrets` sections; it already reads SecretRefs on `secrets`) and nothing else; only the
+API writes it. After a committed write the writer sends `NOTIFY aurora_settings`
+`{ "section", "generation" }` (`05 §Event bus`). History is the audit log (`instance_settings.update`
+rows carry the before/after diff, `04 §Audit`); no history table. Migration
+`20261201000190_instance_settings.sql` (block `000190..199`, SET-1..SET-5) creates the table and the
+grant; no data is written by the migration (the first API start mirrors the configuration's locked
+keys, D-238(a)).
+#### Narration cards and user tokens (phase 5, P4-NARR, P4-UTOK, D-279..D-284, SEC-111..SEC-113)
+
+Migrations `20261201000231` (P4-NARR) and `…000232`, `…000233` (P4-UTOK); `…000234` and `…000235` are unused and
+returned to the block. No gateway database role grant: the gateway reads none of these.
+
+#### `agents` column: `narration_cards` (phase 5, P4-NARR, D-279, migration `20261201000231_agent_narration_cards.sql`)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| narration_cards | boolean not null default false | the agent's progress card on chat platforms that can edit messages (`10 §Live narration cards`); existing rows become `false` | 5 (P4-NARR, D-279) |
+
+#### `user_tokens` (new table; a person's platform tokens; phase 5, P4-UTOK, D-281..D-284, migration `20261201000232_user_tokens.sql`)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| id | uuid pk | id format of `00`; not a bearer token, so no `au?_` prefix | 5 (P4-UTOK) |
+| user_id | uuid FK→users (cascade) | the owner; the token is usable only for this person's link | 5 (P4-UTOK) |
+| integration_id | uuid FK→channel_integrations (cascade) | one platform integration per token | 5 (P4-UTOK) |
+| platform_user_ref | text not null | the platform user the verify op returned; must equal the owner's `user_links.platform_user_ref` on this integration; a partial unique index on (integration_id, platform_user_ref) where `status <> 'revoked'`: one live token per platform user | 5 (P4-UTOK) |
+| label | text null | owner's name for the token, ≤ 80 characters | 5 (P4-UTOK) |
+| token_ref | text not null | a SecretRef, purpose `user_token`, owner = this row's id (`08 §1`); never returned | 5 (P4-UTOK, D-282) |
+| status | text CHECK in (`active`,`invalid`,`revoked`) | `invalid` set by a platform `401`; `revoked` on any end of standing (D-284(a)) and then `token_ref` is discarded and null | 5 (P4-UTOK) |
+| created_at / last_used_at / revoked_at | timestamptz | `last_used_at` set when a send is claimed | 5 (P4-UTOK) |
+
+#### `user_token_agents` (new table; the owner's grants; phase 5, P4-UTOK, D-283, migration `20261201000233_user_token_agents.sql`)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| user_token_id | uuid FK→user_tokens (cascade) | primary key with agent_id | 5 (P4-UTOK) |
+| agent_id | uuid FK→agents (cascade) | a grant ends with the agent | 5 (P4-UTOK) |
+| granted_at | timestamptz not null | | 5 (P4-UTOK) |
+
+Per-op copies of a token are not columns: they live in `channel_ops.payload.user_credential_ref` (`08 §1`),
+discarded at the op's terminal state (`13 §4.2`, `§5.11`).
+
+#### SSH access (phase 5, P4-SSH-1, P4-SSH-2, D-239, SEC-92..SEC-96)
+
+Five new tables and three `sandboxes` columns. P4-SSH-1 lands `ssh_keys` and `ssh_mint_counters`
+(migrations `20261201000200_ssh_keys.sql`, `…000201_ssh_mint_counters.sql`); P4-SSH-2 lands
+`ssh_sessions`, `ssh_stream_grants`, `ssh_terminator_replicas` and the `sandboxes` columns
+(`…000202` … `…000205`; block `000200..209`). Each moves into the tables above, as a real
+`### \`table\`` section, in the change that adds its migration. The gateway database role gets
+nothing on any of them.
+
+#### `ssh_keys` (new table; a person's registered SSH public keys)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| id | uuid pk | | 5 (P4-SSH-1) |
+| user_id | uuid not null FK→users (cascade) | owned by the person, not by an org or workspace; at most `SSH_KEYS_PER_USER` (10) | 5 (P4-SSH-1) |
+| name | text not null CHECK (char_length(name) BETWEEN 1 AND 80) | sanitized (`02 §Untrusted text`); defaults to the key's comment, else "SSH key" | 5 (P4-SSH-1) |
+| algorithm | text not null CHECK in (`ssh-ed25519`) | the only accepted type (D-239(b)) | 5 (P4-SSH-1) |
+| public_key | text not null | **canonical** OpenSSH form `ssh-ed25519 <base64>`, rebuilt from the parsed key (never the raw paste; the comment and any options are dropped) | 5 (P4-SSH-1) |
+| fingerprint | text not null | `SHA256:<unpadded base64>` of the key blob, computed by the server (OpenSSH format) | 5 (P4-SSH-1) |
+| last_used_at | timestamptz null | stamped at a certificate mint and at a session open with this key, at most once a minute (churn column) | 5 (P4-SSH-1) |
+| unique | `(user_id, fingerprint)` | the same key twice for one person is 409 `ssh_key_exists`; two people may register the same public key (a row grants nothing by itself: a certificate also needs the private key) | 5 (P4-SSH-1) |
+
+#### `ssh_mint_counters` (new table; certificate-mint rate limit, a ledger)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| user_id | uuid not null | pk part; no FK (a ledger, like `preview_grant_uses`) | 5 (P4-SSH-1) |
+| agent_id | uuid not null | pk part; no FK | 5 (P4-SSH-1) |
+| window_start | timestamptz not null | pk part; `date_trunc('hour', now())` | 5 (P4-SSH-1) |
+| count | int not null default 0 | incremented by one `INSERT … ON CONFLICT DO UPDATE SET count = count + 1 WHERE count < SSH_MINTS_PER_USER_AGENT_HOUR RETURNING count` in the mint transaction: no row returned → 429 `ssh_mint_rate_limited`. Rows older than 24 h are pruned by the retention sweep | 5 (P4-SSH-1) |
+
+Its own table rather than `rate_limit_windows`/`aurora-counters` (D-239(c)): the mint limit must be exact
+across API replicas whatever `ratelimit.counters.backend` says (the default `local` counts per
+replica) and must never fail open; the audit row is best-effort and cannot be the counter.
+
+#### `ssh_sessions` (new table; one row per authenticated SSH connection)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| id | uuid pk | the session id the terminator carries | 5 (P4-SSH-2) |
+| user_id | uuid not null FK→users (cascade) | the certificate's person | 5 (P4-SSH-2) |
+| ssh_key_id | uuid null FK→ssh_keys (set null) | the key the certificate certified; deleting the key nulls it and the next heartbeat revokes the session (`key_deleted`) | 5 (P4-SSH-2) |
+| key_fingerprint | text not null | kept for audit after the key row is gone | 5 (P4-SSH-2) |
+| cert_serial | bigint not null | the certificate's serial (`agent.ssh_certificate.mint` audit row names it too) | 5 (P4-SSH-2) |
+| org_id | uuid not null FK→organizations (cascade) | denormalized for the org audit and the org delete order | 5 (P4-SSH-2) |
+| workspace_id | uuid not null FK→workspaces (cascade) | | 5 (P4-SSH-2) |
+| agent_id | uuid not null FK→agents (cascade) | the certificate's principal; hosted agents only (service-enforced) | 5 (P4-SSH-2) |
+| terminator_replica_id | uuid not null | the replica that holds the connection (no FK: replica rows are pruned) | 5 (P4-SSH-2) |
+| client_address | text null | the SSH client's address as the terminator saw it, **coarsened** at insert (IPv4 /24, IPv6 /48, like `04 §CLI login`); terminator-reported, audit metadata only | 5 (P4-SSH-2) |
+| state | text not null default `open` CHECK in (`open`,`closed`) | the guarded transition `open → closed` (`UPDATE … WHERE state = 'open' RETURNING`) is the **close-exactly-once** gate; the one `agent.ssh.close` audit row is written by whichever path wins it | 5 (P4-SSH-2) |
+| lease_until | timestamptz not null | `now() + SSH_SESSION_LEASE` (90 s) at open and at every heartbeat that keeps it; a session whose lease passed is dead whatever `state` says (liveness = lease) | 5 (P4-SSH-2) |
+| last_activity_at | timestamptz null | the last channel byte the terminator reported (heartbeat); never keystroke content | 5 (P4-SSH-2) |
+| revoke_requested_at | timestamptz null; revoke_reason text null | set by `DELETE /v1/ssh-sessions/{id}` (`user_disconnect` / `owner_disconnect`); the next heartbeat answers it revoked | 5 (P4-SSH-2) |
+| closed_at | timestamptz null | | 5 (P4-SSH-2) |
+| close_reason | text null | open vocabulary: `client_disconnect`, `idle_timeout`, `max_duration`, `access_revoked`, `key_deleted`, `frozen`, `ssh_disabled`, `user_disconnect`, `owner_disconnect`, `agent_deleted`, `lease_expired`, `wake_timeout`, `terminator_shutdown`, `relay_error` | 5 (P4-SSH-2) |
+| channels_total | int not null default 0; bytes_in bigint not null default 0; bytes_out bigint not null default 0 | heartbeat and close accounting (byte totals only; never content, never commands) | 5 (P4-SSH-2) |
+| index | `(user_id) WHERE state = 'open'`; `(agent_id) WHERE state = 'open'`; `(lease_until) WHERE state = 'open'`; `(created_at)` | caps (`SSH_SESSIONS_PER_USER`, `_PER_AGENT`, counted over open, lease-current rows: global, not per replica), the stale-session sweep, retention | 5 (P4-SSH-2) |
+
+Closed rows are kept for `SSH_SESSION_RETENTION` (30 days) and then deleted by the retention sweep
+(the audit rows outlive them).
+
+#### `ssh_stream_grants` (new table; single-use SSH channel grants)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| id | uuid pk | | 5 (P4-SSH-2) |
+| session_id | uuid not null FK→ssh_sessions (cascade) | the session the channel belongs to; redemption is refused unless it is still `open` and lease-current | 5 (P4-SSH-2) |
+| agent_id, sandbox_id, boot_id | uuid not null | the binding the runner receives (stale boot → redemption refused); no FK | 5 (P4-SSH-2) |
+| grant_hash | text not null unique | SHA-256 of the `auz_` grant; the value is returned once to the terminator and never stored | 5 (P4-SSH-2) |
+| expires_at | timestamptz not null | `now() + SSH_GRANT_TTL` (30 s) | 5 (P4-SSH-2) |
+| consumed_at | timestamptz null | set by the single-use compare-and-set at redemption | 5 (P4-SSH-2) |
+| index | unique `(grant_hash)`; `(expires_at)` | redemption, pruning after 24 h | 5 (P4-SSH-2) |
+
+A table of its own, not rows in `terminal_stream_grants` (D-239(f)): the `auz_` prefix routes redemption
+to this table alone, so a terminal grant can never open an SSH channel or the reverse, and the
+binding includes the session whose liveness redemption re-checks.
+
+#### `ssh_terminator_replicas` (new table; registered terminator replicas)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| id | uuid pk | the replica id returned by `POST /v1/terminator/register` | 5 (P4-SSH-2) |
+| version | text not null | (churn) | 5 (P4-SSH-2) |
+| host_public_key | text not null | the replica's SSH host public key, canonical `ssh-ed25519 <base64>`; the API serves the distinct keys of live replicas as the known-hosts entries (`05 §SSH access`) | 5 (P4-SSH-2) |
+| host_key_fingerprint | text not null | `SHA256:…` | 5 (P4-SSH-2) |
+| sessions_open | int not null default 0 | heartbeat churn | 5 (P4-SSH-2) |
+| last_seen_at | timestamptz not null | refreshed by each heartbeat; a replica is live while `last_seen_at > now() − SSH_SESSION_LEASE`; rows older than 24 h pruned | 5 (P4-SSH-2) |
+
+There is no `terminator_tokens` table: the single anchor token's SHA-256 is computed by the API from
+`AURORA_BOOTSTRAP_TERMINATOR_TOKEN` at startup and held in memory (rotation = a new Secret value and a
+rollout of the API and the terminator; `15 §SSH access`).
+
+#### `sandboxes` (SSH keep-awake; phase 5, P4-SSH-2)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| ssh_active_until | timestamptz null | `now() + SSH_AWAKE_GRACE` at each runner keep-awake stamp while an SSH channel carries bytes; keep-awake reason `ssh` (churn column) | 5 (P4-SSH-2) |
+| ssh_awake_since | timestamptz null | first SSH channel byte of the current boot; the `SSH_AWAKE_CAP` clock; reset at every start claim (churn column) | 5 (P4-SSH-2) |
+
+The SSH **wake demand** reuses `terminal_wake_at` and the terminal's wake budget
+(`TERMINAL_WAKES_PER_AGENT_HOUR`, shared): both are a person asking for an interactive shell on a
+parked sandbox, and one budget keeps two front doors from doubling the wake rate (D-239(h)).
 
 ### `preview_shares` (port previews, phase 4, P4-PRV-1, D-144, D-145)
 | Column | Type | Notes |
@@ -1611,19 +1899,6 @@ migration that adds it (every existing label is already spent).
 The gateway role gets nothing on any preview table. Preview sessions are deleted by cascade when
 their share, user or dashboard session goes; the `sessions` retention job's deletes cascade too.
 
-#### `sandboxes` (start diagnostics; phase 4, FIX-025, D-158, C-582)
-| Planned column | Type | Notes | Phase |
-|---|---|---|---|
-| start_attempt_at | timestamptz null | when the current (or last) start attempt was claimed; the attempt's clock origin | 4 (FIX-025) |
-| start_phase | text null | the last phase the runner reported (`claimed`, `waiting_capacity`, `provisioning`, `scheduling`, `creating`, `booting`, `ready`) | 4 (FIX-025) |
-| start_detail | text null | the phase's detail as the runner reported it (sanitised) | 4 (FIX-025) |
-| start_events | jsonb not null default `'[]'` | the pod's Warning events (bounded, newest first) | 4 (FIX-025) |
-| start_progress_at | timestamptz null | when the runner last reported progress | 4 (FIX-025) |
-| running_at | timestamptz null | when the runner reported `running` for the current boot | 4 (FIX-025) |
-| start_log | jsonb not null default `'[]'` | (phase 4, FIX-029, D-160, C-612) the boot's start log: a ring of ≤ 30 entries `{ts, kind: "phase"\|"note", phase?, detail?}` (≤ 300 chars per detail, sanitised, 8 KiB total, oldest dropped), reset by every new boot | 4 (FIX-029) |
-
-Reset by every new boot. A start failure also writes a `sandbox_start_failures` row (below). A retry of a failed start (C-610) clears the failure fields and resets `start_failures`; it never bypasses the ordinary start arm.
-
 ### `terminal_stream_grants` (single-use web-terminal grants, phase 4, P4-TERM, D-161, SEC-87, C-618)
 | Column | Type | Notes |
 |---|---|---|
@@ -1635,6 +1910,7 @@ Reset by every new boot. A start failure also writes a `sandbox_start_failures` 
 | grant_hash | text not null unique | SHA-256 of the `auy_` grant (the value is never stored) |
 | expires_at | timestamptz not null | `now() + TERMINAL_GRANT_TTL` (30 s) |
 | consumed_at | timestamptz null | set by the single-use compare-and-set at redemption |
+| shell | text not null default `'bash'` check `bash`/`zsh` | (FIX-138) the person's shell choice (the enumerated `?shell=`, never a path); returned by the redemption answer so the runner's `pty.open` carries it |
 | index | unique `(grant_hash)`; `(expires_at)` | redemption, pruning |
 
 No foreign keys (the rows die young, like `preview_stream_grants`); rows pruned after 24 h. The
@@ -1642,27 +1918,88 @@ grant value never reaches the browser and is never stored; terminal bytes are ne
 anywhere — the table holds the open's metadata only. The gateway database role gets nothing on
 this table.
 
-#### `sandbox_start_failures` (new table; per-runner start failures for Admin › Runners; phase 4, FIX-025, D-158, C-587)
-| Planned column | Type | Notes | Phase |
+#### `eval_questions` (phase 5, P4-EVAL, D-289, C-861; migration `20261201000236`)
+| Column | Type | Notes |
+|---|---|---|
+| id | uuid pk | |
+| agent_id | uuid FK→agents (cascade) | hosted agents only (`eval_not_supported` for BYO) |
+| workspace_id | uuid FK→workspaces (cascade) | the audience of §Evals |
+| position | int not null | unique `(agent_id, position)` |
+| question | text not null | ≤ `EVAL_QUESTION_CHARS` |
+| expected_kind | text not null CHECK in (`numeric`,`text`,`judged`) | |
+| expected_number | numeric null | `numeric` only |
+| tolerance | numeric null default 0 | `numeric` only; ≥ 0 |
+| expected_text | text null | `text` only; ≤ `EVAL_EXPECTED_TEXT_CHARS`; agent-audience data (`10 §Evals`, SEC-116) |
+| criteria | text null | `judged` only; ≤ `EVAL_CRITERIA_CHARS` |
+| enabled | bool not null default true | |
+| version | int not null default 1 | bumped by every edit; part of `question_set_version` |
+| created_by / created_at / updated_at | | |
+
+No foreign key to runs: a run keeps its question text and expected kind in `eval_results` (snapshot), so an edit never rewrites history.
+
+#### `eval_runs` and `eval_results` (phase 5, P4-EVAL, D-290, D-291, C-864, C-867; migration `20261201000237`)
+| Table | Column | Type | Notes |
 |---|---|---|---|
-| id | uuid pk | | 4 (FIX-025) |
-| runner_id | uuid null FK→runners (cascade) | null only for a legacy row (the runner is recorded on every write) | 4 (FIX-025) |
-| sandbox_id | uuid not null FK→sandboxes (cascade) | | 4 (FIX-025) |
-| agent_id | uuid not null | denormalized for the admin list | 4 (FIX-025) |
-| boot_id | uuid null | the attempt's boot | 4 (FIX-025) |
-| code | text not null | a start-failure code (`10 §Failure semantics`, C-581) | 4 (FIX-025) |
-| message | text not null | the human reason, sanitised at write time | 4 (FIX-025) |
-| phase | text null | the attempt's last phase | 4 (FIX-025) |
-| events | jsonb not null default `'[]'` | the pod's Warning events | 4 (FIX-025) |
-| elapsed_secs | int null | seconds the attempt ran before it failed | 4 (FIX-025) |
-| created_at | timestamptz not null default now() | rows older than 30 days are pruned on insert | 4 (FIX-025) |
-| indexes | `(runner_id, created_at DESC)` | the admin list (`C-586`) | 4 (FIX-025) |
+| `eval_runs` | id | uuid pk | |
+| | agent_id | uuid FK→agents (cascade) | |
+| | workspace_id | uuid FK→workspaces (cascade) | |
+| | trigger | text not null CHECK in (`manual`,`schedule`) | |
+| | schedule_id | uuid null FK→eval_schedules (set null) | |
+| | started_by_user_id | uuid null FK→users (set null) | null for scheduled runs (fire-time authority: `10 §Evals`) |
+| | status | text not null CHECK in (`queued`,`running`,`done`,`failed`,`cancelled`) | |
+| | question_set_version | text not null | SHA-256 of the enabled questions' ids and versions |
+| | fingerprint | jsonb not null | canonical object of C-866, hashes and ids only, immutable |
+| | fingerprint_hash | text not null | SHA-256 of the canonical `fingerprint` |
+| | questions_total / passed / failed / errored / not_scored | int not null default 0 | counts |
+| | refused_writes | int not null default 0 | total `eval_read_only` refusals of the run |
+| | judge_usage | jsonb null | summed token counts of judge calls (never `turns.usage`) |
+| | regression | jsonb null | `{ from_run_id, drop_points }` (C-871) |
+| | error_code | text null | run-level end reason (`access_lost`, `frozen`, `cancelled`, …) |
+| | cancel_requested_at | timestamptz null | |
+| | lease_until | timestamptz null | claim clock (`SCHEDULE_FIRE_LEASE`-style) |
+| | created_at / started_at / finished_at | timestamptz | |
+| | index | partial unique `(agent_id)` WHERE status IN (`queued`,`running`) | one active run per agent (`EVAL_RUNS_ACTIVE_PER_AGENT`) |
+| `eval_results` | id | uuid pk | |
+| | run_id | uuid FK→eval_runs (cascade) | unique `(run_id, position)` |
+| | position | int not null | |
+| | question_id | uuid null FK→eval_questions (set null) | the question as it was at start: `question_text`, `expected_kind` and `expected_snapshot` below carry the rest |
+| | question_text | text not null | snapshot |
+| | expected_kind | text not null | snapshot |
+| | expected_snapshot | jsonb not null | snapshot of the expected answer; agent-audience data, never copied to audit or logs |
+| | conversation_id | uuid null FK→conversations (set null) | the question's `eval` conversation |
+| | turn_id | uuid null | |
+| | outcome | text not null CHECK in (`pass`,`fail`,`error`,`not_scored`) | |
+| | reason_code | text null | `no_answer_line`, `timeout`, `judge_unparseable`, `judge_not_granted`, `access_lost`, `frozen`, `cancelled`, a turn's `error_code`, … (C-872) |
+| | extracted_value | text null | `numeric`/`text`: the value read from `ANSWER:` |
+| | answer_text | text null | ≤ `EVAL_ANSWER_CHARS`, sanitised; agent-audience data |
+| | judge_verdict | text null | `pass` / `fail` for judged questions |
+| | judge_rationale | text null | ≤ `EVAL_RATIONALE_CHARS`, one line |
+| | refused_writes | int not null default 0 | |
+| | started_at / finished_at | timestamptz null | |
 
-#### `agents`, `conversations` (harness selection)
-| Planned column | Type | Notes | Phase |
-|---|---|---|---|
-| harness | (existing text) | gains `codex` (open vocabulary, validated against `hosted.enabled_harnesses` on write); no schema change | 4 (P4-HAR) |
-| harness_session_epoch | (existing bigint) | bumped on every conversation of an agent when its harness changes; `harness_session_ref` is also cleared, and a `session_purges` row is queued per old session (`12`) | 4 (P4-HAR) |
+Rows of a finished run are immutable except by the retention job (`EVAL_RUN_RETENTION`, 90 days) and by deletion of the run. The gateway database role gets nothing on these tables.
 
-`turns.usage` and `agents.model_provider` already carry free-text provider and model values; nothing changes except that the API stamps `provider`, `endpoint_id` and `model` from the turn's `ModelChoice` rather than from harness-reported values.
+#### `eval_schedules` (phase 5, P4-EVAL, D-293, C-870; migration `20261201000238`)
+| Column | Type | Notes |
+|---|---|---|
+| id | uuid pk | |
+| agent_id | uuid FK→agents (cascade) | |
+| name | text not null | |
+| cron | text not null | 5-field; interval ≥ `EVAL_SCHEDULE_MIN_INTERVAL` over a full week of occurrences |
+| timezone | text not null | IANA |
+| enabled | bool not null default true | |
+| disabled_reason | text null CHECK in (`user`,`authorization`,`failures`) | |
+| consecutive_failures | int not null default 0 | |
+| creator_user_id | uuid null FK→users (set null) | fire-time authority anchor (`04 §Fire-time authority`) |
+| anchor | text not null default `creator` CHECK in (`creator`,`workspace`) | |
+| next_fire_at / fire_lease_until / last_fire_at | timestamptz null | the schedules engine's claim fields |
+| last_outcome | text null CHECK in (`ok`,`failed`,`skipped_busy`,`skipped_frozen`) | |
+| last_run_id | uuid null FK→eval_runs (set null) | |
 
+#### `agents` eval columns and `conversations.kind` (phase 5, P4-EVAL, C-860, C-863; migrations `20261201000239`, `20261201000240`)
+| Table | Planned change | Notes |
+|---|---|---|
+| `agents` | `eval_judge_secret_id uuid null FK→secrets (set null)` | the judge key (LLM secret, granted to the agent, governance-admitted at every call: `10 §Evals`, D-292) |
+| `agents` | `eval_judge_model_id text null` | the judge's model (a model the key's endpoint serves) |
+| `agents` | `eval_regression_notify bool not null default true` | C-871 |
+| `conversations` | `kind` CHECK gains `eval` | external_ref `eval:<run_id>:<position>`; the unique `(agent_id, kind, external_ref)` index is unchanged |

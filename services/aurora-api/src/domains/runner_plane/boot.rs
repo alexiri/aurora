@@ -212,9 +212,9 @@ pub async fn app_boot_for(state: &AppState, agent: &AgentRow) -> Result<AppBoot,
 /// declares (`org.aurora.capabilities`, reported by the runner at registration) ∩ `browser`
 /// unless the effective open-lane posture (strictest of instance, org, workspace) is
 /// `disabled`. The boot credential is minted with the same set. (P4-TERM, C-623) `terminal`
-/// rides the same array when the operator enabled the terminal: the supervisor spawns PTYs
-/// only for a boot document that carries it (`12 §Terminal`: `pty.open` → `pty.refused
-/// { disabled }` otherwise).
+/// rides the same array when the operator enabled the terminal **and** the runner advertised
+/// it (FIX-092): the supervisor spawns PTYs only for a boot document that carries it
+/// (`12 §Terminal`: `pty.open` → `pty.refused { disabled }` otherwise).
 pub async fn capabilities_for(
     state: &AppState,
     agent: &AgentRow,
@@ -235,7 +235,9 @@ pub async fn capabilities_for(
             out.push("browser".to_owned());
         }
     }
-    if state.config.terminal.enabled {
+    // Only when this runner advertised the terminal too (C-623, same gate as `register`): a
+    // runner without the capability cannot serve the `pty.*` frames the boot would promise.
+    if state.config.terminal.enabled && caps.is_some_and(|c| c.terminal) {
         out.push("terminal".to_owned());
     }
     Ok(out)
@@ -277,6 +279,8 @@ pub fn boot_secret(s: &AppState, i: &BootInput<'_>) -> Result<SecretString, ApiE
         // (phase 1, RFE-003) The supervisor starts the open proxy only with `browser`.
         "capabilities": i.capabilities,
         "harness": {"id": i.harness, "capabilities_expected": []},
+        // (FIX-138 item 1b) The harnesses the terminal's `claude`/`codex` wrappers may start.
+        "enabled_harnesses": s.config.hosted.enabled_harnesses,
         "timezone": s.config.hosted.default_timezone,
     });
     let bytes = serde_json::to_vec(&doc).map_err(|e| ApiError::internal(e.to_string()))?;

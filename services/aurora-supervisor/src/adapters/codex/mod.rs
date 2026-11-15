@@ -84,14 +84,32 @@ fn safe_ref(r: &str) -> bool {
     crate::harness::is_safe_session_ref(r) && !r.starts_with('-')
 }
 
-/// Writes `config.toml` (owned by Aurora, overwritten at every start) and removes any
-/// `auth.json`: Aurora never offers sign-in and a planted file must not win over the API key.
+/// Writes `config.toml` (owned by Aurora, rewritten before **every** `codex exec`: the home lives
+/// in the agent-writable workspace because Codex keeps its rollouts beside the configuration, so
+/// the file is re-rendered and its content verified immediately before each spawn, SEC-66) and
+/// removes any `auth.json`: Aurora never offers sign-in and a planted file must not win over the
+/// API key.
 fn write_home(home: &Path, config_toml: &str) -> std::io::Result<()> {
+    use std::io::Write as _;
     std::fs::create_dir_all(home)?;
     let path = home.join("config.toml");
-    // The file may be left read-only by an earlier boot; replace it.
-    let _ = std::fs::remove_file(&path);
-    std::fs::write(&path, config_toml)?;
+    // Replace whatever is there (a read-only file, a symlink, a directory) and create the new
+    // file exclusively so a link planted in between is not followed.
+    match std::fs::symlink_metadata(&path) {
+        Ok(m) if m.is_dir() => std::fs::remove_dir_all(&path)?,
+        Ok(_) => std::fs::remove_file(&path)?,
+        Err(_) => {}
+    }
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)?;
+    f.write_all(config_toml.as_bytes())?;
+    f.sync_all()?;
+    drop(f);
+    if std::fs::read_to_string(&path)? != config_toml {
+        return Err(std::io::Error::other("config.toml changed while written"));
+    }
     match std::fs::remove_file(home.join("auth.json")) {
         Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
         _ => Ok(()),
@@ -185,12 +203,26 @@ fn remove_file_if_present(p: &Path) -> std::io::Result<()> {
     }
 }
 
+/// `rollout-<YYYY-MM-DDThh-mm-ss>-<ref>.jsonl` for exactly this reference: the timestamp is a
+/// fixed 19-character field, so a short reference cannot match the tail of another thread id.
+fn is_rollout_of(name: &str, session_ref: &str) -> bool {
+    let Some(rest) = name
+        .strip_prefix("rollout-")
+        .and_then(|r| r.strip_suffix(".jsonl"))
+    else {
+        return false;
+    };
+    rest.get(..19).is_some_and(|ts| {
+        ts.bytes()
+            .all(|b| b.is_ascii_digit() || matches!(b, b'-' | b'T'))
+    }) && rest.get(19..).and_then(|t| t.strip_prefix('-')) == Some(session_ref)
+}
+
 /// Removes `rollout-<timestamp>-<ref>.jsonl` below `dir` (the date-sharded `sessions/` tree).
 fn remove_rollouts(dir: &Path, session_ref: &str, depth: u8) -> std::io::Result<()> {
     let Ok(rd) = std::fs::read_dir(dir) else {
         return Ok(());
     };
-    let suffix = format!("-{session_ref}.jsonl");
     for e in rd.flatten() {
         let p = e.path();
         let Ok(ft) = e.file_type() else { continue };
@@ -198,8 +230,7 @@ fn remove_rollouts(dir: &Path, session_ref: &str, depth: u8) -> std::io::Result<
             remove_rollouts(&p, session_ref, depth + 1)?;
         } else if ft.is_file() {
             let n = e.file_name();
-            let n = n.to_string_lossy();
-            if n.starts_with("rollout-") && n.ends_with(&suffix) {
+            if is_rollout_of(&n.to_string_lossy(), session_ref) {
                 remove_file_if_present(&p)?;
             }
         }
@@ -303,6 +334,17 @@ impl HarnessSession for CodexSession {
                 "harness_failed",
                 "a turn is already running",
             ));
+        }
+        // The agent can write the home between turns: render the file again right before the
+        // spawn (SEC-66, `docs/12` §Adapter codex).
+        let rendered = config::render_config(&self.opts).and_then(|toml| {
+            write_home(&self.home, &toml).map_err(|e| {
+                HarnessError::new("harness_failed", format!("cannot prepare CODEX_HOME: {e}"))
+            })
+        });
+        if let Err(e) = rendered {
+            self.running.store(false, Ordering::SeqCst);
+            return Err(e);
         }
         let spec = config::launch_spec(
             &self.opts,

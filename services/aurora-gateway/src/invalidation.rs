@@ -268,7 +268,7 @@ impl Hub {
                     .and_then(|v| v.as_str())
                     .and_then(|s| Uuid::parse_str(s).ok());
                 let event = payload.get("event").and_then(|v| v.as_str());
-                if let (Some(id), Some("decided" | "expired")) = (id, event) {
+                if let (Some(id), Some("decided" | "expired" | "abandoned")) = (id, event) {
                     self.wake_approvals(Some(id));
                 }
             }

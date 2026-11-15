@@ -105,6 +105,12 @@ async fn free_port() -> u16 {
 }
 
 async fn start(home: &TempDir) -> (TcpListener, Conn) {
+    start_with_harvest(home, None).await
+}
+
+/// `harvest` overrides the supervisor's harvest tick (default 10 s), which also drives port
+/// discovery: a test that waits for a port change must not depend on a 10 s real-time tick.
+async fn start_with_harvest(home: &TempDir, harvest: Option<Duration>) -> (TcpListener, Conn) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("ws://{}/v1/supervisor", listener.local_addr().unwrap());
     let mut cfg = aurora_supervisor::channel::ChannelConfig::new(
@@ -115,6 +121,9 @@ async fn start(home: &TempDir) -> (TcpListener, Conn) {
     cfg.backoff_initial = Duration::from_millis(50);
     let chan = aurora_supervisor::channel::spawn(cfg);
     let mut sc = SupervisorConfig::new(stub_gateway().await.0, "aub_boot");
+    if let Some(h) = harvest {
+        sc.harvest_interval = h;
+    }
     sc.working_dir = home.path().to_path_buf();
     sc.process = aurora_supervisor::process::ProcessConfig::new(home.path().to_path_buf());
     sc.process.uid = None;
@@ -378,54 +387,61 @@ fn preview_start_frame_is_port_only() {
 /// `listening` status from the current boot's ports.
 #[tokio::test]
 async fn ports_state_reports_loopback_listeners_on_change() {
+    // (FIX-140) The scan runs on the harvest tick (default 10 s). The old test waited on that
+    // real-time tick with a 10 s frame timeout, so under a loaded full-suite run the "port
+    // closed" report arrived after the timeout. A 100 ms tick removes the dependence. The scan
+    // sees every loopback listener of the machine (other test processes bind and close their
+    // own), so the assertions are about this test's port and about "never the same set twice",
+    // not about the whole set.
     let home = TempDir::new();
-    let (listener, mut c) = start(&home).await;
+    let (listener, mut c) = start_with_harvest(&home, Some(Duration::from_millis(100))).await;
 
-    // A port the supervisor is not itself listening on becomes part of the first report.
-    let app = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let port = app.local_addr().unwrap().port();
-    let mut seen: Vec<u16> = Vec::new();
-    let deadline = tokio::time::Instant::now() + T;
-    'outer: while tokio::time::Instant::now() < deadline {
-        let v = timeout(T, c.next()).await.expect("no frame");
-        if v["kind"] == "ports.state"
-            && let Some(ports) = v["body"]["ports"].as_array()
-        {
-            seen = ports
+    fn ports_of(v: &Value) -> Option<Vec<u16>> {
+        (v["kind"] == "ports.state").then(|| {
+            v["body"]["ports"]
+                .as_array()
+                .expect("ports array")
                 .iter()
                 .filter_map(|p| p.as_u64())
                 .map(|p| p as u16)
-                .collect();
-            break 'outer;
-        }
+                .collect()
+        })
     }
-    assert!(
-        seen.contains(&port),
-        "ports.state {seen:?} misses the bound {port}"
-    );
-    assert!(!seen.contains(&0), "port 0 is never reported: {seen:?}");
 
-    // No change → no re-send; change → re-send.
-    let quiet = std::time::Instant::now();
-    while quiet.elapsed() < Duration::from_millis(700) {
-        let left = 700_u64.saturating_sub(quiet.elapsed().as_millis() as u64);
-        match timeout(Duration::from_millis(left), c.next()).await {
-            Err(_) => break,
-            Ok(v) => assert_ne!(v["kind"], "ports.state", "re-sent without a change: {v}"),
+    // A port the supervisor is not itself listening on becomes part of a report (the first
+    // report may predate the bind).
+    let app = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = app.local_addr().unwrap().port();
+    let mut last: Vec<u16> = Vec::new();
+    let deadline = tokio::time::Instant::now() + T;
+    while !last.contains(&port) {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "no ports.state with the bound {port}; last {last:?}"
+        );
+        if let Some(p) = ports_of(&c.next().await) {
+            last = p;
         }
     }
+    assert!(!last.contains(&0), "port 0 is never reported: {last:?}");
+
+    // No change → no re-send: every further report differs from the previous one and still
+    // lists the open port. Then the port closes: a report without it follows.
     drop(app);
     let deadline = tokio::time::Instant::now() + T;
-    while tokio::time::Instant::now() < deadline {
-        let v = timeout(T, c.next()).await.expect("no frame");
-        if v["kind"] == "ports.state" {
-            let ports = v["body"]["ports"].as_array().unwrap();
-            assert!(
-                !ports.iter().any(|p| p.as_u64() == Some(u64::from(port))),
-                "closed port still reported: {ports:?}"
-            );
+    loop {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "closed port {port} still reported: {last:?}"
+        );
+        let Some(p) = ports_of(&c.next().await) else {
+            continue;
+        };
+        assert_ne!(p, last, "ports.state re-sent without a change");
+        if !p.contains(&port) {
             break;
         }
+        last = p;
     }
     drop(listener);
 }

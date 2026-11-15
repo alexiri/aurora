@@ -140,6 +140,11 @@ pub async fn run(
     result
 }
 
+/// Whether `since_ok` (time since the last successful config poll) is past the ownership lease.
+fn lease_lapsed(since_ok: Duration, lease: Option<Duration>) -> bool {
+    lease.is_some_and(|l| since_ok > l)
+}
+
 struct Owned {
     handle: IntegrationHandle,
     integration: Integration,
@@ -155,16 +160,37 @@ async fn config_loop(
 ) -> Result<(), RuntimeError> {
     let mut owned: HashMap<Uuid, Owned> = HashMap::new();
     let mut etag: Option<String> = None;
+    // FIX-113: ownership is a lease the core renews on every config poll. A replica the core
+    // cannot be reached from past that lease must assume another replica owns its integrations
+    // now, so it closes them instead of keeping platform sockets open.
+    let mut lease: Option<Duration> = None;
+    let mut last_ok = tokio::time::Instant::now();
     let result = loop {
         match client.config(etag.as_deref()).await {
-            Ok(ConfigPoll::NotModified) => {}
+            Ok(ConfigPoll::NotModified) => last_ok = tokio::time::Instant::now(),
             Ok(ConfigPoll::Changed(c)) => {
+                last_ok = tokio::time::Instant::now();
+                lease = Some(Duration::from_secs(u64::from(c.lease_secs.max(1))));
                 let complete = apply_config(connector, &sink, &mut owned, *c.clone()).await;
                 // An incomplete apply is retried on the next poll.
                 etag = complete.then(|| c.etag.clone());
             }
             Err(e) if e.is_auth() => break Err(RuntimeError::Unauthorized(e)),
-            Err(e) => tracing::warn!(error = %e, "config poll failed"),
+            Err(e) => {
+                tracing::warn!(error = %e, "config poll failed");
+                if lease_lapsed(last_ok.elapsed(), lease) && !owned.is_empty() {
+                    tracing::error!(
+                        integrations = owned.len(),
+                        "core unreachable past the ownership lease; closing integrations"
+                    );
+                    for o in owned.values() {
+                        o.handle.close();
+                    }
+                    owned.clear();
+                    // Re-open from scratch once the core answers again.
+                    etag = None;
+                }
+            }
         }
         if sleep_or_shutdown(interval, &mut shutdown).await {
             break Ok(());

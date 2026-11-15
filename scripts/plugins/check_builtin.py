@@ -18,6 +18,18 @@ from urllib.parse import urlsplit
 import yaml
 
 
+# App id -> dangerous requests no tool offers; each needs a `refused <what>: ...` fixture whose
+# request selects no tool (FIX-118, PKG-8).
+REFUSED = {
+    "github": ["repository deletion"],
+    "github-ghes": ["repository deletion"],
+    "drive": ["file deletion"],
+    "calendar": ["calendar clear"],
+    "gmail": ["mail deletion"],
+    "microsoft-365": ["mail deletion"],
+}
+
+
 def run(aurora, *args, timeout=300):
     p = subprocess.run([aurora, "plugin", *args], capture_output=True, text=True, timeout=timeout)
     return p.returncode, p.stdout, p.stderr
@@ -222,6 +234,14 @@ def check_app(app, paired, err):
                     err(f"app {aid}: read tool {tid} allows {t['methods']}; reads are GET/HEAD, git fetch, graphql query or a `params` classifier")
             elif tid not in approvals:
                 err(f"app {aid}: write tool {tid} has no approvals template (clamped summary)")
+
+    # dangerous untooled endpoints (FIX-118): a case per entry of REFUSED proves the request
+    # selects no tool (it is refused under custom grants and `block_untooled`)
+    for what in REFUSED.get(app["about"]["id"], []):
+        if not any(c["name"].startswith(f"refused {what}:") and r["status"] == "pass"
+                   and (r.get("observed") or {}).get("tool") is None
+                   and c.get("expect", {}).get("tool") is None for c, r in paired):
+            err(f"app {aid}: no passing `refused {what}: ...` case (the request must select no tool)")
 
     # every summary template: a positive case that asserts the title
     for tid, tpl in approvals.items():

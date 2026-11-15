@@ -17,6 +17,7 @@ Phase: **0**. Tables: `03 §5–8`. The machinery that runs hosted agents is in
 | `brief`               | operator-authored instructions, rendered after the platform preamble and labelled as the operator's.                                                                                     |
 | `avatar`              | PNG/JPEG/WebP ≤ `AVATAR_MAX`, re-encoded to PNG 256×256 by the API; served publicly only at `/v1/public/avatars/{avatar_public_key}` (rotated on change) so chat platforms can fetch it. |
 | `resource_overrides`  | instance admins only; per-agent CPU/memory/home size over org overrides over runner defaults.                                                                                            |
+| `narration_cards` | (phase 5, P4-NARR, D-279, C-846) `true` shows a live steps card for this agent's turns on chat platforms that can edit messages (`§Live narration cards`); default `false`. Settable by whoever may `can_own` the agent. |
 | `proactive_messaging` | `ask` / `allow` / `off` (`13 §Messaging tools`).                                                                                                                                         |
 
 
@@ -110,6 +111,7 @@ session (`harness_session_ref`) inside the shared sandbox.
 | `webhook`  | `webhook:<webhook_id>`    | first delivery                                                                                                                                                                                                           |
 | `watch`    | `watch:<agent_id>`        | first watch fire (one shared conversation for background work)                                                                                                                                                           |
 | `peer`     | `peer:<peer_task_id>`     | a peer task on the receiving agent                                                                                                                                                                                       |
+| `eval` (phase 5, P4-EVAL, C-860) | `eval:<run_id>:<position>` | one question of an eval run (§Evals); created per question, never mirrored to a channel, hidden from the default chat list |
 | `api`      | caller-supplied (≤128)    | `POST /v1/agents/{agent}/conversations`                                                                                                                                                                                  |
 
 
@@ -187,23 +189,95 @@ first, or the harness cannot steer, or the steer is reported *missed*, the
 follow-up is **promoted**: its row becomes `promoted` and a new `queued` turn
 is created with its text (one promotion per follow-up, fenced by
 `promoted_at`).
-- **Approval resume follow-up** (phase 4, RFE-011b, `07 §Park and resume`): when a parked
+- **Approval resume follow-up** (phase 5 (D-138, moved from phase 4), RFE-011b, `07 §Park and resume`): when a parked
   approval is approved or denied the API creates, in the origin conversation, a **system
   follow-up**: a `joining` row steered into the origin turn if it is still running and the
-  harness can steer, else a new `queued` turn with `speaker_kind = system` (door `approval`,
-  no speaker, so `user`/`group` identities never match, D-131), exactly the mechanism by which an
-  action-approval outcome reaches an agent. Its text is composed by the platform from the
+  harness can steer, else a new `queued` turn with `speaker_kind = system` (door `{ "kind":
+  "system", "ref": "approval:<id>" }` — (P4-011B spec batch, D-264(e)) the door vocabulary is
+  closed, the "`approval`" door named here earlier was an error; no speaker, so `user`/`group`
+  identities never match, D-131), exactly the mechanism by which an action-approval outcome
+  reaches an agent. It is written in the deciding transaction, and one decision transaction
+  writes one follow-up per conversation however many of its parked approvals it decides (C-824). Its text is composed by the platform from the
   approval's sanitized summary (never model or request text), states the decision, who made it
   and, for an approval, the single-use window in which to repeat the identical request. It is
   created only if the agent is not effectively frozen and the conversation still exists; the
   sandbox is woken by the normal due-work arms (a parked approval is not a keep-awake reason,
-  `11`). An expired parked approval produces a `notice` and no turn.
+  `11`). An expired parked approval produces a `notice` and no turn. (D-264(d), C-826)
+  Deleting the conversation or the agent, and bumping `harness_session_epoch` (harness switch,
+  redaction with `reset_session`), abandon the conversation's pending parked approvals and revoke
+  its ready grants in the same transaction: a fresh session cannot repeat the exact request.
 - **Send now** (`POST /v1/turns/{id}/send-now`): sets
 `send_now_requested_at`; delivered as `turn.send_now` (harness moves the
 blocking tool to the background if it declares `background_tool`).
 - **Abort** (`POST /v1/turns/{id}/abort`): sets `abort_requested_at`; queued
 turns become `aborted` immediately; dispatched/running ones get
 `turn.abort` and end `aborted` on the terminal event (or by stall recovery).
+
+### Quote-reply and files-only messages (phase 5, P5-CHAT-1, D-228, C-725, C-726)
+
+A message may quote one earlier durable event of **the same conversation**: a `text` (agent message),
+a `turn.queued` (a person's or another door's message) or an `attachment` (a file the agent sent).
+The API validates the target under the conversation lock when it inserts the turn or follow-up
+(`reply_target_invalid`: `not_found` for an unknown seq or another conversation's, `not_replyable`
+for any other event type, `redacted`), stores `turns.reply_to_seq`, and composes the `turn.queued`
+`reply_to` payload (author label, kind, time and an excerpt: the target's text, or for an
+attachment its file name and caption, `sanitize::block` clamped to 280 characters on a word
+boundary with "…"; a files-only `turn.queued` target quotes its file names).
+
+- **Redaction cascade.** Redacting the target (`POST …/events/{seq}/redact`, `POST /v1/turns/{id}/redact`)
+  rewrites every referencing `turn.queued` payload's `reply_to` to `{ seq, redacted: true }` in the
+  redaction's transaction and tells open streams (`event.redacted`) about the rewritten events.
+  Retention removes whole conversations (`§Archive, delete, redaction, retention, export`), so no
+  quote outlives its target there.
+- **Delivery.** The API prepends the quote to the text it hands the agent (`TurnInput.text`, a steered
+  `turn.message`, and the turn a follow-up is promoted into), never to the stored `text`:
+  `> In reply to <author_label>'s message (<at>):`, the excerpt with every line prefixed `> `, one blank
+  line, then the person's text. A target redacted (or gone) by delivery time gives
+  `> In reply to a message that was redacted.` instead — the excerpt is read from the target at
+  delivery, so a redacted message's text never reaches the agent afterwards. One pure function
+  (`conversations::reply::compose_delivered_text`) builds every delivered text.
+- **Files only.** A message may carry attachments and no text: the stored `text` is `""`, the delivered
+  text is `(sent N file(s))`, and door copies and notifications that would quote the text show the
+  file names. Without attachments an empty text is still `400`.
+
+### Search (phase 5, P5-CHAT-4, D-229, D-230, C-727, C-728)
+
+People and agents search what was said. One index (`03 §transcript_search`), one query builder
+(`aurora_db::repo::search`), two callers: the dashboard route (`05`) and the agent tools.
+
+- **What is indexed**: durable `turn.queued` (`text`, plus the file names of its attachments), agent
+  `text` (the D-227 Markdown reduced to plain text: code kept, link text and URLs kept, emphasis and
+  structure marks dropped), `attachment` (file name and caption). Not tool events, approvals, notices,
+  errors, thinking or deltas. A `body` is at most 32 KiB; the rest of a longer message is not searchable.
+- **Language**: `doc` stems in the workspace's memory language (weight A) and also holds the `simple`
+  configuration (weight B), so exact words match in any language. Changing the workspace language
+  later does not re-index (exact words keep working; stemming follows the old language).
+- **Write and removal**: the row is inserted in the event's transaction. Redaction deletes it in
+  the redaction's transaction; conversation delete cascades; a purged attachment keeps its file-name
+  row unless the event itself is redacted. Retention removes whole conversations.
+- **Backfill**: a resumable background job started by every API replica (one step at a time under an
+  advisory lock, batches of 1 000 by `(conversation_id, seq)`, persisted cursor) indexes existing
+  events. It share-locks the event rows it reads and re-checks `redacted_at`, so a concurrent
+  redaction can never leave a row behind; rows the write path already made are skipped. The route
+  reports `index_complete: false` until it finishes.
+- **Query**: our parser turns `q` into terms (words, the last prefix-matched, `"phrases"`, `-word`,
+  `OR`; at most 200 characters and 12 terms); user text never reaches `to_tsquery` — each term is a
+  bound parameter of `plainto_tsquery` / `phraseto_tsquery` (the one `to_tsquery` use takes a prefix
+  word made only of letters, digits and `_`), once per configuration, OR-ed. A statement timeout of
+  2 s bounds a query. Snippets are `ts_headline` output with control-character sentinels converted
+  to plain text and UTF-16 highlight ranges on the server; no markup survives.
+- **Visibility** is part of the query, never a post-filter: non-direct conversations, the caller's
+  own direct ones, and every direct one for workspace owners (`can_see_conversation`).
+- **The agent's scope** (`conversation_search`, `conversation_read`, `12 §Phase 0 catalogue`): built
+  from the call's stamped agent and turn, never from arguments. The agent's conversations that are
+  the current one, or direct and owned by the turn's speaker, or non-direct while the speaker still
+  has access to the workspace; a speakerless turn (schedule, webhook) gets the current conversation and
+  the non-direct ones. **Never another person's direct conversation, even when the speaker is an
+  owner**: owners' wider dashboard view does not extend to the agent, because what the agent reads
+  it may repeat to the person it is talking with (the preamble rule above). An out-of-scope
+  conversation and an unknown one answer identically (`not_found`). Results are wrapped as untrusted
+  quoted data and bounded (≤ 64 KiB, 20 hits, 4 000 characters per message); redacted events show as
+  `redacted`.
 
 ### Failure semantics
 
@@ -235,7 +309,7 @@ generically.
 
 | Type                                                         | Durable | Payload                                                                             |
 | ------------------------------------------------------------ | ------- | ----------------------------------------------------------------------------------- |
-| `turn.queued`                                                | yes     | `{ turn_id, door, speaker_label, text, attachments: [id] }`                         |
+| `turn.queued`                                                | yes     | `{ turn_id, door, speaker_label, text, attachments: [id], reply_to? }` (`reply_to`: `{ seq, author_label, author_kind: "agent"\|"person"\|"other", at, excerpt }` or, once the target is redacted, `{ seq, redacted: true }`; §Quote-reply) |
 | `turn.started`                                               | yes     | `{ turn_id }`                                                                       |
 | `text.delta`                                                 | **no**  | `{ turn_id, message_id, delta, reply_to? }`                                         |
 | `thinking.delta`                                             | **no**  | `{ turn_id, delta }`                                                                |
@@ -246,7 +320,7 @@ generically.
 | `correction`                                                 | yes     | `{ turn_id, message_id, action: "retract"|"replace", text? }`                       |
 | `message.joined`                                             | yes     | `{ turn_id, followup_id }`                                                          |
 | `message.sent_now`                                           | yes     | `{ turn_id }`                                                                       |
-| `approval.pending` / `approval.decided` / `approval.expired` | yes     | `{ approval_id, summary, decision?, decided_by_label?, via? }`; (phase 4, RFE-011b) `approval.pending` also `{ expires_at, parked }`, `approval.decided` for a parked approval `{ resume_expires_at }`, `approval.expired` `{ reason: "deadline" \| "resume_window" }` |
+| `approval.pending` / `approval.decided` / `approval.expired` | yes     | `{ approval_id, summary, decision?, decided_by_label?, via? }`; (phase 5 (D-138, moved from phase 4), RFE-011b) `approval.pending` also `{ expires_at, parked }`, `approval.decided` for a parked approval `{ resume_expires_at }`, `approval.expired` `{ reason: "deadline" \| "resume_window" }` |
 | `action_approval.pending` / `.decided`                       | yes     | `{ id, summary, decision? }`                                                        |
 | `attachment`                                                 | yes     | `{ turn_id, attachment_id, filename, size, caption? }` (agent `send_file`)          |
 | `notice`                                                     | yes     | `{ code, text }` — platform-authored only                                           |
@@ -259,7 +333,41 @@ No vendor concept may appear in this vocabulary; adapters translate.
 **The answer rule**: a turn's durable `text` events contain *what the agent said
 after its last tool call*; narration between tools streams ephemerally. A tool
 call is a structural break; thinking is not. Within a tool-free stretch the
-harness's message framing decides message boundaries.
+harness's message framing decides message boundaries. (FIX-115) When a turn ends
+without a result (failed, stalled, cancelled, restarted), the text buffered since
+its last tool call is written as durable `text` events before the `error` event and
+`turn.finished`; nothing is discarded silently.
+
+### Live narration cards (phase 5, P4-NARR, D-279, D-280, C-846..C-851, SEC-111)
+
+(phase 5, P4-NARR) A chat-platform connector may show a turn's progress as one **narration card**
+instead of the seen-receipt: a message listing the turn's tool steps and their status, updated as
+the steps run and deleted when the answer is posted (`13 §5.12`, `20 §Rendering`). It is a view of
+existing durable events and changes nothing else:
+
+- **Events.** Only `tool.started` and `tool.finished` (durable, `§Transcript events`) and
+  `turn.started` / `turn.finished` drive the card. Their `summary` is already sanitized and capped
+  at 200 characters, and never carries raw arguments. `activity`, `thinking.delta` and `text.delta`
+  never reach a card, and nothing a tool returned is shown.
+- **Who sees what.** A card in a `direct` conversation with the agent shows each step's name and
+  summary. Any other conversation (a shared space) shows the step's name only. A card never shows
+  arguments, file contents, attachment names, secrets or the answer text.
+- **Setting.** `narration_cards` (agent setting, default `false`) enables it. Without it, or on a
+  platform whose connector does not declare `edits` (`13 §4.5`), the turn behaves exactly as before
+  (receipt or placeholder, answer posted once). Dashboard chat is unchanged: it already folds tool
+  calls (`14`, *Agent chat*).
+- **Bounds.** At most `NARR_MAX_STEPS` steps are listed (then "N earlier"), each label at most
+  `NARR_STEP_CHARS`; at most one update per `NARR_MIN_INTERVAL`; at most `NARR_SPACE_UPDATES_PER_MINUTE`
+  narration writes per space; at most `NARR_CARDS_PER_SPACE` cards per space at a time (`02 §Limits`).
+  A `rate_limited` answer supersedes the pending update (the next state replaces it), it is not
+  retried. Limits and cadence (owner answers D-286, D-288): the defaults above are
+  the recommendation.
+- **Failure and restart.** The card is derived from durable events keyed by `turn_id` and the event
+  sequence, so a restarted projector resumes the same card (`dedupe_key narr:<turn_id>:<seq>`) and
+  never posts a second one. A turn that ends without a result still gets the answer rule of
+  `§Turns` before `turn.finished`; the card is **collapsed** in every case (owner, D-286): its last update replaces the step list with one line — the outcome, the step count (failed ones named as a count) and the elapsed time — and that update is never superseded or dropped.
+
+(owner, D-288) The default is off, switched on per agent.
 
 ### Archive, delete, redaction, retention, export (phase 2, RFE-010, D-53)
 
@@ -354,7 +462,7 @@ caps `ATTACH_OUT_*`; produces an `attachment` event and, for threads, a
 - Storage through the **BlobStore** trait (`put`, `get`, `delete`; backend key
 per row). Phase 0 backend: `postgres` (`blobs` table). An S3-compatible
 backend is a later registry entry.
-- **S3-compatible backend (phase 4, P4-S3, D-120, SEC-63).** The registry entry
+- **S3-compatible backend (phase 5 (D-138, moved from phase 4), P4-S3, D-120, SEC-63).** The registry entry
   is `s3` (`15 §S3-compatible blob store`): `blobs.backend = "s3"` makes **new**
   attachments go to the bucket; `attachments.blob_backend` is already per row, so
   `postgres` rows stay readable and nothing is converted unless the operator runs
@@ -454,8 +562,12 @@ backend is a later registry entry.
     (`details: { used_mib, quota_mib }`); a connector `file.fetch` → the attachment
     is `failed` with `failure_reason = quota_exceeded` and the person gets a
     platform-voice notice; the agent's `send_file` (runner `POST /attachments`) →
-    tool error `attachment_quota_exceeded`. At 80 % and 100 % the org's owners get a
-    dashboard notice (and the e-mail notification channel of RFE-011a when enabled).
+    tool error `attachment_quota_exceeded`. At 80 % and 100 % (once per crossing) the sweep writes an
+    **audit row** and, when a mailer exists, **e-mails the org's owners**; the dashboard shows the level as a
+    badge on **Admin › Storage** (`GET /v1/orgs/{org}/storage` → `notice`: `clear` / `warning` / `full`) and
+    nowhere else — **there is no banner in the app shell and no in-app notification** (FIX-119 reworded this
+    sentence; an app-shell banner for org owners while the notice is `warning` or `full` is the open
+    follow-up, same shape as the SCIM expiry notice).
   - **Retention.** `attachments_days` (optional, default none; same bounds and
     instance ceiling `attachments.days_max` as conversations, `RETENTION_MIN_DAYS`..
     `RETENTION_MAX_DAYS`) purges attachment **bytes** older than the window: the
@@ -488,7 +600,7 @@ sync. Order:
 1. **Platform preamble** (platform voice): identity (name, handle, workspace),
  the boundary map (what is the agent's, the platform's and the gateway's),
  how credentials work (never ask people for secrets; the gateway injects),
- how to read gateway refusals. (phase 4, RFE-011b, only when parking is enabled) The
+ how to read gateway refusals. (phase 5 (D-138, moved from phase 4), RFE-011b, only when parking is enabled) The
  preamble includes the paragraph: *"If a request is refused with `approval_parked`, it was not
  sent: a person must approve it and that may take hours. Do not retry it and do not look for another
  route. Finish what you can, tell the user what you are waiting for, and end your turn. When you
@@ -501,6 +613,15 @@ sync. Order:
  "Notes from the <app> plugin (third-party)"), where you talk (channels),
  peer agents, memory (including the **memory language** rule), skills,
  schedules, background processes, machine facts (timezone, home, tools).
+ (Phase 5, FIX-144/FIX-145, C-730/C-731) Each account of the connected-apps
+ render inputs is `{ id, label, service?, address? }`. `address` is where a
+ self-hosted account lives: `https://<instance host><base_path>` for a
+ connection bound to a registered instance (the base path only when the
+ registration has one, D-231: `https://its.cern.ch/jira`),
+ `https://<default_host>` for an instance-bound app's default-host connection,
+ absent for every other app. It is sanitized like the label and rendered after
+ it: ``- `<id>`: <label> — at https://its.cern.ch/jira``. Plugin snippets refer
+ to it as `<address>`.
 
 Render inputs are delivered in the start payload and refreshed by home sync
 (`12 §Home projection`).
@@ -757,10 +878,25 @@ secret, constant-time compare) → 401 on mismatch.
   active owner) → 410 / 403 and a `webhook_deliveries` row.
   (phase 2, RFE-006) Effectively frozen agent → 410 `frozen` and a delivery row
   `paused` (reason `frozen`); the webhook stays enabled.
+  (FIX-111) Delivery rows (including every rejected request) are kept
+  `WEBHOOK_DELIVERY_RETENTION` (30 days) and at most `WEBHOOK_DELIVERY_MAX_PER_WEBHOOK`
+  (10 000) per webhook; the daily retention pass removes the rest. `GET
+  /v1/webhooks/{id}/deliveries` and `GET /v1/schedules/{id}/runs` page by cursor
+  (`05` list convention).
 - Accepted → turn in the webhook's run conversation with the stored
 instructions + payload; responds `202 { "delivery_id" }` immediately.
 - Rate limit: 60 deliveries/min per webhook (429).
+- (FIX-110) The sender's `Content-Type` is part of the untrusted data: it appears
+  inside the fenced block, never in the preamble.
+- (FIX-110, D-178 Q-R5-20) Replay protection of a signed delivery belongs to the
+  sender: a signed delivery without a delivery id is deduplicated for 60 s only, so
+  a captured request can be replayed later. Optional signed-timestamp checking is a
+  later item, not built now.
 - Auto-disable after 5 consecutive failed turns (`failures`).
+- (FIX-110) Schedule and webhook edits read the row under `FOR UPDATE` and write only
+  the edited columns: an edit never restores a stale `next_fire_at`, clears a live
+  fire lease or undoes a secret rotation. The cron minimum interval (5 minutes) is
+  checked over a full cycle (a week of occurrences).
 
 ## Processes and watches
 
@@ -778,15 +914,41 @@ arming conversation.
 - Keep-awake: a busy process or an armed watch holds the sandbox awake within
 `BACKGROUND_CAP` (`11 §Keep-awake`).
 
+## Evals (phase 5, P4-EVAL, D-289..D-294, C-860..C-874, SEC-114..SEC-116)
+
+Owner questions Q-EVAL-1..10 are pending; the text below follows the recommendations (marked "(pending owner answer Q-EVAL-n)"). Briefs: `docs/tasks/P4-EVAL-1.md` … `P4-EVAL-4.md`.
+
+An **eval** measures a hosted agent's answers to fixed questions with known answers. It is not a second execution path: every question is a real turn in the agent's own turn pipeline, under every rule that governs the agent.
+
+- **Questions** (C-861). A question belongs to one hosted agent, has text (≤ `EVAL_QUESTION_CHARS`), a position, an enabled flag and one expected-answer kind: `numeric` (a number, optional absolute tolerance, default 0), `text` (≤ `EVAL_EXPECTED_TEXT_CHARS`), or `judged` (criteria ≤ `EVAL_CRITERIA_CHARS`). At most `EVAL_QUESTIONS_PER_AGENT` per agent. Expected answers are agent-audience data (below); the agent never sees them.
+- **Scoring** (C-862). For numeric and text questions the platform appends to the question text an instruction to end the reply with a final line `ANSWER: <value>` (pending owner answer Q-EVAL-5). The value is read from the last such line: numeric questions compare the parsed number within the tolerance; text questions compare after trimming, whitespace collapse and case folding. No `ANSWER:` line is `fail` (`no_answer_line`). Judged questions are scored by the judge (§Judge). Outcomes: `pass`, `fail` (the answer was given and is wrong or malformed), `error` (no answer could be scored: turn failed, timed out, judge failure, access lost mid-run), `not_scored` (the run was cancelled before the question). Pass rate = pass ÷ (pass + fail); `error` and `not_scored` are shown beside it, never counted as passes.
+- **Runs** (C-864, C-865). A run is started by `POST /v1/agents/{agent}/eval-runs` (or by an eval schedule, below) and records its status (`queued`, `running`, `done`, `failed`, `cancelled`), the trigger, the starter, counts, the configuration fingerprint (below) and `question_set_version` (a hash of the enabled questions' ids and versions). A run's question list is the one at start; edits during a run apply to the next run. One active run per agent (`EVAL_RUNS_ACTIVE_PER_AGENT`, 409 `eval_run_active`); at most `EVAL_RUNS_PER_AGENT_DAY` starts per agent per UTC day, manual and scheduled together (429 `eval_runs_limited`). The run is claimed by the due-work arm under a lease, like schedule fires; a lost lease resumes at the next unfinished question with the same `source_event_id`, so no question is answered twice.
+- **Per-question conversations** (C-860, D-290(b)). Question `n` of run `r` runs in its own conversation of kind `eval` (`external_ref eval:<r>:<n>`), created when the question starts, with one turn whose `source_event_id` is `eval:<r>:<n>`. Each question therefore starts with a fresh harness session: no answer depends on an earlier one. Eval conversations are visible to `can_use` (non-direct kinds follow `can_use`), are hidden from the default chat list, are never mirrored to a channel, never a thread-link target and never the origin of a report.
+- **A run cannot change the world** (C-868, D-290(c), SEC-114). In an eval turn:
+  - every gateway request whose effect is a write is refused with `eval_read_only` (a write is any request that is not a `read` app tool of `07 §Read-only connections` and not `GET`/`HEAD`);
+  - the platform tools `send_message`, `send_file`, `send_as_me` (P4-UTOK), the memory and skill writes, and the creation of schedules, webhooks and peer tasks are refused with the same code;
+  - a refusal creates **no approval**, is never held for a person, and is counted in `eval_results.refused_writes`;
+  - the agent receives the refusal as its tool result and the question is scored on the answer it then gives.
+  The refusal is decided by the conversation's kind, read from the turn's context credential by the gateway and by the tool service, so an agent cannot opt out of it. (pending owner answer Q-EVAL-2)
+- **Cancel and access**. `POST …/cancel` sets `cancel_requested_at`, aborts the running turn and marks the remaining questions `not_scored`. Before each question the run re-checks the starter's or creator's `can_use` and the agent's freeze; a lost right or a freeze cancels the run with reason `access_lost` or `frozen` (an in-flight turn is not aborted by a freeze that the agent's normal rules would not abort it for).
+- **Judge** (C-869, D-292, SEC-115). Judged questions call the judge through **`PlatformLlm`**, the platform's internal LLM service (`08 §Platform-internal LLM calls`, purpose `eval_judge`). The judge key is an LLM secret named in the agent's eval settings with a model (C-863). At every call `PlatformLlm` checks, in order: the secret is `active`, granted to the agent, admitted by governance for its endpoint and scope, and usable (`08 §Model readiness`). The request carries the question, its criteria and the final answer of that question's own turn, cut at `EVAL_JUDGE_INPUT_MAX`; nothing else. The judge returns `{ "verdict": "pass" | "fail", "rationale": string }` (rationale ≤ `EVAL_RATIONALE_CHARS`, sanitised); anything else is `judge_unparseable`. Every judge failure is an `error` for that question; there is no fallback key, provider or retry elsewhere. Judge usage is summed into `eval_runs.judge_usage`, never into `turns.usage`. (pending owner answer Q-EVAL-4)
+- **Fingerprint** (C-866, D-291). At start a run records a canonical JSON object of the configuration its answers depend on: `instructions_sha256` (of `agents.brief`), `harness`, `model_provider`, `model_endpoint_id`, `model_id`, `effort`, `skills` (the effective set: tier, name and content SHA-256 of each), `granted_rule_ids` (the sorted logical ids of the policy rules granted to the agent), `question_set_version`, and the judge's secret id and model. `fingerprint_hash` is its SHA-256. The fingerprint holds hashes and ids, never contents or secret values, and is immutable for the run. `GET /v1/agents/{agent}/eval-fingerprint` returns what a run would record now. **Known gap**: agent memory is not fingerprinted in phase 5 (a follow-up records the memory revision high-water mark). Comparisons show a field-level diff against the previous run and against any chosen run (pending owner answer Q-EVAL-8); attribution is that diff, never an automatic cause.
+- **Eval schedules** (C-870, D-293(a)). An eval schedule (`eval_schedules`) fires through the schedules engine (§Schedules) with the same lease, anchor and fire-time authority (`04 §Fire-time authority`), `skipped_frozen` and `skipped_busy` outcomes and `SCHEDULE_FAILURE_DISABLE`. Its runs count toward `EVAL_RUNS_PER_AGENT_DAY`. Its cadence is at least `EVAL_SCHEDULE_MIN_INTERVAL` (one hour; pending owner answer Q-EVAL-3). At most `EVAL_SCHEDULES_PER_AGENT` per agent.
+- **Regression notice** (C-871, D-293(d)). When a run finishes with a pass rate at least `EVAL_REGRESSION_DROP` (10 points) below the previous finished run of the same `question_set_version`, the Evals page shows a notice to eligible viewers with counts only (pending owner answer Q-EVAL-7). Nothing is posted to a chat platform, e-mailed or pushed. Off per agent with `eval_regression_notify = false`.
+- **Audience and retention** (D-294, SEC-116). Questions, expected answers, answers, rationales and results are visible to `can_use` of the agent's workspace (pending owner answer Q-EVAL-9). They never reach the sandbox, its boot document, a gateway credential, a connector post or notice, an audit row's metadata, the request log, a log line or a URL; audit rows carry ids and counts (C-873). Runs and results are deleted after `EVAL_RUN_RETENTION` (90 days; pending owner answer Q-EVAL-6); deleting a run deletes its eval conversations through the normal delete path, including the harness session purge. Deleting an agent cascades to its evals.
+- **Who may do what** (`04` matrix, pending owner answer Q-EVAL-1). Create, edit and start questions, cancel runs, manage eval schedules: `can_use`. Set the judge key: `can_own`. Delete a run: `can_own`. No agent tool exists for any of it.
+- **Scope**. Hosted agents only (BYO: 422 `eval_not_supported`). Evals are available on every hosted agent with no instance switch (pending owner answer Q-EVAL-10).
+
 ## Usage and metering
 
 - **Runtime intervals**: one row per boot (opened by the start report, closed by
 whatever ends it, plus a reconcile sweep), control-plane timestamps only, no
-foreign keys. `runtime_daily` is rebuilt hourly.
+foreign keys. `runtime_daily` is rebuilt hourly (phase 5, D-138; **specified, not built** — the table exists, nothing writes it, and `GET /v1/workspaces/{ws}/usage` has no route).
 - **Token usage** per turn (`turns.usage`) as reported by the harness;
-aggregated in `GET /v1/workspaces/{ws}/usage`. (phase 4, P4-LLM) The API stamps
+aggregated in `GET /v1/workspaces/{ws}/usage`. (phase 5 (D-138, moved from phase 4), P4-LLM) The API stamps
 `provider`, `endpoint_id` and `model` into `turns.usage` from the turn's `ModelChoice`
 (never from what the harness reports), and the aggregate gains a `by_model` breakdown
-keyed by `(provider, endpoint_id, model)` over the same token counters. The gateway
+keyed by `(provider, endpoint_id, model)` over the same token counters ((phase 5, D-260(g))
+P4-LLM lands the stamping only; `by_model` is built with the usage route itself). The gateway
 counts no tokens; spend limits stay out of scope.
 - Budgets are out of scope (deferred).

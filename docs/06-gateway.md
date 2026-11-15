@@ -24,7 +24,10 @@ good practice).
 
 The skill library (`10 §Skills`) reads repository files with a connection's credential. That
 credential is used **only here**, by the gateway, so the API never holds a plaintext token and the
-refresh and host guard (`08 §8`) stay in one place. The internal listener (4103) serves one more route,
+refresh and host guard (`08 §8`) stay in one place. It is the one credentialed request outside an app's
+tools: policy, grants and the app's `custom_only` / `block_untooled` flags do not apply to it, and it is
+bounded instead by the package's approved `library` templates (exact host, path and method, `09 §3.4 library`;
+FIX-085). The internal listener (4103) serves one more route,
 `POST /internal/v1/library-fetch`, with the same internal-secret auth and the same reachability
 (API replicas only, never a sandbox, SEC-09):
 
@@ -284,6 +287,22 @@ published policy generation (no DB on the hot path; invalidation scopes `org`
 and `workspace`), so changing it takes effect for the next `CONNECT`; open
 tunnels end at the idle limit or when the client closes them.
 
+### Tunnel limits (FIX-106, REVIEW-5 GWT-1/GWT-2)
+
+Everything inside a `CONNECT` is attacker-paced, so every phase has a bound (all in
+`aurora_core::limits`, `02 §Limits`):
+
+| Bound | Value | Applies to |
+|-------|-------|------------|
+| `TUNNEL_HANDSHAKE_TIMEOUT` | 10 s | the inner TLS handshake of a MITM tunnel (from the `200` to a completed handshake) and the dial of an open-lane tunnel (a slow dial answers 504 `upstream_timeout`) |
+| `TUNNEL_HEADER_TIMEOUT` | 30 s | the head of each request inside a MITM tunnel (hyper's header-read bound, which needs a timer: the inner HTTP builder has one). It also bounds the wait for the next request on a keep-alive HTTP/1 tunnel |
+| `TUNNEL_IDLE_TIMEOUT` | 600 s (the WebSocket idle value) | **every** tunnel kind: open-lane tunnels, MITM tunnels (no bytes in either direction and no request in flight; a request held for approval is in flight, not idle) and upgraded WebSockets |
+| `TUNNEL_PER_CREDENTIAL_MAX` | 64 | concurrent tunnels of one credential; the next `CONNECT` is answered 429 `rate_limited` (`details.limit = "concurrent_tunnels"`, `retry-after: 5`) |
+| `TUNNEL_TOTAL_MAX` | 4096 | concurrent tunnels of the gateway (same answer, `details.scope = "total"`) |
+
+A refusal by a cap increments `aurora_gateway_tunnel_refused_total{scope="credential"|"total"}`.
+The slot is held for the tunnel's whole life and released when it ends, for any reason.
+
 ## Database lane (phase 2, P2-DBL-1, D-80)
 
 Spec: `21 §Phase 2 — Database lane`; invariant SEC-60. Code: `services/aurora-gateway/src/db/`
@@ -310,9 +329,24 @@ Only then are the stored credentials opened (`host`, `port`, `dbname`, `user`, `
 optional `sslmode` (default `require`), `ca_pem`) and the gateway opens **its own** server
 session through the guarded dial (the platform database is refused by address and port, SEC-06):
 `sslmode` `disable`, `allow`/`prefer` (TLS first, plaintext only if the server answers `N`),
-`require` (TLS; verifies the chain when `ca_pem` is stored, as libpq), `verify-ca`, `verify-full`;
-authentication with cleartext, MD5 or SCRAM-SHA-256. The server's outcome is relayed as a FATAL
-error (28P01 / 08006 / 08001); the exchange itself never is. The client then gets
+`require` (TLS, **verified** (FIX-106, D-178 Q-R5-7): against the stored `ca_pem` when there is one
+(chain, as libpq's `verify-ca`), otherwise chain **and host name** against the system roots, so the
+stored password is never sent to a server that cannot prove who it is), `verify-ca`, `verify-full`
+(both against `ca_pem`, or the system roots without one). `allow`/`prefer` are opportunistic by
+definition and never verify. A private CA is handled by storing its certificate as `ca_pem`; where
+that is impossible the connection carries the **explicit opt-out** `tls_verification = off` (the
+`postgresql` package's "Server certificate check" field, only offered under `require`, stored in the
+connection's non-secret metadata): it is named, it is recorded in the `connection.create` /
+`connection.reconnect` audit row (`metadata.tls_verification = "off"`), the dashboard shows a warning on
+the connection, and every session that uses it is logged and counted
+(`aurora_gateway_db_tls_unverified_total`). A stored `ca_pem` always wins over the opt-out;
+`verify-ca` and `verify-full` ignore it;
+authentication with cleartext, MD5 or SCRAM-SHA-256. A login the server refuses is relayed to the
+agent as a FATAL error with a **fixed text per class** (28P01 "the database rejected the stored
+credentials; ask a workspace admin to check this connection", 08006 for a TLS/verification or protocol
+failure, 08001 for an unreachable or refused destination): the upstream server's own error text and
+the connection's details (host, role, TLS error) go to the gateway log only (FIX-106, DB-3); the
+exchange itself is never relayed. The client then gets
 `AuthenticationOk`, the server's `ParameterStatus` messages, a **gateway-generated**
 `BackendKeyData` and `ReadyForQuery`. Live sessions are registered with the tunnel registry, so a
 freeze, a revoked credential or a tightened BYO posture ends them (FATAL 57P01).
@@ -372,6 +406,52 @@ registry (removed with the session). A `CancelRequest` (plain, or inside TLS) fo
 pair makes the gateway send the real `CancelRequest` over a fresh guarded connection; unknown pairs
 get no answer.
 
+## LDAP lane (phase 5, P5-CERN-ADDONS, D-251)
+
+Spec: `90 D-251`; manifest `09 §3 ldap`; invariant SEC-110. Code: `services/aurora-gateway/src/ldap/`
+(`ber` the codec, `filter` the RFC 4515 grammar, `client` the LDAPS client, `mod` the request
+translation) and the hook in `decide.rs` (`PreparedRequest.ldap`) and `proxy/mod.rs`
+(`ldap_answer`).
+
+**Not a new listener.** An agent reaches an LDAP app as it reaches any HTTPS app: CONNECT to
+`<app id>.ldap.aurora.internal:443` through the proxy, the gateway's MITM leaf for that name, then
+`POST /search` with a JSON body. The pipeline is unchanged up to step 12: the host entry identifies
+the app, the tool (`POST /search`) is matched, the grant, rules, approval holds and rate limits
+decide, and nothing is injected (an LDAP app declares no credentials). What differs is step 13:
+
+**The lane answers instead of forwarding.** `decide` marks the prepared request with the app's
+approved `ldap` block **only** when the request won a *granted connection* of that app (the
+transport rule of `§MITM lane` applies: TLS to the claimed port). A request on an LDAP host without
+that mark — no connection, no grant, plain HTTP, a host of no LDAP app — is answered
+`403 ldap_no_connection` and never reaches a directory. The proxy then reads the body (≤ 16 KiB,
+else 413 `ldap_request_invalid`), builds the query and runs it; the request-log hook sees the
+answer's status like an upstream answer.
+
+**Request** `POST /search`: `{ "filter": "(uid=jdoe)", "attributes": ["mail"], "scope": "sub",
+"base": "OU=Users,DC=cern,DC=ch", "limit": 10 }`. Only `filter` is required; unknown keys and any
+other path or method are refused. Rules (each failure is `400 ldap_request_invalid`, before any
+connection): the filter is RFC 4515, ≤ 1 KiB, depth ≤ 8, ≤ 64 terms, extensible match refused, every
+attribute it names on the app's list; `attributes` ⊆ the list (default: the whole list); `scope` is
+`sub` (default), `one` or `base`; `base` is the manifest's `base_dn` or below it (case-insensitive,
+an escaped comma is not a separator); `limit` is clamped to `max_entries`.
+
+**Directory conversation** (`client.rs`): guarded dial (or the egress proxy) to `server:port`, TLS
+with the certificate verified for `server` (system roots plus the gateway's extra CA bundle), an
+anonymous simple bind (LDAPv3), one `SearchRequest` (derefAliases never, sizeLimit `max_entries+1`,
+timeLimit 10 s, attributes = the request's), an unbind. Only those three PDUs can be encoded — the
+client has no code for add, modify, delete, modifyDN, compare, extended operations or controls.
+Referrals (`SearchResultReference`) are skipped. Messages over 4 MiB, malformed BER, a wrong message
+id or an unexpected operation end the exchange as `502 ldap_unavailable`; a refused bind or search
+is `502 ldap_refused` with the gateway's own text (the server's diagnostic is logged at warn level
+only, never sent to the agent); a stalled directory is `504 ldap_timeout` after 10 s (or
+`gateway.upstream_header_timeout` when longer); a destination the guard refuses is the usual
+`destination_refused` guidance.
+
+**Response** `200`: `{ "entries": [{ "dn": "...", "attributes": { "mail": ["..."] } }], "truncated":
+false }`. Only requested attributes on the app's list are returned, spelled as the manifest spells
+them; values that are not UTF-8 or longer than 4 KiB are dropped, ≤ 100 values per attribute;
+more than `max_entries` entries are cut and `truncated` is true.
+
 ## MITM lane: connect-time resolution
 
 On `CONNECT host:port` the gateway builds a **ResolvedHost** for
@@ -393,6 +473,29 @@ prefixed by org and workspace (so invalidation can drop whole scopes):
    connections whose `instance_id` is that instance are candidates. The
    instance list is cached per org and dropped by the `org` invalidation scope
    (instance-wide changes invalidate every org).
+   (Phase 5, D-231, FIX-145) A host may carry several registrations with
+   disjoint **base paths** (`its.cern.ch` + `/jira` for jira-dc, + `/confluence`
+   for confluence-dc), so at connect time the host lookup yields every
+   registration on the host with its `base_path`; the choice among them is made
+   per request (the path is not known at `CONNECT`), in step 5 of the pipeline:
+   - the request belongs to a registration when the path normalized by step 3
+     (the same path tool matching uses) is the base path itself or starts with
+     base path + `/` (segment boundary: `/jira` does not cover `/jira2` or
+     `/JIRA`); a registration without a base path covers every path; among
+     several matches the longest base path wins;
+   - that registration's app, host entries and connections are the only
+     instance candidates for the request; a request on the host outside every
+     registered base path matches no instance, so no instance connection is a
+     candidate and nothing is injected (fail closed, as for an unknown host);
+   - app and tool identification (step 5: host-entry `path_prefix`, tool
+     `path`, `params`), `{path.N}` in approval summaries and every other manifest
+     decision use the **app path**, the normalized path with the base path
+     removed (`/jira/rest/api/2/myself` → `/rest/api/2/myself`; the base path
+     itself → `/`);
+   - the upstream request, the audit `path` and the approval display keep the
+     **full** path.
+   Static claims, LLM hosts and secrets stay host-level and are unaffected.
+   `default_host` connections have no base path.
 3. **Secret candidates**: workspace and org secrets whose `host_pattern`
    matches (path patterns are evaluated per request).
 4. **LLM candidates**: if the host is an LLM provider host (`08 §LLM
@@ -423,13 +526,36 @@ minted.
    Drop hop-by-hop headers and `Proxy-*`.
 2. **Destination guard.** IP-literal hosts are judged immediately; names are
    resolved through the guarded resolver at dial time. Refuse (403
-   `destination_refused`) private, loopback, link-local, CGNAT, multicast,
-   unspecified and IPv6 ULA ranges unless covered by `gateway.allowed_private`
-   (CIDRs, IPs, hostnames, `*.suffix`); cloud-metadata addresses
-   (169.254.169.254, fd00:ec2::254) only by exact-IP entry. The gateway's own
-   database and internal services are refused by address+port regardless of the
-   allow-list. When `gateway.egress_proxy` is set, the name check runs locally
-   and resolution happens at the egress proxy.
+   `destination_refused`) every address in this table unless covered by
+   `gateway.allowed_private` (CIDRs, IPs, hostnames, `*.suffix`); the table is one
+   function (`aurora_core::ranges`) shared by the gateway and the API's connect/probe
+   guard (FIX-106):
+
+   | Family | Refused |
+   |--------|---------|
+   | IPv4 | `0.0.0.0/8`, `10.0.0.0/8`, `100.64.0.0/10` (CGNAT), `127.0.0.0/8`, `169.254.0.0/16`, `172.16.0.0/12`, `192.0.0.0/24`, `192.0.2.0/24`, `192.168.0.0/16`, `198.18.0.0/15` (benchmarking), `198.51.100.0/24`, `203.0.113.0/24`, `224.0.0.0/4` (multicast), `240.0.0.0/4` (reserved, includes broadcast) |
+   | IPv6 | `::`, `::1`, `::/96` (IPv4-compatible), `fc00::/7` (ULA), `fe80::/10`, `fec0::/10` (site-local), `ff00::/8`, `2001::/32` (Teredo), `2001:db8::/32`, `64:ff9b:1::/48` |
+   | Translated | an address that **embeds** an IPv4 address is judged by the embedded address: IPv4-mapped `::ffff:0:0/96`, NAT64 `64:ff9b::/96`, 6to4 `2002::/16` (so `64:ff9b::a00:1` is `10.0.0.1`; one embedding a public IPv4 address is public). An IPv4 CIDR in `allowed_private` does not open the translated forms of its range |
+
+   Cloud-metadata addresses (169.254.169.254, fd00:ec2::254, and their translated
+   forms) only by exact-IP entry. (phase 5, P4-LLM spec batch, D-262) The implicit
+   allowance for LLM endpoint hosts (`08 §LLM hosts`) is added only for endpoints
+   defined in the deployment configuration, never covers a metadata or link-local
+   address, and is rebuilt with the endpoint table on every `llm` or `limits`
+   reload; a dashboard endpoint is judged by `gateway.allowed_private` like any
+   other destination. The gateway's own listeners and database are
+   refused by address+port regardless of the allow-list: a listener bound to the
+   wildcard address covers loopback, the unspecified address **and every address of
+   the host's own interfaces** (read at start-up, `/proc/net` on Linux), so the pod
+   address on 4103 (`/metrics`, `/healthz`) is refused even when
+   `allowed_private` covers the pod network. When `gateway.egress_proxy` is set,
+   the **local name check** is: resolve the name here with the system resolver
+   (decimal and hex IP spellings included) and refuse (403) if **any** resolved
+   address is refused, before the egress proxy is contacted; a name this host cannot
+   resolve at all (split-horizon DNS that only the proxy knows) is left to the
+   egress proxy, since nothing was resolved here to judge. The egress proxy then resolves the
+   name itself, so a DNS-rebinding window between the two lookups remains; it is
+   accepted, and the proxy's own policy is the second line.
 3. **Method-override and path hygiene.** Requests carrying
    `X-HTTP-Method-Override`, `X-HTTP-Method`, `X-Method-Override` or a
    `_method` query parameter are refused (400 `method_override_refused`):
@@ -442,7 +568,10 @@ minted.
    body conditions, a GraphQL- or git-tagged tool may match, a hold could
    occur, or a model allow-list applies to the host (`08 §11.5`); the rest
    stays in the pipe. Record `truncated`.
-5. **App and tool identification.** Look up the app serving (host, path) in the
+5. **App and tool identification.** (Phase 5, D-231) On a registered instance
+   host, first select the registration whose base path covers the path (longest
+   wins; none → no instance candidate) and use the app path from here on
+   (`§MITM lane: connect-time resolution`). Look up the app serving (host, path) in the
    snapshot host index (longest path prefix wins among non-lost claims); find
    the matching tool in that app's catalogue (host, path, methods, GraphQL kind
    via the fail-closed classifier, git operation; (phase 4, P4-GRANTS, Q8) a tool's
@@ -481,12 +610,16 @@ minted.
    - a winning LLM secret and a non-empty effective model allow-list →
      `model_from_request` must yield an allowed model or `None`; otherwise 403
      `llm_model_not_allowed`.
-   - (phase 4, P4-LLM, SEC-65) a winning LLM secret of a provider with an
+   - (phase 5 (D-138, moved from phase 4), P4-LLM, SEC-65) a winning LLM secret of a provider with an
      `inference_paths` set (`08 §Phase 4 providers`): the method and path (and, for
      `vertex`, the project and location in it) must be in the set, else 403
-     `llm_path_not_permitted`; for `bedrock` with `aws_sigv4` a request body above
+     `llm_path_not_permitted`; for `bedrock` with `aws_sigv4` (phase 5, D-261: or
+     `aws_assume_role`) a request body above
      `LLM_SIGN_BODY_MAX` (8 MiB) → 413 `llm_request_too_large`. Both are decided before
-     policy and before any credential is opened (SEC-03).
+     policy and before any credential is opened (SEC-03). (phase 5, P4-LLM spec batch,
+     D-260(b)/(c)) `anthropic` has a set too (`/v1/messages`, `/v1/messages/count_tokens`,
+     `GET /v1/models[/{id}]`), and the endpoint's `allowed_paths` only ever **adds** to a
+     set (never for `bedrock`/`vertex`, whose entries cannot carry it).
 7. **Policy decision** (`07 §Evaluation`) with the winning credential known →
    `block` (403 `blocked_by_policy`), `default_denied` (403
    `blocked_by_default_policy`), `egress_denied` (403
@@ -504,13 +637,21 @@ minted.
     `connection_reauth_required` (with the dashboard URL).
 11. **Injection.** Apply the host entry's mechanisms (`09 §Mechanisms`) or the
     secret's injection recipe (`08`). Agent-supplied values for injected
-    headers/params are overwritten, never merged. (phase 4, P4-LLM) LLM recipes add
+    headers/params are overwritten, never merged. (phase 5 (D-138, moved from phase 4), P4-LLM) LLM recipes add
     `header` (Azure `api-key`), `aws_sigv4` (all agent `Authorization` and `X-Amz-*`
     headers removed, then the final request signed; Bedrock) and
     `gcp_service_account_token` (a gateway-minted access token from the in-memory
     token cache, single-flight per secret version, no database lock; Vertex); the
     mint or the signing key is never sent anywhere but the provider's token endpoint
     and signing happens in the gateway only (`08 §Phase 4 providers`, SEC-64).
+    (phase 5, P4-LLM spec batch, D-261) Two more recipes use the same **LLM mint
+    service** (`08 §Phase 4 providers`, *Minted credentials*, C-807): `entra_token`
+    (Azure `azure_entra`: an Entra client-credentials token, `Authorization: Bearer`,
+    agent `api-key` removed) and `aws_assume_role` (Bedrock: STS `AssumeRole` session
+    credentials, then the `aws_sigv4` finalizer with `X-Amz-Security-Token`). The mint
+    runs here, after policy and approval, single-flight per secret version; a failed or
+    held mint answers 502 `credential_unavailable` (`details: { kind: "llm_mint",
+    reason: "mint_rejected" | "mint_unavailable" }`) and nothing is forwarded.
     **LLM key origin preflight** (`08 §11.3`): before an LLM key value is
     injected for the first time (per `LLM_ORIGIN_RECHECK`), verify its origin
     with the provider; non-compliant → 403 `llm_key_wrong_organization` /
@@ -536,7 +677,11 @@ minted.
     pinned per protocol version by strict (non-hyper) oracles in
     `services/aurora-gateway/tests/it/proxy_wire.rs`, and reviewers point
     there for any future header the gateway must add.
-14. **Post-response.**
+14. **Post-response.** (FIX-104, SEC-01) When an injected value was placed in the request
+    URL (`path_template`, `path_regex`, `query` recipes, app templates), the response headers and
+    the first 64 KiB of its body are searched for it (raw and percent-encoded); a match replaces
+    the response with 502 `upstream_echoed_credential`. Bytes beyond 64 KiB of a streamed body are
+    not searched.
     - Upstream 401 and the app opted into stale-token detection (manifest
       `token.stale_codes`) on a body-less request → refresh once and resend
       with only the credential replaced.
@@ -553,9 +698,24 @@ minted.
 
 **WebSocket upgrades**: steps 1–11 run on the upgrade request; then the
 connection becomes a byte pipe with `WEBSOCKET_IDLE_TIMEOUT` idle limit across
-both directions.
+both directions. (FIX-086) Only `Upgrade: websocket` (one token, ASCII case-insensitive) is
+honoured: any other token (`h2c`, a list, …) is stripped and the request is forwarded as a plain
+one, and a `101` from an upstream to a request that asked for no honoured upgrade is a protocol
+error — 502 to the agent, never a byte pipe — so nothing can bypass the per-request pipeline.
 
-**Plain HTTP (absolute-form)**: same pipeline without TLS termination.
+**Plain HTTP (absolute-form)**: same pipeline without TLS termination. (FIX-104, D-180)
+**No credential is injected into a plain-HTTP request**, nor into one to a port other
+than the claimed one: a package's host claim, or a generic secret's host pattern, injects only
+into a request that leaves **over TLS to the claimed port** (443 when the claim names none);
+anything else is an uncredentialed request to that destination, decided by policy as such
+(`09 §7`). A governed LLM key and every other **operator-configured endpoint** (an LLM
+endpoint's `base_url`, `litellm_base`, an instance-configured upstream) is injected only to
+the **exact scheme, host and port the operator configured** — plain `http://` in-cluster is
+legitimate there because the operator chose it — and any other scheme or port of that host
+is uncredentialed. Tests only: `gateway.insecure_loopback_injection` (default `false`,
+never rendered by the Helm chart, `15`, `23`) relaxes the rule for package claims when the
+destination is a loopback address (`127.0.0.0/8`, `::1`, `localhost`), so that plain-HTTP mock
+upstreams on random ports keep working.
 
 ## Approval holds
 
@@ -572,7 +732,16 @@ both directions.
 3. Wait on the instance's LISTEN connection for `decided` of that id, with a
    2 s poll fallback reading the row. Keep the client connection open; do not
    read further body bytes.
-4. `approved` → continue at step 9. `denied` → 403 `manual_approval_denied`
+4. `approved` → **re-resolve and re-evaluate, then continue at step 9** (FIX-084,
+   `07 §Lifecycle`): candidate selection and policy run again against the current
+   snapshot and rules with the same request facts (the buffered body is the one
+   held; rate counts are neither checked nor charged again, the hold consumed them).
+   A request that would now be blocked is refused as on arrival (its ordinary
+   `blocked_by_*` or `app_unavailable` answer), one with no usable credential gets
+   `credential_unavailable`, and one that would still need approval is released
+   (the approval stands; no second hold). The same holds for a database statement.
+   `approvals.connection_id` records the connection the request would use, so the
+   API can abandon the hold when that access is removed. `denied` → 403 `manual_approval_denied`
    (`details.approval_id`). Deadline reached → the gateway sets
    `status='expired'` (`WHERE status='pending'`; phase 2: and `resolved_at`) and answers 403
    `manual_approval_expired`. Client disconnect → `status='abandoned'`.
@@ -581,10 +750,13 @@ both directions.
 
 Decisions are written by the API (`07 §Approvals`); first decision wins.
 
-### Parking and grants (phase 4, RFE-011b, D-133, SEC-74)
+### Parking and grants (phase 5 (D-138, moved from phase 4), RFE-011b, D-133, SEC-74)
 
 With `approvals.park.enabled` (default off) step 8 gains two branches **before** step 1 of the
-list above; with it off the hold is exactly as written.
+list above; with it off the hold is exactly as written. (P4-011B spec batch, D-264(b)) The switch
+is a live instance setting and governs only the **Park** branch: the **Grant lookup** runs on every
+`needs_approval` verdict whatever it says (one indexed read on this slow path; no rows → nothing to
+do), so grants approved before the switch was turned off stay usable.
 
 - **Grant lookup.** When the verdict is `needs_approval` (one database read, only on this slow
   path), the gateway looks for an open approval of the same agent and conversation with
@@ -598,7 +770,8 @@ list above; with it off the hold is exactly as written.
 - **Park.** If the approval is parkable (`07`: parking enabled, effective timeout above
   `approvals.park.threshold_secs`, hosted context credential with conversation and turn, body
   complete within `approvals.park.max_body_bytes` and `PARK_BODY_READ_TIMEOUT`, verdict independent
-  of the speaker, agent under its parked-approval limits), the gateway reads and hashes the body
+  of the speaker, agent under its parked-approval limits, and — D-264(c) — not a request to a
+  governed LLM endpoint of step 6a), the gateway reads and hashes the body (C-821's canonical form)
   (bounded), inserts the `approvals` row with `parked = true`, the salt and fingerprint, **no
   holder is waiting** (`gateway_instance_id` is set for the NOT NULL but ignored by the holder
   sweeps), `NOTIFY aurora_approval created`, and answers **at once** 403 `approval_parked`
@@ -611,6 +784,10 @@ list above; with it off the hold is exactly as written.
   are `pending`, `07`). A store failure while inserting is 503 `approval_store_unavailable` as for
   a hold (fail closed); during a database outage (`§Operation during a Postgres outage`) nothing
   is parked or consumed.
+- **Request log** (D-265(a), C-827): a parked refusal and its identical repeats are logged with
+  decision `approval_parked`; a consumed grant `approved` with `resumed = true`; the deny-cooldown
+  answer `approval_denied`; the caps `rate_limited` with `error_code` `approval_limit_reached`.
+  Every hold, park and consumption fills `request_log.approval_id`.
 
 ## Guidance responses (agent-facing vocabulary)
 
@@ -629,7 +806,7 @@ dashboard URL to fix the problem when one exists.
 | `destination_refused` | 403 | destination guard | `host` |
 | `method_override_refused` | 400 | step 3 | — |
 | `ambiguous_path` | 400 | step 3 | — |
-| `blocked_by_policy` | 403 | rule block (open lane, phase 1: `connect_time: true`; an approval-requiring rule matched at CONNECT time adds `reason: "approval_required"`) | `rule_name`, `method`, `path`, `manage_url` |
+| `blocked_by_policy` | 403 | rule block (open lane, phase 1: `connect_time: true`; an approval-requiring rule matched at CONNECT time adds `reason: "approval_required"`) | `rule_name`, `method`, `path`, `manage_url` for a **workspace** rule; for an **organization** rule the answer is generic (D-178, Q-R5-14): `scope: "organization"`, `method`, `path`, no rule name and no policy URL |
 | `blocked_by_default_policy` | 403 | default-deny | `manage_url` |
 | `blocked_by_egress_policy` | 403 | uncredentialed default (`credentialed_only`) | `host`, `manage_url` (org egress allow-list) |
 | `llm_provider_not_permitted` | 403 | governed LLM host not permitted for the org | `host` |
@@ -639,28 +816,29 @@ dashboard URL to fix the problem when one exists.
 | `llm_key_unverifiable` | 403 | the key's account cannot be determined | `secret_id` |
 | `llm_model_not_allowed` | 403 | model not on the allow-list (or body unreadable) | `model`, `allowed_models` |
 | `llm_origin_check_unavailable` | 503 | provider unreachable during origin preflight | `endpoint_id` |
-| `llm_path_not_permitted` | 403 | (phase 4, P4-LLM) path outside the provider's inference set, or another Vertex project/location | `provider`, `endpoint_id` |
-| `llm_request_too_large` | 413 | (phase 4, P4-LLM) Bedrock request body above `LLM_SIGN_BODY_MAX` that must be buffered to be signed | `limit_bytes` |
+| `llm_path_not_permitted` | 403 | (phase 5 (D-138, moved from phase 4), P4-LLM) path outside the provider's inference set, or another Vertex project/location | `provider`, `endpoint_id` |
+| `llm_request_too_large` | 413 | (phase 5 (D-138, moved from phase 4), P4-LLM) Bedrock request body above `LLM_SIGN_BODY_MAX` that must be buffered to be signed | `limit_bytes` |
 | `rate_limited` | 429 | rate-limit modifier | `limit`, `per` |
-| `manual_approval_denied` / `manual_approval_expired` | 403 | holds; (phase 4, RFE-011b) also an identical retry within the deny cooldown of a denied parked approval | `approval_id` |
-| `approval_parked` | 403 | (phase 4, RFE-011b) the request needs an approval whose deadline is long: it was **not sent**, the agent should end its turn and will be messaged; carries `x-should-retry: false` | `approval_id`, `expires_at`, `resume_window_secs`, `manage_url` |
-| `approval_limit_reached` | 403 | (phase 4, RFE-011b) the agent has too many parked approvals pending or created too many this hour (`x-should-retry: false`) | `limit`, `per` |
+| `manual_approval_denied` / `manual_approval_expired` | 403 | holds; (phase 5 (D-138, moved from phase 4), RFE-011b) also an identical retry within the deny cooldown of a denied parked approval | `approval_id`; for the cooldown also `cooldown_until` (C-820) |
+| `approval_parked` | 403 | (phase 5 (D-138, moved from phase 4), RFE-011b) the request needs an approval whose deadline is long: it was **not sent**, the agent should end its turn and will be messaged; carries `x-should-retry: false` | `approval_id`, `expires_at`, `resume_window_secs`, `manage_url` |
+| `approval_limit_reached` | 403 | (phase 5 (D-138, moved from phase 4), RFE-011b) the agent has too many parked approvals pending or created too many this hour (`x-should-retry: false`) | `limit`, `per` (`pending` \| `hour`, C-820) |
 | `gateway_restarting` | 503 | shutdown during hold | — |
 | `approval_store_unavailable` | 503 | cannot persist hold | — |
 | `gateway_degraded` | 503 | (phase 3, RFE-014) database unreachable and the identity, host or credential value is not in cache (fail closed for new state); not for an invalid token | `reason` (`database_unavailable` \| `credential_store_unavailable`), `retry-after: 5` |
 | `multiple_connections` / `multiple_providers` | 409 | step 9 | `choices`, `header: "x-aurora-connection-id"` |
 | `connection_not_found` | 404 | stale/ungranted id | — |
 | `connection_reauth_required` | 403 | refresh refused earlier | `connection_id`, `reconnect_url` |
-| `credential_unavailable` | 502 | granted secret/connection could not be produced (store error, mint failure) | `kind` |
+| `credential_unavailable` | 502 | granted secret/connection could not be produced (store error, mint failure); (phase 5, P4-LLM, D-261) also a failed or held LLM mint (Vertex, Entra, STS) | `kind`; for an LLM mint `kind: "llm_mint"` and `reason` (`mint_rejected` \| `mint_unavailable`) |
 | `secret_store_unavailable` | 503 | external store unreachable | `store_id` |
 | `app_unavailable` | 403 | org posture restricts the app | `app_id` |
 | `access_restricted` | (upstream status) | upstream 401/403, nothing injected, workspace holds an ungranted candidate | `kind`, `provider`, `manage_url` |
 | `app_not_connected` | (upstream status) | known app host, no connection in scope | `app_id`, `connect_url` |
 | `app_path_unserved` | (upstream status) | known app host, path no app serves | `host` |
 | `credential_not_found` | (upstream status) | unknown host, nothing stored | `create_secret_url` |
-| `host_mismatch` | 421 | tenant-bound (or, phase 2 D-74, instance-bound) credential on wrong host | `expected_host` |
+| `host_mismatch` | 421 | tenant-bound (or, phase 2 D-74, instance-bound) credential on wrong host; (FIX-145, D-231) an instance-bound credential on its host but outside its base path | `expected_host`; `expected_base_url` when the instance has a base path |
 | `upstream_timeout` | 504 | step 13 | — |
 | `bad_gateway` / `resolution_failed` | 502 | upstream connect/DNS failure | — |
+| `upstream_echoed_credential` | 502 | step 14: the response carries a credential injected into the request URL (FIX-104, SEC-01) | — |
 
 The guidance decision list for upstream 401/403 without injection, in order:
 (1) a granted tenant-bound connection on the wrong host → `host_mismatch`;
@@ -678,13 +856,15 @@ injected (the agent should see the real upstream error).
 
 | Cache | Key | TTL | Invalidated by |
 |-------|-----|-----|----------------|
-| Credential → identity | token hash | 60 s | `credential`, `agent`, `workspace`, `org`, `all`; (phase 4, P4-GRP-1) `user` (by speaker); `aurora_auth_revoked` (phase 2, RFE-025: the identity carries the effective BYO posture, source list and require-context flag; the instance switch comes from configuration; phase 4: and the speaker's group ids) |
+| Credential → identity | token hash | 60 s | `credential`, `agent`, `workspace`, `org`, `all`; (phase 4, P4-GRP-1) `user` (by speaker); `aurora_auth_revoked` (phase 2, RFE-025: the identity carries the effective BYO posture, source list and require-context flag; the instance switch comes from configuration — (phase 5, SET-2) from the `governance` settings snapshot; phase 4: and the speaker's group ids) |
 | ResolvedHost | `org/ws/credential/host` | 60 s | `org`, `workspace`, `agent`, `connection`, `all` |
 | Plaintext values | `(SecretRef, version)` | 60 s | `connection`, `workspace`, `org`, `all` (zeroized on eviction) |
 | Effective governance (`08 §11`) | org | 60 s | `org`, `all` |
 | LLM key origin verifications | `(secret_id, sha256(plaintext))` | `LLM_ORIGIN_RECHECK` | `org`, `workspace`, `all` |
+| (phase 5, P4-LLM, D-261, C-807) LLM mint (Vertex/Entra tokens, STS sessions) | `(secret_id, value_version, mode, region)` | until `LLM_TOKEN_SKEW` before expiry (≤ 55 min); failures `LLM_TOKEN_MINT_FAILURE_HOLD`; ≤ `LLM_MINT_CACHE_MAX` entries | `connection`, `workspace`, `org`, `all`, an `llm` settings reload (endpoint region or removal); zeroized on eviction; **not** kept through a Postgres outage beyond its own expiry |
 | Leaf certificates | host | until near expiry | never |
 | Registry snapshot | content hash | until replaced | `aurora_registry` (+ 30 s poll of the active hash) |
+| (phase 5, SET-1, D-236) Instance settings (`governance`, `llm`, `approvals`, `limits`, `secrets` sections merged with the gateway's own configuration; `15 §Instance settings`) | section | until replaced | `aurora_settings` (+ `SETTINGS_RELOAD_POLL` poll of the generations; all sections on LISTEN reconnect). A reload validates the merged view and swaps it atomically; a failing one keeps the previous snapshot. After a swap of `governance`, `llm`, `limits` or `secrets` the gateway flushes as for `all`, so the instance governance (until then built at start), BYO switch, endpoint table, destination guard list and store registry are never served stale beyond the reload. During a database outage the last snapshot stays in force |
 
 Phase 0–2: on LISTEN connection loss the gateway flushes all caches except
 leaf certificates, then reconnects. **From phase 3 (RFE-014) the order is

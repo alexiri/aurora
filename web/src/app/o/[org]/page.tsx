@@ -18,7 +18,7 @@ export default function OrgPage() {
   if (resolved.isError) return <ErrorState error={resolved.error} onRetry={() => resolved.refetch()} />;
 
   return (
-    <div className="max-w-[1160px]">
+    <div className="max-w-page">
       <PageHeader
         title={resolved.data.org.name}
         description="Workspaces in this organization."

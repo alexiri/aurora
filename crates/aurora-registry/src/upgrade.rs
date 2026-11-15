@@ -10,6 +10,10 @@ use std::collections::BTreeSet;
 /// Longest `status_reason` of a flipped connection (C-342).
 pub const REASON_MAX: usize = 300;
 
+pub use crate::superseded::{
+    SUPERSEDED, Superseded, is_superseded_reason, retired_by, superseded_reason, supersedes,
+};
+
 /// Names of the credential fields every connection of `app` must hold: the `credentials`
 /// entries not marked `optional: true`.
 pub fn required_fields(app: &App) -> BTreeSet<String> {

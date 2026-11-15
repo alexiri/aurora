@@ -88,6 +88,12 @@ pub async fn revoke(pool: &PgPool, id: Uuid) -> Result<bool, DbError> {
     .bind(id)
     .execute(&mut *tx)
     .await?;
+    // (FIX-097) The row stays (revoked_at), so the FK cascade never fires: end the preview
+    // sessions of this dashboard session here, in the same transaction (docs/04 §Preview access).
+    sqlx::query("DELETE FROM preview_sessions WHERE session_id = $1")
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
     notify_auth_revoked(&mut *tx, "session", id).await?;
     tx.commit().await?;
     Ok(r.rows_affected() > 0)
@@ -117,6 +123,14 @@ pub async fn revoke_all_for_user_except_tx(
     )
     .bind(user_id)
     .bind(except)
+    .execute(&mut *conn)
+    .await?;
+    // (FIX-097) Revoked sessions keep their row: delete their preview sessions explicitly.
+    sqlx::query(
+        "DELETE FROM preview_sessions p USING sessions s
+         WHERE p.session_id = s.id AND s.user_id = $1 AND s.revoked_at IS NOT NULL",
+    )
+    .bind(user_id)
     .execute(&mut *conn)
     .await?;
     notify_auth_revoked(&mut *conn, "user", user_id).await?;

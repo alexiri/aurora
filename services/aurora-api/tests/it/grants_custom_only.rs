@@ -39,7 +39,8 @@ apps:
 }
 
 const HOST: &str = "api.cust.example";
-const CUSTOM_ONLY: &str = "    grants: { custom_only: true }\n";
+// (FIX-085) `custom_only` implies `block_untooled`: the manifest says both.
+const CUSTOM_ONLY: &str = "    grants: { custom_only: true, block_untooled: true }\n";
 const BLOCK_UNTOOLED: &str = "    grants: { block_untooled: true }\n";
 
 struct W<'a> {
@@ -130,6 +131,46 @@ impl W<'_> {
     }
 }
 
+/// FIX-084: a gateway hold of `agent` (that would use `conn`, if any), still `pending`.
+async fn pend(w: &W<'_>, gw: Uuid, agent: Uuid, ws: Uuid, conn: Option<Uuid>) -> Uuid {
+    let id = Uuid::now_v7();
+    sqlx::query(
+        "INSERT INTO approvals (id, org_id, workspace_id, agent_id, gateway_instance_id, method, host, path,
+            connection_id, summary, status, deadline)
+         VALUES ($1,$2,$3,$4,$5,'POST','api.cust.example','/items',$6,
+            '{\"title\":\"T\",\"fields\":[],\"text\":null,\"link\":null,\"group\":null,\"source\":\"generic\"}',
+            'pending', now() + interval '5 minutes')",
+    )
+    .bind(id)
+    .bind(w.org)
+    .bind(ws)
+    .bind(agent)
+    .bind(gw)
+    .bind(conn)
+    .execute(w.h.pool())
+    .await
+    .unwrap();
+    id
+}
+
+async fn gateway_instance(h: &Harness) -> Uuid {
+    let gw = Uuid::now_v7();
+    sqlx::query("INSERT INTO gateway_instances (id, hostname, version, started_at, last_seen_at) VALUES ($1,'h','0',now(),now())")
+        .bind(gw)
+        .execute(h.pool())
+        .await
+        .unwrap();
+    gw
+}
+
+async fn status_of(h: &Harness, approval: Uuid) -> String {
+    sqlx::query_scalar("SELECT status FROM approvals WHERE id = $1")
+        .bind(approval)
+        .fetch_one(h.pool())
+        .await
+        .unwrap()
+}
+
 async fn install(a: &Admin<'_>, version: &str, grants: &str, host: &str) -> Value {
     let v = a.upload(&yaml(version, grants, host)).await;
     let v = if v["status"] == "pending_approval" {
@@ -210,7 +251,7 @@ async fn full_grant_forbidden_on_every_route_and_app_restrictions_everywhere() {
     assert_eq!(s, 200, "{v}");
     assert_eq!(
         v["app_restrictions"],
-        json!({"custom_only": true, "block_untooled": false})
+        json!({"custom_only": true, "block_untooled": true})
     );
     let r = w.rules(w.agent, conn).await;
     assert_eq!(r.len(), 3);
@@ -244,12 +285,12 @@ async fn full_grant_forbidden_on_every_route_and_app_restrictions_everywhere() {
     assert_eq!(s, 200, "{v}");
     assert_eq!(
         v["items"][0]["grant"]["app_restrictions"],
-        json!({"custom_only": true, "block_untooled": false})
+        json!({"custom_only": true, "block_untooled": true})
     );
     // C-504: the bulk response carries them at the top as well.
     assert_eq!(
         v["app_restrictions"],
-        json!({"custom_only": true, "block_untooled": false})
+        json!({"custom_only": true, "block_untooled": true})
     );
     let (s, v) = w
         .call(Method::GET, &format!("/v1/agents/{}/grants", w.agent), None)
@@ -257,7 +298,7 @@ async fn full_grant_forbidden_on_every_route_and_app_restrictions_everywhere() {
     assert_eq!(s, 200, "{v}");
     assert_eq!(
         v["connections"][0]["app_restrictions"],
-        json!({"custom_only": true, "block_untooled": false})
+        json!({"custom_only": true, "block_untooled": true})
     );
     let (s, v) = w
         .call(Method::GET, &format!("/v1/connections/{conn}/grants"), None)
@@ -265,14 +306,14 @@ async fn full_grant_forbidden_on_every_route_and_app_restrictions_everywhere() {
     assert_eq!(s, 200, "{v}");
     assert_eq!(
         v["items"][0]["app_restrictions"],
-        json!({"custom_only": true, "block_untooled": false})
+        json!({"custom_only": true, "block_untooled": true})
     );
     // The catalogue and the app detail carry the flags too (C-414).
     let (s, v) = w.call(Method::GET, "/v1/apps/cust_app", None).await;
     assert_eq!(s, 200, "{v}");
     assert_eq!(
         v["app_restrictions"],
-        json!({"custom_only": true, "block_untooled": false})
+        json!({"custom_only": true, "block_untooled": true})
     );
     let (s, v) = w.call(Method::GET, "/v1/apps", None).await;
     assert_eq!(s, 200, "{v}");
@@ -284,8 +325,150 @@ async fn full_grant_forbidden_on_every_route_and_app_restrictions_everywhere() {
         .unwrap();
     assert_eq!(
         item["app_restrictions"],
-        json!({"custom_only": true, "block_untooled": false})
+        json!({"custom_only": true, "block_untooled": true})
     );
+}
+
+/// FIX-084 / SEC-67: an app the active snapshot does not hold (its package was deactivated) is
+/// `custom_only` + `block_untooled`; it never reads as "no restrictions".
+#[tokio::test]
+async fn full_grant_is_refused_while_the_apps_package_is_deactivated() {
+    let h = Harness::new().await;
+    let a = setup(&h).await;
+    let v = install(&a, "1.0.0", "", HOST).await;
+    let w = world(&h).await;
+    let conn = w.conn().await;
+    let (s, b) = a.act(&v["id"], "disable").await;
+    assert_eq!(s, 200, "{b}");
+    let (s, v) = w
+        .call(
+            Method::PUT,
+            &w.put(w.agent, conn),
+            Some(json!({"mode": "full"})),
+        )
+        .await;
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (422, Some("full_grant_forbidden")),
+        "{v}"
+    );
+    let n: i64 = sqlx::query_scalar("SELECT count(*) FROM grants WHERE connection_id = $1")
+        .bind(conn)
+        .fetch_one(w.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(n, 0, "nothing written");
+}
+
+/// FIX-084: every writer that removes or narrows the access a held request would use abandons
+/// exactly the pending approvals that depend on it.
+#[tokio::test]
+async fn writers_that_remove_access_abandon_exactly_the_dependent_pending_approvals() {
+    let h = Harness::new().await;
+    let a = setup(&h).await;
+    install(&a, "1.0.0", "", HOST).await;
+    let w = world(&h).await;
+    let gw = gateway_instance(w.h).await;
+    let conn = w.conn().await;
+    let other_conn = w.conn().await;
+    let wide = json!({"mode": "custom", "allow_tools": ["get_item", "list_items"], "ask_tools": ["create_item"]});
+    for ag in [w.agent, w.agent2] {
+        for c in [conn, other_conn] {
+            let (s, v) = w.call(Method::PUT, &w.put(ag, c), Some(wide.clone())).await;
+            assert_eq!(s, 200, "{v}");
+        }
+    }
+
+    // A widening replace and a re-shuffle between allow and ask keep every hold.
+    let held = pend(&w, gw, w.agent, w.ws, Some(conn)).await;
+    let shuffled =
+        json!({"mode": "custom", "allow_tools": ["get_item", "list_items", "create_item"]});
+    let (s, v) = w
+        .call(Method::PUT, &w.put(w.agent, conn), Some(shuffled))
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(status_of(w.h, held).await, "pending", "no tool was removed");
+
+    // Narrowing (a tool is dropped): only this agent's holds on this connection end.
+    let same_agent_other_conn = pend(&w, gw, w.agent, w.ws, Some(other_conn)).await;
+    let other_agent = pend(&w, gw, w.agent2, w.ws, Some(conn)).await;
+    let secret_hold = pend(&w, gw, w.agent, w.ws, None).await;
+    let narrow = json!({"mode": "custom", "allow_tools": ["get_item"]});
+    let mut l = PgListener::connect_with(w.h.pool()).await.unwrap();
+    l.listen("aurora_approval").await.unwrap();
+    let (s, v) = w
+        .call(Method::PUT, &w.put(w.agent, conn), Some(narrow))
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(status_of(w.h, held).await, "abandoned");
+    // (FIX-122) The stream/wake event of a revocation-abandoned approval is `abandoned`, the
+    // name the freeze path uses.
+    let mut event = None;
+    while let Ok(Ok(n)) = tokio::time::timeout(std::time::Duration::from_secs(2), l.recv()).await {
+        let p: Value = serde_json::from_str(n.payload()).unwrap();
+        if p["id"] == json!(held) {
+            event = p["event"].as_str().map(str::to_owned);
+            break;
+        }
+    }
+    assert_eq!(event.as_deref(), Some("abandoned"));
+    assert_eq!(status_of(w.h, same_agent_other_conn).await, "pending");
+    assert_eq!(status_of(w.h, other_agent).await, "pending");
+    assert_eq!(status_of(w.h, secret_hold).await, "pending");
+
+    // Revoking the grant: the same scope.
+    let (s, v) = w.call(Method::DELETE, &w.put(w.agent2, conn), None).await;
+    assert_eq!(s, 204, "{v}");
+    assert_eq!(status_of(w.h, other_agent).await, "abandoned");
+    assert_eq!(status_of(w.h, same_agent_other_conn).await, "pending");
+
+    // Revoking a secret grant ends the agent's holds that use no app connection.
+    let secret = Uuid::now_v7();
+    sqlx::query("INSERT INTO secrets (id, org_id, workspace_id, name, kind, host_pattern, injection, value_source, value_ref) VALUES ($1,$2,$3,'k','generic','api.cust.example','{\"kind\":\"bearer\"}','managed','x:')")
+        .bind(secret).bind(w.org).bind(w.ws).execute(w.h.pool()).await.unwrap();
+    let (s, v) = w
+        .call(
+            Method::PUT,
+            &format!("/v1/agents/{}/grants/secrets/{secret}", w.agent),
+            None,
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let (s, v) = w
+        .call(
+            Method::DELETE,
+            &format!("/v1/agents/{}/grants/secrets/{secret}", w.agent),
+            None,
+        )
+        .await;
+    assert_eq!(s, 204, "{v}");
+    assert_eq!(status_of(w.h, secret_hold).await, "abandoned");
+    assert_eq!(status_of(w.h, same_agent_other_conn).await, "pending");
+
+    // Disabling the connection ends every agent's holds on it; the other connection is untouched.
+    let on_other_a = pend(&w, gw, w.agent, w.ws, Some(other_conn)).await;
+    let on_other_b = pend(&w, gw, w.agent2, w.ws, Some(other_conn)).await;
+    let (s, v) = w
+        .call(
+            Method::PATCH,
+            &format!("/v1/connections/{other_conn}"),
+            Some(json!({"status": "disabled"})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    for id in [same_agent_other_conn, on_other_a, on_other_b] {
+        assert_eq!(status_of(w.h, id).await, "abandoned");
+    }
+
+    // Deleting the connection does the same.
+    let kept = pend(&w, gw, w.agent, w.ws, None).await;
+    let on_conn = pend(&w, gw, w.agent, w.ws, Some(conn)).await;
+    let (s, v) = w
+        .call(Method::DELETE, &format!("/v1/connections/{conn}"), None)
+        .await;
+    assert_eq!(s / 100, 2, "{v}");
+    assert_eq!(status_of(w.h, on_conn).await, "abandoned");
+    assert_eq!(status_of(w.h, kept).await, "pending");
 }
 
 #[tokio::test]
@@ -389,10 +572,22 @@ async fn activation_introducing_custom_only_converts_full_grants_atomically_and_
     }
     assert_eq!(w.grant_row(w.agent, conn).await.0, "full");
 
+    // (FIX-084) Requests held under the full grants; the custom grant's hold and an unrelated
+    // hold of the same agent must survive the conversion.
+    let gw = gateway_instance(w.h).await;
+    let held_full = pend(&w, gw, w.agent, w.ws, Some(conn)).await;
+    let held_full_ws2 = pend(&w, gw, w.agent_ws2, w.ws2, Some(conn)).await;
+    let held_custom = pend(&w, gw, w.agent2, w.ws, Some(conn)).await;
+    let held_other = pend(&w, gw, w.agent, w.ws, None).await;
+
     let mut l = PgListener::connect_with(w.h.pool()).await.unwrap();
     l.listen("aurora_gateway_invalidate").await.unwrap();
     let (s, ap) = a.act(&v["id"], "approve").await;
     assert_eq!(s, 200, "{ap}");
+    assert_eq!(status_of(w.h, held_full).await, "abandoned");
+    assert_eq!(status_of(w.h, held_full_ws2).await, "abandoned");
+    assert_eq!(status_of(w.h, held_custom).await, "pending");
+    assert_eq!(status_of(w.h, held_other).await, "pending");
 
     // Converted: exactly the whole catalogue as allow_tools (items and the group wildcard),
     // nothing to ask, derived rules recompiled as custom (allow + block rest).
@@ -536,4 +731,120 @@ async fn a_failing_activation_leaves_full_grants_and_audit_untouched() {
     assert_eq!(w.grant_row(w.agent, conn).await.0, "full");
     assert_eq!(w.rules(w.agent, conn).await.len(), 1);
     assert!(audit_meta(w.h, "grant.converted_by_app").await.is_empty());
+}
+
+/// FIX-064: a `full` grant PUT racing the activation that makes the app `custom_only` never
+/// leaves a `full` grant behind: the PUT either sees the new restriction (422) or its grant is
+/// written before the activation's conversion, which then converts it. (The grant writer takes
+/// the activation's compile lock in shared mode before reading the restrictions.)
+#[tokio::test]
+async fn a_full_grant_racing_the_custom_only_activation_never_survives_it() {
+    let h = Harness::new().await;
+    let a = setup(&h).await;
+    install(&a, "1.0.0", "", HOST).await;
+    let w = world(&h).await;
+    let conn = w.conn().await;
+    // Few racers: the harness pool has 5 connections and each writer holds one while its
+    // restriction read takes another.
+    let agents = [w.agent, w.agent2];
+    // An existing full grant holds the upload for approval (`converts_grants`); the approval,
+    // i.e. the activation that converts, races the PUTs.
+    let (s, v) = w
+        .call(
+            Method::PUT,
+            &w.put(w.agent_ws2, conn),
+            Some(json!({"mode": "full"})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let held = a.upload(&yaml("1.1.0", CUSTOM_ONLY, HOST)).await;
+    assert_eq!(held["status"], "pending_approval", "{held}");
+    let approve = async {
+        let (s, b) = a.act(&held["id"], "approve").await;
+        assert_eq!(s, 200, "{b}");
+    };
+    let puts = futures::future::join_all(agents.iter().map(|ag| {
+        let w = &w;
+        async move {
+            let (s, v) = w
+                .call(
+                    Method::PUT,
+                    &w.put(*ag, conn),
+                    Some(json!({"mode": "full"})),
+                )
+                .await;
+            assert!(
+                s == 200 || (s == 422 && v["error"]["code"] == "full_grant_forbidden"),
+                "{s} {v}"
+            );
+        }
+    }));
+    tokio::join!(approve, puts);
+    let active: String = sqlx::query_scalar(
+        "SELECT version FROM plugin_packages WHERE package_id = 'cust' AND status = 'active'",
+    )
+    .fetch_one(h.pool())
+    .await
+    .unwrap();
+    assert_eq!(active, "1.1.0", "the activation completed");
+    let fulls: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM grants WHERE connection_id = $1 AND mode = 'full'",
+    )
+    .bind(conn)
+    .fetch_one(h.pool())
+    .await
+    .unwrap();
+    assert_eq!(fulls, 0, "no full grant on a custom_only app");
+}
+
+/// FIX-064: the same race through the *upload* path. With no full grant at the time of the check
+/// the version activates automatically; a `full` PUT racing it must still never survive (it is
+/// refused, or it is counted and holds the version for approval, which then converts it).
+#[tokio::test]
+async fn a_full_grant_racing_an_auto_activating_custom_only_upload_never_survives_it() {
+    let h = Harness::new().await;
+    let a = setup(&h).await;
+    install(&a, "1.0.0", "", HOST).await;
+    let w = world(&h).await;
+    let conn = w.conn().await;
+    let agents = [w.agent, w.agent2];
+    let upload = async {
+        let v = a.upload(&yaml("1.1.0", CUSTOM_ONLY, HOST)).await;
+        if v["status"] == "pending_approval" {
+            let (s, b) = a.act(&v["id"], "approve").await;
+            assert_eq!(s, 200, "{b}");
+        }
+    };
+    let puts = futures::future::join_all(agents.iter().map(|ag| {
+        let w = &w;
+        async move {
+            let (s, v) = w
+                .call(
+                    Method::PUT,
+                    &w.put(*ag, conn),
+                    Some(json!({"mode": "full"})),
+                )
+                .await;
+            assert!(
+                s == 200 || (s == 422 && v["error"]["code"] == "full_grant_forbidden"),
+                "{s} {v}"
+            );
+        }
+    }));
+    tokio::join!(upload, puts);
+    let active: String = sqlx::query_scalar(
+        "SELECT version FROM plugin_packages WHERE package_id = 'cust' AND status = 'active'",
+    )
+    .fetch_one(h.pool())
+    .await
+    .unwrap();
+    assert_eq!(active, "1.1.0", "the upload ended active");
+    let fulls: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM grants WHERE connection_id = $1 AND mode = 'full'",
+    )
+    .bind(conn)
+    .fetch_one(h.pool())
+    .await
+    .unwrap();
+    assert_eq!(fulls, 0, "no full grant on a custom_only app");
 }

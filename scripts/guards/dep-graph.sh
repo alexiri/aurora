@@ -15,9 +15,22 @@ cd "$ROOT"
 
 fail=0
 
+# (FIX-101) "did not match any packages" used to pass for ANY name, so a misspelt forbidden crate was a
+# permanent green. Both packages must exist: `from` as a workspace member, `forbidden` in Cargo.lock
+# (it is in the graph of some other crate; if the dependency is gone for good, delete the check).
+lock_has() { grep -qx "name = \"$1\"" Cargo.lock; }
+
 # check <from-package> <forbidden-package>
 check() {
     local from="$1" forbidden="$2" out status
+    if ! lock_has "$from"; then
+        echo "dep-graph: FAIL — $from is not a package in Cargo.lock (misspelt, or removed: update the guard)" >&2
+        fail=1; return
+    fi
+    if ! lock_has "$forbidden"; then
+        echo "dep-graph: FAIL — $forbidden is not in Cargo.lock, so '$from must not reach it' proves nothing (misspelt, or the dependency is gone: update the guard)" >&2
+        fail=1; return
+    fi
     set +e
     out="$(cargo tree -p "$from" -e normal -i "$forbidden" 2>&1)"
     status=$?
@@ -52,6 +65,11 @@ check aurora-sqlclass aurora-db
 
 if [ "$fail" -ne 0 ]; then
     echo "dep-graph: FAIL" >&2
+    exit 1
+fi
+# Self-test (FIX-101): a misspelt forbidden crate must be refused, not counted as "not in the graph".
+if ! (check aurora-api no-such-crate-planted 2>&1) | grep -q "is not in Cargo.lock"; then
+    echo "dep-graph: FAIL — self-test: a misspelt forbidden crate was accepted" >&2
     exit 1
 fi
 echo "dep-graph: OK"

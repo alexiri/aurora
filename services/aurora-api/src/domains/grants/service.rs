@@ -11,7 +11,7 @@ use crate::http::auth::Caller;
 use aurora_core::ApiError;
 use aurora_db::DbError;
 use aurora_db::repo::agents::{self, AgentRow};
-use aurora_db::repo::{connections, credentials, derived_rules, grants, secrets};
+use aurora_db::repo::{approvals, connections, credentials, derived_rules, grants, secrets};
 use serde_json::json;
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
@@ -237,13 +237,22 @@ pub async fn list_secret_grants(
         .collect())
 }
 
+/// (FIX-084, SEC-67) An app the active snapshot does not hold (its package is deactivated) is
+/// treated as `custom_only` with `block_untooled` by every grant writer and evaluator: with no
+/// manifest to say otherwise, the restrictive reading is the safe one.
+pub const ABSENT_APP: aurora_registry::manifest::Grants = aurora_registry::manifest::Grants {
+    custom_only: true,
+    block_untooled: true,
+};
+
 /// (P4-GRANTS, D-123) The manifest restrictions of an app in the active snapshot; both `false`
-/// for an app without `grants` (or, never in practice, one the snapshot does not hold).
+/// for an app without `grants`, both `true` for one the snapshot does not hold ([`ABSENT_APP`]).
 pub async fn app_restrictions(state: &AppState, app_id: &str) -> Result<AppRestrictions, ApiError> {
     Ok(apps::snapshot(state)
         .await?
-        .and_then(|s| s.app(app_id).map(|a| a.grants.into()))
-        .unwrap_or_default())
+        .and_then(|s| s.app(app_id).map(|a| a.grants))
+        .unwrap_or(ABSENT_APP)
+        .into())
 }
 
 /// [`app_restrictions`] of each of the given connections.
@@ -262,9 +271,8 @@ pub async fn restrictions_by_connection(
             let r = snap
                 .as_ref()
                 .and_then(|s| s.app(&app))
-                .map(|a| AppRestrictions::from(a.grants))
-                .unwrap_or_default();
-            (id, r)
+                .map_or(ABSENT_APP, |a| a.grants);
+            (id, AppRestrictions::from(r))
         })
         .collect())
 }
@@ -440,6 +448,12 @@ pub async fn revoke_secret(
         .await?
         .ok_or_else(|| ApiError::not_found("Grant not found."))?;
     derived_rules::delete_for_source(&mut *tx, "grant", id).await?;
+    // (FIX-084) Held requests of this agent that would use a secret end with the grant.
+    approvals::abandon_pending_depending_on(
+        &mut tx,
+        approvals::Dependency::AgentSecrets { agent_id: agent.id },
+    )
+    .await?;
     credentials::notify_gateway_invalidate(&mut *tx, "agent", agent.id).await?;
     let ev = event(
         caller,
@@ -550,7 +564,9 @@ async fn write_connection_grant(
     actor: AuditActor,
     by: Option<Uuid>,
 ) -> Result<Written<ConnectionGrant>, ApiError> {
-    let conn = connections::get(&state.pool, connection_id)
+    // Everything below runs on the transaction's own connection: a second pool connection taken
+    // while this one is pinned could starve the pool under many concurrent writers.
+    let conn = connections::get(&mut **tx, connection_id)
         .await?
         .filter(|c| {
             c.org_id == agent.org_id
@@ -561,7 +577,26 @@ async fn write_connection_grant(
     // (P4-GRANTS, D-123, SEC-67) An app whose manifest says `custom_only` is never granted in
     // `full` mode, on any path: this function is the only writer of connection grants, so the
     // agent-side PUT and the credential-side bulk route both stop here.
-    let restrictions = app_restrictions(state, &conn.app_id).await?;
+    //
+    // The activation of a plugin version (which converts `full` grants of a newly `custom_only`
+    // app) holds the exclusive compile lock for its whole transaction. Taking the same lock in
+    // shared mode here, *before* reading the restrictions, closes the read-then-write race: either
+    // the activation committed first (this read, a fresh statement after the lock, sees the new
+    // snapshot and refuses `full`), or it waits for this transaction and then converts the grant
+    // written here. The lock is released with the transaction.
+    sqlx::query(
+        "SELECT pg_advisory_xact_lock_shared(hashtextextended('aurora:registry:compile', 0))",
+    )
+    .execute(&mut **tx)
+    .await
+    .map_err(DbError::from)?;
+    let snap = crate::domains::plugins::registry::active_typed_on(tx).await?;
+    // (FIX-084, SEC-67) An app absent from the snapshot is `custom_only`, never "no restrictions".
+    let restrictions = AppRestrictions::from(
+        snap.as_ref()
+            .and_then(|s| s.app(&conn.app_id))
+            .map_or(ABSENT_APP, |a| a.grants),
+    );
     if restrictions.custom_only && req.mode == GrantMode::Full {
         return Err(ApiError::unprocessable(
             "full_grant_forbidden",
@@ -608,7 +643,6 @@ async fn write_connection_grant(
                 "A tool cannot be both allowed and set to ask.",
             ));
         }
-        let snap = apps::snapshot(state).await?;
         let known: HashSet<String> = snap
             .as_ref()
             .and_then(|s| s.app(&conn.app_id))
@@ -621,6 +655,12 @@ async fn write_connection_grant(
             ));
         }
     }
+    // (FIX-084) The previous grant, to tell a narrowing replace from a widening one.
+    let previous = if origin.replaces() {
+        grants::get_connection_grant(&mut **tx, agent.id, conn.id).await?
+    } else {
+        None
+    };
     let (g, created) = if origin.replaces() {
         let g = grants::upsert_connection_grant(
             &mut **tx,
@@ -658,6 +698,20 @@ async fn write_connection_grant(
             }
         }
     };
+    if let Some(p) = &previous
+        && narrows(p, req.mode, &allow, &ask)
+    {
+        // Held requests of this agent that would use the connection were approved or are waiting
+        // under the wider grant; they do not survive its narrowing.
+        approvals::abandon_pending_depending_on(
+            tx,
+            approvals::Dependency::Connection {
+                connection_id: conn.id,
+                agent_id: Some(agent.id),
+            },
+        )
+        .await?;
+    }
     let grant = ConnectionGrant::from(g).restricted(restrictions);
     if !created {
         return Ok(Written {
@@ -699,6 +753,26 @@ async fn write_connection_grant(
     })
 }
 
+/// Whether replacing `old` by (`mode`, `allow`, `ask`) removes access: `full` becoming `custom`,
+/// or a custom grant losing a tool (moving a tool between allow and ask keeps it granted).
+fn narrows(
+    old: &grants::ConnectionGrantRow,
+    mode: GrantMode,
+    allow: &[String],
+    ask: &[String],
+) -> bool {
+    match (old.mode.as_str(), mode) {
+        ("full", GrantMode::Full) => false,
+        ("full", GrantMode::Custom) => true,
+        (_, GrantMode::Full) => false,
+        (_, GrantMode::Custom) => old
+            .allow_tools
+            .iter()
+            .chain(&old.ask_tools)
+            .any(|t| !allow.contains(t) && !ask.contains(t)),
+    }
+}
+
 /// Remove the connection grant and its derived rules (404 when absent).
 pub async fn revoke_connection(
     state: &AppState,
@@ -711,6 +785,15 @@ pub async fn revoke_connection(
         .await?
         .ok_or_else(|| ApiError::not_found("Grant not found."))?;
     derived_rules::delete_for_source(&mut *tx, "grant", id).await?;
+    // (FIX-084) Held requests of this agent that would use the connection end with the grant.
+    approvals::abandon_pending_depending_on(
+        &mut tx,
+        approvals::Dependency::Connection {
+            connection_id,
+            agent_id: Some(agent.id),
+        },
+    )
+    .await?;
     credentials::notify_gateway_invalidate(&mut *tx, "agent", agent.id).await?;
     let ev = event(
         caller,

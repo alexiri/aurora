@@ -32,6 +32,22 @@ pub struct AppSummary {
     /// (phase 4, P4-GSL, D-149) the app declares a `library` block: it can serve a git skill
     /// library (the dashboard offers its org-scoped connections when connecting a repository).
     pub serves_library: bool,
+    /// (phase 5, FIX-135, D-242, C-744) The product this app is a deployment of; `null` for an
+    /// app that is its own product.
+    pub family: Option<AppFamily>,
+}
+
+/// `about.family` of an app (C-744): the catalogue and every picker show one product, named
+/// "<name> · <variant_label>" wherever an app is named.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct AppFamily {
+    pub id: String,
+    /// The product name, the same on every member.
+    pub name: String,
+    /// This app's deployment (its host, "Self-hosted", "Data Center"), unique within the family.
+    pub variant_label: String,
+    /// The app is served by registered self-hosted servers (it declares `instances`).
+    pub instance_bound: bool,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -93,6 +109,13 @@ pub struct ConnectMethod {
     pub id: String,
     /// `oauth2` | `fields` | `hook`.
     pub kind: String,
+    /// (FIX-123, D-214) Short name for the connect window's "How do you want to connect?"
+    /// chooser; `null` = the window falls back to the kind.
+    pub label: Option<String>,
+    /// One or two sentences: what the method is and when to use it.
+    pub description: Option<String>,
+    /// The chooser preselects this method and badges it "Recommended" (at most one per app).
+    pub recommended: bool,
     pub fields: Vec<FormField>,
     pub scopes: Vec<ScopeInfo>,
     pub default_scopes: Vec<String>,
@@ -100,6 +123,9 @@ pub struct ConnectMethod {
     pub client_key: Option<String>,
     /// `query` | `fragment` (OAuth only).
     pub callback: Option<String>,
+    /// (FIX-136) For a `fields` method: the read scopes whose probe prefills the declaration
+    /// ("Which scopes did you give this token?"); the others are asked without a prefill.
+    pub probe_scopes: Vec<String>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -113,6 +139,10 @@ pub struct Tool {
     pub host: String,
     pub path: String,
     pub methods: Vec<String>,
+    /// (FIX-123, D-214) Connect method ids the tool works with; empty = every method.
+    pub connect_methods: Vec<String>,
+    /// (FIX-136, D-241) Scope ids (any of) the tool needs; empty = no requirement.
+    pub scopes: Vec<String>,
     /// `query` | `mutation`.
     pub graphql: Option<String>,
     /// `push` | `fetch`.
@@ -173,6 +203,8 @@ pub struct AppDetail {
     pub app_restrictions: crate::domains::grants::dto::AppRestrictions,
     /// (phase 4, P4-GSL) as on `AppSummary`.
     pub serves_library: bool,
+    /// (phase 5, FIX-135, C-744) as on `AppSummary`.
+    pub family: Option<AppFamily>,
     pub api_docs: Option<String>,
     pub connect_note: Option<ConnectNote>,
     pub label_hint: Option<String>,

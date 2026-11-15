@@ -49,6 +49,10 @@ fn tls_config() -> Result<Arc<rustls::ClientConfig>, WsError> {
     for cert in native.certs {
         let _ = roots.add(cert);
     }
+    // `tls.extra_ca_bundle` (docs/15): trusted by the socket as well as by the REST client.
+    for der in crate::tls::extra_root_ders() {
+        let _ = roots.add(rustls::pki_types::CertificateDer::from(der.clone()));
+    }
     let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
     let cfg = rustls::ClientConfig::builder_with_provider(provider)
         .with_safe_default_protocol_versions()
@@ -133,7 +137,9 @@ impl WsConn {
                     .pointer("/error/status_code")
                     .and_then(serde_json::Value::as_u64)
                     .unwrap_or(0);
-                return Err(if code == 401 || code == 0 {
+                // Only an explicit 401 means the token is dead; a reply without an error
+                // code is a platform hiccup and must not retire the bot.
+                return Err(if code == 401 {
                     WsError::Auth
                 } else {
                     WsError::Io(format!("authentication failed ({code})"))

@@ -42,6 +42,144 @@ fn load_with(toml: &str, extra: &[(&str, &str)]) -> Result<RawConfig> {
 // Phase 1 (RFE-004): at least one OIDC provider is required, so every config carries one.
 const BASE: &str = "[[auth.oidc_providers]]\nid = \"base\"\nissuer = \"https://idp.example.org\"\nclient_id = \"b\"\nclient_secret_env = \"BASE_IDP_SECRET\"\n[server]\nexternal_url = \"https://aurora.example.org\"\n";
 
+/// `BASE` on a loopback origin (development installs).
+fn local_base() -> String {
+    BASE.replace("https://aurora.example.org", "http://localhost:4100")
+}
+
+/// FIX-116: development-only switches and credentials in URLs are refused outside a loopback
+/// install; each bound is enforced.
+#[test]
+fn development_switches_userinfo_and_bounds_are_refused() {
+    let api = |extra: &str| {
+        load_with(&format!("{BASE}{extra}"), &[])
+            .unwrap()
+            .api_config()
+    };
+    let local_api = |extra: &str| {
+        load_with(&format!("{}{extra}", local_base()), &[])
+            .unwrap()
+            .api_config()
+    };
+    for (extra, key) in [
+        (
+            "[plugins]\nallow_unsigned = true\n",
+            "plugins.allow_unsigned",
+        ),
+        (
+            "[hosted]\nallow_fake_harness = true\nenabled_harnesses = [\"claude-code\", \"fake\"]\n",
+            "hosted.allow_fake_harness",
+        ),
+        (
+            "[ratelimit.api]\nenabled = false\n",
+            "ratelimit.api.enabled",
+        ),
+    ] {
+        assert!(
+            api(extra).unwrap_err().has_key(key),
+            "{key} refused off loopback"
+        );
+        assert!(local_api(extra).is_ok(), "{key} accepted on loopback");
+    }
+    let raw = format!(
+        "{BASE}[runner]\nbackend = \"podman\"\napi_url = \"http://api:4101\"\ndev_allow_external_network = true\n"
+    );
+    let e = load_with(&raw, &[]).unwrap().runner_config().unwrap_err();
+    assert!(e.has_key("runner.dev_allow_external_network"), "{e}");
+    let e = load_with(
+        &format!("{BASE}[connector_host]\ntest_types = true\n"),
+        &[("AURORA_CONNECTOR_HOST_TOKEN", "auh_abc123")],
+    )
+    .unwrap()
+    .connector_host_config()
+    .unwrap_err();
+    assert!(e.has_key("connector_host.test_types"), "{e}");
+    // Credentials never ride in the file.
+    let e = api("[email]\nsmtp_url = \"smtp://user:pw@mail:25\"\nfrom = \"a@b.io\"\n").unwrap_err();
+    assert!(e.has_key("email.smtp_url"), "{e}");
+    assert!(api("[email]\nsmtp_url = \"smtp://mail:25\"\nfrom = \"a@b.io\"\n").is_ok());
+    let e =
+        api("[email]\nsmtp_url = \"smtp://mail:25\"\nfrom = \"a@b.io\"\nsmtp_username = \"u\"\n")
+            .unwrap_err();
+    assert!(e.has_key("email.smtp_username"), "{e}");
+    let ok = load_with(
+        &format!("{BASE}[email]\nsmtp_url = \"smtp://mail:25\"\nfrom = \"a@b.io\"\nsmtp_username = \"u\"\n"),
+        &[("AURORA_SMTP_PASSWORD", "pw")],
+    )
+    .unwrap()
+    .api_config()
+    .unwrap();
+    assert_eq!(ok.email.smtp_password.unwrap().expose(), "pw");
+    let e = load_with(
+        &format!("{BASE}[gateway]\negress_proxy = \"http://u:p@proxy:3128\"\n"),
+        &[],
+    )
+    .unwrap()
+    .gateway_config()
+    .unwrap_err();
+    assert!(e.has_key("gateway.egress_proxy"), "{e}");
+    // Bounds.
+    for (extra, key) in [
+        ("[approvals]\ntimeout_secs = 30\n", "approvals.timeout_secs"),
+        (
+            "[hosted]\nbackground_cap_secs = 700000\n",
+            "hosted.background_cap_secs",
+        ),
+        ("[scim]\ntoken_max_days = 1000\n", "scim.token_max_days"),
+        (
+            "[previews]\nsession_ttl_secs = 999999\n",
+            "previews.session_ttl_secs",
+        ),
+        (
+            "[previews]\nsession_idle_secs = 0\n",
+            "previews.session_idle_secs",
+        ),
+        (
+            "[previews]\nbytes_per_share_day = 0\n",
+            "previews.bytes_per_share_day",
+        ),
+    ] {
+        assert!(api(extra).unwrap_err().has_key(key), "{key}");
+    }
+    let relay = |extra: &str| {
+        load_with(
+            &format!("{BASE}[relay]\npreviews_domain = \"preview.example.org\"\n{extra}"),
+            &[("AURORA_RELAY_TOKEN", "aul_abc")],
+        )
+        .unwrap()
+        .relay_config()
+    };
+    assert!(relay("").is_ok());
+    for (extra, key) in [
+        (
+            "request_body_max_bytes = 999999999\n",
+            "relay.request_body_max_bytes",
+        ),
+        (
+            "request_body_max_bytes = 0\n",
+            "relay.request_body_max_bytes",
+        ),
+        ("max_streams = 0\n", "relay.max_streams"),
+        (
+            "max_streams = 10\nmax_streams_per_user = 11\n",
+            "relay.max_streams_per_user",
+        ),
+    ] {
+        assert!(relay(extra).unwrap_err().has_key(key), "{key}");
+    }
+    let e = load_with(
+        &format!("{BASE}[runner]\nbackend = \"podman\"\napi_url = \"http://api:4101\"\norphan_grace_secs = 0\ncapacity_wait_secs = 0\n"),
+        &[],
+    )
+    .unwrap()
+    .runner_config()
+    .unwrap_err();
+    assert!(e.has_key("runner.orphan_grace_secs") && e.has_key("runner.capacity_wait_secs"));
+    // A lowered preview session TTL is carried through.
+    let p = local_api("[previews]\nsession_ttl_secs = 600\nsession_idle_secs = 300\n").unwrap();
+    assert_eq!(p.previews.session_ttl_secs, 600);
+}
+
 #[test]
 fn toml_only_and_api_validates() {
     let raw = load_with(BASE, &[]).unwrap();
@@ -88,13 +226,16 @@ fn hosted_enabled_harnesses_defaults_and_validation() {
             "{why}: {e:?}"
         );
     }
-    // `fake` is fine when explicitly allowed.
+    // `fake` is fine when explicitly allowed — on a loopback install only (FIX-116).
+    let fake =
+        "[hosted]\nallow_fake_harness = true\nenabled_harnesses = [\"claude-code\", \"fake\"]\n";
     assert!(
-        ok(
-            "[hosted]\nallow_fake_harness = true\nenabled_harnesses = [\"claude-code\", \"fake\"]\n"
-        )
-        .is_ok()
+        load_with(&format!("{}{fake}", local_base()), &[])
+            .unwrap()
+            .api_config()
+            .is_ok()
     );
+    assert!(ok(fake).unwrap_err().has_key("hosted.allow_fake_harness"));
     // The Kubernetes runner names the runtimes of its image (it cannot read the label).
     let raw = load_with(
         &format!("{BASE}[runner]\nbackend = \"podman\"\napi_url = \"http://api:4101\"\nimage_harnesses = [\"claude-code\", \"codex\"]\n"),
@@ -492,6 +633,44 @@ fn unknown_key_origin_method_suggests_nearest() {
     assert_eq!(nearest_origin_method("zzzzzzzzzzzz"), None);
 }
 
+/// (D-177, FIX-105) `allowed_paths`: absolute paths, one trailing `/*` at most, bounded.
+#[test]
+fn llm_endpoint_allowed_paths_are_validated() {
+    let ep = |provider: &str, paths: &str| {
+        format!(
+            "{BASE}[[llm.endpoints]]\nid = \"e\"\nprovider = \"{provider}\"\nbase_url = \"https://aigw.example.org\"\nallowed_paths = {paths}\n"
+        )
+    };
+    let good = ep("litellm", r#"["/health/liveliness", "/model/*", "/*"]"#);
+    assert!(load_with(&good, &[]).unwrap().api_config().is_ok());
+    for bad in [
+        r#"["health"]"#,
+        r#"["/a/../b"]"#,
+        r#"["/a//b"]"#,
+        r#"["/a*"]"#,
+        r#"["/*/a"]"#,
+        r#"["/a?x=1"]"#,
+        r#"["/**"]"#,
+    ] {
+        let e = load_with(&ep("litellm", bad), &[])
+            .unwrap()
+            .api_config()
+            .unwrap_err();
+        assert!(e.has_key("llm.endpoints[0].allowed_paths[0]"), "{bad}: {e}");
+    }
+    let many = format!("[{}]", vec!["\"/a\""; 33].join(","));
+    let e = load_with(&ep("litellm", &many), &[])
+        .unwrap()
+        .api_config()
+        .unwrap_err();
+    assert!(e.has_key("llm.endpoints[0].allowed_paths"), "{e}");
+    let e = load_with(&ep("anthropic", r#"["/a"]"#), &[])
+        .unwrap()
+        .api_config()
+        .unwrap_err();
+    assert!(e.has_key("llm.endpoints[0].allowed_paths"), "{e}");
+}
+
 #[test]
 fn known_hosts_extra_and_endpoint_removal() {
     let raw = load_with(
@@ -508,8 +687,8 @@ fn known_hosts_extra_and_endpoint_removal() {
 #[test]
 fn secrets_never_in_debug() {
     let mut raw = load_with(
-        &format!("{BASE}[email]\nsmtp_url = \"smtp://u:smtppass@mail:25\"\nfrom = \"a@b.c\"\n[[secrets.stores]]\nid = \"v\"\nkind = \"vault\"\ntoken = \"vaulttoken\"\n"),
-        &[],
+        &format!("{BASE}[email]\nsmtp_url = \"smtp://mail:25\"\nsmtp_username = \"u\"\nfrom = \"a@b.c\"\n[[secrets.stores]]\nid = \"v\"\nkind = \"vault\"\ntoken = \"vaulttoken\"\n"),
+        &[("AURORA_SMTP_PASSWORD", "smtppass")],
     )
     .unwrap();
     raw.env_secrets.runner_token = Some(Redacted::new("aur_topsecret".into()));
@@ -698,6 +877,46 @@ fn overlap_warning_logic() {
     assert!(bind_overlap_warning("0.0.0.0", "127.0.0.1").is_none());
 }
 
+/// FIX-094 (SEC-09): on podman the ops listener defaults to loopback (not to the documented
+/// `0.0.0.0` sandbox-facing bind), and an explicit ops bind that overlaps the sandbox-facing
+/// one is refused. Other backends keep the fallback (the chart sets its own value).
+#[test]
+fn podman_ops_bind_defaults_to_loopback_and_overlap_is_refused() {
+    let podman = |extra: &str| {
+        load_with(
+            &format!(
+                "{BASE}bind = \"0.0.0.0\"\n[runner]\nbackend = \"podman\"\napi_url = \"http://a:1\"\n{extra}"
+            ),
+            &[],
+        )
+        .unwrap()
+    };
+    assert_eq!(podman("").runner_config().unwrap().ops_bind, "127.0.0.1");
+    assert_eq!(
+        podman("ops_bind = \"127.0.0.5\"\n")
+            .runner_config()
+            .unwrap()
+            .ops_bind,
+        "127.0.0.5"
+    );
+    for bad in ["0.0.0.0", "::"] {
+        let err = podman(&format!("ops_bind = \"{bad}\"\n"))
+            .runner_config()
+            .unwrap_err();
+        assert!(err.has_key("runner.ops_bind"), "{bad}: {err}");
+    }
+    // Kubernetes keeps the fallback to `server.bind`.
+    let k8s = load_with(
+        &format!(
+            "{BASE}bind = \"0.0.0.0\"\n[runner]\nbackend = \"kubernetes\"\napi_url = \"http://a:1\"\n\
+             [runner.k8s]\nnamespace = \"sbx\"\ncore_namespace = \"core\"\n"
+        ),
+        &[],
+    )
+    .unwrap();
+    assert_eq!(k8s.runner_config().unwrap().ops_bind, "0.0.0.0");
+}
+
 #[test]
 fn k8s_core_namespace_is_accepted() {
     let raw = load_with(
@@ -802,11 +1021,20 @@ fn helm_rendered_runner_config_loads() {
 
 /// Renders the chart with `helm template t <chart> --set-json <each arg>` and returns the
 /// ConfigMap `aurora.toml`. `None` when `helm` is not installed.
+///
+/// FIX-106: with an external database the chart refuses to render without the gateway's
+/// least-privilege role pair, so every render sets the recommended pair.
 fn helm_rendered_toml(set_json: &[&str]) -> Option<String> {
     let chart = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../deploy/helm/aurora");
     let mut cmd = std::process::Command::new("helm");
     cmd.args(["template", "t"]).arg(&chart);
-    for s in set_json {
+    for s in [
+        r#"database.gatewayRole="aurora_gateway""#,
+        r#"database.gatewayExistingSecret="aurora-gateway-db""#,
+    ]
+    .iter()
+    .chain(set_json)
+    {
         cmd.args(["--set-json", s]);
     }
     let Ok(out) = cmd.output() else {
@@ -904,6 +1132,42 @@ fn dev_config_loads_for_host_processes() {
 }
 
 #[test]
+fn bootstrap_connector_host_tokens_are_validated_strictly() {
+    let key = "AURORA_BOOTSTRAP_CONNECTOR_HOST_TOKENS";
+    let api = |v: &str| load_with(BASE, &[(key, v)]).unwrap().api_config();
+    let ok = api(
+        r#"[{"name":"mm","token":"auh_aaa","types":["mattermost","fake"]},
+            {"name":"other","token":"auh_bbb","types":["x1"]}]"#,
+    )
+    .unwrap();
+    assert_eq!(ok.bootstrap_connector_host_tokens.len(), 2);
+    assert_eq!(
+        ok.bootstrap_connector_host_tokens[0].2,
+        ["fake", "mattermost"]
+    );
+    for bad in [
+        "not json",
+        r#"[{"name":"mm","token":"aun_aaa","types":["a1"]}]"#,
+        r#"[{"name":"mm","token":"auh_aaa","types":[]}]"#,
+        r#"[{"name":"","token":"auh_aaa","types":["a1"]}]"#,
+        r#"[{"name":"mm","token":"auh_aaa","types":["a1"],"extra":1}]"#,
+        r#"[{"name":"mm","token":"auh_aaa","types":["a1"]},{"name":"mm","token":"auh_bbb","types":["a1"]}]"#,
+        r#"[{"name":"a","token":"auh_aaa","types":["a1"]},{"name":"b","token":"auh_aaa","types":["a1"]}]"#,
+    ] {
+        let e = api(bad).unwrap_err();
+        assert!(e.has_key(key), "{bad}: {e}");
+    }
+    assert!(
+        load_with(BASE, &[])
+            .unwrap()
+            .api_config()
+            .unwrap()
+            .bootstrap_connector_host_tokens
+            .is_empty()
+    );
+}
+
+#[test]
 fn bootstrap_connector_host_token_must_be_an_auh_token() {
     let ok = load_with(
         BASE,
@@ -938,7 +1202,8 @@ fn connector_host_config_defaults_token_and_overrides() {
     assert_eq!(c.token.expose(), "auh_abc123");
     let c = load_with(
         &format!(
-            "{BASE}\n[connector_host]\napi_url = \"http://aurora-api:4101/\"\ntest_types = true\nops_port = 4200\n"
+            "{}\n[connector_host]\napi_url = \"http://aurora-api:4101/\"\ntest_types = true\nops_port = 4200\n",
+            local_base()
         ),
         &[("AURORA_CONNECTOR_HOST_TOKEN", "auh_abc123")],
     )
@@ -962,6 +1227,30 @@ fn connector_host_config_defaults_token_and_overrides() {
     assert!(!format!("{c:?}").contains("auh_abc123"));
 }
 
+/// `relay.trusted_proxies` (FIX-090): empty by default, strict CIDRs, `/0` refused.
+#[test]
+fn relay_trusted_proxies_default_empty_and_validated() {
+    let env = [("AURORA_RELAY_TOKEN", "aul_abc123")];
+    let base = format!("{BASE}\n[relay]\npreviews_domain = \"preview.example.org\"\n");
+    let c = load_with(&base, &env).unwrap().relay_config().unwrap();
+    assert!(c.trusted_proxies.is_empty());
+    let c = load_with(
+        &format!("{base}trusted_proxies = [\"10.0.0.0/8\", \"fd00::/8\"]\n"),
+        &env,
+    )
+    .unwrap()
+    .relay_config()
+    .unwrap();
+    assert_eq!(c.trusted_proxies, ["10.0.0.0/8", "fd00::/8"]);
+    for bad in ["0.0.0.0/0", "10.0.0.1/8", "not-a-cidr", "10.0.0.0"] {
+        let e = load_with(&format!("{base}trusted_proxies = [\"{bad}\"]\n"), &env)
+            .unwrap()
+            .relay_config()
+            .unwrap_err();
+        assert!(e.has_key("relay.trusted_proxies[0]"), "{bad}: {e}");
+    }
+}
+
 #[test]
 fn relay_config_defaults_token_domain_and_overrides() {
     let toml = format!("{BASE}\n[relay]\npreviews_domain = \"preview.example.org\"\n");
@@ -978,7 +1267,7 @@ fn relay_config_defaults_token_domain_and_overrides() {
     assert_eq!(c.token.expose(), "aul_abc123");
     let c = load_with(
         &format!(
-            "{BASE}\n[relay]\napi_url = \"http://aurora-api:4101/\"\nlisten = \"0.0.0.0:5112\"\nops_port = 4300\nmax_streams = 8\npreviews_domain = \"Preview.Example.ORG\"\n"
+            "{BASE}\n[relay]\napi_url = \"http://aurora-api:4101/\"\nlisten = \"0.0.0.0:5112\"\nops_port = 4300\nmax_streams = 8\nmax_streams_per_user = 8\npreviews_domain = \"Preview.Example.ORG\"\n"
         ),
         &[("AURORA_RELAY_TOKEN", "aul_abc123")],
     )
@@ -2036,9 +2325,20 @@ fn previews_domain_shape() {
             &[],
         )
     };
-    // A valid registrable domain passes (two labels, lower case, sane lengths).
-    ok("preview.example.org").unwrap();
-    ok("p.example.org").unwrap();
+    // Valid DNS names pass validation (AUDIT-004 F-2: labels may start/end with a digit and be one
+    // character long; `previews.audit4` was refused and crash-looped the chart's migrate hook).
+    for good in [
+        "preview.example.org",
+        "p.example.org",
+        "previews.audit4",
+        "4u.example.org",
+        "preview.k8s-2.example.org",
+    ] {
+        ok(good)
+            .unwrap()
+            .api_config()
+            .unwrap_or_else(|e| panic!("{good}: {e}"));
+    }
     // Shape refusals: upper case, one label, too long, IP literal, bad characters, bare suffix.
     for bad in [
         "Preview.Example.Org",
@@ -2052,6 +2352,8 @@ fn previews_domain_shape() {
         "co.uk",
         "github.io",
         "pages.dev",
+        "preview.123", // all-digit last label
+        "preview.ex_ample.org",
     ] {
         let e = ok(bad).unwrap().api_config().unwrap_err();
         assert!(e.has_key("previews.domain"), "{bad}: {e}");

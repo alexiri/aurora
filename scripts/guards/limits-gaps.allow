@@ -1,0 +1,200 @@
+# FIX-116 ratchet for scripts/guards/limits-readers.sh: known gaps, one `NAME tag` per line.
+# unread = no reader outside limits.rs (wire it or delete it with its docs/02 row);
+# no-row = no docs/02 row; doc-only = docs/02 names it but limits.rs does not define it.
+# Entries can only be removed: closing a gap without removing its line fails the guard.
+# Exception (coordinator): a spec step may add `doc-only` entries for limits it specifies before
+# the code exists, marked with the task that must close them; that task's lane removes them.
+# FIX-146 (spec step 0, 2026-11-14) — Part A2 adds DB_SPAN_STATEMENT_MAX, Part D the TELEMETRY_*:
+DB_SPAN_STATEMENT_MAX doc-only
+TELEMETRY_CLOCK_FUTURE doc-only
+TELEMETRY_CLOCK_PAST doc-only
+TELEMETRY_INGEST_BODY_MAX doc-only
+TELEMETRY_INGEST_SPANS_MAX doc-only
+TELEMETRY_SPAN_ATTRIBUTES_MAX doc-only
+TELEMETRY_SPAN_DURATION_MAX doc-only
+TELEMETRY_SPAN_EVENTS_MAX doc-only
+TELEMETRY_STACKTRACE_MAX doc-only
+# SET-1 (SPEC-SETTINGS spec batch, 2026-11-14) — the instance-settings framework adds the SETTINGS_*:
+SETTINGS_AUDIT_VALUE_MAX doc-only
+SETTINGS_IMPORT_BYTES_MAX doc-only
+SETTINGS_PREVIEW_ORGS_MAX doc-only
+SETTINGS_RELOAD_POLL doc-only
+SETTINGS_SECTION_BYTES_MAX doc-only
+# P4-SSH (spec, 2026-11-14) — P4-SSH-1 adds SSH_KEYS_PER_USER, SSH_CERT_TTL, SSH_MINTS_PER_USER_AGENT_HOUR;
+# P4-SSH-2 adds the rest:
+SSH_API_RATE doc-only
+SSH_AUTH_ATTEMPTS doc-only
+SSH_AUTH_FAILURE_DELAY doc-only
+SSH_AUTH_TIMEOUT doc-only
+SSH_AWAKE_CAP doc-only
+SSH_AWAKE_GRACE doc-only
+SSH_CERT_TTL doc-only
+SSH_CHANNELS_PER_SANDBOX doc-only
+SSH_CHANNELS_PER_SESSION doc-only
+SSH_CONNECT_RATE doc-only
+SSH_ENV_VARS_MAX doc-only
+SSH_EXEC_COMMAND_MAX doc-only
+SSH_GRANT_TTL doc-only
+SSH_HEARTBEAT doc-only
+SSH_HEARTBEAT_FAILURES doc-only
+SSH_IDLE_TIMEOUT doc-only
+SSH_KEYS_PER_USER doc-only
+SSH_MAX_LIFETIME doc-only
+SSH_MINTS_PER_USER_AGENT_HOUR doc-only
+SSH_PREAUTH_MAX doc-only
+SSH_PREAUTH_PER_IP doc-only
+SSH_SESSION_LEASE doc-only
+SSH_SESSION_RETENTION doc-only
+SSH_SESSIONS_PER_AGENT doc-only
+SSH_SESSIONS_PER_USER doc-only
+SSH_WAKE_WAIT doc-only
+# P4-LLM (spec batch, 2026-11-14) — P4-LLM-2 (mint service) adds LLM_TOKEN_MINT_FAILURE_HOLD and
+# LLM_MINT_CACHE_MAX and closes LLM_TOKEN_MINT_TIMEOUT / LLM_TOKEN_SKEW (listed below, earlier spec);
+# P4-LLM-4 (Bedrock) adds LLM_ASSUME_ROLE_DURATION and closes LLM_SIGN_BODY_MAX:
+LLM_ASSUME_ROLE_DURATION doc-only
+LLM_MINT_CACHE_MAX doc-only
+LLM_TOKEN_MINT_FAILURE_HOLD doc-only
+# P4-011B (spec batch, 2026-11-14) — P4-011B-2 adds PARK_FOLLOWUP_LINES_MAX; P4-011B-3 adds the PUSH_*
+# below. The earlier RFE-011b entries (PARK_*, PUSH_*, APPROVAL_PUSH_DELAY, listed below) close with
+# P4-011B-1 (gateway PARK_*), P4-011B-2 (PARK_RESUME_WINDOW) and P4-011B-3 (PUSH_*, APPROVAL_PUSH_DELAY):
+PARK_FOLLOWUP_LINES_MAX doc-only
+PUSH_DISABLE_AFTER_FAILURES doc-only
+PUSH_ENDPOINT_MAX doc-only
+PUSH_RETRY_MAX doc-only
+PUSH_VAPID_JWT_TTL doc-only
+ACCESS_NOTIFY_BULK doc-only
+ACCESS_RECHECK doc-only
+ACTION_APPROVAL_TTL no-row
+AGENT_TOKEN_MAX_AGE_MAX no-row
+AGENT_TOKEN_RETROFIT_GRACE_DAYS no-row
+AGENT_TOKEN_RETROFIT_GRACE doc-only
+API_RATE_UNAUTH doc-only
+API_STREAMS_PER_PRINCIPAL doc-only
+APPROVAL_PUSH_DELAY doc-only
+APPROVAL_TIMEOUT_MAX_CONFIGURABLE no-row
+APPROVAL_TIMEOUT_MAX_FLOOR no-row
+ATTACH_ORG_QUOTA_DEFAULT doc-only
+ATTACH_ORG_QUOTA_MAX doc-only
+ATTACH_QUOTA_NOTICE doc-only
+CONDITION_BODY_BUFFER_MAX no-row
+CONDITION_BODY_BUFFER_MIN no-row
+CONNECTOR_HOST_RETAIN no-row
+COUNTER_BREAKER_COOLDOWN doc-only
+COUNTER_BREAKER_FAILURES doc-only
+COUNTER_PRUNE_BATCH doc-only
+COUNTER_PRUNE_INTERVAL doc-only
+COUNTER_TIMEOUT doc-only
+DELTA_COALESCE doc-only
+EXPORT_MAX_BYTES no-row
+EXPORT_MAX doc-only
+EXPORT_MAX_EVENTS no-row
+GATEWAY_DB_PROBE_INTERVAL doc-only
+GATEWAY_LISTEN_GRACE doc-only
+GRANT_BULK_MAX doc-only
+GROUP_BINDINGS_PER_GROUP doc-only
+GROUP_DESCRIPTION_MAX doc-only
+GROUP_IMPACT_LIST_MAX doc-only
+GROUP_MEMBERS_MAX doc-only
+GROUP_NAME_MAX doc-only
+GROUPS_PER_ORG doc-only
+GROUPS_PER_USER doc-only
+HOOK_FETCH_RESPONSE_MAX no-row
+HOOK_FETCH_TIMEOUT no-row
+HOOK_WALL_SUMMARIZE no-row
+KEY_ID_HEADER no-row
+LIBRARY_BROWSE_CACHE no-row
+LIBRARY_FETCH_RATE doc-only
+LIBRARY_REFRESH_BUDGET no-row
+LIBRARY_REFRESH_INTERVAL_MIN no-row
+LIBRARY_SKILLS_PER_AGENT no-row
+LLM_SIGN_BODY_MAX doc-only
+LLM_TOKEN_MINT_TIMEOUT doc-only
+LLM_TOKEN_SKEW doc-only
+MEMORY_CONTENT_JSON_MAX no-row
+MEMORY_SNIPPET_CHARS no-row
+MEMORY_SNIPPET_MIN_SCORE no-row
+OIDC_AUTH_RATE doc-only
+OP_BACKOFF_INITIAL no-row
+OP_BACKOFF_MAX no-row
+PACKAGE_ICON_MAX no-row
+PACKAGE_SETUP_GUIDE_MAX no-row
+PARK_BODY_MAX doc-only
+PARK_BODY_READ_TIMEOUT doc-only
+PARK_DENY_COOLDOWN doc-only
+PARK_MAX_TIMEOUT doc-only
+PARK_PENDING_PER_AGENT doc-only
+PARK_PER_AGENT_HOUR doc-only
+PARK_RESUME_WINDOW doc-only
+PARK_THRESHOLD doc-only
+PREVIEW_AUTH_CACHE_NEG no-row
+PREVIEW_CWD_MAX no-row
+PREVIEW_LABEL_CHARS no-row
+PREVIEW_STREAMS_PER_SANDBOX no-row
+PREVIEW_STREAMS_PER_USER no-row
+PREVIEW_SUPERVISOR_CONNECT_TIMEOUT no-row
+PROXY_TLS_LEAF_VALIDITY doc-only
+PUSH_PAYLOAD_MAX doc-only
+PUSH_PER_USER_HOUR doc-only
+PUSH_SUBSCRIPTIONS_PER_USER doc-only
+PUSH_TEST_PER_HOUR doc-only
+PUSH_TTL_MAX doc-only
+PUSH_VAPID_RETIRE doc-only
+REACH_EXPIRES_IN doc-only
+REACH_EXPIRES_IN_MAX_SECS no-row
+REACH_EXPIRES_IN_MIN_SECS no-row
+REQUEST_LOG_FLUSH_ROWS no-row
+REQUEST_LOG_OUTAGE_BUFFER doc-only
+RETENTION_SWEEP_PER_ORG no-row
+RULE_GROUP_IDENTITIES_MAX doc-only
+RUNNER_SUPERVISOR_HELLO no-row
+S3_CONNECT_TIMEOUT doc-only
+S3_ORPHAN_GRACE doc-only
+S3_ORPHAN_SWEEP_MAX doc-only
+S3_PROBE_INTERVAL doc-only
+S3_REQUEST_TIMEOUT doc-only
+S3_RETRIES doc-only
+S3_UPLOAD_CONCURRENCY doc-only
+SANDBOX_DEFAULT_CPUS no-row
+SANDBOX_DEFAULT_HOME_MIB no-row
+SANDBOX_DEFAULT_MEMORY_MIB no-row
+SANDBOX_DEFAULT_PIDS no-row
+SANDBOX_DEFAULTS doc-only
+SANDBOX_READINESS_SWEEP no-row
+SANDBOX_START_LOG_BYTES no-row
+SANDBOX_START_LOG_DETAIL no-row
+SUMMARY_FIELDS_MAX no-row
+SUMMARY_LIMITS doc-only
+SUMMARY_TEXT_MAX no-row
+SUMMARY_TITLE_MAX no-row
+SUMMARY_VALUE_MAX no-row
+TERMINAL_PTY_OPEN_TIMEOUT no-row
+TERMINALS_PER_AGENT no-row
+TERMINALS_PER_USER no-row
+TERMINAL_WAKE_WAIT no-row
+# P4-NARR / P4-UTOK spec batch (2026-11-15): doc-only until the named task defines them in limits.rs (P4-NARR, P4-UTOK remove their lines)
+NARR_MIN_INTERVAL doc-only
+NARR_SPACE_UPDATES_PER_MINUTE doc-only
+NARR_CARDS_PER_SPACE doc-only
+NARR_MAX_STEPS doc-only
+NARR_STEP_CHARS doc-only
+USER_TOKENS_PER_PERSON doc-only
+USER_TOKEN_PENDING_MAX doc-only
+# P4-EVAL spec batch (2026-11-15) — the EVAL_* limits of docs/02 are specified; their briefs
+# (P4-EVAL-1 for the question and settings limits, P4-EVAL-2 for the run and schedule limits,
+# P4-EVAL-3 for the judge limits) remove each line when the constant lands in aurora-core::limits.
+EVAL_QUESTIONS_PER_AGENT doc-only
+EVAL_QUESTION_CHARS doc-only
+EVAL_EXPECTED_TEXT_CHARS doc-only
+EVAL_CRITERIA_CHARS doc-only
+EVAL_ANSWER_CHARS doc-only
+EVAL_TURN_TIMEOUT doc-only
+EVAL_RUNS_ACTIVE_PER_AGENT doc-only
+EVAL_RUNS_PER_AGENT_DAY doc-only
+EVAL_SCHEDULE_MIN_INTERVAL doc-only
+EVAL_SCHEDULES_PER_AGENT doc-only
+EVAL_JUDGE_TIMEOUT doc-only
+EVAL_JUDGE_MAX_TOKENS doc-only
+EVAL_JUDGE_INPUT_MAX doc-only
+EVAL_RATIONALE_CHARS doc-only
+EVAL_RUN_RETENTION doc-only
+EVAL_REGRESSION_DROP doc-only

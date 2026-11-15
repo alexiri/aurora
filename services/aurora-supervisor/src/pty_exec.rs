@@ -32,8 +32,10 @@ fn make_session() -> std::io::Result<()> {
     rustix::process::setsid()?;
     // fd 0/1/2 are the pty slave (the supervisor spawned this bootstrap with the slave as
     // its stdio). As a session leader without a controlling terminal, `TIOCSCTTY` on the
-    // slave makes it ours; the slave is not yet any other session's ctty, so no privilege
-    // is needed (the uid drop, when any, already happened pre-exec).
+    // slave makes it ours; the slave is not yet any other session's ctty — the supervisor
+    // opens it with `O_NOCTTY` (`pty::PtySession::spawn`; as PID 1 it is a session leader
+    // without a ctty and would otherwise adopt the slave itself, FIX-091 item 7) — so no
+    // privilege is needed (the uid drop, when any, already happened pre-exec).
     rustix::process::ioctl_tiocsctty(std::io::stdin())?;
     Ok(())
 }
@@ -41,16 +43,20 @@ fn make_session() -> std::io::Result<()> {
 /// The `__pty-exec` subcommand: session + controlling terminal, then exec the shell.
 /// Diverges on success (`exec` replaces this process); a failure prints on the pty and
 /// exits non-zero.
-pub fn run(shell: &str) -> ExitCode {
+pub fn run(shell: &str, args: &[String], notice: Option<&str>) -> ExitCode {
     if let Err(e) = make_session() {
         eprintln!("aurora-supervisor {SUBCOMMAND}: {e}");
         return ExitCode::FAILURE;
+    }
+    // (FIX-138) A one-line notice for the pane when the chosen shell was not available.
+    if let Some(n) = notice {
+        println!("{n}");
     }
     // The environment was scrubbed by the supervisor before spawning this bootstrap
     // (`PtySession::spawn`); exec the shell with exactly that environ. On success `exec`
     // never returns.
     let env: Vec<(std::ffi::OsString, std::ffi::OsString)> = std::env::vars_os().collect();
-    let e = crate::spawn::exec(shell, env);
+    let e = crate::spawn::exec(shell, args, env);
     eprintln!("aurora-supervisor {SUBCOMMAND}: exec {shell}: {e}");
     ExitCode::FAILURE
 }

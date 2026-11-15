@@ -61,7 +61,17 @@ async fn list_groups(
     Path(org): Path<Uuid>,
     Query(q): Query<GroupListQuery>,
 ) -> Result<Json<Page<Group>>, ApiError> {
-    c.org_credential_reader(&s, org).await?;
+    let auth = c.org_credential_reader(&s, org).await?;
+    // (FIX-083, C-460) `member=` reveals a person's memberships — the groups of a colleague are
+    // as private as `GET /groups/{id}/members` (org admin): only an admin, or the caller's own id.
+    if let Some(member) = q.member
+        && member != c.user_id
+        && !auth.role.is_admin()
+    {
+        return Err(ApiError::forbidden(
+            "Organization owner/admin required to list another member's groups.",
+        ));
+    }
     let p = Pagination::new(q.limit, q.cursor.as_deref())?;
     if let Some(src) = q.source.as_deref()
         && !matches!(src, "manual" | "scim" | "idp")
@@ -272,7 +282,8 @@ async fn list_group_workspaces(
     }))
 }
 
-/// What deleting the group (or, with `remove_member`, removing that member) would take away.
+/// What deleting the group (or, with `remove_member`, removing that member; with
+/// `unbind_workspace`, removing its binding to that workspace) would take away.
 #[utoipa::path(get, path = "/groups/{id}/impact", operation_id = "groupImpact", tag = "groups",
     params(("id" = Uuid, Path, description = "Group id"), ImpactQuery),
     responses((status = 200, body = GroupImpact), (status = 403, body = ErrorEnvelope),
@@ -286,7 +297,7 @@ async fn group_impact(
 ) -> Result<Json<GroupImpact>, ApiError> {
     let g = service::load_admin(&s, &c, id).await?;
     let mut conn = s.pool.acquire().await.map_err(aurora_db::DbError::from)?;
-    let rows = repo::impact(&mut conn, &g, q.remove_member).await?;
+    let rows = repo::impact(&mut conn, &g, q.remove_member, q.unbind_workspace).await?;
     Ok(Json(GroupImpact {
         workspaces: rows.into_iter().map(Into::into).collect(),
     }))

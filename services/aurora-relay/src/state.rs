@@ -24,6 +24,10 @@ pub struct CachedResolve {
     /// `true` = positive entry (15 s), `false` = negative (5 s).
     pub positive: bool,
     pub at: Instant,
+    /// What the stream caps need from an `allow` (kept so a cache hit is as complete as the
+    /// API's answer): the share and the session's user.
+    pub share: Option<crate::api::ShareRef>,
+    pub user: Option<uuid::Uuid>,
 }
 
 impl CachedResolve {
@@ -41,11 +45,17 @@ pub struct State {
     /// The dashboard origin for the authorize redirect.
     pub external_url: String,
     pub wake_wait_secs: u32,
+    /// `PREVIEW_GRANT_RATE` at the grant endpoint (per replica).
+    pub grant_rate: crate::limits::GrantRate,
+    /// `relay.trusted_proxies`: edge proxies whose `X-Forwarded-For` names the visitor.
+    pub trusted_proxies: Vec<aurora_core::cidr::Cidr>,
+    /// Negative resolves per client address (FIX-090).
+    pub negative: crate::limits::NegativeResolves,
     cache: Mutex<HashMap<(String, String), CachedResolve>>,
 }
 
 const CACHE_POS: Duration = Duration::from_secs(15);
-const CACHE_NEG: Duration = Duration::from_secs(5);
+const CACHE_NEG: Duration = aurora_core::limits::PREVIEW_AUTH_CACHE_NEG;
 /// Cache entries beyond this count are dropped wholesale (labels are bounded anyway).
 const CACHE_MAX: usize = 100_000;
 
@@ -56,11 +66,53 @@ impl State {
         external_url: String,
         wake_wait_secs: u32,
     ) -> Arc<Self> {
+        Self::with_grant_rate(
+            api,
+            domain,
+            external_url,
+            wake_wait_secs,
+            crate::limits::GrantRate::spec(),
+        )
+    }
+
+    /// `new` with explicit grant-redemption limits (tests).
+    pub fn with_grant_rate(
+        api: Arc<RelayApi>,
+        domain: String,
+        external_url: String,
+        wake_wait_secs: u32,
+        grant_rate: crate::limits::GrantRate,
+    ) -> Arc<Self> {
+        Self::with_edge(
+            api,
+            domain,
+            external_url,
+            wake_wait_secs,
+            grant_rate,
+            Vec::new(),
+            crate::limits::NegativeResolves::new(crate::limits::NEGATIVE_RESOLVES_PER_MIN),
+        )
+    }
+
+    /// Everything explicit: the grant limiter, the trusted edge proxies and the negative-resolve
+    /// cap (production passes the configured proxies; tests shorten the limits).
+    pub fn with_edge(
+        api: Arc<RelayApi>,
+        domain: String,
+        external_url: String,
+        wake_wait_secs: u32,
+        grant_rate: crate::limits::GrantRate,
+        trusted_proxies: Vec<aurora_core::cidr::Cidr>,
+        negative: crate::limits::NegativeResolves,
+    ) -> Arc<Self> {
         Arc::new(Self {
             api,
             domain,
             external_url,
             wake_wait_secs,
+            grant_rate,
+            trusted_proxies,
+            negative,
             cache: Mutex::new(HashMap::new()),
         })
     }
@@ -86,6 +138,8 @@ impl State {
                 reason: a.reason.clone(),
                 positive: a.decision == "allow",
                 at: Instant::now(),
+                share: a.share.clone(),
+                user: a.user,
             },
         );
     }
@@ -97,6 +151,7 @@ impl State {
         label: &str,
         hash: Option<&str>,
         navigation: bool,
+        client: Option<std::net::IpAddr>,
     ) -> Result<crate::api::ResolveAnswer, crate::api::ApiError> {
         let key = hash.unwrap_or("");
         if let Some(c) = self.cached(label, key).await {
@@ -104,13 +159,37 @@ impl State {
             return Ok(crate::api::ResolveAnswer {
                 decision: c.decision,
                 reason: c.reason,
-                share: None,
+                share: c.share,
                 route: None,
+                user: c.user,
+                retry_after_secs: None,
             });
         }
         metrics::counter!("aurora_relay_resolve_cache", "hit" => "false").increment(1);
+        // An address that already burned its negative-resolve budget (random or stale cookies)
+        // gets the login answer locally: the API is not asked, so this visitor cannot spend the
+        // relay plane's rate class (FIX-090). A holder of a good, cached credential is unaffected.
+        if hash.is_some() && !self.negative.allows(client) {
+            metrics::counter!("aurora_relay_refused_total", "reason" => "negative_resolves")
+                .increment(1);
+            return Ok(crate::api::ResolveAnswer {
+                decision: "login".into(),
+                reason: None,
+                share: None,
+                route: None,
+                user: None,
+                retry_after_secs: None,
+            });
+        }
         let a = self.api.resolve(label, hash, 0, navigation).await?;
-        self.cache_put(label, key, &a).await;
+        if hash.is_some() && a.decision != "allow" {
+            self.negative.record(client);
+        }
+        // A `wake_limited` answer is not cached: its `retry_after_secs` is the API's, and the
+        // budget frees a slot on the API's clock, not after a cache entry.
+        if a.reason.as_deref() != Some("wake_limited") {
+            self.cache_put(label, key, &a).await;
+        }
         Ok(a)
     }
 }
@@ -118,10 +197,18 @@ impl State {
 /// A live `(label, session_hash)` pair of open streams.
 pub type LivePair = (String, String);
 
+/// Puts back the report entries whose delivery failed.
+pub type RestoreFn = Arc<dyn Fn(&[crate::api::ReportShare]) + Send + Sync>;
+
 /// Validation callbacks: the pairs to check and what to do with the revoked ones.
 pub struct ValidateHooks {
     pub live: Arc<dyn Fn() -> Vec<LivePair> + Send + Sync>,
     pub on_revoked: Arc<dyn Fn(Vec<LivePair>) + Send + Sync>,
+    /// The bytes relayed per share since the last heartbeat (the API counts them against the
+    /// daily quota); drained each cycle.
+    pub report: Arc<dyn Fn() -> Vec<crate::api::ReportShare> + Send + Sync>,
+    /// Puts back a report whose delivery failed.
+    pub restore: RestoreFn,
 }
 
 /// Registration heartbeat: registers once, then keeps the replica alive with `report`
@@ -159,15 +246,53 @@ pub async fn registration_loop(
     }
 }
 
+/// Pauses between the attempts of one `validate` / `report` call (FIX-090): a throttled (429),
+/// overloaded (5xx) or briefly unreachable API is retried within the cycle instead of waiting
+/// 15 s for the next one — a revocation delayed by an API hiccup is a security delay.
+const RETRY_BACKOFF: [Duration; 3] = [
+    Duration::from_millis(200),
+    Duration::from_millis(400),
+    Duration::from_millis(800),
+];
+
+/// Whether a failed API call is worth repeating at once.
+fn retryable(e: &crate::api::ApiError) -> bool {
+    use crate::api::ApiError;
+    match e {
+        ApiError::Transport(_) => true,
+        ApiError::Status(s) => matches!(*s, 429 | 500 | 502 | 503 | 504),
+        ApiError::Decode(_) => false,
+    }
+}
+
+/// Runs `call`, repeating it with [`RETRY_BACKOFF`] while it fails in a way a retry can fix.
+async fn with_retry<T, Fut>(mut call: impl FnMut() -> Fut) -> Result<T, crate::api::ApiError>
+where
+    Fut: std::future::Future<Output = Result<T, crate::api::ApiError>>,
+{
+    let mut last = call().await;
+    for pause in RETRY_BACKOFF {
+        match &last {
+            Err(e) if retryable(e) => {
+                tokio::time::sleep(pause).await;
+                last = call().await;
+            }
+            _ => break,
+        }
+    }
+    last
+}
+
 /// The 15 s heartbeat + validation cycle. `hooks.live` reports the currently open
 /// `(label, session_hash)` pairs of open streams; revoked pairs go to `hooks.on_revoked`
 /// so the stream table can close them with 4403.
 pub async fn heartbeat_loop(
     api: Arc<RelayApi>,
     hooks: ValidateHooks,
+    every: Duration,
     mut stop: tokio::sync::watch::Receiver<bool>,
 ) {
-    let mut tick = tokio::time::interval(Duration::from_secs(15));
+    let mut tick = tokio::time::interval(every);
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {
         tokio::select! {
@@ -177,7 +302,7 @@ pub async fn heartbeat_loop(
         // Re-validate open streams first (docs/04 step 5): revoked → close 4403.
         let pairs = (hooks.live)();
         if !pairs.is_empty() {
-            match api.validate(&pairs).await {
+            match with_retry(|| api.validate(&pairs)).await {
                 Ok(revoked) => {
                     if !revoked.is_empty() {
                         tracing::info!(revoked = revoked.len(), "preview sessions revoked");
@@ -187,10 +312,13 @@ pub async fn heartbeat_loop(
                 Err(e) => tracing::warn!(error = %e, "validate failed"),
             }
         }
-        // The heartbeat itself (an empty list is still a liveness report; per-share accounting
-        // rides the stream table's own report call).
-        if let Err(e) = api.report(&[]).await {
+        // The heartbeat itself (an empty list is still a liveness report) carries the bytes
+        // relayed per share since the last one: the API adds them to the share's daily
+        // counter (`PREVIEW_BYTES_PER_SHARE_DAY`). A failed report is retried with the next.
+        let shares = (hooks.report)();
+        if let Err(e) = with_retry(|| api.report(&shares)).await {
             tracing::warn!(error = %e, "relay report failed");
+            (hooks.restore)(&shares);
         }
     }
 }

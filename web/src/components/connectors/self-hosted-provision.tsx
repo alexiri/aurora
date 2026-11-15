@@ -63,7 +63,7 @@ export function SelfHostedProvision({
             onChange={(e) => setName(e.target.value)}
           />
         </Field>
-        <div className="flex flex-wrap gap-2 sm:mt-[1.625rem]">
+        <div className="flex flex-wrap gap-2 sm:mt-label-offset">
           <Button type="submit" disabled={provision.isPending}>
             Provision
           </Button>

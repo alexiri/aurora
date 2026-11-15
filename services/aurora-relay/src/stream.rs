@@ -21,13 +21,9 @@ use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 
 use crate::api::StreamsAnswer;
+use crate::limits::Timeouts;
 use crate::state::State;
 
-/// Idle timeout of the runner leg (`PREVIEW_WS_IDLE_TIMEOUT`); a stream that sends nothing
-/// for this long is closed (the runner's own idle close agrees).
-const IDLE: Duration = aurora_core::limits::PREVIEW_WS_IDLE_TIMEOUT;
-/// Total lifetime of one stream.
-const LIFETIME: Duration = aurora_core::limits::PREVIEW_STREAM_LIFETIME;
 /// The runner's connect timeout (`PREVIEW_CONNECT_TIMEOUT`): the dial either completes or
 /// the relay answers 504.
 const CONNECT: Duration = aurora_core::limits::PREVIEW_CONNECT_TIMEOUT;
@@ -49,9 +45,25 @@ pub struct StreamKey {
 pub struct LiveTx {
     cmd_tx: mpsc::Sender<Vec<u8>>,
     revoked_rx: watch::Receiver<bool>,
+    upgraded: Arc<Upgraded>,
+}
+
+/// Whether the stream switched protocols (a `101`): an upgraded stream idles out after
+/// `Timeouts::idle_ws`, a plain HTTP one after `Timeouts::idle_http`.
+struct Upgraded {
+    flag: std::sync::atomic::AtomicBool,
+    wake: tokio::sync::Notify,
 }
 
 impl LiveTx {
+    /// The app answered `101`: from now on the longer upgraded idle limit applies.
+    pub fn mark_upgraded(&self) {
+        self.upgraded
+            .flag
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        self.upgraded.wake.notify_one();
+    }
+
     /// Sends bytes toward the app, split into leg-sized binary frames (`PREVIEW_CHUNK`).
     /// `false` = the stream is gone (the pump dropped it).
     pub async fn to_app(&self, mut data: &[u8]) -> bool {
@@ -100,14 +112,62 @@ impl LiveStream {
     }
 }
 
+/// Relayed bytes are handed to the per-share report counter in batches of at least this many
+/// (per stream), and the rest when the stream ends: the table's lock is not taken per chunk.
+const BYTES_FLUSH: u64 = 64 * 1024;
+
+/// Which concurrent-stream cap refused a reservation (`FIX-072`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SlotRefused {
+    Share,
+    User,
+}
+
+impl SlotRefused {
+    /// The `aurora_relay_refused_total{reason}` label value (no ids in labels).
+    pub const fn reason(self) -> &'static str {
+        match self {
+            Self::Share => "share_streams",
+            Self::User => "user_streams",
+        }
+    }
+}
+
+/// A reserved concurrent-stream slot of one share and one user. RAII: every exit path of the
+/// exchange (client abort, upstream error, a finished pump) releases it by dropping it.
+pub struct Slot {
+    streams: Arc<Streams>,
+    share: uuid::Uuid,
+    user: String,
+}
+
+impl Slot {
+    pub fn share(&self) -> uuid::Uuid {
+        self.share
+    }
+}
+
+impl Drop for Slot {
+    fn drop(&mut self) {
+        self.streams.release(self.share, &self.user);
+    }
+}
+
 /// The table of open streams: what `validate` can close and `report` can count.
-#[derive(Default)]
 pub struct Streams {
     inner: std::sync::Mutex<Table>,
+    per_share_max: u32,
+    per_user_max: u32,
+    timeouts: Timeouts,
 }
 
 #[derive(Default)]
 struct Table {
+    /// Reserved + open streams per share and per user (the per-replica caps).
+    per_share: std::collections::HashMap<uuid::Uuid, u32>,
+    per_user: std::collections::HashMap<String, u32>,
+    /// Relayed bytes not yet reported to the API (`to_app`, `from_app`) per share.
+    pending: std::collections::HashMap<uuid::Uuid, (u64, u64)>,
     /// `(label, session_hash) -> open count` plus totals since start.
     open: std::collections::HashMap<StreamKey, u32>,
     /// Every open stream's revocation signal, per key (pumps deregister on exit).
@@ -118,8 +178,118 @@ struct Table {
 }
 
 impl Streams {
+    /// The spec's caps: `PREVIEW_STREAMS_PER_SHARE` and `PREVIEW_STREAMS_PER_USER`.
     pub fn new() -> Arc<Self> {
-        Arc::new(Self::default())
+        Self::with_limits(
+            aurora_core::limits::PREVIEW_STREAMS_PER_SHARE,
+            aurora_core::limits::PREVIEW_STREAMS_PER_USER,
+        )
+    }
+
+    /// Explicit caps (`relay.max_streams_per_user` may lower the per-user one).
+    pub fn with_limits(per_share_max: u32, per_user_max: u32) -> Arc<Self> {
+        Self::with_timeouts(per_share_max, per_user_max, Timeouts::spec())
+    }
+
+    /// Explicit caps and time limits (tests shorten the latter; production never does).
+    pub fn with_timeouts(per_share_max: u32, per_user_max: u32, timeouts: Timeouts) -> Arc<Self> {
+        Arc::new(Self {
+            inner: std::sync::Mutex::new(Table::default()),
+            per_share_max,
+            per_user_max,
+            timeouts,
+        })
+    }
+
+    /// The stream and header time limits in force.
+    pub fn timeouts(&self) -> Timeouts {
+        self.timeouts
+    }
+
+    /// Reserves one concurrent stream of `share` for `user` (a user id, or the session hash
+    /// when the API named none), or says which cap is full.
+    pub fn reserve(self: &Arc<Self>, share: uuid::Uuid, user: &str) -> Result<Slot, SlotRefused> {
+        let mut g = self.inner.lock().unwrap_or_else(|p| p.into_inner());
+        if g.per_share.get(&share).copied().unwrap_or(0) >= self.per_share_max {
+            return Err(SlotRefused::Share);
+        }
+        if g.per_user.get(user).copied().unwrap_or(0) >= self.per_user_max {
+            return Err(SlotRefused::User);
+        }
+        *g.per_share.entry(share).or_insert(0) += 1;
+        *g.per_user.entry(user.to_owned()).or_insert(0) += 1;
+        Ok(Slot {
+            streams: self.clone(),
+            share,
+            user: user.to_owned(),
+        })
+    }
+
+    fn release(&self, share: uuid::Uuid, user: &str) {
+        let mut g = self.inner.lock().unwrap_or_else(|p| p.into_inner());
+        if let std::collections::hash_map::Entry::Occupied(mut e) = g.per_share.entry(share) {
+            *e.get_mut() = e.get().saturating_sub(1);
+            if *e.get() == 0 {
+                e.remove();
+            }
+        }
+        if let std::collections::hash_map::Entry::Occupied(mut e) =
+            g.per_user.entry(user.to_owned())
+        {
+            *e.get_mut() = e.get().saturating_sub(1);
+            if *e.get() == 0 {
+                e.remove();
+            }
+        }
+    }
+
+    /// Streams currently reserved for `share` (tests, metrics).
+    pub fn share_count(&self, share: uuid::Uuid) -> u32 {
+        self.inner
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .per_share
+            .get(&share)
+            .copied()
+            .unwrap_or(0)
+    }
+
+    fn add_bytes(&self, share: uuid::Uuid, to_app: u64, from_app: u64) {
+        if to_app + from_app == 0 {
+            return;
+        }
+        let mut g = self.inner.lock().unwrap_or_else(|p| p.into_inner());
+        let e = g.pending.entry(share).or_insert((0, 0));
+        e.0 += to_app;
+        e.1 += from_app;
+    }
+
+    /// Takes the bytes relayed since the last report, per share, as report entries (at most
+    /// 500 per call, the API's batch bound; the rest stays pending).
+    pub fn drain_report(&self) -> Vec<crate::api::ReportShare> {
+        let mut g = self.inner.lock().unwrap_or_else(|p| p.into_inner());
+        let ids: Vec<uuid::Uuid> = g.pending.keys().copied().take(500).collect();
+        ids.into_iter()
+            .filter_map(|id| {
+                let (to_app, from_app) = g.pending.remove(&id)?;
+                Some(crate::api::ReportShare {
+                    share_id: id,
+                    streams_open: i32::try_from(g.per_share.get(&id).copied().unwrap_or(0))
+                        .unwrap_or(i32::MAX),
+                    streams_total: 0,
+                    bytes_to_app: to_app,
+                    bytes_from_app: from_app,
+                    last_request_at: None,
+                })
+            })
+            .collect()
+    }
+
+    /// Puts a report whose delivery failed back, so its bytes are counted on the next try.
+    pub fn restore_report(&self, shares: &[crate::api::ReportShare]) {
+        for s in shares {
+            self.add_bytes(s.share_id, s.bytes_to_app, s.bytes_from_app);
+        }
     }
 
     fn add(&self, key: &StreamKey) -> (Arc<watch::Sender<bool>>, watch::Receiver<bool>) {
@@ -210,7 +380,77 @@ impl Streams {
 pub type LegWs =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
+/// Whether `endpoint` is `ws[s]://<host-name | IP literal>[:port]/v1/preview-stream` and nothing
+/// else (FIX-090). The relay sends `Authorization: Bearer aux_…` to whatever the API names; an
+/// endpoint with userinfo (`ws://user@evil/…`), a query, a stray character or another path is
+/// refused before a live grant leaves the process. Same rule as the API's registration check
+/// of `advertised_host` (`runner_plane::preview_streams::advertised_host_ok`).
+pub fn endpoint_ok(endpoint: &str) -> bool {
+    let Some(rest) = endpoint
+        .strip_prefix("wss://")
+        .or_else(|| endpoint.strip_prefix("ws://"))
+    else {
+        return false;
+    };
+    let Some((authority, path)) = rest.split_once('/') else {
+        return false;
+    };
+    path == "v1/preview-stream" && authority_ok(authority)
+}
+
+/// A host name or IP literal (`[v6]` bracketed) with an optional port.
+fn authority_ok(h: &str) -> bool {
+    if h.is_empty() || h.len() > 255 {
+        return false;
+    }
+    let (host, port) = if let Some(rest) = h.strip_prefix('[') {
+        let Some((v6, tail)) = rest.split_once(']') else {
+            return false;
+        };
+        if v6.parse::<std::net::Ipv6Addr>().is_err() {
+            return false;
+        }
+        match tail {
+            "" => return true,
+            t => (None, t.strip_prefix(':')),
+        }
+    } else {
+        match h.split_once(':') {
+            Some((host, port)) => (Some(host), Some(port)),
+            None => (Some(h), None),
+        }
+    };
+    if let Some(p) = port
+        && (p.is_empty()
+            || p.len() > 5
+            || !p.bytes().all(|b| b.is_ascii_digit())
+            || p.parse::<u32>().is_ok_and(|n| n == 0 || n > 65_535))
+    {
+        return false;
+    }
+    let Some(host) = host else {
+        return true;
+    };
+    if host.parse::<std::net::Ipv4Addr>().is_ok() {
+        return true;
+    }
+    !host.is_empty()
+        && host.split('.').all(|l| {
+            (1..=63).contains(&l.len())
+                && !l.starts_with('-')
+                && !l.ends_with('-')
+                && l.bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+        })
+}
+
 pub async fn dial(_state: &State, sa: &StreamsAnswer) -> Result<LegWs, u16> {
+    if !endpoint_ok(&sa.runner_endpoint) {
+        tracing::warn!("the API named a runner endpoint that is not host[:port]; not dialling");
+        metrics::counter!("aurora_relay_stream_dial_errors_total", "kind" => "endpoint")
+            .increment(1);
+        return Err(502);
+    }
     let mut req = sa
         .runner_endpoint
         .as_str()
@@ -256,26 +496,96 @@ fn redact_endpoint(uri: &http::Uri) -> String {
     }
 }
 
+/// Why a guarded wait was cut.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Cut {
+    Revoked,
+    Idle,
+    Lifetime,
+}
+
+impl Cut {
+    /// The leg's close code and the `aurora_relay_stream_closed_total` reason.
+    fn close(self) -> (u16, &'static str) {
+        match self {
+            Self::Revoked => (4403, "revoked"),
+            Self::Idle => (4504, "idle"),
+            Self::Lifetime => (4504, "lifetime"),
+        }
+    }
+}
+
+/// Runs `fut` (a send to a peer that may have stopped reading) but gives up when the stream is
+/// revoked or its idle or lifetime limit passes: the pump never awaits a peer without these
+/// still being watched (SEC-81: revocation closes within `PREVIEW_AUTH_CACHE`).
+async fn guarded<F: std::future::Future>(
+    fut: F,
+    revoked: &mut watch::Receiver<bool>,
+    idle: std::pin::Pin<&mut tokio::time::Sleep>,
+    lifetime: std::pin::Pin<&mut tokio::time::Sleep>,
+) -> Result<F::Output, Cut> {
+    tokio::select! {
+        r = fut => Ok(r),
+        Ok(_) = revoked.wait_for(|v| *v) => Err(Cut::Revoked),
+        () = idle => Err(Cut::Idle),
+        () = lifetime => Err(Cut::Lifetime),
+    }
+}
+
+/// Hands the bytes moved since the last flush to the share's report counter once at least
+/// `BYTES_FLUSH` accumulated (or `last`): the quota overshoot per stream is below that.
+fn flush(
+    streams: &Streams,
+    slot: &Slot,
+    to_app: &u64,
+    from_app: &u64,
+    flushed: &mut (u64, u64),
+    last: bool,
+) {
+    let (dt, df) = (to_app - flushed.0, from_app - flushed.1);
+    if dt + df >= BYTES_FLUSH || (last && dt + df > 0) {
+        streams.add_bytes(slot.share(), dt, df);
+        *flushed = (*to_app, *from_app);
+    }
+}
+
 /// Splits a freshly dialed leg-1 WebSocket into a [`LiveStream`] and drives its pump:
 /// bytes sent through [`LiveTx::to_app`] go to the app, bytes from the app come back
 /// through [`LiveStream::from_app`]; revocation (`Streams::revoke`), idle and lifetime
 /// close the leg (4403 / 4504), and the leg is closed properly when both halves drop.
-pub(crate) fn run_leg(streams: Arc<Streams>, key: StreamKey, ws: LegWs) -> LiveStream {
+pub(crate) fn run_leg(streams: Arc<Streams>, key: StreamKey, ws: LegWs, slot: Slot) -> LiveStream {
     let (sig, revoked_rx) = streams.add(&key);
     let (cmd_tx, mut cmd_rx) = mpsc::channel::<Vec<u8>>(DATA_Q);
     let (from_app_tx, from_app_rx) = mpsc::channel::<Bytes>(DATA_Q);
     let pump_rx = revoked_rx.clone();
+    let upgraded = Arc::new(Upgraded {
+        flag: std::sync::atomic::AtomicBool::new(false),
+        wake: tokio::sync::Notify::new(),
+    });
+    let pump_up = upgraded.clone();
+    let tm = streams.timeouts;
     tokio::spawn(async move {
+        let upgraded = pump_up;
+        // The idle limit that applies now (plain HTTP until a `101`).
+        let idle_len = || {
+            if upgraded.flag.load(std::sync::atomic::Ordering::Relaxed) {
+                tm.idle_ws
+            } else {
+                tm.idle_http
+            }
+        };
         let mut pump_rx = pump_rx;
         let (mut sink, mut source) = ws.split();
         let mut bytes_to_app: u64 = 0;
         let mut bytes_from_app: u64 = 0;
+        // Bytes already handed to the per-share report counter (to_app, from_app).
+        let mut flushed: (u64, u64) = (0, 0);
         #[expect(unused_assignments)]
         let mut reason = "closed";
         let mut close_code: u16 = 1000;
         tokio::pin! {
-            let idle = tokio::time::sleep(IDLE);
-            let lifetime = tokio::time::sleep(LIFETIME);
+            let idle = tokio::time::sleep(idle_len());
+            let lifetime = tokio::time::sleep(tm.lifetime);
         }
         let mut ping = tokio::time::interval(Duration::from_secs(20));
         ping.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -284,12 +594,30 @@ pub(crate) fn run_leg(streams: Arc<Streams>, key: StreamKey, ws: LegWs) -> LiveS
             tokio::select! {
                 cmd = cmd_rx.recv() => match cmd {
                     Some(b) => {
-                        idle.as_mut().reset(tokio::time::Instant::now() + IDLE);
+                        idle.as_mut().reset(tokio::time::Instant::now() + idle_len());
                         bytes_to_app += b.len() as u64;
-                        if sink.send(Message::binary(b)).await.is_err() {
-                            close_code = 1000;
-                            reason = "closed";
-                            break;
+                        flush(&streams, &slot, &bytes_to_app, &bytes_from_app, &mut flushed, false);
+                        // Never wait on the runner past revocation or the timers: a runner
+                        // that stopped reading must not keep the stream open.
+                        match guarded(
+                            sink.send(Message::binary(b)),
+                            &mut pump_rx,
+                            idle.as_mut(),
+                            lifetime.as_mut(),
+                        )
+                        .await
+                        {
+                            Ok(Ok(())) => {}
+                            Ok(Err(_)) => {
+                                close_code = 1000;
+                                reason = "closed";
+                                break;
+                            }
+                            Err(cut) => {
+                                (close_code, reason) = cut.close();
+                                revoked = cut == Cut::Revoked;
+                                break;
+                            }
                         }
                     }
                     None => {
@@ -300,11 +628,29 @@ pub(crate) fn run_leg(streams: Arc<Streams>, key: StreamKey, ws: LegWs) -> LiveS
                 },
                 msg = source.next() => match msg {
                     Some(Ok(Message::Binary(b))) => {
-                        idle.as_mut().reset(tokio::time::Instant::now() + IDLE);
+                        idle.as_mut().reset(tokio::time::Instant::now() + idle_len());
                         bytes_from_app += b.len() as u64;
-                        if from_app_tx.send(b).await.is_err() {
-                            reason = "closed";
-                            break;
+                        flush(&streams, &slot, &bytes_to_app, &bytes_from_app, &mut flushed, false);
+                        // A viewer that stopped reading fills this queue: the wait on it is
+                        // bounded by revocation and the timers like every other.
+                        match guarded(
+                            from_app_tx.send(b),
+                            &mut pump_rx,
+                            idle.as_mut(),
+                            lifetime.as_mut(),
+                        )
+                        .await
+                        {
+                            Ok(Ok(())) => {}
+                            Ok(Err(_)) => {
+                                reason = "closed";
+                                break;
+                            }
+                            Err(cut) => {
+                                (close_code, reason) = cut.close();
+                                revoked = cut == Cut::Revoked;
+                                break;
+                            }
                         }
                     }
                     Some(Ok(Message::Close(c))) => {
@@ -326,27 +672,49 @@ pub(crate) fn run_leg(streams: Arc<Streams>, key: StreamKey, ws: LegWs) -> LiveS
                         break;
                     }
                 }
+                () = upgraded.wake.notified() => {
+                    // The `101` arrived: the stream now idles on the upgraded limit.
+                    idle.as_mut().reset(tokio::time::Instant::now() + idle_len());
+                }
                 _ = &mut idle => { close_code = 4504; reason = "idle"; break; }
                 _ = &mut lifetime => { close_code = 4504; reason = "lifetime"; break; }
                 _ = ping.tick() => {
-                    if sink.send(Message::Ping(Vec::new().into())).await.is_err() {
-                        reason = "closed";
-                        break;
+                    match guarded(
+                        sink.send(Message::Ping(Vec::new().into())),
+                        &mut pump_rx,
+                        idle.as_mut(),
+                        lifetime.as_mut(),
+                    )
+                    .await
+                    {
+                        Ok(Ok(())) => {}
+                        Ok(Err(_)) => {
+                            reason = "closed";
+                            break;
+                        }
+                        Err(cut) => {
+                            (close_code, reason) = cut.close();
+                            revoked = cut == Cut::Revoked;
+                            break;
+                        }
                     }
                 }
             }
         }
-        if revoked {
-            let _ = sink
-                .send(Message::Close(Some(
-                    tokio_tungstenite::tungstenite::protocol::CloseFrame {
-                        code: 4403.into(),
-                        reason: "revoked".into(),
-                    },
-                )))
-                .await;
+        // The closing frame is bounded: a stalled runner must not hold the slot.
+        let closing = if revoked {
+            Message::Close(Some(tokio_tungstenite::tungstenite::protocol::CloseFrame {
+                code: 4403.into(),
+                reason: "revoked".into(),
+            }))
         } else {
-            let _ = sink.send(Message::Close(None)).await;
+            Message::Close(None)
+        };
+        if tokio::time::timeout(tm.close, sink.send(closing))
+            .await
+            .is_err()
+        {
+            tracing::debug!(budget = ?tm.close, "relay: the runner did not take the close frame");
         }
         tracing::debug!(
             reason,
@@ -356,7 +724,16 @@ pub(crate) fn run_leg(streams: Arc<Streams>, key: StreamKey, ws: LegWs) -> LiveS
             "relay: leg pump done"
         );
         drop(from_app_tx);
+        flush(
+            &streams,
+            &slot,
+            &bytes_to_app,
+            &bytes_from_app,
+            &mut flushed,
+            true,
+        );
         streams.remove(&key, &sig, bytes_to_app, bytes_from_app);
+        drop(slot);
         metrics::counter!("aurora_relay_stream_closed_total", "reason" => reason).increment(1);
         let _ = close_code;
     });
@@ -364,6 +741,7 @@ pub(crate) fn run_leg(streams: Arc<Streams>, key: StreamKey, ws: LegWs) -> LiveS
         tx: LiveTx {
             cmd_tx,
             revoked_rx: revoked_rx.clone(),
+            upgraded,
         },
         from_app_rx,
     }

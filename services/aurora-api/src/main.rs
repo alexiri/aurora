@@ -285,6 +285,9 @@ async fn serve(cfg: ApiConfig) -> Result<(), Box<dyn std::error::Error>> {
         tracing::warn!("{w}");
     }
     let state = aurora_api::app::AppState::try_new(pool.clone(), cfg.clone())?;
+    // (FIX-083) IdP-linked groups of a provider that no longer syncs them (provider ids only).
+    aurora_api::domains::groups::sync::warn_orphaned_providers(&pool, &cfg.auth.oidc_providers)
+        .await;
     aurora_api::http::auth::spawn_revocation_listener(pool.clone(), state.session_cache.clone());
     if let Err(e) = aurora_api::domains::runners_admin::service::bootstrap_default(&state).await {
         tracing::warn!(error = %e, "bootstrap runner token not applied");
@@ -331,7 +334,11 @@ async fn serve(cfg: ApiConfig) -> Result<(), Box<dyn std::error::Error>> {
     aurora_api::domains::channels::deprovision::spawn(state.clone());
     // (P4-GSL) git skill library refresh (lease per library; proposals only) and its retention.
     aurora_api::domains::skill_libraries::refresh::spawn(state.clone());
+    // (P5-ASRC, D-250) addon source poll (lease per source; shared with the manual checks).
+    aurora_api::domains::addon_sources::poll::spawn(state.clone());
     aurora_api::domains::plugins::scan::spawn(state.clone());
+    // (P5-CHAT-4) index pre-existing messages for search (resumable; ends when complete).
+    aurora_api::domains::conversations::search::spawn_backfill(state.clone());
     aurora_api::domains::plugins::registry::spawn_initial(state.clone());
     let internal =
         aurora_api::domains::plugins::internal::router(state.clone()).fallback(service::not_found);

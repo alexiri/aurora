@@ -36,3 +36,10 @@
 - { sql: "select * from t where a = unknown_fn(b)", class: admin }
 - { sql: "select 1; vacuum", class: admin, statements: 2 }
 - { sql: "select * from t for update; vacuum", class: admin }
+# (FIX-118) implicit user-function calls: a non-pg_catalog operator and a cast to a non-built-in type
+- { sql: "select 1 operator(public.!!) 1", class: admin }
+- { sql: "select a operator(myschema.===) b from t", class: admin }
+- { sql: "select 'x'::public.mytype", class: admin }
+- { sql: "select a::mytype from t", class: admin }
+- { sql: "select cast(a as myschema.money_like) from t", class: admin }
+- { sql: "select * from t where a::citext = 'x'", class: admin }

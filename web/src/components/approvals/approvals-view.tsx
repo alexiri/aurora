@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DataTable, Td, Th } from "@/components/ui/data-table";
 import { inputClass } from "@/components/ui/field";
+import { MoreNotShown } from "@/components/ui/more-not-shown";
 import { PageHeader } from "@/components/ui/page-header";
 import { StatusDot } from "@/components/ui/status-dot";
 import { Tabs, tabId, tabPanelId } from "@/components/ui/tabs";
@@ -162,6 +163,7 @@ function PendingTab({ wsId }: { wsId: string }) {
           {batchError}
         </p>
       ) : null}
+      {q.data.truncated ? <MoreNotShown what="pending approvals" narrow="Decide the ones shown; the rest appear as these are decided." /> : null}
       {groups.length === 0 ? (
         <EmptyState title="No pending approvals" when="Look here when a number appears next to Approvals in the menu.">
           Nothing is waiting for you. When an agent wants to do something risky, it asks here first.

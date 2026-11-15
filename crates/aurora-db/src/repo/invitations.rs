@@ -93,12 +93,11 @@ pub async fn is_member<'e, E: PgExecutor<'e>>(
     .await?)
 }
 
-pub async fn count_active_members<'e, E: PgExecutor<'e>>(
-    exec: E,
-    org: Uuid,
-) -> Result<i64, DbError> {
+/// Seats in use against `max_members`: `active` members and (D-175, FIX-082) `pending` ones
+/// SCIM prepared for an existing account; a suspended member holds none.
+pub async fn count_seats<'e, E: PgExecutor<'e>>(exec: E, org: Uuid) -> Result<i64, DbError> {
     Ok(sqlx::query_scalar(
-        "SELECT count(*) FROM org_members WHERE org_id = $1 AND status = 'active'",
+        "SELECT count(*) FROM org_members WHERE org_id = $1 AND status IN ('active', 'pending')",
     )
     .bind(org)
     .fetch_one(exec)

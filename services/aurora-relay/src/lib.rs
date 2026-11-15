@@ -3,6 +3,7 @@
 
 pub mod api;
 pub mod edge;
+pub mod limits;
 pub mod proxy;
 pub mod state;
 pub mod stream;

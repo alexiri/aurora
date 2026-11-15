@@ -1,6 +1,7 @@
 "use client";
 
 import { useQueries } from "@tanstack/react-query";
+import Link from "next/link";
 import { useState, type FormEvent } from "react";
 
 import { EmptyState, ErrorState, Loading } from "@/components/states";
@@ -17,13 +18,25 @@ import {
   useCreateAppInstance,
   useDeleteAppInstance,
   usePatchAppInstance,
+  usePromoteAppInstance,
   type AppDetail,
   type AppInstance,
   type InstanceScope,
 } from "@/lib/api/apps";
+import { appDisplayName } from "@/lib/api/app-name";
 import { api } from "@/lib/api/client";
-import { errorMessage, fieldErrors } from "@/lib/api/errors";
+import {
+  errorMessage,
+  fieldErrors,
+  hostConflict,
+  hostConflictMessage,
+  probeFailedMessage,
+  probeFailure,
+} from "@/lib/api/errors";
+import { useAdminOrgs } from "@/lib/api/freeze";
+import { useMe } from "@/lib/api/queries";
 import { unwrap } from "@/lib/api/unwrap";
+import { splitInstanceUrl } from "@/lib/instance-url";
 
 /** Apps that declare `instances` (from the catalogue detail; no app knowledge lives in the bundle). */
 export function useInstanceBoundApps() {
@@ -41,6 +54,77 @@ export function useInstanceBoundApps() {
   return { apps, bound, pending: apps.isPending || details.some((q) => q.isPending) };
 }
 
+/**
+ * The refusal of a host (FIX-132): says who holds it as far as the server tells (an organization
+ * administrator never sees another organization's name), links an instance administrator to the page
+ * where it can be dealt with, and offers **Make instance-wide** for an organization's registration of the
+ * app being registered.
+ */
+function HostConflictNotice({
+  error,
+  scope,
+  appId,
+  onPromoted,
+}: {
+  error: unknown;
+  scope: InstanceScope;
+  appId: string;
+  onPromoted: () => void;
+}) {
+  const me = useMe();
+  const promote = usePromoteAppInstance();
+  const c = hostConflict(error);
+  if (!c) {
+    return (
+      <Notice tone="danger" role="alert">
+        {errorMessage(error)}
+      </Notice>
+    );
+  }
+  const isAdmin = me.data?.user.is_instance_admin === true;
+  return (
+    <Notice tone="danger" role="alert" className="space-y-2">
+      <p>{hostConflictMessage(c, scope.kind === "organization")}</p>
+      {c.kind === "static_claim" ? (
+        isAdmin ? (
+          <p>
+            <Link href="/admin/host-claims" className="font-medium underline">
+              Host claims
+            </Link>{" "}
+            ·{" "}
+            <Link href="/admin/plugins" className="font-medium underline">
+              Plugins
+            </Link>
+          </p>
+        ) : (
+          <p>Ask an instance administrator.</p>
+        )
+      ) : null}
+      {c.kind === "instance" && c.scope === "org" && !c.promotable && isAdmin && scope.kind === "organization" ? (
+        <p>
+          <Link href="/admin/instances" className="font-medium underline">
+            Self-hosted apps (admin)
+          </Link>
+        </p>
+      ) : null}
+      {c.promotable && c.instance_id && c.app_id === appId ? (
+        <div className="space-y-1">
+          <p>Make that registration available to every organization instead of registering the host again.</p>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={promote.isPending}
+            onClick={() => promote.mutate(c.instance_id!, { onSuccess: onPromoted })}
+          >
+            Make instance-wide
+          </Button>
+          {promote.isError ? <p className="text-xs">{errorMessage(promote.error)}</p> : null}
+        </div>
+      ) : null}
+    </Notice>
+  );
+}
+
 function RegisterDialog({
   scope,
   open,
@@ -55,15 +139,28 @@ function RegisterDialog({
   const create = useCreateAppInstance(scope);
   const [appId, setAppId] = useState("");
   const [host, setHost] = useState("");
+  const [basePath, setBasePath] = useState("");
   const [label, setLabel] = useState("");
   const app = bound.find((a) => a.app_id === appId);
   const errs = fieldErrors(create.error);
+  const probe = probeFailure(create.error);
+  const pathValue = basePath.trim();
+  const hostError = probe ? probeFailedMessage(probe, app?.name ?? "", host.trim(), pathValue || undefined) : errs.host;
 
   function reset() {
     setAppId("");
     setHost("");
+    setBasePath("");
     setLabel("");
     create.reset();
+  }
+
+  /** A full URL typed or pasted into Host fills Host and Path (D-231). */
+  function onHostChange(value: string) {
+    const s = splitInstanceUrl(value);
+    if (!s) return setHost(value);
+    setHost(s.host);
+    if (s.path) setBasePath(s.path);
   }
 
   async function submit(e: FormEvent) {
@@ -72,6 +169,7 @@ function RegisterDialog({
       await create.mutateAsync({
         app_id: appId,
         host: host.trim(),
+        ...(pathValue ? { base_path: pathValue } : {}),
         label: label.trim() || host.trim(),
       });
       reset();
@@ -88,7 +186,7 @@ function RegisterDialog({
         if (!o) reset();
         onOpenChange(o);
       }}
-      title="Register an instance"
+      title="Register a self-hosted app"
       description="Registering a host is a trust decision: it is the only place the app's credentials may be sent for connections bound to it."
       submitLabel="Register"
       busy={create.isPending}
@@ -106,7 +204,7 @@ function RegisterDialog({
           <option value="">Select…</option>
           {bound.map((a) => (
             <option key={a.app_id} value={a.app_id}>
-              {a.name}
+              {appDisplayName(a)}
             </option>
           ))}
         </select>
@@ -114,8 +212,8 @@ function RegisterDialog({
       <Field
         id="ai-host"
         label="Host"
-        hint="The host name only, in lower case, for example gitlab.example.com. No https://, port, path or IP address."
-        error={errs.host}
+        hint="The host name, in lower case, for example gitlab.example.com. No port or IP address. Pasting a full URL fills Host and Path."
+        error={hostError}
       >
         <input
           id="ai-host"
@@ -124,8 +222,25 @@ function RegisterDialog({
           autoCapitalize="none"
           spellCheck={false}
           value={host}
-          onChange={(e) => setHost(e.target.value)}
+          onChange={(e) => onHostChange(e.target.value)}
           required
+        />
+      </Field>
+      <Field
+        id="ai-path"
+        label="Path"
+        hint="Only if the app is served under a path, for example /jira for https://its.cern.ch/jira"
+        error={errs.base_path}
+      >
+        <input
+          id="ai-path"
+          className={`${inputClass} font-mono`}
+          autoComplete="off"
+          autoCapitalize="none"
+          spellCheck={false}
+          placeholder="/jira"
+          value={basePath}
+          onChange={(e) => setBasePath(e.target.value)}
         />
       </Field>
       <Field id="ai-label" label="Label" hint="Shown when people connect. Defaults to the host." error={errs.label}>
@@ -137,15 +252,16 @@ function RegisterDialog({
           onChange={(e) => setLabel(e.target.value)}
         />
       </Field>
-      {create.isError && !errs.host && !errs.app_id && !errs.label ? (
-        <Notice tone="danger" role="alert">
-          {errorMessage(create.error)}
-        </Notice>
-      ) : null}
-      {create.isError && errs.host ? (
-        <Notice tone="danger" role="alert">
-          {errorMessage(create.error)}
-        </Notice>
+      {create.isError && !errs.app_id && !errs.label && !errs.base_path && !probe ? (
+        <HostConflictNotice
+          error={create.error}
+          scope={scope}
+          appId={appId}
+          onPromoted={() => {
+            reset();
+            onOpenChange(false);
+          }}
+        />
       ) : null}
     </FormDialog>
   );
@@ -155,42 +271,81 @@ function InstanceRow({
   inst,
   appName,
   canManage,
+  showOrg = false,
+  canPromote = false,
 }: {
   inst: AppInstance;
   appName: string;
   canManage: boolean;
+  /** The admin list: an Organization column. */
+  showOrg?: boolean;
+  /** Offer **Make instance-wide** on an organization's registration (instance admin). */
+  canPromote?: boolean;
 }) {
   const patch = usePatchAppInstance();
   const del = useDeleteAppInstance();
+  const promote = usePromoteAppInstance();
   const [confirm, setConfirm] = useState(false);
+  const [confirmPromote, setConfirmPromote] = useState(false);
   const active = inst.status === "active";
   return (
     <tr>
       <Td>{appName}</Td>
       <Td>
-        <div className="font-mono text-sm">{inst.host}</div>
+        <div className="break-all font-mono text-sm">{inst.base_url}</div>
         <div className="text-xs text-muted">{inst.label}</div>
       </Td>
+      {showOrg ? <Td className="text-ink-2">{inst.org_id ? (inst.org_name ?? inst.org_slug ?? inst.org_id) : "—"}</Td> : null}
       <Td>
-        <Badge tone={inst.org_id ? "neutral" : "accent"}>{inst.org_id ? "Organization" : "Instance-wide"}</Badge>
+        {/* (FIX-134, D-243) A package's preset instance (a vendor's region host): the package's own, read-only. */}
+        <Badge tone={inst.builtin || !inst.org_id ? "accent" : "neutral"}>
+          {inst.builtin ? "Built in" : inst.org_id ? "Organization" : "Instance-wide"}
+        </Badge>
       </Td>
       <Td>
         <Badge tone={active ? "accent" : "pending"}>{active ? "Active" : "Disabled"}</Badge>
       </Td>
       <Td className="tabular-nums">{inst.connections}</Td>
       <Td className="text-right">
-        {canManage ? (
+        {canPromote && inst.org_id ? (
+          <>
+            <Button
+              size="sm"
+              variant="outline"
+              aria-label={`Make ${inst.base_url} instance-wide`}
+              onClick={() => setConfirmPromote(true)}
+            >
+              Make instance-wide
+            </Button>
+            <ConfirmDialog
+              open={confirmPromote}
+              onOpenChange={setConfirmPromote}
+              title={`Make ${inst.base_url} instance-wide?`}
+              description={`Every organization will see this self-hosted app and can connect to it. Its ${inst.connections} existing connection${inst.connections === 1 ? "" : "s"} keep working. This is recorded in the audit log.`}
+              confirmLabel="Make instance-wide"
+              busy={promote.isPending}
+              onConfirm={() => promote.mutate(inst.id, { onSuccess: () => setConfirmPromote(false) })}
+            >
+              {promote.isError ? (
+                <Notice tone="danger" role="alert">
+                  {errorMessage(promote.error)}
+                </Notice>
+              ) : null}
+            </ConfirmDialog>
+          </>
+        ) : null}
+        {canManage && !inst.builtin ? (
           <div className="flex flex-wrap justify-end gap-2">
             <Button
               size="sm"
               variant="outline"
               disabled={patch.isPending}
-              aria-label={`${active ? "Disable" : "Enable"} ${inst.host}`}
+              aria-label={`${active ? "Disable" : "Enable"} ${inst.base_url}`}
               onClick={() => patch.mutate({ id: inst.id, status: active ? "disabled" : "active" })}
             >
               {active ? "Disable" : "Enable"}
             </Button>
-            <Button size="sm" variant="danger" aria-label={`Delete ${inst.host}`} onClick={() => setConfirm(true)}>
+            <Button size="sm" variant="danger" aria-label={`Delete ${inst.base_url}`} onClick={() => setConfirm(true)}>
               Delete
             </Button>
           </div>
@@ -203,9 +358,9 @@ function InstanceRow({
         <ConfirmDialog
           open={confirm}
           onOpenChange={setConfirm}
-          title={`Delete ${inst.host}?`}
-          description={`Its ${inst.connections} connection${inst.connections === 1 ? "" : "s"} will be disabled and its OAuth clients removed. Nothing is injected on this host again.`}
-          confirmLabel="Delete instance"
+          title={`Delete ${inst.base_url}?`}
+          description={`Its ${inst.connections} connection${inst.connections === 1 ? "" : "s"} will be disabled and its OAuth clients removed. Nothing is injected on ${inst.base_path ? "this address" : "this host"} again.`}
+          confirmLabel="Delete self-hosted app"
           danger
           busy={del.isPending}
           onConfirm={() => del.mutate(inst.id, { onSuccess: () => setConfirm(false) })}
@@ -221,56 +376,87 @@ function InstanceRow({
   );
 }
 
+/** The admin list's organization filter (instance admins only: it reads `/v1/admin/orgs`). */
+function OrgFilter({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const orgs = useAdminOrgs(false);
+  return (
+    <select
+      aria-label="Organization"
+      className={`${inputClass} w-auto max-w-56`}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+    >
+      <option value="">Every organization</option>
+      {orgs.data?.items.map((o) => (
+        <option key={o.id} value={o.id}>
+          {o.name}
+        </option>
+      ))}
+    </select>
+  );
+}
+
 /**
- * Self-hosted instances of instance-bound apps (D-74). Organization owners/admins manage their
- * organization's instances; instance admins manage the instance-wide ones. Instance-wide rows
- * are read-only in an organization.
+ * Self-hosted apps: hosts registered for apps that can run on your own servers (D-74). Organization
+ * owners/admins manage their organization's; instance admins see every registration (with its organization)
+ * and manage the instance-wide ones, and can make an organization's registration instance-wide. Instance-wide
+ * rows are read-only in an organization.
  */
 export function InstancesView({ scope, canManage }: { scope: InstanceScope; canManage: boolean }) {
-  const list = useAppInstances(scope);
+  const [orgFilter, setOrgFilter] = useState("");
+  const adminAll = scope.kind === "instance" && scope.all === true;
+  const effective: InstanceScope = adminAll ? { kind: "instance", all: true, org: orgFilter || undefined } : scope;
+  const list = useAppInstances(effective);
   const { bound, pending } = useInstanceBoundApps();
   const [open, setOpen] = useState(false);
   if (list.isPending || pending) return <Loading />;
   if (list.isError) return <ErrorState error={list.error} onRetry={() => list.refetch()} />;
-  const names = new Map(bound.map((a) => [a.app_id, a.name]));
+  const names = new Map(bound.map((a) => [a.app_id, appDisplayName(a)]));
   const items = list.data.items;
   return (
     <div className="space-y-6">
       <Notice tone="neutral" role="status">
-        An app that supports self-hosted deployments (for example your own GitLab) is served on its SaaS host by
-        default. Register the host of each self-hosted deployment here; members then choose it when they connect.
-        Credentials are only ever sent to the exact host a connection is bound to.
+        Register your own GitLab, GitHub Enterprise Server, Indico … so people can connect to it. An app that
+        supports self-hosted servers is served on its SaaS host by default; register the host of each of your
+        servers here and members then choose it when they connect. Credentials are only ever sent to the exact host
+        a connection is bound to.
       </Notice>
       <Section
-        id="instances"
-        title="Instances"
+        id="self-hosted"
+        title="Self-hosted apps"
         description={
           scope.kind === "instance"
-            ? "Available to every organization."
-            : "Registered for this organization, plus the instance-wide ones."
+            ? adminAll
+              ? "Every registration: available to every organization, or registered by one organization."
+              : "Available to every organization."
+            : "Registered for this organization, plus the ones available to every organization."
         }
         actions={
-          canManage && bound.length > 0 ? (
-            <Button size="sm" onClick={() => setOpen(true)}>
-              Register instance
-            </Button>
-          ) : null
+          <div className="flex flex-wrap items-center gap-2">
+            {adminAll ? <OrgFilter value={orgFilter} onChange={setOrgFilter} /> : null}
+            {canManage && bound.length > 0 ? (
+              <Button size="sm" onClick={() => setOpen(true)}>
+                Register a self-hosted app
+              </Button>
+            ) : null}
+          </div>
         }
       >
         {bound.length === 0 ? (
-          <EmptyState title="No app supports self-hosted instances">
-            Install or enable an app whose package declares instances, such as the GitLab package.
+          <EmptyState title="No app supports self-hosting">
+            Install or enable an app whose package declares self-hosted servers, such as the GitLab package.
           </EmptyState>
         ) : items.length === 0 ? (
-          <EmptyState title="No instances registered yet">
-            Apps are connected to their SaaS host until you register a self-hosted instance.
+          <EmptyState title="No self-hosted apps registered yet">
+            Apps are connected to their SaaS host until you register one of your own servers.
           </EmptyState>
         ) : (
-          <DataTable caption="Registered app instances">
+          <DataTable caption="Registered self-hosted apps">
             <thead>
               <tr>
                 <Th>App</Th>
-                <Th>Instance</Th>
+                <Th>Host</Th>
+                {adminAll ? <Th>Organization</Th> : null}
                 <Th>Scope</Th>
                 <Th>Status</Th>
                 <Th>Connections</Th>
@@ -285,7 +471,9 @@ export function InstancesView({ scope, canManage }: { scope: InstanceScope; canM
                   key={i.id}
                   inst={i}
                   appName={names.get(i.app_id) ?? i.app_id}
-                  canManage={canManage && (scope.kind === "instance" || i.org_id != null)}
+                  canManage={canManage && (adminAll ? i.org_id == null : scope.kind === "instance" || i.org_id != null)}
+                  showOrg={adminAll}
+                  canPromote={adminAll && canManage}
                 />
               ))}
             </tbody>

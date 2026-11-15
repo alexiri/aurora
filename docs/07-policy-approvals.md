@@ -117,11 +117,17 @@ present), `is_llm_host`, `identity` (agent id, principals; from phase 2 also
   and `a.b.example.com`, not `example.com`). Patterns with more than one `*`
   are rejected at authoring and, if ever encountered at runtime, match nothing.
   An optional `:port` in a pattern must equal the request port; without it any
-  port matches.
+  port matches. (FIX-109) Host patterns are ASCII: clients send the punycode form, so an
+  internationalised name is written in its punycode form (`xn--bcher-kva.example`);
+  authoring refuses other characters with that hint (a Unicode pattern would be accepted
+  and never match).
 - **Path patterns**: `/`-separated segments; a segment is a literal, `*` (exactly
   one non-empty segment) or, as the **last** segment only, `**` (zero or more
   segments). A literal segment may end with `*` for prefix matching within that
-  segment (`/v1/file*`). Query strings never participate.
+  segment (`/v1/file*`). Query strings never participate. (FIX-109) A trailing `/` is
+  not significant: `/a/b` and `/a/b/` match the same literal pattern (most frameworks
+  serve both identically, and doubt only tightens: a block on `/v1/users` must also stop
+  `/v1/users/`). For allow rules this loosens by the slash variant.
 - **Methods**: uppercase list; empty = any.
 - **GraphQL kind** (tools tagged `graphql: query|mutation`): parse the JSON
   body (`{query, operationName}` or a batch array) and the GraphQL document
@@ -212,7 +218,13 @@ carve-out is deliberate and was undocumented until phase 3:
   governs requests to an LLM host on which Aurora injects nothing (the agent
   brought its own key): they are blocked unless allow-listed. (3) The `allow`
   Default Rule is unaffected (it allows anyway). (4) Everything in `08 §11`.
-- (phase 4, P4-LLM, D-121) **More endpoint hosts, same rule, still exact.** The
+- (phase 5, FIX-138 item 1b, D-247) **The web terminal's `claude`/`codex` are the agent's traffic.**
+  They reach the LLM through the same machine proxy and boot-token credential as a turn's model
+  calls, so governance and this carve-out apply unchanged, the calls count against the agent's
+  budgets and rate limits, and the request log shows them as the agent's `mitm` requests with the
+  agent's injected key and **no turn or conversation** (the person at the terminal is not
+  recorded as a speaker). The terminal holds only the placeholder credential (SEC-01/SEC-34).
+- (phase 5 (D-138, moved from phase 4), P4-LLM, D-121) **More endpoint hosts, same rule, still exact.** The
   providers of `08 §Phase 4 providers` (OpenAI, Azure OpenAI, Bedrock, Vertex, generic
   OpenAI-compatible) add the **exact hosts** of their configured endpoints to the
   governed LLM hosts, so the carve-out covers them and only them: enabling Bedrock
@@ -252,7 +264,10 @@ carve-out is deliberate and was undocumented until phase 3:
    count), whatever the backend.
 5. The evaluator returns a **trace** (per scope: rules considered, the matching
    rule, why) used by simulation and the request log (`rule_logical_id`,
-   `rule_name`).
+   `rule_name`). (D-178, Q-R5-14) The block response to the agent names the deciding rule
+   and the workspace policy URL only for a **workspace** rule; for an **organization**
+   rule it answers generically (no rule name, no organization policy URL). The request
+   log and the dashboard keep both.
 
 Performance: rules are part of the cached ResolvedHost; **the per-request
 decision never touches the database**.
@@ -332,6 +347,26 @@ facts of the approved manifest, copied into the snapshot, and apply **below** th
   override it, and it applies under every grant mode and to hand-written rules alike. It
   does not apply at CONNECT time (no credential is injected there) and does not affect
   requests to the same host without that connection as the winning credential.
+- **Read-only connections** (phase 5, FIX-133, D-240, C-740). A connection's `access` is `read`
+  or `write` (`03 §app_connections`; default `write`). For a request whose winning credential
+  is a `read` connection, the scope verdict is `block` **before any rule is consulted**, like
+  `block_untooled`, unless the request's `tool_id` is a tool of the app's `read` group: a write
+  tool, and a request that matches no catalogue tool (it cannot be proven a read), is refused
+  (403 `blocked_by_policy`, `details.reason = "read_only_connection"`; reason
+  `read_only_connection` in the trace and request log, trace `via = read_only_blocked`). Order
+  within the two pre-rule checks: `block_untooled` first, then read-only. No grant, rule or
+  approval overrides it; it applies under every grant mode, to hand-written rules, and not at
+  CONNECT time. It works for any app with a read/write split and does not rely on the vendor.
+  The effective view and the simulator evaluate it too. Grants of a read-only connection are
+  shown with a "Read-only connection" note (`14`).
+- **Tool scopes** (phase 5, FIX-136, D-241, C-741). A tool may declare `scopes` (any of). When the
+  request's `tool_id` declares them and the winning connection's scopes are **known** (non-empty:
+  an OAuth token's granted scopes, or those declared for a pasted token) and hold none, the scope
+  verdict is `block` before any rule is consulted (after `block_untooled` and the read-only check),
+  403 `tool_scope_missing` with `details.tool_id` and `details.needs`, trace `via = tool_scope_blocked`;
+  nothing is injected, so the token is not sent. Unknown scopes refuse nothing, and declared scopes
+  never widen: they can only remove tools. Not at `CONNECT` time. The effective view evaluates it,
+  so the grant forms list such tools as unavailable (`14`). No grant, rule or approval overrides it.
 - **Composition.** The restrictions only tighten: they combine with grants, rules,
   approvals, governance and the Default Rule by the usual strictness order (`block` wins), never
   add an allow, and never change a custom grant's compilation (rules 1–3 above already block
@@ -389,7 +424,9 @@ facts per tool (one per tool's first method/path example).
 - **Publish**: copies the draft into a new `published` generation (previous
   becomes `superseded`), creates a fresh draft as a copy, invalidates gateways.
 - **Rollback**: publishes a copy of an older generation's rules as a new
-  generation (history is append-only).
+  generation (history is append-only). (FIX-109) It replaces the current draft, so it
+  requires the draft revision the caller last read (`expect_revision`; 409
+  `stale_revision`): a colleague's saved draft is never discarded silently.
 - **Validation at authoring** (422): (phase 2, RFE-011a) `approval_timeout_secs`
   outside `[APPROVAL_TIMEOUT_MIN, approvals.max_timeout_secs]` →
   `approval_timeout_out_of_range`, and a timeout on a rule without
@@ -445,9 +482,13 @@ prod" ask deserves longer than a routine one, so from phase 2:
   and dashboard show the exact expiry; `GET …/policy/simulate` and the effective view
   show the timeout a request would get; the transcript `approval.pending` event
   carries `expires_at`. Expiry still **denies** (`expired`, 403 `manual_approval_expired`).
+  (FIX-109) The deadline is part of the decision itself: a decision after the deadline is
+  refused (409 `already_decided`) and the approval is expired in the same transaction,
+  whether or not the expiry sweep has run (the sweep keeps its 30 s grace only for rows
+  nobody touches).
 - Clients may time out before a long deadline (an agent tool's own HTTP timeout is
   the client's business). Parking a request and resuming it later is **not** part of
-  phase 2. (phase 4, RFE-011b, D-133) From phase 4, and only when the operator enables
+  phase 2. (phase 5 (D-138, moved from phase 4), RFE-011b, D-133) From phase 4, and only when the operator enables
   it, a long deadline can be served by **parking** instead of holding the connection:
   *Park and resume* below. With parking off (the default) everything in this section is
   unchanged.
@@ -463,11 +504,11 @@ means: no pending approval of the turn **and** `now − GREATEST(last_progress_a
 latest approval resolved_at) ≥ TURN_STALL`. The exemption never extends `TURN_CEILING`
 (wall-clock cap, still `failed time_limit`) and does not apply to action approvals
 (the agent is not blocked on them: it received `pending_approval` and continued).
-(phase 4, RFE-011b) Nor does it apply to **parked** approvals (`parked = true`): the
+(phase 5 (D-138, moved from phase 4), RFE-011b) Nor does it apply to **parked** approvals (`parked = true`): the
 agent was refused and is not blocked, so a turn that keeps running after a parked
 refusal is subject to stall detection like any other.
 
-**Lifecycle**: `pending` → `approved` | `denied` | `expired` | `abandoned`. (phase 2, RFE-006) Freezing the agent, its workspace or its org marks its `pending` approvals `abandoned` and pending action approvals `rejected` (reason `frozen`); unfreezing does not revive them.
+**Lifecycle**: `pending` → `approved` | `denied` | `expired` | `abandoned`. (phase 2, RFE-006) Freezing the agent, its workspace or its org marks its `pending` approvals `abandoned` and pending action approvals `rejected` (reason `frozen`); unfreezing does not revive them. **An approval authorizes the held request only under the policy in force when it is released.** Deleting or narrowing the grant the request would use, disabling or deleting its connection or secret, and activating a snapshot under which the request would be blocked each mark the affected pending approvals `abandoned` in the same transaction (as freezing does). Independently, the gateway re-resolves the credential and re-evaluates policy after `approved`; if the request would now be blocked or has no usable credential it is refused as it would be on arrival, and a request that would still need approval is released (the approval stands). (FIX-084)
 First decision wins (`UPDATE approvals SET status=… WHERE id=$1 AND
 status='pending'`); a losing decider gets 409 `already_decided`.
 
@@ -524,14 +565,14 @@ in UIs and cards ("Approve all 14 / Deny all"); a batch decision applies to all
 *pending* approvals of that batch id within the same agent that the caller may
 decide.
 
-- **Web Push when the user has no live tab (phase 4, RFE-011b, D-134).** Besides the
+- **Web Push when the user has no live tab (phase 5 (D-138, moved from phase 4), RFE-011b, D-134).** Besides the
   e-mail above, a decider who registered a browser for Web Push (`§Web Push`) receives a
   push for each approval created while they have no live `approvals/stream` or
   long-poll in that workspace. It is per user and per device, independent of the e-mail
   (the e-mail remains the fallback and is **not** suppressed by a push), and never an
   approve/deny action.
 
-### Park and resume (phase 4, RFE-011b, D-133, SEC-74)
+### Park and resume (phase 5 (D-138, moved from phase 4), RFE-011b, D-133, SEC-74)
 
 **Problem.** A gateway hold keeps the agent's connection open until a person decides
 (`06 §Approval holds`). That is right for minutes and wrong for hours: the sandbox is
@@ -546,7 +587,12 @@ same conversation. Nothing is suspended and nothing stays in memory: the agent's
 ends, the sandbox idles and parks like any other, and the grant is only data in Postgres.
 
 **Opt-in.** `approvals.park.enabled` (default `false`). With it off nothing in this
-section runs and phase 2 behaviour is exact.
+section runs and phase 2 behaviour is exact. (P4-011B spec batch, D-264(b), D-265(c)) The
+`approvals.park.*` keys are **instance settings** (section `approvals`, `15 §Instance settings`),
+so the switch can change while parked rows exist: it governs only whether **new** approvals park.
+Grant lookup and consumption, decisions, follow-ups, reminders and expiry keep running for parked
+rows created earlier, so turning parking off never strands an approved grant; requests that would
+have parked are held and clamped from then on.
 
 **Which approvals park** (all must hold at the moment the gateway reaches the hold,
 `06` step 8; otherwise the request is held exactly as before):
@@ -575,6 +621,13 @@ section runs and phase 2 behaviour is exact.
    `pending` approvals and `PARK_PER_AGENT_HOUR` (60) new parked approvals per hour, else
    403 `approval_limit_reached` (`x-should-retry: false`): a prompt-injected agent cannot
    flood the approvers' queue. (Held approvals keep their existing behaviour.)
+6. (P4-011B spec batch, D-264(c)) The request is **not to a governed LLM endpoint** (`06` step
+   6a): that is the harness's own model call, which the agent cannot repeat byte-identically and
+   whose refusal would fail the turn. It is held and clamped as before.
+
+Settings rule (D-265(c), C-829): `approvals.park.threshold_secs ≤ approvals.max_timeout_secs ≤
+approvals.park.max_timeout_secs`, checked at start and on every settings write, so a timeout the
+hold cannot serve is always parkable (when the request is eligible) rather than silently clamped.
 
 **What is persisted** (`03 §Planned changes`, columns of `approvals`): `parked`, a salted
 request `fingerprint`, `resume_state`, `resume_expires_at`, `consumed_at`, `resume_turn_id`. The
@@ -607,6 +660,12 @@ critical audit and first-decision-wins, through dashboard, API or channel card):
   **platform-composed** — approval title, "approved by <label>", the sanitized redacted request
   line and the deadline — never model or request text beyond the sanitized summary. A frozen
   agent gets no turn (creation is refused, `04 §Freeze`) and the grant is revoked.
+  (P4-011B spec batch, D-264(e), C-823, C-824) The follow-up is written **in the deciding
+  transaction** (with the decision and its audit row), so a crash cannot leave a grant the agent
+  is never told about; a decision transaction that covers several parked approvals of one
+  conversation (a batch) writes **one** follow-up listing them (at most `PARK_FOLLOWUP_LINES_MAX`,
+  then "…and N more"). Its door is `{ kind: "system", ref: "approval:<id>" }`. A conversation that
+  no longer exists gets no follow-up and the grant is `revoked`.
 - **Deny** → `status = denied`; a follow-up tells the agent "denied by <label>, do not retry". A
   retry of the same fingerprint within `approvals.park.deny_cooldown_secs` (default 900 s) is
   answered 403 `manual_approval_denied` without creating a new approval.
@@ -617,8 +676,8 @@ critical audit and first-decision-wins, through dashboard, API or channel card):
 - **Resume window passes unused** → `resume_state = expired` (audit best-effort, transcript
   notice, no turn).
 
-**Consuming the grant** (gateway, step 8). When the verdict is `needs_approval` and parking is
-enabled, before creating anything the gateway looks for an open approval of the same agent and
+**Consuming the grant** (gateway, step 8). When the verdict is `needs_approval` (whatever
+`approvals.park.enabled` says now, D-264(b)), before creating anything the gateway looks for an open approval of the same agent and
 conversation (`parked`, `resume_state = ready`, unexpired), recomputes the fingerprint with that
 row's salt and, on a match, **consumes it atomically** (`UPDATE … SET resume_state = 'consumed',
 consumed_at = now() WHERE id = $1 AND resume_state = 'ready' AND resume_expires_at > now()
@@ -633,9 +692,17 @@ approval or hold proceeds as above.
 
 **What revokes a grant or approval.** Freezing the agent, its workspace or its org marks its
 `pending` parked approvals `abandoned` (as for holds, `§Approvals`) and its `ready` grants
-`resume_state = revoked`; unfreezing revives neither. Deleting the agent or conversation deletes
-the rows (the approval history survives as before, `03 §approvals`). A grant is bound to the
-conversation and agent, single use, short-lived, and dies with its window.
+`resume_state = revoked`; unfreezing revives neither. (P4-011B spec batch, D-264(d), C-826) The
+same holds, in the event's own transaction and with the predicate it already uses for pending
+holds (FIX-084, *Lifecycle*), for deleting or narrowing the grant the request would use, disabling
+or deleting its connection or secret, and activating a snapshot under which it would be blocked:
+the agent is told now (`approval_grant_revoked` notice) rather than after a futile retry, and
+consumption still re-resolves and re-evaluates. For the conversation concerned (or every
+conversation of the agent), **deleting the agent or the conversation** and **bumping
+`harness_session_epoch`** (a harness switch, a redaction with `reset_session`) also abandon its
+pending parked approvals and revoke its ready grants: there is no conversation to resume in, or the
+agent no longer holds the exact request. The rows themselves survive as history (`03 §approvals`).
+A grant is bound to the conversation and agent, single use, short-lived, and dies with its window.
 
 **Sandbox lifecycle.** A parked approval is **not** a keep-awake reason (`11 §Keep-awake`): the
 turn ends, the sandbox idles out after `IDLE_STOP` and parks (home volume kept) like any other.
@@ -647,14 +714,15 @@ point of parking: a pending approval costs a database row, not a container.
 unchanged and apply to parked approvals (the e-mail and push text says "the agent has stopped
 waiting and will resume when you approve"); a **reminder** is sent once, to deciders with a
 push subscription or e-mail enabled and no live watcher, when half of a parked approval's time
-has elapsed and it is still `pending`. Action approvals already work this way and are unaffected.
+has elapsed and it is still `pending` (D-265(b): the reminder e-mail is claimed in
+`approval_notifications` with `stage = 'reminder'`, the push in `approval_push_claims`; C-828). Action approvals already work this way and are unaffected.
 Batches (`x-aurora-batch-id`) park per request. The app-turn cap (`APP_TURN_CAP`) does not count
 system turns, and each resume needs a human decision, so a retry loop is metered by people.
 Limits and honesty: parking suits requests the agent can repeat **byte-identically**; a client
 that puts a timestamp, nonce or idempotency token in the body will produce a different
 fingerprint on retry and must be approved again (documented in the guidance and `17`).
 
-### Web Push (phase 4, RFE-011b, D-134, SEC-75, SEC-76)
+### Web Push (phase 5 (D-138, moved from phase 4), RFE-011b, D-134, SEC-75, SEC-76)
 
 RFE-011a notifies by dashboard SSE (an open tab) and e-mail (when *nobody* has a live
 surface). Web Push (RFC 8030, 8291, 8292) reaches a **person's device** when their browser is
@@ -674,6 +742,14 @@ stops receiving and is deleted. Deciding needs a signed-in session, so a push to
 without one is noise at best and a leak at worst; this also fixes shared computers. Registering
 an endpoint that already exists under another user **moves** it to the registering user's
 current session (the browser profile that holds the endpoint is the one signed in now).
+(P4-011B spec batch, D-266(c), C-831) Precisely: sign-out, "sign out other sessions", an
+administrator's revocation and deactivation **delete** the session's subscriptions in the revoking
+transaction; idle or absolute expiry stops delivery at once (the send-time liveness check is the
+authentication check) and the daily session pruning deletes the rows. When the same person comes
+back in that browser with a new session, the dashboard **re-binds** the device silently
+(`rebind: true`), which succeeds only for an endpoint already registered **to the caller**; a
+different person never inherits a device without the deliberate gesture (a move needs a gesture
+registration).
 
 **Who receives what, and when.** On `aurora_approval created` (gateway hold, parked approval or
 action approval) the API picks the users with an unpaused, unexpired subscription whose session is
@@ -705,7 +781,8 @@ action buttons: deciding needs the dashboard and its session.
 
 **VAPID keys** (RFC 8292; ES256 on P-256). Instance-wide. Normally **generated** by the first API
 replica that finds none (under an advisory lock) and stored in `webpush_vapid_keys` with the private
-key **sealed** through the SecretVault (purpose `webpush.vapid`, `08 §1`) and the public key in
+key **sealed** through the SecretVault (purpose `webpush.vapid`, `08 §1`; D-266(b): always the
+`inline` store, as are the subscriptions' sealed material) and the public key in
 clear; only the API ever opens it (never the gateway, a runner, a sandbox or a response; the public
 key is served to signed-in users). An operator who prefers to manage the key sets
 `push.vapid.private_key_env` (the name of an environment variable holding it); Aurora then
@@ -713,7 +790,8 @@ generates and rotates nothing. **Rotation** (`aurora-api push rotate-vapid`) mak
 `active` and the old one `retired`; a browser subscription is tied to the application-server key it
 was created with, so each subscription keeps its `vapid_key_id` and is signed for with *its* key
 while the dashboard silently re-subscribes on the user's next visit (the permission persists) under
-the new key and deletes the old subscription; a retired key and its secret are destroyed when no
+the new key and deletes the old subscription (D-266(d): the browser reports the public key it
+subscribed with, so detection is the same for generated and operator-managed keys); a retired key and its secret are destroyed when no
 subscription references it or after `PUSH_VAPID_RETIRE` (30 days). With an operator-managed key
 rotation is a redeploy that invalidates every subscription (users re-subscribe). The VAPID subject
 (`push.vapid.subject`, default the external URL) is the contact the push service may use.
@@ -724,8 +802,11 @@ only, resolution pinned for the connection, TLS to system roots plus `tls.extra_
 redirects**, `push.timeout_secs` 10 s), and only to an endpoint whose host matches
 `push.allowed_endpoint_hosts` (validated at registration *and* before every send, `15`). Headers:
 `TTL` = the approval's remaining time capped at `PUSH_TTL_MAX` (24 h) and at least 60 s, `Urgency:
-high` for a new approval, `Topic` (≤ 32 URL-safe characters derived from the approval id) so a later
-push for the same approval replaces the earlier. Outcomes: 201 → success; 404/410 → the subscription
+high` for a new approval, `Topic` (32 URL-safe characters, D-266(e): derived from the
+subscription id and the approval id, so the push service learns neither the approval id nor which
+pushes to a person's devices concern the same approval) so a later push for the same approval
+replaces the earlier. In tests only, `push.dev_endpoint_overrides` sends to a loopback mock push
+service (D-267(b), C-837, C-839); it is refused outside a loopback development instance. Outcomes: 201 → success; 404/410 → the subscription
 is deleted; 413/400/403 → failure (a 403 after rotation means a key mismatch); 429/5xx → at most 3
 tries within 60 s. Five consecutive failures set `disabled_at` and the dashboard shows "not
 receiving — re-enable". A push failure never affects an approval, a decision or the e-mail. Metrics

@@ -36,10 +36,19 @@ const HOST_SUFFIX: &str = ".db.aurora.internal";
 /// The relay's credential: the boot token, overridden by the turn context credential while
 /// exactly one turn is active (with several concurrent turns the process cannot be attributed to
 /// one of them, so the boot token is used).
-#[derive(Debug)]
 pub struct DbTurns {
     cred: Arc<Credential>,
     active: Mutex<Vec<(Uuid, String)>>,
+}
+
+// (FIX-114, SEC-01) The per-turn context credentials are secrets: never printed.
+impl std::fmt::Debug for DbTurns {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DbTurns")
+            .field("cred", &self.cred)
+            .field("active", &"[redacted]")
+            .finish()
+    }
 }
 
 impl DbTurns {

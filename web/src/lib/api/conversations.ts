@@ -6,6 +6,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api, ApiError } from "./client";
+import { fetchAllPages, PAGE_LIMIT } from "./paging";
 import type { components } from "./schema";
 import { unwrap } from "./unwrap";
 
@@ -86,11 +87,16 @@ export const chatApi = {
   events: (id: string, afterSeq: number) =>
     unwrap(api.GET("/v1/conversations/{id}/events", { params: { path: { id }, query: { after_seq: afterSeq, limit: 500 } } })),
   /** `idempotencyKey` (RFE-018): the same key on a retry returns the first result instead of a second message. */
-  send: (id: string, text: string, attachmentIds: string[] = [], idempotencyKey?: string) =>
+  /** `replyToSeq`: quote an earlier message of this conversation (C-725); `text` may be empty with attachments (C-726). */
+  send: (id: string, text: string, attachmentIds: string[] = [], idempotencyKey?: string, replyToSeq?: number) =>
     unwrap(
       api.POST("/v1/conversations/{id}/messages", {
         params: { path: { id }, ...(idempotencyKey ? { header: { "Idempotency-Key": idempotencyKey } } : {}) },
-        body: attachmentIds.length > 0 ? { text, attachment_ids: attachmentIds } : { text },
+        body: {
+          text,
+          ...(attachmentIds.length > 0 ? { attachment_ids: attachmentIds } : {}),
+          ...(replyToSeq ? { reply_to: { seq: replyToSeq } } : {}),
+        },
       }),
     ),
   continue: (id: string) => unwrap(api.POST("/v1/conversations/{id}/continue", { params: { path: { id } } })),
@@ -111,14 +117,31 @@ export function useDirectConversation(agentId: string) {
 export function useConversations(agentId: string, archived = false) {
   return useQuery({
     queryKey: ["agents", agentId, "conversations", archived] as const,
-    queryFn: () => chatApi.list(agentId, archived),
+    // Every page (FIX-117): the first 50 are not the whole list, and an older conversation must still resolve.
+    queryFn: () =>
+      fetchAllPages((cursor) =>
+        unwrap(
+          api.GET("/v1/agents/{agent}/conversations", {
+            params: { path: { agent: agentId }, query: { limit: PAGE_LIMIT, archived, cursor } },
+          }),
+        ),
+      ),
+    retry: false,
+  });
+}
+
+/** One conversation by id: a deep link to one that is not among the loaded pages still gets its title and kind. */
+export function useConversationById(id: string | null, enabled: boolean) {
+  return useQuery({
+    queryKey: ["conversations", id ?? "", "one"] as const,
+    queryFn: () => unwrap(api.GET("/v1/conversations/{id}", { params: { path: { id: id! } } })),
+    enabled: enabled && !!id,
     retry: false,
   });
 }
 
 /** Download URL of a conversation export (`aurora.conversation.v1` JSON, or a zip with the files). */
-export const exportUrl = (id: string, kind: "json" | "zip") =>
-  `/v1/conversations/${id}/export${kind === "zip" ? "?attachments=zip" : ""}`;
+export const exportUrl = (id: string, kind: "json" | "zip") => `/v1/conversations/${id}/export${kind === "zip" ? "?attachments=zip" : ""}`;
 export function useSandbox(agentId: string) {
   return useQuery({
     queryKey: ["agents", agentId, "sandbox"] as const,

@@ -171,6 +171,9 @@ pub struct PlatformQuirks {
     pub dedicated_presences: bool,
     /// The platform has a person-initiated action that makes the connector call `POST /link-start`.
     pub link_start_action: bool,
+    /// The connector exposes public HTTP callbacks (interactive actions, slash
+    /// commands) that a stranger could call, so the refusal scenario forges them.
+    pub public_callbacks: bool,
 }
 
 impl Default for PlatformQuirks {
@@ -180,8 +183,30 @@ impl Default for PlatformQuirks {
             users_without_email: true,
             dedicated_presences: true,
             link_start_action: true,
+            public_callbacks: true,
         }
     }
+}
+
+/// A forged call to one of the connector's public callbacks. The platform
+/// makes these calls itself in normal operation; a stranger can make them too,
+/// so each must be refused (HTTP 403) and must never reach the core.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Forgery {
+    /// An action callback whose signature is wrong.
+    ActionBadSignature,
+    /// A correctly signed action naming an integration this connector does not serve.
+    ActionUnknownIntegration,
+    /// A correctly signed action with no clicker.
+    ActionNoClicker,
+    /// An action callback with no context at all.
+    ActionNoContext,
+    /// A slash command carrying a token no integration issued.
+    CommandWrongToken,
+    /// A slash command for a team no integration serves.
+    CommandUnknownTeam,
+    /// A slash command with no token.
+    CommandNoToken,
 }
 
 #[async_trait]
@@ -216,6 +241,25 @@ pub trait PlatformDriver: Send + Sync {
     /// A platform-side "link my account" action: the connector calls the
     /// core's `POST /link-start` for `user_ref` and returns the sign-in URL.
     async fn request_link(&self, user_ref: &str) -> Result<String>;
+
+    /// Calls the connector's public callback with `f`, built from the real
+    /// action `token` of a card the connector rendered, and returns the HTTP
+    /// status it answered. Only drivers whose quirks say `public_callbacks`.
+    async fn forge_callback(&self, _f: Forgery, _message_ref: &str, _token: &str) -> Result<u16> {
+        anyhow::bail!("this driver has no public callbacks (PlatformQuirks::public_callbacks)")
+    }
+
+    /// Whether `member` (a non-admin person), fetching `message_ref` through
+    /// the platform's ordinary client API, is shown the interactive-action
+    /// context (the token) of its buttons. `None`: the driver cannot tell.
+    async fn member_sees_action_context(
+        &self,
+        _message_ref: &str,
+        _member: &str,
+        _token: &str,
+    ) -> Result<Option<bool>> {
+        Ok(None)
+    }
 
     /// A dedicated bot as the platform shows it (`None`: the driver cannot tell).
     async fn bot_profile(&self, _bot_ref: &str) -> Result<Option<BotProfile>> {

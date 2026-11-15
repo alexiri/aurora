@@ -34,8 +34,7 @@ export function ThreadHeader({
           type="button"
           onClick={onBack}
           aria-label="Back to conversations"
-          className="inline-flex size-11 shrink-0 items-center justify-center rounded-control text-ink-2 hover:bg-subtle hover:text-ink md:hidden"
-        >
+          className="inline-flex size-11 shrink-0 items-center justify-center rounded-control text-ink-2 hover:bg-subtle hover:text-ink md:hidden">
           <ArrowLeftIcon aria-hidden="true" width={20} height={20} />
         </button>
       ) : null}

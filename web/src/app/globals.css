@@ -125,6 +125,34 @@
   --font-mono: var(--font-jbmono), ui-monospace, SFMono-Regular, Menlo, monospace;
   --radius-control: 8px;
   --radius-card: 14px;
+  /* The flat corner of a chat bubble next to its speaker (docs/14 §Visual design, chat). */
+  --radius-tail: 4px;
+  /* Page widths (docs/14 §Visual design, page patterns): `max-w-page` for list/detail pages, `max-w-page-narrow`
+     for single-column pages such as Approvals. The agent page uses neither (the full content width). */
+  --container-page: 72.5rem;
+  --container-page-narrow: 55rem;
+  /* Chat thread widths: a bubble, a card in the thread, a centred notice. */
+  --container-bubble: 80%;
+  --container-chat-card: min(88%, 45rem);
+  --container-chat-notice: min(100%, 38.75rem);
+  /* Small caps labels (table heads, field group labels, badges): 11/600 with 0.06em tracking. */
+  --text-label: 0.6875rem;
+  --text-micro: 0.625rem;
+  --tracking-label: 0.06em;
+  --tracking-brand: 0.22em;
+  /* Offset that aligns a button with the input of the field beside it (label height + gap). */
+  --spacing-label-offset: 1.625rem;
+}
+
+/* Two-column layouts: a fixed aside next to a fluid main column from `md` up (one column below). */
+@utility layout-aside-sm {
+  grid-template-columns: 12rem 1fr;
+}
+@utility layout-aside-md {
+  grid-template-columns: 16rem 1fr;
+}
+@utility layout-aside-lg {
+  grid-template-columns: 18rem 1fr;
 }
 
 html {
@@ -180,66 +208,68 @@ a {
   --term-pane-bg: var(--surface);
   --term-pane-fg: #24292f;
   --term-pane-cursor: var(--accent);
-  --term-color-0: #24292f;
-  --term-color-1: #b91c1c;
-  --term-color-2: #047857;
-  --term-color-3: #b45309;
-  --term-color-4: #1d4ed8;
-  --term-color-5: #a21caf;
-  --term-color-6: #0e7490;
-  --term-color-7: #e5e7eb;
-  --term-color-8: #57606a;
-  --term-color-9: #dc2626;
-  --term-color-10: #059669;
-  --term-color-11: #d97706;
-  --term-color-12: #2563eb;
-  --term-color-13: #c026d3;
-  --term-color-14: #0891b2;
-  --term-color-15: #f3f4f6;
+  /* Light theme: "white" (7, 15) is drawn dark enough to read on the white surface (>= 4.5:1);
+     the usual pale whites are ~1.2:1 there. */
+  --aurora-term-color-0: #24292f;
+  --aurora-term-color-1: #b91c1c;
+  --aurora-term-color-2: #047857;
+  --aurora-term-color-3: #b45309;
+  --aurora-term-color-4: #1d4ed8;
+  --aurora-term-color-5: #a21caf;
+  --aurora-term-color-6: #0e7490;
+  --aurora-term-color-7: #6b7280;
+  --aurora-term-color-8: #57606a;
+  --aurora-term-color-9: #dc2626;
+  --aurora-term-color-10: #059669;
+  --aurora-term-color-11: #d97706;
+  --aurora-term-color-12: #2563eb;
+  --aurora-term-color-13: #c026d3;
+  --aurora-term-color-14: #0891b2;
+  --aurora-term-color-15: #374151;
 }
 
 :root[data-theme="dark"] {
   --term-pane-bg: #0d1322;
   --term-pane-fg: #d5dbe7;
   --term-pane-cursor: var(--accent);
-  --term-color-0: #101828;
-  --term-color-1: #f87171;
-  --term-color-2: #4ade80;
-  --term-color-3: #fbbf24;
-  --term-color-4: #60a5fa;
-  --term-color-5: #e879f9;
-  --term-color-6: #22d3ee;
-  --term-color-7: #d5dbe7;
-  --term-color-8: #64748b;
-  --term-color-9: #fca5a5;
-  --term-color-10: #86efac;
-  --term-color-11: #fcd34d;
-  --term-color-12: #93c5fd;
-  --term-color-13: #f0abfc;
-  --term-color-14: #67e8f9;
-  --term-color-15: #f8fafc;
+  --aurora-term-color-0: #101828;
+  --aurora-term-color-1: #f87171;
+  --aurora-term-color-2: #4ade80;
+  --aurora-term-color-3: #fbbf24;
+  --aurora-term-color-4: #60a5fa;
+  --aurora-term-color-5: #e879f9;
+  --aurora-term-color-6: #22d3ee;
+  --aurora-term-color-7: #d5dbe7;
+  --aurora-term-color-8: #64748b;
+  --aurora-term-color-9: #fca5a5;
+  --aurora-term-color-10: #86efac;
+  --aurora-term-color-11: #fcd34d;
+  --aurora-term-color-12: #93c5fd;
+  --aurora-term-color-13: #f0abfc;
+  --aurora-term-color-14: #67e8f9;
+  --aurora-term-color-15: #f8fafc;
 }
 
 .wterm.term-pane {
   --term-fg: var(--term-pane-fg);
   --term-bg: var(--term-pane-bg);
   --term-cursor: var(--term-pane-cursor);
-  --term-color-0: var(--term-color-0);
-  --term-color-1: var(--term-color-1);
-  --term-color-2: var(--term-color-2);
-  --term-color-3: var(--term-color-3);
-  --term-color-4: var(--term-color-4);
-  --term-color-5: var(--term-color-5);
-  --term-color-6: var(--term-color-6);
-  --term-color-7: var(--term-color-7);
-  --term-color-8: var(--term-color-8);
-  --term-color-9: var(--term-color-9);
-  --term-color-10: var(--term-color-10);
-  --term-color-11: var(--term-color-11);
-  --term-color-12: var(--term-color-12);
-  --term-color-13: var(--term-color-13);
-  --term-color-14: var(--term-color-14);
-  --term-color-15: var(--term-color-15);
+  --term-color-0: var(--aurora-term-color-0);
+  --term-color-1: var(--aurora-term-color-1);
+  --term-color-2: var(--aurora-term-color-2);
+  --term-color-3: var(--aurora-term-color-3);
+  --term-color-4: var(--aurora-term-color-4);
+  --term-color-5: var(--aurora-term-color-5);
+  --term-color-6: var(--aurora-term-color-6);
+  --term-color-7: var(--aurora-term-color-7);
+  --term-color-8: var(--aurora-term-color-8);
+  --term-color-9: var(--aurora-term-color-9);
+  --term-color-10: var(--aurora-term-color-10);
+  --term-color-11: var(--aurora-term-color-11);
+  --term-color-12: var(--aurora-term-color-12);
+  --term-color-13: var(--aurora-term-color-13);
+  --term-color-14: var(--aurora-term-color-14);
+  --term-color-15: var(--aurora-term-color-15);
   /* The dashboard's mono face and the card posture (no wterm drop shadow on the page). */
   --term-font-family: var(--font-jbmono), ui-monospace, SFMono-Regular, Menlo, monospace;
   box-shadow: none;
@@ -248,6 +278,275 @@ a {
   /* The pane fills the tab column and scrolls internally (no page-level horizontal scroll). */
   width: 100%;
   max-width: 100%;
+  /* (FIX-138) A bounded height: `autoResize` derives a fixed grid from it, so output scrolls inside the pane's
+     scrollback instead of growing the page (at least ~16 rows). On phones a fixed share of the viewport. */
+  height: max(18rem, calc(100dvh - 25rem));
+  overflow-y: auto;
+}
+
+@media (max-width: 767px) {
+  .wterm.term-pane {
+    height: 60dvh;
+  }
+}
+
+/* (Owner 2026-11-14) A full-screen app (alternate screen) has no scrollback: the pane stays pinned to its screen. */
+.wterm.term-pane[data-alt-screen] {
+  overflow-y: hidden;
+}
+
+/* The standalone terminal window (`…/agents/<agent>/terminal`): the pane fills the viewport below its title bar. */
+.wterm.term-pane.term-pane-window {
+  height: calc(100dvh - 11rem);
+  border-radius: 0;
+}
+
+/*
+ * Rendered Markdown (FIX-137, `components/ui/markdown.tsx`): github.com-like prose sized for a chat bubble,
+ * tokens only, both themes. Tables and code blocks scroll inside their own box (never the page).
+ */
+.md {
+  overflow-wrap: anywhere;
+}
+.md > :first-child {
+  margin-top: 0;
+}
+.md h1,
+.md h2,
+.md h3,
+.md h4,
+.md h5,
+.md h6 {
+  margin-top: 0.75rem;
+  font-weight: 600;
+  line-height: 1.3;
+}
+.md h1 {
+  font-size: 1.125rem;
+}
+.md h2 {
+  font-size: 1.0625rem;
+}
+.md h3 {
+  font-size: 1rem;
+}
+.md h4,
+.md h5,
+.md h6 {
+  font-size: 0.9375rem;
+}
+.md h6 {
+  color: var(--muted);
+}
+.md ul {
+  list-style: disc;
+  padding-left: 1.25rem;
+}
+.md ol {
+  list-style: decimal;
+  padding-left: 1.5rem;
+}
+.md li > p {
+  margin: 0;
+}
+.md li + li {
+  margin-top: 0.125rem;
+}
+.md ul.contains-task-list {
+  list-style: none;
+  padding-left: 0.25rem;
+}
+.md .task-list-item input {
+  margin-right: 0.5rem;
+  accent-color: var(--accent);
+}
+.md blockquote {
+  border-left: 3px solid var(--line-strong);
+  padding-left: 0.75rem;
+  color: var(--ink-2);
+}
+.md hr {
+  border: 0;
+  border-top: 1px solid var(--line);
+}
+.md :not(pre) > code {
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--ink);
+  padding: 0 0.25rem;
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+}
+:root[data-theme="dark"] .md :not(pre) > code {
+  background: var(--canvas);
+}
+.md .md-code {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  color: var(--ink);
+  overflow: hidden;
+}
+:root[data-theme="dark"] .md .md-code {
+  background: var(--canvas);
+}
+.md .md-code-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--line);
+  background: var(--subtle);
+  padding: 0.125rem 0.5rem;
+}
+.md pre {
+  margin: 0;
+  overflow-x: auto;
+  padding: 0.5rem 0.75rem;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+}
+.md pre code {
+  font-family: inherit;
+}
+.md .md-table {
+  max-width: 100%;
+  overflow-x: auto;
+}
+.md table {
+  border-collapse: collapse;
+  font-size: 0.8125rem;
+}
+.md th,
+.md td {
+  border: 1px solid var(--line-strong);
+  padding: 0.25rem 0.625rem;
+  text-align: left;
+}
+.md th {
+  background: var(--subtle);
+  font-weight: 600;
+}
+.md details {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  padding: 0.25rem 0.625rem;
+}
+.md summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.md kbd {
+  border: 1px solid var(--line-strong);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  background: var(--surface);
+  padding: 0 0.3rem;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+}
+.md mark {
+  background: var(--pending-soft);
+  color: var(--pending-ink);
+}
+.md .md-img {
+  max-width: 100%;
+  height: auto;
+  border-radius: var(--radius-control);
+}
+.md .katex-display {
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+.md section[data-footnotes] {
+  border-top: 1px solid var(--line);
+  padding-top: 0.5rem;
+  font-size: 0.8125rem;
+  color: var(--ink-2);
+}
+.md .md-alert {
+  --alert-line: var(--accent);
+  --alert-bg: var(--accent-soft);
+  --alert-ink: var(--accent-ink);
+  border-left: 3px solid var(--alert-line);
+  border-radius: var(--radius-control);
+  background: var(--alert-bg);
+  color: var(--alert-ink);
+  padding: 0.5rem 0.75rem;
+}
+.md .md-alert-important {
+  --alert-line: var(--avatar-lavender-ink);
+  --alert-bg: var(--avatar-lavender);
+  --alert-ink: var(--avatar-lavender-ink);
+}
+.md .md-alert-warning {
+  --alert-line: var(--pending-ink);
+  --alert-bg: var(--pending-soft);
+  --alert-ink: var(--pending-ink);
+}
+.md .md-alert-caution {
+  --alert-line: var(--danger-ink);
+  --alert-bg: var(--danger-soft);
+  --alert-ink: var(--danger-ink);
+}
+.md .md-alert-note {
+  --alert-line: var(--avatar-blue-ink);
+  --alert-bg: var(--avatar-blue);
+  --alert-ink: var(--avatar-blue-ink);
+}
+.md .md-alert-title {
+  margin: 0;
+  font-weight: 600;
+}
+.md .md-alert > :not(.md-alert-title) {
+  margin-top: 0.25rem;
+}
+/* Highlighted code: the terminal's contrast-checked palette, per theme. */
+.md .hljs-comment,
+.md .hljs-quote {
+  color: var(--muted);
+}
+.md .hljs-keyword,
+.md .hljs-selector-tag,
+.md .hljs-doctag {
+  color: var(--aurora-term-color-5);
+}
+.md .hljs-string,
+.md .hljs-regexp,
+.md .hljs-addition,
+.md .hljs-meta .hljs-string {
+  color: var(--aurora-term-color-2);
+}
+.md .hljs-number,
+.md .hljs-literal,
+.md .hljs-attr,
+.md .hljs-attribute,
+.md .hljs-variable,
+.md .hljs-template-variable {
+  color: var(--aurora-term-color-3);
+}
+.md .hljs-title,
+.md .hljs-section,
+.md .hljs-name,
+.md .hljs-selector-id,
+.md .hljs-selector-class {
+  color: var(--aurora-term-color-4);
+}
+.md .hljs-built_in,
+.md .hljs-type,
+.md .hljs-symbol,
+.md .hljs-bullet,
+.md .hljs-meta {
+  color: var(--aurora-term-color-6);
+}
+.md .hljs-deletion {
+  color: var(--aurora-term-color-1);
+}
+.md .hljs-emphasis {
+  font-style: italic;
+}
+.md .hljs-strong {
+  font-weight: 700;
 }
 
 @media (prefers-reduced-motion: reduce) {

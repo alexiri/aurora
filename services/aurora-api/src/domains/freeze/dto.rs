@@ -45,6 +45,11 @@ pub struct FreezeResult {
     /// Whether the resource is effectively frozen after the call (an agent: agent ∨ workspace ∨
     /// org flag; a workspace: workspace ∨ org flag).
     pub effective_frozen: bool,
+    /// What a `freeze` call did: `frozen` (it was not frozen), `escalated` (it was frozen by a
+    /// lower authority; the record now carries the caller's authority, reason and identity) or
+    /// `unchanged` (already frozen by an equal or higher authority: nothing changed). `null`
+    /// after `unfreeze`.
+    pub outcome: Option<String>,
 }
 
 /// One organization in the instance-admin list (operator view: no org data).
@@ -55,6 +60,31 @@ pub struct AdminOrg {
     pub name: String,
     pub frozen: Option<Frozen>,
     pub created_at: DateTime<Utc>,
+    /// (C-733) No active owner.
+    pub ownerless: bool,
+    /// Active members.
+    pub member_count: i64,
+    pub workspace_count: i64,
+    pub agent_count: i64,
+}
+
+/// One workspace of an organization in the instance-admin view: metadata only (C-733).
+#[derive(Debug, Serialize, ToSchema)]
+pub struct AdminWorkspace {
+    pub id: Uuid,
+    pub slug: String,
+    pub name: String,
+    pub personal: bool,
+    pub agent_count: i64,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Default, Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
+pub struct ListAdminWorkspacesQuery {
+    /// Page size, 1..=200 (default 50).
+    pub limit: Option<u32>,
+    pub cursor: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize, utoipa::IntoParams)]

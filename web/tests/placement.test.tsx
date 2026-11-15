@@ -99,7 +99,7 @@ describe("Admin › Sign-up & placement (P4-ONB-1, D-140)", () => {
     ).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("Try it with a name"), { target: { value: "Ada Lovelace" } });
     fireEvent.change(screen.getByLabelText("Workspace name"), { target: { value: "{name}" } });
-    await waitFor(() => expect(screen.getByTestId("placement-preview")).toHaveTextContent("workspace Ada Lovelace (ada-lovelace)"), { timeout: 3000 });
+    await waitFor(() => expect(screen.getByTestId("placement-preview")).toHaveTextContent("workspace Ada Lovelace (ada-lovelace)"));
   });
 
   it("saves the form with workspaces and starter grants", async () => {

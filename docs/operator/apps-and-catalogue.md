@@ -1,4 +1,4 @@
-# App instances and the built-in catalogue
+# Self-hosted apps (app instances) and the built-in catalogue
 
 (Phase 2, D-74, P2-CAT and P2-INST.) The general plugin and connector flow is in [plugins-and-connectors.md](plugins-and-connectors.md). This page covers the two pieces specific to phase 2:
 the packages that ship in the API image, and registering self-hosted servers for apps that support it. No new configuration key is involved besides `plugins.builtin_dir`;
@@ -10,15 +10,15 @@ The API image ships signed app packages in `/usr/share/aurora/plugins` (`plugins
 only archives signed by the compiled-in Aurora project key (publisher `aurora`) load. Unsigned archives, archives signed by any other key (a trusted key included) and invalid archives are refused and logged as `plugin file refused`.
 `plugins.allow_unsigned` does not apply to this directory. A built-in package activates automatically on first sight and on upgrade, unless its permissions widened compared with the version you approved before; then it waits for instance-administrator approval.
 
+**One app per service** (FIX-123, D-195(a)): ways to authenticate to the same service are **connect methods** of one app, and the connect window asks "How do you want to connect?" with a short description and a *Recommended* badge. `github` (and `github-ghes`) offer a GitHub App installation, OAuth and a personal access token; `aws-keys` offers *Assume a role* and *Access keys*. The retired packages `github-app` and `aws-role` are no longer shipped. **Upgrading an instance that has them:** the new `github` and `aws-keys` versions (2.0.0) add hooks and egress, a permission widening, so each waits for one instance-administrator approval (*Admin, Plugins*; the release notes say so). On approval, in the same transaction, every connection of `github-app` / `github-app-ghes` / `aws-role` moves to `github` / `github-ghes` / `aws-keys` with its connect method recorded (`github_app`, `assume_role`); connection ids, stored credentials, grants and history are untouched. Registered GitHub Enterprise Server instances, skill libraries and per-organization app availability move along, the host-claim decisions between the old pairs are deleted, and the retired package is disabled (`superseded_by_<package>`). Rerunning finds nothing to move. Until approval the old packages keep working; a fresh instance starts with one GitHub and one AWS tile and no built-in host-claim conflict.
+
 What ships (the package directories in `plugins/builtin/`):
 
 | Package | Product | Self-hosted instances |
 |---------|---------|-----------------------|
 | `atlassian` | Atlassian | yes |
-| `aws-keys` | AWS (access keys) | no |
-| `aws-role` | AWS (assume role) | no |
-| `github` | GitHub | yes |
-| `github-app` | GitHub App | yes |
+| `aws-keys` | AWS (assume a role or access keys) | no |
+| `github` | GitHub (GitHub App, OAuth or personal token) | yes |
 | `gitlab` | GitLab | yes |
 | `google-workspace` | Google Workspace | no |
 | `indico` | Indico | yes |
@@ -26,7 +26,11 @@ What ships (the package directories in `plugins/builtin/`):
 | `microsoft-365` | Microsoft 365 | no |
 | `notion` | Notion | no |
 | `postgresql` | PostgreSQL (database lane, see [gateway-posture.md](gateway-posture.md#database-lane)) | no |
-| `sentry` | Sentry | yes |
+| `sentry` | Sentry (sentry.io, its US and EU regions, and self-hosted servers: one app) | yes |
+
+**Built-in instances (FIX-134).** A package may ship ready-made instances next to its SaaS host: Sentry's `us.sentry.io` ("US region") and `de.sentry.io` ("EU region (DE)"). They are seeded when the package version activates, offered in every connect window, and listed on Admin › Self-hosted apps as **Built in**: nobody has to register them, and nobody can edit, disable or delete them (409 `instance_builtin`). **Upgrading from `sentry` 1.0.x:** `sentry` 2.0.0 activates by itself (it widens no permission) and, in the same step, moves the connections of the old `sentry-us`, `sentry-de` and `sentry-self-hosted` apps to the one `sentry` app (US/EU connections bound to the matching built-in instance; self-hosted ones keep their registered server); connection ids, agent grants and history are unchanged and the audit log shows one `plugin.supersede` row with the counts.
+
+**One tile per product (FIX-135, app families).** GitHub and GitHub Enterprise Server, Jira Cloud and Jira Data Center, Confluence Cloud and Confluence Data Center are separate apps underneath (different hosts, tools and sign-in) but one product to the people using them: the catalogue shows one tile (GitHub, Jira, Confluence) whose connect window asks where it runs (github.com, or a registered server); connections, grants, policy pickers and approvals name the app "GitHub · Enterprise Server". Nothing to configure and no permission changes: `github` 2.2.0 and `atlassian` 1.1.0 only declare the family, so they replace the previous version by themselves. Registered servers are still registered under Self-hosted apps.
 
 Each package carries a setup guide (`plugins/builtin/<id>/docs/setup.md`) written for the person connecting the app. Versions are in each `plugin.yaml`.
 Organizations choose which apps their members may use (`GET` and `PUT /v1/orgs/{org}/app-availability`, posture plus allow-list).
@@ -40,7 +44,20 @@ Details and the first-run checks are in [docs/ops/builtin-plugin-signing.md](../
 
 Verify: `GET /v1/admin/plugins` (instance administrator) lists each package with `source: builtin`, `status: active` and `signer.kind: builtin`; the API log has no `plugin file refused` warnings.
 
-## App instances (self-hosted servers)
+### Apps that allow only custom grants (`custom_only`)
+
+Some packages declare `grants.custom_only: true` (`docs/09 §Grants`, for apps whose token is far broader than their
+catalogue, such as Indico's `full:everything`). What it means for you as the instance admin:
+
+- It is part of the manifest you approve and appears in the permissions review; nobody can switch it off in a grant.
+- Users and agent owners cannot give such an app a `full` grant: the API refuses it (422 `full_grant_forbidden`) and the
+  dashboard does not offer it. They choose allow / ask / block **per tool**; tools a later version adds arrive blocked.
+- A request that matches none of the app's catalogue tools is blocked (403 `blocked_by_policy`, reason
+  `app_untooled_blocked`), and **no hand-written policy rule can allow it**, even a `network` allow for the app's host. If a
+  workflow needs something the catalogue does not name, the fix is a newer package, not a rule.
+- The only credentialed request outside the tools is the skill-library fetch (`skill-libraries.md`).
+
+## Self-hosted apps (app instances: your own servers)
 
 SaaS apps live on fixed hosts. A company's own GitLab, Jira Data Center or Sentry (the examples in docs/09) lives on a domain nobody can declare in advance. An app whose manifest declares `instances` therefore does not send credentials anywhere until an administrator
 **registers the host** as an *app instance*. Registration is the trust decision about where that app's credentials may be sent; members never type a host. The gateway injects a connection's credential only on the host of the instance it was connected to.
@@ -49,8 +66,12 @@ SaaS apps live on fixed hosts. A company's own GitLab, Jira Data Center or Sentr
 
 | Scope | Who | Where |
 |-------|-----|-------|
-| Instance-wide (usable by every organization) | instance administrator | the admin pages; `GET` and `POST /v1/admin/app-instances` |
-| One organization | organization owner or admin | Organization settings, Instances; `GET` and `POST /v1/orgs/{org}/app-instances` with `{ app_id, host, label }` |
+| Instance-wide (usable by every organization) | instance administrator | Admin › **Self-hosted apps**; `GET` and `POST /v1/admin/app-instances` |
+| One organization | organization owner or admin | the organization's **Self-hosted apps** page; `GET` and `POST /v1/orgs/{org}/app-instances` with `{ app_id, host, label }` |
+
+(The dashboard calls this feature **Self-hosted apps**; the API and the data keep the name *app instance*.)
+
+**Who holds a host (FIX-132).** A refusal with `instance_host_conflict` says what holds the host (`details.conflict`): a package's static claim (app and package — see Admin › Host claims and Plugins), an LLM endpoint, one of Aurora's own addresses (`external_url`, `hookhost_url`, `advertised_proxy_url`), or another registration. Instance administrators see which organization registered it; an organization administrator is only ever told "instance-wide", or that it is their own organization's. Admin › Self-hosted apps lists **every** registration with its organization and has a filter. An organization's registration of a host that the instance should serve to everyone is moved with **Make instance-wide** (`POST /v1/admin/app-instances/{id}/promote`, audited as `app_instance.promote`, security-critical): connections keep working, every organization then sees it. It is refused (409 `instance_host_shared`) while another organization also registered the same host — delete that one first.
 
 Members of the organization see the registered instances (instance-wide plus their own) in the connect form and pick one. `PATCH /v1/app-instances/{id}` changes the label or status; `DELETE` disables the instance's connections. An app with a `default_host` (for example `gitlab.com`) can also be
 connected without choosing an instance.

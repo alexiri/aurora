@@ -45,7 +45,8 @@ struct FlowState {
     ra: Option<(Uuid, Uuid)>,
 }
 
-/// A re-authentication callback must carry an `auth_time` at most this old (docs/04 §OIDC).
+/// A re-authentication callback must carry an `auth_time` at most this old, and at most this far
+/// in the future (clock skew) (docs/04 §OIDC).
 const REAUTH_AUTH_TIME_MAX_AGE_SECS: i64 = 60;
 
 fn aad(provider: &str) -> Vec<u8> {
@@ -432,7 +433,17 @@ fn display_name(v: &Verified) -> String {
         .map(str::trim)
         .filter(|n| !n.is_empty() && !n.chars().any(char::is_control))
         .unwrap_or_else(|| v.email.split('@').next().unwrap_or("User"));
-    raw.chars().take(80).collect()
+    // (FIX-116) bidi and zero-width characters are dropped (`02 §Untrusted text`).
+    let cleaned: String = raw
+        .chars()
+        .filter(|c| !aurora_core::sanitize::is_stripped(*c))
+        .take(80)
+        .collect();
+    if cleaned.trim().is_empty() {
+        "User".to_owned()
+    } else {
+        cleaned
+    }
 }
 
 pub async fn callback(
@@ -498,8 +509,8 @@ pub async fn callback(
     }
 }
 
-/// Re-authentication callback (docs/04 §OIDC): the same user, a fresh `auth_time` when the IdP
-/// returns one, then `sessions.reauth_at = now()`.
+/// Re-authentication callback (docs/04 §OIDC): the same user, a fresh `auth_time` (required),
+/// then `sessions.reauth_at = now()`.
 async fn reauthenticate(
     state: &AppState,
     client: &Client,
@@ -517,9 +528,13 @@ async fn reauthenticate(
     if user.disabled_at.is_some() {
         return Err(Fail("user_disabled"));
     }
-    if let Some(t) = v.auth_time
-        && Utc::now().timestamp() - t > REAUTH_AUTH_TIME_MAX_AGE_SECS
-    {
+    // (FIX-108, OIDC Core §3.1.2.1) `max_age` was sent, so the claim is required: a missing one
+    // is as stale as an old one, and a value in the future beyond the skew is not believed.
+    let age = v
+        .auth_time
+        .map(|t| Utc::now().timestamp() - t)
+        .ok_or(Fail("reauth_stale"))?;
+    if !(-REAUTH_AUTH_TIME_MAX_AGE_SECS..=REAUTH_AUTH_TIME_MAX_AGE_SECS).contains(&age) {
         return Err(Fail("reauth_stale"));
     }
     if !sessions::stamp_reauth(&state.pool, session, user_id).await? {
@@ -584,6 +599,19 @@ async fn sign_in(
                 match existing {
                     // Link only on a provider-verified email.
                     Some(u) if v.email_verified => {
+                        // (FIX-108, D-178 Q-R5-12) A provider that does not link existing
+                        // users never takes over an account created through another provider
+                        // (by default that is every provider relying on
+                        // `trusted_email_domains`). Accounts without an identity (bootstrap
+                        // admin, SCIM-provisioned) still bind by their e-mail.
+                        if !p.links_existing_users()
+                            && identities::by_user(&mut *tx, u.id)
+                                .await?
+                                .iter()
+                                .any(|(provider, _)| provider != &p.id)
+                        {
+                            return Err(Fail("email_linked_elsewhere"));
+                        }
                         if u.email_verified_at.is_some() {
                             break u;
                         }
@@ -624,6 +652,15 @@ async fn sign_in(
         }
         aurora_db::repo::idp_roles::clear_admin_source(&mut *tx, user.id).await?;
     }
+    // (D-175, FIX-082) The person's own verified sign-in activates every membership SCIM
+    // prepared for this account (`pending` → `active`, audited), before the role and group sync
+    // so both see the member they now are; the SCIM admission gate still applies.
+    crate::domains::scim::pending::activate_on_sign_in(&mut tx, &state.pool, &user)
+        .await
+        .map_err(|e| {
+            tracing::error!("oidc: activate pending memberships: {e:?}");
+            Fail("oidc_failed")
+        })?;
     // Precedence: invitation (in `create_user`) → role claims → provider `jit` → placement.
     roles::sync(&mut tx, state, p, &mut user, &v.role_values, &desired).await?;
     apply_jit(state, &mut tx, p, &mut user).await?;
@@ -647,14 +684,15 @@ async fn sign_in(
     // (P4-GRP-1, D-156) IdP-linked group memberships, in the same transaction after the role
     // sync, JIT and placement: those are what can create the org membership a group needs (a
     // first sign-in is then already in its groups). Never creates a membership itself.
-    if p.group_claim.is_some() {
-        crate::domains::groups::sync::sync_signin(&mut tx, p, user.id, &v.group_values)
-            .await
-            .map_err(|e| {
-                tracing::error!("oidc: group sync: {e:?}");
-                Fail("oidc_failed")
-            })?;
-    }
+    // (FIX-083) Always runs: a provider whose `group_claim` was removed from the configuration
+    // syncs an empty value set (`v.group_values` is empty without a claim), which removes the
+    // IdP rows it once created instead of leaving them for ever.
+    crate::domains::groups::sync::sync_signin(&mut tx, p, user.id, &v.group_values)
+        .await
+        .map_err(|e| {
+            tracing::error!("oidc: group sync: {e:?}");
+            Fail("oidc_failed")
+        })?;
 
     user = users::record_login(&mut *tx, user.id).await?;
     let token = auth::issue_session(&mut tx, state, user.id, client)
@@ -780,7 +818,7 @@ async fn create_user(
     } else {
         // Every case but "own organization": a pending invitation is accepted as part of the
         // sign-in.
-        invitations::service::accept_pending_for_email(tx, &user)
+        invitations::service::accept_pending_for_email(tx, &state.pool, &user)
             .await
             .map_err(|e| {
                 tracing::error!("oidc: accept invitations: {e:?}");
@@ -809,20 +847,36 @@ async fn apply_jit(
     // membership outright (deprovisioned by the IdP), an `exclusive` org admits only people
     // with an `active` link. The refusal fails the sign-in (the transaction rolls back), so
     // the denied `member.add` row is written on its own connection to survive.
-    match crate::domains::scim::gates::admission_gate(&mut *tx, org_id, user.id).await? {
-        crate::domains::scim::gates::Admission::Allowed => {}
-        g => {
-            let mut conn = state.pool.acquire().await.map_err(DbError::from)?;
-            crate::domains::scim::gates::audit_denied(
-                &mut conn,
-                org_id,
-                user.id,
-                "jit",
-                g.reason().unwrap_or("scim_refused"),
-            )
-            .await?;
-            return Err(Fail("scim_refused"));
-        }
+    // (FIX-080) The decision is taken under the org lock (the lock every SCIM writer takes)
+    // with the membership re-read under it, and the seat cap applies like for invitations: a
+    // full org skips the JIT membership (the sign-in itself goes on, as for claims).
+    aurora_db::repo::groups::lock_org(&mut *tx, org_id).await?;
+    if members::get(&mut *tx, org_id, user.id).await?.is_some() {
+        return Ok(());
+    }
+    if let Some(reason) =
+        crate::domains::scim::gates::admit_new_member(&mut *tx, org_id, user.id).await?
+    {
+        crate::domains::scim::gates::audit_denied_detached(
+            &state.pool,
+            org_id,
+            user.id,
+            "jit",
+            reason,
+        )
+        .await?;
+        return if reason == crate::domains::scim::gates::MEMBER_LIMIT_REASON {
+            Ok(())
+        } else {
+            Err(Fail("scim_refused"))
+        };
+    }
+    // (FIX-108, docs/04 §JIT) JIT applies on the sign-in that creates the user and later only
+    // for an org the user has never been a member of: a membership an admin removed is not
+    // restored. An invitation or an admin add clears the marker. (After the SCIM gate, whose
+    // refusal of a deprovisioned person is audited and fails the sign-in.)
+    if members::was_removed(&mut *tx, org_id, user.id).await? {
+        return Ok(());
     }
     let role = if j.role == "admin" { "admin" } else { "member" };
     members::insert(&mut *tx, org_id, user.id, role).await?;

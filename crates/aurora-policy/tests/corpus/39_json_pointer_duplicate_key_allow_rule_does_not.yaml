@@ -1,0 +1,4 @@
+description: FIX-085 a repeated key at the json_pointer is unknown, so an allow rule on /action = read does not match although the last duplicate says read (the default blocks)
+workspace: {ordered_rules: [{logical_id: 00000000-0000-0000-0000-0000000000a1, name: reads-only, action: allow, conditions: [{on: body, op: equals, value: read, json_pointer: /action}]}], default_action: block}
+facts: {host: api.example.com, port: 443, path: /q, method: POST, body: '{"action":"delete","action":"read"}', winning_credential: {type: secret, id: 00000000-0000-0000-0000-0000000000b1, kind: generic, scope: workspace}, identity: {agent_id: 00000000-0000-0000-0000-000000000001}}
+expect: {verdict: block, reason: default_denied}

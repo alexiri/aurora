@@ -43,6 +43,11 @@ tool catalogue and policy engine (all phase 0).
   SET of non-session settings, LISTEN/NOTIFY, DO, CALL), `transaction`
   (BEGIN/COMMIT/ROLLBACK/SAVEPOINT — always allowed). Function calls are
   allowed only from a pure-function allow-list; anything unknown → `admin`.
+  (FIX-118, D-188) Operators and casts are judged by the database role: an operator spelled
+  with a schema other than `pg_catalog` (`OPERATOR(public.!!)`) and a cast to a type outside
+  the built-in catalogue are `admin` (they run user-defined functions). Views cannot be
+  inspected: a view over a volatile or user-defined function runs with the role's privileges,
+  so the role is the control (the package's setup note says so).
   Multi-statement strings are classified by their strictest statement.
 - **Policy**: each class maps to a synthetic request `POST
   https://<connection_id>.db.aurora.internal/<class>`; the app's tools declare
@@ -108,6 +113,22 @@ SSH arm hook. Design follows OneCLI `docs/11`:
   (podman exec / Kubernetes exec); heartbeat every 30 s re-runs the access law;
   lease 90 s; close exactly once with a reason; audit.
 - Tables: `ssh_keys`, `ssh_sessions`, `ssh_mint_counters`.
+- **Specified (phase 5, P4-SSH-1, P4-SSH-2, D-239, SEC-92..SEC-96, C-790..C-799).** Off unless the
+  operator sets `ssh.enabled`; who may connect is the web terminal's rule (`can_use`, hosted, not
+  frozen). Two departures from the sketch above: the terminator reaches the sandbox through the
+  **runner's stream listener :4108** (one `auz_` grant per SSH channel, `exec.*` frames to the
+  supervisor) instead of podman/Kubernetes exec — exec would bypass the supervisor's environment scrub
+  and give an internet-facing daemon cluster-wide exec rights (D-239(e)); and the "CA-signed session
+  grant" is an API-side `ssh_sessions` row plus single-use per-channel grants the runner redeems at the
+  API, which closes the same compromised-terminator hole without a second signed token (D-239(f)).
+  Session channels only (shell, exec, `sftp`/`scp`); no port, agent or X11 forwarding. Tables
+  `ssh_keys`, `ssh_mint_counters`, `ssh_sessions`, `ssh_stream_grants`, `ssh_terminator_replicas`
+  and `sandboxes.ssh_active_until`/`ssh_awake_since`. Owning sections: `04 §SSH access`,
+  `11 §SSH access`, `12 §SSH channels`, `16 §W20`, `05 §SSH access` and `§Terminator plane`,
+  `03 §Planned changes`, `14` (Account › SSH keys, agent SSH page), `15 §SSH access`, `23`, `02 §Limits`,
+  `17` SEC-92..SEC-96, `18 §SSH access`, `00` (`aut_`, `auz_`), `01` (trust boundary 14). Not in this
+  batch: port forwarding of any kind, FIDO (`sk-ssh-ed25519`) keys, a KMS signer, an org-level switch,
+  PROXY-protocol client addresses.
 
 ## Phase 4 — Port previews
 
@@ -154,6 +175,8 @@ Per-agent questions with expected answers (numeric, text, judged), runs as real
 turns in `eval` conversations, configuration fingerprint (instructions, model,
 effort, skills, granted rule ids) for regression attribution, optional
 schedules; judge calls through the `PlatformLlm` service with a granted key.
+
+- **Specified (phase 5, P4-EVAL, D-289..D-294, SEC-114..SEC-116, C-860..C-874; pending owner answers Q-EVAL-1..10, the spec follows the recommendations).** Questions with numeric, text and judged expected answers per hosted agent; each question runs as a real turn in its own `eval` conversation under every existing rule, with writes refused in eval turns (`10 §Evals`, SEC-114); a run records a configuration fingerprint of hashes and ids (D-291); the judge is `PlatformLlm`'s `eval_judge` purpose with a granted, governance-admitted key and fails closed (D-292, SEC-115); eval schedules fire through the schedules engine under the same caps (D-293); expected answers stay in the agent's audience (D-294, SEC-116). Owning sections: `10 §Evals`, `05 §Evals` and jobs, `03 §Planned changes` (`eval_questions`, `eval_runs`, `eval_results`, `eval_schedules`, migrations `20261201000236..240`), `04` matrix and §Audit, `08 §Platform-internal LLM calls`, `02 §Limits` (`EVAL_*`), `14` (Behaviour › Evals), `17` SEC-114..SEC-116, `18 §Evals`, `API_CONTRACTS.md` §Phase 5 — P4-EVAL. Briefs `docs/tasks/P4-EVAL-1.md` (questions, settings, fingerprint), `P4-EVAL-2.md` (runs, refusal, schedules), `P4-EVAL-3.md` (judge), `P4-EVAL-4.md` (dashboard). Not in phase 5: more than one judge, eval results as a public or shared report, cross-agent comparisons, eval-driven automatic tuning of an agent, a second judge scale.
 
 ## Phase 4 — Git skill library
 
@@ -208,7 +231,7 @@ tokens), group → workspace access bindings, group identities in policy
 
 ## Phase 5 — App guides on demand
 
-**Specified (P5-GUIDE-1..5, owner 2026-11-13, D-170..D-172, SEC-90, SEC-91, C-640..C-659);
+**Specified (P5-GUIDE-1..5, owner 2026-11-13, D-170..D-172, SEC-117, SEC-91, C-640..C-659);
 `24-app-guides.md` is normative.** The owner asked whether to adopt Code Mode (and the Rust
 gateway Skarn). It does not apply as such: apps are not MCP tools, and agents already run code
 against app APIs in their sandbox (D-170). What is built is the part that transfers:
@@ -233,6 +256,30 @@ packages; both are done once, in this shape). Owning sections: `24`; `09 §2`, `
 (`plugin_blobs`); `05` (plugin routes); `14` (Plugins); `02 §Limits`; `17`; `18 §App guides on
 demand`. Not in this phase: a code-execution runtime, MCP-server apps (shape recorded in D-172),
 effective-policy access in `tools.md`, digest-skipping in the home sync, guides for BYO agents.
+## Phase 6 — Proposals (owner, 2026-11-14; not specified, not started)
+
+- **Nested organizations — proposed (`docs/tasks/P6-ORGTREE.md`).** `organizations.parent_org_id`
+  plus a closure table; root orgs are today's orgs. **Membership is upward-closed (owner, D-276(a))**: a
+  sub-org member is a member of every ancestor, and removal cascades down. Recommended: ancestor owners/admins are implicit
+  admins below, plain membership does not flow down; governance, org policy (one rule list per org on
+  the path, strictest verdict), retention, app availability, freeze and limits inherit down the tree
+  and can only be tightened; credentials, skill libraries and app registrations are shared down only by
+  an explicit flag; SCIM at roots; create/move (dry-run impact)/delete children; tree switcher and
+  "Inherited from …" labels in the dashboard. Open questions Q-P6-ORG-2..8.
+- **Usage limits and load knobs — proposed (`docs/tasks/P6-LIMITS.md`).** One quota framework
+  `(resource, scope, window, value)` with instance defaults (settings section `quotas`), limit profiles
+  (`standard`/`trusted`/`restricted`) assignable to orgs and users, org admins tightening only. **Threat
+  model (owner, D-276(c)): long jobs on free compute**, so the core is sandbox time with no person engaged:
+  background vs interactive metering, concurrent background sandboxes, background cap and background-hour
+  budgets, and (proposed, Q-P6-LIM-10) only a person's engagement restarts the background cap. Further
+  resources: an awake-hours hard ceiling (from `runtime_intervals`), per-profile
+  sandbox deadlines and sizes, schedule/webhook/watch counts above the per-agent caps, a profile cron
+  floor applied at fire time, fires and turns per day, gateway request, egress-byte and LLM-request caps,
+  invitations. New API classes (`sandbox`, `probe`, `invite`) and per-replica concurrency caps on heavy
+  handlers. An instance **pressure level** (`normal`/`elevated`/`critical`) that defers automations and
+  background starts before touching interactive chat, switchable live from Admin › Limits and from the
+  CLI. Admin/Org/My usage views and abuse signals (report-only). **Abuse control only, not billing, plans or
+  budgets (owner, D-276(b))**. Open questions Q-P6-LIM-1, 3..8, 10.
 
 ## Other later items
 
@@ -242,13 +289,13 @@ effective-policy access in `tools.md`, digest-skipping in the home sync, guides 
   `15 §Shared rate-limit counters`, `06 §Rate limiting`, `05 §Conventions`
   (*Shared counters*), `04 §Rate limits (auth)`, `07 §Evaluation`, `03 §Planned
   changes`, `18 §Shared rate-limit counters`.
-- **S3-compatible blob store — specified (phase 4, P4-S3, D-120, SEC-63).**
+- **S3-compatible blob store — specified (phase 5 (D-138, moved from phase 4), P4-S3, D-120, SEC-63).**
   `BlobStore` backend `s3` beside `postgres` for attachment bytes; per-row backend,
   SSE verified at startup, no pre-signed URLs, explicit `aurora-api blobs migrate`.
   Owning sections: `10 §Attachments`, `15 §S3-compatible blob store`, `03 §Planned
   changes`, `05` (storage and overview routes, jobs), `16 §W14`, `18 §S3-compatible
   blob store`.
-- **Additional LLM providers — specified (phase 4, P4-LLM, D-121, SEC-64, SEC-65):**
+- **Additional LLM providers — specified (phase 5 (D-138, moved from phase 4), P4-LLM, D-121, SEC-64, SEC-65):**
   OpenAI, Azure OpenAI (key auth, v1 API), AWS Bedrock (gateway-side SigV4 or
   Bedrock API key), Google Vertex (gateway-minted tokens from a service-account
   key), generic OpenAI-compatible endpoints; credentials never reach a sandbox;
@@ -257,6 +304,13 @@ effective-policy access in `tools.md`, digest-skipping in the home sync, guides 
   hosts`, `09` (reserved hosts), `12` (claude-code dialects), `15`, `16`, `18 §Additional
   LLM providers`. Not in phase 4: Entra ID for Azure, assume-role or gateway-identity
   AWS auth for Bedrock, Converse and Gemini-native dialects, gateway token counting.
+  (phase 5, P4-LLM spec batch, D-260..D-262, SEC-97, SEC-98, C-800..C-814) Reconciled with
+  instance settings (SET-3): Entra client credentials (`azure_entra`) and Bedrock
+  `aws_assume_role` are added through one gateway mint service; the gateway never translates
+  wire formats (cross-format use goes through LiteLLM); `anthropic` gets its inference path
+  set; dashboard endpoints follow `gateway.allowed_private`. Briefs `docs/tasks/P4-LLM-1.md` …
+  `P4-LLM-6.md`. Still out: gateway identity, workload-identity federation, sovereign Azure
+  clouds, Converse/Gemini dialects, gateway token counting.
 - **Additional harness adapters — specified (phase 4, P4-HAR, D-122, SEC-66):** the
   `codex` adapter declaring `openai_responses` / `openai_chat`, explicit harness
   selection (`agents.harness`, `hosted.enabled_harnesses`, runner label
@@ -271,7 +325,7 @@ effective-policy access in `tools.md`, digest-skipping in the home sync, guides 
   routes), `14` (Access tab), `18 §Custom grants only and parameter-level matching`.
   Adoption (Indico `grants`, AWS `Describe*` tools) is a package change made at
   implementation, not part of this specification.
-- **Approval park-and-resume and Web Push — specified (phase 4, RFE-011b, D-133, D-134,
+- **Approval park-and-resume and Web Push — specified (phase 5 (D-138, moved from phase 4), RFE-011b, D-133, D-134,
   SEC-74, SEC-75, SEC-76).** Opt-in parking: a request whose approval deadline is long is
   refused to the agent (`403 approval_parked`, not sent) and the approval becomes a
   single-use, same-conversation grant for the identical request, delivered by a system
@@ -284,9 +338,18 @@ effective-policy access in `tools.md`, digest-skipping in the home sync, guides 
   `14` (Notifications, parked approvals, service worker), `15 §Approval park-and-resume and Web
   Push`, `16 §W16`, `18`. Not in phase 4: suspending a live harness process, parking BYO or
   streamed requests, retraction of delivered pushes, mobile-app push, per-rule push routing.
+  (P4-011B spec batch, 2026-11-14) Reconciled with instance settings, FIX-084 and the session
+  model by D-264..D-267 (contracts C-820..C-839, SEC-102, migrations `20261201000220..223`);
+  briefs `docs/tasks/P4-011B-1.md` … `P4-011B-5.md`. Still out: offline/PWA caching, an
+  org-level parking opt-out, push for anything other than approvals.
 - Live narration cards in chat (steps list updated under the connector's write
   rate hint), user-token features (`user_tokens` capability).
-- **Slack connector**: decision deferred; if built, it is a connector covering
+  (phase 5 spec, 2026-11-15, coordinator) Specified as **P4-NARR** (`10 §Live narration cards`,
+  `13 §5.12`, D-279, D-280, SEC-111) and **P4-UTOK** (`13 §5.11`, D-281..D-284, SEC-112, SEC-113), with
+  C-846..C-859 and migrations `20261201000231..233`; briefs `docs/tasks/P4-NARR.md` and
+  `docs/tasks/P4-UTOK.md`. Owner answers: Q-NARR-4 collapse (D-286), every other recommendation accepted (D-288).
+  Read-as-user (the other user-token feature) is not specified in phase 5 (Q-UTOK-1).
+- **Slack connector** (phase 6, P6-SLACK; owner 2026-11-15, D-285: moved from phase 5, not a priority): decision deferred; if built, it is a connector covering
   events and OAuth endpoints, the shared app, app provisioning via the manifest
   API, configuration-token rotation through `POST /v1/connector/credentials`,
   and Block Kit rendering. Nothing in the core changes.

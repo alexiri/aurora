@@ -289,6 +289,19 @@ pub async fn purged_among(
     .await?)
 }
 
+/// File names of `ids`, oldest first (door copies and quotes of a files-only message, C-726).
+pub async fn filenames(exec: impl PgExecutor<'_>, ids: &[Uuid]) -> Result<Vec<String>, DbError> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    Ok(sqlx::query_scalar(
+        "SELECT filename FROM attachments WHERE id = ANY($1) ORDER BY created_at, id",
+    )
+    .bind(ids)
+    .fetch_all(exec)
+    .await?)
+}
+
 /// Mark one attachment purged (`reason`: `retention` | `deleted`) and clear its `blob_key`, so a
 /// blob that survives a failed delete is unreferenced and left to the orphan sweep. `None` when
 /// it holds no bytes (already purged, or `failed`).
@@ -489,6 +502,55 @@ pub async fn blob_totals(exec: impl PgExecutor<'_>) -> Result<(i64, i64), DbErro
     )
     .fetch_one(exec)
     .await?)
+}
+
+/// The cached Storage-page figures of `scope` (`instance` or an org id) and when they were computed.
+pub async fn snapshot_get(
+    exec: impl PgExecutor<'_>,
+    scope: &str,
+) -> Result<Option<(serde_json::Value, DateTime<Utc>)>, DbError> {
+    Ok(
+        sqlx::query_as("SELECT payload, computed_at FROM storage_snapshots WHERE scope = $1")
+            .bind(scope)
+            .fetch_optional(exec)
+            .await?,
+    )
+}
+
+/// Replace the snapshot of `scope`; returns the stamp (the database clock).
+pub async fn snapshot_put(
+    exec: impl PgExecutor<'_>,
+    scope: &str,
+    payload: &serde_json::Value,
+) -> Result<DateTime<Utc>, DbError> {
+    Ok(sqlx::query_scalar(
+        "INSERT INTO storage_snapshots (scope, payload, computed_at)
+         VALUES ($1, $2, clock_timestamp())
+         ON CONFLICT (scope) DO UPDATE SET payload = $2, computed_at = clock_timestamp()
+         RETURNING computed_at",
+    )
+    .bind(scope)
+    .bind(payload)
+    .fetch_one(exec)
+    .await?)
+}
+
+/// The database clock at call time (not the transaction start), for "was it computed after I
+/// asked" comparisons.
+pub async fn clock(exec: impl PgExecutor<'_>) -> Result<DateTime<Utc>, DbError> {
+    Ok(sqlx::query_scalar("SELECT clock_timestamp()")
+        .fetch_one(exec)
+        .await?)
+}
+
+/// Single-flight: one recomputation per scope at a time, across replicas (waits for the holder;
+/// released at the end of the transaction).
+pub async fn snapshot_lock(conn: &mut PgConnection, scope: &str) -> Result<(), DbError> {
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended('storage_snapshot:' || $1, 0))")
+        .bind(scope)
+        .execute(conn)
+        .await?;
+    Ok(())
 }
 
 /// Level (`warning` | `full` | `clear`) of the org's latest quota notice row in the audit log.

@@ -40,7 +40,7 @@ export function SettingsView({ org, ws }: { org: string; ws: string }) {
   const tabs = TABS.filter((t) => canOwn || !t.ownerOnly);
 
   return (
-    <div className="max-w-[1160px] space-y-4">
+    <div className="max-w-page space-y-4">
       <PageHeader
         title="Settings"
         description="Name, access, API keys and audit trail for this workspace."

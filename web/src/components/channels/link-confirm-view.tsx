@@ -9,13 +9,14 @@ import { FormError } from "@/components/auth/form-error";
 import { Loading } from "@/components/states";
 import { Button } from "@/components/ui/button";
 import { ApiError } from "@/lib/api/client";
-import { useConfirmChannelLink } from "@/lib/api/channels";
+import { useChannelLinkPreview, useConfirmChannelLink } from "@/lib/api/channels";
 import { useSession } from "@/lib/api/queries";
 import { isUnauthorized, loginUrl } from "@/lib/auth/use-unauthorized-redirect";
 
 import { channelError } from "./shared";
 
 const PATH = "/link/channel";
+const STORE = "aurora.channel-link-token";
 
 /** Remove the single-use token from the address bar (and history entry). */
 function stripToken() {
@@ -26,19 +27,54 @@ function stripToken() {
   }
 }
 
+function stored(): string | null {
+  try {
+    return window.sessionStorage.getItem(STORE);
+  } catch {
+    return null;
+  }
+}
+
+function remember(token: string | null) {
+  try {
+    if (token) window.sessionStorage.setItem(STORE, token);
+    else window.sessionStorage.removeItem(STORE);
+  } catch {
+    // ignore: the page still works for this visit
+  }
+}
+
+/**
+ * The token reaches this page in the URL once; it leaves the address bar at once and is kept in
+ * `sessionStorage` for the sign-in round trip (the return URL never carries it, so it does not
+ * land in access logs or history before use).
+ */
 export function LinkConfirmView() {
-  // Captured once so the token can leave the URL without losing it for a retry.
   const params = useSearchParams();
-  const [token] = useState(() => params.get("token"));
+  const [token] = useState(() => params.get("token") ?? stored());
   const session = useSession();
+  const signedIn = session.isSuccess;
+  const preview = useChannelLinkPreview(token, signedIn);
   const confirm = useConfirmChannelLink();
 
   useEffect(() => {
+    if (!token) return;
+    remember(token);
+    stripToken();
+  }, [token]);
+
+  useEffect(() => {
     if (session.isError && isUnauthorized(session.error)) {
-      // The return URL still needs the token so the flow resumes after sign-in.
-      window.location.assign(loginUrl(window.location.pathname + window.location.search));
+      // The return URL is the bare page; the token waits in sessionStorage.
+      window.location.assign(loginUrl(PATH));
     }
   }, [session.isError, session.error]);
+
+  // A used or dead token is of no further use.
+  useEffect(() => {
+    const dead = (e: unknown) => e instanceof ApiError && (e.code === "link_expired" || e.code === "already_linked");
+    if (confirm.isSuccess || dead(confirm.error) || dead(preview.error)) remember(null);
+  }, [confirm.isSuccess, confirm.error, preview.error]);
 
   if (!token) {
     return (
@@ -76,15 +112,62 @@ export function LinkConfirmView() {
     );
   }
 
+  if (preview.isPending) {
+    return (
+      <AuthCard title="Link your chat account">
+        <Loading />
+      </AuthCard>
+    );
+  }
+  if (preview.isError) {
+    return (
+      <AuthCard title="Link your chat account">
+        <FormError message={channelError(preview.error)} />
+      </AuthCard>
+    );
+  }
+
+  const p = preview.data;
   const terminal =
     confirm.error instanceof ApiError &&
-    (confirm.error.code === "link_expired" || confirm.error.code === "already_linked");
+    (confirm.error.code === "link_expired" ||
+      confirm.error.code === "already_linked" ||
+      confirm.error.code === "link_reference_mismatch");
 
   return (
     <AuthCard title="Link your chat account">
       <p className="text-sm">
-        Link your chat account to <strong>{session.data.user.display_name}</strong> ({session.data.user.email}) so
-        agents know who you are in chat.
+        Link this chat account to <strong>{session.data.user.display_name}</strong> ({session.data.user.email}) so
+        agents know who you are in chat:
+      </p>
+      <dl data-testid="link-account" className="space-y-1 rounded-card border border-line bg-subtle p-3 text-sm">
+        <div className="flex flex-wrap gap-x-2">
+          <dt className="text-muted">Integration</dt>
+          <dd>
+            {p.tenant_label} <span className="text-muted">({p.connector_id})</span>
+          </dd>
+        </div>
+        {p.platform_display_name ? (
+          <div className="flex flex-wrap gap-x-2">
+            <dt className="text-muted">Chat name</dt>
+            <dd>{p.platform_display_name}</dd>
+          </div>
+        ) : null}
+        <div className="flex flex-wrap gap-x-2">
+          <dt className="text-muted">Chat account</dt>
+          <dd>
+            <code>{p.platform_user_ref}</code>
+          </dd>
+        </div>
+        {p.platform_email_hint ? (
+          <div className="flex flex-wrap gap-x-2">
+            <dt className="text-muted">Email on the platform</dt>
+            <dd>{p.platform_email_hint}</dd>
+          </div>
+        ) : null}
+      </dl>
+      <p className="text-sm text-muted">
+        Only confirm if this is your own chat account. Whoever writes as it will act as you in Aurora.
       </p>
       <FormError message={confirm.isError ? channelError(confirm.error) : undefined} />
       {!terminal ? (
@@ -92,14 +175,7 @@ export function LinkConfirmView() {
           size="lg"
           className="w-full"
           disabled={confirm.isPending}
-          onClick={() =>
-            confirm.mutate(token, {
-              // Single-use: drop it from the URL once the server has answered.
-              onSettled: (_d, err) => {
-                if (!err || err instanceof ApiError) stripToken();
-              },
-            })
-          }
+          onClick={() => confirm.mutate({ token, platform_user_ref: p.platform_user_ref })}
         >
           {confirm.isPending ? "Linking…" : "Confirm link"}
         </Button>

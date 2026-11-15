@@ -43,6 +43,9 @@ pub struct EnvSecrets {
     pub bootstrap_runner_token: Option<Redacted<String>>,
     pub bootstrap_connector_tokens: Option<Redacted<String>>,
     pub bootstrap_connector_host_token: Option<Redacted<String>>,
+    /// (FIX-120) JSON `[{"name","token","types":[…]}]`: per-host `auh_…` tokens bound to connector
+    /// types, upserted at start.
+    pub bootstrap_connector_host_tokens: Option<Redacted<String>>,
     /// (P4-PRV-2) `aul_…`: the relay's anchor token, upserted at start.
     pub bootstrap_relay_token: Option<Redacted<String>>,
     /// (P4-PRV-2) `aul_…`: the relay's own credential (`aurora-relay` only).
@@ -52,6 +55,8 @@ pub struct EnvSecrets {
     /// (phase 4, P4-CNT) values of `ratelimit.counters.redis.username_env` / `password_env`.
     pub redis_username: Option<Redacted<String>>,
     pub redis_password: Option<Redacted<String>>,
+    /// (FIX-116) `AURORA_SMTP_PASSWORD` / `_FILE`: the mailer's password, never in the config file.
+    pub smtp_password: Option<Redacted<String>>,
 }
 
 /// The whole configuration file, merged with env overrides.
@@ -132,6 +137,9 @@ pub struct AuthSection {
     pub trusted_origins: Vec<String>,
     pub session_idle_secs: u64,
     pub session_absolute_secs: u64,
+    /// (FIX-108, D-178 Q-R5-16) Lifetime in days of an API key minted by the CLI device login;
+    /// `0` = never expires. Keys minted before the setting keep their stored expiry.
+    pub cli_key_ttl_days: u32,
     pub oidc_providers: Vec<OidcProvider>,
     /// (phase 1, RFE-004) The development IdP, `docs/04 §Development and end-to-end sign-in`.
     pub dev_idp: DevIdp,
@@ -170,8 +178,10 @@ impl Default for AuthSection {
             org_creation: "instance_admins".into(),
             instance_admins: vec![],
             trusted_origins: vec![],
-            session_idle_secs: 1_209_600,
-            session_absolute_secs: 2_592_000,
+            // (FIX-119) the docs/02 constants are the defaults, not a second copy of the numbers.
+            session_idle_secs: aurora_core::limits::SESSION_IDLE.as_secs(),
+            session_absolute_secs: aurora_core::limits::SESSION_ABSOLUTE.as_secs(),
+            cli_key_ttl_days: 90,
             oidc_providers: vec![],
             dev_idp: DevIdp::default(),
         }
@@ -198,6 +208,11 @@ pub struct OidcProvider {
     /// domain, case-insensitive, no subdomains) counts as verified even when the ID token has no
     /// `email_verified = true`. For IdPs that never send the claim. Empty = claim required.
     pub trusted_email_domains: Vec<String>,
+    /// (FIX-108, D-178 Q-R5-12) May a first sign-in through this provider link to an existing
+    /// account that was created through **another** provider with the same e-mail? Unset: yes,
+    /// except for a provider that relies on `trusted_email_domains` (its addresses are not
+    /// proven by a `email_verified` claim, so linking would let it take that account over).
+    pub link_existing_users: Option<bool>,
     pub jit: Option<OidcJit>,
     /// (phase 4, P4-IDP-1, D-139) Dot path into the validated ID token (or userinfo response)
     /// holding the IdP's role values, e.g. `cern_roles` or `resource_access.aurora.roles`.
@@ -226,6 +241,7 @@ impl Default for OidcProvider {
             require_email_verified: None,
             allowed_email_domains: vec![],
             trusted_email_domains: vec![],
+            link_existing_users: None,
             jit: None,
             role_claim: None,
             role_claim_source: String::new(),
@@ -265,6 +281,13 @@ pub struct OidcWorkspaceRole {
 }
 
 impl OidcProvider {
+    /// (FIX-108, D-178) The effective `link_existing_users`: the explicit value, else `true`
+    /// unless the provider relies on `trusted_email_domains`.
+    pub fn links_existing_users(&self) -> bool {
+        self.link_existing_users
+            .unwrap_or(self.trusted_email_domains.is_empty())
+    }
+
     /// Whether the role claim is read from the userinfo response instead of the ID token.
     pub fn role_claim_from_userinfo(&self) -> bool {
         self.role_claim_source == "userinfo"
@@ -290,9 +313,18 @@ pub struct OidcJit {
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct EmailSection {
-    /// May embed a password, hence redacted. Unset => log-only mode.
+    /// `smtp://host:port` or `smtps://…`; **no userinfo** (the file lands in a ConfigMap).
+    /// Unset => log-only mode.
     pub smtp_url: Option<Redacted<String>>,
     pub from: Option<String>,
+    /// (FIX-116) SMTP user name; the password is `AURORA_SMTP_PASSWORD` (or `_FILE`).
+    pub smtp_username: Option<String>,
+    /// (FIX-116) The password read from the environment (never from the file).
+    #[serde(skip)]
+    pub smtp_password: Option<Redacted<String>>,
+    /// (FIX-116) Log-only mode writes the action link (sign-in / invitation tokens) to the log.
+    /// Development only; default `false`.
+    pub log_links: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -353,6 +385,9 @@ pub struct LlmEndpoint {
     pub models: Vec<String>,
     pub allowed_models: Vec<String>,
     pub key_origin: Option<KeyOrigin>,
+    /// (D-177, FIX-105) `litellm` / `openai_compatible`: paths beyond the inference set that the
+    /// sanctioned key may be injected on. Absolute; a trailing `/*` admits the subtree.
+    pub allowed_paths: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -609,6 +644,10 @@ pub struct RelaySection {
     pub request_body_max_bytes: usize,
     /// The API's `previews.domain` (the relay refuses to serve on mismatch after registering).
     pub previews_domain: Option<String>,
+    /// CIDRs of the edge proxies in front of the relay (same syntax and semantics as
+    /// `server.trusted_proxies`; default none): when the socket peer is inside one, the visitor's
+    /// address is the rightmost untrusted `X-Forwarded-For` entry; otherwise the peer itself.
+    pub trusted_proxies: Vec<String>,
 }
 impl Default for RelaySection {
     fn default() -> Self {
@@ -620,6 +659,7 @@ impl Default for RelaySection {
             max_streams_per_user: 64,
             request_body_max_bytes: 100 * 1024 * 1024,
             previews_domain: None,
+            trusted_proxies: vec![],
         }
     }
 }
@@ -678,6 +718,11 @@ pub struct GatewaySection {
     /// (phase 2, RFE-025) CIDRs of layer-4 load balancers that send a PROXY protocol header on
     /// the proxy port (docs/06 §BYO admission). Not `server.trusted_proxies`.
     pub trusted_proxies: Vec<String>,
+    /// (FIX-104, D-180) **Tests and development only; the Helm chart never renders it.** When
+    /// `true`, a package's host claim is injected over any scheme and port if the destination is
+    /// a loopback address (`127.0.0.0/8`, `::1`, `localhost`), so that plain-HTTP mock upstreams
+    /// on random ports work. Default `false`: injection only over TLS to the claimed port.
+    pub insecure_loopback_injection: bool,
 }
 
 /// `[byo]` (phase 2, RFE-025, D-59).
@@ -721,13 +766,14 @@ impl Default for GatewaySection {
             internal_bind: None,
             allowed_private: vec![],
             egress_proxy: None,
-            condition_body_bytes: 262_144,
-            upstream_header_timeout_secs: 300,
-            resolve_cache_ttl_secs: 60,
+            condition_body_bytes: aurora_core::limits::CONDITION_BODY_BUFFER as u64,
+            upstream_header_timeout_secs: aurora_core::limits::UPSTREAM_HEADER_TIMEOUT.as_secs(),
+            resolve_cache_ttl_secs: aurora_core::limits::GATEWAY_RESOLVE_CACHE_TTL.as_secs(),
             ca_dir: "/var/lib/aurora/ca".into(),
             hookhost_url: "http://aurora-hookhost:4104".into(),
             proxy_tls: ProxyTlsSection::default(),
             trusted_proxies: vec![],
+            insecure_loopback_injection: false,
         }
     }
 }
@@ -769,7 +815,7 @@ pub struct ApprovalsSection {
 impl Default for ApprovalsSection {
     fn default() -> Self {
         Self {
-            timeout_secs: 300,
+            timeout_secs: aurora_core::limits::APPROVAL_TIMEOUT.as_secs(),
             max_timeout_secs: 3600,
             email_notifications: true,
         }
@@ -783,6 +829,8 @@ pub struct PluginsSection {
     /// Built-in catalogue (09 §10): only archives signed by the project key are loaded from here.
     pub builtin_dir: String,
     pub allow_unsigned: bool,
+    /// (phase 5, P5-ASRC, D-250) addon sources: the default poll interval of a new source.
+    pub addon_sources: AddonSourcesSection,
 }
 impl Default for PluginsSection {
     fn default() -> Self {
@@ -790,6 +838,24 @@ impl Default for PluginsSection {
             dir: "/var/lib/aurora/plugins".into(),
             builtin_dir: "/usr/share/aurora/plugins".into(),
             allow_unsigned: false,
+            addon_sources: AddonSourcesSection::default(),
+        }
+    }
+}
+
+/// `[plugins.addon_sources]` (phase 5, P5-ASRC, D-250; docs/15).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct AddonSourcesSection {
+    /// The schedule a newly registered addon source starts with (an admin can change it per
+    /// source): `6h|12h|1d|1w|2w|1mo|never` (`never` = manual checks only). Validated in
+    /// `validate_for`.
+    pub update_interval: String,
+}
+impl Default for AddonSourcesSection {
+    fn default() -> Self {
+        Self {
+            update_interval: "1d".into(),
         }
     }
 }
@@ -887,12 +953,12 @@ impl Default for RunnerSection {
             image: concat!("aurora-sandbox:", env!("CARGO_PKG_VERSION")).into(),
             image_harnesses: Vec::new(),
             advertised_host: None,
-            max_sandboxes: 4,
+            max_sandboxes: aurora_core::limits::RUNNER_MAX_SANDBOXES,
             held_awake_ceiling: None,
-            sandbox_memory_mib: 2048,
-            sandbox_cpus: 1,
-            sandbox_pids: 512,
-            home_gib: 10,
+            sandbox_memory_mib: aurora_core::limits::SANDBOX_DEFAULT_MEMORY_MIB,
+            sandbox_cpus: aurora_core::limits::SANDBOX_DEFAULT_CPUS,
+            sandbox_pids: aurora_core::limits::SANDBOX_DEFAULT_PIDS,
+            home_gib: aurora_core::limits::SANDBOX_DEFAULT_HOME_MIB / 1024,
             reconcile_interval_secs: 60,
             orphan_grace_secs: 3600,
             orphan_reap: "reap".into(),

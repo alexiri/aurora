@@ -68,7 +68,14 @@ export function usePolicyGenerations(scope: PolicyScope, enabled: boolean) {
 
 function useInvalidatePolicy(scope: PolicyScope) {
   const qc = useQueryClient();
-  return () => qc.invalidateQueries({ queryKey: ["policy", scope.kind, scope.id] });
+  // A draft save, publish or rollback changes what every agent in the scope is allowed (WEBC-6): the agents'
+  // effective-credentials and grants views refetch too (the key prefix reaches every agent).
+  return () =>
+    Promise.all([
+      qc.invalidateQueries({ queryKey: ["policy", scope.kind, scope.id] }),
+      qc.invalidateQueries({ queryKey: ["effective"] }),
+      qc.invalidateQueries({ queryKey: ["grants"] }),
+    ]);
 }
 
 export function usePutDraft(scope: PolicyScope) {
@@ -96,10 +103,21 @@ export function usePublish(scope: PolicyScope) {
 export function useRollback(scope: PolicyScope) {
   const inv = useInvalidatePolicy(scope);
   return useMutation({
-    mutationFn: (generation: number) =>
+    // `expect_revision`: the draft revision last read (rollback replaces the draft; 409 when it moved).
+    mutationFn: ({ generation, expectRevision }: { generation: number; expectRevision: number }) =>
       scope.kind === "workspace"
-        ? unwrap(api.POST("/v1/workspaces/{ws}/policy/rollback", { params: { path: { ws: scope.id } }, body: { generation } }))
-        : unwrap(api.POST("/v1/orgs/{org}/policy/rollback", { params: { path: { org: scope.id } }, body: { generation } })),
+        ? unwrap(
+            api.POST("/v1/workspaces/{ws}/policy/rollback", {
+              params: { path: { ws: scope.id } },
+              body: { generation, expect_revision: expectRevision },
+            }),
+          )
+        : unwrap(
+            api.POST("/v1/orgs/{org}/policy/rollback", {
+              params: { path: { org: scope.id } },
+              body: { generation, expect_revision: expectRevision },
+            }),
+          ),
     onSuccess: inv,
   });
 }

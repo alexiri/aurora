@@ -1,4 +1,4 @@
-import { render } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TerminalTab } from "@/components/agents/terminal-tab";
@@ -23,6 +23,7 @@ let paneProps: TerminalProps | null = null;
 // would re-run the effect — and re-open the socket — on every render, forever.
 const { write } = vi.hoisted(() => ({ write: vi.fn() }));
 
+vi.mock("next/navigation", () => ({ useParams: () => ({ org: "acme", ws: "main", handle: "daneel" }) }));
 vi.mock("@wterm/ghostty", () => ({
   GhosttyCore: {
     load: vi.fn(() =>
@@ -92,7 +93,7 @@ function openSocket(): RecordingSocket {
 describe("terminal tab input framing (FIX-054)", () => {
   it("sends keystrokes as Binary frames with the exact UTF-8 bytes", async () => {
     render(<TerminalTab agentId="agent-1" frozen={false} />);
-    await vi.waitFor(() => expect(paneProps).not.toBeNull());
+    await waitFor(() => expect(RecordingSocket.instances).toHaveLength(1));
     const ws = openSocket();
 
     paneProps!.onData("ls\n");
@@ -104,7 +105,7 @@ describe("terminal tab input framing (FIX-054)", () => {
 
   it("encodes multi-byte UTF-8 exactly", async () => {
     render(<TerminalTab agentId="agent-1" frozen={false} />);
-    await vi.waitFor(() => expect(paneProps).not.toBeNull());
+    await waitFor(() => expect(RecordingSocket.instances).toHaveLength(1));
     const ws = openSocket();
 
     paneProps!.onData("héllo ☃\r");
@@ -113,7 +114,7 @@ describe("terminal tab input framing (FIX-054)", () => {
 
   it("chunks a >16 KiB paste into ordered Binary frames of at most 16384 bytes", async () => {
     render(<TerminalTab agentId="agent-1" frozen={false} />);
-    await vi.waitFor(() => expect(paneProps).not.toBeNull());
+    await waitFor(() => expect(RecordingSocket.instances).toHaveLength(1));
     const ws = openSocket();
 
     // A 40 KiB paste (the clipboard arrives as one onData string): one ASCII half, one
@@ -137,9 +138,23 @@ describe("terminal tab input framing (FIX-054)", () => {
     expect(Array.from(joined)).toEqual(Array.from(encoder.encode(paste)));
   });
 
+  it("does not send keystrokes while disconnected and says so (FIX-098)", async () => {
+    render(<TerminalTab agentId="agent-1" frozen={false} />);
+    await waitFor(() => expect(RecordingSocket.instances).toHaveLength(1));
+    const ws = openSocket();
+    await waitFor(() => expect(screen.queryByTestId("terminal-not-connected")).toBeNull());
+
+    // A final close (revoked): the pane is no longer connected.
+    act(() => ws.onclose?.({ code: 4403, wasClean: true }));
+    ws.readyState = 3;
+    act(() => paneProps!.onData("secret\n"));
+    expect(ws.sent).toHaveLength(0);
+    expect(screen.getByTestId("terminal-not-connected")).toHaveTextContent("what you typed was not sent");
+  });
+
   it("keeps pty.resize on Text as the JSON control with pty_id: 0", async () => {
     render(<TerminalTab agentId="agent-1" frozen={false} />);
-    await vi.waitFor(() => expect(paneProps).not.toBeNull());
+    await waitFor(() => expect(RecordingSocket.instances).toHaveLength(1));
     const ws = openSocket();
 
     paneProps!.onResize(120, 40);

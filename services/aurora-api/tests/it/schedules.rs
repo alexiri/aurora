@@ -516,6 +516,98 @@ async fn missed_fires_coalesce_and_pollers_fire_once() {
     assert_eq!(r.runs(&id).await.len(), 2);
 }
 
+/// (FIX-110) A PATCH that read the schedule before a fire claimed it must not restore the old
+/// `next_fire_at` or clear the fire lease (which would fire it twice): the edit starts from the
+/// locked current row and writes only the edited columns. A timing change still reschedules.
+#[tokio::test]
+async fn patch_racing_a_fire_keeps_next_fire_at_and_the_lease() {
+    use aurora_api::domains::schedules::service::{Patch, patch_with};
+    let r = rig().await;
+    let agent = r.agent("racer", true).await;
+    let v = r
+        .sched(
+            agent,
+            json!({"name": "d", "prompt": "p", "cron": "0 * * * *"}),
+        )
+        .await;
+    let id: Uuid = v["id"].as_str().unwrap().parse().unwrap();
+    let seen = aurora_db::repo::schedules::get(r.h.pool(), id)
+        .await
+        .unwrap()
+        .unwrap();
+    let pool = r.h.pool().clone();
+    // Between the caller's read and the update a fire claims the schedule and moves it on.
+    let fire = async {
+        sqlx::query(
+            "UPDATE schedules SET next_fire_at = now() + interval '3 hours',
+                 fire_lease_until = now() + interval '5 minutes' WHERE id = $1",
+        )
+        .bind(id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    };
+    let row = patch_with(
+        r.h.pool(),
+        seen.clone(),
+        Patch {
+            name: Some("renamed".into()),
+            ..Patch::default()
+        },
+        fire,
+    )
+    .await
+    .unwrap();
+    assert_eq!(row.name, "renamed");
+    let (moved, leased): (bool, bool) = sqlx::query_as(
+        "SELECT next_fire_at > now() + interval '2 hours', fire_lease_until > now()
+         FROM schedules WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_one(r.h.pool())
+    .await
+    .unwrap();
+    assert!(moved, "the fire's next_fire_at survived the edit");
+    assert!(leased, "the live fire lease survived the edit");
+    // A timing change reschedules and clears the lease.
+    let row = patch_with(
+        r.h.pool(),
+        seen,
+        Patch {
+            cron: Some("30 * * * *".into()),
+            ..Patch::default()
+        },
+        async {},
+    )
+    .await
+    .unwrap();
+    assert_eq!(row.cron, "30 * * * *");
+    let (soon, leased): (bool, bool) = sqlx::query_as(
+        "SELECT next_fire_at < now() + interval '70 minutes',
+                coalesce(fire_lease_until > now(), false) FROM schedules WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_one(r.h.pool())
+    .await
+    .unwrap();
+    assert!(soon && !leased);
+}
+
+/// (FIX-110) The cron minimum interval holds over a full cycle through the API too.
+#[tokio::test]
+async fn cron_with_a_close_pair_later_in_the_cycle_is_refused() {
+    let r = rig().await;
+    let agent = r.agent("closepair", true).await;
+    let (s, v) = r
+        .user_call(
+            Method::POST,
+            &format!("/v1/agents/{agent}/schedules"),
+            Some(json!({"name": "d", "prompt": "p", "cron": "0,5,10,15,20,21 * * * *"})),
+        )
+        .await;
+    assert_eq!(s, 400, "{v}");
+}
+
 #[tokio::test]
 async fn creator_losing_access_disables_with_authorization_and_notice() {
     let r = rig().await;
@@ -732,4 +824,53 @@ async fn schedule_tools_via_tool_calls() {
     assert_eq!(v["ok"], false);
     let v = call("schedule_delete", json!({"id": id})).await;
     assert_eq!(v["ok"], true, "{v}");
+}
+
+/// (FIX-111 5) The run history pages by keyset cursor: following `next_cursor` through more
+/// than 200 runs (some sharing one `created_at`) returns every run exactly once, newest first.
+#[tokio::test]
+async fn run_history_pages_by_cursor() {
+    let r = rig().await;
+    let agent = r.agent("pager", true).await;
+    let v = r
+        .sched(
+            agent,
+            json!({"name": "daily", "prompt": "p", "cron": "0 9 * * *"}),
+        )
+        .await;
+    let id = v["id"].as_str().unwrap().to_owned();
+    sqlx::query(
+        "INSERT INTO schedule_runs (id, schedule_id, outcome, fired_at, created_at)
+         SELECT gen_random_uuid(), $1::uuid, 'gated_quiet', now() - make_interval(secs => g / 3),
+                now() - make_interval(secs => g / 3)
+         FROM generate_series(1, 450) g",
+    )
+    .bind(&id)
+    .execute(r.h.pool())
+    .await
+    .unwrap();
+    let mut seen = Vec::new();
+    let mut cursor: Option<String> = None;
+    loop {
+        let uri = match &cursor {
+            None => format!("/v1/schedules/{id}/runs?limit=200"),
+            Some(c) => format!("/v1/schedules/{id}/runs?limit=200&cursor={c}"),
+        };
+        let (s, v) = r.user_call(Method::GET, &uri, None).await;
+        assert_eq!(s, 200, "{v}");
+        seen.extend(
+            v["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|i| i["id"].as_str().unwrap().to_owned()),
+        );
+        match v["next_cursor"].as_str() {
+            Some(c) => cursor = Some(c.to_owned()),
+            None => break,
+        }
+    }
+    assert_eq!(seen.len(), 450);
+    let unique: std::collections::HashSet<_> = seen.iter().collect();
+    assert_eq!(unique.len(), 450, "each run exactly once");
 }

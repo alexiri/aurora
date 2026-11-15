@@ -36,6 +36,7 @@ fn placeholder_settings() -> Settings {
         token_check: Duration::from_secs(DEFAULT_TOKEN_CHECK_SECS),
         capabilities: None,
         test_control: false,
+        net: crate::api::NetPolicy::from_env(),
     }
 }
 
@@ -87,6 +88,7 @@ pub fn settings_from_assignment(
         )?),
         capabilities: None,
         test_control: false,
+        net: crate::api::NetPolicy::from_env(),
     })
 }
 

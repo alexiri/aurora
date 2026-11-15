@@ -109,6 +109,50 @@ pub async fn list_pending_undecidable_for(
     .await?)
 }
 
+/// FIX-112: pending approvals the user may decide whose chat code (`sha256(id)[..5]`, the five
+/// bytes `code_prefix` decodes from) matches, found in SQL: the newest approval is as reachable as
+/// the oldest, whatever else is pending.
+pub async fn list_pending_by_code(
+    pool: &PgPool,
+    user: Uuid,
+    code_prefix: &[u8],
+    limit: i64,
+) -> Result<Vec<ApprovalRow>, DbError> {
+    Ok(sqlx::query_as(&format!(
+        "{SELECT} WHERE a.status = 'pending' AND {} \
+         AND substring(sha256(uuid_send(a.id)) from 1 for 5) = $2 \
+         ORDER BY a.created_at ASC, a.id ASC LIMIT $3",
+        may_decide()
+    ))
+    .bind(user)
+    .bind(code_prefix)
+    .bind(limit)
+    .fetch_all(pool)
+    .await?)
+}
+
+/// [`list_pending_undecidable_for`] narrowed to one chat code (FIX-112).
+pub async fn list_pending_undecidable_by_code(
+    pool: &PgPool,
+    user: Uuid,
+    code_prefix: &[u8],
+    limit: i64,
+) -> Result<Vec<ApprovalRow>, DbError> {
+    Ok(sqlx::query_as(&format!(
+        "{SELECT} WHERE a.status = 'pending' \
+         AND {MEMBER_ONLY} \
+         AND NOT {} \
+         AND substring(sha256(uuid_send(a.id)) from 1 for 5) = $2 \
+         ORDER BY a.created_at ASC, a.id ASC LIMIT $3",
+        crate::authz::hidden_direct_conversation_sql("a.conversation_id", "$1", "a.workspace_id")
+    ))
+    .bind(user)
+    .bind(code_prefix)
+    .bind(limit)
+    .fetch_all(pool)
+    .await?)
+}
+
 /// `MAY_DECIDE` plus conversation visibility (phase 1, RFE-009): an approval naming a direct
 /// conversation the user cannot see is neither visible nor decidable.
 fn may_decide() -> String {
@@ -155,12 +199,14 @@ pub async fn list_workspace(
     viewer: Uuid,
     ws: Uuid,
     status: Option<&str>,
+    agent_id: Option<Uuid>,
     after: After,
     fetch: i64,
 ) -> Result<Vec<ApprovalRow>, DbError> {
     let (t, id) = split(after);
     Ok(sqlx::query_as(&format!(
         "{SELECT} WHERE a.workspace_id = $6 AND ($2::text IS NULL OR a.status = $2) \
+         AND ($7::uuid IS NULL OR a.agent_id = $7) \
          AND ($3::timestamptz IS NULL OR (a.created_at, a.id) < ($3, $4)) \
          AND NOT {} \
          ORDER BY a.created_at DESC, a.id DESC LIMIT $5",
@@ -172,6 +218,7 @@ pub async fn list_workspace(
     .bind(id)
     .bind(fetch)
     .bind(ws)
+    .bind(agent_id)
     .fetch_all(pool)
     .await?)
 }
@@ -214,7 +261,61 @@ async fn notify_tx(
     .map_err(|e| DbError::Other(sqlx::Error::Protocol(e.to_string())))
 }
 
-/// First decision wins: `pending` -> `approved`/`denied`. `None` = already resolved.
+/// (FIX-109, `07` §Approval deadlines: "Expiry still denies") A `pending` approval past its
+/// deadline is `expired` here, in the caller's transaction, instead of waiting for the sweep
+/// (which runs every 10 s and adds a 30 s grace): a decision after the deadline must not win.
+/// Returns whether this call expired it.
+pub async fn expire_if_overdue(tx: &mut sqlx::PgConnection, id: Uuid) -> Result<bool, DbError> {
+    let ws: Option<Uuid> = sqlx::query_scalar(
+        "UPDATE approvals SET status = 'expired', decided_at = now(), resolved_at = now(), \
+         updated_at = now() WHERE id = $1 AND status = 'pending' AND deadline <= now() \
+         RETURNING workspace_id",
+    )
+    .bind(id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let Some(ws) = ws else {
+        return Ok(false);
+    };
+    notify_tx(&mut *tx, id, ws, "expired").await?;
+    Ok(true)
+}
+
+/// [`expire_if_overdue`] for the pending approvals of one batch of one agent that the user
+/// could decide. Returns how many it expired.
+pub async fn expire_overdue_of_batch(
+    tx: &mut sqlx::PgConnection,
+    user: Uuid,
+    org: Option<Uuid>,
+    ws: Option<Uuid>,
+    agent: Uuid,
+    batch_id: &str,
+) -> Result<usize, DbError> {
+    let rows: Vec<(Uuid, Uuid)> = sqlx::query_as(&format!(
+        "UPDATE approvals a SET status = 'expired', decided_at = now(), resolved_at = now(), \
+         updated_at = now() \
+         WHERE a.status = 'pending' AND a.deadline <= now() AND a.batch_id = $5 \
+         AND a.agent_id = $4 AND {} AND ($2::uuid IS NULL OR a.org_id = $2) \
+         AND ($3::uuid IS NULL OR a.workspace_id = $3) \
+         RETURNING a.id, a.workspace_id",
+        may_decide()
+    ))
+    .bind(user)
+    .bind(org)
+    .bind(ws)
+    .bind(agent)
+    .bind(batch_id)
+    .fetch_all(&mut *tx)
+    .await?;
+    for (id, w) in &rows {
+        notify_tx(&mut *tx, *id, *w, "expired").await?;
+    }
+    Ok(rows.len())
+}
+
+/// First decision wins: `pending` -> `approved`/`denied`. `None` = already resolved (or past its
+/// deadline: (FIX-109) the deadline is part of the statement, so a decision after it cannot win
+/// even when the expiry sweep is down).
 ///
 /// Runs inside the caller's transaction (RFE-008): the `approval.decide` audit row commits with
 /// the decision, or the decision does not happen.
@@ -228,7 +329,7 @@ pub async fn decide(
     let won: Option<Uuid> = sqlx::query_scalar(
         "UPDATE approvals SET status = $2, decided_by_user_id = $3, decided_via = $4, \
          decided_at = now(), resolved_at = now(), updated_at = now() \
-         WHERE id = $1 AND status = 'pending' \
+         WHERE id = $1 AND status = 'pending' AND deadline > now() \
          RETURNING workspace_id",
     )
     .bind(id)
@@ -285,7 +386,8 @@ pub async fn decide_batch(
     let rows: Vec<(Uuid, Uuid, Uuid)> = sqlx::query_as(&format!(
         "UPDATE approvals a SET status = $6, decided_by_user_id = $1, decided_via = $7, \
          decided_at = now(), resolved_at = now(), updated_at = now() \
-         WHERE a.status = 'pending' AND a.batch_id = $5 AND a.agent_id = $4 AND {} \
+         WHERE a.status = 'pending' AND a.deadline > now() AND a.batch_id = $5 AND a.agent_id = $4 \
+         AND {} \
          AND ($2::uuid IS NULL OR a.org_id = $2) AND ($3::uuid IS NULL OR a.workspace_id = $3) \
          RETURNING a.id, a.workspace_id, a.org_id",
         may_decide()
@@ -301,6 +403,72 @@ pub async fn decide_batch(
     .await?;
     for (id, w, _) in &rows {
         notify_tx(&mut *tx, *id, *w, "decided").await?;
+    }
+    Ok(rows)
+}
+
+/// What a pending gateway approval depends on (FIX-084): an approval authorizes the held request
+/// only under the policy in force when it is released, so the writers that remove or narrow the
+/// access it would use end it in their own transaction, as freezing does.
+#[derive(Debug, Clone, Copy)]
+pub enum Dependency<'a> {
+    /// Holds that would use this app connection's credential; `agent` narrows them to one agent
+    /// (a grant of that agent), `None` is every agent (the connection itself goes away).
+    Connection {
+        connection_id: Uuid,
+        agent_id: Option<Uuid>,
+    },
+    /// Holds of this agent that would use a generic secret rather than an app connection (the
+    /// row names no secret; revoking one secret ends them all, which is the safe side).
+    AgentSecrets { agent_id: Uuid },
+    /// Holds that would use any connection of this app (a snapshot that restricts the app).
+    App { app_id: &'a str },
+}
+
+/// `pending` approvals depending on `dep` -> `abandoned`, notifying the waiting gateways.
+/// Runs inside the caller's transaction. Returns `(id, workspace_id)`.
+pub async fn abandon_pending_depending_on(
+    tx: &mut sqlx::PgConnection,
+    dep: Dependency<'_>,
+) -> Result<Vec<(Uuid, Uuid)>, DbError> {
+    let set = "UPDATE approvals SET status = 'abandoned', decided_at = now(), resolved_at = now(), \
+               updated_at = now() WHERE status = 'pending' AND ";
+    let rows: Vec<(Uuid, Uuid)> = match dep {
+        Dependency::Connection {
+            connection_id,
+            agent_id,
+        } => {
+            sqlx::query_as(&format!(
+                "{set} connection_id = $1 AND ($2::uuid IS NULL OR agent_id = $2) \
+                 RETURNING id, workspace_id"
+            ))
+            .bind(connection_id)
+            .bind(agent_id)
+            .fetch_all(&mut *tx)
+            .await?
+        }
+        Dependency::AgentSecrets { agent_id } => {
+            sqlx::query_as(&format!(
+                "{set} agent_id = $1 AND connection_id IS NULL RETURNING id, workspace_id"
+            ))
+            .bind(agent_id)
+            .fetch_all(&mut *tx)
+            .await?
+        }
+        Dependency::App { app_id } => {
+            sqlx::query_as(&format!(
+                "{set} connection_id IN (SELECT id FROM app_connections WHERE app_id = $1) \
+                 RETURNING id, workspace_id"
+            ))
+            .bind(app_id)
+            .fetch_all(&mut *tx)
+            .await?
+        }
+    };
+    for (id, ws) in &rows {
+        // The event follows the status (docs/05 `aurora_approval`): `abandoned`, as on the
+        // freeze path (FIX-122).
+        notify_tx(&mut *tx, *id, *ws, "abandoned").await?;
     }
     Ok(rows)
 }
@@ -339,7 +507,7 @@ pub async fn abandon_unseen(pool: &PgPool, unseen_secs: f64) -> Result<Vec<(Uuid
     .fetch_all(&mut *tx)
     .await?;
     for (id, ws) in &rows {
-        notify_tx(&mut tx, *id, *ws, "expired").await?;
+        notify_tx(&mut tx, *id, *ws, "abandoned").await?;
     }
     tx.commit().await?;
     Ok(rows)

@@ -84,6 +84,48 @@ describe("PreviewsTab", () => {
   });
 });
 
+describe("PreviewsTab polling (FIX-089)", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("refetches after Start now without a focus change, and stops once nothing is waking", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    // The list as the API reports it over time: parked, then waking twice, then listening.
+    const statuses = ["not_listening", "waking", "waking", "listening"];
+    let lists = 0;
+    const fetchFn = mockFetch({
+      "GET /v1/agents/a1/previews": () => {
+        const status = statuses[Math.min(lists, statuses.length - 1)];
+        lists += 1;
+        return json(200, { shares: [{ ...share, status }] });
+      },
+      "POST /v1/previews/00000000-0000-4000-8000-000000000001/start": () => json(202, { status: "waking" }),
+    });
+    wrap(<PreviewsTab agentId="a1" frozen={false} />);
+    await screen.findByText("Not listening");
+    expect(lists).toBe(1);
+    // No polling while nothing is waking: a quiet minute adds no request.
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(lists).toBe(1);
+
+    fireEvent.click(screen.getByRole("button", { name: "Start now" }));
+    // The mutation's own refetch shows `waking`…
+    await screen.findByText("Waking");
+    expect(lists).toBe(2);
+    // …and from then on the list polls (5 s) until the share is listening.
+    await vi.advanceTimersByTimeAsync(5000);
+    await waitFor(() => expect(lists).toBe(3));
+    await vi.advanceTimersByTimeAsync(5000);
+    await screen.findByText("Listening");
+    expect(lists).toBe(4);
+    // Nothing is waking any more: polling stops.
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(lists).toBe(4);
+    expect(fetchFn.mock.calls.filter(([r]) => (r as Request).method === "POST")).toHaveLength(1);
+  });
+});
+
 describe("ShareDialog", () => {
   it("maps the duplicate-port conflict to a notice", async () => {
     const fetchFn = mockFetch({

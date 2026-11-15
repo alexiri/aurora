@@ -559,12 +559,76 @@ pub const TERMINAL_CHUNK_MAX: usize = limits::TERMINAL_CHUNK;
 /// Outside the seq/ack lineage (`seq: 0`); pty ids are allocated by the runner, increasing per
 /// channel connection. `window` is the sender's credit window (`TERMINAL_STREAM_WINDOW`);
 /// `cols`/`rows` seed the PTY's `TIOCSWINSZ`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct PtyOpen {
     pub pty_id: u32,
     pub window: u32,
     pub cols: u16,
     pub rows: u16,
+    /// (FIX-138) The shell the person chose; absent (an older runner) = bash. An enumerated
+    /// value, never a path: the supervisor maps it to a fixed binary.
+    #[serde(default)]
+    pub shell: PtyShell,
+    /// (FIX-138 item 1b, D-247 (e), C-750 (4)) The model each terminal harness would run;
+    /// absent (an older API or runner) = the CLIs' own defaults.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub models: Option<Box<TerminalModels>>,
+}
+
+/// (FIX-138 item 1b, C-750 (4)) One entry per terminal harness enabled on the instance.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct TerminalModels {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub claude_code: Option<TerminalModel>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub codex: Option<TerminalModel>,
+}
+
+/// Exactly one of `choice` / `unavailable` is present.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct TerminalModel {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub choice: Option<ModelChoice>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unavailable: Option<TerminalModelUnavailable>,
+}
+
+/// Why a terminal harness has no model.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TerminalModelUnavailable {
+    /// The agent has no usable LLM key for the harness.
+    NoKey,
+    /// No model is chosen for the agent.
+    NoModel,
+}
+
+/// (FIX-138) The terminal's shell choice (`12 §Terminal`, `16 §W19`, `05` `?shell=`).
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum PtyShell {
+    #[default]
+    Bash,
+    Zsh,
+}
+
+impl PtyShell {
+    /// Wire/query spelling.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Bash => "bash",
+            Self::Zsh => "zsh",
+        }
+    }
+
+    /// Parses the API's `?shell=` value: exactly `bash` or `zsh`.
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "bash" => Some(Self::Bash),
+            "zsh" => Some(Self::Zsh),
+            _ => None,
+        }
+    }
 }
 
 /// The supervisor accepted a PTY; `window` is its own credit window.
@@ -705,6 +769,13 @@ pub struct PreviewStreamOpenResponse {
     pub idle_secs: u32,
     /// Total stream lifetime (`PREVIEW_STREAM_LIFETIME`).
     pub max_lifetime_secs: u32,
+    /// (FIX-138) Terminal grant only: the shell the person chose (absent = bash).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shell: Option<PtyShell>,
+    /// (FIX-138 item 1b, C-750 (4)) Terminal grant only: the models of the enabled terminal
+    /// harnesses (absent = an older API).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub models: Option<TerminalModels>,
 }
 
 impl Validate for PreviewStreamOpenRequest {
@@ -1237,5 +1308,58 @@ mod report_id_tests {
             frame_report_id(Uuid::from_u128(2), 5)
         );
         assert_eq!(frame_report_id(boot, 5).get_version_num(), 5);
+    }
+}
+
+#[cfg(test)]
+mod terminal_models_tests {
+    use super::*;
+
+    fn choice() -> ModelChoice {
+        ModelChoice {
+            provider: "litellm".into(),
+            endpoint_id: "e".into(),
+            base_url: "http://llm.example/v1".into(),
+            dialect: "anthropic_messages".into(),
+            model: "m".into(),
+            effort: String::new(),
+            client_env: vec![],
+        }
+    }
+
+    #[test]
+    fn pty_open_without_models_is_an_older_peer() {
+        let o: PtyOpen =
+            serde_json::from_str(r#"{"pty_id":1,"window":10,"cols":80,"rows":24}"#).unwrap();
+        assert_eq!(o.models, None);
+        assert!(!serde_json::to_string(&o).unwrap().contains("models"));
+    }
+
+    #[test]
+    fn models_round_trip_with_snake_case_unavailable() {
+        let m = TerminalModels {
+            claude_code: Some(TerminalModel {
+                choice: Some(choice()),
+                unavailable: None,
+            }),
+            codex: Some(TerminalModel {
+                choice: None,
+                unavailable: Some(TerminalModelUnavailable::NoKey),
+            }),
+        };
+        let o = PtyOpen {
+            pty_id: 1,
+            window: 10,
+            cols: 80,
+            rows: 24,
+            shell: PtyShell::Bash,
+            models: Some(Box::new(m)),
+        };
+        let s = serde_json::to_string(&o).unwrap();
+        assert!(s.contains(r#""unavailable":"no_key""#), "{s}");
+        assert!(s.contains(r#""claude_code""#), "{s}");
+        assert_eq!(serde_json::from_str::<PtyOpen>(&s).unwrap(), o);
+        let n: TerminalModelUnavailable = serde_json::from_str(r#""no_model""#).unwrap();
+        assert_eq!(n, TerminalModelUnavailable::NoModel);
     }
 }

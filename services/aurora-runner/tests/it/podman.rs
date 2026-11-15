@@ -11,7 +11,9 @@ use std::time::Duration;
 use aurora_protocol::common::SecretString;
 use aurora_protocol::runner::{SandboxResources, SandboxSpec};
 use aurora_runner::backend::{Backend, HoldCallback, ObjectKind, StartRequest};
-use aurora_runner::backends::podman::{PodmanBackend, PodmanSettings, verify_network};
+use aurora_runner::backends::podman::{
+    PodmanBackend, PodmanSettings, verify_network, verify_network_dns,
+};
 use base64::Engine;
 use bollard::Docker;
 use bollard::exec::{CreateExecOptions, StartExecResults};
@@ -22,8 +24,10 @@ use uuid::Uuid;
 const PROBE_CA_PEM: &str = "-----BEGIN CERTIFICATE-----\nMIIBnzCCAUSgAwIBAgIUM9r7jwTt+H50+gskkfbctBQg0sowCgYIKoZIzj0EAwIw\nGjEYMBYGA1UEAwwPQXVyb3JhIHByb2JlIENBMCAXDTI2MTEwNzEzMjMyMloYDzIx\nMjYxMDE0MTMyMzIyWjAaMRgwFgYDVQQDDA9BdXJvcmEgcHJvYmUgQ0EwWTATBgcq\nhkjOPQIBBggqhkjOPQMBBwNCAASdiPf1x/r5vS0uY0nK0X3wfuEftek+6V7nsozQ\nwCJKGRDKzjU59cfBr+an8uoDuPo0DJl0CkHxqrD643MFTD2Lo2YwZDAdBgNVHQ4E\nFgQUIYO3pRSPN1VCDAVE+sMSFUz/urIwHwYDVR0jBBgwFoAUIYO3pRSPN1VCDAVE\n+sMSFUz/urIwEgYDVR0TAQH/BAgwBgEB/wIBADAOBgNVHQ8BAf8EBAMCAgQwCgYI\nKoZIzj0EAwIDSQAwRgIhAJYDTz1V0xJaySFLV71ajMjhmwEh3OGF1s9z5yaY8sM0\nAiEA8s1UeriAsGDKFM2OfjSCULwfCM5Q4Z8puur8GY2njI0=\n-----END CERTIFICATE-----\n";
 const BOOT_MARKER: &str = "aub_probe_marker_7f3a";
 
+/// (FIX-101) Skips without `AURORA_TEST_PODMAN`; with `CI=true` and the gate unset `require_or_skip`
+/// panics, so SEC-26's live hardening assertions cannot be skipped in CI.
 fn enabled() -> bool {
-    std::env::var("AURORA_TEST_PODMAN").is_ok_and(|v| v == "1")
+    aurora_testkit::require_or_skip("AURORA_TEST_PODMAN")
 }
 
 fn env_or(k: &str, d: &str) -> String {
@@ -282,6 +286,43 @@ async fn refuses_non_internal_network() {
     assert!(refused.unwrap_err().contains("not internal"));
     allowed.unwrap();
     verify_network(&d, &settings().network, false)
+        .await
+        .unwrap();
+}
+
+/// FIX-094 (SEC-02): an `--internal` network that still has DNS enabled is refused (the runner
+/// used to check `internal` only); the configured sandbox network, created `--disable-dns`,
+/// passes.
+#[tokio::test]
+async fn refuses_internal_network_with_dns_enabled() {
+    if !enabled() {
+        eprintln!("skipped: AURORA_TEST_PODMAN != 1");
+        return;
+    }
+    let socket = settings().socket.unwrap_or_else(|| {
+        format!(
+            "{}/podman/podman.sock",
+            std::env::var("XDG_RUNTIME_DIR").unwrap()
+        )
+    });
+    let d = docker();
+    let name = format!("aurora-test-dns-{}", Uuid::new_v4().simple());
+    d.create_network(bollard::models::NetworkCreateRequest {
+        name: name.clone(),
+        internal: Some(true),
+        ..Default::default()
+    })
+    .await
+    .unwrap();
+    let refused = verify_network_dns(&socket, &name, false).await;
+    let allowed = verify_network_dns(&socket, &name, true).await;
+    d.remove_network(&name).await.unwrap();
+    assert!(
+        refused.unwrap_err().contains("DNS"),
+        "DNS left on is refused"
+    );
+    allowed.unwrap();
+    verify_network_dns(&socket, &settings().network, false)
         .await
         .unwrap();
 }

@@ -352,8 +352,10 @@ async fn s6_approval_approve_deny_and_cross_replica() {
 
 #[tokio::test]
 async fn s6b_approval_expires() {
+    // (FIX-116) `approvals.timeout_secs` has a 60 s floor (the api refuses to start below it), so
+    // this test waits a full minute; `via_proxy`'s client bound stays above it.
     let f = fx(Opts {
-        approvals_timeout_secs: Some(3),
+        approvals_timeout_secs: Some(60),
         ..Opts::default()
     })
     .await;

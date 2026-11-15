@@ -74,7 +74,7 @@ pub async fn set_archived(
 // ------------------------------------------------------------------ delete
 
 /// Remove blob bytes after the delete committed; a failure leaves an orphan for the daily sweep.
-async fn remove_blobs(pool: &PgPool, blobs: &[(String, String)]) {
+pub(crate) async fn remove_blobs(pool: &PgPool, blobs: &[(String, String)]) {
     for (backend, key) in blobs {
         match blob::for_backend(backend, pool) {
             Some(store) => {
@@ -120,7 +120,12 @@ pub async fn delete(state: &AppState, c: &Caller, id: Uuid) -> Result<(), ApiErr
 }
 
 /// Ids, kinds and counts only: never content (docs/04 §Audit).
-fn delete_meta(convs: &[(Uuid, &str)], agent: Uuid, gone: &Deleted, reason: Option<&str>) -> Value {
+pub(crate) fn delete_meta(
+    convs: &[(Uuid, &str)],
+    agent: Uuid,
+    gone: &Deleted,
+    reason: Option<&str>,
+) -> Value {
     let mut m = json!({
         "conversation_ids": convs.iter().map(|(i, _)| *i).collect::<Vec<_>>(),
         "kinds": convs.iter().map(|(_, k)| *k).collect::<Vec<_>>(),
@@ -221,9 +226,12 @@ pub async fn redact(
     }
     let mut done = Vec::new();
     let mut types = Vec::new();
+    let mut quoting: Vec<i64> = Vec::new();
     for e in events.iter().filter(|e| e.redacted_at.is_none()) {
         let payload = marker(&e.payload, &label, reason.as_deref());
         lifecycle::write_redaction(&mut tx, conversation, e.seq, &payload, Some(c.user_id)).await?;
+        // C-725: messages quoting this event now show a redacted quote, in this transaction.
+        quoting.extend(transcript::redact_quotes_of(&mut tx, conversation, e.seq).await?);
         if e.ty == "turn.queued"
             && let Some(t) = e.turn_id
         {
@@ -262,7 +270,8 @@ pub async fn redact(
         audit::insert_tx(&mut tx, &ev).await?;
     }
     tx.commit().await.map_err(db)?;
-    for seq in &done {
+    quoting.retain(|s| !done.contains(s));
+    for seq in done.iter().chain(quoting.iter()) {
         state
             .conversation_bus
             .publish_redacted(&state.pool, conversation, *seq)

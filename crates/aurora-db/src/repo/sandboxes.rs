@@ -118,8 +118,9 @@ pub struct StopClaim {
 }
 
 /// Arm 2: requested stop/restart, idle park, background cap, and stalled `stopping` re-drives.
-/// `awake_cap_secs` is `PREVIEW_AWAKE_CAP`/`TERMINAL_AWAKE_CAP` (the keep-awake reasons
-/// `preview` and `terminal`'s shared per-boot bound).
+/// `awake_cap_secs` is `previews.awake_cap_secs` and `terminal_awake_cap_secs` is
+/// `terminal.awake_cap_secs`: the per-boot bounds of the keep-awake reasons `preview` and
+/// `terminal` (FIX-116: separate clocks, each from its own key).
 #[allow(clippy::too_many_arguments)]
 pub async fn claim_stops(
     conn: &mut PgConnection,
@@ -129,6 +130,7 @@ pub async fn claim_stops(
     cap_secs: f64,
     lease_secs: f64,
     awake_cap_secs: f64,
+    terminal_awake_cap_secs: f64,
     limit: i64,
 ) -> Result<Vec<StopClaim>, DbError> {
     let sql = format!(
@@ -169,10 +171,11 @@ pub async fn claim_stops(
         PREVIEW_KEEP = "s.preview_active_until > now() \
              AND (s.preview_awake_since IS NULL \
                   OR now() - s.preview_awake_since < make_interval(secs => $7))",
-        // (P4-TERM, C-620) the terminal's stamp and cap clock, same bound ($7 = the awake cap).
+        // (P4-TERM, C-620; FIX-116) the terminal's stamp and its own cap clock ($8 =
+        // `terminal.awake_cap_secs`, no longer the preview cap).
         TERMINAL_KEEP = "s.terminal_active_until > now() \
              AND (s.terminal_awake_since IS NULL \
-                  OR now() - s.terminal_awake_since < make_interval(secs => $7))",
+                  OR now() - s.terminal_awake_since < make_interval(secs => $8))",
     );
     Ok(sqlx::query_as(&sql)
         .bind(runner)
@@ -182,6 +185,7 @@ pub async fn claim_stops(
         .bind(limit)
         .bind(lease_secs)
         .bind(awake_cap_secs)
+        .bind(terminal_awake_cap_secs)
         .fetch_all(conn)
         .await?)
 }
@@ -335,6 +339,9 @@ pub async fn claim_starts(
              ORDER BY coalesce(s.last_engaged_at, s.created_at), s.id
              LIMIT $4 FOR UPDATE OF s SKIP LOCKED)
          UPDATE sandboxes s SET state = 'starting', runner_id = $1, owner_replica_id = $2,
+             -- (FIX-093) the attempt clock starts at the claim (not at the previous boot's stamp);
+             -- a re-claim of a still-`starting` row keeps it, so the deadline cannot be renewed.
+             start_attempt_at = CASE WHEN s.state = 'starting' THEN s.start_attempt_at ELSE now() END,
              lifecycle_lease_until = now() + make_interval(secs => $5), updated_at = now()
          FROM cand WHERE s.id = cand.id
          RETURNING s.id AS sandbox_id, s.agent_id",
@@ -392,7 +399,7 @@ pub async fn begin_boot(
 ) -> Result<Vec<Uuid>, DbError> {
     sqlx::query(
         "UPDATE sandboxes SET boot_id = $2, bootstrap_token_hash = $3, bootstrap_used_at = NULL,
-             channel_replica_id = NULL, listening_ports = '{}', home_applied_generation = 0,
+             channel_held_at = NULL, channel_replica_id = NULL, listening_ports = '{}', home_applied_generation = 0,
              stop_reason = NULL, stop_requested_at = NULL, restart_requested_at = NULL,
              failure_code = NULL, failure_message = NULL, container_ref = NULL, home_ref = $4,
              resource_profile = $5::jsonb,
@@ -506,6 +513,103 @@ pub async fn hello_overdue(
     .await?)
 }
 
+/// (FIX-093, C-580) A `starting` attempt with no waiting turn needs a deadline too (due schedules,
+/// preview and terminal demand claim starts as well).
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct StaleStart {
+    pub sandbox_id: Uuid,
+    pub boot_id: Uuid,
+    pub runner_live: bool,
+    pub start_phase: Option<String>,
+    pub start_detail: Option<String>,
+}
+
+/// (FIX-093, C-580) `starting` sandboxes whose attempt is older than `secs` (the readiness
+/// deadline), or whose lifecycle lease lapsed while the runner holding them is no longer live
+/// (replica seen within `online_secs`). No locks: `fail_attempt` fences.
+pub async fn stale_starts(
+    conn: &mut PgConnection,
+    secs: f64,
+    online_secs: f64,
+    limit: i64,
+) -> Result<Vec<StaleStart>, DbError> {
+    Ok(sqlx::query_as(
+        "SELECT id AS sandbox_id, boot_id, runner_live, start_phase, start_detail FROM (
+             SELECT s.id, s.boot_id, s.start_phase, s.start_detail, s.start_attempt_at,
+                    s.lifecycle_lease_until,
+                    EXISTS (SELECT 1 FROM runner_replicas rr WHERE rr.runner_id = s.runner_id
+                        AND rr.retired_at IS NULL
+                        AND rr.last_seen_at > now() - make_interval(secs => $2)) AS runner_live
+             FROM sandboxes s WHERE s.state = 'starting' AND s.boot_id IS NOT NULL) x
+         WHERE (start_attempt_at < now() - make_interval(secs => $1))
+            OR (NOT runner_live AND (lifecycle_lease_until IS NULL OR lifecycle_lease_until < now()))
+         ORDER BY start_attempt_at NULLS FIRST LIMIT $3",
+    )
+    .bind(secs)
+    .bind(online_secs)
+    .bind(limit)
+    .fetch_all(conn)
+    .await?)
+}
+
+/// (FIX-093) Whether the sandbox is ready for dispatch right now (supervisor connected, channel
+/// held, harness ready, home synced) — the predicate `fail_attempt` fences on. Call inside the
+/// transaction that holds the sandbox row.
+pub async fn is_ready(conn: &mut PgConnection, sandbox: Uuid) -> Result<bool, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT coalesce(bool_or(s.state = 'running' AND s.bootstrap_used_at IS NOT NULL
+                AND s.channel_replica_id IS NOT NULL AND s.resource_profile ? 'harness'
+                AND s.home_applied_generation >=
+                    (a.home_sync_generation + w.home_sync_generation + 1)), false)
+         FROM sandboxes s JOIN agents a ON a.id = s.agent_id JOIN workspaces w ON w.id = a.workspace_id
+         WHERE s.id = $1",
+    )
+    .bind(sandbox)
+    .fetch_one(conn)
+    .await?)
+}
+
+/// (FIX-071) The hello-overdue give-up: `fail_attempt`, additionally fenced on the supervisor
+/// still not having connected — the predicate `hello_overdue` selects on (`running`,
+/// `bootstrap_used_at IS NULL`). The row is locked first (held to the end of the caller's
+/// transaction), so a supervisor that connected between the selection and this update leaves the
+/// sandbox to the ordinary readiness deadline, which names the correct later-phase reason.
+/// Call inside a transaction.
+pub async fn fail_attempt_unconnected(
+    conn: &mut PgConnection,
+    sandbox: Uuid,
+    boot: Uuid,
+    code: &str,
+    message: &str,
+) -> Result<Option<Vec<Uuid>>, DbError> {
+    fail_attempt_unconnected_detail(conn, sandbox, boot, code, message, message).await
+}
+
+/// [`fail_attempt_unconnected`] with a separate `admin_message` for the start log and the admin
+/// start-failure rows (FIX-093: it may name the runner endpoint, the member text never does).
+pub async fn fail_attempt_unconnected_detail(
+    conn: &mut PgConnection,
+    sandbox: Uuid,
+    boot: Uuid,
+    code: &str,
+    message: &str,
+    admin_message: &str,
+) -> Result<Option<Vec<Uuid>>, DbError> {
+    let still: Option<Uuid> = sqlx::query_scalar(
+        "SELECT id FROM sandboxes
+         WHERE id = $1 AND boot_id = $2 AND state = 'running' AND bootstrap_used_at IS NULL
+         FOR UPDATE",
+    )
+    .bind(sandbox)
+    .bind(boot)
+    .fetch_optional(&mut *conn)
+    .await?;
+    if still.is_none() {
+        return Ok(None);
+    }
+    fail_attempt_detail(conn, sandbox, boot, code, message, false, admin_message).await
+}
+
 /// (FIX-025, D-158) The API gives up on the current start attempt of `boot`: the sandbox moves to
 /// `stopping` (reason `failure`, lease cleared so arm 2 sends the stop at the next poll) with the
 /// failure recorded; the `stopped` report then lands it in `failed` with the backoff. Fenced on
@@ -526,6 +630,21 @@ pub async fn fail_attempt(
     code: &str,
     message: &str,
     runner_gone: bool,
+) -> Result<Option<Vec<Uuid>>, DbError> {
+    fail_attempt_detail(conn, sandbox, boot, code, message, runner_gone, message).await
+}
+
+/// [`fail_attempt`] with a separate `admin_message` for the start log and the admin
+/// start-failure rows (FIX-093: it may name the runner endpoint; `message` is member-facing and
+/// never carries an address).
+pub async fn fail_attempt_detail(
+    conn: &mut PgConnection,
+    sandbox: Uuid,
+    boot: Uuid,
+    code: &str,
+    message: &str,
+    runner_gone: bool,
+    admin_message: &str,
 ) -> Result<Option<Vec<Uuid>>, DbError> {
     let row: Option<(Uuid, i32)> = sqlx::query_as(
         "SELECT s.agent_id, s.start_failures FROM sandboxes s
@@ -552,6 +671,8 @@ pub async fn fail_attempt(
             "UPDATE sandboxes SET state = 'failed', stop_reason = 'failure',
                  failure_code = $2, failure_message = $3, start_failures = $4,
                  lifecycle_lease_until = now() + make_interval(secs => $5),
+                 -- (FIX-093) no runner holds it: the next attempt may go to any runner.
+                 runner_id = NULL, owner_replica_id = NULL,
                  channel_replica_id = NULL, listening_ports = '{}', container_ref = NULL,
                  stop_requested_at = NULL, restart_requested_at = NULL, updated_at = now()
              WHERE id = $1",
@@ -579,13 +700,13 @@ pub async fn fail_attempt(
         .await?;
     }
     // (FIX-029, C-612) The readiness sweep's verdict enters the boot's start log.
-    append_start_log(conn, sandbox, "phase", Some("failed"), Some(message)).await?;
+    append_start_log(conn, sandbox, "phase", Some("failed"), Some(admin_message)).await?;
     record_start_failure(
         conn,
         sandbox,
         Some(boot),
         code,
-        message,
+        admin_message,
         &serde_json::json!([]),
     )
     .await?;
@@ -766,7 +887,7 @@ pub async fn agent_start_failures(
     .await?)
 }
 
-/// `(state, boot, owner, agent, stop_reason, start_failures)`.
+/// `(state, boot, owner, agent, stop_reason, start_failures, failure_code)`.
 type StatusRow = (
     String,
     Option<Uuid>,
@@ -774,6 +895,7 @@ type StatusRow = (
     Uuid,
     Option<String>,
     i32,
+    Option<String>,
 );
 
 /// Apply a lifecycle `sandbox.status` report, fenced on `(sandbox, boot, owner replica)`.
@@ -787,13 +909,13 @@ pub async fn apply_status(
 ) -> Result<(Applied, Vec<Uuid>), DbError> {
     let row: Option<StatusRow> = sqlx::query_as(
         "SELECT s.state, s.boot_id, s.owner_replica_id, s.agent_id, s.stop_reason,
-                    s.start_failures
+                    s.start_failures, s.failure_code
              FROM sandboxes s WHERE s.id = $1 FOR UPDATE",
     )
     .bind(sandbox)
     .fetch_optional(&mut *conn)
     .await?;
-    let Some((state, cur_boot, owner, agent, stop_reason, failures)) = row else {
+    let Some((state, cur_boot, owner, agent, stop_reason, failures, failure_code)) = row else {
         return Ok((Applied::Fenced, vec![]));
     };
     if cur_boot != Some(boot) || owner != Some(replica) {
@@ -912,9 +1034,18 @@ pub async fn apply_status(
             if state == "failed" || state == "stopped" {
                 return Ok((Applied::Duplicate, vec![]));
             }
-            let n = failures + 1;
+            // (FIX-093) The API already gave this boot up (`fail_attempt`: `stopping`, reason
+            // `failure`, code recorded, failure counted once): the runner's late `failed` for the
+            // same boot only lands the sandbox in `failed`: no second count, the code and message
+            // the API recorded stay.
+            let late = state == "stopping"
+                && stop_reason.as_deref() == Some("failure")
+                && failure_code.is_some();
+            let n = if late { failures } else { failures + 1 };
             sqlx::query(
-                "UPDATE sandboxes SET state='failed', failure_code=$2, failure_message=$3,
+                "UPDATE sandboxes SET state='failed',
+                     failure_code = CASE WHEN $6 THEN failure_code ELSE $2 END,
+                     failure_message = CASE WHEN $6 THEN failure_message ELSE $3 END,
                      channel_replica_id=NULL, listening_ports='{}', container_ref=NULL,
                      lifecycle_lease_until = now() + make_interval(secs => $5),
                      start_failures = $4,
@@ -925,6 +1056,7 @@ pub async fn apply_status(
             .bind(u.message)
             .bind(n)
             .bind(backoff_secs(n))
+            .bind(late)
             .execute(&mut *conn)
             .await?;
             // (FIX-025) A start failure keeps its events on the attempt and in the history.
@@ -1069,15 +1201,19 @@ pub async fn apply_ports(
     })
 }
 
-/// Channel claim: consume the single-use bootstrap token. `Ok(None)` => unknown token.
+/// Channel claim: consume the bootstrap token. `Ok(None)` => unknown token. The claim is
+/// idempotent while the boot has never held a channel (`channel_held_at IS NULL`, FIX-094,
+/// SEC-25): a claim whose response was lost, or whose `channel/hold` then failed, is answered
+/// again with the same `(sandbox, boot)`; once a channel was held the token is spent.
 pub async fn claim_bootstrap(
     conn: &mut PgConnection,
     runner: Uuid,
     hash: &[u8],
 ) -> Result<Option<Result<(Uuid, Uuid), ()>>, DbError> {
     let won: Option<(Uuid, Uuid)> = sqlx::query_as(
-        "UPDATE sandboxes SET bootstrap_used_at = now(), updated_at = now()
-         WHERE bootstrap_token_hash = $1 AND runner_id = $2 AND bootstrap_used_at IS NULL
+        "UPDATE sandboxes SET bootstrap_used_at = coalesce(bootstrap_used_at, now()), updated_at = now()
+         WHERE bootstrap_token_hash = $1 AND runner_id = $2
+           AND (bootstrap_used_at IS NULL OR channel_held_at IS NULL)
            AND state IN ('starting','running') AND boot_id IS NOT NULL
          RETURNING id, boot_id",
     )
@@ -1109,6 +1245,7 @@ pub async fn hold_channel(
     Ok(sqlx::query(
         // (FIX-025) The supervisor connected: the attempt moves on to `booting` until `ready`.
         "UPDATE sandboxes SET channel_replica_id = $4,
+             channel_held_at = coalesce(channel_held_at, now()),
              start_phase = CASE WHEN start_phase = 'ready' THEN start_phase ELSE 'booting' END,
              updated_at = now()
          WHERE id=$1 AND boot_id=$2 AND runner_id=$3 AND state IN ('starting','running')",
@@ -1170,10 +1307,17 @@ pub async fn assignments(
     .await?)
 }
 
-pub async fn known_ids(conn: &mut PgConnection, ids: &[Uuid]) -> Result<Vec<Uuid>, DbError> {
+/// Which of `ids` are sandboxes of `runner` (FIX-094: another runner's ids are not "known" —
+/// `sandboxes/check` decides what a runner may reap).
+pub async fn known_ids(
+    conn: &mut PgConnection,
+    runner: Uuid,
+    ids: &[Uuid],
+) -> Result<Vec<Uuid>, DbError> {
     Ok(
-        sqlx::query_scalar("SELECT id FROM sandboxes WHERE id = ANY($1)")
+        sqlx::query_scalar("SELECT id FROM sandboxes WHERE id = ANY($1) AND runner_id = $2")
             .bind(ids)
+            .bind(runner)
             .fetch_all(conn)
             .await?,
     )

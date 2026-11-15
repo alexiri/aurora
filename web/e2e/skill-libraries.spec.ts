@@ -34,6 +34,18 @@ for (const width of [1280, 390]) {
   });
 }
 
+test.describe("library catalogue paging", () => {
+  test.use({ viewport: { width: 1280, height: 900 } });
+  test("Load more lists the skills of the next page (FIX-100)", async ({ page }) => {
+    await openLibraryScreen(page, "add-list", "light");
+    const list = page.getByRole("list", { name: "Library skills" });
+    await expect(list.getByRole("button", { name: /^triage-issues/ })).toHaveCount(0);
+    await page.getByRole("button", { name: "Load more" }).click();
+    await expect(list.getByRole("button", { name: /^triage-issues/ })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Load more" })).toHaveCount(0);
+  });
+});
+
 test.describe("repository text is data", () => {
   test.use({ viewport: { width: 1280, height: 900 } });
   test("a markup or link payload in a description or diff is inert", async ({ page }) => {

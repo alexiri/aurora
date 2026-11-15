@@ -113,9 +113,8 @@ pub fn validate_path(path: &str) -> Result<(), ApiError> {
         && segs
             .iter()
             .all(|s| !s.is_empty() && *s != "." && *s != "..")
-        && !segs
-            .last()
-            .is_some_and(|l| l.eq_ignore_ascii_case("skill.md"));
+        // (FIX-110) `SKILL.md` in any segment (`skill.md/x` too), not only the last.
+        && !segs.iter().any(|s| s.eq_ignore_ascii_case("skill.md"));
     if ok {
         Ok(())
     } else {
@@ -417,6 +416,24 @@ pub async fn create(
     validate_description(n.description)?;
     validate_body(n.body)?;
     let mut tx = pool.begin().await.map_err(DbError::from)?;
+    // (FIX-110) The per-agent cap is checked under the agent row lock (the pattern
+    // `schedules::service::create` uses), so concurrent creates cannot overshoot it.
+    if let Some(agent) = owner.agent {
+        sqlx::query("SELECT 1 FROM agents WHERE id = $1 FOR UPDATE")
+            .bind(agent)
+            .execute(&mut *tx)
+            .await
+            .map_err(DbError::from)?;
+        if repo::count_agent_own(&mut tx, agent).await? >= limits::SKILL_PER_AGENT_MAX {
+            return Err(ApiError::conflict(
+                "skill_limit_reached",
+                format!(
+                    "An agent can have at most {} skills of its own.",
+                    limits::SKILL_PER_AGENT_MAX
+                ),
+            ));
+        }
+    }
     let row = repo::insert(
         &mut tx,
         org,
@@ -502,6 +519,17 @@ pub async fn put_file(
         return Err(readonly());
     }
     let mut files = repo::files(&mut tx, &[id]).await?;
+    // (FIX-110) At most SKILL_FILES_MAX files per skill (a replaced path adds none); the skill
+    // row is locked above, so the count is race-free.
+    if !files.iter().any(|f| f.path == path) && files.len() as i64 >= limits::SKILL_FILES_MAX {
+        return Err(ApiError::conflict(
+            "skill_files_limit_reached",
+            format!(
+                "A skill can have at most {} files.",
+                limits::SKILL_FILES_MAX
+            ),
+        ));
+    }
     files.retain(|f| f.path != path);
     files.push(repo::FileRow {
         skill_id: id,

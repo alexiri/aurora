@@ -9,6 +9,7 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { DataTable, Td, Th } from "@/components/ui/data-table";
 import { Notice } from "@/components/ui/notice";
 import { Section } from "@/components/ui/section";
+import { Segmented } from "@/components/ui/segmented";
 import { StatusDot } from "@/components/ui/status-dot";
 import { errorMessage } from "@/lib/api/errors";
 import { useRetrySandbox, useRestartSandbox, useSandbox, useStartFailures } from "@/lib/api/conversations";
@@ -18,6 +19,41 @@ import { useParams } from "next/navigation";
 import { ShareDialog } from "@/components/agents/previews-tab";
 import { clockTime } from "@/lib/chat/layout";
 import { errorCopy } from "@/lib/chat/transcript";
+
+import { readShell, SHELL_OPTIONS, writeShell, type Shell } from "./terminal-shell";
+
+/**
+ * (FIX-138, D-246) The terminal's shell, on the Computer page rather than above the pane (owner 2026-11-14). Still
+ * remembered per browser and agent, so it applies at once and to the next terminal session only.
+ */
+function TerminalShellSection({ agentId }: { agentId: string }) {
+  // Lazy initial read: the agent page renders its pages client-side only (inside its agent query), so no hydration mismatch.
+  const [shell, setShell] = useState<Shell>(() => readShell(agentId));
+  const [unsaved, setUnsaved] = useState(false);
+  return (
+    <Section
+      id="terminal-shell"
+      title="Terminal"
+      description="The shell a new terminal session starts. Remembered in this browser; an open terminal keeps its shell until you reconnect."
+      card
+    >
+      <Segmented<Shell>
+        label="Shell"
+        value={shell}
+        options={SHELL_OPTIONS}
+        onChange={(s) => {
+          setShell(s);
+          setUnsaved(!writeShell(agentId, s));
+        }}
+      />
+      {unsaved ? (
+        <p role="status" className="mt-2 text-xs text-muted">
+          This browser blocks storage, so the choice was not remembered; terminals start bash.
+        </p>
+      ) : null}
+    </Section>
+  );
+}
 
 const REASONS: Record<string, string> = {
   active_turn: "A turn is running",
@@ -127,7 +163,16 @@ function StartLog({ agentId, log }: { agentId: string; log: StartLogEntry[] }) {
 /** States where Restart has nothing to do (the API answers 409 `restart_not_applicable`, C-626). */
 const RESTART_NOT_APPLICABLE = new Set(["stopping", "stopped", "unprovisioned"]);
 
-export function ComputerTab({ agentId, frozen = false }: { agentId: string; frozen?: boolean }) {
+export function ComputerTab({
+  agentId,
+  frozen = false,
+  terminal = false,
+}: {
+  agentId: string;
+  frozen?: boolean;
+  /** The instance's `terminal.enabled`: the Terminal card shows only where the Terminal page exists. */
+  terminal?: boolean;
+}) {
   const q = useSandbox(agentId);
   const restart = useRestartSandbox(agentId);
   const retry = useRetrySandbox(agentId);
@@ -164,6 +209,7 @@ export function ComputerTab({ agentId, frozen = false }: { agentId: string; froz
           State: <StatusDot tone={tone}>{v.state}</StatusDot>
         </div>
       </Section>
+      {terminal ? <TerminalShellSection agentId={agentId} /> : null}
       {sharePort !== null ? <ShareDialog agentId={agentId} prefillPort={sharePort} onDone={() => setSharePort(null)} /> : null}
       {v.ports.length ? (
         <Section id="computer-ports" title="Ports" description="TCP ports currently listening inside this computer.">

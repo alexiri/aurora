@@ -3,6 +3,7 @@
 //! preview-stream grant endpoints, and the dashboard-side `GET /v1/previews/authorize`.
 pub mod auth;
 pub mod dto;
+pub mod quota;
 mod routes;
 pub mod service;
 

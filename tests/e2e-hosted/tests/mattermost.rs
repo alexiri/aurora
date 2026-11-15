@@ -379,6 +379,11 @@ async fn wait_link(h: &Human, secs: u64) -> String {
         let found = lock(&h.ephemerals).iter().find_map(|p| {
             let t = p["message"].as_str()?;
             let i = t.find("token=aui_")?;
+            // FIX-128: the notice arrives in the very DM, named by no internal channel id.
+            assert!(
+                !t.contains("In ~"),
+                "the sign-in notice carries a space prefix: {t}"
+            );
             Some(
                 t[i + 6..]
                     .chars()
@@ -432,6 +437,7 @@ async fn world() -> W {
             token_check: Duration::from_secs(2),
             capabilities: None,
             test_control: false,
+            net: aurora_connector_mattermost::api::NetPolicy::allow_all(),
         })
         .with_publisher("e2e-mm")
         .manifest(),
@@ -472,6 +478,8 @@ async fn world() -> W {
             ),
             ("AURORA_CONNECTOR_PUBLISHER".into(), "e2e-mm".into()),
             ("AURORA_CONNECTOR_TOKEN_CHECK_SECS".into(), "2".into()),
+            // The test Mattermost listens on loopback; production refuses private server URLs.
+            ("AURORA_MM_ALLOW_PRIVATE_NETWORKS".into(), "true".into()),
             ("AURORA_LOG_LEVEL".into(), "debug".into()),
         ],
     );
@@ -583,7 +591,10 @@ impl W {
         let token = wait_link(&self.alice, 60).await;
         let (s, v) = self
             .api
-            .post("/v1/channel-links/confirm", json!({"token": token}))
+            .post(
+                "/v1/channel-links/confirm",
+                json!({"token": token, "platform_user_ref": self.alice.id}),
+            )
             .await;
         assert!(s == 200 || s == 201, "confirm: {s} {v}");
         assert_eq!(self.links().await, 1);
@@ -642,9 +653,10 @@ async fn s1_dm_sign_in_link_then_answer() {
     let m =
         w.mm.wait_text(&dm, &w.bot.id, "hello from daneel", 30, &w.logs())
             .await;
+    // FIX-128: a 1:1 DM with the shared bot carries no "Agent · via Bot" line.
     assert!(
-        m["message"].as_str().unwrap().contains("Daneel"),
-        "shared-bot attribution on the first post: {m}"
+        !m["message"].as_str().unwrap().contains("via"),
+        "no attribution line in a 1:1 DM: {m}"
     );
     w.finish().await;
 }
@@ -824,13 +836,25 @@ async fn s4_unlinked_user_link_flow_and_no_autolink() {
         .api
         .post(
             "/v1/channel-links/confirm",
-            json!({"token": "aui_notarealtoken"}),
+            json!({"token": "aui_notarealtoken", "platform_user_ref": w.alice.id}),
         )
         .await;
     assert_eq!(s, 410, "bogus token: {v}");
+    // A confirm that names another chat account than the token's is refused (FIX-112).
     let (s, v) = w
         .api
-        .post("/v1/channel-links/confirm", json!({"token": link}))
+        .post(
+            "/v1/channel-links/confirm",
+            json!({"token": link, "platform_user_ref": "someone-else"}),
+        )
+        .await;
+    assert_eq!(s, 422, "mismatched account: {v}");
+    let (s, v) = w
+        .api
+        .post(
+            "/v1/channel-links/confirm",
+            json!({"token": link, "platform_user_ref": w.alice.id}),
+        )
         .await;
     assert!(s == 200 || s == 201, "confirm: {s} {v}");
     let method: String = sqlx::query_scalar(
@@ -844,7 +868,10 @@ async fn s4_unlinked_user_link_flow_and_no_autolink() {
     assert_eq!(method, "sign_in_link");
     let (s, v) = w
         .api
-        .post("/v1/channel-links/confirm", json!({"token": link}))
+        .post(
+            "/v1/channel-links/confirm",
+            json!({"token": link, "platform_user_ref": w.alice.id}),
+        )
         .await;
     assert_eq!(s, 410, "link reuse: {v}");
 

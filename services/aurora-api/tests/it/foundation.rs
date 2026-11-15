@@ -500,6 +500,41 @@ async fn instance_and_openapi() {
     assert_eq!((s.as_u16(), code(&v)), (404, "not_found"));
 }
 
+/// (FIX-119) Every operation that declares a security requirement documents the two answers any authenticated
+/// route can give regardless of its handler: 401 (no or an invalid credential) and 429 (the limiter).
+#[test]
+fn every_authenticated_operation_documents_401_and_429() {
+    let doc: Value = serde_json::from_str(&aurora_api::openapi::document_json()).unwrap();
+    let mut checked = 0;
+    let mut missing = Vec::new();
+    for (path, item) in doc["paths"].as_object().unwrap() {
+        for (method, op) in item.as_object().unwrap() {
+            if !matches!(method.as_str(), "get" | "post" | "put" | "patch" | "delete") {
+                continue;
+            }
+            if op["security"].as_array().is_none_or(|s| s.is_empty()) {
+                continue;
+            }
+            checked += 1;
+            for code in ["401", "429"] {
+                if op["responses"][code].is_null() {
+                    missing.push(format!("{} {path}: no {code}", method.to_uppercase()));
+                }
+            }
+        }
+    }
+    assert!(
+        checked > 250,
+        "expected hundreds of authenticated operations, saw {checked}"
+    );
+    assert!(
+        missing.is_empty(),
+        "{} gaps:\n{}",
+        missing.len(),
+        missing.join("\n")
+    );
+}
+
 #[test]
 fn openapi_matches_checked_in() {
     let generated = aurora_api::openapi::document_json();

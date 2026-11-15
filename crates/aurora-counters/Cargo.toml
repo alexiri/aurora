@@ -29,6 +29,8 @@ tokio = { workspace = true, features = ["test-util"] }
 # The conformance suite runs every backend: turn the Redis one on for this crate's own tests.
 aurora-counters = { path = ".", features = ["redis"] }
 aurora-db.workspace = true
+# (FIX-101) the skip policy of the env-gated Redis tests (`require_or_skip`: CI=true fails instead of skipping).
+aurora-testkit.workspace = true
 sqlx.workspace = true
 futures.workspace = true
 redis = { version = "1.5", default-features = false, features = ["tokio-comp", "script"] }

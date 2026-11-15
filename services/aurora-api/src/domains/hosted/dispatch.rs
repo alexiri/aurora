@@ -20,6 +20,8 @@ use std::time::Duration;
 use uuid::Uuid;
 
 const ARM_LIMIT: i64 = 16;
+/// (FIX-115) Pages of `ARM_LIMIT` agents the `no_model_key` sweep walks per poll (128 agents).
+const NO_KEY_PAGES: usize = 8;
 /// Lease on a home sync / abort delivery before it is re-sent.
 const SYNC_LEASE_SECS: f64 = 60.0;
 const ABORT_LEASE_SECS: f64 = 30.0;
@@ -51,7 +53,22 @@ pub async fn sweep_no_model_key(
     tx: &mut PgConnection,
     after: &mut After,
 ) -> Result<(), ApiError> {
-    for (turn, conversation, agent) in hosted::queued_hosted_turns(tx, ARM_LIMIT).await? {
+    // (FIX-115) Walk the agents with queued turns page by page (bounded), not just the sixteen
+    // oldest turns: a keyless agent behind turns that wait for capacity is still found.
+    let mut cursor = None;
+    let mut agents_seen: Vec<Uuid> = Vec::new();
+    for _ in 0..NO_KEY_PAGES {
+        let page = hosted::queued_hosted_agents(tx, cursor, ARM_LIMIT).await?;
+        let Some(last) = page.last().copied() else {
+            break;
+        };
+        cursor = Some((last.1, last.0));
+        agents_seen.extend(page.iter().map(|p| p.0));
+        if (page.len() as i64) < ARM_LIMIT {
+            break;
+        }
+    }
+    for agent in agents_seen {
         let Some(a) = agents::get(&mut *tx, agent).await? else {
             continue;
         };
@@ -80,12 +97,15 @@ pub async fn sweep_no_model_key(
                 .failure()
         };
         if let Some((code, message)) = failure {
-            convs::lock(tx, conversation).await?;
-            if lifecycle::fail(tx, turn, conversation, code, &message)
-                .await?
-                .is_some()
-            {
-                after.flush.push((conversation, turn));
+            // Every queued turn of the agent ends with the reason (the verdict is per agent).
+            for (turn, conversation) in hosted::queued_turns_of_agent(tx, agent).await? {
+                convs::lock(tx, conversation).await?;
+                if lifecycle::fail(tx, turn, conversation, code, &message)
+                    .await?
+                    .is_some()
+                {
+                    after.flush.push((conversation, turn));
+                }
             }
         }
     }
@@ -286,7 +306,7 @@ async fn arm6_dispatch(
         let (resume_ref, epoch) = hosted::session_of(tx, turn.conversation_id).await?;
         let mems = hosted::memories(tx, agent.id).await?;
         let snippets = crate::domains::memory::recall_snippets(tx, agent.id, &turn.text).await?;
-        let attachments = hosted::turn_attachments(tx, turn.id)
+        let attachments: Vec<AttachmentRef> = hosted::turn_attachments(tx, turn.id)
             .await?
             .into_iter()
             .map(|a| AttachmentRef {
@@ -295,6 +315,16 @@ async fn arm6_dispatch(
                 size: u64::try_from(a.size_bytes).unwrap_or(0),
             })
             .collect();
+        // C-725/C-726: the quote block and the files-only line are built here, never stored.
+        let delivered_text = crate::domains::conversations::reply::delivered_text_of(
+            tx,
+            turn.conversation_id,
+            turn.agent_id,
+            &turn.text,
+            turn.reply_to_seq,
+            attachments.len(),
+        )
+        .await?;
         items.push(item(
             cand.sandbox_id,
             cand.boot_id,
@@ -310,7 +340,7 @@ async fn arm6_dispatch(
                     tok.expose().as_str(),
                 ),
                 input: TurnInput {
-                    text: turn.text.clone(),
+                    text: delivered_text,
                     speaker_label: turn.speaker_label.clone(),
                     door: door_name(&turn.door),
                     recall: Recall {
@@ -338,13 +368,26 @@ async fn arm7_steer(
         if !turns::mark_steer_delivered(tx, c.followup_id).await? {
             continue;
         }
+        let agent_id = turns::get(&mut *tx, c.turn_id)
+            .await?
+            .map(|t| t.agent_id)
+            .ok_or_else(|| ApiError::internal("Turn vanished."))?;
+        let text = crate::domains::conversations::reply::delivered_text_of(
+            tx,
+            c.conversation_id,
+            agent_id,
+            &c.text,
+            c.reply_to_seq,
+            usize::try_from(c.n_files).unwrap_or(0),
+        )
+        .await?;
         items.push(item(
             c.sandbox_id,
             c.boot_id,
             WorkItemBody::TurnMessage(TurnMessage {
                 turn_id: c.turn_id,
                 followup_id: c.followup_id,
-                text: c.text,
+                text,
                 speaker_label: c.speaker_label,
             }),
         ));

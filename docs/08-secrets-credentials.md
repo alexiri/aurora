@@ -14,9 +14,12 @@ Phase: **0** (inline store, LiteLLM, Anthropic) · **3** (HashiCorp Vault store,
 | Dedicated presence credentials | `channel_presences.credentials_ref` | `presence.credentials` |
 | Webhook verification secret | `webhooks.verification.secret_ref` | `webhook.verification` |
 | Credential copy of a self-contained deprovision op (RFE-024, owner = op id) | `channel_ops.payload.credentials_ref` | `channel_op.deprovision` |
+| A person's chat-platform token (phase 5, P4-UTOK, D-282, SEC-112; owner = the `user_tokens` row id) | `user_tokens.token_ref` | `user_token` |
+| Per-op copy of a person's token for one `message.post` or `user_token.verify` (phase 5, P4-UTOK, D-282; owner = the op id; discarded at the op's terminal state) | `channel_ops.payload.user_credential_ref` | `channel_op_user_token` |
 | Managed connector secret settings (phase 4, P4-MCON; owner = `connectors.secret_owner`, org = nil UUID) | `connectors.secret_refs` (one per field) | `connector.settings` |
-| Web Push VAPID private key (phase 4, RFE-011b; owner = the key id, org = nil UUID) | `webpush_vapid_keys.private_ref` | `webpush.vapid` |
-| Web Push subscription endpoint and keys (phase 4, RFE-011b; owner = the subscription id, org = nil UUID) | `push_subscriptions.secret_ref` | `webpush.subscription` |
+| Web Push VAPID private key (phase 5 (D-138, moved from phase 4), RFE-011b; owner = the key id, org = nil UUID; always the `inline` store, D-266(b)) | `webpush_vapid_keys.private_ref` | `webpush.vapid` |
+| Web Push subscription endpoint and keys (phase 5 (D-138, moved from phase 4), RFE-011b; owner = the subscription id, org = nil UUID; always the `inline` store, D-266(b)) | `push_subscriptions.secret_ref` | `webpush.subscription` |
+| Instance setting secrets: OIDC client secrets, the SMTP password, Vault AppRole secret ids (phase 5, SET-1, D-236(g); owner = the field's own id, org = nil UUID; **always the `inline` store**, whatever `secrets.default_store` says, so sign-in, mail and reaching Vault never depend on an external store) | `instance_settings.value` (`$secret` fields, `03 §Planned changes`) | `instance_setting` |
 
 Every such column holds a **SecretRef**. Code never interprets a SecretRef
 outside `aurora-secrets`; it calls the **SecretVault** service:
@@ -39,6 +42,10 @@ impl SecretVault {
 
 The vault holds a **store registry** built at startup from configuration. Both
 the API and the gateway build it from the same `[secrets]` configuration.
+(phase 5, FIX-124 on SET-1, D-195(d)) `secrets.default_store` and the store definitions become
+instance settings (`15 §Instance settings`, section `secrets`, keyed list `secrets.stores` by `id`):
+stores the configuration defines are locked, others are added on Admin › Secret stores, and both
+services rebuild the registry live when the section changes.
 
 ## 2. The SecretStore seam
 
@@ -62,7 +69,14 @@ Rules every store MUST follow:
    ref naming it. The **database row is the compare-and-set authority**: callers
    swap refs with `UPDATE … WHERE <ref/version column> = <old>`. Stores
    therefore need no CAS of their own, and a lost race leaves only an orphan
-   version (cleaned by `discard`).
+   version (cleaned by `discard`). **Deleting an owner discards its values** (FIX-122): an
+   agent delete discards the agent's webhook verification secrets and its dedicated
+   presences' credentials; a workspace delete those of its agents plus its managed
+   secrets, connections and OAuth client secrets; an org delete all of those plus the
+   org's channel-integration credentials. The refs are collected inside the deleting
+   transaction and discarded after the commit (the store call cannot join the
+   transaction); a failed discard is logged and leaves an unreferenced orphan in the
+   store, never a row that still resolves.
 2. **Purpose binding.** A ref resolved with a different purpose or owner than it
    was sealed with MUST fail (`SecretRefMismatch`). Inline achieves this with
    AEAD associated data; external stores by path layout and by storing the
@@ -161,7 +175,7 @@ value on the connect path, never per request.
 `AURORA_SIGNING_KEY` (32 bytes, base64) is the root for derived keys:
 `HKDF-SHA256(root, info = "aurora:<purpose>:v1")`.
 
-(phase 4, P4-S3) **Blob-store credentials** are not Aurora secrets and are not in
+(phase 5 (D-138, moved from phase 4), P4-S3) **Blob-store credentials** are not Aurora secrets and are not in
 the `secrets` table or any SecretStore: the S3 backend (`15 §S3-compatible blob
 store`) uses the workload's provider chain (preferred) or environment variables named
 by the configuration (`blobs.s3.credentials.*_env`), filled from a Kubernetes Secret.
@@ -178,10 +192,13 @@ the configuration names environment variables (`username_env`, `password_env`),
 filled from a Secret (Helm `counters.redis.existingSecret`), exactly like the Vault
 `approle` variables (`15`).
 
-(phase 4, RFE-011b) **Web Push material** is opened only by the API: the VAPID private key
+(phase 5 (D-138, moved from phase 4), RFE-011b) **Web Push material** is opened only by the API: the VAPID private key
 (ES256) to sign a push request's JWT, and a subscription's sealed `{ endpoint, p256dh, auth }` to
-encrypt and address one push. Both live under the usual store registry (managed in the default
-store; an external store works the same), are never returned by a route, never logged and never
+encrypt and address one push. Both live under the usual store registry, (P4-011B spec batch,
+D-266(b); replaces "in the default store; an external store works the same") **always in the
+`inline` store** whatever `secrets.default_store` says — a push opens one secret per device per
+approval and must neither depend on nor fan out to an external store, and the material is the
+instance's, not an organization's — are never returned by a route, never logged and never
 sent to the gateway, a runner or a sandbox; an operator-managed VAPID key (`push.vapid.private_key_env`)
 is read from the environment at startup and never stored. The endpoint URL is sealed because it is a
 capability: with the subscription's keys it lets anyone who holds it push to that browser (VAPID
@@ -330,7 +347,7 @@ pub trait LlmProvider: Send + Sync {
     /// e.g. listing models), or Unknown (body truncated/unparsable — fail closed).
     fn model_from_request(&self, ep: &Endpoint, method: &Method, path: &str, body_prefix: &[u8], truncated: bool) -> ModelRef;
 
-    // --- (phase 4, P4-LLM, D-121) additions; phase-0 providers return the defaults ---
+    // --- (phase 5 (D-138, moved from phase 4), P4-LLM, D-121) additions; phase-0 providers return the defaults ---
     /// Paths on which Aurora may inject this provider's credential (SEC-65); `None` = unrestricted (litellm, anthropic).
     fn inference_paths(&self, ep: &Endpoint) -> Option<PathSet> { None }
     /// Provider error → class, shared by the gateway (request log, metrics) and the harness adapters.
@@ -338,6 +355,10 @@ pub trait LlmProvider: Send + Sync {
 }
 // InjectionRecipe gains (LLM secrets only): Header { name } (e.g. Azure `api-key`), AwsSigV4 { region, service },
 // GcpServiceAccountToken { scope }; AuthMode gains `aws_sigv4`, `gcp_service_account`.
+// (phase 5, P4-LLM spec batch, D-261) also AwsAssumeRole { region, service } (STS session minted, then SigV4)
+// and EntraToken { scope }; AuthMode gains `aws_assume_role`, `azure_entra`. Minted modes declare a
+// `MintSpec` (pinned token endpoint, request builder, response parser) in `aurora-llm`, used by the
+// gateway's mint service and by the API's validation alike (C-807).
 
 pub struct KeyOrigin {             // every field optional; which ones are filled depends on the method
     pub organization_id: Option<String>,
@@ -388,7 +409,7 @@ The `anthropic` endpoint is implicit (`id = "anthropic"`, no key-origin rule)
 when the provider is enabled and no endpoint of that provider is declared;
 declare it explicitly to attach origin rules or a model allow-list. Adding a provider later (OpenAI, Azure OpenAI, Bedrock, Vertex, a
 generic OpenAI-compatible endpoint) is a module + one registry line; adding an
-endpoint of an existing provider is configuration only. (phase 4, P4-LLM) These five are
+endpoint of an existing provider is configuration only. (phase 5 (D-138, moved from phase 4), P4-LLM) These five are
 specified below (*Phase 4 providers*).
 
 ### Phase 4 providers (P4-LLM, D-121, SEC-64, SEC-65)
@@ -404,10 +425,10 @@ a module of `aurora-llm` plus one registry line.
 | Provider | Endpoint (hosts) | Auth modes | Dialects | Injection (gateway) | Models | Key origin (§11) |
 |----------|------------------|-----------|----------|---------------------|--------|------------------|
 | **`openai`** | Fixed `https://api.openai.com`; optional `organization`, `project` set as `OpenAI-Organization` / `OpenAI-Project` | `api_key` | `openai_chat`, `openai_responses` | `Authorization: Bearer <key>`; agent-supplied `Authorization`, `OpenAI-Organization`, `OpenAI-Project` removed, the configured ones set | `GET /v1/models` (paged); fallback static | `provider_account`: the organization and project the key reports in the `openai-organization` / `openai-project` response headers of `GET /v1/models` (and of every ordinary response, for the backstop); the exact fields are pinned in the provider and covered by the live suite, like `litellm_team`. `organization_id` ← organization, `workspace_id` ← project |
-| **`azure_openai`** | **Configured**: `base_url = https://<resource>.<azure-domain>` (https, host only; the OpenAI **v1 API** `/openai/v1/…` is the only surface supported in phase 4, so no `api-version` is involved) | `api_key` (the resource key) | `openai_chat`, `openai_responses` | `api-key: <key>`; agent-supplied `Authorization` and `api-key` removed | **static `models` = deployment names (required, with `default_model`)**: Azure's data plane lists base models, not deployments; `GET /openai/v1/models` is used only to validate the key | `endpoint` only (a key that works on the operator's resource is that operator's) |
-| **`bedrock`** | **Configured**: `region`; hosts `bedrock-runtime.<region>.amazonaws.com` (optional `base_url` override for a VPC endpoint). The control-plane host `bedrock.<region>.amazonaws.com` is used only by the API for listing and is **never** an agent-reachable injection target | `aws_sigv4` (IAM access key id + secret [+ session token], JSON value) and `api_key` (a Bedrock API key) | `anthropic_bedrock` (default); `openai_chat` / `openai_responses` only when the endpoint declares them (Bedrock's OpenAI-compatible surface) | `aws_sigv4`: the gateway **removes every agent-supplied `Authorization` and `X-Amz-*` header and SigV4-signs the final request** (service `bedrock`, the endpoint's region; the mechanism of `09 §5`, body buffered up to `LLM_SIGN_BODY_MAX` 8 MiB, larger → 413 `llm_request_too_large`); `api_key`: `Authorization: Bearer <key>` | `GET /foundation-models` and `GET /inference-profiles` on the control-plane host, signed by the API (needs `bedrock:ListFoundationModels`, `bedrock:ListInferenceProfiles`); on failure, the static `models` list | `aws_sigv4`: `provider_account` = the AWS account id from a signed `sts:GetCallerIdentity` (needs no permission); `organization_id` ← account id. `api_key`: `endpoint` only |
+| **`azure_openai`** | **Configured**: `base_url = https://<resource>.<azure-domain>` (https, host only; the OpenAI **v1 API** `/openai/v1/…` is the only surface supported in phase 4, so no `api-version` is involved) | `api_key` (the resource key); (phase 5, D-261) `azure_entra` (Entra app: `{ tenant_id, client_id, client_secret }`) | `openai_chat`, `openai_responses` | `api_key`: `api-key: <key>`; `azure_entra`: `Authorization: Bearer <gateway-minted Entra token>` (client-credentials grant, scope `https://cognitiveservices.azure.com/.default`); either way agent-supplied `Authorization` and `api-key` removed | **static `models` = deployment names (required, with `default_model`)**: Azure's data plane lists base models, not deployments; `GET /openai/v1/models` is used only to validate the key | `api_key`: `endpoint` only (a key that works on the operator's resource is that operator's); `azure_entra`: `endpoint` or `provider_account` (`organization_id` ← the token's tenant `tid`, `user_id` ← its `appid`/`azp`; proven by the mint) |
+| **`bedrock`** | **Configured**: `region`; hosts `bedrock-runtime.<region>.amazonaws.com` (optional `base_url` override for a VPC endpoint). The control-plane host `bedrock.<region>.amazonaws.com` is used only by the API for listing and is **never** an agent-reachable injection target | (phase 5, D-261) **`aws_assume_role`** (recommended: a source IAM key + `role_arn`, the gateway assumes the role with the org's external id), `aws_sigv4` (IAM access key id + secret [+ session token], JSON value) and `api_key` (a Bedrock API key) | `anthropic_bedrock` (default); `openai_chat` / `openai_responses` only when the endpoint declares them (Bedrock's OpenAI-compatible surface) | `aws_sigv4`: the gateway **removes every agent-supplied `Authorization` and `X-Amz-*` header and SigV4-signs the final request** (service `bedrock`, the endpoint's region; the mechanism of `09 §5`, body buffered up to `LLM_SIGN_BODY_MAX` 8 MiB, larger → 413 `llm_request_too_large`); `aws_assume_role`: the same, signed with the **session credentials** from the gateway's STS mint (`X-Amz-Security-Token` set by the gateway; the source key never signs an inference request); `api_key`: `Authorization: Bearer <key>` | `GET /foundation-models` and `GET /inference-profiles` on the control-plane host, signed by the API (needs `bedrock:ListFoundationModels`, `bedrock:ListInferenceProfiles`); on failure, the static `models` list | `aws_sigv4`: `provider_account` = the AWS account id from a signed `sts:GetCallerIdentity` (needs no permission); `organization_id` ← account id. `aws_assume_role`: `provider_account` = the account id of the assumed-role ARN in the `AssumeRole` answer (the role's account, not the source key's), `user_id` ← the role ARN. `api_key`: `endpoint` only |
 | **`vertex`** | **Configured**: `project_id`, `location` (`global` or a region); host `<location>-aiplatform.googleapis.com` (`aiplatform.googleapis.com` for `global`) | `gcp_service_account` (the service-account key file, JSON value) | `anthropic_vertex` (default); `openai_chat` (Vertex's OpenAI-compatible `…/endpoints/openapi/chat/completions`) when declared | the gateway **mints an OAuth2 access token** from the key (JWT bearer grant, scope `https://www.googleapis.com/auth/cloud-platform`) and sets `Authorization: Bearer <token>`; agent-supplied `Authorization` and `x-goog-*` removed | **static `models` (required, with `default_model`)**: no listing call that needs no extra IAM; the key is validated by minting a token | `provider_account`: the key's `project_id` and `client_email` (proven live by the successful mint); `workspace_id` ← project id, `user_id` ← service-account e-mail |
-| **`openai_compatible`** | **Configured**: `base_url` (https, optional path prefix); any host, allowed by the guard even when private (like `litellm`) | `api_key` | as declared per endpoint (default `["openai_chat"]`; may add `openai_responses`, `anthropic_messages`) | `Authorization: Bearer <key>` or, per endpoint `auth_header = "api-key"` / `"x-api-key"`; the others removed | `GET <base>/v1/models` (or `models_path`); fallback static | `endpoint` only |
+| **`openai_compatible`** | **Configured**: `base_url` (optional path prefix); any host. (phase 5, D-262) `https`, or plain `http` like `litellm` (Helm endpoints; dashboard endpoints only to a loopback host or one covered by `gateway.allowed_private`); a private address passes the guard implicitly only for a Helm endpoint (*Endpoint destinations* below) | `api_key` | as declared per endpoint (default `["openai_chat"]`; may add `openai_responses`, `anthropic_messages`) | `Authorization: Bearer <key>` or, per endpoint `auth_header = "api-key"` / `"x-api-key"`; the others removed | `GET <base>/v1/models` (or `models_path`); fallback static | `endpoint` only |
 
 **Shared mechanics**
 
@@ -427,14 +448,45 @@ a module of `aurora-llm` plus one registry line.
   `[[llm.endpoints]]` entry refuses startup. Temporary AWS credentials (`session_token`) are not
   refreshed by Aurora: they stop working when they expire and the key must be replaced; use a
   least-privilege IAM user (`bedrock:InvokeModel*` only) or a Bedrock API key.
+  (phase 5, D-261) `aws_assume_role` is the JSON `{ "access_key_id", "secret_access_key", "role_arn",
+  "session_duration_secs"? }` (`role_arn` `arn:aws[-us-gov]:iam::<12 digits>:role/<path/name>`,
+  duration 900–43 200 s, default 3 600): the role's trust policy must require the org's external id
+  (`Org.external_id`, shown on the key form), so a source key stored in one org can never assume a
+  role meant for another; the source key needs only `sts:AssumeRole` on that role and the role only
+  `bedrock:InvokeModel*` (plus the two list permissions for live model lists). `azure_entra` is the
+  JSON `{ "tenant_id", "client_id", "client_secret" }` (tenant and client ids are GUIDs; the tenant may
+  not be `common`, `organizations` or `consumers`). Both are sealed and opened like every LLM secret,
+  and neither can carry a token endpoint, an authority or a region: those come from the mode and the
+  endpoint only.
 - **Vertex tokens.** The mint is stateless (no single-use refresh token), so unlike OAuth refresh
   (§8) it needs no database lock: each gateway replica mints for itself, single-flight per
   `(secret_id, value_version)`, and caches the token in the zeroizing in-memory cache for
   `min(expires_in − 300 s, 55 min)`; the signed assertion is valid ≤ 10 min and never logged. The key's
   `token_uri` must equal `https://oauth2.googleapis.com/token` (anything else is refused at save, so a
   crafted key cannot redirect the assertion); the mint goes out through the guarded dial with a
-  `LLM_TOKEN_MINT_TIMEOUT` of 10 s. A failed mint answers 503 `credential_unavailable` and nothing is
+  `LLM_TOKEN_MINT_TIMEOUT` of 10 s. A failed mint answers 502 `credential_unavailable` (the code's
+  status in `06 §Guidance responses`; `details: { kind: "llm_mint", reason }`) and nothing is
   forwarded.
+- **Minted credentials: one service** (phase 5, P4-LLM spec batch, D-261, C-807). The Vertex token,
+  the Entra token (`azure_entra`) and the STS session (`aws_assume_role`) are produced by one gateway
+  mint service with the rules above: cache key `(secret_id, value_version, mode, region)`, single-flight,
+  zeroizing memory only, reused until `LLM_TOKEN_SKEW` before its expiry (at most 55 min, and never
+  past an STS `Expiration`), each mint bounded by `LLM_TOKEN_MINT_TIMEOUT`, a failed mint remembered for
+  `LLM_TOKEN_MINT_FAILURE_HOLD` (5 s) so a burst of requests makes one upstream call, at most
+  `LLM_MINT_CACHE_MAX` entries (least recently used evicted; an evicted entry is minted again). Token
+  endpoints are **pinned per mode**: `https://oauth2.googleapis.com/token` (Vertex; the key's
+  `token_uri` must equal it), `https://login.microsoftonline.com/<tenant_id>/oauth2/v2.0/token`
+  (Entra), `https://sts.<endpoint region>.amazonaws.com/` (STS `AssumeRole`, `Version=2011-06-15`,
+  `RoleSessionName=aurora-<org_id>`, `ExternalId` = the org's `external_id`, `DurationSeconds` from the
+  value); nothing in a secret or an endpoint entry can change them (tests use
+  `llm.dev_upstream_overrides`, D-260(e)). A secret value change, a secret deletion and an endpoint
+  change (region) drop the affected entries (the existing invalidation of `06 §Caches`). The
+  `reason` of a failed mint is `mint_rejected` (the token endpoint answered 400/401/403: a revoked
+  key, a role whose trust policy refuses the external id, a deleted Entra app; request-log class
+  `llm_auth`) or `mint_unavailable` (timeout, transport error, 5xx). Neither marks the secret; the
+  next request after the hold mints again. The minted value never leaves the gateway: never in a
+  log, a metric, the request log or an error message (only the provider's error *code* is kept, as
+  D-95(d)).
 - **Inference-only paths** (SEC-65). Where a provider's credential could do more than call a model (an IAM key,
   a GCP service account), Aurora injects it only on the provider's **inference path set**
   and only for the endpoint's own account, region and project; anything else on the endpoint host
@@ -446,13 +498,84 @@ a module of `aurora-llm` plus one registry line.
   - `azure_openai`: the same paths under `/openai/v1/`.
   - `bedrock` (runtime host): `POST /model/{modelId}/{invoke|invoke-with-response-stream|converse|converse-stream|count-tokens}` and, only for a declared OpenAI dialect, `POST /openai/v1/{chat/completions|responses}`. Guardrail, async-invoke, agent and every other runtime route are refused.
   - `vertex`: `POST /v1/projects/<project_id>/locations/<location>/publishers/{anthropic|google}/models/<model>:{rawPredict|streamRawPredict|generateContent|streamGenerateContent|countTokens}` and, when declared, `POST …/endpoints/openapi/chat/completions`; the **project and location in the path must equal the endpoint's**, otherwise `llm_path_not_permitted`.
-  - `openai_compatible`: derived from the declared dialects relative to the base path (`openai_chat` → `/v1/chat/completions`, `/v1/completions`; `openai_responses` → `/v1/responses` family; `anthropic_messages` → `/v1/messages`, `/v1/messages/count_tokens`; always `/v1/models`, `/v1/embeddings`); `allowed_paths = ["/**"]` is the explicit opt-out for servers with other routes.
-  (`litellm` and `anthropic` keep their phase-0 behaviour: no path restriction.)
+  - `openai_compatible`: derived from the declared dialects relative to the base path (`openai_chat` → `/v1/chat/completions`, `/v1/completions`; `openai_responses` → `/v1/responses` family; `anthropic_messages` → `/v1/messages`, `/v1/messages/count_tokens`; always `/v1/models`, `/v1/embeddings`); `allowed_paths = ["/*"]` is the explicit opt-out for servers with other routes (D-260(b); an earlier `/**` spelling was an error).
+  - `anthropic` (phase 5, P4-LLM spec batch, D-260(c)): `POST /v1/messages`, `POST /v1/messages/count_tokens`, `GET /v1/models[/{id}]`. The Files, Batches, Skills and Admin APIs and every other route get no key (403 `llm_path_not_permitted`); the live suite pins that the pinned Claude Code calls nothing else on the host.
+  - `litellm` (**phase 4, live**, D-177, FIX-105): `POST /v1/messages`, `/v1/messages/count_tokens`, `/v1/chat/completions`, `/v1/completions`, `/v1/responses`, `/v1/embeddings` (also under a route prefix, as `model_from_request` reads them) and `GET /v1/models[/{id}]`. The LiteLLM management API (`/key/*`, `/user/*`, `/team/*`, …) and every other route get no key: 403 `llm_path_not_permitted`. For `litellm` and `openai_compatible` the per-endpoint `allowed_paths` **adds** paths to the set (absolute path, or a prefix ending in `/*`, at most 32 entries): an operator who needs `GET /health/liveliness` lists it; `/*` is the explicit opt-out.
+  (Until P4-LLM lands `anthropic` keeps its phase-0 behaviour: no path restriction.)
+  **`allowed_paths` has one meaning** (phase 5, D-260(b)): it **adds** paths to the set (absolute path
+  or a `/*`-suffixed subtree, at most 32, matched on the normalized path as `inference_path_permitted`
+  does today). It is accepted for `litellm`, `openai_compatible`, `anthropic`, `openai` and
+  `azure_openai`, whose credential is only a model key, and **refused for `bedrock` and `vertex`**
+  (startup and every settings write, 422 `settings_invalid` code `allowed_paths_not_supported`): an
+  IAM key or a service account is never widened beyond inference. Nothing narrows a path set;
+  `allowed_models` narrows what may be called.
 - **`model_from_request`** per provider: `openai`, `azure_openai`, `openai_compatible`: JSON body `/model` as today (`Unknown` when the body prefix is truncated or unparsable → refused when an allow-list applies). `bedrock`: the percent-decoded `{modelId}` path segment (an inference-profile ARN or id, compared exactly with the allow-list; no body needed). `vertex`: the `<model>` before `:` in the path (`claude-sonnet-4-5@20250929`, no publisher); for the OpenAI-compatible route, body `/model`. Allow-list entries are therefore the ids the client really sends (for Azure, the deployment name; for Bedrock, the profile id such as `eu.anthropic.claude-…`).
 - **Streaming.** Responses are streamed through unbuffered: SSE (OpenAI, Azure, Vertex, compatible) and the AWS binary `application/vnd.amazon.eventstream` (Bedrock). The gateway never parses or rewrites a response body, sets no response timeout beyond `UPSTREAM_HEADER_TIMEOUT` (time to response headers), and only Bedrock's `aws_sigv4` needs the *request* body buffered (to sign it).
-- **Error classification and usage.** One table in `aurora-llm` (`classify(provider, status, error_type)`), used by the gateway (request-log `error_code` `llm_auth`, `llm_rate_limited`, `llm_quota`, `llm_overloaded`, `llm_refusal`; metric `gateway_llm_upstream_total{provider,endpoint,class}`) and by the harness adapters for the turn error codes of `12`: 401/403 with the provider's credential errors (OpenAI `invalid_api_key`; Azure 401; Bedrock `UnrecognizedClientException`, `InvalidSignatureException`, `ExpiredTokenException`, `AccessDeniedException`; Vertex 401/403 `UNAUTHENTICATED`/`PERMISSION_DENIED`) → `auth`; 429 and `ThrottlingException` / `RESOURCE_EXHAUSTED` → `rate_limited`; OpenAI `insufficient_quota`, Bedrock `ServiceQuotaExceededException` → `quota`; 5xx, 529, `ServiceUnavailableException`, `ModelNotReadyException` → `overloaded`; Azure `content_filter`, Bedrock guardrail intervention, Vertex `SAFETY` → `refusal`. The gateway **never alters** an upstream status or body (clients keep their own retry logic); a spike of `llm_auth` marks nothing automatically. **Usage** stays harness-reported (`turns.usage`, `10 §Usage and metering`); the API stamps `provider`, `endpoint_id` and `model` from the turn's `ModelChoice`, never from what the harness claims, so usage aggregates are correct for every provider. The gateway does not count tokens.
-- **Governance** (§11) applies to every new endpoint unchanged: instance endpoint list, org `endpoints.<id>`, key scopes, `sanctioned_only`, origin rules (the id meanings are in the table: for `bedrock` `allowed_organization_ids` are AWS account ids, for `vertex` `allowed_workspace_ids` are GCP project ids, for `openai` organization and project ids), model allow-lists, the origin preflight and the response backstop (`origin_from_response` exists for `openai` only; the others have none). The LLM hosts of a configured endpoint are **reserved** (§LLM hosts) and leave the known-hosts list automatically; the hosts of a new provider that has **no** configured endpoint stay *known* LLM hosts (refused under `sanctioned_only`), as today. The credentialed Default Rule skips these hosts exactly as it skips the phase-0 ones (`07 §Why the Default Rule skips LLM hosts`); the carve-out is by **exact configured host** (never `*.amazonaws.com` or `*.googleapis.com`), so enabling Bedrock does not exempt any other AWS or Google API from the Default Rule, and an explicit block rule naming an endpoint host still wins.
-- **Configuration** (`15`): endpoint keys per provider are in the table of `15`; unknown keys, a non-https `base_url` (except loopback), a `base_url` with userinfo or query, an empty `models`/`default_model` for `azure_openai` and `vertex`, an invalid region/location/project id, or a duplicate endpoint id refuse startup naming the key. API-side calls (validation, listing, origin) and the gateway's token mint honour `tls.extra_ca_bundle`.
+- **Error classification and usage.** One table in `aurora-llm` (`classify(provider, status, error_type)`), used by the gateway (request-log `error_code` `llm_auth`, `llm_rate_limited`, `llm_quota`, `llm_overloaded`, `llm_refusal`; metric `gateway_llm_upstream_total{provider,endpoint,class}`) and by the harness adapters for the turn error codes of `12`: 401/403 with the provider's credential errors (OpenAI `invalid_api_key`; Azure 401; Bedrock `UnrecognizedClientException`, `InvalidSignatureException`, `ExpiredTokenException`, `AccessDeniedException`; Vertex 401/403 `UNAUTHENTICATED`/`PERMISSION_DENIED`) → `auth`; 429 and `ThrottlingException` / `RESOURCE_EXHAUSTED` → `rate_limited`; OpenAI `insufficient_quota`, Bedrock `ServiceQuotaExceededException` → `quota`; 5xx, 529, `ServiceUnavailableException`, `ModelNotReadyException` → `overloaded`; Azure `content_filter`, Bedrock guardrail intervention, Vertex `SAFETY` → `refusal`. The gateway **never alters** an upstream status or body (clients keep their own retry logic); a spike of `llm_auth` marks nothing automatically. (phase 5, D-260(d)) The gateway **never reads a response body** to classify: it calls `classify` with the status and, for Bedrock only, the `x-amzn-ErrorType` response header as `error_type` (`error_type = None` otherwise), so a 429 is `llm_rate_limited` in the request log even when OpenAI's body says `insufficient_quota`; the harness adapters, which parse the body, call the same table with the body's error type and refine the turn code (`provider_quota`). Errors inside a stream (an event-stream `:message-type: exception` frame, an SSE `error` event after a 200) are seen by the adapters only; the request log records the 200. The gateway **never retries** an LLM request (bodies are streamed and inference is not idempotent); the one gateway-side retry that exists is the mint after its failure hold. **Usage** stays harness-reported (`turns.usage`, `10 §Usage and metering`); the API stamps `provider`, `endpoint_id` and `model` from the turn's `ModelChoice`, never from what the harness claims, so usage aggregates are correct for every provider. The gateway does not count tokens.
+- **Governance** (§11) applies to every new endpoint unchanged: instance endpoint list, org `endpoints.<id>`, key scopes, `sanctioned_only`, origin rules (the id meanings are in the table: for `bedrock` `allowed_organization_ids` are AWS account ids, for `vertex` `allowed_workspace_ids` are GCP project ids, for `openai` organization and project ids, (phase 5, D-261) for `azure_openai` with `azure_entra` `allowed_organization_ids` are Entra tenant ids; an `azure_openai` endpoint with a `provider_account` rule accepts only `azure_entra` keys, an `api_key` there is 422 `llm_key_unverifiable`), model allow-lists, the origin preflight and the response backstop (`origin_from_response` exists for `openai` only; the others have none). The LLM hosts of a configured endpoint are **reserved** (§LLM hosts) and leave the known-hosts list automatically; the hosts of a new provider that has **no** configured endpoint stay *known* LLM hosts (refused under `sanctioned_only`), as today. The credentialed Default Rule skips these hosts exactly as it skips the phase-0 ones (`07 §Why the Default Rule skips LLM hosts`); the carve-out is by **exact configured host** (never `*.amazonaws.com` or `*.googleapis.com`), so enabling Bedrock does not exempt any other AWS or Google API from the Default Rule, and an explicit block rule naming an endpoint host still wins.
+- **Configuration** (`15`): endpoint keys per provider are in the table of `15`; unknown keys, a non-https `base_url` (except loopback), a `base_url` with userinfo or query, an empty `models`/`default_model` for `azure_openai` and `vertex`, an invalid region/location/project id, or a duplicate endpoint id refuse startup naming the key. API-side calls (validation, listing, origin) and the gateway's token mint honour `tls.extra_ca_bundle`. (phase 5, D-260(f), D-262) `openai_compatible` follows `litellm` for the scheme (*Endpoint destinations* below); `allowed_paths` on `bedrock`/`vertex` refuses startup. Since SET-3 the same validation runs on every write of `llm.endpoints` from the dashboard, import or CLI (422 `settings_invalid` with the key path, C-800).
+
+#### Wire formats and harness reach (phase 5, P4-LLM spec batch, D-260)
+
+**The gateway never translates between wire formats.** It forwards the agent's request body and the
+provider's response bytes unchanged; it only removes and sets authentication headers, signs, and
+refuses. A harness therefore uses an endpoint only through a dialect that both declare (`12 §Harness
+selection`): an agent whose granted keys share no dialect with its harness gets `no_shared_dialect`
+for each key in model readiness and `no_model_key` at the turn. The reach this gives (`12 §Provider
+reach per harness` is the per-harness table):
+
+| Provider | Dialects it can serve | `claude-code` | `codex` |
+|----------|----------------------|---------------|---------|
+| `anthropic` | `anthropic_messages` | yes | no |
+| `litellm` | as declared (default all three) | via `anthropic_messages` | via `openai_responses` |
+| `openai` | `openai_chat`, `openai_responses` | no | yes |
+| `azure_openai` | `openai_chat`, `openai_responses` | no | yes |
+| `bedrock` | `anthropic_bedrock` (default); `openai_chat`/`openai_responses` when declared | via `anthropic_bedrock` | only with `openai_responses` declared |
+| `vertex` | `anthropic_vertex` (default); `openai_chat` when declared | via `anthropic_vertex` | no (Codex refuses chat, D-153) |
+| `openai_compatible` | as declared (default `openai_chat`) | only with `anthropic_messages` declared | only with `openai_responses` declared |
+
+A combination the table refuses (Codex on Claude models, Claude Code on an OpenAI-only server) is
+served by putting a **`litellm` endpoint** in front: LiteLLM translates under the operator's control
+and is governed like any endpoint. A Bedrock or Vertex model reached through LiteLLM uses LiteLLM's
+own cloud credentials, not an Aurora `aws_*`/`gcp_*` secret. An endpoint that serves only
+`openai_chat` (Vertex's OpenAI surface, many compatible servers) serves no shipped harness until a
+harness declares `openai_chat`; Admin › LLM endpoints and the LLM key form say so (C-811).
+
+#### Endpoint destinations (phase 5, P4-LLM spec batch, D-262, SEC-98)
+
+Endpoints became instance settings with SET-3 (`15 §Instance settings`, section `llm`), so an
+instance admin, not only the operator, can add one. The destination rules therefore depend on the
+entry's source:
+
+- **Private addresses.** An endpoint defined in the deployment configuration (source `helm`) passes
+  the gateway's destination guard for its exact host even when it resolves to a private address, as
+  before (§LLM hosts). A **dashboard** endpoint has no such pass: reaching a private address needs its
+  host (or address) in `gateway.allowed_private`, the audited instance setting that governs every
+  other private destination. Cloud-metadata and link-local addresses are never passed implicitly,
+  whatever the source (exact-IP `allowed_private` entries only, `06` step 2). An endpoint handed from
+  Helm to the dashboard by mirroring loses the pass at that start; `GET /v1/admin/settings/llm` marks
+  a dashboard entry `needs_allowed_private` when its host resolves into a refused range that
+  `gateway.allowed_private` does not cover (C-813), and the preview of a
+  write warns `endpoint_resolves_private` for any dashboard endpoint that resolves into a refused
+  range not covered (C-813). The guard decides at dial time; the save-time resolution is advice only.
+- **Scheme.** `https` for every provider; plain `http` only for `litellm` and `openai_compatible`:
+  for a Helm endpoint as before (the operator's choice; the key goes only to the exact configured
+  origin, D-180), for a dashboard endpoint only when its host is loopback or covered by
+  `gateway.allowed_private` (422 `settings_invalid` code `http_needs_private_host` otherwise).
+- **Host ownership.** A dashboard endpoint whose host is matched by an active app's static claim or
+  by an app-instance registration is refused (422 `settings_invalid`, code `endpoint_host_claimed`,
+  `details.app_id`); an instance admin removes the claim or the registration first. The reverse — a
+  package claiming an endpoint host — is already refused (`09 §6`).
+- **Reload.** On every `llm` or `limits` reload the gateway rebuilds the endpoint table and the
+  guard's endpoint allowance together (SET-3, SET-5), then flushes its resolution caches (`all`).
+
+**Endpoint test per provider** (C-779, C-803): the unauthenticated probe of Admin › LLM endpoints goes
+to the provider's own path — `openai` `GET https://api.openai.com/v1/models`, `azure_openai`
+`GET <base>/openai/v1/models`, `bedrock` `GET https://bedrock-runtime.<region>.amazonaws.com/`
+(or the override `base_url`), `vertex` `GET https://<host>/v1/projects/<project_id>/locations/<location>`,
+`openai_compatible` `GET <base>/v1/models` (or `models_path`), `anthropic` `GET /v1/models`, `litellm`
+unchanged — and any HTTP answer below 500 (401 and 403 included) counts as reachable; the guard of
+this list applies to the probe exactly as it will to agent traffic.
 
 ### LLM hosts
 
@@ -464,7 +587,10 @@ Two host sets matter:
   applies to them (`07`). Because endpoints are operator-configured, their
   hosts are implicitly allowed by the gateway's destination guard even when
   they resolve to private addresses (e.g. an in-cluster LiteLLM); upstream TLS
-  to them uses `tls.extra_ca_bundle` when set.
+  to them uses `tls.extra_ca_bundle` when set. (phase 5, D-262) The implicit
+  pass holds only for endpoints defined in the deployment configuration and
+  never for cloud-metadata or link-local addresses; a dashboard endpoint needs
+  `gateway.allowed_private` (§Phase 4 providers, *Endpoint destinations*).
 - **Known LLM hosts**: hosts of well-known model APIs that Aurora does *not*
   have a configured endpoint for (`governance.llm.known_llm_hosts`, §11).
   They are not reserved for plugins, but governance can make them unreachable.
@@ -482,15 +608,25 @@ every value change run, in order:
    and the secret's scope (organization / workspace) must be permitted for that
    endpoint, else 403 `llm_key_not_permitted`.
 2. **Validation**: list models with the key (failure → 422 `llm_key_invalid`).
-   (phase 4, P4-LLM) For providers without a usable listing call validation is the
+   (phase 5 (D-138, moved from phase 4), P4-LLM) For providers without a usable listing call validation is the
    provider's own cheapest proof of a live key: `azure_openai` `GET /openai/v1/models`,
    `bedrock` with `aws_sigv4` a signed `sts:GetCallerIdentity`, `vertex` the token mint;
    the value's shape (JSON fields, `token_uri`, key type) is checked first.
+   (phase 5, D-261) `bedrock` with `aws_assume_role`: the `AssumeRole` call itself (it proves the
+   source key, the role's trust in the org's external id and the duration; an `AccessDenied` is
+   422 `llm_key_invalid` with `details.reason = "assume_role_denied"` and the hint to check the
+   trust policy's external id); `azure_entra`: the Entra mint followed by `GET /openai/v1/models`
+   with the minted token. The API runs the same `aurora-llm` request builders as the gateway's mint
+   service (C-807), through its own destination guard, and keeps nothing it minted.
 3. **Origin verification** when the endpoint has a key-origin rule: call
    `verify_key_origin`, compare with the effective rule, store the result in
    `secrets.origin`. A key from another account → 422
    `llm_key_wrong_organization` and nothing is saved; a provider that cannot
    report the account → 422 `llm_key_unverifiable`.
+
+The check uses the provider's own `GET /v1/models` **without** the static-list fallback that
+feeds the model picker (FIX-105): an endpoint that answers an error or nothing never makes a key
+`verified`, whatever `models` is configured.
 
 If the endpoint is unreachable: without a key-origin rule the key may be saved
 anyway (`origin.status = pending`, verified by the gateway before first use);
@@ -554,6 +690,10 @@ A key with no failing check is `usable`. `default` is what the next turn would
 use without an override (`{ endpoint_id, model_id }`), or `null` when no model
 resolves (`no_default_model`). An endpoint whose provider lists models live and
 that has no `default_model` logs a **warning at start** (`15`); it still starts.
+(phase 5, P4-LLM spec batch) That covers `openai`, `bedrock` and `openai_compatible` as
+well; `azure_openai` and `vertex` require `default_model` (static lists), so
+`no_default_model` cannot arise on them. Since SET-3 the same warning is a preview warning of
+Admin › LLM endpoints.
 - The supervisor receives `{ provider, endpoint base URL, dialect, model,
   effort, client_env }`. `client_env` carries **placeholders only**; the
   gateway injects the real key.
@@ -564,6 +704,18 @@ Phase 0 has exactly one: model catalogue listing (API → endpoint, with the
 granted key, cached 10 min). Future internal calls (reaction picking, memory
 review) MUST go through a single `PlatformLlm` service that names the
 workspace secret it uses and records usage.
+
+(phase 5, P4-EVAL, D-292, C-869, SEC-115) **`PlatformLlm` gets its first purpose, `eval_judge`.**
+It lives in the API (`domains/llm`, built by P4-EVAL-3), uses the `aurora-llm` request builders
+and the API's own destination guard, and is the only path a judge call takes. Every call checks
+at call time, not only when the key is saved: the secret is `active`; it is **granted to the agent
+that owns the eval run** (a key never used without a grant, `§5`); governance admits its endpoint
+and scope (`§11`); and it is usable by readiness (`Model readiness` above). The judge key is
+named in the agent's eval settings (`agents.eval_judge_secret_id`, `03`). The request carries
+only the question, its criteria and the final answer of that question's own turn (`10 §Evals`);
+output is parsed strictly; a failure is an `error` for that question and there is no fallback
+key, provider or retry elsewhere. Usage is recorded on the eval run (`eval_runs.judge_usage`),
+never on `turns.usage`. A judge call is not a turn and writes no transcript event.
 
 ## 7. Gateway credentials
 
@@ -745,7 +897,7 @@ above, enforced at several points.
 
 | Level | Who | Where stored | Can |
 |-------|-----|--------------|-----|
-| **Instance ceiling** | operator | configuration `[governance]`, `[byo]` (phase 2, RFE-025) and `[[llm.endpoints]]` (`15`) | enable providers and endpoints; set key-origin rules and model allow-lists per endpoint; set permitted key scopes; set **minimum** postures for every org (including, from phase 1, the **open-lane** minimum, RFE-003); set the known-LLM-hosts list and an egress baseline allow-list; (phase 3, RFE-013) set a maximum age for BYO agent tokens; (phase 2, RFE-025) switch BYO agents off (`byo.enabled`) and set the BYO posture floor and default source CIDRs |
+| **Instance ceiling** | operator; (phase 5, SET-2/SET-3, D-195(b)) instance admins | configuration `[governance]`, `[byo]` (phase 2, RFE-025) and `[[llm.endpoints]]` (`15`); (phase 5) **application state**: the instance settings sections `governance` and `llm` (`15 §Instance settings`), edited on Admin › Governance and Admin › LLM endpoints, with a key set in the configuration locked (D-236) | enable providers and endpoints; set key-origin rules and model allow-lists per endpoint; set permitted key scopes; set **minimum** postures for every org (including, from phase 1, the **open-lane** minimum, RFE-003); set the known-LLM-hosts list and an egress baseline allow-list; (phase 3, RFE-013) set a maximum age for BYO agent tokens; (phase 2, RFE-025) switch BYO agents off (`byo.enabled`) and set the BYO posture floor and default source CIDRs |
 | **Organization governance** | org owners/admins | `organizations.governance` (`03`) | permit a subset of endpoints; restrict key scopes per endpoint; narrow origin rules and model allow-lists; choose the LLM posture and the egress posture (never looser than the instance minimum); maintain the org egress allow-list; (phase 3, RFE-013) set a stricter maximum age for BYO agent tokens; (phase 2, RFE-025) choose the org **BYO posture** and default BYO source CIDRs |
 | **Workspace policy** | workspace owners | the workspace's policy generation (`07`) | block destinations with rules; set the workspace's own uncredentialed default to `block` with its own allow-list (it cannot loosen the org); (phase 1, RFE-003) set the workspace's **open-lane posture** (`enabled` \| `allowlist_only` \| `disabled`; it can only tighten); (phase 2, RFE-025) set the workspace's **BYO posture** (`enabled` \| `owners_only` \| `disabled`; it can only tighten) |
 | **Agent grants and rules** | workspace owners | grants, rules (`07`) | decide which permitted keys each agent may use |
@@ -754,6 +906,15 @@ Effective settings are computed, never stored: `effective = instance ∩ org`
 for permissions and lists, `max(instance minimum, org)` for postures. When the
 instance tightens later, orgs are tightened automatically and the dashboard
 shows "enforced by instance".
+
+(phase 5, SPEC-SETTINGS, D-236(i)) Moving the instance level into the database changes **only
+where it is stored and who edits it**: the layering, the rules of §11.2 and the enforcement points
+of §11.7 are unchanged, and there is still **no instance-level policy rule scope** (D-195(f)). An
+instance change takes effect live: the API and gateways reload it (`15 §Instance settings`), and the
+API runs §11.2's re-evaluation (stored origins, model overrides, gateway invalidation) for every
+organization as a background job, so an instance change has the same effect on an org as an org
+change. "Enforced by instance" carries the setting it comes from (C-783): instance admins get a link
+to it, everyone else the text "Set by the instance administrator".
 
 ### 11.2 Organization governance document
 
@@ -989,7 +1150,8 @@ BYO is governed like the rest of this section. **Hosted agents are unaffected**
   and homes stay; the gateway simply refuses them, so loosening again restores
   service instantly (invalidation scopes `agent`/`workspace`/`org`; the instance
   switch is read from configuration at start, so changing `byo.enabled` is a
-  rolling restart). The dashboard marks affected agents "BYO disabled by
+  rolling restart — (phase 5, SET-2, D-237(f)) from then on it is a live instance
+  setting: the gateways reload it and drop their credential caches, no restart). The dashboard marks affected agents "BYO disabled by
   <level>".
 
 **(b) Source restriction.** `agents.byo_source_cidrs` (≤32 IPv4/IPv6 CIDRs; null =

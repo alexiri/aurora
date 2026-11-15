@@ -70,22 +70,10 @@ spec:
   {{- with .Values.gatewayApi.parentRefs }}
   parentRefs: {{- toYaml . | nindent 4 }}
   {{- end }}
-  {{- if .Values.relay.enabled }}
-  hostnames: {{ toJson (concat (default (list $host) .Values.gatewayApi.hostnames) (list (printf "*.%s" .Values.relay.domain))) }}
-  {{- else }}
+  {{- /* (FIX-102) hostnames exist only at spec level: HTTPRouteRule has no `hostnames`. The previews
+         wildcard is its own HTTPRoute below, so this route's rules apply to the dashboard hosts only. */}}
   hostnames: {{ toJson (default (list $host) .Values.gatewayApi.hostnames) }}
-  {{- end }}
-  {{- /* rules: with relay.enabled a hostname-scoped wildcard rule for the previews domain is prepended. */}}
   rules:
-    {{- if .Values.relay.enabled }}
-    - hostnames: [{{ printf "*.%s" .Values.relay.domain | quote }}]
-      matches:
-        - path: {type: PathPrefix, value: /}
-      timeouts:
-        request: {{ .Values.gatewayApi.requestTimeout }}
-      backendRefs:
-        - {name: {{ $full }}-relay, port: 4112}
-    {{- end }}
     {{- if .Values.scim.enabled }}
     # (P4-GRP-2) SCIM provisioning, see the Ingress above.
     - matches:
@@ -113,4 +101,26 @@ spec:
         - path: {type: PathPrefix, value: /}
       backendRefs:
         - {name: {{ $full }}-web, port: 4100}
+{{- if .Values.relay.enabled }}
+---
+# (FIX-102, P4-PRV-2) The previews wildcard "*.<domain>" is a second HTTPRoute: every preview label is
+# served by the relay (uniform 404 for unknown ones); the dashboard route above is untouched.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ $full }}-previews
+  labels: {{- include "aurora.labels" . | nindent 4 }}
+spec:
+  {{- with .Values.gatewayApi.parentRefs }}
+  parentRefs: {{- toYaml . | nindent 4 }}
+  {{- end }}
+  hostnames: [{{ printf "*.%s" .Values.relay.domain | quote }}]
+  rules:
+    - matches:
+        - path: {type: PathPrefix, value: /}
+      timeouts:
+        request: {{ .Values.gatewayApi.requestTimeout }}
+      backendRefs:
+        - {name: {{ $full }}-relay, port: 4112}
+{{- end }}
 {{- end }}

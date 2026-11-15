@@ -11,6 +11,7 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { DataTable, Td, Th } from "@/components/ui/data-table";
 import { Field, inputClass } from "@/components/ui/field";
 import { Notice } from "@/components/ui/notice";
+import { matchesFilter, PickerFilter } from "@/components/ui/picker-filter";
 import { PageHeader } from "@/components/ui/page-header";
 import { Section } from "@/components/ui/section";
 import { cn } from "@/lib/utils";
@@ -18,6 +19,7 @@ import { useOrgMembers } from "@/lib/api/account";
 import { errorMessage } from "@/lib/api/errors";
 import {
   isManaged,
+  isStaleGroup,
   sourceLabel,
   useChangeMembers,
   useDeleteGroup,
@@ -72,12 +74,14 @@ function Details({ g, orgId }: { g: Group; orgId: string }) {
             onChange={(e) => setDescription(e.target.value)}
           />
         </Field>
-        <Button type="submit" disabled={patch.isPending} className="sm:mt-[1.625rem]">
+        <Button type="submit" disabled={patch.isPending} className="sm:mt-label-offset">
           Save
         </Button>
         {patch.error ? (
           <Notice tone="danger" role="alert" className="basis-full">
-            {errorMessage(patch.error)}
+            {isStaleGroup(patch.error)
+              ? "This group was changed by someone else. The latest version has been loaded; review your edit and save again."
+              : errorMessage(patch.error)}
           </Notice>
         ) : null}
       </form>
@@ -131,13 +135,15 @@ function Members({ g, orgId }: { g: Group; orgId: string }) {
   const orgMembers = useOrgMembers(orgId);
   const change = useChangeMembers(g.id, orgId);
   const [pick, setPick] = useState("");
+  const [filter, setFilter] = useState("");
   const [target, setTarget] = useState<{ id: string; label: string } | null>(null);
   const managed = isManaged(g);
   if (members.isPending) return <Loading />;
   if (members.isError) return <ErrorState error={members.error} onRetry={() => members.refetch()} />;
   const items = members.data.pages.flatMap((p) => p.items);
   const inGroup = new Set(items.map((m) => m.user.id));
-  const candidates = (orgMembers.data?.items ?? []).filter((m) => !inGroup.has(m.user_id));
+  const eligible = (orgMembers.data?.items ?? []).filter((m) => !inGroup.has(m.user_id));
+  const candidates = eligible.filter((m) => m.user_id === pick || matchesFilter(filter, m.display_name, m.email));
   return (
     <Section
       id="grp-members"
@@ -161,6 +167,7 @@ function Members({ g, orgId }: { g: Group; orgId: string }) {
               if (pick) change.mutate({ add: [pick] }, { onSuccess: () => setPick("") });
             }}
           >
+            <PickerFilter id="gm-filter" label="Find by name or e-mail" count={eligible.length} value={filter} onChange={setFilter} />
             <Field id="gm-add" label="Add a member">
               <select
                 id="gm-add"
@@ -298,6 +305,7 @@ function Workspaces({ g, orgId }: { g: Group; orgId: string }) {
   const bindings = useGroupWorkspaces(g.id);
   const all = useWorkspaces(orgId);
   const [ws, setWs] = useState("");
+  const [filter, setFilter] = useState("");
   const [role, setRole] = useState<WorkspaceRole>("member");
   const [err, setErr] = useState<unknown>(null);
   // The mutation hooks are bound to a workspace: use the picked one for adds, each row's for edits.
@@ -306,7 +314,8 @@ function Workspaces({ g, orgId }: { g: Group; orgId: string }) {
   if (bindings.isError) return <ErrorState error={bindings.error} onRetry={() => bindings.refetch()} />;
   const items = bindings.data.items;
   const bound = new Set(items.map((b) => b.workspace.id));
-  const candidates = (all.data?.items ?? []).filter((w) => !bound.has(w.id));
+  const unbound = (all.data?.items ?? []).filter((w) => !bound.has(w.id));
+  const candidates = unbound.filter((w) => w.id === ws || matchesFilter(filter, w.name, w.slug));
   return (
     <Section id="grp-ws" title="Workspace access" description={ROLE_HELP}>
       <div className="space-y-3">
@@ -345,6 +354,7 @@ function Workspaces({ g, orgId }: { g: Group; orgId: string }) {
             put.mutate({ group: g.id, role }, { onSuccess: () => setWs(""), onError: setErr });
           }}
         >
+          <PickerFilter id="gw-filter" label="Find a workspace" count={unbound.length} value={filter} onChange={setFilter} />
           <Field id="gw-ws" label="Workspace">
             <select id="gw-ws" className={cn(inputClass, "w-64 max-w-full")} value={ws} onChange={(e) => setWs(e.target.value)}>
               <option value="">Select a workspace…</option>
@@ -388,7 +398,8 @@ function BindingRow({
   const put = usePutGroupAccess(b.workspace.id);
   const del = useDeleteGroupAccess(b.workspace.id);
   const [confirm, setConfirm] = useState(false);
-  const impact = useGroupImpact(g.id, null, confirm);
+  // Unbinding takes away this workspace only, not the whole group (C-464 `unbind_workspace`).
+  const impact = useGroupImpact(g.id, null, confirm, b.workspace.id);
   return (
     <tr>
       <Td className="font-medium">{b.workspace.name}</Td>
@@ -430,6 +441,7 @@ function DeleteGroup({ g, orgId, orgSlug }: { g: Group; orgId: string; orgSlug: 
   const router = useRouter();
   const del = useDeleteGroup(g.id, orgId);
   const [open, setOpen] = useState(false);
+  const scim = g.source === "scim";
   const impact = useGroupImpact(g.id, null, open);
   return (
     <Section id="grp-danger" title="Delete group" card>
@@ -438,7 +450,12 @@ function DeleteGroup({ g, orgId, orgSlug }: { g: Group; orgId: string; orgSlug: 
           Deleting a group removes its members and bindings. Policy rules that name it stay as they are and match
           nobody.
         </p>
-        <Button variant="danger" onClick={() => setOpen(true)}>
+        {scim ? (
+          <p className="text-sm text-muted">
+            This group is managed by your directory (SCIM): delete it in your identity provider.
+          </p>
+        ) : null}
+        <Button variant="danger" disabled={scim} onClick={() => setOpen(true)}>
           Delete group
         </Button>
         <ConfirmDialog
@@ -470,7 +487,7 @@ export function GroupDetail({ orgId, orgSlug, id }: { orgId: string; orgSlug: st
   if (group.isError) return <ErrorState error={group.error} onRetry={() => group.refetch()} />;
   const g = group.data;
   return (
-    <div className="max-w-[1160px] space-y-8">
+    <div className="max-w-page space-y-8">
       <PageHeader
         breadcrumb={[{ label: "Groups", href: `/o/${orgSlug}/groups` }, { label: g.name }]}
         title={

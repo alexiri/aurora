@@ -101,6 +101,22 @@ pub async fn by_task_conversation<'e, E: PgExecutor<'e>>(
     )
 }
 
+/// Queued tasks of the ordered pair (FIX-110 cap; call under the link lock).
+pub async fn queued_count<'e, E: PgExecutor<'e>>(
+    exec: E,
+    from: Uuid,
+    to: Uuid,
+) -> Result<i64, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT count(*) FROM peer_tasks
+           WHERE from_agent_id = $1 AND to_agent_id = $2 AND status = 'queued'",
+    )
+    .bind(from)
+    .bind(to)
+    .fetch_one(exec)
+    .await?)
+}
+
 /// Is there an `open` task for the ordered pair?
 pub async fn open_exists<'e, E: PgExecutor<'e>>(
     exec: E,

@@ -17,6 +17,7 @@ pub fn router() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(list_org_instances, create_org_instance))
         .routes(routes!(list_instance_instances, create_instance_instance))
+        .routes(routes!(promote_instance))
         .routes(routes!(patch_instance, delete_instance))
 }
 
@@ -59,14 +60,23 @@ async fn create_org_instance(
     Json(req): Json<CreateAppInstanceRequest>,
 ) -> Result<(StatusCode, Json<AppInstance>), ApiError> {
     caller.org(&state, org).await?.require_admin()?;
-    let row = service::create(&state, &AuditActor::from_caller(&caller), Some(org), req).await?;
+    let reveal = caller.is_instance_admin && caller.is_session();
+    let row = service::create(
+        &state,
+        &AuditActor::from_caller(&caller),
+        Some(org),
+        reveal,
+        req,
+    )
+    .await?;
     Ok((StatusCode::CREATED, Json(row.into())))
 }
 
-/// List instance-wide app instances (instance admin).
+/// List app instances (instance admin): the instance-wide ones, or with `scope=all` every
+/// organization's too.
 #[utoipa::path(
     get, path = "/admin/app-instances", operation_id = "listInstanceAppInstances", tag = "app-instances",
-    params(ListQuery),
+    params(AdminListQuery),
     responses((status = 200, description = "Instances", body = Page<AppInstance>),
               (status = 403, description = "Forbidden", body = ErrorEnvelope)),
     security(("session" = []))
@@ -74,9 +84,9 @@ async fn create_org_instance(
 async fn list_instance_instances(
     _admin: InstanceAdmin,
     State(state): State<AppState>,
-    Query(q): Query<ListQuery>,
+    Query(q): Query<AdminListQuery>,
 ) -> Result<Json<Page<AppInstance>>, ApiError> {
-    Ok(Json(service::list_instance_wide(&state, &q).await?))
+    Ok(Json(service::list_admin(&state, &q).await?))
 }
 
 /// Register an instance-wide app instance (instance admin).
@@ -94,8 +104,36 @@ async fn create_instance_instance(
     State(state): State<AppState>,
     Json(req): Json<CreateAppInstanceRequest>,
 ) -> Result<(StatusCode, Json<AppInstance>), ApiError> {
-    let row = service::create(&state, &AuditActor::instance_admin(&caller), None, req).await?;
+    let row = service::create(
+        &state,
+        &AuditActor::instance_admin(&caller),
+        None,
+        true,
+        req,
+    )
+    .await?;
     Ok((StatusCode::CREATED, Json(row.into())))
+}
+
+/// Make an organization's registration instance-wide (instance admin, FIX-132): one transaction
+/// moves it to `org_id = NULL`; its connections keep resolving, other organizations then see it
+/// too. Audited as `app_instance.promote` (security-critical).
+#[utoipa::path(
+    post, path = "/admin/app-instances/{id}/promote", operation_id = "promoteAppInstance", tag = "app-instances",
+    params(("id" = Uuid, Path, description = "App instance id")),
+    responses((status = 200, description = "Promoted", body = AppInstance),
+              (status = 403, description = "Forbidden", body = ErrorEnvelope),
+              (status = 404, description = "Not found", body = ErrorEnvelope),
+              (status = 409, description = "instance_already_wide or instance_host_shared", body = ErrorEnvelope)),
+    security(("session" = []))
+)]
+async fn promote_instance(
+    InstanceAdmin(caller): InstanceAdmin,
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<AppInstance>, ApiError> {
+    let row = service::promote(&state, &AuditActor::instance_admin(&caller), id).await?;
+    Ok(Json(row.into()))
 }
 
 /// Authority over an instance: the owners/admins of its org, or an instance admin for an

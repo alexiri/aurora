@@ -51,6 +51,31 @@ async fn list_requires_instance_admin_and_filters() {
     assert!(v["next_cursor"].is_string());
 }
 
+/// (FIX-108, AUTH-3) Removing instance-admin through `PATCH /v1/admin/users/{id}` takes effect
+/// at once for a session whose authentication result is already cached.
+#[tokio::test]
+async fn demoted_instance_admin_loses_admin_routes_at_once() {
+    let h = Harness::new().await;
+    let root = h.user("root@x.io", true).await;
+    let other = h.user("other@x.io", true).await;
+    let (_, rt) = h.good_session(root).await;
+    let (_, ot) = h.good_session(other).await;
+    // The other admin's session is used (and so cached) as an admin.
+    let (s, _) = call(&h, &ot, Method::GET, "/v1/admin/users", None).await;
+    assert_eq!(s, 200);
+    let (s, v) = call(
+        &h,
+        &rt,
+        Method::PATCH,
+        &format!("/v1/admin/users/{other}"),
+        Some(json!({"is_instance_admin": false})),
+    )
+    .await;
+    assert_eq!(s, 200, "{v}");
+    let (s, v) = call(&h, &ot, Method::GET, "/v1/admin/users", None).await;
+    assert_eq!((s, code(&v)), (403, "instance_admin_required"), "{v}");
+}
+
 #[tokio::test]
 async fn patch_user_disable_revokes_and_self_rejected() {
     let h = Harness::new().await;

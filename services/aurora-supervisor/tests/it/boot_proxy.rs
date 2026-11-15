@@ -92,6 +92,41 @@ fn boot_json(dir: &std::path::Path) -> String {
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(doc.to_string())
 }
 
+/// (FIX-114, docs/16 §W6) A `wss://` runner URL cannot be dialled: boot refuses it with a clear
+/// message instead of failing later to connect; `ws://` still parses.
+#[test]
+fn wss_runner_url_is_refused_at_boot() {
+    let doc = |url: &str| {
+        let d = json!({
+            "v": 1,
+            "sandbox_id": "00000000-0000-0000-0000-000000000001",
+            "boot_id": "00000000-0000-0000-0000-000000000002",
+            "agent": {"id": "00000000-0000-0000-0000-000000000003", "handle": "d", "name": "D"},
+            "runner_url": url, "bootstrap_token": "aup_x",
+            "gateway": {"proxy": "g:4102", "tls": true, "boot_token": "aub_x"}, "ca_pem": "PEM",
+            "files": [], "harness": {"id": "fake"}
+        });
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(d.to_string())
+    };
+    let err = BootDocument::parse(&doc("wss://r:4105/v1/supervisor")).unwrap_err();
+    assert!(err.to_string().contains("wss:// is not supported"), "{err}");
+    assert!(BootDocument::parse(&doc("ws://r:4105/v1/supervisor")).is_ok());
+    assert!(BootDocument::parse(&doc("http://r:4105/v1/supervisor")).is_err());
+}
+
+/// (FIX-114, SEC-01) The credential types never print the boot token or a context credential.
+#[test]
+fn credential_debug_output_is_redacted() {
+    let cred = aurora_supervisor::proxy::Credential::new("x", "aub_super_secret_boot");
+    cred.set_context(Some("auc_context_secret".into()));
+    let s = format!("{cred:?}");
+    assert!(
+        !s.contains("super_secret") && !s.contains("context_secret"),
+        "{s}"
+    );
+    assert!(s.contains("[redacted]"));
+}
+
 #[test]
 fn boot_document_files_env_and_dumpable() {
     use std::os::unix::fs::PermissionsExt as _;

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useQueryClient } from "@tanstack/react-query";
 import { useMemo, type ReactNode } from "react";
 
+import { ConnectorAvailableCallout } from "@/components/connectors/available-callout";
 import { LlmKeyForm } from "@/components/credentials/llm-form";
 import { ErrorState, Loading } from "@/components/states";
 import { Badge } from "@/components/ui/badge";
@@ -23,6 +24,7 @@ import { cn } from "@/lib/utils";
 
 import { OwnerlessBanner } from "./ownerless-banner";
 import { PlacementView } from "./placement-view";
+import { PreviewsLine } from "./previews-line";
 
 type Tone = "accent" | "pending" | "neutral";
 
@@ -231,7 +233,7 @@ function LlmBody({ step, onChanged }: { step: SetupStep; onChanged: () => void }
               <strong className="text-ink">{orgKey.name}</strong> belongs to {org.name}. It is stored sealed and never shown again.
             </p>
           ) : (
-            <LlmKeyForm scope={{ kind: "organization", id: org.id }} orgId={org.id} />
+            <LlmKeyForm scope={{ kind: "organization", id: org.id }} orgId={org.id} onSaved={onChanged} />
           )}
           {orgKey ? <StarterSwitch placement={placement.data} secretId={orgKey.id} onChanged={onChanged} /> : null}
         </div>
@@ -268,7 +270,7 @@ export function SetupView() {
   const step = (id: string) => setup.data?.steps.find((s) => s.id === id);
 
   return (
-    <div className="max-w-[1160px] space-y-6">
+    <div className="max-w-page space-y-6">
       <PageHeader
         title="Set up Aurora"
         description="Six steps from a fresh install to your first answer. Each shows what is ready now."
@@ -277,6 +279,8 @@ export function SetupView() {
       {setup.isPending ? <Loading /> : null}
       {setup.isError ? <ErrorState error={setup.error} onRetry={() => setup.refetch()} /> : null}
       <OwnerlessBanner />
+      <ConnectorAvailableCallout />
+      <PreviewsLine />
       {setup.data ? (
         <>
           {!setup.data.placement_saved ? (

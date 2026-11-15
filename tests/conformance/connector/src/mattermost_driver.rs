@@ -627,7 +627,103 @@ impl PlatformDriver for MattermostDriver {
             dedicated_presences: true,
             // No Mattermost action makes the connector call `POST /link-start` in shared mode.
             link_start_action: false,
+            // `/mm/actions` and `/mm/commands` are public.
+            public_callbacks: true,
         }
+    }
+
+    async fn forge_callback(&self, f: Forgery, message_ref: &str, token: &str) -> Result<u16> {
+        let base = self.control_url.trim_end_matches("/mm/test");
+        // The real context of the button, as the connector rendered it (the REST API strips it).
+        let real = |post_id: &str| -> anyhow::Result<Value> {
+            let props = self.db_props(post_id)?;
+            props["attachments"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .flat_map(|a| a["actions"].as_array().into_iter().flatten())
+                .find(|a| a["integration"]["context"]["token"].as_str() == Some(token))
+                .map(|a| a["integration"]["context"].clone())
+                .context("no action carries that token")
+        };
+        let post_id = message_ref.to_owned();
+        let url = |p: &str| format!("{base}/{p}");
+        let resp = match f {
+            Forgery::ActionBadSignature
+            | Forgery::ActionUnknownIntegration
+            | Forgery::ActionNoClicker
+            | Forgery::ActionNoContext => {
+                let mut ctx = real(&post_id)?;
+                let mut user = self.person("U1")?.id;
+                match f {
+                    Forgery::ActionBadSignature => ctx["sig"] = json!("AAAAAAAAAAAAAAAA"),
+                    Forgery::ActionUnknownIntegration => {
+                        ctx["iid"] = json!(Uuid::now_v7().to_string());
+                    }
+                    Forgery::ActionNoClicker => user.clear(),
+                    _ => ctx = json!({}),
+                }
+                self.http
+                    .post(url("mm/actions"))
+                    .json(
+                        &json!({"user_id": user, "channel_id": "c", "post_id": post_id,
+                                  "trigger_id": Uuid::now_v7().to_string(), "context": ctx}),
+                    )
+                    .send()
+                    .await?
+            }
+            Forgery::CommandWrongToken | Forgery::CommandUnknownTeam | Forgery::CommandNoToken => {
+                let (team, tok) = match f {
+                    Forgery::CommandWrongToken => (self.team_id.as_str(), "not-the-token"),
+                    Forgery::CommandUnknownTeam => ("no-such-team-id", "not-the-token"),
+                    _ => (self.team_id.as_str(), ""),
+                };
+                self.http
+                    .post(url("mm/commands"))
+                    .form(&[
+                        ("team_id", team),
+                        ("token", tok),
+                        ("channel_id", "c"),
+                        ("user_id", "u"),
+                        ("text", "help"),
+                        ("trigger_id", &Uuid::now_v7().to_string()),
+                    ])
+                    .send()
+                    .await?
+            }
+        };
+        Ok(resp.status().as_u16())
+    }
+
+    async fn member_sees_action_context(
+        &self,
+        message_ref: &str,
+        member: &str,
+        token: &str,
+    ) -> Result<Option<bool>> {
+        let who = self.person(member)?;
+        let post = self
+            .call(
+                &who.token,
+                Method::GET,
+                &format!("/posts/{message_ref}"),
+                None,
+            )
+            .await?;
+        let actions = post["props"]["attachments"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .flat_map(|a| a["actions"].as_array().into_iter().flatten())
+            .count();
+        anyhow::ensure!(
+            actions > 0,
+            "the member's view of {message_ref} shows no actions at all"
+        );
+        let shown = post.to_string();
+        Ok(Some(
+            shown.contains("\"integration\"") || shown.contains(token),
+        ))
     }
 
     async fn wait_ready(&self, timeout: Duration) -> Result<()> {

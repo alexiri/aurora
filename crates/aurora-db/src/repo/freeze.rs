@@ -143,6 +143,42 @@ pub async fn freeze(
         == 1)
 }
 
+/// (FIX-109, D-50) Raise the record of an already frozen scope to a higher authority: who,
+/// reason and authority change, `frozen_at` stays (the freeze began then). Only ever raises:
+/// the statement is a no-op unless the stored authority ranks below `authority`. Returns `true`
+/// when the record was raised.
+pub async fn escalate(
+    conn: &mut PgConnection,
+    scope: Scope,
+    id: Uuid,
+    by: Uuid,
+    reason: &str,
+    authority: &str,
+) -> Result<bool, DbError> {
+    let rank = |col: &str| {
+        format!(
+            "CASE {col} WHEN 'workspace_owner' THEN 1 WHEN 'org_admin' THEN 2
+                         WHEN 'instance_admin' THEN 3 ELSE 255 END"
+        )
+    };
+    let sql = format!(
+        "UPDATE {} SET frozen_by_user_id = $2, frozen_reason = $3, frozen_authority = $4
+          WHERE id = $1 AND frozen_at IS NOT NULL AND {} < {}",
+        scope.table(),
+        rank("frozen_authority"),
+        rank("$4::text"),
+    );
+    Ok(sqlx::query(&sql)
+        .bind(id)
+        .bind(by)
+        .bind(reason)
+        .bind(authority)
+        .execute(&mut *conn)
+        .await?
+        .rows_affected()
+        == 1)
+}
+
 /// Clear the flag. Returns `true` when it was set.
 pub async fn unfreeze(conn: &mut PgConnection, scope: Scope, id: Uuid) -> Result<bool, DbError> {
     let sql = format!(
@@ -467,6 +503,85 @@ pub struct AdminOrgRow {
     pub by_label: Option<String>,
     pub frozen_reason: Option<String>,
     pub frozen_authority: Option<String>,
+    /// (P5-ADMDEL, C-733) No active owner.
+    pub ownerless: bool,
+    /// Active members.
+    pub member_count: i64,
+    pub workspace_count: i64,
+    pub agent_count: i64,
+}
+
+/// One workspace of an organization in the instance-admin view (metadata only).
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct AdminWorkspaceRow {
+    pub id: Uuid,
+    pub slug: String,
+    pub name: String,
+    pub personal: bool,
+    pub agent_count: i64,
+    pub created_at: DateTime<Utc>,
+}
+
+const ADMIN_ORG_COLS: &str = "o.id, o.slug, o.name, o.created_at, o.frozen_at, o.frozen_by_user_id,
+        u.email::text AS by_label, o.frozen_reason, o.frozen_authority,
+        NOT EXISTS (SELECT 1 FROM org_members m
+                    WHERE m.org_id = o.id AND m.status = 'active' AND m.role = 'owner') AS ownerless,
+        (SELECT count(*) FROM org_members m
+          WHERE m.org_id = o.id AND m.status = 'active') AS member_count,
+        (SELECT count(*) FROM workspaces w WHERE w.org_id = o.id) AS workspace_count,
+        (SELECT count(*) FROM agents a WHERE a.org_id = o.id) AS agent_count";
+
+/// One organization's operator row (`None` when it does not exist).
+pub async fn get_admin_org(
+    conn: &mut PgConnection,
+    org: Uuid,
+) -> Result<Option<AdminOrgRow>, DbError> {
+    Ok(sqlx::query_as(&format!(
+        "SELECT {ADMIN_ORG_COLS}
+         FROM organizations o LEFT JOIN users u ON u.id = o.frozen_by_user_id
+         WHERE o.id = $1"
+    ))
+    .bind(org)
+    .fetch_optional(&mut *conn)
+    .await?)
+}
+
+/// An organization's workspaces, newest first (metadata only).
+pub async fn list_admin_workspaces(
+    conn: &mut PgConnection,
+    org: Uuid,
+    after: Option<(DateTime<Utc>, Uuid)>,
+    limit: i64,
+) -> Result<Vec<AdminWorkspaceRow>, DbError> {
+    let (t, id) = after.map_or((None, None), |(t, i)| (Some(t), Some(i)));
+    Ok(sqlx::query_as(
+        "SELECT w.id, w.slug, w.name, w.personal, w.created_at,
+                (SELECT count(*) FROM agents a WHERE a.workspace_id = w.id) AS agent_count
+         FROM workspaces w
+         WHERE w.org_id = $1 AND ($2::timestamptz IS NULL OR (w.created_at, w.id) < ($2, $3))
+         ORDER BY w.created_at DESC, w.id DESC LIMIT $4",
+    )
+    .bind(org)
+    .bind(t)
+    .bind(id)
+    .bind(limit)
+    .fetch_all(&mut *conn)
+    .await?)
+}
+
+/// A workspace for the instance-admin delete: `(org_id, slug, name, agent_count)`.
+pub async fn get_admin_workspace(
+    conn: &mut PgConnection,
+    ws: Uuid,
+) -> Result<Option<(Uuid, String, String, i64)>, DbError> {
+    Ok(sqlx::query_as(
+        "SELECT w.org_id, w.slug, w.name,
+                (SELECT count(*) FROM agents a WHERE a.workspace_id = w.id)
+         FROM workspaces w WHERE w.id = $1",
+    )
+    .bind(ws)
+    .fetch_optional(&mut *conn)
+    .await?)
 }
 
 impl AdminOrgRow {
@@ -492,14 +607,13 @@ pub async fn list_orgs(
     limit: i64,
 ) -> Result<Vec<AdminOrgRow>, DbError> {
     let (t, id) = after.map_or((None, None), |(t, i)| (Some(t), Some(i)));
-    Ok(sqlx::query_as(
-        "SELECT o.id, o.slug, o.name, o.created_at, o.frozen_at, o.frozen_by_user_id,
-                u.email::text AS by_label, o.frozen_reason, o.frozen_authority
-         FROM organizations o LEFT JOIN users u ON u.id = o.frozen_by_user_id
-         WHERE (NOT $1 OR o.frozen_at IS NOT NULL)
-           AND ($2::timestamptz IS NULL OR (o.created_at, o.id) < ($2, $3))
-         ORDER BY o.created_at DESC, o.id DESC LIMIT $4",
-    )
+    Ok(sqlx::query_as(&format!(
+        "SELECT {ADMIN_ORG_COLS}
+             FROM organizations o LEFT JOIN users u ON u.id = o.frozen_by_user_id
+             WHERE (NOT $1 OR o.frozen_at IS NOT NULL)
+               AND ($2::timestamptz IS NULL OR (o.created_at, o.id) < ($2, $3))
+             ORDER BY o.created_at DESC, o.id DESC LIMIT $4"
+    ))
     .bind(frozen_only)
     .bind(t)
     .bind(id)

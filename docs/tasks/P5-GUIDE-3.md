@@ -1,7 +1,7 @@
 # P5-GUIDE-3: Agent guides — dashboard section in the plugin view and review (owner, 2026-11-13)
 
 Third task of "app guides on demand". Normative spec: `docs/24-app-guides.md` §9, `14`
-(Instance administration → Plugins), `14 §Visual design`; contract **C-648**; SEC-90. Depends on
+(Instance administration → Plugins), `14 §Visual design`; contract **C-648**; SEC-117. Depends on
 **P5-GUIDE-2** (the `agent_guides` field and the file route, with `schema.d.ts` regenerated).
 It may start as soon as C-648 is merged, against the generated types.
 

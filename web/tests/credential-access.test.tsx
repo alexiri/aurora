@@ -327,6 +327,7 @@ describe("Give agents access step", () => {
   });
 
   it("grants a connection full access (C-504)", async () => {
+    routes["GET /v1/apps/github"] = () => json(200, { app_id: "github", name: "GitHub", tools });
     routes["POST /v1/connections/c1/grants"] = () => json(200, { items: [{ agent_id: "a1", grant: {}, status: "created" }] });
     step(wsSubject({ kind: "connection", id: "c1" }, { appId: "github", appWorkspaceId: "w1" }));
     await check("Daneel");
@@ -336,26 +337,29 @@ describe("Give agents access step", () => {
   });
 
   const tools = [
-    { id: "issues.read", name: "Read issues", group: "read", host: "api.github.com", methods: ["GET"], path: "/issues", wildcard: false },
-    { id: "issues.write", name: "Create issues", group: "write", host: "api.github.com", methods: ["POST"], path: "/issues", wildcard: false },
+    { id: "issues.read", name: "Read issues", group: "read", host: "api.github.com", methods: ["GET"], path: "/issues", connect_methods: [], wildcard: false },
+    { id: "issues.write", name: "Create issues", group: "write", host: "api.github.com", methods: ["POST"], path: "/issues", connect_methods: [], wildcard: false },
   ];
 
-  it("asks for the allowed tools first for a custom_only app and sends a custom grant", async () => {
+  it("starts a custom_only app on Custom with every tool blocked and sends the chosen grant (the Access tab's form)", async () => {
     routes["GET /v1/apps/github"] = () => json(200, { app_id: "github", name: "GitHub", tools });
     routes["POST /v1/connections/c1/grants"] = () => json(200, { items: [{ agent_id: "a1", grant: {}, status: "created" }] });
     step(wsSubject({ kind: "connection", id: "c1" }, { appId: "github", appWorkspaceId: "w1", customOnly: true }));
     await check("Daneel");
-    expect((screen.getByRole("button", { name: "Give access" }) as HTMLButtonElement).disabled).toBe(true); // no tool yet
-    fireEvent.click(await screen.findByRole("checkbox", { name: /Read issues/ }));
-    expect(screen.getByText(/Every tool you do not choose is blocked/)).toBeTruthy();
+    expect(await screen.findByText(/This app only supports custom access/)).toBeTruthy();
+    expect(screen.queryByRole("radiogroup", { name: "Access mode" })).toBeNull();
+    expect((screen.getByRole("button", { name: "Give access" }) as HTMLButtonElement).disabled).toBe(true); // nothing allowed yet
+    fireEvent.click(within(screen.getByRole("radiogroup", { name: "Access for Read issues" })).getByLabelText("Allow"));
+    fireEvent.click(within(screen.getByRole("radiogroup", { name: "Access for Create issues" })).getByLabelText("Ask"));
+    fireEvent.change(screen.getByLabelText("Approval timeout (seconds)"), { target: { value: "600" } });
     give();
     await screen.findByText("Access given to 1 agent.");
     expect(calls.find((c) => c.key === "POST /v1/connections/c1/grants")?.body).toEqual({
-      agent_ids: ["a1"], mode: "custom", allow_tools: ["issues.read"], ask_tools: [],
+      agent_ids: ["a1"], mode: "custom", allow_tools: ["issues.read"], ask_tools: ["issues.write"], ask_timeout_secs: 600,
     });
   });
 
-  it("falls back to the tools picker when the server answers full_grant_forbidden", async () => {
+  it("falls back to Custom when the server answers full_grant_forbidden", async () => {
     routes["GET /v1/apps/github"] = () => json(200, { app_id: "github", name: "GitHub", tools });
     routes["POST /v1/connections/c1/grants"] = (_r, body) =>
       (body as { mode: string }).mode === "full"
@@ -364,7 +368,8 @@ describe("Give agents access step", () => {
     step(wsSubject({ kind: "connection", id: "c1" }, { appId: "github", appWorkspaceId: "w1" }));
     await check("Daneel");
     give();
-    fireEvent.click(await screen.findByRole("checkbox", { name: /Create issues/ }));
+    const row = await screen.findByRole("radiogroup", { name: "Access for Create issues" }); // the form switched to Custom
+    fireEvent.click(within(row).getByLabelText("Allow"));
     give();
     await screen.findByText("Access given to 1 agent.");
     expect(calls.filter((c) => c.key === "POST /v1/connections/c1/grants").map((c) => (c.body as { mode: string }).mode)).toEqual(["full", "custom"]);

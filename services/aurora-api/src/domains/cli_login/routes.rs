@@ -4,7 +4,7 @@ use crate::app::AppState;
 use crate::http::auth::SessionCaller;
 use crate::http::client_ip::ClientIp;
 use crate::http::error::ErrorEnvelope;
-use crate::http::json::Json;
+use crate::http::json::{Json, Query};
 use crate::http::ratelimit::Quota;
 use aurora_core::ApiError;
 use axum::Extension;
@@ -17,6 +17,7 @@ pub fn router() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(start))
         .routes(routes!(token))
+        .routes(routes!(pending))
         .routes(routes!(approve))
 }
 
@@ -38,7 +39,21 @@ async fn start(
             per: Duration::from_secs(60),
         },
     )?;
-    Ok(Json(service::start(&s, req).await?))
+    Ok(Json(service::start(&s, req, ip.0).await?))
+}
+
+/// What a pending login is asking for: host name, start time, coarse address (session only).
+#[utoipa::path(get, path = "/auth/cli/pending", operation_id = "getPendingCliLogin", tag = "auth",
+    params(PendingQuery),
+    responses((status = 200, body = PendingResponse), (status = 400, body = ErrorEnvelope),
+        (status = 404, body = ErrorEnvelope), (status = 429, body = ErrorEnvelope)),
+    security(("session" = [])))]
+async fn pending(
+    c: SessionCaller,
+    State(s): State<AppState>,
+    Query(q): Query<PendingQuery>,
+) -> Result<Json<PendingResponse>, ApiError> {
+    Ok(Json(service::pending(&s, &c, &q.code).await?))
 }
 
 /// Poll for the API key; the key is returned exactly once.

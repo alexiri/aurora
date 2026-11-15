@@ -65,6 +65,9 @@ pub struct PreparedRequest {
     pub response_headers: HeaderMap,
     /// Stale-token resend (step 14): body-less requests only.
     pub retry: Option<Box<dyn Retry>>,
+    /// (D-251) Set for a request on an LDAP app's synthetic host: the approved `ldap` block the
+    /// request is translated with instead of being forwarded.
+    pub ldap: Option<aurora_registry::manifest::Ldap>,
 }
 
 /// Rebuilds a request with fresh credentials after the upstream answered with a
@@ -78,6 +81,12 @@ pub trait Retry: Send + 'static {
 
 /// Post-response hook (pipeline steps 14-15): guidance replacement and request log.
 pub trait PostHook: Send + 'static {
+    /// (FIX-104, SEC-01) Forms of every injected value that was placed in the request URL: a
+    /// response carrying one (headers, or the first 64 KiB of the body) is replaced by 502
+    /// `upstream_echoed_credential`. Empty when nothing was placed in the URL.
+    fn echo_needles(&self) -> Vec<Vec<u8>> {
+        Vec::new()
+    }
     /// Upstream answered. Return `Some` to replace the response (status is the
     /// caller's to preserve).
     fn on_response(
@@ -105,6 +114,7 @@ impl PipelineRequest {
             hook: None,
             response_headers: HeaderMap::new(),
             retry: None,
+            ldap: None,
         }
     }
 }

@@ -19,8 +19,24 @@ platform's agent inside the agent's computer. It:
 ## Process model and startup
 
 1. Runs as PID 1 (uid 1000), reaps children, forwards SIGTERM to process groups.
-2. Reads `AURORA_BOOT`, calls `prctl(PR_SET_DUMPABLE, 0)`, scrubs the variable
-   from its environment.
+   (FIX-114) Tokio reaps the children it spawned; a SIGCHLD/1 s loop reaps the zombie
+   children of PID 1 that are still there on the next scan (orphans reparented to it:
+   tool subprocesses of an aborted turn, `sh -c 'server &'`), so they cannot eat the
+   sandbox's pid budget; shutdown (the runner's `shutdown` frame or SIGTERM) sends
+   SIGTERM to every registered process group first.
+2. Reads `AURORA_BOOT`, makes the process non-dumpable (`prctl(PR_SET_DUMPABLE, 0)`) so
+   `/proc/<pid>/environ` is unreadable to the agent, and never passes the variable to a
+   child (every child starts from a rebuilt environment, `SEC-34`). The supervisor cannot
+   remove the variable from its own environment (no `unsafe`).
+   (FIX-114) The child-environment filter drops values with any platform token prefix
+   (`aug_ aub_ auc_ auk_ auo_ aur_ aun_ aut_ auw_ aus_ aui_ aup_ auh_ aud_ aul_ auv_ aux_
+   auy_`) and secret-shaped names (`*_TOKEN *_SECRET *_PASSWORD *_KEY *_CREDENTIAL(S) *_DSN
+   *_PASS *_PWD *_AUTH *_APIKEY`, `DATABASE_URL`) unless the value is the placeholder.
+   Reads of agent-writable files are bounded (memory files at 4 × the content limit, with a
+   notice; `tools.json`, staged sync parts and `render_inputs.json` at a few MiB), the
+   process table keeps at most 64 exited records and reserves a slot under the same lock
+   as the `max_running` check, and each tools-socket connection and MCP bridge has an
+   in-flight cap (32; over it `tools_unavailable`) and a request-line bound (1 MiB).
 3. Writes boot `files` (`only_if_absent_or_sentinel` honoured: never overwrite a
    file lacking the `aurora-managed` sentinel), writes `/run/aurora/ca.pem`.
 4. Starts the loopback proxies (the open proxy only with the `browser` capability, `11`).
@@ -149,7 +165,7 @@ against `fake`, and against `claude-code` when an LLM endpoint is configured
   `ANTHROPIC_AUTH_TOKEN=aurora-placeholder`; for `anthropic`
   `ANTHROPIC_API_KEY=aurora-placeholder`; `ANTHROPIC_MODEL=<model>`;
   auto-update, telemetry and non-essential traffic disabled.
-- (phase 4, P4-LLM, D-121) The adapter's `dialects` become `[anthropic_messages,
+- (phase 5 (D-138, moved from phase 4), P4-LLM, D-121) The adapter's `dialects` become `[anthropic_messages,
   anthropic_bedrock, anthropic_vertex]` (declared, never probed; a harness version
   that cannot speak one removes it). Client environment for the new dialects, all
   **without credentials** because the gateway signs or mints: `anthropic_bedrock` →
@@ -161,7 +177,13 @@ against `fake`, and against `claude-code` when an LLM endpoint is configured
   `ANTHROPIC_MODEL=<model>`. The exact variable names are pinned next to the CLI version
   and verified by the live conformance suite (env-gated, per provider), like the phase-0
   ones. A pinned version that lacks the "skip auth" switch for a provider does not declare
-  that dialect.
+  that dialect. (phase 5, P4-LLM spec batch, D-261) The environment is the same for every
+  auth mode of the endpoint (`aws_assume_role`, `aws_sigv4` and a Bedrock `api_key` alike:
+  no `AWS_BEARER_TOKEN_BEDROCK`, no AWS profile, no `GOOGLE_APPLICATION_CREDENTIALS`); with
+  the "skip auth" switches the CLI sends unsigned requests and the gateway signs or injects.
+  The adapter also sets `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1` for these dialects as
+  for `anthropic_messages`, so the only calls on the endpoint host are inference calls
+  (the inference path sets of `08` refuse anything else).
 - MCP configuration: one stdio server `aurora` = `aurora-supervisor mcp-bridge
   --session <conversation_id>`.
 - Tool permission prompts are disabled (the sandbox is the isolation boundary;
@@ -209,6 +231,19 @@ does not enable a second harness.
   agent's harness re-runs that selection: a model override whose endpoint no longer serves
   the new harness is dropped with a notice (the existing rule); with no compatible granted
   key the next turn fails `no_model_key`.
+- **Provider reach per harness** (phase 5, P4-LLM spec batch, D-260). The gateway never
+  translates between wire formats, so a harness reaches a provider only through a shared
+  dialect (the full table is `08 §Phase 4 providers`, *Wire formats and harness reach*):
+  `claude-code` reaches `anthropic`, `bedrock` (`anthropic_bedrock`), `vertex`
+  (`anthropic_vertex`), and `litellm`/`openai_compatible` endpoints declaring
+  `anthropic_messages`; `codex` reaches `openai`, `azure_openai`, and `litellm`/
+  `openai_compatible`/`bedrock` endpoints declaring `openai_responses`. Any other pairing
+  goes through a `litellm` endpoint (LiteLLM translates) or is refused as
+  `no_shared_dialect`. The **auth mode never reaches the harness**: the supervisor gets
+  the same `client_env` for every auth mode of a provider (placeholders and "skip auth"
+  switches, C-809), because the gateway removes whatever the client sends and injects,
+  signs or mints itself; the API passes the key's real auth mode to `client_env` (not a
+  fixed `api_key`).
 - **Switching the harness of an agent that has history.** Sessions are adapter-owned
   files in the agent's home, so the change (a) bumps `harness_session_epoch` of every
   conversation (the next turn starts a fresh harness session; the transcript in Aurora
@@ -239,10 +274,16 @@ specified here is the contract.
   `skills_dir` = the pinned version's skills directory when it has one, else none (skills
   are then listed in `AGENTS.md`).
 - **State.** `CODEX_HOME` points into the agent's home (`~/.codex`); sessions live there
-  and are what `purge_session` deletes (idempotent: the rollout files of one session id).
+  and are what `purge_session` deletes (idempotent: exactly the rollout files named
+  `rollout-<timestamp>-<id>.jsonl` of one session id). Codex keeps its rollouts and its
+  configuration under one home, so the file is **re-rendered and verified (read back) immediately
+  before every `codex exec`**: what the agent wrote there between turns is gone (SEC-66). A thread
+  id from `thread.started` is kept only when it is a UUID; stdout lines are read with a 16 MiB
+  bound and a longer line fails the turn (`harness_failed`); the release supervisor reads no
+  binary override from the environment.
   No `auth.json` is ever written and ChatGPT-account sign-in is never offered.
-- **Configuration the adapter renders** (per session start, into `CODEX_HOME/config.toml`
-  owned by Aurora and overwritten on every start): a model provider whose `base_url` is the
+- **Configuration the adapter renders** (before every turn, into `CODEX_HOME/config.toml`
+  owned by Aurora and overwritten each time): a model provider whose `base_url` is the
   endpoint base URL of `ModelChoice`, `wire_api` from the chosen dialect, `env_key =
   OPENAI_API_KEY`; `model`; the reasoning effort from a version-pinned table (`low`,
   `medium`, `high`; `max` maps to the highest the CLI accepts); approvals set to "never"
@@ -257,7 +298,13 @@ specified here is the contract.
   every call carries the turn's context credential), the CA bundle variables of the boot
   document, `CODEX_HOME`, `OPENAI_API_KEY=aurora-placeholder`; no `OPENAI_BASE_URL`
   outside the rendered provider. Azure OpenAI and OpenAI-compatible endpoints use the same
-  provider block with their `base_url`.
+  provider block with their `base_url`. (phase 5, P4-LLM spec batch, C-809) The block's
+  `base_url` is the provider's `OPENAI_BASE_URL` from `client_env` (as for `litellm`
+  today): `openai` `https://api.openai.com/v1`, `azure_openai` `<base>/openai/v1` (the
+  v1 API needs no `api-version`; the placeholder `Authorization` Codex sends is removed and
+  replaced by `api-key` or an Entra token at the gateway), `openai_compatible` `<base>/v1`,
+  `bedrock` with `openai_responses` `<runtime base>/openai/v1`. No Azure- or AWS-specific
+  Codex setting is rendered.
 - **Events.** The adapter maps Codex's JSON events to `HarnessEvent`: agent messages →
   text (message boundaries per the harness's framing, `10 §Answer rule`), reasoning
   summaries → thinking, command/file/MCP tool items → tool started/finished and activity
@@ -285,17 +332,26 @@ The supervisor maps terminal harness errors to turn error codes:
 originated at the **gateway** (recognized by the gateway's error envelope or
 the `x-should-retry: false` + Aurora error code) is never presented as a
 provider refusal; it is reported as `gateway_refused` with the gateway code.
-(phase 4, P4-LLM) The classes for the new providers come from the shared
+(phase 5 (D-138, moved from phase 4), P4-LLM) The classes for the new providers come from the shared
 `aurora-llm` table (`08 §Phase 4 providers`, *Error classification*), so a Bedrock
 `ThrottlingException`, an OpenAI `insufficient_quota` or a Vertex `PERMISSION_DENIED`
 map to `provider_rate_limited`, `provider_quota` and `provider_auth` the same way in
 every adapter. The new gateway codes `llm_path_not_permitted` and
-`llm_request_too_large` are gateway refusals (`gateway_refused`).
-(phase 4, RFE-011b) `approval_parked` is a gateway refusal that is **not a failure**: the supervisor
-shows it as an activity line ("waiting for approval") and never maps it to `gateway_refused` as a
-terminal error; a turn that ends normally after it is `done`. No adapter changes: the refusal
-arrives as the HTTP response of the agent's own tool call, and the platform preamble
-(`10 §Agent instructions`) tells the agent how to behave. Harness-level tool-failure counters
+`llm_request_too_large` are gateway refusals (`gateway_refused`). (phase 5, P4-LLM spec
+batch, D-261) So is a 502 `credential_unavailable` with `details.kind = "llm_mint"`; when
+its `reason` is `mint_rejected` the adapter reports `provider_auth` instead (the
+credential, not the gateway, is at fault), with the gateway code kept in the message.
+Errors inside a 200 stream (an event-stream exception, an SSE `error` event) are classified
+by the adapter from the event's error type with the same table (D-260(d)).
+(phase 5 (D-138, moved from phase 4), RFE-011b) `approval_parked` is a gateway refusal that is **not a failure**: a turn
+that ends normally after it is `done`. (P4-011B spec batch, D-264(a)(c); corrects the earlier text,
+which had the supervisor turn it into an activity line) The supervisor never sees it: the refusal
+arrives as the HTTP response of the agent's own tool call, inside the harness, and the platform
+preamble (`10 §Agent instructions`) tells the agent how to behave; the person sees the
+`approval.pending { parked: true }` transcript event the API appends. The harness's **own** model
+requests never park (requests to governed LLM endpoints are held, `07` *Which approvals park* 6), so
+`approval_parked` can never reach the provider-error mapping above and needs no entry in it. No
+adapter changes. Harness-level tool-failure counters
 (`TOOL_CONSECUTIVE_FAILURES`) apply to platform tools only and do not see it. Resuming is a new
 turn, so no harness needs a "suspend" capability and none is added to the adapter contract.
 
@@ -308,6 +364,9 @@ socket `/run/aurora/tools.sock` → supervisor → `tool.call` frame (stamped wi
 conversation and current turn) → runner (stamps sandbox and boot) →
 `POST /v1/runner/tool-calls` → **tool registry** → result back.
 
+- (FIX-110) `turn_id` is required and must be an active turn of the calling agent;
+  a call without one is refused `no_active_turn` (the supervisor refuses it locally
+  when no turn is running in the conversation, and the API refuses it again).
 - End-to-end budget `TOOL_CALL_TIMEOUT` (below typical harness MCP timeouts so
   the model sees Aurora's error text). After `TOOL_CONSECUTIVE_FAILURES`
   consecutive transport failures in a session the bridge answers immediately
@@ -358,6 +417,7 @@ arguments; state changes are reported to the API.
 | Webhooks | `webhook_list {}`, `webhook_deliveries {id}`, `webhook_update {id, instructions?, enabled?}` |
 | Processes (local) | `process_start {name, command, cwd?}`, `process_status {id?}`, `process_stop {id}`, `process_watch {id, kind, pattern?, silence_secs?}` |
 | Files | `send_file {path, caption?}` (to the current conversation) |
+| Conversations (phase 5, P5-CHAT-4 part C, D-230, C-728; always available to hosted agents) | `conversation_search {query, where?, author?, after?, before?, limit?}`, `conversation_read {conversation_id, seq, before?, after?}` — the agent's own memory of what was said in its conversations, on the message-search index (`10 §Search`). Scope computed at call time from the stamped agent and turn: the current conversation, the speaker's own direct conversation, and non-direct conversations the speaker can see; never another person's direct conversation, even for an owner speaker. Results are wrapped as untrusted quoted data; the descriptions repeat the direct-conversation privacy rule of `10 §Visibility of direct conversations` |
 | Messaging (available with an active presence) | `find_recipient {query, platform?}`, `send_message {to, text, files?, platform?}`, `read_conversation {target?, limit?}`, `list_my_messages {}`, `edit_my_message {message_id, text}`, `delete_my_message {message_id}` (`13 §Messaging tools`) |
 | Agents | `list_agents {}`, `message_agent {agent, text}`, `complete_task {report}`, `list_peer_tasks {}`, `cancel_peer_task {id}` |
 | Apps | `list_apps {}`, `request_app_connection {app_id, reason}`, `propose_custom_connection {name, host, path?, recipe, reason}` |
@@ -384,7 +444,7 @@ The home (`/workspace`) holds:
   (preamble data, brief, capability fragment inputs: apps with snippets and
   docs links, presences, peers, memory language, schedules summary, timezone),
   `tools` (catalogue), (phase 5, P5-GUIDE-2) `apps` (agent guide files, below), (phase 4, P4-PRV-1) `previews` (the active preview shares, held in memory only, `§Previews`), `manifest` (the complete list of managed paths), `final`.
-- (phase 5, P5-GUIDE-2, D-171, SEC-90, `24 §7`) **`apps` parts** carry file entries
+- (phase 5, P5-GUIDE-2, D-171, SEC-117, `24 §7`) **`apps` parts** carry file entries
   `{ path, content }` (the entry shape of `skills`) for `.aurora/apps/<app_id>/<file>`: the two
   files the API renders per connected app (`guide.md`, `tools.md`) and the reference files of the
   app's package, the latter up to `AGENT_GUIDE_SYNC_MAX` per sync (apps beyond the budget, in
@@ -502,14 +562,68 @@ file is logged and does not fail the sync. The sandbox image ships the `psql` cl
 
 ### Terminal (phase 4, P4-TERM, D-161; wire in `16 §W19`)
 
-- On `pty.open { pty_id, window, cols, rows }` from its channel — which only the runner sends,
+- On `pty.open { pty_id, window, cols, rows, shell? }` from its channel — which only the runner sends,
   and only for an API-redeemed terminal grant of the current boot — the supervisor spawns the
-  image's shell (`/bin/sh`, or `$SHELL` if set) under a pseudo-terminal as the agent user
-  (uid/gid as the process manager uses), cwd `/workspace`, own process group, and answers
-  `pty.opened`. The environment is the container environment **minus every `AURORA_*`
+  person's chosen shell under a pseudo-terminal as the agent user (FIX-138, D-246: `shell` is
+  the enumeration `bash` (default, also when absent) or `zsh`, never a path; the supervisor maps
+  it to the fixed binaries `/bin/bash` and `/usr/bin/zsh` and starts them as an interactive
+  **login** shell, `-l`. A missing zsh falls back to bash; a missing bash — or neither — to
+  `/bin/sh` without `-l`; each fallback prints one line in the pane ("zsh is not installed in
+  this sandbox image; starting bash instead." / "bash and zsh are not installed in this sandbox
+  image; starting sh (no completion or history)."). `$SHELL` of the supervisor is no longer
+  consulted; the PTY's `SHELL` is the chosen binary)
+  (uid/gid as the process manager uses), cwd `/workspace`, own session with the
+  pseudo-terminal as its controlling terminal (job control works); the supervisor opens both
+  ends with `O_NOCTTY` and never acquires a terminal itself (it is PID 1 and a session leader
+  in the sandbox), and answers `pty.opened`. Closing a terminal hangs the session up
+  (SIGHUP), then after a short grace kills its process group (SIGKILL): a shell that ignores
+  HUP does not outlive its terminal. The environment is the container environment **minus every `AURORA_*`
   variable** and minus the boot document: no platform credential, no token, no supervisor
   handle ever appears in a terminal's environment (SEC-01/SEC-34 posture) — the shell has
   exactly the privilege a `process_start` command already has, in a PTY.
+- **`PATH` and interactive defaults (FIX-138).** One `PATH` for both shells, a turn and the
+  terminal: `/workspace/.local/bin:/opt/aurora/bin:/usr/local/bin:/usr/bin:/bin` (the image's
+  `ENV PATH`, `/etc/profile.d/aurora.sh` for bash login shells, `/etc/zsh/zshenv` for zsh, the PTY
+  spawn's environment and the supervisor's spawn default `spawn::IMAGE_PATH`). `/opt/aurora/bin`
+  is the directory of the `claude` and `codex` wrappers (below). System-wide **interactive** defaults (aliases `ls`,
+  `ll`, `la`, `l`, `grep`, colours, a prompt `user@<agent handle>:cwd`, history size and
+  de-duplication, zsh `compinit`) live only in the image's system rc files (`/etc/bashrc`,
+  `/etc/zshrc`) — not in the agent's home, so a person's own `~/.bashrc`/`~/.zshrc` still wins —
+  and are read by interactive shells only: agent turns and `bash -c` never see the aliases.
+- **Harnesses in the terminal (FIX-138 item 1b, D-247).** `claude` and `codex` on `PATH` are the
+  wrappers `/opt/aurora/bin/claude` and `/opt/aurora/bin/codex` (image files, `images/sandbox/bin`),
+  not the pinned binaries (`/opt/aurora/harness/…`, off `PATH`). At boot, and again with the agent's
+  model at every session start, the supervisor writes **`/run/aurora/harness.env`** (mode 0644,
+  shell-sourceable, **no secret**): the harnesses the instance enables (boot document
+  `enabled_harnesses`, from `hosted.enabled_harnesses`; absent = only the booted one), the machine
+  proxy `http://127.0.0.1:3128` (`HTTPS_PROXY`…: the loopback forwarder adds the boot token, the
+  terminal never holds it), the CA bundle (`SSL_CERT_FILE`, `NODE_EXTRA_CA_CERTS`,
+  `CODEX_CA_CERTIFICATE`), the placeholder credential `aurora-placeholder` that the gateway
+  replaces with the agent's governed LLM key (SEC-01/SEC-34: a real key is never in a terminal's
+  environment or on disk), the CLIs' telemetry/auto-update switches, and — once a turn has chosen
+  one — the model, and for a non-Anthropic endpoint its base URL, exactly the values the adapters
+  put into a turn's environment (Codex takes its provider from `-c` overrides the wrapper builds,
+  not from a config file). **(Owner 2026-11-14, C-750 (4))** Every terminal open also brings the
+  models: the API resolves, at grant redemption, the model a turn of **each** enabled terminal
+  harness (`claude-code`, `codex`) would use (the same `model::select`), and the runner hands them
+  to the supervisor in `pty.open.models`; the supervisor rewrites the file before it spawns the
+  shell. So `claude`/`codex` reach the agent's endpoint from the first terminal of a fresh boot,
+  not only after a turn (before this, a fresh boot sent `claude` to `api.anthropic.com`, where an
+  agent whose key is for another endpoint has no credential). The file keeps one section per
+  harness; a turn's session start replaces only its own harness's section. A harness with no
+  usable model gets `AURORA_<HARNESS>_UNAVAILABLE` (a fixed reason: no usable LLM key, or no model
+  chosen) and its wrapper prints that and exits 1 instead of calling a host with no credential.
+  An older runner or API (no `models`) keeps the previous behaviour. Each wrapper refuses with "`<harness>`: not
+  enabled on this instance" (exit 127) when its binary is not in the image or its harness is not
+  in `HARNESSES_ENABLED`; otherwise it sources the file, sets its **own state directory**
+  (`CLAUDE_CONFIG_DIR=/workspace/.aurora/terminal/claude`, `CODEX_HOME=/workspace/.aurora/terminal/codex`,
+  created by the supervisor and owned by the agent user) so an interactive session never reads or
+  changes the agent harness's configuration, sessions or memory (FIX-095), and `exec`s the binary.
+  The terminal session does not read the agent's instructions or skills. **Attribution:** the
+  traffic goes through the same machine proxy and boot-token credential as a turn's model calls, so
+  the gateway attributes it to the **agent** (lane `mitm`, no turn or conversation), counts it
+  against the same budgets and rate limits and shows it in the request log (`07`) like any other
+  model call of that agent; the person at the terminal is not recorded as a speaker.
 - `pty.resize { cols, rows }` applies `TIOCSWINSZ`; bytes are relayed with the W18 credit
   machinery (`16 §W19`, tag `0x02`), never logged, never counted beyond byte totals, never
   visible to the harness, the gateway or the loopback proxies. A terminal session is **not**
@@ -518,8 +632,52 @@ file is logged and does not fail the sync. The sandbox image ships the `psql` cl
   alone (`11 §Web terminal`).
 - Limits: at most `TERMINALS_PER_SANDBOX` (2) concurrently, more → `pty.refused { limit }`;
   idle and lifetime enforcement as the runner instructs (`pty.close` reasons `idle`,
-  `lifetime`). Everything closes on `shutdown`, channel loss, a stop, a restart or a freeze
+  `lifetime`). Everything closes on `shutdown` (PTYs and preview streams, within the shutdown
+  grace — a wedged engine cannot hold shutdown), channel loss, a stop, a restart or a freeze
   (the runner closes leg 1 with 4503/4403); nothing is resumed.
+
+### SSH channels (phase 5, P4-SSH-2, D-239, SEC-95; wire in `16 §W20`)
+
+An SSH session channel becomes one **exec** in the sandbox: the terminal's PTY posture plus the
+non-interactive modes SSH clients need. Only the runner sends `exec.open`, and only for an
+API-redeemed `auz_` grant of the current boot; agent tools can never open, signal or read one.
+
+- **Modes** (`exec.open { pty_id, window, mode, command?, tty?, env }`, the `pty_id` space and the
+  `0x02` data tag shared with terminals):
+  - `shell` — the image shell (`$SHELL`, else `/bin/sh`) as a login-less interactive shell; with
+    `tty` it is exactly `§Terminal`'s PTY (own session, controlling terminal, `O_NOCTTY` on the
+    supervisor's side, `TIOCSWINSZ` from `tty.cols/rows`); without `tty` (`ssh -T host`) it reads
+    commands from stdin over pipes.
+  - `exec` — `<shell> -c <command>` (OpenSSH's semantics; `command` ≤ `SSH_EXEC_COMMAND_MAX` 8 KiB, no
+    NUL; never logged, never stored, never audited), with or without `tty` (`ssh -t host cmd`).
+    Legacy `scp -O` arrives here as `scp -t|-f …` and works because the image carries `scp`.
+  - `sftp` — the image's `/usr/libexec/openssh/sftp-server` (fixed path; never a path the client
+    names) over pipes, no `tty`; `exec.refused { unsupported }` when the image lacks it (a custom
+    image). Modern `scp` uses SFTP and lands here.
+- **Identity and environment.** As `§Terminal`: agent uid/gid, cwd `/workspace`, the container
+  environment **minus every `AURORA_*` variable** and minus the boot document. Added: `TERM` from
+  `tty.term` (≤ 64 printable ASCII characters, else `xterm-256color`) and the client's `env`
+  requests that the terminator accepted — only `LANG` and `LC_*`, at most `SSH_ENV_VARS_MAX` (16) of
+  ≤ 256 bytes each; any other name (and every `AURORA_*` name) is dropped by the terminator and
+  again by the supervisor.
+- **Pipes and status.** Without `tty`, stdout travels as `0x02` data and stderr as `0x03` data
+  (supervisor → runner only); with `tty` both are the PTY's output (`0x02`). `exec.eof` from the
+  runner closes the child's stdin (the client's `EOF`). When the child exits the supervisor drains
+  its output, then sends `exec.exit { pty_id, status }` (or `{ signal }`, the signal's name without
+  `SIG`, e.g. `KILL`), then `pty.close { reason: "eof" }`. Closing an exec early hangs up and then
+  kills its process group exactly as a terminal (FIX-091 posture); the PTY master and pipe ends are
+  `CLOEXEC` and never reach any other child (FIX-059 posture).
+- **Refused at this layer** (defence in depth behind the terminator, `16 §W20`): any mode other than
+  the three above, a `command` for `shell`/`sftp`, a `tty` for `sftp`, an `env` name outside the list
+  — `exec.refused { reason: "unsupported" }`. There is **no** port forwarding, agent forwarding, X11
+  or Unix-socket forwarding in the supervisor at all: it never dials or listens for an SSH channel.
+- **Limits.** At most `SSH_CHANNELS_PER_SANDBOX` (8) concurrent execs, separate from
+  `TERMINALS_PER_SANDBOX`, more → `exec.refused { limit }`; idle and lifetime as the runner
+  instructs; everything closes on `shutdown`, channel loss, a stop, a restart or a freeze; nothing is
+  resumed. An exec is not a process row, never a turn, never a transcript event and never stamps
+  `last_engaged_at`; its bytes are never logged, counted beyond byte totals or visible to the
+  harness, the gateway or the loopback proxies. An older supervisor ignores `exec.*` (the runner's
+  `exec.open` times out after 5 s → leg 1 closes 4502): harmless.
 
 ## Outbound files
 

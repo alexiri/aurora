@@ -1,4 +1,4 @@
-//! The thirteen connector conformance scenarios (docs/13 §7, TEST-015).
+//! The connector conformance scenarios (docs/13 §7, TEST-015).
 //!
 //! Each test starts its own fake core + connector under test (the in-process
 //! fake connector, or the binary in `CONFORMANCE_CONNECTOR_BIN`), plays the
@@ -1249,6 +1249,176 @@ async fn s14_deprovision_error_codes_and_missing_credentials() -> R {
     if let Some(p) = c.0.driver.bot_profile(&res.platform_user_ref).await? {
         assert!(!p.active, "bot still active after deprovision");
     }
+    c.0.finish().await?;
+    Ok(())
+}
+
+// ------------------------------- 15. validate probe mode (FIX-127, C-710)
+
+#[tokio::test]
+async fn s15_validate_probe_returns_choices_and_changes_nothing() -> R {
+    let c = ctx(StartOptions::default()).await?;
+    let before = c.0.driver.posts(None).await?.len();
+    // The team is the field whose choices come from the probe: probe without it set.
+    let mut payload =
+        c.0.core
+            .validate_payload(c.0.integration, true)
+            .expect("the integration is served");
+    let secrets: Vec<String> = payload["credentials"]
+        .as_object()
+        .map(|o| {
+            o.values()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default();
+    if let Some(cfg) = payload["config"].as_object_mut() {
+        cfg.remove("team");
+    }
+    let r = c.op("credentials.validate", payload).await?;
+    let data = ok_data(&r);
+    let res: CredentialsValidateResult = serde_json::from_value(data.clone())?;
+    let teams = res.choices.get("team").expect("probe returns team choices");
+    assert!(!teams.is_empty(), "no choices: {data}");
+    assert!(
+        teams
+            .iter()
+            .all(|t| !t.value.is_empty() && !t.label.is_empty())
+    );
+    assert!(teams.len() <= 100 && res.warnings.len() <= 5);
+    // Nothing of the credentials comes back.
+    let text = data.to_string();
+    for s in secrets.iter().filter(|s| !s.is_empty()) {
+        assert!(
+            !text.contains(s.as_str()),
+            "the probe result echoes a credential"
+        );
+    }
+    // A probe has no effect on the platform.
+    assert_eq!(c.0.driver.posts(None).await?.len(), before);
+    c.0.finish().await?;
+    Ok(())
+}
+
+// ------------- 16/17. public callbacks refuse strangers (FIX-139, FIX-113)
+
+/// Posts a card with one button in U1's DM with the bot; returns `(message_ref, token)`.
+async fn button_card(c: &Ctx) -> anyhow::Result<(String, String)> {
+    let dm =
+        c.0.driver
+            .post_message(msg("U1", None, "run the report"))
+            .await?;
+    let space = c.message_event(&dm.message_ref).await?.space.reference;
+    let token = "v1.eyJraW5kIjoiYXBwcm92YWwuZGVjaWRlIn0.Rk9SR0VELVRFU1Q=";
+    let card = Card::new(vec![
+        Block::header("Approval needed"),
+        Block::buttons(vec![ButtonItem::new(
+            "Approve",
+            ButtonStyle::Primary,
+            token.into(),
+        )])?,
+    ])?;
+    let (_, r) = c
+        .post(space_target(&space, None), &Content::card(card))
+        .await?;
+    let res: MessagePostResult = serde_json::from_value(ok_data(&r))?;
+    Ok((res.message_ref, token.to_owned()))
+}
+
+/// Every forged call to a public callback is refused with 403 and nothing of it reaches the core:
+/// a bad signature, an unknown integration, no clicker, no context; a slash command with a wrong
+/// token, an unknown team or no token. A genuine click still works afterwards.
+#[tokio::test]
+async fn s16_forged_callbacks_are_refused_and_never_reach_the_core() -> R {
+    let c = ctx(StartOptions::default()).await?;
+    if !c.0.driver.quirks().public_callbacks {
+        c.0.finish().await?;
+        return Ok(());
+    }
+    let (message_ref, token) = button_card(&c).await?;
+    let events_before = c.0.core.events().len();
+    for f in [
+        Forgery::ActionBadSignature,
+        Forgery::ActionUnknownIntegration,
+        Forgery::ActionNoClicker,
+        Forgery::ActionNoContext,
+        Forgery::CommandWrongToken,
+        Forgery::CommandUnknownTeam,
+        Forgery::CommandNoToken,
+    ] {
+        let status = c.0.driver.forge_callback(f, &message_ref, &token).await?;
+        assert_eq!(status, 403, "{f:?} was not refused");
+    }
+    // The refusals are synchronous (the callback answers before it would emit), so by now any
+    // leak would be in the core's inbox or on its way: a genuine click proves the path is alive
+    // and, being the next event after it, shows nothing else slipped in before it.
+    let ack =
+        c.0.driver
+            .click(Click {
+                clicker: "U1".into(),
+                token: token.clone(),
+                value: None,
+                space_ref: None,
+                message_ref: Some(message_ref.clone()),
+            })
+            .await?;
+    assert_eq!(ack, Ack::Accepted);
+    c.event_of(EventKind::ActionInvoked).await?;
+    let new: Vec<_> = c.0.core.events().into_iter().skip(events_before).collect();
+    assert_eq!(
+        new.iter()
+            .filter(|e| matches!(e.kind, EventKind::ActionInvoked | EventKind::CommandInvoked))
+            .count(),
+        1,
+        "a forged callback reached the core: {new:?}"
+    );
+    c.0.finish().await?;
+    Ok(())
+}
+
+/// The clicker's identity rests on the platform server making the callback itself and never
+/// delivering the action context (token and signature) to clients (docs/20 §Public callbacks):
+/// a non-admin member fetching the post through the ordinary client API must not see it.
+#[tokio::test]
+async fn s17_members_never_see_the_action_context() -> R {
+    let c = ctx(StartOptions::default()).await?;
+    let (message_ref, token) = button_card(&c).await?;
+    // `None`: the driver cannot tell (the fake platform has no client API).
+    let seen =
+        c.0.driver
+            .member_sees_action_context(&message_ref, "U1", &token)
+            .await?;
+    assert_ne!(
+        seen,
+        Some(true),
+        "a non-admin member's fetch carries the action context"
+    );
+    c.0.finish().await?;
+    Ok(())
+}
+
+// ------------------------------------- 18. formatted agent answers (FIX-142, D-227(c))
+
+/// An agent's formatted answer reaches the platform with every construct the platform renders
+/// natively **unchanged** (docs/13 §4.6): the connector converts only what the platform lacks.
+/// The sample is what the core posts after `markdown_safe` (neutral text, no broadcast words; a URL
+/// is a labelled link `[url](url)`, D-270: the platform's preview never fetches a bare URL).
+#[tokio::test]
+async fn s18_native_markdown_constructs_reach_the_platform_unchanged() -> R {
+    let c = ctx(StartOptions::default()).await?;
+    let md = "# Heading\n\n**Your meetings today:** `insufficient_scope` is _not_ ~~fixed~~ [docs](https://x.example/a)\n\n\
+> quote\n>\n> - nested\n>   - deeper\n\n1. one\n2. two\n\n---\n\n\
+| name | n |\n|:--|--:|\n| **a** | `1` |\n\n\
+```rust\nfn main() {}\n```\n\n\
+line one  \nline two [https://y.example](https://y.example) :tada:";
+    let (_, r) = c.post(space_target("C1", None), &text(md)).await?;
+    let res: MessagePostResult = serde_json::from_value(ok_data(&r))?;
+    let post = c.find_post(&res.message_ref).await?;
+    assert_eq!(
+        post.text, md,
+        "a native construct was altered on its way to the platform"
+    );
     c.0.finish().await?;
     Ok(())
 }

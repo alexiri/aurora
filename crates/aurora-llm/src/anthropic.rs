@@ -121,6 +121,9 @@ impl LlmProvider for AnthropicProvider {
     fn hosts(&self, _ep: &Endpoint) -> Vec<String> {
         host_of(&self.base).into_iter().collect()
     }
+    fn base_url(&self, _ep: &Endpoint) -> String {
+        self.base.clone()
+    }
     fn injection(&self, _mode: &AuthMode) -> LlmInjection {
         LlmInjection {
             header: InjectionHeader::XApiKey,
@@ -144,6 +147,14 @@ impl LlmProvider for AnthropicProvider {
                 .collect()),
             other => other,
         }
+    }
+    async fn list_models_strict(
+        &self,
+        _ep: &Endpoint,
+        key: &Secret<String>,
+        http: &reqwest::Client,
+    ) -> Result<Vec<ModelInfo>> {
+        self.fetch_models(http, key).await
     }
     fn default_model(&self, ep: &Endpoint) -> Option<String> {
         ep.default_model.clone()

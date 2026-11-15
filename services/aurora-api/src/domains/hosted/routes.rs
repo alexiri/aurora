@@ -6,7 +6,7 @@ use super::dto::{
     ModelOption, ModelOptions, ModelReadiness, SandboxPort, SandboxProcess, SandboxStartAttempt,
     SandboxView, StartLogEntry,
 };
-use super::{lifecycle, model};
+use super::{lifecycle, model, readiness};
 use crate::app::AppState;
 use crate::audit::{AuditActor, AuditEvent, Outcome};
 use crate::domains::conversations::service::{self as conv, load_agent};
@@ -85,7 +85,41 @@ async fn hosted_agent(
     Ok(a)
 }
 
-async fn view(s: &AppState, a: &AgentRow) -> Result<SandboxView, ApiError> {
+/// (D-178 Q-R5-5, FIX-093) Pod/volume warning events, the image reference, runner endpoints and
+/// start-attempt detail go to instance admins and the agent's workspace owners; other members who
+/// can use the agent see a start failure's class and a hint only.
+async fn can_see_start_detail(s: &AppState, c: &Caller, a: &AgentRow) -> Result<bool, ApiError> {
+    if c.is_instance_admin {
+        return Ok(true);
+    }
+    Ok(c.workspace(s, a.workspace_id).await?.can_own())
+}
+
+/// The reduced (member) shape of a sandbox view: class + hint, no events, detail, image or runner.
+fn reduce_view(v: &mut SandboxView) {
+    v.image = None;
+    v.runner_id = None;
+    if let Some(code) = v.failure_code.as_deref() {
+        v.failure_message = Some(readiness::member_hint(code).to_owned());
+    }
+    if let Some(at) = v.start_attempt.as_mut() {
+        at.detail = None;
+        at.events.clear();
+    }
+    for e in &mut v.start_log {
+        e.detail = None;
+    }
+}
+
+async fn view(s: &AppState, c: &Caller, a: &AgentRow) -> Result<SandboxView, ApiError> {
+    let mut v = view_full(s, a).await?;
+    if !can_see_start_detail(s, c, a).await? {
+        reduce_view(&mut v);
+    }
+    Ok(v)
+}
+
+async fn view_full(s: &AppState, a: &AgentRow) -> Result<SandboxView, ApiError> {
     let agent = a.id;
     let mut conn = s.pool.acquire().await.map_err(DbError::from)?;
     let Some(r) = hosted::sandbox_view(&mut conn, agent).await? else {
@@ -238,7 +272,7 @@ async fn get_sandbox(
     Path(agent): Path<Uuid>,
 ) -> Result<Json<SandboxView>, ApiError> {
     let a = hosted_agent(&s, &c, agent).await?;
-    Ok(Json(view(&s, &a).await?))
+    Ok(Json(view(&s, &c, &a).await?))
 }
 
 /// (FIX-029, C-611) Parse the `start_log` jsonb into `StartLogEntry`s (already newest first).
@@ -307,12 +341,20 @@ async fn start_failures(
     Path(agent): Path<Uuid>,
 ) -> Result<Json<AgentStartFailures>, ApiError> {
     let a = hosted_agent(&s, &c, agent).await?;
+    let detailed = can_see_start_detail(&s, &c, &a).await?;
     let mut conn = s.pool.acquire().await.map_err(DbError::from)?;
     let rows = aurora_db::repo::sandboxes::agent_start_failures(&mut conn, a.id, 20).await?;
     drop(conn);
-    Ok(Json(AgentStartFailures {
-        items: failure_items(rows, false),
-    }))
+    let mut items = failure_items(rows, false);
+    if !detailed {
+        // (D-178 Q-R5-5) Members see the class and a hint; events, pod/volume detail and the
+        // runner's wording stay with instance admins and workspace owners.
+        for i in &mut items {
+            i.message = readiness::member_hint(&i.code).to_owned();
+            i.events.clear();
+        }
+    }
+    Ok(Json(AgentStartFailures { items }))
 }
 
 /// (FIX-029, C-610) Retry a failed sandbox start from `failed`: clears the failure, resets the
@@ -375,7 +417,7 @@ async fn retry_failed(
     tx.commit().await.map_err(DbError::from)?;
     // Best-effort audit (docs/04 §Audit): previous failure code and the route taken.
     audit_event(s, c, a, previous_code, via);
-    Ok((StatusCode::ACCEPTED, Json(view(s, a).await?)))
+    Ok((StatusCode::ACCEPTED, Json(view(s, c, a).await?)))
 }
 
 /// Best-effort `agent.sandbox_retry` audit row.
@@ -450,7 +492,7 @@ async fn restart(
     for (cid, turn) in flush {
         lifecycle::flush_deltas(&s, cid, turn).await;
     }
-    Ok((StatusCode::ACCEPTED, Json(view(&s, &a).await?)))
+    Ok((StatusCode::ACCEPTED, Json(view(&s, &c, &a).await?)))
 }
 
 /// Per-key readiness and the default model of a hosted agent (`can_own`; D-136, C-500). The

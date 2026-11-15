@@ -23,10 +23,8 @@ export const agent = {
 /** Real built-in packages: id, display name (plugin.yaml `name:`). Every one ships icon.png and icon-dark.png. */
 export const PACKAGES: { id: string; name: string; description: string }[] = [
   { id: "atlassian", name: "Atlassian", description: "Jira and Confluence Cloud" },
-  { id: "aws-keys", name: "AWS (access keys)", description: "AWS APIs signed with an access key" },
-  { id: "aws-role", name: "AWS (assume role)", description: "AWS APIs through an assumed IAM role" },
-  { id: "github", name: "GitHub", description: "Repositories, issues, pull requests, files and Actions runs" },
-  { id: "github-app", name: "GitHub App", description: "GitHub through an installed GitHub App" },
+  { id: "aws-keys", name: "AWS", description: "AWS APIs through an assumed IAM role or with access keys" },
+  { id: "github", name: "GitHub", description: "Repositories, issues, pull requests, files and Actions runs (GitHub App, OAuth or token)" },
   { id: "gitlab", name: "GitLab", description: "Projects, merge requests and pipelines" },
   { id: "google-workspace", name: "Google Workspace", description: "Gmail, Calendar and Drive" },
   { id: "indico", name: "Indico", description: "Events and contributions" },
@@ -43,7 +41,7 @@ const apps = PACKAGES.map((p) => ({
   // Mirrors plugins/builtin/*/plugin.yaml `grants:` (P4-GRANTS): Indico is custom access only; the AWS packages block untooled requests.
   app_restrictions: {
     custom_only: p.id === "indico",
-    block_untooled: p.id === "indico" || p.id === "aws-keys" || p.id === "aws-role",
+    block_untooled: p.id === "indico" || p.id === "aws-keys",
   },
   // (P4-GSL) the built-in GitHub and GitLab packages declare a `library` block.
   serves_library: p.id === "github" || p.id === "gitlab",
@@ -277,7 +275,19 @@ export async function mockApi(
     if (p === "/v1/admin/placement/choices") {
       return json({ workspaces: [{ id: id(2), slug: "main", name: "Main workspace" }], secrets: [{ id: id(300), name: "org-llm-key", kind: "llm" }], connections: [] });
     }
-    if (p === "/v1/admin/orgs") return json({ items: [{ id: id(1), slug: "users", name: "Users", frozen: null, created_at: now }], next_cursor: null });
+    // P5-ADMDEL (C-733): counts and ownerless state; the organization page and its workspaces.
+    const adminOrg = { id: id(1), slug: "users", name: "Users", frozen: null, created_at: now, ownerless: true, member_count: 3, workspace_count: 2, agent_count: 5 };
+    if (p === "/v1/admin/orgs") return json({ items: [adminOrg], next_cursor: null });
+    if (p === `/v1/admin/orgs/${id(1)}`) return json(adminOrg);
+    if (p === `/v1/admin/orgs/${id(1)}/workspaces`) {
+      return json({
+        items: [
+          { id: id(2), slug: "main", name: "Main workspace", personal: false, agent_count: 4, created_at: now },
+          { id: id(3), slug: "ada", name: "Ada", personal: true, agent_count: 1, created_at: now },
+        ],
+        next_cursor: null,
+      });
+    }
     if (p === "/v1/admin/connectors") return json({ items: [mattermostConnector] });
     if (p === "/v1/admin/connector-types") return json({ host_running: true, items: [mattermostType] });
     // FIX-025 (C-586) + FIX-029 (C-614): the runners admin view and its per-runner failures.
@@ -305,16 +315,36 @@ export async function mockApi(
     if (p === "/v1/apps") return json({ items: apps });
     if (/^\/v1\/apps\/[^/]+$/.test(p)) {
       const a = PACKAGES.find((x) => x.id === p.split("/")[3]) ?? PACKAGES[3];
-      // Connect methods as in plugins/builtin/github/plugin.yaml (token form and OAuth).
+      // Connect methods as in plugins/builtin/github/plugin.yaml (FIX-123: GitHub App, token form and OAuth),
+      // with the chooser's label, description and Recommended flag.
       const connect = [
         {
-          id: "token", kind: "fields", access_levels: [], default_scopes: [], scopes: [],
+          id: "github_app", kind: "hook", access_levels: [], default_scopes: [], scopes: [], recommended: true, label: "GitHub App",
+          description: "An app installed on the repositories you choose. Permissions are fine-grained and per repository, tokens last one hour and access does not depend on one person's account. Recommended for teams.",
+          fields: [
+            { name: "app_id", label: "GitHub App ID or client ID", type: "text", store: "metadata", required: true, placeholder: "123456" },
+            { name: "installation_id", label: "Installation ID", type: "text", store: "metadata", required: true, placeholder: "12345678" },
+            { name: "private_key", label: "Private key (.pem file)", type: "file", store: "credentials", required: true },
+          ],
+        },
+        {
+          id: "token", kind: "fields", access_levels: [], default_scopes: [], scopes: [], recommended: false, label: "Personal access token",
+          description: "Acts as you, on everything your account can reach. The quickest way to start for personal use; a fine-grained token can be limited to chosen repositories.",
           fields: [{ name: "access_token", label: "Personal access token", type: "secret", store: "credentials", required: true, placeholder: "Fine-grained or classic personal access token", help_url: "https://github.com/settings/personal-access-tokens" }],
+        },
+        {
+          id: "oauth", kind: "oauth2", access_levels: [], default_scopes: ["read:user"], recommended: false, label: "OAuth", client_key: "github", callback: "query",
+          description: "Sign in with GitHub and act as you, with the scopes you tick. Needs an OAuth app registered by an administrator.",
+          scopes: [{ scope: "read:user", name: "Read your profile", access: "read" }], fields: [],
         },
       ];
       return json({ ...apps.find((x) => x.app_id === a.id), connect, credentials: [], hosts: [], metadata: [], oauth_clients: [], tools: [] });
     }
-    if (p.endsWith("/connections")) return json({ items: [connection(40, "github", "acme-bot"), connection(41, "linear", "Product team")] });
+    // The two lists are different scopes: these are workspace connections, the organization's list has none.
+    // (Serving them for both made the Access tab, which merges the lists, render ids 40/41 twice.)
+    if (p.endsWith("/connections")) {
+      return json({ items: p.startsWith("/v1/orgs/") ? [] : [connection(40, "github", "acme-bot"), connection(41, "linear", "Product team")] });
+    }
     if (p.endsWith("/approvals")) return json({ items: url.searchParams.get("status") === "pending" ? [approval] : [], next_cursor: null });
     if (p.endsWith("/workspaces")) return json({ items: [ws] });
     if (p.endsWith("/agents")) return json({ items: [agent] });
@@ -362,15 +392,18 @@ export const ROUTES: { name: string; path: string; admin?: boolean }[] = [
   { name: "admin-setup", path: "/admin/setup" },
   { name: "admin-users", path: "/admin/users" },
   { name: "admin-orgs", path: "/admin/orgs" },
+  { name: "admin-org-detail", path: `/admin/orgs/${id(1)}` },
   { name: "admin-placement", path: "/admin/placement" },
   { name: "admin-plugins", path: "/admin/plugins" },
   { name: "admin-plugin-detail", path: "/admin/plugins/github" },
+  { name: "admin-addon-sources", path: "/admin/addon-sources" },
   { name: "admin-connectors", path: "/admin/connectors" },
   { name: "admin-storage", path: "/admin/storage" },
   { name: "admin-host-claims", path: "/admin/host-claims" },
   { name: "admin-instances", path: "/admin/instances" },
   { name: "admin-oauth-clients", path: "/admin/oauth-clients" },
   { name: "admin-trusted-keys", path: "/admin/trusted-keys" },
+  { name: "admin-audit", path: "/admin/audit" },
   { name: "org-workspaces", path: "/o/acme" },
   { name: "org-api-keys", path: "/o/acme/api-keys" },
   { name: "org-apps", path: "/o/acme/apps" },
@@ -395,7 +428,7 @@ export const ROUTES: { name: string; path: string; admin?: boolean }[] = [
   { name: "ws-agents", path: "/o/acme/w/main/agents" },
   { name: "ws-agent", path: "/o/acme/w/main/agents/daneel" },
   { name: "ws-approvals", path: "/o/acme/w/main/approvals" },
-  { name: "ws-app-connect", path: "/o/acme/w/main/apps/github/connect" },
+  { name: "ws-app-connect", path: "/o/acme/w/main/credentials?tab=apps&connect=github" },
   { name: "ws-credentials", path: "/o/acme/w/main/credentials" },
   { name: "ws-policy", path: "/o/acme/w/main/policy" },
   { name: "ws-skills", path: "/o/acme/w/main/skills" },

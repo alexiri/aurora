@@ -9,7 +9,7 @@ use uuid::Uuid;
 
 const SEL: &str = "p.id, p.package_id, p.version, p.contract, p.publisher, p.digest,
     p.signer_key_id, tk.name AS signer_name, p.manifest, p.permissions, p.violations,
-    p.source, p.status, p.status_reason, p.approved_by, u.display_name AS approved_by_name,
+    p.source, p.source_id, p.status, p.status_reason, p.approved_by, u.display_name AS approved_by_name,
     p.approved_at, p.created_at";
 const FROM: &str = "plugin_packages p
     LEFT JOIN trusted_keys tk ON tk.public_key = p.signer_key_id
@@ -30,6 +30,8 @@ pub struct PackageRow {
     pub permissions: Value,
     pub violations: Value,
     pub source: String,
+    /// (P5-ASRC) the addon source row for `source = "addon"`.
+    pub source_id: Option<Uuid>,
     pub status: String,
     pub status_reason: Option<String>,
     pub approved_by: Option<Uuid>,
@@ -54,6 +56,8 @@ pub struct NewPackage<'a> {
     pub status_reason: Option<&'a str>,
     /// Set `approved_at = now()` (automatic activation).
     pub approved_now: bool,
+    /// (P5-ASRC) the addon source row for `source = "addon"`.
+    pub source_id: Option<Uuid>,
 }
 
 /// Insert; `None` when `(package_id, version, digest)` already exists.
@@ -63,9 +67,9 @@ pub async fn insert_package(
 ) -> Result<Option<Uuid>, DbError> {
     Ok(sqlx::query_scalar(
         "INSERT INTO plugin_packages (id, package_id, version, contract, publisher, digest,
-            signer_key_id, manifest, permissions, violations, source, status, status_reason,
-            approved_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13, CASE WHEN $14 THEN now() END)
+            signer_key_id, manifest, permissions, violations, source, source_id, status,
+            status_reason, approved_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14, CASE WHEN $15 THEN now() END)
          ON CONFLICT (package_id, version, digest) DO NOTHING RETURNING id",
     )
     .bind(p.id)
@@ -79,6 +83,7 @@ pub async fn insert_package(
     .bind(p.permissions)
     .bind(p.violations)
     .bind(p.source)
+    .bind(p.source_id)
     .bind(p.status)
     .bind(p.status_reason)
     .bind(p.approved_now)
@@ -268,7 +273,29 @@ pub async fn revoke_trusted_key(
     .await?)
 }
 
+/// (P5-ASRC, C-595) Move a trusted key to a new public key (the admin re-confirmed an
+/// addon source's changed signing key). Nothing is revoked; packages signed by the old
+/// key stay as they are.
+pub async fn update_trusted_key_public_key(
+    conn: &mut PgConnection,
+    id: Uuid,
+    public_key: &str,
+) -> Result<(), DbError> {
+    sqlx::query(
+        "UPDATE trusted_keys SET public_key = $2, updated_at = now()
+         WHERE id = $1 AND revoked_at IS NULL",
+    )
+    .bind(id)
+    .bind(public_key)
+    .execute(conn)
+    .await?;
+    Ok(())
+}
+
 /// Disable every live package signed by `public_key`; returns `(id, was_active)`.
+///
+/// The comparison ignores the base64 spelling (URL-safe, unpadded) so a row written before ids
+/// were canonical is still found (FIX-107, SEC-15).
 pub async fn disable_signed_by(
     conn: &mut PgConnection,
     public_key: &str,
@@ -277,13 +304,42 @@ pub async fn disable_signed_by(
     Ok(sqlx::query_as(
         "UPDATE plugin_packages p SET status = 'disabled', status_reason = $2, updated_at = now()
          FROM (SELECT id, status FROM plugin_packages
-               WHERE signer_key_id = $1
+               WHERE translate(rtrim(signer_key_id, '='), '-_', '+/')
+                     = translate(rtrim($1, '='), '-_', '+/')
                  AND status IN ('pending_approval','active','superseded') FOR UPDATE) o
          WHERE p.id = o.id RETURNING p.id, (o.status = 'active')",
     )
     .bind(public_key)
     .bind(reason)
     .fetch_all(conn)
+    .await?)
+}
+
+/// Every approved version string of `package_id` (any status but never-approved ones), for the
+/// downgrade check (FIX-107).
+pub async fn approved_versions<'e, E: PgExecutor<'e>>(
+    exec: E,
+    package_id: &str,
+) -> Result<Vec<String>, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT version FROM plugin_packages WHERE package_id = $1 AND approved_at IS NOT NULL",
+    )
+    .bind(package_id)
+    .fetch_all(exec)
+    .await?)
+}
+
+/// `true` when some stored version of `package_id` came from the built-in source (FIX-107).
+pub async fn has_builtin_source<'e, E: PgExecutor<'e>>(
+    exec: E,
+    package_id: &str,
+) -> Result<bool, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM plugin_packages
+                        WHERE package_id = $1 AND source = 'builtin' AND status <> 'invalid')",
+    )
+    .bind(package_id)
+    .fetch_one(exec)
     .await?)
 }
 
@@ -499,6 +555,202 @@ pub async fn manifest_of_version<'e, E: PgExecutor<'e>>(
     .bind(version)
     .fetch_optional(exec)
     .await?)
+}
+
+// ---- superseded apps (FIX-123, D-195(a), D-215) --------------------------------------------
+
+/// A connection moved to the app that superseded its own. Names only.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct MovedConnection {
+    pub id: Uuid,
+    pub status: String,
+    pub credential_keys: Option<Vec<String>>,
+}
+
+/// Number of connections (any status) of `app_id` (the dry-run count of the upgrade log).
+pub async fn count_connections_of_app<'e, E: PgExecutor<'e>>(
+    exec: E,
+    app_id: &str,
+) -> Result<i64, DbError> {
+    Ok(
+        sqlx::query_scalar("SELECT count(*) FROM app_connections WHERE app_id = $1")
+            .bind(app_id)
+            .fetch_one(exec)
+            .await?,
+    )
+}
+
+/// Move every connection of `old_app` (any status, any scope) to `new_app` of `new_package`,
+/// recording the connect method. Ids, credential refs, scopes, metadata, instance and grants are
+/// untouched. Idempotent: a second call finds nothing.
+pub async fn move_connections(
+    conn: &mut PgConnection,
+    old_app: &str,
+    new_app: &str,
+    new_package: &str,
+    new_version: &str,
+    method: Option<&str>,
+) -> Result<Vec<MovedConnection>, DbError> {
+    Ok(sqlx::query_as(
+        "UPDATE app_connections SET app_id = $2, package_id = $3, app_version = $4,
+            connect_method = COALESCE($5, connect_method), updated_at = now()
+         WHERE app_id = $1 RETURNING id, status, credential_keys",
+    )
+    .bind(old_app)
+    .bind(new_app)
+    .bind(new_package)
+    .bind(new_version)
+    .bind(method)
+    .fetch_all(conn)
+    .await?)
+}
+
+/// (FIX-134, D-243) Point the given connections at an instance (a preset of the new app).
+pub async fn bind_instance(
+    conn: &mut PgConnection,
+    ids: &[Uuid],
+    instance_id: Uuid,
+) -> Result<u64, DbError> {
+    Ok(sqlx::query(
+        "UPDATE app_connections SET instance_id = $2, updated_at = now() WHERE id = ANY($1)",
+    )
+    .bind(ids)
+    .bind(instance_id)
+    .execute(conn)
+    .await?
+    .rows_affected())
+}
+
+/// Move registered instances of `old_app` to `new_app`. An instance whose organization and host
+/// the new app already has merges into it: the connections are re-pointed first, then the old
+/// registration goes. Returns the number of old registrations handled.
+pub async fn move_instances(
+    conn: &mut PgConnection,
+    old_app: &str,
+    new_app: &str,
+    new_package: &str,
+) -> Result<u64, DbError> {
+    sqlx::query(
+        "UPDATE app_connections c SET instance_id = n.id, updated_at = now()
+           FROM app_instances o
+           JOIN app_instances n ON n.app_id = $2 AND n.org_id IS NOT DISTINCT FROM o.org_id
+                               AND n.host = o.host
+                               AND n.base_path IS NOT DISTINCT FROM o.base_path
+          WHERE o.app_id = $1 AND c.instance_id = o.id",
+    )
+    .bind(old_app)
+    .bind(new_app)
+    .execute(&mut *conn)
+    .await?;
+    let merged = sqlx::query(
+        "DELETE FROM app_instances o USING app_instances n
+          WHERE o.app_id = $1 AND n.app_id = $2
+            AND n.org_id IS NOT DISTINCT FROM o.org_id AND n.host = o.host
+            AND n.base_path IS NOT DISTINCT FROM o.base_path",
+    )
+    .bind(old_app)
+    .bind(new_app)
+    .execute(&mut *conn)
+    .await?
+    .rows_affected();
+    let moved = sqlx::query(
+        "UPDATE app_instances SET app_id = $2, package_id = $3, updated_at = now()
+          WHERE app_id = $1",
+    )
+    .bind(old_app)
+    .bind(new_app)
+    .bind(new_package)
+    .execute(conn)
+    .await?
+    .rows_affected();
+    Ok(merged + moved)
+}
+
+/// Skill libraries that name `old_app` now name `new_app`.
+pub async fn move_skill_libraries(
+    conn: &mut PgConnection,
+    old_app: &str,
+    new_app: &str,
+) -> Result<u64, DbError> {
+    Ok(
+        sqlx::query("UPDATE skill_libraries SET app_id = $2, updated_at = now() WHERE app_id = $1")
+            .bind(old_app)
+            .bind(new_app)
+            .execute(conn)
+            .await?
+            .rows_affected(),
+    )
+}
+
+/// An organization (or workspace) that had `old_app` available gets `new_app` available; the old
+/// rows go.
+pub async fn move_availability(
+    conn: &mut PgConnection,
+    old_app: &str,
+    new_app: &str,
+) -> Result<u64, DbError> {
+    sqlx::query(
+        "INSERT INTO org_app_availability (org_id, app_id, workspace_id)
+         SELECT org_id, $2, workspace_id FROM org_app_availability WHERE app_id = $1
+         ON CONFLICT DO NOTHING",
+    )
+    .bind(old_app)
+    .bind(new_app)
+    .execute(&mut *conn)
+    .await?;
+    Ok(
+        sqlx::query("DELETE FROM org_app_availability WHERE app_id = $1")
+            .bind(old_app)
+            .execute(conn)
+            .await?
+            .rows_affected(),
+    )
+}
+
+/// Delete the host-claim decisions on these claim keys (the old pair's, no longer meaningful).
+pub async fn delete_decisions_on(
+    conn: &mut PgConnection,
+    claim_keys: &[String],
+) -> Result<u64, DbError> {
+    Ok(
+        sqlx::query("DELETE FROM host_claim_decisions WHERE claim_key = ANY($1)")
+            .bind(claim_keys)
+            .execute(conn)
+            .await?
+            .rows_affected(),
+    )
+}
+
+/// Every stored manifest of `package_id` (any status but `invalid`), newest first: the claims the
+/// retired package made.
+pub async fn manifests_of_package<'e, E: PgExecutor<'e>>(
+    exec: E,
+    package_id: &str,
+) -> Result<Vec<Value>, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT manifest FROM plugin_packages WHERE package_id = $1 AND status <> 'invalid'
+         ORDER BY created_at DESC, id DESC",
+    )
+    .bind(package_id)
+    .fetch_all(exec)
+    .await?)
+}
+
+/// Disable every `active` or `pending_approval` version of a retired package. Returns how many.
+pub async fn disable_retired(
+    conn: &mut PgConnection,
+    package_id: &str,
+    reason: &str,
+) -> Result<u64, DbError> {
+    Ok(sqlx::query(
+        "UPDATE plugin_packages SET status = 'disabled', status_reason = $2, updated_at = now()
+          WHERE package_id = $1 AND status IN ('active', 'pending_approval')",
+    )
+    .bind(package_id)
+    .bind(reason)
+    .execute(conn)
+    .await?
+    .rows_affected())
 }
 
 /// A live (`active` or `reauth_required`) connection, for the major-upgrade check. Names only.

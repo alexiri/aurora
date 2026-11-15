@@ -20,11 +20,21 @@ const MAX_HEAD: usize = 64 * 1024;
 
 /// The credential a proxy adds: a fixed boot token, optionally overridden by a turn context
 /// credential while a turn is active.
-#[derive(Debug)]
 pub struct Credential {
     username: &'static str,
     boot: String,
     context: Mutex<Option<String>>,
+}
+
+// (FIX-114, SEC-01) Never prints the boot token or a context credential.
+impl std::fmt::Debug for Credential {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Credential")
+            .field("username", &self.username)
+            .field("boot", &"[redacted]")
+            .field("context", &"[redacted]")
+            .finish()
+    }
 }
 
 impl Credential {

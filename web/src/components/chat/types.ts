@@ -5,4 +5,6 @@ export interface AgentIdent {
   avatarUrl?: string | null;
   /** The agent's brief, shown in the empty conversation when set. */
   brief?: string | null;
+  /** The agent is frozen (C-205): a failed start cannot be retried (C-615 hides **Retry now**). */
+  frozen?: boolean;
 }

@@ -39,8 +39,31 @@ Each entry of `[[llm.endpoints]]` accepts:
 | `models` | Optional static fallback list when the model list endpoint is not available. |
 | `allowed_models` | Instance-wide model allow-list. Empty means any model. |
 | `key_origin` | Key-origin rule (below). |
+| `allowed_paths` | `litellm` endpoints: extra paths the key may be used on, see [Inference paths only](#inference-paths-only). Up to 32 absolute paths; a trailing `/*` admits a subtree. |
 
 Unknown keys are rejected (`deny_unknown_fields`), so a misspelled key stops startup and names the key.
+
+### Inference paths only
+
+Aurora injects a `litellm` endpoint's key only on the **inference routes**: `POST /v1/messages`,
+`/v1/messages/count_tokens`, `/v1/chat/completions`, `/v1/completions`, `/v1/responses`,
+`/v1/embeddings` (also under a route prefix) and `GET /v1/models[/{id}]`. A request to any other
+path of the endpoint, for example LiteLLM's management API (`/key/generate`, `/user/new`,
+`/team/*`) or the files, images and fine-tuning routes, is refused with **403
+`llm_path_not_permitted`** before policy runs and before the key is opened, so an agent cannot use
+the sanctioned key to mint other keys or reach storage. If your clients need another route, list it:
+
+```toml
+[[llm.endpoints]]
+id = "central"
+provider = "litellm"
+base_url = "https://litellm.internal"
+allowed_paths = ["/health/liveliness", "/model/info"]
+```
+
+Even so, **give Aurora a LiteLLM virtual key without management rights** (no `models` wildcard
+beyond what agents need, no admin or master key): the path set is a second line of defence, not a
+replacement for a least-privilege key.
 
 ### No default model
 

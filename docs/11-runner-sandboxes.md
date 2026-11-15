@@ -176,9 +176,12 @@ environment or memory), removes it from its environment and never passes it on.
   "capabilities": [ "browser" ],
   "ca_pem": "-----BEGIN CERTIFICATE-----…",
   "files": [ { "path": "/workspace/.config/…", "mode": "0600", "content_b64": "…", "only_if_absent_or_sentinel": true } ],
-  "harness": { "id": "claude-code", "capabilities_expected": [ "resume", "steer" ] },  "timezone": "Europe/Zurich"
+  "harness": { "id": "claude-code", "capabilities_expected": [ "resume", "steer" ] },
+  "enabled_harnesses": [ "claude-code", "codex" ],  "timezone": "Europe/Zurich"
 }
 ```
+
+(FIX-138 item 1b, C-750) `enabled_harnesses` is `hosted.enabled_harnesses`; the terminal's `claude` and `codex` wrappers refuse a harness not listed (absent: only `harness.id`).
 
 (phase 4, P4-HAR, D-122) `harness.id` is the agent's `agents.harness` (`claude-code`, `codex`, `fake`), chosen by the API only; an unknown id or a runtime missing from the image fails the boot with `reason_code = harness_unsupported` (`12 §Harness selection and adapter contract`). The runner registers `harnesses` from the image label `org.aurora.harnesses` (`16 §W5`); an image without the label is treated as `claude-code,fake`, so images built before phase 4 keep working.
 
@@ -259,6 +262,10 @@ Sandbox states: `unprovisioned → starting → running → stopping → stopped
 
 ### Start readiness deadline (FIX-025, D-158, C-580)
 
+A failed or timed-out Kubernetes API call during a start is retried at the next poll; only the start
+deadline or a terminal pod/claim state ends the attempt (FIX-094). A home claim in phase `Lost` is a
+terminal claim state and maps to `home_volume_unbound`.
+
 The whole path from step 1 to the `ready` of step 4 is bounded by
 `hosted.sandbox_ready_timeout_secs` (60–1800, default 300, `15`): the runner's
 capacity wait counts inside it. The API's readiness sweep (10 s interval,
@@ -276,6 +283,21 @@ the live trail of a starting sandbox and the frozen record of a failed one,
 rendered on the Computer tab.
 Automatic retries stop after 3 failures (`start_failures`); a message sent
 after the last failure retries once the backoff has passed.
+
+(FIX-093) Every start attempt is bounded from its claim, whether or not a turn
+is waiting (due schedules, preview and terminal demand claim starts too): the
+sweep fails a `starting` sandbox whose lease expired with its runner no longer
+live (`runner_unavailable`, `runner_id` cleared so another runner can claim the
+next start) and one whose attempt is older than the deadline
+(`sandbox_start_failed`). The sweep works from a snapshot and re-checks under
+the locks: a sandbox that became ready is left alone and a turn is failed only
+while still `queued`. A runner's late `failed` report for a boot the API already
+gave up lands the sandbox in `failed` without a second count or a new code.
+Member-facing failure text never contains an address; the runner endpoint is
+shown in the admin start log only. (D-178, Q-R5-5) Members who can use the
+agent see a start failure's class and a hint; pod/volume warning events, the
+image reference and the start-attempt detail go to instance admins and the
+agent's workspace owners.
 
 **Retry after a failure** (FIX-029, D-160, C-610): `POST
 /v1/agents/{agent}/sandbox/retry` (same authority as restart, `can_use`), only
@@ -311,19 +333,25 @@ A running sandbox is **kept awake** if any of:
 - an active turn or `joining` follow-up exists;
 - a **busy** process (recent output or CPU) on the current boot, or an **armed
 watch** — both only while `now − last_engaged_at < BACKGROUND_CAP`;
-- (phase 4) a lease-current SSH session;
+- (phase 5, D-138; P4-SSH-2, D-239(h)) an **SSH session in use**: `ssh_active_until > now()` (stamped
+  only while a channel of a lease-current session carries bytes, grace `SSH_AWAKE_GRACE` 120 s) and
+  fewer than `SSH_AWAKE_CAP` (4 h) since the first SSH byte of this boot (`§SSH access`);
 - (phase 4, P4-PRV-1, D-145) a **preview in use**: `preview_active_until > now()` and fewer than
   `PREVIEW_AWAKE_CAP` (4 h) since the first preview heartbeat of this boot (`§Port previews`);
 - (phase 4, P4-TERM, D-161) a **terminal session in use**: `terminal_active_until > now()` and
   fewer than `TERMINAL_AWAKE_CAP` (4 h) since the first session byte of this boot
   (`§Web terminal`).
 
-(phase 4, RFE-011b) A **parked approval is not a keep-awake reason** (`07 §Park and resume`):
+(phase 5 (D-138, moved from phase 4), RFE-011b) A **parked approval is not a keep-awake reason** (`07 §Park and resume`):
 the agent was refused, its turn ends, and the pending decision lives in Postgres. The
 sandbox idles out and parks like any other; the resume follow-up (`10 §Turns`) is ordinary
 due work (start arm → new boot, harness session restored from `harness_session_ref`, home volume
 intact, processes of the old boot `parked`/`lost`). A *held* approval still keeps the sandbox awake
-through its active turn, as before.
+through its active turn, as before. (P4-011B spec batch, D-264(a)) The resume turn gets no
+priority, reservation or extra wake budget: it waits for capacity and fails exactly like any queued
+turn (`10 §Failure semantics`). If it fails to start, the grant stays `ready` until its window ends
+and a later turn of the conversation can still use it; the window is not extended. A frozen agent
+gets no resume turn at all (`07 §Park and resume`).
 
 `last_engaged_at` is stamped by person/turn engagement (a turn created by a
 person, schedule, webhook or watch); it is distinct from `last_active_at`
@@ -456,8 +484,9 @@ for a sandbox that is not effectively frozen, subject to the ordinary start back
    code and the tail of the process output for people who can use the workspace.
 
 A share **without** a start command never starts anything: a request to a running sandbox
-whose port is not listening waits up to `PREVIEW_LISTEN_WAIT` (5 s) and then answers 502
-"nothing is listening on this port"; a request to a parked sandbox still wakes it (the agent
+whose port is not listening waits up to `PREVIEW_LISTEN_WAIT` (5 s, the API's stream grant,
+FIX-089) for the port to appear in the current boot's listening set, then answers 502 "nothing is
+listening on this port"; a request to a parked sandbox still wakes it (the agent
 may bring the app up by itself, e.g. from its shell history or a schedule) and waits the same
 `PREVIEW_WAKE_WAIT`. A preview **never** creates a turn, a conversation event or a
 `last_engaged_at` stamp.
@@ -532,12 +561,13 @@ the runner's existing :4108 listener (`kind: "terminal"`, C-617); the sandbox it
   user, cwd `/workspace`, container environment minus every `AURORA_*` variable and the boot
   document — the shell has exactly the privilege a `process_start` command already has, in a
   terminal. `pty.resize` applies `TIOCSWINSZ`; a W6 reconnect or a stop closes every PTY.
-- **Lifecycle**: frozen agent → sessions closed within `TERMINAL_AUTH_CACHE` 15 s and no new
+- **Lifecycle**: frozen agent → sessions closed within 10 s (the API re-checks access every `ACCESS_RECHECK`; a 15 s draft constant was never read and was removed, FIX-119) and no new
   open (423); restart/park → sessions closed (4503/`channel_lost`), the tab shows "Waking…"
   and reopens on ready; harness change or runner move → sessions closed; agent deleted →
   destroyed with the sandbox. Bytes are never logged, stored or request-log-rowed (byte
-  totals in metrics only); the best-effort audit row `agent.terminal.open` records the open
-  (agent, workspace), never content (`04 §Audit`).
+  totals in metrics only); the best-effort audit rows `agent.terminal.open` and
+  `agent.terminal.close` record the open (agent, workspace) and the end (close code, duration),
+  never content (`04 §Audit`).
 - **Listener and capabilities**: the runner opens :4108 when previews **or** the terminal is
   enabled and registers the matching capabilities (`previews`, `terminal`, plus `stream_tls`
   when `runner.stream_tls` is on — the API derives the endpoint scheme it hands the relay
@@ -545,6 +575,71 @@ the runner's existing :4108 listener (`kind: "terminal"`, C-617); the sandbox it
   admits :4108 from the relay pods **and** the api pods (only those), `15 §Port previews`.
   An older runner without the `kind` extension refuses terminal grants (the API answers 4502
   — the tab shows "the runner does not support terminals").
+
+## SSH access (phase 5, P4-SSH-1, P4-SSH-2, D-239, SEC-92..SEC-96)
+
+People with access to an agent can `ssh <agent id>@<ssh host>` into its sandbox with an ordinary
+OpenSSH client: an interactive shell, a remote command, `sftp` and `scp`. Off unless the operator
+sets `ssh.enabled` (an internet-facing port is a deliberate deployment choice); independent of
+`terminal.enabled`. Who may connect is the web terminal's rule (`04 §SSH access`).
+
+**Flow.** (1) The person registers an ed25519 public key once (Account › SSH keys). (2) Before
+connecting, `aurora ssh <agent>` (or the dashboard's "Connect with SSH" panel) asks the API for a
+short-lived **user certificate** for that key and agent (`POST /v1/agents/{agent}/ssh-certificate`,
+default 15 min). (3) The client connects to the terminator with the certificate; the terminator
+checks it offline against the CA public keys, the client proves possession of the key, and only then
+does the terminator open a **session** with the API (`/v1/terminator/sessions`), which re-verifies
+everything and records `ssh_sessions`. (4) For each session channel (shell, exec, sftp) the
+terminator asks the API for a single-use **channel grant** (`auz_`), dials the sandbox's runner
+on its stream listener :4108 with it, and the runner bridges the bytes to the supervisor
+(`16 §W20`, the W18/W19 machinery with an exec target). (5) Every 30 s the terminator heartbeats its
+sessions; the API renews the 90 s lease and re-runs the access law; a revoked session is closed.
+
+**Why the runner's :4108 path and not `podman exec`/`kubectl exec`** (D-239(e); the PROGRESS row and
+`21` named substrate exec): exec would run in the container with the **container's environment**,
+where the supervisor's boot material lives (`AURORA_*`), bypassing the scrub the terminal applies
+(SEC-87, SEC-01/SEC-34); it would hand an internet-facing daemon cluster credentials (`pods/exec` on
+the sandboxes namespace, or the podman socket) that open **every** sandbox, where a grant opens one
+channel of one sandbox for 30 s; it would need a second backend per substrate and a second set of
+PTY, limit and keep-awake rules, where :4108 already has them (FIX-059 CLOEXEC, FIX-091 pumps, W18
+credits) and works the same for podman, Kubernetes and runners outside the cluster; and it would
+make the terminator a peer of the runner on the sandbox side, where :4108 adds only one ingress
+peer to the runner's existing listener and nothing to the sandboxes namespace.
+
+- **Wake and keep-awake.** A session open on a parked sandbox is a wake demand (the terminal's path:
+  `terminal_wake_at`, `TERMINAL_WAKE_WINDOW`, and the terminal's per-agent wake budget, shared);
+  a channel opened while the sandbox wakes waits up to `SSH_WAKE_WAIT` (90 s) — the terminator writes
+  one line `Waking the agent's sandbox…` to the channel's stderr — then fails with a notice
+  (`wake_timeout`). While a channel carries bytes the runner stamps `ssh_active_until`
+  (`SSH_AWAKE_GRACE` 120 s after the last byte, `POST /v1/runner/terminal/keep-awake` with
+  `kind: "ssh"`, at most one stamp per grace per sandbox) and the sandbox is kept awake with the
+  reason **`ssh`**, capped at `SSH_AWAKE_CAP` (4 h per boot). An idle connection (client keepalives
+  only) does not hold the sandbox awake: it parks like any idle sandbox, its channels close
+  (`4503`, the terminator writes `The agent's sandbox stopped.` to stderr), and the session stays open
+  until idle timeout or lifetime, so a new channel wakes it again. An SSH session is never a turn, a
+  conversation event or a `last_engaged_at` stamp.
+- **Lifecycle.** Frozen agent, lost access, deleted key, `ssh.enabled` off, disconnect by the person or
+  an owner → revoked at the next heartbeat (≤ 30 s) and closed; restart/park/harness change/runner move
+  → channels closed (4503), session kept; agent deleted → sessions closed (`agent_deleted`) and rows
+  cascade. Idle `SSH_IDLE_TIMEOUT` (600 s without channel bytes or client keepalive replies) and lifetime
+  `SSH_MAX_LIFETIME` (4 h) are enforced by the terminator; the lease (90 s) bounds a crashed terminator:
+  the stale-session sweep closes its rows (`lease_expired`). Every session closes **exactly once**
+  (`03 §ssh_sessions` `state`) with one `agent.ssh.close` audit row.
+- **Runner side.** The runner opens :4108 when previews, the terminal **or SSH** is enabled and registers
+  the `ssh` capability when the API reports `ssh.enabled` at registration; it redeems `auz_` grants
+  (`kind: "ssh"`), checks it holds the sandbox's channel for that boot, caps live SSH legs per sandbox at
+  `SSH_CHANNELS_PER_SANDBOX` (8, beside 64 streams and 2 PTYs), and speaks `exec.*` frames to the
+  supervisor (`12 §SSH channels`). An older runner refuses the unknown grant kind: the channel fails
+  (`relay_error`) and nothing else is affected. The NetworkPolicy admits :4108 from the terminator pods
+  (beside the relay and api pods), `15 §SSH access`.
+- **CLI.** `aurora ssh <agent> [-- <ssh args>]` (P4-SSH-1): resolves the agent (id, or handle within the
+  CLI's workspace), finds a registered key among `~/.ssh/id_ed25519.pub` or `--key <path>` (the
+  private key never leaves the machine and is never read by the CLI), mints a certificate with the
+  CLI's API key, writes it to `~/.config/aurora/ssh/<agent id>-cert.pub` (0600) and the
+  `known_hosts` lines of `GET /v1/ssh` to `~/.config/aurora/ssh/known_hosts`, then execs
+  `ssh -i <key> -o CertificateFile=<cert> -o UserKnownHostsFile=<that file> -o StrictHostKeyChecking=yes
+  -o IdentitiesOnly=yes -p <port> <agent id>@<host> <ssh args>`; a certificate with more than 60 s of
+  validity left is reused. `aurora ssh cert <agent>` only mints and writes the files (for `sftp` and `scp`) and prints the options to use.
 
 ## Reconcile and orphan reaping
 
@@ -571,7 +666,7 @@ Two installations sharing a daemon or cluster never touch each other's objects
 Built from `images/sandbox/Containerfile`, published as
 `aurora-sandbox:<version>`:
 
-- **Base layer** (rebuilt rarely, tagged by content hash): AlmaLinux 10 (phase 0–2 named the CERN registry image `gitlab-registry.cern.ch/linuxsupport/alma10-base`; **from phase 3 (RFE-019, D-63)** the specified base is the **public official AlmaLinux image**, `docker.io/library/almalinux:10`, pinned by digest in `images/sandbox/Containerfile` as `ARG SANDBOX_BASE_IMAGE=docker.io/library/almalinux:10@sha256:<digest recorded at release>`; a deployment that must use a private or mirrored base overrides the build argument `SANDBOX_BASE_IMAGE` — the package set and the image labels do not depend on which base is used; this deployment's override is the CERN `alma10-base` image, `15 §Deployment-specific settings example`), `git`, `curl`, `jq`, `ripgrep`, `fd-find`, `less`,`openssh-client`, `python3` + `pip` + `venv` + `uv`, Node.js LTS + npm, `build-essential`, `chromium` (headless), `unzip`, `zip`, `procps`, `tini`-free. (phase 1, RFE-003) The image carries the label `org.aurora.capabilities=browser` (it ships the Chromium wrapper); a custom image without Chromium omits it and its sandboxes get no open-lane listener.
+- **Base layer** (rebuilt rarely, tagged by content hash): AlmaLinux 10 (phase 0–2 named the CERN registry image `gitlab-registry.cern.ch/linuxsupport/alma10-base`; **from phase 3 (RFE-019, D-63)** the specified base is the **public official AlmaLinux image**, `docker.io/library/almalinux:10`, pinned by digest in `images/sandbox/Containerfile` as `ARG SANDBOX_BASE_IMAGE=docker.io/library/almalinux:10@sha256:<digest recorded at release>`; a deployment that must use a private or mirrored base overrides the build argument `SANDBOX_BASE_IMAGE` — the package set and the image labels do not depend on which base is used; this deployment's override is the CERN `alma10-base` image, `15 §Deployment-specific settings example`), `git`, `curl`, `jq`, `ripgrep`, `fd-find`, `less`,`openssh-client`, (phase 5, P4-SSH-2) `openssh-server` **for its `sftp-server` binary only** (`/usr/libexec/openssh/sftp-server`; `sshd` is never started: the supervisor is PID 1 and no unit runs, and no host key is generated), `python3` + `pip` + `venv` + `uv`, Node.js LTS + npm, `build-essential`, `chromium` (headless), `unzip`, `zip`, `procps`, `tini`-free. (phase 1, RFE-003) The image carries the label `org.aurora.capabilities=browser` (it ships the Chromium wrapper); a custom image without Chromium omits it and its sandboxes get no open-lane listener.
 
 - **App layer**: `aurora-supervisor` binary, pinned harness runtimes (Claude Code
 CLI at a pinned version installed under `/opt/aurora/harness/claude-code`;
@@ -582,6 +677,17 @@ checksum-verified release artifact, and the image label `org.aurora.harnesses` l
 runtimes present, e.g. `claude-code,codex,fake`),
 entrypoint `/usr/local/bin/aurora-supervisor run`, user `agent` (uid 1000),
 `WORKDIR /workspace`.
+- (FIX-138, D-246) **Terminal shells and defaults**: `bash` + `bash-completion` and `zsh` are in
+  the OS layer (so every target, `sandbox-min` included, has both); `ripgrep`, `less`, `jq`,
+  `fd-find` are in the base layer. `/etc/profile.d/aurora.sh` (bash login shells) and
+  `/etc/zsh/zshenv` set the one `PATH` — `/workspace/.local/bin:/opt/aurora/bin:/usr/local/bin:/usr/bin:/bin`,
+  also the image's `ENV PATH`; `/etc/bashrc` and `/etc/zshrc` carry the interactive defaults
+  (aliases, `LS_COLORS`, prompt, history, zsh `compinit`) — system files, never the agent's home
+  (`12 §Terminal`). `/opt/aurora/bin` holds the `claude` and `codex` wrappers (FIX-138 item 1b,
+  D-247; `images/sandbox/bin`, in the OS layer so every image has them): they refuse when the
+  pinned binary is missing or the harness is not in the boot document's `enabled_harnesses`, source
+  `/run/aurora/harness.env` (written by the supervisor, no secret) and keep their own state under
+  `/workspace/.aurora/terminal/` (`12 §Terminal`, C-750).
 - Durable user-space installs live in the home: `npm config prefix ~/.local`, `pip --user`, `uv tool`; `~/.local/bin` is on `PATH`.
 - No root, no sudo, no package manager usable by the agent.
 

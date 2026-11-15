@@ -526,6 +526,108 @@ fn func_name(call: &Value) -> (String, bool) {
     (name, builtin_scope)
 }
 
+/// The `sval`s of a list of `String` nodes (qualified names).
+fn string_list(v: &Value) -> Vec<&str> {
+    v.as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|n| n.get("node")?.get("String")?.get("sval")?.as_str())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Types the server ships in `pg_catalog` whose input/output and cast functions are built in.
+const BUILTIN_TYPES: &[&str] = &[
+    "bool",
+    "boolean",
+    "bytea",
+    "char",
+    "name",
+    "int8",
+    "bigint",
+    "int2",
+    "smallint",
+    "int4",
+    "int",
+    "integer",
+    "text",
+    "oid",
+    "xid",
+    "cid",
+    "tid",
+    "json",
+    "jsonb",
+    "jsonpath",
+    "xml",
+    "float4",
+    "real",
+    "float8",
+    "float",
+    "bpchar",
+    "varchar",
+    "date",
+    "time",
+    "timetz",
+    "timestamp",
+    "timestamptz",
+    "interval",
+    "bit",
+    "varbit",
+    "numeric",
+    "decimal",
+    "uuid",
+    "inet",
+    "cidr",
+    "macaddr",
+    "macaddr8",
+    "money",
+    "point",
+    "line",
+    "lseg",
+    "box",
+    "path",
+    "polygon",
+    "circle",
+    "tsvector",
+    "tsquery",
+    "int4range",
+    "int8range",
+    "numrange",
+    "tsrange",
+    "tstzrange",
+    "daterange",
+    "int4multirange",
+    "int8multirange",
+    "nummultirange",
+    "tsmultirange",
+    "tstzmultirange",
+    "datemultirange",
+    "regclass",
+    "regtype",
+    "regproc",
+    "regprocedure",
+    "regoper",
+    "regoperator",
+    "regconfig",
+    "regdictionary",
+    "regnamespace",
+    "regrole",
+    "regcollation",
+    "pg_lsn",
+    "pg_snapshot",
+    "txid_snapshot",
+];
+
+/// `true` for an unqualified built-in type name or any `pg_catalog`-qualified one.
+fn builtin_type(names: &[&str]) -> bool {
+    match names {
+        [t] => BUILTIN_TYPES.contains(&t.to_ascii_lowercase().as_str()),
+        ["pg_catalog", t] => BUILTIN_TYPES.contains(&t.to_ascii_lowercase().as_str()),
+        _ => false,
+    }
+}
+
 fn setting_name(name: &str) -> String {
     name.to_ascii_lowercase()
 }
@@ -687,6 +789,21 @@ fn walk(root: &Value, w: &mut Walk) -> Result<(), Refusal> {
                                 return Err(Refusal::Forbidden(why));
                             }
                             if executing && !(builtin && PURE_FUNCTIONS.contains(&name.as_str())) {
+                                w.raise(Class::Admin);
+                            }
+                        }
+                        // (FIX-118, docs/21 §Database lane: "anything unknown → admin") An operator
+                        // spelled with a schema other than `pg_catalog` runs a user-defined
+                        // function (`OPERATOR(public.!!)`); so does a cast to a type outside the
+                        // built-in catalogue (its I/O functions are user code).
+                        "AExpr" if executing => {
+                            let names = string_list(&child["name"]);
+                            if names.len() > 1 && names[0] != "pg_catalog" {
+                                w.raise(Class::Admin);
+                            }
+                        }
+                        "TypeCast" if executing => {
+                            if !builtin_type(&string_list(&child["type_name"]["names"])) {
                                 w.raise(Class::Admin);
                             }
                         }

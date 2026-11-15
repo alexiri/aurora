@@ -53,21 +53,31 @@ async fn identity(
     if conv_agent != Some(sb.agent_id) {
         return Err(ApiError::not_found("Unknown conversation."));
     }
-    if let Some(turn) = req.call.turn_id {
-        let active =
-            tool_identity::turn_is_active(&mut *conn, turn, req.call.conversation_id, sb.agent_id)
-                .await?;
-        if !active {
-            return Err(ApiError::new(
-                StatusCode::FORBIDDEN,
-                "turn_not_active",
-                "The turn is not an active turn of this conversation.",
-            ));
-        }
+    // (FIX-110, SEC-24, docs/16 W7) A tool call is fenced on the agent's active turns: `turn_id`
+    // is required. A process left behind by an earlier turn cannot act, unattributed, later.
+    let Some(turn) = req.call.turn_id else {
+        return Err(ApiError::new(
+            StatusCode::FORBIDDEN,
+            "no_active_turn",
+            "Platform tools can only be used while a turn is running.",
+        ));
+    };
+    let active =
+        tool_identity::turn_is_active(&mut *conn, turn, req.call.conversation_id, sb.agent_id)
+            .await?;
+    if !active {
+        return Err(ApiError::new(
+            StatusCode::FORBIDDEN,
+            "turn_not_active",
+            "The turn is not an active turn of this conversation.",
+        ));
     }
     let agent = agents::get(&mut *conn, sb.agent_id)
         .await?
         .ok_or_else(|| ApiError::not_found("Unknown agent."))?;
+    drop(conn);
+    // (FIX-110, SEC-45) An effectively frozen agent's own tools are refused too.
+    crate::domains::freeze::service::ensure_agent_active_pool(s, agent.id).await?;
     Ok(ToolCallContext {
         agent: ToolContext {
             pool: s.pool.clone(),

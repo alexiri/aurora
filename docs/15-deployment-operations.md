@@ -16,6 +16,7 @@ One OCI image per component, all tagged with the Aurora version
 | `aurora-hookhost` | `aurora-hookhost` |
 | `aurora-runner` | `aurora-runner` |
 | `aurora-relay` | `aurora-relay` (phase 4, P4-PRV-2, deployed only when previews are enabled) |
+| `aurora-terminator` | `aurora-terminator` (phase 5, P4-SSH-2, deployed only when `ssh.enabled`; a copy of the single workspace compile like the other service images) |
 | `aurora-web` | Next.js standalone build |
 | `aurora-connector-fake` | test/dev only |
 | `aurora-connector-mattermost` | phase 1 |
@@ -53,6 +54,14 @@ from environment variables (or files referenced as `*_file`), never be baked
 into images. Each service validates the sections it uses at startup and
 refuses to start on any error, naming the key.
 
+(phase 5, SPEC-SETTINGS, D-195(b)–(d), D-236..D-238) Instance-wide **settings** that need no
+different Kubernetes configuration, no secret root and no development switching are
+**application state** from SET-1 on: stored in the database and edited on **Admin › Settings**
+(`14 §Instance administration`), applied live. The configuration file still accepts every one of
+them, and a key it sets is **locked**: that value is effective and the dashboard shows it
+read-only. See *Instance settings* below; the keys are marked in the reference table by that
+section's list, not row by row.
+
 ### Required secrets
 
 | Variable | Used by | Format |
@@ -67,14 +76,126 @@ refuses to start on any error, naming the key.
 | `AURORA_BOOTSTRAP_RUNNER_TOKEN` (optional) | api | on startup, upsert runner `default` with this token's hash (Helm bootstrap) |
 | `AURORA_BOOTSTRAP_CONNECTOR_TOKENS` (optional) | api | `id:aun_…,id2:aun_…` — upsert connector ids (still require manifest approval unless `plugins.allow_unsigned` dev mode auto-approves) |
 | `AURORA_CONNECTOR_HOST_TOKEN` | connector-host | (phase 4, P4-MCON) `auh_…` |
-| `AURORA_BOOTSTRAP_CONNECTOR_HOST_TOKEN` (optional) | api | (phase 4, P4-MCON) on startup, upsert this `auh_…` token's hash into `connector_host_tokens` (Helm bootstrap; no admin route mints it) |
-| OIDC client secrets, SMTP password | api | referenced from config (`client_secret_env = "…"`) |
+| `AURORA_BOOTSTRAP_CONNECTOR_HOST_TOKEN` (optional) | api | (phase 4, P4-MCON) on startup, upsert this `auh_…` token's hash into `connector_host_tokens` as the shared, unbound token (kept for the upgrade path, `§Upgrades`) |
+| `AURORA_BOOTSTRAP_CONNECTOR_HOST_TOKENS` (optional) | api | (FIX-120, D-189) JSON `[{"name","token":"auh_…","types":["mattermost"]}]`: per-host tokens bound to connector types, upserted by name at start (hash only; a changed token under the same name revokes the old one). Strictly validated: names unique, `types` non-empty, `auh_` prefix. The chart writes it from `connectorHost.perHostToken` |
+| OIDC client secrets | api | referenced from config (`client_secret_env = "…"`) |
+| `AURORA_TERMINATOR_TOKEN` | terminator | (phase 5, P4-SSH-2) `aut_…`; the chart hands the same Secret key to the API as `AURORA_BOOTSTRAP_TERMINATOR_TOKEN` (hash kept in memory; no table) |
+| `AURORA_SSH_CA_KEY` | api only | (phase 5, P4-SSH-1, D-239(d)) the SSH **user-certificate CA** private key: `ed25519:<base64 of a 32-byte seed>` (what the `secrets` hook generates) or an unencrypted OpenSSH ed25519 private key; the `local` signer. Never given to the terminator (it receives the public key at registration). Required when `ssh.enabled` (startup refusal naming it) |
+| `AURORA_SSH_HOST_KEY` | terminator only | (phase 5, P4-SSH-2) the SSH **host** key, same two formats; the same key on every replica so clients can pin it. Required when `ssh.enabled` |
+| `AURORA_SMTP_PASSWORD` (or `AURORA_SMTP_PASSWORD_FILE`) | api | (FIX-116) the mailer's password, paired with `email.smtp_username`; `email.smtp_url` carries no credentials (the file is rendered into a ConfigMap), startup refuses userinfo there and in `gateway.egress_proxy`. In the chart: `api.extraEnv` with a `secretKeyRef` |
 
 Setup tooling generates every secret and **never overwrites** an existing one.
 (phase 2, RFE-007) For the two rings it only **appends** new entries on request
 (`aurora-api keys generate`); Helm's `secrets` hook supports `existingSecret` rings
 and a values flag `secrets.rotate.signing` / `secrets.rotate.internal` that appends
 one new entry without activating it.
+
+### Instance settings (phase 5, SPEC-SETTINGS, D-236..D-238, SEC-89, SEC-90)
+
+Not built yet: SET-1 builds the framework, SET-2..SET-5 and FIX-124 the sections. Until then
+every key below is read from the configuration at start, as the reference table says.
+
+**Effective value.** For every key of the table below (a *movable* key), in this order:
+
+1. **`helm`** — the key is present in the service's configuration (`aurora.toml`, which the chart
+   renders from `config.*` and some chart values, or an `AURORA__<SECTION>__<KEY>` override). The
+   setting is **locked**: the dashboard shows the value read-only with "Configured in Helm
+   (`<helm key>`)", and every write path refuses it (409 `setting_locked`, SEC-89).
+2. **`dashboard`** — the value stored in `instance_settings` (`03 §Planned changes`).
+3. **`default`** — the application's default (`aurora-config`), the value in the *Default* column
+   of the reference table. The chart never renders a default for a movable key (D-237(c)).
+
+A lock is per leaf key. **Whole-list** keys lock as a whole (no merging of Helm and dashboard
+entries in one list). **Keyed lists** lock per entry: an entry the configuration defines is
+locked ("Managed by Helm") and dashboard entries with other ids sit beside it. A dashboard write
+whose entry id is a configuration entry's is refused with a field error (422 `settings_invalid`,
+code `entry_id_in_helm`); if the configuration later adds an entry with a stored entry's id, the
+configuration's entry replaces it at the next start (mirroring, below). The keyed lists are
+`auth.oidc_providers`, `secrets.stores` and `llm.endpoints` (by `id`) and `ratelimit.api.classes`
+(by class name). Both kinds are named in the table.
+
+**Helm mirroring.** At every start the API (one replica at a time, under an advisory lock) writes
+the configuration's value of each locked key into the stored section when it differs
+(`instance_settings.helm_sync`, a best-effort system audit row naming the keys). So **removing a
+key from the values file hands it to the dashboard with the value Helm had** — for the API and the
+gateway alike — and never reverts it to the default. An install upgraded to SET-1 keeps every key
+its values file sets locked: nothing changes behaviour (D-238(a)). The release notes and a banner on
+Admin › Settings list the locked keys.
+
+**Validation.** A write (dashboard, import, CLI) is validated on the merged view of all sections by
+the same functions as startup validation, cross-section rules included (for example
+`approvals.max_timeout_secs` < `hosted.turn_ceiling_secs − 900`, `hosted.default_harness` ∈
+`hosted.enabled_harnesses`, `governance.llm.require_key_origin` against every endpoint, at least one
+OIDC provider across both sources). At start an invalid merged view refuses to start naming the
+section, the key and the reset command (D-238(c)).
+
+**Live application.** After a committed write the API sends `NOTIFY aurora_settings`
+`{ "section", "generation" }` (`05 §Event bus`). Every API replica and gateway re-reads that section, validates the merged
+view and swaps its settings snapshot atomically; `SETTINGS_RELOAD_POLL` (30 s) compares generations as
+a backstop, and a LISTEN reconnect reloads every section. A reload that fails validation keeps the
+previous snapshot (error log, `aurora_settings_reload_failed_total{service,section}`); during a
+database outage the last snapshot stays in force. No other service reads settings: runners, hook
+hosts, relays and connectors get what they need from the API as today. Values a sandbox receives at
+boot apply on its next boot (`restart_to_update`, `11`).
+
+**Secrets** entered in the dashboard (OIDC client secrets, the SMTP password, FIX-124's AppRole
+secret ids) are sealed in the **inline** store (purpose `instance_setting`, `08 §1`) whatever
+`secrets.default_store` says, are never returned, exported or logged, and are replaced by a new seal
+(the old one discarded after commit). A secret the configuration supplies through an environment
+variable (`client_secret_env`, `AURORA_SMTP_PASSWORD`) locks that field.
+
+**Writes** need an instance-admin session with a re-authentication within 600 s, are
+security-critical audited with a before/after diff and e-mailed to every instance admin
+(`04 §Audit`, `05 §Instance administration`, SEC-90).
+
+**Break-glass** (D-238(b)): `auth.instance_admins` (stays in Helm), a provider defined in Helm,
+pinning any key in Helm, and the CLI on any pod with the API image and configuration:
+
+```
+aurora-api settings show [<section>]                      # effective values and sources
+aurora-api settings reset <section> [--key <k>] [--entry <id>] [--dry-run]
+aurora-api settings export [--format yaml|json] > settings.yaml
+aurora-api settings import --file settings.yaml [--dry-run]
+```
+
+The CLI writes through the same service (validation, generation, critical audit with source `cli`,
+notify, admin e-mail; no re-authentication: shell access to the deployment is the authority) and
+starts even when the stored settings are invalid. On Kubernetes:
+`kubectl -n <ns> exec deploy/<release>-api -- aurora-api settings …`, or, when the API cannot start,
+`kubectl -n <ns> debug` / a one-off pod from the API image with the same ConfigMap and Secret
+(`docs/operator/upgrades.md`).
+
+**Movable keys** (sections, Admin pages, list kinds, and how today's startup-only readers become live):
+
+| Section | Admin › page | Keys | Lists | Readers → live |
+|---|---|---|---|---|
+| `governance` | Governance (SET-2) | `governance.llm.allowed_key_scopes`, `.minimum_posture`, `.require_key_origin`, `.known_llm_hosts_extra`; `governance.egress.minimum_posture`, `.baseline_allowlist`, `.open_lane_minimum`; `governance.agent_tokens.max_age_days`; `byo.enabled`, `byo.minimum_posture`, `byo.default_source_cidrs`, `byo.require_context_credentials` | whole: `allowed_key_scopes`, `known_llm_hosts_extra`, `baseline_allowlist`, `default_source_cidrs` | API governance service (org validation, pickers, BYO create/regenerate) and the gateway's instance governance (built at start today) swap on reload; the gateway then drops its effective-governance and credential-identity caches (scope `all`), so `byo.enabled` and the floors apply without the rolling restart `08 §11.9` used to need. A change runs `08 §11.2`'s re-evaluation (stored origins, model overrides) for every organization as a background job, and a tightened token maximum age `08 §7`'s retrofit |
+| `llm` | LLM endpoints (SET-3) | `llm.enabled_providers`, `llm.provider_preference`, `llm.endpoints` | whole: `enabled_providers`, `provider_preference`; keyed by `id`: `endpoints` (a Helm endpoint is locked, dashboard endpoints with other ids beside it) | API (secret create, pickers, model readiness, setup wizard) and gateway (endpoint table, reserved LLM hosts, known LLM hosts minus endpoint hosts) rebuild on reload; gateway resolution caches dropped (`all`); the same re-evaluation as `governance`. (phase 5, P4-LLM spec batch, D-262) The gateway also rebuilds the destination guard's endpoint allowance (Helm endpoints only) and drops LLM mint entries of changed endpoints; dashboard endpoints follow `gateway.allowed_private` (section `limits`), and a write is refused for `http_needs_private_host`, `endpoint_host_claimed` and `allowed_paths_not_supported`, with the preview warning `endpoint_resolves_private` (C-800, C-813) |
+| `sign_in` | Sign-in (SET-4) | `auth.signup_mode`, `auth.org_creation`, `auth.session_idle_secs`, `auth.session_absolute_secs`, `auth.cli_key_ttl_days`, `auth.oidc_providers` | keyed by `id`: `oidc_providers` | API only: the provider registry and discovery cache rebuild on reload (a sign-in in flight with a removed provider fails `oidc_provider_unknown`); a shorter session lifetime applies to existing sessions at their next request, a longer one to new sessions only; `cli_key_ttl_days` to keys minted afterwards |
+| `email` | Email (SET-4) | `email.smtp_url`, `email.from`, `email.smtp_username`, `email.smtp_password` (secret) | — | API mailer rebuilt on reload |
+| `secrets` | Secret stores (FIX-124) | `secrets.default_store`, `secrets.stores` (Vault store definitions and `reference_scopes`) | keyed by `id`: `stores` | API and gateway rebuild their store registry (FIX-124) |
+| `agents` | Agents & sandboxes (SET-5) | `agents.default_name`, `agents.default_brief`, `hosted.enabled`, `hosted.default_harness`, `hosted.enabled_harnesses`, `hosted.default_timezone`, `hosted.idle_stop_secs`, `hosted.background_cap_secs`, `hosted.turn_ceiling_secs`, `hosted.turn_stall_secs`, `hosted.sandbox_ready_timeout_secs` | whole: `enabled_harnesses` | API only, read at use: defaults apply to workspaces and agents created afterwards, deadlines to turns and starts begun afterwards. `enabled_harnesses` must be among the harnesses registered runners report (422 `harness_not_available`). The page also shows each runner's sandbox sizes and `max_sandboxes` read-only (D-235(a)) |
+| `approvals` | Approvals (SET-5) | `approvals.timeout_secs`, `approvals.max_timeout_secs`, `approvals.email_notifications`; (P4-011B, D-265(c), C-829; registered by whichever of SET-5 and P4-011B-2 lands second) `approvals.park.enabled`, `.threshold_secs`, `.max_timeout_secs`, `.resume_window_secs`, `.deny_cooldown_secs`, `.max_body_bytes`, `.max_pending_per_agent` | — | API and gateway, read per hold, park, grant lookup and decision. Cross-key rule `approvals.park.threshold_secs ≤ approvals.max_timeout_secs ≤ approvals.park.max_timeout_secs` (422 `settings_invalid`, codes `park_threshold_above_hold_max` / `park_max_below_hold_max`). The parking switch governs only new parked approvals (D-264(b)); turning it on and raising its maxima, window or caps are loosenings, lowering the threshold or the cooldown too |
+| `retention` | Retention & storage (SET-5) | `retention.request_log_days`, `retention.conversation_days_max`, `attachments.default_org_quota_mib`, `attachments.org_quota_mib_max`, `attachments.days_max` | — | API jobs, read per sweep; a lower ceiling clamps organizations' effective values (tighten-only, `10`) |
+| `skills` | Skills (SET-5) | `skills.library.enabled`, `skills.library.refresh_interval_secs`, `skills.library.bytes_per_agent` | — | API, read per refresh |
+| `scim` | Directory sync (SET-5) | `scim.enabled`, `scim.allowed_email_domains`, `scim.rate_per_minute`, `scim.token_max_days` | whole: `allowed_email_domains` | API, read per request; `scim.enabled` defaults to `scim.available` and cannot be turned on without it |
+| `previews` | Previews (SET-5) | `previews.session_ttl_secs`, `previews.session_idle_secs`, `previews.bytes_per_share_day`, `previews.shares_per_agent`, `previews.shares_per_org`, `previews.awake_cap_secs` | — | API, read per use (`previews.enabled` and `previews.domain` stay in Helm) |
+| `terminal` | Terminal (SET-5) | `terminal.enabled`, `terminal.awake_cap_secs`, `terminal.wake_window_secs`, `terminal.wake_wait_secs` | — | API, read per open; runners register the `terminal` capability whenever they can serve it and the API checks the live switch; `terminal.enabled` defaults to `terminal.available` and cannot be turned on without it |
+| `limits` | Limits (SET-5) | `ratelimit.api.multiplier`, `ratelimit.api.org_per_minute`, `ratelimit.api.classes`, `gateway.allowed_private`, `gateway.condition_body_bytes`, `gateway.upstream_header_timeout_secs` | keyed by class name: `classes`; whole: `allowed_private` | API limiter (bucket parameters swap; existing bucket state is kept, so a change applies from the next take) and gateway (destination guard, condition body cap, header timeout for new requests). `allowed_private` opens private-address egress and is read by the API for app-instance probes too: every change is flagged as a loosening when it adds an entry |
+
+**Not settings** (stay in the configuration; no settings entry exists, D-237(b)): secret and key
+roots (`§Required secrets`), `database.*`, `server.*`, `auth.instance_admins`, `auth.trusted_origins`,
+`api.*_internal_url`, `hookhost.*`, `gateway.*` binds, certificates, proxy URLs, `trusted_proxies`,
+`egress_proxy` and `resolve_cache_ttl_secs`, `runner.*` (including sandbox sizes and
+`max_sandboxes`, D-235(a)), `relay.*`, `connector_host.*`, `previews.enabled`, `previews.domain`,
+`terminal.available`, `scim.available`, `ratelimit.counters.*`, `events.*`, `tls.*`, `plugins.*`,
+`telemetry.*`, `push.*`, `blobs.*`, `governance.llm.known_llm_hosts` (the replacement list), and
+every development or test switch: `auth.dev_idp.*`, `hosted.allow_fake_harness`,
+`gateway.insecure_loopback_injection`, `plugins.allow_unsigned`, `runner.dev_*`,
+`connector_host.test_types`, `ratelimit.api.enabled`, `email.log_links`, (phase 5, P4-LLM,
+D-260(e)) `llm.dev_upstream_overrides`, (phase 5, P4-011B, D-267(b)) `push.dev_endpoint_overrides`
+(SEC-89). (P4-011B, D-266(a)) `push.*` stays here as D-237(b) decided: its switch renders an egress
+NetworkPolicy and its key is a secret root.
 
 ### Configuration reference (keys and defaults)
 
@@ -83,36 +204,49 @@ one new entry without activating it.
 | `server.external_url` | — (required) | api, web, gateway | public origin, e.g. `https://aurora.example.org` |
 | `server.bind` | `0.0.0.0` | all | listen address |
 | `gateway.internal_bind` | `server.bind` | gateway | address for the internal listener :4103; must not be sandbox-reachable (SEC-09); startup warns if it overlaps `server.bind` |
-| `runner.ops_bind` | `server.bind` | runner | address for the ops listener :4106; same rule |
+| `runner.ops_bind` | `127.0.0.1` on podman, else `server.bind` | runner | address for the ops listener :4106; same rule; on podman an overlap with the sandbox-facing bind is a startup error (FIX-094) |
 | `server.trusted_proxies` | `[]` | api | CIDRs whose `X-Forwarded-For` is trusted |
 | `connector_host.api_url` | `http://127.0.0.1:4101` | connector-host | (phase 4, P4-MCON) the API the host registers with; the token comes from `AURORA_CONNECTOR_HOST_TOKEN` (`auh_`) |
 | `connector_host.listen` / `connector_host.ops_port` | `0.0.0.0:4110` / `4192` | connector-host | (phase 4, P4-MCON) platform callbacks (`/connectors/<id>/…`) / health and metrics |
-| `connector_host.test_types` | `false` | connector-host | (phase 4, P4-MCON) also announce the `fake` type (development and e2e only; startup warns) |
+| `connector_host.test_types` | `false` | connector-host | (phase 4, P4-MCON) also announce the `fake` type (development and e2e only; startup warns); **development-only key**: refused unless `server.external_url` is loopback (FIX-116) |
 | `skills.library.enabled` | `true` | api | (phase 4, P4-GSL) kill-switch of the git skill library; invisible until an org admin connects a repository; no new infrastructure (`§Git skill library`) |
 | `api.gateway_internal_url` | `http://aurora-gateway:4103` | api | (phase 4, P4-GSL, D-154) the gateway's internal listener as the API reaches it for `POST /internal/v1/library-fetch` (`06 §Library fetch`); the internal secret ring authenticates; must be an `http(s)` URL (startup refusal naming the key otherwise) |
 | `skills.library.refresh_interval_secs`, `skills.library.bytes_per_agent` | 900 (≥ 300), 1 MiB (lower only) | api | (phase 4, P4-GSL) `LIBRARY_REFRESH_INTERVAL`, `LIBRARY_BYTES_PER_AGENT` (`02 §Limits`) |
+| `plugins.addon_sources.update_interval` | `1d` | api | (phase 5, P5-ASRC, D-250) how often every addon source is re-checked: one of `6h`, `12h`, `1d`, `1w`, `2w`, `1mo`, `never` (`never` = manual checks only); anything else refuses startup. The poll shares the per-source lease with the manual "Check now" (`02 §Limits` `ADDON_*`, `22-addon-repos.md`) |
 | `previews.enabled` | `false` | api, relay | (phase 4, P4-PRV-1) master switch for port previews; **off unless configured**; when `true` the API refuses to start without a valid `previews.domain` (`§Port previews`). Helm: the chart value `relay.enabled` is the single switch — it mirrors `config.previews.enabled` (FIX-056), so `helm upgrade --set relay.enabled=true --set relay.domain=…` wires everything; set the config key only to agree explicitly, never alone |
 | `previews.domain` | — | api, relay | (phase 4, P4-PRV-1) the DNS suffix of preview hostnames, e.g. `preview.example.org`; needs a wildcard DNS record and a wildcard TLS certificate; must not be, contain or sit under the dashboard host (startup validation, `§Port previews`) |
 | `previews.session_ttl_secs`, `previews.session_idle_secs`, `previews.bytes_per_share_day` | 28800, 3600, 5 GiB | api, relay | (phase 4, P4-PRV-2) lower only for the first two (`02 §Limits`) |
 | `relay.api_url` | `http://127.0.0.1:4101` | relay | (phase 4, P4-PRV-2) the API it registers with; the anchor token comes from `AURORA_RELAY_TOKEN` (`aul_`) |
 | `relay.listen` / `relay.ops_port` | `0.0.0.0:4112` / `4193` | relay | (phase 4, P4-PRV-2) edge-facing HTTP / health and metrics |
-| `relay.max_streams`, `relay.max_streams_per_user`, `relay.request_body_max_bytes` | 2048, 64, 100 MiB | relay | (phase 4, P4-PRV-2) per replica; lower only for the last two |
+| `relay.trusted_proxies` | `[]` | relay | (FIX-090) CIDRs of the edge proxies in front of the relay (same syntax, semantics and default as `server.trusted_proxies`; `/0` refused): when the socket peer is inside one, the visitor's address is the rightmost untrusted `X-Forwarded-For` entry (grant-redemption limit, outbound `X-Forwarded-For`); without it the socket peer is the client address |
+| `relay.max_streams`, `relay.max_streams_per_user`, `relay.request_body_max_bytes` | 2048, 64, 100 MiB (chart: 2048, 64, **32 MiB**) | relay | (phase 4, P4-PRV-2) per replica; lower only for the last two. 100 MiB is the ceiling and the binary's default; the Helm chart deliberately ships the lower 32 MiB (`docs/23`), raise it to at most 100 MiB if previews must accept larger uploads (FIX-074) |
 | `runner.stream_bind` / `runner.stream_tls.*` | `server.bind`:4108 / off | runner | (phase 4, P4-PRV-2) the relay-facing stream listener (only opened when the API's `previews.enabled` is true at registration) and optional TLS (`cert_file`, `key_file`). The runner registers the `stream_tls` capability; the API derives the endpoint scheme it hands the relay from it (`ws://` off, `wss://` on, `16 §W18`) — the relay verifies the presented certificate against its own trust configuration |
-| `terminal.enabled` | `false` | api | (phase 4, P4-TERM, D-161) the dashboard's web-terminal surface (`GET /v1/agents/{agent}/terminal`): off means every route answers 404 `terminal_disabled` and the runner registers no `terminal` capability; the runner opens :4108 when previews **or** the terminal is enabled. Helm: the chart value `terminal.enabled` is the single switch — it mirrors `config.terminal.enabled` (FIX-053), so `helm upgrade --set terminal.enabled=true` wires everything; set the config key only to agree explicitly, never alone |
-| `terminal.awake_cap_secs` | 14400 | api | (phase 4, P4-TERM) `TERMINAL_AWAKE_CAP`, at most `hosted.background_cap_secs` |
+| `terminal.enabled` | `false` | api | (phase 4, P4-TERM, D-161) the dashboard's web-terminal surface (`GET /v1/agents/{agent}/terminal`): off means every route answers 404 `terminal_disabled` and the runner registers no `terminal` capability; the runner opens :4108 when previews **or** the terminal is enabled. Helm: the chart value `terminal.enabled` is the single switch — it mirrors `config.terminal.enabled` (FIX-053), so `helm upgrade --set terminal.enabled=true` wires everything; set the config key only to agree explicitly, never alone. (phase 5, SET-5, D-237(d)) A movable setting (*Instance settings*): its default becomes the value of `terminal.available`, and the chart value renders `terminal.available` instead of this key |
+| `terminal.available` | `false` | api | (phase 5, SET-5, D-237(d); not built yet) the deployment provides the terminal's wiring (the runner's :4108 listener and, on Kubernetes, the NetworkPolicy flows). Rendered by the chart from its `terminal.enabled` value; set it to `true` by hand on other deployments that route :4108. Not a setting: `terminal.enabled` cannot be turned on while it is `false` (422 `setting_requires_deployment`) |
+| `ssh.enabled` | `false` | api, terminator, runner (via the API) | (phase 5, P4-SSH-1/2, D-239) SSH access to sandboxes: off means every SSH route answers 404 `ssh_disabled`, no key can be registered, the runner registers no `ssh` capability and the chart deploys no terminator. Helm: the chart value `ssh.enabled` is the single switch and mirrors `config.ssh.enabled` (the FIX-053/FIX-056 pattern: both set and unequal, or the config key alone, fails the render). Independent of `terminal.enabled` |
+| `ssh.public_host` / `ssh.public_port` | host of `server.external_url` / `22` | api | (phase 5, P4-SSH-1) the name and port people connect to (the terminator's LoadBalancer address or a DNS name for it); shown in the dashboard, returned by `GET /v1/ssh` and the mint, used in `known_hosts` lines (`[host]:port` when the port is not 22) |
+| `ssh.cert_ttl_secs` | 900 | api | (phase 5, P4-SSH-1) `SSH_CERT_TTL`, 60 … 86 400 |
+| `ssh.ca.previous_public_keys` | `[]` | api | (phase 5, P4-SSH-1) OpenSSH public-key lines of retired CA keys the terminators still accept (a rotation's overlap, at least `ssh.cert_ttl_secs`); the API never signs with them |
+| `ssh.sessions_per_user`, `ssh.sessions_per_agent`, `ssh.idle_timeout_secs` | 4, 8, 600 | api | (phase 5, P4-SSH-2) lower only (`02 §Limits`); the API hands the idle timeout to the terminators at registration |
+| `ssh.awake_cap_secs` / `ssh.wake_wait_secs` | 14400 / 90 | api | (phase 5, P4-SSH-2) `SSH_AWAKE_CAP` (≤ `hosted.background_cap_secs`) / `SSH_WAKE_WAIT` |
+| `terminator.api_url` | `http://127.0.0.1:4101` | terminator | (phase 5, P4-SSH-2) the API it registers with; the anchor token comes from `AURORA_TERMINATOR_TOKEN` (`aut_`) |
+| `terminator.listen` / `terminator.ops_port` | `0.0.0.0:2222` / `4194` | terminator | (phase 5, P4-SSH-2) the SSH listener / health and metrics |
+| `terminator.max_preauth`, `terminator.max_preauth_per_ip` | 256, 8 | terminator | (phase 5, P4-SSH-2) `SSH_PREAUTH_MAX`, `SSH_PREAUTH_PER_IP` per replica (lower only) |
+| `terminal.awake_cap_secs` | 14400 | api | (phase 4, P4-TERM) `TERMINAL_AWAKE_CAP`, at most `hosted.background_cap_secs`; since FIX-116 the terminal keep-awake is bounded by this key (not `previews.awake_cap_secs`), and `terminal.wake_window_secs` sets the wake-demand window |
 | `terminal.wake_window_secs` / `terminal.wake_wait_secs` | 60 / 45 | api | (phase 4, P4-TERM) the wake-demand window on open / how long the WebSocket upgrade may wait for a waking sandbox |
 | `previews.shares_per_agent`, `previews.shares_per_org` | 10, 200 | api | (phase 4, P4-PRV-1) lower only (`02 §Limits`) |
 | `previews.awake_cap_secs` | 14400 | api | (phase 4, P4-PRV-1) `PREVIEW_AWAKE_CAP`, at most `hosted.background_cap_secs` |
 | `database.max_connections` | 20 (api), 10 (gateway) | api, gateway | pool size |
-| `database.gateway_role` | — | api (migrations) | login role the **operator creates** (`CREATE ROLE <r> LOGIN PASSWORD '…'`); `migrate` only grants it the gateway privileges (`03`) and fails if it does not exist. The gateway must then connect as it (its own `AURORA_DATABASE_URL`; Helm `database.gatewayExistingSecret`) |
+| `database.gateway_role` | — | api (migrations) | login role the **operator creates** (`CREATE ROLE <r> LOGIN PASSWORD '…'`; the Helm chart's bundled evaluation Postgres creates `aurora_gateway` itself, FIX-106); `migrate` only grants it the gateway privileges (`03`) and fails if it does not exist. The gateway must then connect as it (its own `AURORA_DATABASE_URL`; Helm `database.gatewayExistingSecret`). Running the gateway as the main login is the exception, never the default (`01`, "Gateway ↔ database") |
 | `auth.signup_mode` | `invite_only` | api | `open`, `invite_only`, `sso_jit` |
 | `auth.org_creation` | `instance_admins` | api | or `anyone` |
 | `auth.instance_admins` | `[]` | api | emails |
 | `auth.trusted_origins` | `[]` | api | extra origins for CSRF checks |
 | `auth.session_idle_secs` / `auth.session_absolute_secs` | 1209600 / 2592000 | api | |
-| `auth.oidc_providers[]` | — | api | `04 §OIDC`; (phase 1, RFE-004) **at least one required** (or `auth.dev_idp.enabled`), `require_email_verified` removed; (D-118) `trusted_email_domains` (default `[]`): exact domains whose addresses count as verified without the `email_verified` claim; (phase 4, P4-IDP-1, D-139) `role_claim` (dot path), `role_claim_source` (`id_token` \| `userinfo`), `require_role` (default `false`), `role_mappings[]` (`value` → `instance_admin`, `org {slug, role}`, `workspaces [{slug, role}]`), `04 §OIDC role claims`; (phase 4, P4-GRP-1, D-156) `group_claim` (dot path, e.g. `cern_roles` or `groups`) and `group_claim_source` (`id_token` \| `userinfo`): the claim whose values feed IdP-linked groups (`04 §IdP-linked groups`); unset = no IdP-linked groups for this provider |
+| `auth.cli_key_ttl_days` | 90 | api | (FIX-108, D-178) lifetime of an API key minted by the CLI device login (`04 §CLI login`); `0` = never expires, at most 3650; earlier keys are not changed |
+| `auth.oidc_providers[]` | — | api | `04 §OIDC`; (phase 1, RFE-004) **at least one required** (or `auth.dev_idp.enabled`), `require_email_verified` removed; (D-118) `trusted_email_domains` (default `[]`): exact domains whose addresses count as verified without the `email_verified` claim; (FIX-108, D-178) `link_existing_users` (default: `true`, `false` for a provider with `trusted_email_domains`): may a first sign-in link to an account created through another provider with the same e-mail (`email_linked_elsewhere` when not); (phase 4, P4-IDP-1, D-139) `role_claim` (dot path), `role_claim_source` (`id_token` \| `userinfo`), `require_role` (default `false`), `role_mappings[]` (`value` → `instance_admin`, `org {slug, role}`, `workspaces [{slug, role}]`), `04 §OIDC role claims`; (phase 4, P4-GRP-1, D-156) `group_claim` (dot path, e.g. `cern_roles` or `groups`) and `group_claim_source` (`id_token` \| `userinfo`): the claim whose values feed IdP-linked groups (`04 §IdP-linked groups`); unset = no IdP-linked groups for this provider. (phase 5, SET-4, D-235(b), D-237) A keyed list (by `id`): providers defined here are locked ("Managed by Helm"), more are added on Admin › Sign-in with the client secret sealed (`client_secret`, never returned); "at least one provider" then counts both sources |
 | `auth.dev_idp.enabled`, `auth.dev_idp.issuer`, `auth.dev_idp.internal_url` | `false`, —, `issuer` | api | (phase 1, RFE-004) registers the development provider `dev` served by `aurora-dev-idp`; `issuer` is the URL the browser reaches, `internal_url` (optional) where the API itself reaches the IdP (discovery, token, JWKS; the chart sets it to the Service); refused unless `server.external_url` is on `localhost`, `*.localhost`, `127.0.0.1` or `[::1]` (`04 §Development and end-to-end sign-in`) |
-| `email.smtp_url`, `email.from` | — | api | unset ⇒ log-only mode; used for invitations and (phase 2, RFE-011a) approval notifications. `email.from` (an e-mail address) is required when `email.smtp_url` is set, or startup fails |
+| `email.smtp_url`, `email.from`, `email.smtp_username`, `email.log_links` | —, —, —, `false` | api | unset ⇒ log-only mode; used for invitations and (phase 2, RFE-011a) approval notifications. `email.from` (an e-mail address) is required when `email.smtp_url` is set, or startup fails. `smtp_url` is `smtp(s)://host:port` with **no userinfo**; `smtp_username` and `AURORA_SMTP_PASSWORD` go together (FIX-116). Log-only mode logs recipient and subject; the sign-in/invitation **link** (a token) only when `email.log_links = true` (development; the dev and kind values set it). (phase 5, SET-4, D-237(f)) `smtp_url`, `from` and `smtp_username` are movable settings, and the dashboard's sealed `email.smtp_password` replaces `AURORA_SMTP_PASSWORD` when that variable is unset (when it is set, the password is locked); `email.log_links` is a development switch and stays configuration-only |
 | `secrets.default_store`, `secrets.stores[]` | `inline` | api, gateway | `08 §2` |
 | `secrets.stores[].kind = "hashicorp-vault"` | — | api, gateway | (phase 3, `21 §Phase 3 — HashiCorp Vault secret store`, C-370..C-375) a Vault KV v2 store; `id` follows the existing rule (non-empty, no `:`, unique). `secrets.default_store` may name it (managed values are then written to Vault). Both services build the store from their own configuration, so each may use its own `auth` role (recommended: the gateway reads managed and reference paths and writes managed connection-credential paths only) |
 | `secrets.stores[].address` | — (required) | api, gateway | Vault base URL, `https://host[:port]` with no path, query or credentials; `http://` is accepted only for a loopback host (dev server); anything else refuses startup naming the key |
@@ -127,9 +261,9 @@ one new entry without activating it.
 | `secrets.stores[].kv_mount` | `secret` | api, gateway | KV **version 2** mount; non-empty, no leading or trailing `/`. Reference paths (C-371) are relative to it |
 | `secrets.stores[].managed_prefix` | `aurora` | api, gateway | managed values live at `<kv_mount>/data/<managed_prefix>/<org_id>/<purpose>/<owner_id>` (fixed layout; only the prefix is configurable); 1..128 chars, segments of `[A-Za-z0-9._-]`, no `.`/`..`/empty segment. The mount's `max_versions` SHOULD be ≥ 10 |
 | `secrets.stores[].reference_scopes[]` | `[]` (no org may reference) | api, gateway | which org may reference which paths (SEC-61; phase 3, D-107): entries `{ org_id, paths: [glob, …] }`. `org_id` is the organization's **immutable id** (a UUID string; anything else refuses startup naming the key), never its slug: a slug can be changed, freed and taken by another org, which must never inherit a scope. An id that matches no org grants nothing. Operators find an org's id with `GET /v1/admin/orgs` (instance admin; `id`, `slug`, `name` per org, C-203) or, as an org member, `GET /v1/resolve?org=<slug>` (`org.id`). `paths` non-empty, each glob either an exact path or a prefix ending in a single trailing `*` (the phase-0 `memory` store rule; `*` anywhere else is refused), relative to `kv_mount`, no leading `/`, no `.`/`..`/empty segment; a glob equal to, inside or covering `<managed_prefix>/` refuses startup (no reference can reach another org's managed values). Several entries for one id are unioned. Matched against the secret's org id at every resolve and open |
-| `llm.enabled_providers`, `llm.provider_preference`, `llm.endpoints[]` | `["litellm","anthropic"]` | api, gateway | `08 §6`; each endpoint may set `allowed_models` and `key_origin` (`method` = `endpoint` \| `litellm_team` \| `provider_account`, with `allowed_organization_ids`, `allowed_workspace_ids`, `allowed_team_ids`); (phase 4, FIX-019, D-136) an endpoint whose models are listed live (`litellm`) and that has no `default_model` starts with a **warning**: hosted agents then need a model chosen per agent, otherwise turns fail `no_default_model`. Set `default_model` (a model id served by the endpoint, e.g. a Claude model for the `claude-code` harness). An unknown `key_origin.method` refuses startup with the nearest valid value suggested |
-| `llm.endpoints[]` provider keys (phase 4, P4-LLM, D-121) | — | api, gateway | per provider, in addition to the common `id`, `provider`, `display_name`, `dialects`, `default_model`, `models`, `allowed_models`, `key_origin`: **`openai`**: `organization`, `project` (optional, not secrets); **`azure_openai`**: `base_url` (required, `https://<resource>.<azure-domain>`, host only), `models` and `default_model` required (deployment names); **`bedrock`**: `region` (required, e.g. `eu-central-1`), `base_url` (optional VPC endpoint override), `dialects` (default `["anthropic_bedrock"]`); **`vertex`**: `project_id` and `location` (required), `models` and `default_model` required; **`openai_compatible`**: `base_url` (required), `auth_header` (`authorization` default \| `api-key` \| `x-api-key`), `models_path`, `allowed_paths` (default derived from `dialects`; `["/**"]` opts out). Every provider also accepts `allowed_paths` to **narrow** its inference set. Credentials never appear here: an entry with a key such as `api_key`, `access_key*`, `secret*`, `private_key`, `password` or `token`, an unknown key, a non-https `base_url` (loopback excepted), or an invalid region/location/project id refuses startup naming the key (`08 §Phase 4 providers`) |
-| `llm.enabled_providers` additions | default unchanged | api, gateway | (phase 4, P4-LLM) accepts `openai`, `azure_openai`, `bedrock`, `vertex`, `openai_compatible` besides `litellm`, `anthropic`; the default stays `["litellm","anthropic"]`, so an existing configuration behaves exactly as before |
+| `llm.enabled_providers`, `llm.provider_preference`, `llm.endpoints[]` | `["litellm","anthropic"]` | api, gateway | `08 §6`; each endpoint may set `allowed_models` and `key_origin` (`method` = `endpoint` \| `litellm_team` \| `provider_account`, with `allowed_organization_ids`, `allowed_workspace_ids`, `allowed_team_ids`); (phase 4, FIX-019, D-136) (phase 4, D-177, FIX-105) a `litellm` endpoint may set **`allowed_paths`** (absolute paths or a `/*` prefix, at most 32): the sanctioned key is injected only on the inference routes (`08 §6`) plus these, anything else is refused 403 `llm_path_not_permitted`; an endpoint whose models are listed live (`litellm`) and that has no `default_model` starts with a **warning**: hosted agents then need a model chosen per agent, otherwise turns fail `no_default_model`. Set `default_model` (a model id served by the endpoint, e.g. a Claude model for the `claude-code` harness). An unknown `key_origin.method` refuses startup with the nearest valid value suggested |
+| `llm.endpoints[]` provider keys (phase 5 (D-138, moved from phase 4), P4-LLM, D-121) | — | api, gateway | per provider, in addition to the common `id`, `provider`, `display_name`, `dialects`, `default_model`, `models`, `allowed_models`, `key_origin`: **`openai`**: `organization`, `project` (optional, not secrets); **`azure_openai`**: `base_url` (required, `https://<resource>.<azure-domain>`, host only), `models` and `default_model` required (deployment names); **`bedrock`**: `region` (required, e.g. `eu-central-1`), `base_url` (optional VPC endpoint override), `dialects` (default `["anthropic_bedrock"]`); **`vertex`**: `project_id` and `location` (required), `models` and `default_model` required; **`openai_compatible`**: `base_url` (required; `https`, or `http` like `litellm` — for a dashboard endpoint only to a loopback host or one covered by `gateway.allowed_private`, D-262), `auth_header` (`authorization` default \| `api-key` \| `x-api-key`), `models_path`, `allowed_paths` (the set is derived from `dialects`; `["/*"]` opts out). (phase 5, P4-LLM spec batch, D-260(b)) `allowed_paths` **adds** paths to the provider's inference set (absolute or `/*` subtree, ≤ 32) and is accepted for `litellm`, `openai_compatible`, `anthropic`, `openai` and `azure_openai`; on `bedrock` or `vertex` it refuses startup (and a settings write, `allowed_paths_not_supported`) — it never narrows (the earlier "narrow" wording was withdrawn). The auth mode is a property of the **key** (`08 §LLM secrets`), never of the entry: one endpoint accepts every auth mode its provider supports (`azure_openai`: `api_key`, `azure_entra`; `bedrock`: `aws_assume_role`, `aws_sigv4`, `api_key`), except that a `provider_account` key-origin rule on `azure_openai` admits `azure_entra` keys only. Credentials never appear here: an entry with a key such as `api_key`, `access_key*`, `secret*`, `private_key`, `password` or `token`, an unknown key, a non-https `base_url` (loopback excepted), or an invalid region/location/project id refuses startup naming the key (`08 §Phase 4 providers`) |
+| `llm.enabled_providers` additions | default unchanged | api, gateway | (phase 5 (D-138, moved from phase 4), P4-LLM) accepts `openai`, `azure_openai`, `bedrock`, `vertex`, `openai_compatible` besides `litellm`, `anthropic`; the default stays `["litellm","anthropic"]`, so an existing configuration behaves exactly as before |
 | `governance.llm.allowed_key_scopes` | `["organization","workspace"]` | api, gateway | key scopes any org may permit (`08 §11`) |
 | `governance.llm.minimum_posture` | `open` | api, gateway | `open` or `sanctioned_only` — floor for every org |
 | `governance.llm.require_key_origin` | `false` | api, gateway | when `true`, startup fails unless every endpoint declares a `key_origin` |
@@ -142,7 +276,7 @@ one new entry without activating it.
 | `hosted.enabled` | `true` | api | hosted agents available |
 | `hosted.default_harness` | `claude-code` | api | must be in `hosted.enabled_harnesses` or startup fails |
 | `hosted.enabled_harnesses` | `["claude-code"]` | api | (phase 4, P4-HAR, D-122) harness ids agents may use (`claude-code`, `codex`; `fake` only with `hosted.allow_fake_harness`); an unknown id refuses startup. Enabling `codex` also needs a runner image that contains it (image label `org.aurora.harnesses`, `11 §Sandbox image`) and an LLM endpoint serving `openai_responses` (the pinned Codex 0.167.0 does not speak `openai_chat`, D-153; `08 §Phase 4 providers`) |
-| `hosted.allow_fake_harness` | `false` | api | tests/dev |
+| `hosted.allow_fake_harness` | `false` | api | tests/dev; **development-only key**: refused unless `server.external_url` is loopback (FIX-116) |
 | `hosted.default_timezone` | `UTC` | api | for new workspaces |
 | `hosted.idle_stop_secs`, `hosted.background_cap_secs`, `hosted.turn_ceiling_secs`, `hosted.turn_stall_secs` | `02 §Limits` | api | |
 | `hosted.sandbox_ready_timeout_secs` | 300 | api | (FIX-025, D-158) end-to-end start deadline, 60–1800: from "a turn needs a sandbox" (start claimed; the runner's capacity wait counts inside it) to "the supervisor is ready". At the deadline the readiness sweep fails the attempt and the queued turns with the code naming where it stopped (`10 §Failure semantics`, `11 §Start readiness deadline`). Raise it for images that pull slowly (the pull counts inside the deadline) |
@@ -154,7 +288,9 @@ one new entry without activating it.
 | `gateway.allowed_private` | `[]` | gateway (and the API, for app-instance probes and connect requests only, D-74) | private destinations allowed |
 | `gateway.resolve_cache_ttl_secs` | 60 | gateway | resolution-cache TTL (`02 §Limits`); (phase 3, RFE-014: also the **outage tolerance** and the revocation-lag bound while the database or listener is down; above 300 the gateway logs a warning at start; `06 §Operation during a Postgres outage`) |
 | `gateway.trusted_proxies` | `[]` | gateway | (phase 2, RFE-025) CIDRs of layer-4 load balancers / NAT hops that send a PROXY protocol v1/v2 header on the proxy port; the client address for BYO source restriction is taken from that header only for peers in this list (`06 §BYO admission`). Not the same as `server.trusted_proxies` (API, `X-Forwarded-For`) |
-| `byo.enabled` | `true` | api, gateway | (phase 2, RFE-025) master switch for BYO agents: `false` ⇒ BYO creation refused and every `aug_`/BYO `auc_` credential refused (403 `byo_disabled`), regardless of org/workspace settings. Hosted agents unaffected; changed by restart |
+| `llm.dev_upstream_overrides` | `{}` | api, gateway | (phase 5, P4-LLM spec batch, D-260(e)) **Tests and development only.** A table from a fixed provider origin or mint endpoint (`https://api.openai.com`, `https://api.anthropic.com`, `https://oauth2.googleapis.com`, `https://login.microsoftonline.com`, `https://sts.<region>.amazonaws.com`, `https://bedrock.<region>.amazonaws.com`, `https://bedrock-runtime.<region>.amazonaws.com`, `https://<location>-aiplatform.googleapis.com`) to a loopback URL of a mock upstream. Accepted only when every target is a loopback URL **and** `gateway.insecure_loopback_injection` is `true`; refused otherwise naming the key. Not an instance setting (never in the registry, ignored in a stored row), never rendered by the chart (the `no-deployment-defaults` guard checks it), and the services refuse to start with it inside a Kubernetes cluster, like `insecure_loopback_injection` |
+| `gateway.insecure_loopback_injection` | `false` | gateway | (FIX-104, D-180) **Tests and development only.** When `true`, a package's host claim is injected over any scheme and port if the destination is a loopback address (`127.0.0.0/8`, `::1`, `localhost`), so plain-HTTP mock upstreams on random ports work; otherwise a credential leaves only over TLS to the claimed port (`06 §Plain HTTP`). The Helm chart never renders it (`config.gateway.insecure_loopback_injection` fails the render, the `no-deployment-defaults` guard checks it) and the gateway refuses to start with it inside a Kubernetes cluster |
+| `byo.enabled` | `true` | api, gateway | (phase 2, RFE-025) master switch for BYO agents: `false` ⇒ BYO creation refused and every `aug_`/BYO `auc_` credential refused (403 `byo_disabled`), regardless of org/workspace settings. Hosted agents unaffected; changed by restart (phase 5, SET-2: a live setting, no restart; *Instance settings*) |
 | `byo.minimum_posture` | `owners_only` | api, gateway | (phase 2, RFE-025) `enabled` \| `owners_only` \| `disabled` — floor of the BYO posture for every org and workspace (`08 §11.9`); set `enabled` to keep phase 0/1 behaviour |
 | `byo.default_source_cidrs` | `[]` | api, gateway | (phase 2, RFE-025) default source CIDR list of every BYO agent without its own or an org list (e.g. corporate networks and CI runners); orgs and agents may only narrow it. Empty = unrestricted |
 | `byo.require_context_credentials` | `false` | api, gateway | (phase 2, RFE-025) when `true` every BYO agent must use context credentials for credentialed requests (`08 §11.9`) |
@@ -168,7 +304,7 @@ one new entry without activating it.
 | `approvals.email_notifications` | `true` | api | (phase 2, RFE-011a) e-mail deciders when an approval has no live surface (needs `email.smtp_url`; log-only otherwise) |
 | `plugins.dir` | `/var/lib/aurora/plugins` | api | scanned packages |
 | `plugins.builtin_dir` | `/usr/share/aurora/plugins` | api | (phase 2, C-210) built-in catalogue shipped in the API image; scanned like `plugins.dir` but fail-closed: only archives signed by the compiled-in project key (publisher `aurora`) load, anything else is refused and logged; `plugins.allow_unsigned` does not apply. Must not be empty (`ops/builtin-plugin-signing.md`) |
-| `plugins.allow_unsigned` | `false` | api | dev only (warning banner); never applies to `plugins.builtin_dir` |
+| `plugins.allow_unsigned` | `false` | api | dev only (warning banner); never applies to `plugins.builtin_dir`; **development-only key**: refused unless `server.external_url` is loopback (FIX-116) |
 | `hookhost.api_internal_url` | `http://aurora-api:4111` | hookhost | snapshot/blob source |
 | `runner.api_url` | — | runner | e.g. `http://aurora-api:4101` |
 | `runner.backend` | — (required) | runner | `podman`, `kubernetes`, `fake` (config, never detection) |
@@ -181,10 +317,10 @@ one new entry without activating it.
 | `runner.capacity_wait_secs` | 300 | runner | |
 | `runner.podman_socket`, `runner.sandbox_network`, `runner.sandbox_hosts` | — | runner (podman) | `11` |
 | `runner.k8s.namespace`, `runner.k8s.core_namespace` (namespace holding the gateway/runner Services; default: the runner pod's own namespace, else `default`), `runner.k8s.storage_class`, `runner.k8s.runtime_class`, `runner.k8s.node_selector`, `runner.k8s.tolerations`, `runner.k8s.gateway_service`, `runner.k8s.runner_service`, `runner.k8s.image_pull_secrets` (Secret names in the sandbox namespace for `spec.imagePullSecrets` of sandbox Pods; DNS-1123 subdomains; the runner never reads or creates them) | — | runner (kubernetes) | `11` |
-| `tls.extra_ca_bundle` | — | api, gateway, hookhost, runner, connectors | PEM file of additional trusted CAs for all outbound TLS (e.g. an organization CA for internal LLM endpoints, OIDC, Vault) |
+| `tls.extra_ca_bundle` | — | api, gateway, hookhost, runner, connectors | PEM file of additional trusted CAs for all outbound TLS (e.g. an organization CA for internal LLM endpoints, OIDC, Vault, a self-hosted app server such as Jira Data Center). It only adds trust anchors. (FIX-144 follow-up) Who reads it: the **gateway** (upstream TLS for agent requests and the skill-library fetch), the **API** (every outbound client: the self-hosted app registration check and connect probes/OAuth exchanges to registered instances — a private-CA instance that the gateway reaches no longer fails the check with `tls` —, OIDC discovery and token calls, LLM endpoint listing and origin checks, the secret stores, and the internal hops to the hook host and the gateway), the **hook host**, the **runner**, and the **connectors** (Mattermost, via `AURORA_TLS_EXTRA_CA_BUNDLE`). An unreadable or empty bundle refuses the API's startup naming the key |
 | `events.delta_bus` | `notify` | api | (phase 1, RFE-016) `DeltaBus` implementation id; unknown id fails startup |
 | `events.delta_coalesce_ms` | 100 | api | (phase 1, RFE-016) delta coalescing window, 100–500 |
-| `ratelimit.api.enabled`, `ratelimit.api.multiplier` | `true`, `1.0` | api | (phase 2, RFE-017) management-API token buckets and a global multiplier (0.1–100) |
+| `ratelimit.api.enabled`, `ratelimit.api.multiplier` | `true`, `1.0` | api | (phase 2, RFE-017) management-API token buckets and a global multiplier (0.1–100). `enabled = false` removes every `/v1` limit, anonymous and rejected-bearer buckets included, so it is a **development-only setting**: refused unless `server.external_url` is loopback (FIX-116). The development-only keys are `runner.dev_allow_external_network`, `plugins.allow_unsigned`, `hosted.allow_fake_harness`, `connector_host.test_types` and `ratelimit.api.enabled = false`; the chart refuses them on a non-loopback `externalUrl` too |
 | `ratelimit.api.classes.<name>`, `ratelimit.api.org_per_minute` | `05 §Conventions` | api | (phase 2, RFE-017) per-class `{ per_minute \| per_hour, burst }` overrides and the per-org bucket (default 3000) |
 | `ratelimit.counters.backend` | `memory` | api, gateway | (phase 4, P4-CNT, D-119) `memory` (per replica, today's behaviour, no infrastructure), `postgres` (shared, tables of `03`, no new infrastructure) or `redis`; any other value refuses startup. See *Shared rate-limit counters* |
 | `ratelimit.counters.api`, `ratelimit.counters.gateway` | `shared` | api, gateway | (phase 4, P4-CNT) `shared` (use the backend above) or `memory` (keep that limiter per replica): lets an operator share only the gateway's rule quotas and keep the API limiter local. With `backend = memory` both are `memory` whatever they say |
@@ -196,40 +332,43 @@ one new entry without activating it.
 | `ratelimit.counters.redis.username_env`, `.password_env` | unset | api, gateway | (phase 4, P4-CNT) names of environment variables holding the Redis ACL user and password (both optional; an unset variable that is named refuses startup); never the values (`08 §4`) |
 | `ratelimit.counters.redis.ca_file` | unset (system roots, then `tls.extra_ca_bundle`) | api, gateway | (phase 4, P4-CNT) PEM bundle verifying the Redis server |
 | `ratelimit.counters.redis.db`, `.key_prefix` | `0`, `aurora:rl:` | api, gateway | (phase 4, P4-CNT) database index and key prefix (lets several Aurora instances share one Redis); `key_prefix` ≤ 64 chars of `[A-Za-z0-9:_-]` |
-| `scim.enabled` | `false` | api | (phase 4, P4-GRP-2, D-132) serve `/scim/v2` and show the Directory sync page; while `false` every `/scim/v2` path is 404 and no org can enable SCIM. Helm `scim.enabled` also adds the edge route (`15 §Networking`) |
+| `scim.enabled` | `false` | api | (phase 4, P4-GRP-2, D-132) serve `/scim/v2` and show the Directory sync page; while `false` every `/scim/v2` path is 404 and no org can enable SCIM. Helm `scim.enabled` also adds the edge route (`15 §Networking`). (phase 5, SET-5, D-237(d)) A movable setting whose default is `scim.available`; the chart value renders `scim.available` instead of this key |
+| `scim.available` | `false` | api | (phase 5, SET-5, D-237(d); not built yet) the deployment routes `/scim/v2` to the API (rendered by the chart from its `scim.enabled` value; set by hand elsewhere). Not a setting: `scim.enabled` cannot be turned on while it is `false` (422 `setting_requires_deployment`) |
 | `scim.allowed_email_domains` | `[]` | api | (phase 4, P4-GRP-2) optional instance allow-list of the e-mail domains an org may provision (exact, case-insensitive); empty = any domain the org owner lists. Entries must be domains (no `@`, wildcard or single label), else startup refuses naming the key |
 | `scim.rate_per_minute` | 600 | api | (phase 4, P4-GRP-2) `SCIM_RATE` per token (burst is a fifth of it), 30–6000 |
-| `scim.token_max_days` | 730 | api | (phase 4, P4-GRP-2) longest lifetime of an `aud_` token, 1–1825; the default offered in the dashboard is 365 (never above this) |
-| `approvals.park.enabled` | `false` | gateway, api | (phase 4, RFE-011b, D-133) park approvals with long deadlines instead of holding the connection (`07 §Park and resume`). Off = exactly phase 2 behaviour. The gateway and the API must agree (both read it from the shared configuration) |
-| `approvals.park.threshold_secs` | 900 | gateway | (phase 4, RFE-011b) effective timeouts above this park; 60–`approvals.park.max_timeout_secs` |
-| `approvals.park.max_timeout_secs` | 86400 | gateway, api | (phase 4, RFE-011b) longest deadline of a parked approval, 3600–604800 (also the upper bound of a rule's `approval_timeout_secs` when parking is enabled); requests that cannot park stay clamped to `approvals.max_timeout_secs` |
-| `approvals.park.resume_window_secs` | 1800 | api | (phase 4, RFE-011b) how long an approved parked request can be repeated once, 60–86400 |
-| `approvals.park.deny_cooldown_secs` | 900 | gateway | (phase 4, RFE-011b) a denied parked request repeated within it is answered `manual_approval_denied`, 0–86400 |
-| `approvals.park.max_body_bytes` | 262144 | gateway | (phase 4, RFE-011b) largest request body that can be parked (4096–1048576); larger requests are held |
-| `approvals.park.max_pending_per_agent` | 20 | gateway | (phase 4, RFE-011b) parked pending approvals per agent, 1–200 |
-| `push.enabled` | `false` | api | (phase 4, RFE-011b, D-134) Web Push; needs outbound HTTPS from the API to the push services. See *Approval park-and-resume and Web Push* below |
-| `push.vapid.subject` | the external URL | api | (phase 4, RFE-011b) VAPID `sub` claim: `mailto:` or `https:` contact for the push services |
-| `push.vapid.private_key_env` | unset | api | (phase 4, RFE-011b) name of an environment variable holding an operator-managed ES256 (P-256) VAPID private key (PKCS#8 PEM or raw base64url); unset = Aurora generates, seals and rotates its own key. Never the value |
-| `push.allowed_endpoint_hosts` | `fcm.googleapis.com`, `updates.push.services.mozilla.com`, `*.push.services.mozilla.com`, `web.push.apple.com`, `*.push.apple.com`, `*.notify.windows.com` | api | (phase 4, RFE-011b) host patterns (`07 §Matching primitives`; a leading label wildcard only) a subscription endpoint may have; checked at registration and before every send; an empty list refuses startup; an entry that is not a host pattern refuses startup |
-| `push.concurrency`, `push.timeout_secs` | 16, 10 | api | (phase 4, RFE-011b) pushes in flight per replica (1–64) and per-request timeout (2–30) |
-| `blobs.backend` | `postgres` | api | (phase 4, P4-S3, D-120) where **new** attachment bytes go: `postgres` (the `blobs` table) or `s3`; existing rows keep their own backend (`attachments.blob_backend`); any other value refuses startup. See *S3-compatible blob store* |
-| `blobs.s3.bucket`, `blobs.s3.region` | — (required for `s3`) | api | (phase 4, P4-S3) bucket name (3–63 chars, DNS-compatible) and signing region (any non-empty string for S3-compatible servers that ignore it, e.g. `us-east-1`) |
-| `blobs.s3.endpoint` | unset (AWS S3 for the region) | api | (phase 4, P4-S3) `https://host[:port]` of an S3-compatible server (MinIO, Ceph, …), no userinfo, path or query; `http://` accepted only for a loopback host or with `allow_insecure_http = true` |
-| `blobs.s3.allow_insecure_http` | `false` | api | (phase 4, P4-S3) opt-in for `http://` to a non-loopback endpoint (in-cluster MinIO without TLS); startup warning |
-| `blobs.s3.path_style` | `false` | api | (phase 4, P4-S3) path-style addressing (`https://host/bucket/key`); needed by most self-hosted servers |
-| `blobs.s3.prefix` | `aurora/` | api | (phase 4, P4-S3) key prefix, ≤ 64 chars of `[A-Za-z0-9._/-]`, no leading `/`, no `..`, empty or ending in `/` |
-| `blobs.s3.credentials.source` | `provider_chain` | api | (phase 4, P4-S3) `provider_chain` (the standard AWS chain: web identity / IRSA / pod identity / instance profile / environment; **recommended**, no static key in Aurora's configuration) or `env` (static keys from the variables named below); never inline values |
-| `blobs.s3.credentials.access_key_id_env`, `.secret_access_key_env`, `.session_token_env` | — | api | (phase 4, P4-S3) `source = env`: names of the environment variables holding the keys (`session_token_env` optional); an unset or empty named variable refuses startup; values are filled from a Secret (Helm `blobs.s3.existingSecret`), never from `aurora.toml` or the database |
-| `blobs.s3.sse` | `AES256` | api | (phase 4, P4-S3) server-side encryption requested on every `PutObject`: `AES256` (SSE-S3), `aws:kms` (with `sse_kms_key_id`) or `none` (startup warning; only for servers without encryption support). The startup probe verifies that the server **confirms** the requested encryption (`x-amz-server-side-encryption` in the response) and refuses to start otherwise |
-| `blobs.s3.sse_kms_key_id` | unset | api | (phase 4, P4-S3) KMS key id/ARN for `aws:kms` (not a secret) |
-| `blobs.s3.ca_file` | unset (system roots, then `tls.extra_ca_bundle`) | api | (phase 4, P4-S3) PEM bundle verifying the endpoint |
-| `blobs.s3.allow_versioned_bucket` | `false` | api | (phase 4, P4-S3) accept a bucket with versioning enabled; purges then delete every version (`10 §Attachments`). Object-Lock buckets are never accepted |
-| `blobs.s3.upload_concurrency` | 16 | api | (phase 4, P4-S3) `S3_UPLOAD_CONCURRENCY`, 1–64 uploads in flight per replica |
+| `scim.token_max_days` | 730 | api | (phase 4, P4-GRP-2) longest lifetime of an `aud_` token, 1–730 (`SCIM_TOKEN_MAX_DAYS`, one ceiling since FIX-116); the default offered in the dashboard is 365 (never above this) |
+| `approvals.park.enabled` | `false` | gateway, api | (phase 5 (D-138, moved from phase 4), RFE-011b, D-133) park approvals with long deadlines instead of holding the connection (`07 §Park and resume`). Off = exactly phase 2 behaviour. (P4-011B, D-265(c)) Every `approvals.park.*` key is a movable instance setting (section `approvals`; setting it here locks it); the gateway and the API read the same effective value live. The switch governs only new parked approvals; grants and pending parked approvals created earlier are served whatever it says (D-264(b)) |
+| `approvals.park.threshold_secs` | 900 | gateway | (phase 5 (D-138, moved from phase 4), RFE-011b) effective timeouts above this park; 60–`approvals.park.max_timeout_secs` |
+| `approvals.park.max_timeout_secs` | 86400 | gateway, api | (phase 5 (D-138, moved from phase 4), RFE-011b) longest deadline of a parked approval, 3600–604800 (also the upper bound of a rule's `approval_timeout_secs` when parking is enabled); requests that cannot park stay clamped to `approvals.max_timeout_secs` |
+| `approvals.park.resume_window_secs` | 1800 | api | (phase 5 (D-138, moved from phase 4), RFE-011b) how long an approved parked request can be repeated once, 60–86400 |
+| `approvals.park.deny_cooldown_secs` | 900 | gateway | (phase 5 (D-138, moved from phase 4), RFE-011b) a denied parked request repeated within it is answered `manual_approval_denied`, 0–86400 |
+| `approvals.park.max_body_bytes` | 262144 | gateway | (phase 5 (D-138, moved from phase 4), RFE-011b) largest request body that can be parked (4096–1048576); larger requests are held |
+| `approvals.park.max_pending_per_agent` | 20 | gateway | (phase 5 (D-138, moved from phase 4), RFE-011b) parked pending approvals per agent, 1–200 |
+| `push.enabled` | `false` | api | (phase 5 (D-138, moved from phase 4), RFE-011b, D-134) Web Push; needs outbound HTTPS from the API to the push services. See *Approval park-and-resume and Web Push* below |
+| `push.vapid.subject` | the external URL | api | (phase 5 (D-138, moved from phase 4), RFE-011b) VAPID `sub` claim: `mailto:` or `https:` contact for the push services |
+| `push.vapid.private_key_env` | unset | api | (phase 5 (D-138, moved from phase 4), RFE-011b) name of an environment variable holding an operator-managed ES256 (P-256) VAPID private key (PKCS#8 PEM or raw base64url); unset = Aurora generates, seals and rotates its own key. Never the value |
+| `push.allowed_endpoint_hosts` | `fcm.googleapis.com`, `updates.push.services.mozilla.com`, `*.push.services.mozilla.com`, `web.push.apple.com`, `*.push.apple.com`, `*.notify.windows.com` | api | (phase 5 (D-138, moved from phase 4), RFE-011b) host patterns (`07 §Matching primitives`; a leading label wildcard only) a subscription endpoint may have; checked at registration and before every send; an empty list refuses startup; an entry that is not a host pattern refuses startup |
+| `push.concurrency`, `push.timeout_secs` | 16, 10 | api | (phase 5 (D-138, moved from phase 4), RFE-011b) pushes in flight per replica (1–64) and per-request timeout (2–30) |
+| `push.dev_endpoint_overrides` | unset | api | (phase 5, P4-011B, D-267(b), C-837) **tests and development only**: `{ "<allow-listed push host>": "<loopback http URL>" }` sends pushes for that host to the test kit's mock push service (the allow-list check and the VAPID `aud` still use the real origin). Refused at startup unless every target is a loopback URL and `server.external_url` is loopback; never rendered by the chart; not an instance setting (SEC-89) |
+| `blobs.backend` | `postgres` | api | (phase 5 (D-138, moved from phase 4), P4-S3, D-120) where **new** attachment bytes go: `postgres` (the `blobs` table) or `s3`; existing rows keep their own backend (`attachments.blob_backend`); any other value refuses startup. See *S3-compatible blob store* |
+| `blobs.s3.bucket`, `blobs.s3.region` | — (required for `s3`) | api | (phase 5 (D-138, moved from phase 4), P4-S3) bucket name (3–63 chars, DNS-compatible) and signing region (any non-empty string for S3-compatible servers that ignore it, e.g. `us-east-1`) |
+| `blobs.s3.endpoint` | unset (AWS S3 for the region) | api | (phase 5 (D-138, moved from phase 4), P4-S3) `https://host[:port]` of an S3-compatible server (MinIO, Ceph, …), no userinfo, path or query; `http://` accepted only for a loopback host or with `allow_insecure_http = true` |
+| `blobs.s3.allow_insecure_http` | `false` | api | (phase 5 (D-138, moved from phase 4), P4-S3) opt-in for `http://` to a non-loopback endpoint (in-cluster MinIO without TLS); startup warning |
+| `blobs.s3.path_style` | `false` | api | (phase 5 (D-138, moved from phase 4), P4-S3) path-style addressing (`https://host/bucket/key`); needed by most self-hosted servers |
+| `blobs.s3.prefix` | `aurora/` | api | (phase 5 (D-138, moved from phase 4), P4-S3) key prefix, ≤ 64 chars of `[A-Za-z0-9._/-]`, no leading `/`, no `..`, empty or ending in `/` |
+| `blobs.s3.credentials.source` | `provider_chain` | api | (phase 5 (D-138, moved from phase 4), P4-S3) `provider_chain` (the standard AWS chain: web identity / IRSA / pod identity / instance profile / environment; **recommended**, no static key in Aurora's configuration) or `env` (static keys from the variables named below); never inline values |
+| `blobs.s3.credentials.access_key_id_env`, `.secret_access_key_env`, `.session_token_env` | — | api | (phase 5 (D-138, moved from phase 4), P4-S3) `source = env`: names of the environment variables holding the keys (`session_token_env` optional); an unset or empty named variable refuses startup; values are filled from a Secret (Helm `blobs.s3.existingSecret`), never from `aurora.toml` or the database |
+| `blobs.s3.sse` | `AES256` | api | (phase 5 (D-138, moved from phase 4), P4-S3) server-side encryption requested on every `PutObject`: `AES256` (SSE-S3), `aws:kms` (with `sse_kms_key_id`) or `none` (startup warning; only for servers without encryption support). The startup probe verifies that the server **confirms** the requested encryption (`x-amz-server-side-encryption` in the response) and refuses to start otherwise |
+| `blobs.s3.sse_kms_key_id` | unset | api | (phase 5 (D-138, moved from phase 4), P4-S3) KMS key id/ARN for `aws:kms` (not a secret) |
+| `blobs.s3.ca_file` | unset (system roots, then `tls.extra_ca_bundle`) | api | (phase 5 (D-138, moved from phase 4), P4-S3) PEM bundle verifying the endpoint |
+| `blobs.s3.allow_versioned_bucket` | `false` | api | (phase 5 (D-138, moved from phase 4), P4-S3) accept a bucket with versioning enabled; purges then delete every version (`10 §Attachments`). Object-Lock buckets are never accepted |
+| `blobs.s3.upload_concurrency` | 16 | api | (phase 5 (D-138, moved from phase 4), P4-S3) `S3_UPLOAD_CONCURRENCY`, 1–64 uploads in flight per replica |
 | `retention.request_log_days` | 30 | api | |
 | `attachments.default_org_quota_mib`, `attachments.org_quota_mib_max` | 10240, 51200 | api | (phase 2, RFE-015) default and ceiling of an org's attachment storage quota (MiB; `0` = unlimited) |
 | `attachments.days_max` | — (no ceiling) | api | (phase 2, RFE-015) instance maximum for an org's attachment retention window |
 | `retention.conversation_days_max` | — (no ceiling) | api | (phase 2, RFE-010) instance maximum for an org's conversation retention window (tighten-only, 7..3650) |
-| `telemetry.otlp_endpoint` | — | all | optional tracing export |
+| `telemetry.otlp_endpoint` | — | all | optional tracing export (OTLP/HTTP; a base URL gets `/v1/traces` appended). (phase 5, FIX-146, D-232) Request ids, propagation and `x-request-id` work without it; setting it adds the exporter, enables `POST /v1/telemetry/traces` (404 otherwise) and, on Helm, renders the dashboard's tracing switch (`23`). In Kubernetes the collector must also be in `networkPolicy.telemetryTo` (`§Observability`) |
+| `telemetry.sample_ratio` | `1.0` | all (api, gateway, hookhost, runner, relay, connector host, connectors; the dashboard through the chart) | (phase 5, FIX-146, D-232, C-732 (7)) fraction of traces sampled, 0.0–1.0 (anything else, or not a number, refuses startup naming the key); applied by the trace-id rule of C-732 (7) to every root and browser-adopted context, parent-based elsewhere. `0.0` exports no span (server or browser) while log lines still carry `request_id` |
 | `telemetry.log_level` | `info` | all | |
 
 ### Governance example (corporate LLM accounts only, strict egress)
@@ -265,7 +404,7 @@ Built-in `known_llm_hosts` (maintained with releases): `api.openai.com`,
 `api.together.xyz`, `api.fireworks.ai`, `api.deepseek.com`, `api.x.ai`,
 `api.perplexity.ai`, `openrouter.ai`, `api.anthropic.com` (when no
 `anthropic` endpoint is configured). Hosts that are also endpoint hosts are
-removed from the list automatically. (phase 4, P4-LLM) The list is unchanged: the
+removed from the list automatically. (phase 5 (D-138, moved from phase 4), P4-LLM) The list is unchanged: the
 hosts of OpenAI, Azure OpenAI, Bedrock and Vertex are already known LLM hosts, so
 until an operator configures an endpoint they stay refused under `sanctioned_only`;
 configuring one reserves exactly that endpoint's host and removes it from the list.
@@ -317,7 +456,7 @@ override changes nothing else (same package list, same labels, same tag scheme
 - (phase 4, P4-PRV-2) With `relay.enabled` (the chart's single previews switch,
   FIX-056) the edge also serves the **wildcard host** `*.<previews.domain>` →
   relay :4112 (a second host, never a path of `server.external_url`;
-  `§Port previews`). Without it nothing about the edge changes.
+  `§Port previews`; with Gateway API a separate `HTTPRoute`, FIX-102). Without it nothing about the edge changes.
 - (phase 2, RFE-017) The API limits by authenticated principal, not by IP, except
   for unauthenticated routes (which trust the edge's overwritten `X-Forwarded-For`).
   Size `ratelimit.api.multiplier` up for deployments where service keys legitimately
@@ -425,7 +564,7 @@ backend is `podman` and `server.bind`, `server.external_url` and `runner.api_url
   exists before the job on `helm upgrade`, when default deny is already in
   place); connectors → api, their platform. (phase 4, P4-CNT) With the Redis counter
   backend api and gateway also reach the configured Redis peers
-  (`counters.redis.networkPolicy`) on its port; nothing else changes. (phase 4, P4-S3)
+  (`counters.redis.networkPolicy`) on its port; nothing else changes. (phase 5 (D-138, moved from phase 4), P4-S3)
   With the `s3` blob backend the **api** (only) also reaches the configured bucket
   endpoint (`blobs.s3.networkPolicy`).
 - (phase 4, P4-MCON) **Connector host** (`connectorHost.enabled`, default `true`; replicas
@@ -441,9 +580,11 @@ backend is `podman` and `server.bind`, `server.external_url` and `runner.api_url
   ServiceAccount + Role (`11 §kubernetes`).
 - **Postgres**: external database expected in production (values: URL secret,
   and the least-privilege gateway login: `database.gatewayRole` plus
-  `database.gatewayExistingSecret`, set together; the DBA creates the role first and
-  `aurora-api migrate` grants it, `03 §Gateway database role grants`); a bundled single-instance Postgres subchart is available for
-  evaluation only.
+  `database.gatewayExistingSecret`, set together and **required** with an external database — the
+  chart refuses to render without them unless `database.allowSharedLogin: true` says, explicitly, that
+  the gateway may share the main login (FIX-106, D-178 Q-R5-11); the DBA creates the role first and
+  `aurora-api migrate` grants it, `03 §Gateway database role grants`); a bundled single-instance
+  Postgres is available for evaluation only and creates the gateway's role automatically.
 - **Values highlights**: image registry/tag, replicas, resources, external
   URL, auth config, OIDC providers, LLM endpoints, secret stores, runner
   backend settings (storage class, runtime class, node selectors), connectors
@@ -464,8 +605,25 @@ backend is `podman` and `server.bind`, `server.external_url` and `runner.api_url
 - Wire contracts: API supports runner/connector/supervisor protocol versions N
   and N−1; plugin manifest contracts N and N−1; registry snapshots
   "newest contract wins" (`09 §9`).
-- Order: migrate → api → hookhost → gateway → runner → web → connectors.
+- Order: migrate → api → hookhost → gateway → runner → relay (when `relay.enabled`; after the API, whose relay plane
+  it registers with, and after the runners, whose :4108 stream listener it dials) → web → connectors.
   Gateways and runners of the previous version keep working during the roll.
+  A runner pod that stops cleanly retires its replica through the API, so the new replica owns
+  its sandboxes at once; this needs the API to be up while runners roll (the order above). A
+  replica that dies without retiring (crash, kill, API unreachable at shutdown) keeps ownership
+  until it has been silent for `REPLICA_ONLINE_THRESHOLD` (90 s): restart, stop and park of its
+  sandboxes wait up to that long (AUDIT-004 F-1).
+- (FIX-120, D-189) **Connector-host tokens.** Upgrading is two steps, with no downtime: (1) upgrade
+  Aurora (migration `20261201000071` adds the binding columns; every existing token row is the
+  shared, unbound bootstrap token and keeps working); (2) issue one token per connector-host
+  Deployment (Admin → Connectors, or the chart's hook for the Deployments it renders), put it in
+  that Deployment's `AURORA_CONNECTOR_HOST_TOKEN` and roll the Deployment. **From the moment the
+  first bound token is issued the shared bootstrap token is refused (401)**: a host that still
+  presents it keeps its running connectors (a failed poll keeps the running set) until it is
+  rolled, and a rolling update starts the new pod before it stops the old one, so connectors do
+  not stop. Revoking every bound token makes the shared token work again (rollback). Hosts
+  announce their types as before; a token bound to type A that registers type B is refused (403
+  `type_not_bound`, naming B).
 - (phase 4, P4-TERM, FIX-053) Turning the web terminal on in an existing
   deployment is a single-switch upgrade: `helm upgrade … --set
   terminal.enabled=true` (the chart value mirrors `config.terminal.enabled`
@@ -477,6 +635,18 @@ backend is `podman` and `server.bind`, `server.external_url` and `runner.api_url
   mirrors `config.previews.enabled` and renders the relay, the wildcard edge
   rules and the NetworkPolicy flows with it; `docs/23 §NetworkPolicy`,
   `§Port previews` below).
+- (FIX-069) Narrower egress on upgrade: the `secrets` hook's NetworkPolicy (`<release>-aurora-hooks`) now allows
+  443/6443 only to `networkPolicy.kubeApiCidrs` when you set it, else to the API server addresses that Helm
+  reads from the `kubernetes` EndpointSlice (`discovery.k8s.io/v1`) in `default` at `helm install/upgrade` time (it
+  was always `0.0.0.0/0`). **(FIX-102)** The lookup moved from the deprecated core `v1` Endpoints (every `helm upgrade`
+  on Kubernetes ≥ 1.33 printed `Warning: v1 Endpoints is deprecated`) to the EndpointSlice, in one helper
+  (`aurora.kubeApiCidrs`) shared by the hook and the runner policy; the installing identity needs `get` on
+  `endpointslices.discovery.k8s.io` in `default`. Where nothing can be read (`helm template`, `--dry-run`, no
+  access) there is **no** silent `0.0.0.0/0` any more: the egress rule is not rendered (NOTES.txt warns) until
+  you set `networkPolicy.kubeApiCidrs`, or `networkPolicy.kubeApiOpen: true` to say "any:443/6443" on purpose.
+  An upgrade by an identity without that read access therefore needs `kubeApiCidrs` set first. The relay's policy lost its
+  external egress (it only ever needs the api and the runners). An instance whose Secret still carries the
+  unused `AURORA_BOOTSTRAP_RELAY_TOKEN` key can delete it.
 - Running sandboxes keep their image until their next boot; the dashboard shows
   "restart to update" when an agent's boot image differs from the runner's.
 - (phase 1, RFE-002) Upgrading to phase 1 requires restarting running sandboxes; the
@@ -499,6 +669,15 @@ backend is `podman` and `server.bind`, `server.external_url` and `runner.api_url
   (warning) and for `gateway.resolve_cache_ttl_secs` (critical: cache is running out,
   new requests are being refused); page on `state="down"`. Kubernetes probes use
   plain `/readyz`; use `?strict=true` only in monitoring, never as a readiness probe.
+  **(FIX-102)** The chart's probes are `httpGet`: readiness `/readyz`, liveness `/healthz`, on the port that
+  serves the ops router (api 4101, gateway 4103, hookhost 4104, runner 4106, connector host 4192, relay 4193),
+  so an API replica without its database, or a gateway reporting `down`, leaves rotation. The web workload and
+  external connector images have no ops router and keep a TCP check. Kubelet probes are not subject to
+  NetworkPolicy on the supported CNIs; the gateway's 4103 is checked on kind (`scripts/e2e/kind.sh`).
+- Scraping: `networkPolicy.monitoringFrom` (raw NetworkPolicy `from` entries, empty by default) opens every
+  ops/metrics port (4101, 4103, 4104, 4106, 4192, 4193) to your Prometheus; `monitoring.podMonitor.enabled`
+  renders a Prometheus Operator `PodMonitor` per component (a PodMonitor, not a ServiceMonitor: the runner,
+  relay and connector-host ops listeners have no Service by design). Neither is on by default.
 - Metrics: Prometheus `/metrics` per service (internal listener). Required
   series: HTTP requests by route/status/latency (api), gateway decisions and
   latencies, holds pending, refresh/mint outcomes, due-work arm durations and
@@ -513,13 +692,52 @@ backend is `podman` and `server.bind`, `server.external_url` and `runner.api_url
   must be removed by hand (Mattermost: System Console → Integrations → Bot
   Accounts, disable/delete `platform_user_ref`). An org's shared bot is never
   deprovisioned by Aurora.
-- Logs: JSON to stdout, correlation ids per `02 §Coding rules`.
-- Tracing: optional OTLP export; `traceparent` propagated API ↔ gateway-internal
-  ↔ hookhost ↔ runner ↔ connector calls.
+- Logs: JSON to stdout, correlation ids per `02 §Coding rules`. (phase 5, FIX-146, D-232) Every line
+  emitted inside a request or job span carries `request_id`, the W3C trace id (32 lowercase hex) of that
+  span, **with or without a collector**, so `kubectl logs … | grep <request id>` follows one request
+  across api, gateway, hookhost and runner. Every router except `/healthz`, `/readyz` and `/metrics`
+  writes one `info` access line per request: `message="request"`, `method`, `route` (the route
+  template, never the raw path; `unmatched` when no route matched), `status`, `duration_ms`,
+  `request_id`. Public API responses carry the same id as `x-request-id` (C-732 (1)); the dashboard
+  shows it as the "Reference" of an error.
+- Tracing (phase 5, FIX-146, D-232, C-732, SEC-88): request tracing end to end, browser to database.
+  - **Always on, export optional.** Every service installs the W3C propagator and a tracer provider at
+    startup; the OTLP/HTTP exporter is added only when `telemetry.otlp_endpoint` is set. An unsampled
+    request still has its trace id and still propagates it.
+  - **Sampling** is one rule, the same in every Rust service and the dashboard (C-732 (7)): a trace is
+    sampled when its rightmost 7 bytes, read as a big-endian integer, are below
+    `telemetry.sample_ratio` × 2^56. It decides for every root and for browser-adopted contexts;
+    internal and machine adoption is parent-based. The SDKs' `TraceIdRatioBased` sampler is not used.
+  - **Spans**: a server span per request (`"{METHOD} {route}"`, attributes `http.request.method`,
+    `http.route`, `http.response.status_code`, `aurora.error_code` on ≥ 400; error status on 5xx and
+    panics); a client span per call to another Aurora service (`traceparent`/`tracestate` injected:
+    API ↔ gateway-internal ↔ hookhost ↔ runner ↔ relay ↔ connector host); a database span per sqlx
+    query inside a sampled span (`"{operation} {table}"`, parameterized SQL ≤ `DB_SPAN_STATEMENT_MAX`,
+    never bind values, back-dated by the query's elapsed time); a root span `job {name}` per
+    background-job iteration that claims work (an empty poll makes no span); a gateway span per proxied
+    request (`"gateway {host}"`, decision, app, tool, rule, status).
+  - **Turns cross the queue** through `turns.trace_context` (`03`): the runner (work items, `16 §W5`),
+    the API (supervisor reports and channel events of the turn), the gateway (the turn's context
+    credential), approval holds and hook calls record their work as children of the turn's context,
+    read from the database or a trusted Aurora peer, never from the sandbox. Child turns join the
+    parent turn's trace.
+  - **Browser spans** (dashboard, `14 §Architecture rules`) are posted same-origin to
+    `POST /v1/telemetry/traces`; the API rebuilds and re-exports them through its own exporter
+    (C-732 (6)). Without an endpoint that route is 404 and the dashboard loads no tracing code.
+  - **Trust and content** follow SEC-88: which incoming `traceparent` is adopted where, `traceparent`
+    sent only to Aurora's own services (never to apps, LLM providers, IdPs or chat platforms), span
+    attributes from an allowlist only. Sandboxes and the supervisor export nothing and get no collector
+    egress.
+  - **Kubernetes**: the chart's default-deny NetworkPolicies block the collector until
+    `networkPolicy.telemetryTo` names it (`23`); with an endpoint set and `telemetryTo` empty, the
+    chart's NOTES warn. Any OTLP/HTTP receiver works (Jaeger, Grafana Tempo, an OpenTelemetry
+    Collector, a vendor accepting OTLP). kind dev: `deploy/dev/kind-dev.sh up --tracing` installs a
+    dev-only in-memory Jaeger and points every service at it (`kubectl -n aurora port-forward
+    svc/jaeger 16686` for the UI).
 
 ## Backups and state
 
-Stateful: Postgres (system of record), (phase 4, P4-S3) the attachment bucket when
+Stateful: Postgres (system of record), (phase 5 (D-138, moved from phase 4), P4-S3) the attachment bucket when
 `blobs.backend = "s3"` (restore it together with Postgres), per-agent home volumes (PVC snapshots /
 volume backups are the operator's job), the gateway CA Secret, the encryption
 keyring and signing key (phase 2: the signing-key and internal-secret **rings**,
@@ -534,7 +752,7 @@ occupy a slot permanently: size for steady state, not peak. Postgres: modest;
 
 ### Attachment storage (phase 2, RFE-015)
 
-Attachments live in Postgres (`blobs`, `bytea`) by default (phase 4, P4-S3: or in an
+Attachments live in Postgres (`blobs`, `bytea`) by default (phase 5 (D-138, moved from phase 4), P4-S3: or in an
 S3-compatible bucket with `blobs.backend = "s3"`, *S3-compatible blob store* below), so in
 the default they share the database's disk and backups. Budget for
 `Σ org quotas` (default 10 GiB each) in the worst case, expect real use to be far
@@ -617,7 +835,10 @@ every limiter behaves the same.
   at start and on `NOSCRIPT`) implement the operations with `PEXPIRE` TTLs and the
   Redis `TIME`. TLS by default (`rediss://`), ACL user and password from
   environment variables, keys under `ratelimit.counters.redis.key_prefix`. The
-  Redis ACL needs only `EVALSHA`/`SCRIPT LOAD`/`GET`/`PING` on that prefix. Run it
+  Redis ACL must allow `EVALSHA`, `SCRIPT LOAD`, `GET`, `SET`, `INCRBY`, `PEXPIRE` and
+  `PING` on that prefix (`~<prefix>*`), and `TIME` (it takes no key): the scripts call
+  all of them, and a narrower ACL makes every counter call fail as unavailable
+  (REVIEW-5, FIX-087). Run it
   with `maxmemory-policy noeviction` or `volatile-ttl` (an LRU policy evicts live
   counters, which resets limits); persistence may be off. Redis is **optional and
   never required**; every Aurora feature works without it.
@@ -670,7 +891,7 @@ back to `memory` leaves the tables in place (they are pruned, not dropped). A mi
 fleet (some replicas shared, some `memory`) is safe: each counts what it sees, so
 the effective limit is between the configured value and N× until the roll finishes.
 
-## S3-compatible blob store (phase 4, P4-S3, D-120, SEC-63)
+## S3-compatible blob store (phase 5 (D-138, moved from phase 4), P4-S3, D-120, SEC-63)
 
 A second attachment backend beside Postgres, behind the same **BlobStore** trait
 (`put`, `get`, `delete`, `list(prefix)`, `health`; crate `aurora-blobstore`, with the
@@ -774,18 +995,19 @@ infrastructure**: the API serves it, state is in Postgres, rate limits use the c
 - **What it never does**: sign anyone in, change a role, create or touch an org owner, change the
   global account of a person who has signed in, link by `externalId`, or reactivate a person an org
   admin suspended by hand (`04 §SCIM`).
-- **Observability.** `aurora_scim_requests_total{resource,method,status}`,
-  `aurora_scim_provisioned_total{op}` (`user_created`, `user_linked`, `suspended`, `reactivated`,
-  `removed`, `group_member_added`, `group_member_removed`), `aurora_scim_auth_failures_total`;
-  alert on a rising `status=401` rate for a token that was recently valid (expired token or a
-  rotated one still in the IdP) and on `5xx`. The Directory sync page shows the same per org.
+- **Observability.** `aurora_scim_requests_total{outcome}` (`ok`, `unauthorized`, `rate_limited`,
+  `client_error`, `server_error`) and `aurora_scim_auth_failures_total` (no labels: never an org, token
+  name or e-mail); alert on a rising `outcome="unauthorized"` / auth-failure rate for a token that was
+  recently valid (expired token or a rotated one still in the IdP) and on `outcome="server_error"`. What
+  was provisioned is in the audit log and the Directory sync page, not in a metric (there is no
+  `aurora_scim_provisioned_total`).
 - **Offboarding runbook.** SCIM deprovisioning does not rotate BYO agent tokens the person saw and
   cannot reassign their automations (`04 §SCIM`); follow the offboarding view of the member
   (`/o/<org>/members`) after the IdP removes them.
-- **Helm values**: `scim.enabled` (false), `scim.allowedEmailDomains` (`[]`), `scim.ratePerMinute`
-  (600), `scim.tokenMaxDays` (730); no Secret is generated (tokens are created in the dashboard).
+- **Helm values**: `scim.enabled` (false) and `scim.ratePerMinute` (600); the other keys are config keys
+  (`config.scim.allowed_email_domains` (`[]`), `config.scim.token_max_days` (730)); no Secret is generated (tokens are created in the dashboard).
 
-## Approval park-and-resume and Web Push (phase 4, RFE-011b, D-133, D-134, SEC-74..SEC-76)
+## Approval park-and-resume and Web Push (phase 5 (D-138, moved from phase 4), RFE-011b, D-133, D-134, SEC-74..SEC-76)
 
 Both are optional and off by default; an existing `aurora.toml` and Helm values change nothing.
 
@@ -795,7 +1017,12 @@ set a rule's *Approval timeout* above `approvals.park.threshold_secs` (default 1
 gateway and the API read the same `approvals.park.*` values (`resume_window_secs` is the API's,
 `threshold_secs`/`max_body_bytes`/`max_pending_per_agent`/`deny_cooldown_secs` the gateway's); a
 rolling upgrade is safe because an older gateway simply holds (no `parked` row is ever created by it)
-and ignores grants. Operators should know the trade-off: the agent is *told* "not sent, wait for a
+and ignores grants. (P4-011B spec batch, D-265(c)) The keys are **instance settings**: Admin ›
+Approvals edits them live (instance admins, re-authentication, audited, `§Instance settings`);
+setting `config.approvals.park.*` in Helm locks them. There is no chart value. Turning parking off
+later stops new parked approvals only; approved grants and pending parked approvals already created
+keep working until they end (D-264(b)). Turn it on only after every gateway runs a release with
+P4-011B (an older gateway ignores the setting and holds). Operators should know the trade-off: the agent is *told* "not sent, wait for a
 message", so agents that cannot repeat a request byte-identically (timestamps or nonces in the body)
 will need a second approval. Metrics: `aurora_gateway_approvals_parked_total`,
 `aurora_gateway_approval_grants_consumed_total{result="consumed"|"no_match"|"expired"}`,
@@ -817,8 +1044,15 @@ user must re-enable notifications. `aurora-api push status` shows key ids, subsc
 state and host. Metrics: `aurora_push_sent_total{result}`, `aurora_push_duration_seconds`,
 `aurora_push_subscriptions{state}`; alert on sustained `result=forbidden` (VAPID mismatch after a
 rotation or a wrong operator key) and on `result=rejected_host` (a push service moved to a host not
-in `push.allowed_endpoint_hosts`). Helm values: `approvals.park.*`, `push.enabled`, `push.vapid.*`,
-`push.allowedEndpointHosts`, `push.networkPolicy.egressTo`. A subscription (and so the notification)
+in `push.allowed_endpoint_hosts`). Helm values (C-837): `push.enabled` (the single switch: it
+mirrors `config.push.enabled` and renders the api's egress rule), `push.networkPolicy.egressTo`
+(required while push is on), `push.vapid.existingSecret`/`push.vapid.key` (an operator-managed key,
+mounted as `AURORA_PUSH_VAPID_KEY`), `push.allowedEndpointHosts`; `push.vapid.subject` is a config
+key. (P4-011B spec batch, D-266(b)) The generated key and every subscription are sealed in the
+`inline` store whatever `secrets.default_store` says, so Web Push never depends on Vault being
+reachable. Testing without a push service: `push.dev_endpoint_overrides` (development only, above).
+Real delivery to a browser through a real push service is a manual release check
+(`docs/operator`), not part of CI (D-267(b)). A subscription (and so the notification)
 belongs to the browser profile and the Aurora session that created it: shared-computer users should
 sign out, which ends delivery.
 
@@ -846,17 +1080,20 @@ until an org owner or admin switches **Port previews** on.
 2. **Wildcard DNS**: `*.<previews.domain>` → the edge (an `A`/`AAAA`/`CNAME` record). Nothing else
    resolves under it; Aurora never creates DNS records.
 3. **A wildcard TLS certificate** for `*.<previews.domain>` served by the edge (HTTP-01 cannot issue
-   wildcards; use DNS-01 through cert-manager, e.g. `previews.tls.certManager.issuerRef`, or provide
-   an existing Secret `previews.tls.secretName`). The relay serves plain HTTP behind the edge (it
-   never holds the certificate key) and trusts the edge's overwritten `X-Forwarded-Proto`/`-For`
-   exactly like the API (`server.trusted_proxies`). Browsers must reach the preview host on 443;
+   wildcards; use DNS-01 through cert-manager). The chart has no `previews.tls.*` values and renders
+   no TLS block for the wildcard host: configure the certificate on your ingress controller or
+   Gateway listener ([23 §Port previews (relay)](23-helm-values.md#port-previews-relay)). The relay serves plain HTTP behind the edge (it
+   never holds the certificate key) and trusts the edge's overwritten `X-Forwarded-For`
+   exactly like the API, but only from the peers listed in its own `relay.trusted_proxies` (same
+   semantics and default as `server.trusted_proxies`; **list your ingress pods' CIDR**, or every visitor
+   shares the ingress pod's address in the grant-redemption limit). Browsers must reach the preview host on 443;
    previews are **https only** (the edge redirects `http` and the relay refuses to mint a grant for
    a non-https redirect target).
 
 **Turn it on** (one switch): set `relay.enabled: true` and `relay.domain` (the chart value
 mirrors `config.previews.enabled`, FIX-056 — set the config key only to agree explicitly,
-never alone), wait for `aurora_relay_up` and the Admin → Overview "Previews" line (relay
-replicas seen by the API), then an org owner or admin enables **Port previews** in the org
+never alone), wait for `up{job="aurora-relay"}` and the "Previews" line of the admin overview (top of Admin → Setup; relay
+replicas seen by the API, C-841), then an org owner or admin enables **Port previews** in the org
 settings. **Turn it off**: set `relay.enabled: false` (or unset it; shares are kept but
 inert; the supervisor allow-list is emptied at the next sync) or switch the org setting
 off.
@@ -907,34 +1144,49 @@ guard, `18`).
 
 **The relay** (`aurora-relay`, image `aurora-relay`, P4-PRV-2). A stateless Rust service (hyper,
 `tokio-tungstenite`; no database, no key, no Vault). Helm (`relay.*`; rendered **only** when
-`relay.enabled`, FIX-056): Deployment `aurora-relay` (replicas 2, `relay.resources`, PodDisruptionBudget,
+`relay.enabled`, FIX-056): Deployment `aurora-relay` (`relay.replicas`, default 1; `relay.resources`, PodDisruptionBudget,
 read-only root filesystem, dropped capabilities, non-root), Service on 4112 (edge-routed) and a headless
-ops Service on 4193. Its anchor token `aul_` is generated by the `secrets` hook into the instance
-Secret (`AURORA_BOOTSTRAP_RELAY_TOKEN`, never shown), given to the API under the same name and to the
-relay as `AURORA_RELAY_TOKEN`. The relay sets no cookie other than `__Host-aurora_preview` and
+ops Service on 4193. Its anchor token `aul_` is generated by the `secrets` hook into **one** key of the
+instance Secret, `AURORA_RELAY_TOKEN` (never shown): the relay reads it under that name and the chart hands
+the same key to the API as its `AURORA_BOOTSTRAP_RELAY_TOKEN` env var (FIX-069: the hook used to also generate a
+separate `AURORA_BOOTSTRAP_RELAY_TOKEN` secret key that nothing read; an instance that has it keeps it,
+harmlessly, and it can be deleted). With `secrets.existingSecret`, create the key **`AURORA_RELAY_TOKEN`**
+(`aul_` + 48 hex characters) when `relay.enabled`. The relay's NetworkPolicy allows ingress from the edge on
+4112 and egress to the API (:4101), the runners' stream listener (:4108) and DNS only — no external egress
+(FIX-069; it is an edge-exposed pod and talks to nothing else). The relay sets no cookie other than `__Host-aurora_preview` and
 `__Host-aurora_pstate` and keeps no state beyond in-memory caches (resolve results ≤ 15 s), so a
 restart loses only open streams.
 
 **NetworkPolicy** (default deny stays; each rule is rendered only with `relay.enabled`, FIX-056):
-relay ingress from the edge (and the Cilium edge entities) on 4112 and from the monitoring
-namespace on 4193; relay egress to **api:4101** and **runner:4108** (runner pods of this release,
-or `relay.networkPolicy.runnerEgressTo` for runners elsewhere) and DNS **only**: no Postgres, no
+relay ingress from the edge on 4112; **no policy of the chart opens any ops/metrics port by default** (4193 included,
+like the other components' ops ports); with `networkPolicy.monitoringFrom` set (FIX-102, replacing the FIX-074 "bring your
+own policy" rule) one policy admits those peers to every ops port, 4193 among them; relay egress to **api:4101** and **runner:4108** (runner pods of this release;
+a runner outside the cluster must be reachable from the relay by the overlay/private link described
+above, there is no chart value for extra egress) and DNS **only**: no Postgres, no
 gateway, no hook host, no sandboxes, no Internet; api ingress from the relay on 4101; runner ingress
 on 4108 from the relay pods **only** (the sandboxes namespace gets nothing new: sandboxes → gateway:4102
 and runner:4105 only, unchanged). The `aurora-relay` pod runs in the control-plane namespace, never in
 the sandboxes namespace.
 
-**Metrics** (4193 `/metrics`, plus API gauges): `aurora_relay_up`, `aurora_relay_requests_total{outcome}`
-(`ok`, `login`, `not_found`, `paused`, `frozen`, `cross_site`, `quota`, `wake_limited`, `unreachable`,
-`upstream_error`), `aurora_relay_request_duration_seconds`, `aurora_relay_streams_open`,
-`aurora_relay_stream_bytes_total{direction}`, `aurora_relay_stream_closed_total{reason}`,
-`aurora_relay_grants_total{result}` (`redeemed`, `invalid`, `replayed`, `no_state`),
-`aurora_relay_wake_wait_seconds`, `aurora_relay_resolve_cache_hit_ratio`; API: `aurora_preview_shares{state}`,
-`aurora_preview_sessions`, `aurora_preview_wakes_total{result}`; runner: `aurora_runner_preview_streams_open`,
-`aurora_runner_preview_stream_refused_total{reason}`. Alert on a rising `grants_total{result="replayed"}` or
-`result="no_state"` (attempted login CSRF or a replayed link), on `stream_closed_total{reason="refused"}` for
-`not_shared` (a relay or runner disagreeing with the API) and on `aurora_relay_up == 0`. Logs carry the label,
-share id, outcome and byte counts; never paths with query strings, headers, cookies or bodies.
+**Metrics** (4193 `/metrics`, plus one API gauge and counter; FIX-074: this list is what the code emits):
+`aurora_relay_requests_total{outcome}` (`ok`, `login`, `redeemed`, `not_found`, `bad_request`, `cross_site`,
+`quota`, `too_large`, `unreachable`, `upstream_error`, `invalid`), `aurora_relay_streams_open` (gauge),
+`aurora_relay_stream_bytes_total{direction}` (`to_app`, `from_app`), `aurora_relay_stream_closed_total{reason}`
+(`closed`, `eof`, `detached`, `revoked`, `idle`, `lifetime`), `aurora_relay_stream_dial_seconds` (histogram) and
+`aurora_relay_stream_dial_errors_total{kind}` (`connect`, `timeout`, `endpoint` — a runner endpoint that is not host[:port], FIX-090), `aurora_relay_grants_total{result}`
+(`redeemed`, `invalid`, `no_state`), `aurora_relay_resolve_cache{hit}` (`true`/`false`), `aurora_relay_refused_total{reason}` (FIX-072, `docs/16 §W18`, C-636:
+`share_streams`, `user_streams`, `quota`, `grant_rate_address`, `grant_rate_share`, `negative_resolves`, `head_timeout`, `body_too_large` (FIX-088/090); no ids in labels; the matching responses are 429 `preview_streams_limit` / WebSocket 4409,
+429 `preview_quota` with `Retry-After`, and 429 `grant_rate_limited`); API (every replica):
+`aurora_preview_shares{state}` (shares per state, `active` / `paused`, set by the share job; no tenant label) and
+`aurora_preview_stream_bytes_total{direction}`. There is no `aurora_relay_up`: relay liveness is the
+Prometheus-generated `up{job="aurora-relay"}` of the 4193 scrape (`== 0` means the relay is down or unscrapable)
+and the Deployment's readiness. Alert on `up{job="aurora-relay"} == 0`, on a rising
+`grants_total{result="no_state"}` or `result="invalid"` (attempted login CSRF, a replayed or tampered link) and
+on a rising `aurora_relay_stream_dial_errors_total` (a runner's 4108 unreachable). Not emitted (earlier drafts
+named them): `aurora_relay_request_duration_seconds`, `aurora_relay_wake_wait_seconds`,
+`aurora_relay_resolve_cache_hit_ratio` (compute it from `aurora_relay_resolve_cache`), `aurora_preview_sessions`,
+`aurora_preview_wakes_total`, `aurora_runner_preview_*`. Logs carry the label, share id, outcome and byte counts;
+never paths with query strings, headers, cookies or bodies.
 
 **Upgrade and rollback.** The relay and the preview columns are additive: an older API ignores them, an
 older runner reports no `previews` capability. Rolling back removes the relay Deployment; shares stay in
@@ -949,6 +1201,82 @@ With N API replicas the effective ceilings are N× those numbers (a user can hol
 `TERMINALS_PER_SANDBOX` is still enforced at the runner across replicas. Over the cap the upgrade completes and
 the socket closes `4409`. An open terminal re-checks its holder every 10 s (dashboard session live, org
 membership, `can_use`, agent not frozen) and closes `4403` when access is lost.
+
+## SSH access (phase 5, P4-SSH-1, P4-SSH-2, D-239, SEC-92..SEC-96)
+
+**Optional and off by default.** SSH (`11 §SSH access`) adds an internet-facing TCP port, so a
+deployment that does not set `ssh.enabled` has no terminator, no LoadBalancer, no keys and no extra
+NetworkPolicy; nothing else changes.
+
+**Turn it on** (Helm, one switch plus one required list): `ssh.enabled: true` and
+`networkPolicy.sshFrom` (who may reach the SSH port; the render fails while it is empty — to admit
+everyone, say so: `[{ipBlock: {cidr: 0.0.0.0/0}}, {ipBlock: {cidr: ::/0}}]`). Then point a DNS name at
+the Service's external address and set `config.ssh.public_host` to it (and `public_port` if the
+Service port is not 22). Wait for Admin › Overview's **SSH** line to show a replica.
+
+**The terminator** (`aurora-terminator`, image `aurora-terminator`, P4-SSH-2). A Rust service
+(`russh`; no database, no Vault, no Kubernetes or podman credential; in-memory session table only).
+Helm (rendered **only** with `ssh.enabled`): Deployment `aurora-terminator` (`terminator.replicas`,
+default 2 so a node loss does not cut SSH; PodDisruptionBudget; read-only root filesystem, dropped
+capabilities, non-root, no service-account token), a **LoadBalancer** Service publishing
+`terminator.service.port` (default 22) → 2222 with `externalTrafficPolicy: Local` (the terminator's
+per-address limits need the client's address; with a load balancer that cannot keep it, every client
+shares the balancer's address in `SSH_PREAUTH_PER_IP` and `SSH_CONNECT_RATE` — raise
+`terminator.max_preauth_per_ip` accordingly), `loadBalancerSourceRanges` from
+`terminator.service.loadBalancerSourceRanges`, optional annotations, and a headless ops Service on
+4194. Several replicas are fine: each holds its own connections; sessions are rows in the API with a
+lease, so a replica that dies loses its connections only (the sweep closes their rows within 90 s).
+A rolling update ends the sessions of the replica being replaced (`terminator_shutdown`, with a
+notice to the client); clients reconnect.
+
+**Keys** (all in the instance Secret, generated by the `secrets` hook when `ssh.enabled` and absent,
+never overwritten; with `secrets.existingSecret` create them yourself):
+- `AURORA_TERMINATOR_TOKEN` — `aut_` + 48 hex characters; the terminator's anchor (the API reads the
+  same key as `AURORA_BOOTSTRAP_TERMINATOR_TOKEN`). Rotate by replacing the value and rolling both.
+- `AURORA_SSH_CA_KEY` — the user-certificate CA, mounted **into the API pods only**. Generated as
+  `ed25519:` + base64 of 32 random bytes (the hook has no `ssh-keygen`); an operator may supply an
+  OpenSSH key (`ssh-keygen -t ed25519 -N '' -f ca`). **Rotation**: put the old public key into
+  `config.ssh.ca.previous_public_keys`, replace the private key, roll the API; terminators learn both at
+  the next heartbeat; remove the old key after `ssh.cert_ttl_secs`. A leaked CA key lets its holder
+  mint certificates for any agent id — but the API still refuses a session whose key id does not
+  name a registered key of a person with access (`04 §SSH access` point 2), so rotation is urgent
+  hygiene, not an open door (17 residual risk).
+- `AURORA_SSH_HOST_KEY` — the host key, mounted **into the terminator pods only**, same formats.
+  Clients pin it (the dashboard and `aurora ssh` publish the `known_hosts` line). **Rotation** changes
+  what every client has pinned: announce it, roll the terminators, and clients see a host-key change
+  warning until they update `known_hosts` (`aurora ssh` updates its own file from `GET /v1/ssh`).
+
+**NetworkPolicy** (each rule rendered only with `ssh.enabled`): terminator ingress on 2222 from
+`networkPolicy.sshFrom` only; terminator egress to **api:4101**, **runner:4108** (runner pods of this
+release; a runner outside the cluster must be reachable on 4108 from the terminator, as from the relay)
+and DNS **only** — no Postgres, no gateway, no sandboxes, no Internet; api ingress from the terminator
+on 4101; runner ingress on 4108 from the terminator pods (beside the relay and api pods). The
+sandboxes namespace gets nothing new (the `sandbox-network` guard keeps it so). The ops port 4194 is
+opened only through `networkPolicy.monitoringFrom`. The runner opens :4108 when previews, the terminal
+or SSH is enabled.
+
+**Metrics** (4194 `/metrics`; no ids, addresses or usernames in labels):
+`aurora_terminator_connections_total{outcome}` (`authenticated`, `auth_failed`, `preauth_limited`,
+`rate_limited`, `auth_timeout`, `api_error`), `aurora_terminator_auth_failures_total{reason}`
+(`not_certificate`, `bad_signature`, `expired`, `principal`, `critical_options`, `key_id`, `denied`,
+`limit` — the reason the client is never told), `aurora_terminator_sessions_open` (gauge),
+`aurora_terminator_channels_total{mode}` (`shell`, `exec`, `sftp`) and
+`aurora_terminator_channel_refused_total{kind}` (`direct-tcpip`, `tcpip-forward`, `x11`,
+`auth-agent`, `streamlocal`, `subsystem`, `other`), `aurora_terminator_bytes_total{direction}`
+(`to_sandbox`, `from_sandbox`), `aurora_terminator_session_closed_total{reason}`,
+`aurora_terminator_heartbeat_failures_total`; API: `aurora_ssh_certificates_minted_total` and
+`aurora_ssh_sessions_open` (gauge). Alert on `up{job="aurora-terminator"} == 0`, on rising
+`heartbeat_failures_total`, and on a rising `auth_failures_total{reason="bad_signature"}` or
+`connections_total{outcome="rate_limited"}` (scanning or a forged-certificate attempt). Logs carry
+session ids, agent ids, coarse addresses and reasons; never certificates, commands or bytes.
+
+**kind dev**: `deploy/kind` maps the terminator Service as a NodePort on host port 2222
+(`ssh -p 2222 <agent id>@localhost`); `scripts/e2e/ssh.sh` is the end-to-end suite (`18 §SSH access`).
+
+**Upgrade and rollback.** All SSH state is additive (new tables and two `sandboxes` columns). An
+older runner reports no `ssh` capability (channels fail, nothing else); an older supervisor ignores
+`exec.*` (channels fail with 4502). Rolling back removes the terminator; keys and closed session rows
+stay in the database, inert.
 
 ## Git skill library (phase 4, P4-GSL, D-148, D-149, SEC-83, SEC-84)
 

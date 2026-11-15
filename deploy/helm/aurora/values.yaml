@@ -30,6 +30,10 @@ secrets:
   existingSecret: ""
   # Name of the generated Secret (when existingSecret is empty). Existing keys are never overwritten.
   generatedName: ""       # default: <release>-aurora-secrets
+  # An UPGRADE that finds the generated Secret absent (a namespace restore without it) refuses to
+  # create fresh encryption keys: credentials stored with the old keys would become undecryptable
+  # with no error. Restore the Secret, or set true to start over deliberately (FIX-102).
+  allowRegenerate: false
   # Key rings (RFE-007, docs/08 §4, docs/operator/key-rotation.md). AURORA_SIGNING_KEY and
   # AURORA_INTERNAL_SECRET accept `id:base64,id2:base64` plus AURORA_SIGNING_ACTIVE_KEY /
   # AURORA_INTERNAL_ACTIVE_KEY (optional keys of the Secret; a bare value is ring `v0`). With an
@@ -88,14 +92,21 @@ database:
   # migrate Job read that one key; the gateway too, unless gatewayRole/gatewayExistingSecret are set.
   existingSecret: ""     # default name when empty: <release>-aurora-database (you must create it)
   maxConnections: {api: 20, gateway: 10}
-  # Least-privilege gateway login (FIX-016). Set BOTH or neither (helm fails if only one is set).
+  # Least-privilege gateway login (FIX-016, FIX-106). Set BOTH or neither (helm fails if only one is set).
   # The DBA creates the role first (CREATE ROLE <r> LOGIN PASSWORD '...'; docs/operator/install-helm.md,
   # Database); `aurora-api migrate` only grants it exactly what 03 lists (rendered as database.gateway_role).
+  # With an EXTERNAL database the pair is REQUIRED: helm refuses to render without it unless
+  # allowSharedLogin is set. With the bundled evaluation Postgres (postgres.enabled) and neither the pair
+  # nor allowSharedLogin, the chart creates the role `aurora_gateway` itself (a generated password, a hook
+  # Job on install and upgrade) and the gateway connects as it.
   gatewayRole: ""
   # A Secret you create, with key AURORA_DATABASE_URL, that logs in as gatewayRole. The gateway
-  # Deployment reads its AURORA_DATABASE_URL from it. Without the pair, the gateway runs as the main
-  # database user (not least privilege).
+  # Deployment reads its AURORA_DATABASE_URL from it.
   gatewayExistingSecret: ""
+  # Explicit opt-in to the NOT recommended setup: the gateway shares the main database login (every
+  # privilege the API has). Needed only with an external database and no role pair; with the bundled
+  # Postgres it switches the automatic role off. Mutually exclusive with the pair.
+  allowSharedLogin: false
   # Egress CIDRs of the external database, used by NetworkPolicies (ignored if postgres.enabled).
   cidrs: []               # e.g. ["10.20.0.0/24"]
   port: 5432
@@ -128,7 +139,7 @@ counters:
 # does NOT remove them (and the PVC is never removed). See NOTES.txt for the cleanup command.
 postgres:
   enabled: false
-  image: docker.io/library/postgres:16
+  image: docker.io/library/postgres:16@sha256:63e83b5a3dc36a917dccb76fe1bd2ac51f1ec9c1deb47ff20d4f04233bf6eae9
   storage: 5Gi
   storageClass: ""
   # Optional ConfigMap of *.sql / *.sh files mounted at /docker-entrypoint-initdb.d (run once, on an
@@ -250,6 +261,12 @@ connectorHost:
   resources: {requests: {cpu: 100m, memory: 128Mi}, limits: {memory: 512Mi}}
   # Also announce the `fake` test type (development and e2e only; the host warns at start).
   testTypes: false
+  # FIX-120 (D-189): give this Deployment its own `auh_` token, bound to the connector types it runs,
+  # instead of the instance-wide shared token. Applying it makes the api refuse the shared token
+  # (docs/15 §Upgrades); `false` keeps the shared token (not recommended). With a Secret you supply
+  # yourself (`secrets.existing`) add the keys AURORA_CONNECTOR_HOST_TOKEN_BOUND and
+  # AURORA_BOOTSTRAP_CONNECTOR_HOST_TOKENS (docs/23), or set this to false.
+  perHostToken: true
   nodeSelector: {}
   tolerations: []
   extraEnv: []
@@ -270,10 +287,17 @@ relay:
   # The preview DNS suffix (must equal config.previews.domain; the relay refuses a mismatch
   # after registering). Required when relay.enabled.
   domain: ""
-  # Edge limits ([relay] request_body_max_bytes / max_streams*).
-  request_body_max_bytes: 33554432   # 32 MiB
+  # Edge limits ([relay] request_body_max_bytes / max_streams*). The relay's ops/metrics port
+  # 4193 is opened to other namespaces only through networkPolicy.monitoringFrom (FIX-102; empty by
+  # default, then nothing scrapes it).
+  request_body_max_bytes: 33554432   # 32 MiB (the binary's default and ceiling is 100 MiB)
   max_streams: 2048
   max_streams_per_user: 64
+  # CIDRs of the edge proxies / ingress pods in front of the relay ([relay] trusted_proxies, the
+  # same semantics as server.trusted_proxies): when the socket peer is inside one, the visitor's
+  # address is the rightmost untrusted X-Forwarded-For entry (grant-redemption limit, the
+  # X-Forwarded-For sent to the app); empty means the socket peer is the visitor (FIX-090).
+  trusted_proxies: []
 
 # Web terminal (P4-TERM, D-161, docs/15 §Web terminal operations): the dashboard's Terminal
 # tab — a wterm pane over the API's same-origin WebSocket (`/v1/agents/{agent}/terminal`),
@@ -300,9 +324,20 @@ plugins:
   configMapName: ""
   pvcName: ""
 
+# Rendered per workload only from two replicas (FIX-102): minAvailable 1 on a single replica
+# would block every node drain.
 podDisruptionBudget:
   enabled: true
   minAvailable: 1
+
+# Prometheus Operator scraping (FIX-102, docs/15 §Observability). Needs the monitoring.coreos.com CRDs.
+# A PodMonitor (the ops listeners of runner/relay/connector host have no Service); allow the scraper
+# through the NetworkPolicies with networkPolicy.monitoringFrom.
+monitoring:
+  podMonitor:
+    enabled: false
+    interval: 30s
+    labels: {}            # e.g. {release: kube-prometheus-stack}, for the Prometheus' monitor selector
 
 # Optional connectors: [{id, image, callbackPort (default 4190), tokenSecret: {name, key},
 #   callbackIngress: {enabled, host, path}, replicas, resources, env: []}]
@@ -394,8 +429,20 @@ networkPolicy:
     kubernetes.io/metadata.name: ingress-nginx
   dnsNamespaceSelector:
     kubernetes.io/metadata.name: kube-system
-  # Kubernetes API server CIDRs for runner egress (empty = any:443/6443).
+  # Kubernetes API server CIDRs for runner egress and the `secrets` hook's policy (FIX-069). When
+  # empty, the API server addresses are read from the `kubernetes` EndpointSlice (discovery.k8s.io/v1)
+  # in `default` at install/upgrade time (Helm `lookup`; /32 per ready address — the installing
+  # identity needs `get` on endpointslices in `default`). Where lookup returns nothing (`helm
+  # template`, --dry-run, no read access) the rule is not rendered at all: set kubeApiCidrs, or
+  # kubeApiOpen below. (FIX-102: there is no silent any:443/6443 any more.)
   kubeApiCidrs: []
+  # Explicitly allow any:kubeApiPorts for the runner and the secrets hook (the old default). Prefer kubeApiCidrs.
+  kubeApiOpen: false
+  # Peers allowed to scrape every ops/metrics listener (api 4101, gateway 4103, hookhost 4104, runner 4106,
+  # connector host 4192, relay 4193): raw NetworkPolicy `from` entries, e.g.
+  #   - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: monitoring}}
+  # Empty (default): nothing opens them (FIX-102).
+  monitoringFrom: []
   # Ports the API server listens on behind the `kubernetes` Service (its endpoint port).
   kubeApiPorts: [443, 6443]
   # Cilium does not match the API server or cluster nodes with a NetworkPolicy ipBlock (they are

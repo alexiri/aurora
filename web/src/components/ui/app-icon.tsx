@@ -6,8 +6,8 @@ import { cn } from "@/lib/utils";
 
 // Fixed sizes use classes (the production CSP blocks inline style attributes).
 const SIZES: Record<number, string> = {
-  16: "size-4 text-[10px]",
-  20: "size-5 text-[11px]",
+  16: "size-4 text-micro",
+  20: "size-5 text-label",
   24: "size-6 text-xs",
   32: "size-8 text-sm",
   40: "size-10 text-lg",

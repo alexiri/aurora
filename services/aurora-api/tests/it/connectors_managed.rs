@@ -1238,6 +1238,73 @@ async fn sec69_disable_stops_serving_and_enable_restores_the_status() {
 
 // ------------------------------------------------------------- assignments
 
+/// FIX-113 (CONN-12): a bootstrap `aun_` token never attaches to a managed connector id.
+#[tokio::test]
+async fn bootstrap_token_never_attaches_to_a_managed_connector() {
+    let m = M::new().await;
+    m.add_managed("alpha").await;
+    let before: Option<Vec<u8>> =
+        sqlx::query_scalar("SELECT token_hash FROM connectors WHERE id='alpha'")
+            .fetch_one(m.h.pool())
+            .await
+            .unwrap();
+    let evil = aurora_core::token::hash("aun_attacker_chosen_token");
+    aurora_db::repo::connectors::upsert_bootstrap(m.h.pool(), "alpha", &evil, "alpha")
+        .await
+        .unwrap();
+    let after: Option<Vec<u8>> =
+        sqlx::query_scalar("SELECT token_hash FROM connectors WHERE id='alpha'")
+            .fetch_one(m.h.pool())
+            .await
+            .unwrap();
+    assert_eq!(after, before, "the managed connector's token is untouched");
+    // A self-hosted connector still takes its bootstrap token.
+    let t = aurora_core::token::hash("aun_selfhosted");
+    aurora_db::repo::connectors::upsert_bootstrap(m.h.pool(), "plain", &t, "plain")
+        .await
+        .unwrap();
+    let t2 = aurora_core::token::hash("aun_selfhosted_rotated");
+    aurora_db::repo::connectors::upsert_bootstrap(m.h.pool(), "plain", &t2, "plain")
+        .await
+        .unwrap();
+    let got: Vec<u8> = sqlx::query_scalar("SELECT token_hash FROM connectors WHERE id='plain'")
+        .fetch_one(m.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(got, t2.to_vec());
+}
+
+/// FIX-113 (CONN-14): a managed connector waiting for approval of a widened manifest is not
+/// assigned, so its decrypted settings are not handed to the host.
+#[tokio::test]
+async fn pending_approval_connectors_get_no_assignment() {
+    let m = M::new().await;
+    let (host, _) = m.add_managed("alpha").await;
+    let (s, v) = delegated_register(&m, "alpha", &manifest("alpha")).await;
+    assert_eq!((s, v["status"].as_str()), (200, Some("active")), "{v}");
+    let (_, _, v) = m.assignments(Some(host), None, 0).await;
+    assert_eq!(v["connectors"].as_array().map(Vec::len), Some(1), "{v}");
+    let mut wider = manifest("alpha");
+    wider["package"]["version"] = json!("1.1.0");
+    wider["instance_setup"]["fields"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"name": "new_setting", "label": "New", "type": "text"}));
+    let (s, v) = delegated_register(&m, "alpha", &wider).await;
+    assert_eq!(
+        (s, v["status"].as_str()),
+        (200, Some("pending_approval")),
+        "{v}"
+    );
+    let (s, _, v) = m.assignments(Some(host), None, 0).await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(
+        v["connectors"].as_array().map(Vec::len),
+        Some(0),
+        "no assignment (and no decrypted secrets) while approval is pending: {v}"
+    );
+}
+
 #[tokio::test]
 async fn assignments_apply_defaults_decrypt_secrets_and_are_not_cached() {
     let m = M::new().await;

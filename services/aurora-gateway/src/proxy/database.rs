@@ -286,18 +286,29 @@ impl Proxy {
             Err(e) => {
                 count("server_refused");
                 tracing::warn!(connection = %conn_id, error = %e, "database connection failed");
+                // (FIX-106, DB-3) Fixed texts only: the upstream server's own error text and the
+                // connection's details (host, user, TLS or protocol errors) go to the log above,
+                // never to the agent.
+                let dial_message;
                 let (code, msg) = match &e {
-                    ConnectError::Server(m) => (
+                    ConnectError::Server(_) => (
                         "28P01",
-                        format!("the database rejected the stored credentials: {m}"),
+                        "the database rejected the stored credentials; ask a workspace admin to check this connection",
                     ),
-                    ConnectError::Dial(d) => ("08001", super::dial_error(d).message().to_owned()),
-                    other => (
+                    ConnectError::Dial(d) => {
+                        dial_message = super::dial_error(d);
+                        ("08001", dial_message.message())
+                    }
+                    ConnectError::Tls(_) => (
                         "08006",
-                        format!("could not connect to the database: {other}"),
+                        "the database server's TLS certificate could not be verified or TLS could not be negotiated; ask a workspace admin to check this connection's TLS settings",
+                    ),
+                    _ => (
+                        "08006",
+                        "could not connect to the database; ask a workspace admin to check this connection",
                     ),
                 };
-                fatal(&mut io, code, &msg).await;
+                fatal(&mut io, code, msg).await;
                 return;
             }
         };

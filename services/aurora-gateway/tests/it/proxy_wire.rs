@@ -1296,3 +1296,90 @@ fn host_targeting_injection_is_refused_at_snapshot_load() {
     let ok = mk(json!({"header": {"name": "x-api-key", "value": "k"}}));
     assert!(snapshot::parse("h", ok).is_ok());
 }
+
+/// A plain-HTTP oracle that answers its one request with `status_line` and reports the head it saw.
+async fn plain_oracle_answering(status_line: &'static str) -> (SocketAddr, OracleRx) {
+    let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = l.local_addr().unwrap();
+    let (tx, rx) = tokio::sync::oneshot::channel::<Result<Seen, String>>();
+    tokio::spawn(async move {
+        let out = async {
+            let (mut s, _) = l.accept().await.map_err(|e| format!("accept: {e}"))?;
+            let seen = read_h1_head(&mut s).await?;
+            s.write_all(
+                format!("HTTP/1.1 {status_line}\r\nconnection: close\r\ncontent-length: 0\r\n\r\n")
+                    .as_bytes(),
+            )
+            .await
+            .map_err(|e| format!("write: {e}"))?;
+            Ok::<_, String>(seen)
+        }
+        .await;
+        let _ = tx.send(out);
+    });
+    (addr, rx)
+}
+
+/// An absolute-form GET through the proxy; the status code of the answer.
+async fn absolute_get_status(proxy: SocketAddr, target: SocketAddr, extra: &str) -> u16 {
+    let mut s = crate::common::connect(proxy).await;
+    s.write_all(
+        format!(
+            "GET http://{target}/x HTTP/1.1\r\nHost: {target}\r\nProxy-Authorization: {}\r\n{extra}Connection: close\r\n\r\n",
+            basic("agent:aug_good")
+        )
+        .as_bytes(),
+    )
+    .await
+    .unwrap();
+    let mut out = Vec::new();
+    let _ = tokio::time::timeout(Duration::from_secs(5), s.read_to_end(&mut out)).await;
+    String::from_utf8_lossy(&out)
+        .split_whitespace()
+        .nth(1)
+        .and_then(|c| c.parse().ok())
+        .unwrap_or(0)
+}
+
+/// (FIX-086, `06 §WebSocket upgrades`) Only `Upgrade: websocket` is honoured. Any other token is
+/// stripped and the request goes on as a plain one: the upstream sees no `Upgrade`, and a `101`
+/// it then answers is a protocol error (502), never a byte pipe that bypasses the pipeline.
+#[tokio::test]
+async fn only_websocket_upgrades_are_forwarded_and_an_unsolicited_101_is_502() {
+    let (up_ca, _) = oracle_tls("up-upgrade-tokens");
+    let (proxy, _) = gw(&up_ca).await;
+    for token in ["h2c", "foo", "websocket, h2c", "WebSockets"] {
+        // The upstream would accept the upgrade (101): the gateway must not have asked for it.
+        let (addr, rx) = plain_oracle_answering("101 Switching Protocols").await;
+        let status = absolute_get_status(
+            proxy,
+            addr,
+            &format!("Connection: Upgrade\r\nUpgrade: {token}\r\n"),
+        )
+        .await;
+        let seen = seen_err(rx.await.unwrap());
+        assert_eq!(seen.get("upgrade"), None, "{token}: {seen:?}");
+        assert!(
+            seen.get("connection")
+                .is_none_or(|c| !c.to_ascii_lowercase().contains("upgrade")),
+            "{token}: {seen:?}"
+        );
+        assert_eq!(
+            status, 502,
+            "{token}: an unsolicited 101 is a protocol error"
+        );
+        // And an upstream that answers 200 to the stripped request is relayed as usual.
+        let (addr, rx) = plain_oracle_answering("200 OK").await;
+        let status = absolute_get_status(
+            proxy,
+            addr,
+            &format!("Connection: Upgrade\r\nUpgrade: {token}\r\n"),
+        )
+        .await;
+        assert_eq!(status, 200, "{token}");
+        assert_eq!(seen_err(rx.await.unwrap()).get("upgrade"), None);
+    }
+    // No upgrade asked at all, yet the upstream answers 101.
+    let (addr, _rx) = plain_oracle_answering("101 Switching Protocols").await;
+    assert_eq!(absolute_get_status(proxy, addr, "").await, 502);
+}

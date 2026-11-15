@@ -98,6 +98,16 @@ async fn happy_path_once_and_slow_down() {
         .await
         .unwrap();
     assert_eq!(name, "CLI on my laptop");
+    // (FIX-108, D-178 Q-R5-16) The minted key expires in 90 days by default.
+    let in_window: bool = sqlx::query_scalar(
+        "SELECT expires_at > now() + interval '89 days' AND expires_at < now() + interval '91 days'
+         FROM api_keys WHERE token_hash = $1",
+    )
+    .bind(&aurora_core::token::hash(&key)[..])
+    .fetch_one(h.pool())
+    .await
+    .unwrap();
+    assert!(in_window, "CLI keys expire after 90 days by default");
     let (s, v) = post(&h, "/v1/auth/cli/token", None, json!({"device_code":dc})).await;
     assert_eq!((s, code(&v)), (400, "invalid_token"));
     let (s, v) = post(
@@ -111,6 +121,49 @@ async fn happy_path_once_and_slow_down() {
     // minted key works
     let (s, _) = h.get("/v1/me", &[("authorization", &bearer(&key))]).await;
     assert_eq!(s, 200);
+}
+
+/// (FIX-108, AUTH-5) The approving session sees what it is approving: the requesting host name,
+/// the start time, the coarse address and the key lifetime; nothing else may read it.
+#[tokio::test]
+async fn pending_login_detail_is_shown_to_the_approving_session() {
+    let h = Harness::new().await;
+    let org = h.org().await;
+    let u = h.user("p@x.io", false).await;
+    h.member(org, u, "member", "active").await;
+    let (_, tok) = h.good_session(u).await;
+    let (_, v) = post(&h, "/v1/auth/cli", None, json!({"hostname":"build-box"})).await;
+    let uc = v["user_code"].as_str().unwrap().to_owned();
+    sqlx::query("UPDATE cli_logins SET requested_addr = '203.0.113.0/24'")
+        .execute(h.pool())
+        .await
+        .unwrap();
+    let uri = format!("/v1/auth/cli/pending?code={}", uc.to_lowercase());
+
+    let (s, v) = h.get(&uri, &[("cookie", &cookie(&tok))]).await;
+    assert_eq!(s.as_u16(), 200, "{v}");
+    assert_eq!(v["hostname"], "build-box");
+    assert_eq!(v["address"], "203.0.113.0/24");
+    assert_eq!(v["key_expires_in_days"], 90);
+    assert!(v["requested_at"].as_str().is_some() && v["expires_at"].as_str().is_some());
+
+    // No session: 401; a key: session_required; unknown code: 404; malformed: 400.
+    let (s, _) = h.get(&uri, &[]).await;
+    assert_eq!(s.as_u16(), 401);
+    let (_, k) = h.api_key(u, org, None, false).await;
+    let (s, v) = h.get(&uri, &[("authorization", &bearer(&k))]).await;
+    assert_eq!((s.as_u16(), code(&v)), (403, "session_required"));
+    let (s, _) = h
+        .get(
+            "/v1/auth/cli/pending?code=AAAA-AAAA",
+            &[("cookie", &cookie(&tok))],
+        )
+        .await;
+    assert_eq!(s.as_u16(), 404);
+    let (s, _) = h
+        .get("/v1/auth/cli/pending?code=x", &[("cookie", &cookie(&tok))])
+        .await;
+    assert_eq!(s.as_u16(), 400);
 }
 
 #[tokio::test]

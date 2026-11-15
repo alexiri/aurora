@@ -326,6 +326,77 @@ async fn trusted_email_domain_counts_as_verified_only_for_exact_domain() {
     );
 }
 
+/// Seed an account created through another provider (`corp`) and sign in with the same
+/// address through the mock provider, which sends `email_verified` per `claim_verified`.
+async fn link_attempt(
+    tweak: impl FnOnce(&mut OidcProvider),
+    claim_verified: Option<bool>,
+) -> (String, i64) {
+    let idp = MockIdp::start().await;
+    let h = harness(&idp, SignupMode::Open, tweak, &[]).await;
+    let u = h.user("shared@example.com", false).await;
+    sqlx::query(
+        "INSERT INTO user_identities (id, user_id, provider_id, subject, email_at_link)
+         VALUES ($1, $2, 'corp', 'c-1', 'shared@example.com')",
+    )
+    .bind(Uuid::now_v7())
+    .bind(u)
+    .execute(h.pool())
+    .await
+    .unwrap();
+    idp.set(|c| {
+        c.sub = "m-1".into();
+        c.email = Some("shared@example.com".into());
+        c.email_verified = claim_verified;
+    });
+    let (path, cookie) = authorize(&h, None).await;
+    let (_, hd) = callback(&h, &path, &cookie).await;
+    let linked = count(
+        &h,
+        &format!(
+            "SELECT count(*) FROM user_identities WHERE user_id = '{u}' AND provider_id = '{PID}'"
+        ),
+    )
+    .await;
+    (
+        if has_session(&hd) {
+            "session".into()
+        } else {
+            location(&hd)
+        },
+        linked,
+    )
+}
+
+/// (FIX-108, D-178 Q-R5-12) `link_existing_users`: off by default for a provider relying on
+/// `trusted_email_domains` (it must not take over an account of another provider), on for a
+/// provider with a verified-email claim; either default can be overridden per provider.
+#[tokio::test]
+async fn link_existing_users_switch() {
+    let trusted = |p: &mut OidcProvider| p.trusted_email_domains = vec!["example.com".into()];
+    // Trusted-domain provider, default: refused, nothing linked.
+    let (out, linked) = link_attempt(trusted, None).await;
+    assert_eq!(out, "/auth/login?error=email_linked_elsewhere");
+    assert_eq!(linked, 0);
+    // Explicitly on: links.
+    let (out, linked) = link_attempt(
+        |p| {
+            trusted(p);
+            p.link_existing_users = Some(true);
+        },
+        None,
+    )
+    .await;
+    assert_eq!((out.as_str(), linked), ("session", 1));
+    // Provider with the claim, default: links (unchanged behaviour).
+    let (out, linked) = link_attempt(|_| {}, Some(true)).await;
+    assert_eq!((out.as_str(), linked), ("session", 1));
+    // Explicitly off for a claim provider: refused.
+    let (out, linked) = link_attempt(|p| p.link_existing_users = Some(false), Some(true)).await;
+    assert_eq!(out, "/auth/login?error=email_linked_elsewhere");
+    assert_eq!(linked, 0);
+}
+
 #[tokio::test]
 async fn wrong_audience_rejected() {
     let idp = MockIdp::start().await;
@@ -584,6 +655,101 @@ async fn sso_jit_adds_membership_and_bindings() {
     assert_eq!(count(&h, "SELECT count(*) FROM org_members").await, 1);
 }
 
+/// (FIX-108, AUTH-1) A membership an admin removed is not restored by the next JIT sign-in;
+/// an invitation afterwards works and clears the removal marker.
+#[tokio::test]
+async fn sso_jit_does_not_readmit_a_removed_member() {
+    let idp = MockIdp::start().await;
+    idp.identity("jr1", "jr@example.com", true);
+    let h = harness(&idp, SignupMode::SsoJit, jit, &[]).await;
+    let (org, eng, _ops) = jit_seed(&h).await;
+    let owner = h.user("own@example.com", false).await;
+    h.member(org, owner, "owner", "active").await;
+    let (_, key) = h.api_key(owner, org, None, false).await;
+    let auth = format!("Bearer {key}");
+
+    let (path, cookie) = authorize(&h, None).await;
+    let (_, hd) = callback(&h, &path, &cookie).await;
+    assert!(has_session(&hd));
+    let jr: Uuid = sqlx::query_scalar("SELECT id FROM users WHERE email = 'jr@example.com'")
+        .fetch_one(h.pool())
+        .await
+        .unwrap();
+    let members = format!("SELECT count(*) FROM org_members WHERE user_id = '{jr}'");
+    let bindings = format!("SELECT count(*) FROM workspace_access WHERE user_id = '{jr}'");
+    assert_eq!(count(&h, &members).await, 1);
+
+    // An admin removes the member.
+    let (st, _, v) = h
+        .send(
+            Method::DELETE,
+            &format!("/v1/orgs/{org}/members/{jr}"),
+            &[("authorization", &auth), ("origin", ORIGIN)],
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::NO_CONTENT, "{v}");
+    assert_eq!(count(&h, &members).await, 0);
+    assert_eq!(count(&h, &bindings).await, 0);
+
+    // Signing in again does not bring the membership or the bindings back.
+    let (path, cookie) = authorize(&h, None).await;
+    let (_, hd) = callback(&h, &path, &cookie).await;
+    assert!(has_session(&hd), "the sign-in itself still works");
+    assert_eq!(count(&h, &members).await, 0, "JIT must not re-admit");
+    assert_eq!(count(&h, &bindings).await, 0);
+    let session = header(&hd, "set-cookie")
+        .into_iter()
+        .find(|c| c.starts_with("aurora_session=aus_"))
+        .map(|c| c.split(';').next().unwrap().to_owned())
+        .unwrap();
+
+    // An invitation afterwards works ...
+    let (st, _, v) = h
+        .send(
+            Method::POST,
+            &format!("/v1/orgs/{org}/invitations"),
+            &[("authorization", &auth), ("origin", ORIGIN)],
+            Some(serde_json::json!({"email": "jr@example.com", "role": "member", "workspace_ids": [eng]})),
+        )
+        .await;
+    assert_eq!(st, StatusCode::CREATED, "{v}");
+    let mut tok = None;
+    for _ in 0..200 {
+        if let Some(m) = h
+            .mail
+            .sent()
+            .into_iter()
+            .rev()
+            .find(|m| m.to == "jr@example.com")
+        {
+            tok = Some(m.link.split("token=").nth(1).unwrap().to_owned());
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    let tok = tok.expect("invitation mail");
+    let (st, _, v) = h
+        .send(
+            Method::POST,
+            "/v1/invitations/accept",
+            &[("cookie", &session), ("origin", ORIGIN)],
+            Some(serde_json::json!({"token": tok})),
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    assert_eq!(count(&h, &members).await, 1);
+    // ... and cleared the marker.
+    assert_eq!(
+        count(
+            &h,
+            &format!("SELECT count(*) FROM org_member_removals WHERE user_id = '{jr}'")
+        )
+        .await,
+        0
+    );
+}
+
 #[tokio::test]
 async fn sso_jit_without_rule_is_signup_closed() {
     let idp = MockIdp::start().await;
@@ -749,6 +915,21 @@ async fn reauth_refusals() {
     let (loc, _) = reauth(&h, &a.cookie, Some("ann@example.com")).await;
     assert_eq!(loc, "/auth/login?error=reauth_stale");
     h.idp.set(|c| c.auth_time_ago = None);
+    // (FIX-108) An IdP that ignores `max_age` and omits `auth_time` does not re-authenticate.
+    h.idp.set(|c| c.omit_auth_time = true);
+    let (loc, _) = reauth(&h, &a.cookie, Some("ann@example.com")).await;
+    assert_eq!(loc, "/auth/login?error=reauth_stale");
+    // An `auth_time` in the future beyond the clock skew is refused too.
+    h.idp.set(|c| {
+        c.omit_auth_time = false;
+        c.auth_time_ago = Some(-3600);
+    });
+    let (loc, _) = reauth(&h, &a.cookie, Some("ann@example.com")).await;
+    assert_eq!(loc, "/auth/login?error=reauth_stale");
+    h.idp.set(|c| {
+        c.omit_auth_time = false;
+        c.auth_time_ago = None;
+    });
     // An unverified e-mail never re-authenticates.
     h.idp
         .identity("dev-ann@example.com", "ann@example.com", false);

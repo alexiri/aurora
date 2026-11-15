@@ -46,6 +46,7 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(redact_turn))
         .routes(routes!(export_conversation))
         .routes(routes!(get_retention, put_retention))
+        .merge(super::search::router())
 }
 
 /// Archive a conversation (hidden from default lists; a person message unarchives).
@@ -346,7 +347,7 @@ async fn list_events(
     request_body = SendMessage,
     responses((status = 202, body = MessageAccepted), (status = 400, body = ErrorEnvelope),
         (status = 404, body = ErrorEnvelope), (status = 413, body = ErrorEnvelope),
-        (status = 422, description = "hosted_disabled, idempotency_key_invalid, idempotency_key_reused (details.turn_id | details.followup_id)", body = ErrorEnvelope)),
+        (status = 422, description = "hosted_disabled, idempotency_key_invalid, idempotency_key_reused (details.turn_id | details.followup_id), reply_target_invalid (details.reason: not_found | not_replyable | redacted)", body = ErrorEnvelope)),
     security(("session" = []), ("api_key" = [])))]
 async fn post_message(
     c: Caller,
@@ -360,8 +361,7 @@ async fn post_message(
         .iter()
         .map(|v| v.as_bytes().to_vec())
         .collect();
-    let (out, replayed) =
-        service::post_message(&s, &c, id, &b.text, &b.attachment_ids, &key_headers).await?;
+    let (out, replayed) = service::post_message(&s, &c, id, &b, &key_headers).await?;
     let mut h = HeaderMap::new();
     if replayed {
         h.insert("idempotent-replayed", HeaderValue::from_static("true"));

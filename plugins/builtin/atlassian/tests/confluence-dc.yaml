@@ -78,7 +78,7 @@
   expect:
     app: confluence-dc
     tool: create_content
-    summary: { title: "Create Confluence content", fields: { Type: "page", Space: "DOC", Title: "Release runbook" } }
+    summary: { title: "Create Confluence content", fields: { Type: "page", Space: "DOC", Title: "Release runbook", Content: "<p>Steps</p>" } }
 - name: "negative create_content: DELETE selects no tool on the registered host"
   connection: { instance_host: wiki.example.com, instance_app: confluence-dc, credentials: { access_token: "pat-fixture-1" } }
   request: { method: DELETE, url: "https://wiki.example.com/rest/api/content" }
@@ -93,7 +93,7 @@
   expect:
     app: confluence-dc
     tool: update_content
-    summary: { title: "Update Confluence page", fields: { Page: "98765", Title: "Release runbook v2", Version: "3" } }
+    summary: { title: "Update Confluence page", fields: { Page: "98765", Title: "Release runbook v2", Version: "3", Content: "<p>New</p>" } }
 - name: "negative update_content: PATCH selects no tool on the registered host"
   connection: { instance_host: wiki.example.com, instance_app: confluence-dc, credentials: { access_token: "pat-fixture-1" } }
   request: { method: PATCH, url: "https://wiki.example.com/rest/api/content/98765" }

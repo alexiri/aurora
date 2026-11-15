@@ -13,6 +13,8 @@ volume and secret tooling. Test them on a non-production copy before you rely on
 | **Encryption keyring** (`AURORA_ENCRYPTION_KEYS`, `AURORA_ENCRYPTION_ACTIVE_KEY`) | Secret `<fullname>-secrets` (or `secrets.existingSecret`) | **Every inline secret becomes unreadable.** docs/08 §3: "Losing the keyring loses every inline value." |
 | **Signing key** (`AURORA_SIGNING_KEY`) | Same Secret as the keyring | Signed values stop verifying. |
 | Internal secret, runner session key | Same Secret | Services that share them stop talking until restored. |
+| **The whole generated Secret, as one object** | `<fullname>-secrets`: `AURORA_ENCRYPTION_KEYS`, `AURORA_ENCRYPTION_ACTIVE_KEY`, `AURORA_SIGNING_KEY`, `AURORA_INTERNAL_SECRET`, `AURORA_RUNNER_SESSION_KEY`, **`AURORA_RUNNER_TOKEN`, `AURORA_CONNECTOR_TOKEN`, `AURORA_CONNECTOR_HOST_TOKEN`, `AURORA_RELAY_TOKEN`** (the anchor tokens of the runner, connectors, connector host and relay), the optional `*_ACTIVE_KEY` ring ids, and — with the evaluation Postgres — `POSTGRES_PASSWORD`, `AURORA_DATABASE_URL`, `POSTGRES_GATEWAY_PASSWORD`, `AURORA_GATEWAY_DATABASE_URL` | Back it up and restore it **whole** (`kubectl get secret <fullname>-secrets -o yaml`, then `kubectl apply`): restoring only the keyring leaves the services with new tokens that no stored row knows, and the database credentials stored beside them out of step. An upgrade that finds it missing refuses to mint new keys (FIX-102, `secrets.allowRegenerate`). |
+| **Vault** (when `vault.enabled`) | HashiCorp Vault; the chart stores only its address and auth wiring | Managed secrets live in Vault, not in Postgres: back Vault up with its own procedure ([vault.md](vault.md)); the Aurora keyring still seals inline values and Vault references' metadata. |
 | **Gateway CA** (`ca.pem`, `ca.key`) | Secret `<fullname>-gateway-ca` (or `gateway.ca.existingSecret`) | A new CA must be minted, and anything that trusted the old CA must trust the new one. |
 | **Per-agent home volumes** | PVCs `home-<sandbox_id>` in the sandboxes namespace | Each agent's files and workspace. |
 | **Directory-sourced plugins** | `plugins.source`: the ConfigMap (`configMap`) or the PVC (`pvc`), see [install-helm.md](install-helm.md#plugin-packages) | Packages must be re-supplied. |
@@ -25,8 +27,9 @@ docs/15 says home volume backups are the operator's job (PVC snapshots or volume
 The keyring and signing key cannot be regenerated. The setup tooling never overwrites an
 existing secret, but it creates any missing one:
 
-- **Helm.** The `secrets` hook creates a missing key. If you install into a namespace where
-  the old Secret is gone, the hook generates new keys, and existing inline secrets cannot be opened.
+- **Helm.** The `secrets` hook creates a missing key on **install**. If you install into a namespace where
+  the old Secret is gone, the hook generates new keys, and existing inline secrets cannot be opened. On an
+  **upgrade** it refuses (FIX-102): restore the Secret, or set `secrets.allowRegenerate=true` to start over on purpose.
 
 Store the keyring, the signing key and the gateway CA in a secret manager, separate from the
 database backups (docs/08 §3). Restore them before you start the services.

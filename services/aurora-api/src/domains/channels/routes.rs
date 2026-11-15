@@ -15,6 +15,7 @@ use uuid::Uuid;
 pub fn router() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(list_integrations, create_integration))
+        .routes(routes!(probe_integration))
         .routes(routes!(
             get_integration,
             patch_integration,
@@ -26,10 +27,12 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(presence_options))
         .routes(routes!(detach_presence))
         .routes(routes!(reattach_presence))
-        .routes(routes!(list_bindings))
+        .routes(routes!(list_bindings, create_binding))
+        .routes(routes!(my_integration_spaces))
         .routes(routes!(patch_binding, delete_binding))
         .routes(routes!(my_links))
         .routes(routes!(delete_my_link))
+        .routes(routes!(preview_link))
         .routes(routes!(confirm_link))
         .routes(routes!(list_dm_defaults, set_dm_default))
         .routes(routes!(list_reach))
@@ -76,6 +79,26 @@ async fn create_integration(
         StatusCode::CREATED,
         Json(integrations::create(&s, &c, org, req).await?),
     ))
+}
+
+/// Probe credentials before creating an integration (C-711): returns the choices a connector
+/// offers for fields such as a team. Nothing is stored. 422 `credentials_invalid`,
+/// `probe_unsupported`, 503 `connector_unavailable`.
+#[utoipa::path(post, path = "/orgs/{org}/channel-integrations:probe", operation_id = "probeChannelIntegration",
+    tag = "channels",
+    params(("org" = Uuid, Path, description = "Organization id")),
+    request_body = ProbeIntegrationRequest,
+    responses((status = 200, body = ProbeIntegrationResponse), (status = 403, body = ErrorEnvelope),
+        (status = 404, body = ErrorEnvelope), (status = 422, body = ErrorEnvelope),
+        (status = 502, body = ErrorEnvelope), (status = 503, body = ErrorEnvelope)),
+    security(("session" = []), ("api_key" = [])))]
+async fn probe_integration(
+    c: Caller,
+    State(s): State<AppState>,
+    Path(org): Path<Uuid>,
+    Json(req): Json<ProbeIntegrationRequest>,
+) -> Result<Json<ProbeIntegrationResponse>, ApiError> {
+    Ok(Json(integrations::probe(&s, &c, org, req).await?))
 }
 
 /// Get one integration (org owner/admin). Credentials are never returned.
@@ -291,6 +314,43 @@ async fn list_bindings(
     }))
 }
 
+/// Bind an agent to a space from the dashboard (C-713, `can_own`): only a space the caller's
+/// linked chat account is a member of and the shared bot is already in.
+#[utoipa::path(post, path = "/agents/{agent}/space-bindings", operation_id = "createAgentSpaceBinding", tag = "channels",
+    params(("agent" = Uuid, Path, description = "Agent id")),
+    request_body = CreateBindingRequest,
+    responses((status = 201, body = SpaceBinding), (status = 403, body = ErrorEnvelope),
+        (status = 404, body = ErrorEnvelope), (status = 409, body = ErrorEnvelope),
+        (status = 422, body = ErrorEnvelope), (status = 503, body = ErrorEnvelope)),
+    security(("session" = []), ("api_key" = [])))]
+async fn create_binding(
+    c: Caller,
+    State(s): State<AppState>,
+    Path(agent): Path<Uuid>,
+    Json(req): Json<CreateBindingRequest>,
+) -> Result<(StatusCode, Json<SpaceBinding>), ApiError> {
+    Ok((
+        StatusCode::CREATED,
+        Json(bindings::create(&s, &c, agent, req).await?),
+    ))
+}
+
+/// Spaces the caller is in and the bot is in (C-714).
+#[utoipa::path(get, path = "/integrations/{id}/spaces", operation_id = "listMyIntegrationSpaces", tag = "channels",
+    params(("id" = Uuid, Path, description = "Integration id"), MySpacesQuery),
+    responses((status = 200, body = MySpacesList), (status = 400, body = ErrorEnvelope),
+        (status = 403, body = ErrorEnvelope), (status = 404, body = ErrorEnvelope),
+        (status = 409, body = ErrorEnvelope), (status = 503, body = ErrorEnvelope)),
+    security(("session" = []), ("api_key" = [])))]
+async fn my_integration_spaces(
+    c: Caller,
+    State(s): State<AppState>,
+    Path(id): Path<Uuid>,
+    Query(q): Query<MySpacesQuery>,
+) -> Result<Json<MySpacesList>, ApiError> {
+    Ok(Json(bindings::my_spaces(&s, &c, id, q).await?))
+}
+
 /// Edit a binding (`can_own`).
 #[utoipa::path(patch, path = "/space-bindings/{id}", operation_id = "patchSpaceBinding", tag = "channels",
     params(("id" = Uuid, Path, description = "Binding id")),
@@ -350,11 +410,26 @@ async fn delete_my_link(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// The chat account a sign-in link token would bind (FIX-112). Session only.
+#[utoipa::path(get, path = "/channel-links/preview", operation_id = "previewChannelLink", tag = "channels",
+    params(LinkPreviewParams),
+    responses((status = 200, body = LinkPreview), (status = 403, body = ErrorEnvelope),
+        (status = 410, body = ErrorEnvelope)),
+    security(("session" = [])))]
+async fn preview_link(
+    c: SessionCaller,
+    State(s): State<AppState>,
+    Query(p): Query<LinkPreviewParams>,
+) -> Result<Json<LinkPreview>, ApiError> {
+    Ok(Json(links::preview(&s, &c, &p.token).await?))
+}
+
 /// Confirm a sign-in link token for the signed-in user (C-36). Session only.
 #[utoipa::path(post, path = "/channel-links/confirm", operation_id = "confirmChannelLink", tag = "channels",
     request_body = ConfirmLinkRequest,
     responses((status = 200, body = UserLink), (status = 404, body = ErrorEnvelope),
-        (status = 409, body = ErrorEnvelope), (status = 410, body = ErrorEnvelope)),
+        (status = 409, body = ErrorEnvelope), (status = 410, body = ErrorEnvelope),
+        (status = 422, body = ErrorEnvelope)),
     security(("session" = [])))]
 async fn confirm_link(
     c: SessionCaller,

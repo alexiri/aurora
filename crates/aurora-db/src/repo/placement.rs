@@ -38,7 +38,9 @@ pub async fn save<'e, E: PgExecutor<'e>>(
     by: Uuid,
 ) -> Result<(), DbError> {
     sqlx::query(
-        "INSERT INTO instance_placement (singleton, mode, default_org_id, default_org_role,
+        "WITH setup AS (UPDATE instance_setup SET placement_pending = false, updated_at = now()
+                         WHERE placement_pending)
+         INSERT INTO instance_placement (singleton, mode, default_org_id, default_org_role,
             shared_workspaces, personal_enabled, personal_role, name_template, starter_grants,
             updated_by, updated_at)
          VALUES (true, $1,$2,$3,$4,$5,$6,$7,$8,$9, now())
@@ -56,6 +58,35 @@ pub async fn save<'e, E: PgExecutor<'e>>(
     .bind(&p.name_template)
     .bind(&p.starter_grants)
     .bind(by)
+    .execute(exec)
+    .await?;
+    Ok(())
+}
+
+/// (P5-ADMDEL, D-234) Remove deleted workspaces from `shared_workspaces`: the owner's and the
+/// instance admin's delete paths call it in the delete's own transaction, before the rows go.
+/// `workspace_ids` are workspace ids; `org_id` additionally drops every workspace of that
+/// organization (an organization delete). No-op without a placement row or a match.
+pub async fn prune_shared_workspaces<'e, E: PgExecutor<'e>>(
+    exec: E,
+    workspace_ids: &[Uuid],
+    org_id: Option<Uuid>,
+) -> Result<(), DbError> {
+    sqlx::query(
+        "UPDATE instance_placement SET shared_workspaces = COALESCE((
+             SELECT jsonb_agg(e) FROM jsonb_array_elements(shared_workspaces) e
+             WHERE NOT ((e->>'workspace_id')::uuid = ANY($1)
+                        OR EXISTS (SELECT 1 FROM workspaces w
+                                   WHERE w.id = (e->>'workspace_id')::uuid AND w.org_id = $2))
+         ), '[]'::jsonb)
+         WHERE jsonb_typeof(shared_workspaces) = 'array'
+           AND EXISTS (SELECT 1 FROM jsonb_array_elements(shared_workspaces) e
+                       WHERE (e->>'workspace_id')::uuid = ANY($1)
+                          OR EXISTS (SELECT 1 FROM workspaces w
+                                     WHERE w.id = (e->>'workspace_id')::uuid AND w.org_id = $2))",
+    )
+    .bind(workspace_ids)
+    .bind(org_id)
     .execute(exec)
     .await?;
     Ok(())
@@ -85,6 +116,19 @@ pub async fn personal_workspace<'e, E: PgExecutor<'e>>(
     .await?)
 }
 
+/// (FIX-097) Is the workspace a personal one? The sticky `personal` marker, not the owner id:
+/// that is nulled when the person's account is deleted, and the workspace must still never be
+/// handed out as a shared workspace.
+pub async fn is_personal<'e, E: PgExecutor<'e>>(exec: E, workspace: Uuid) -> Result<bool, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT personal OR personal_owner_user_id IS NOT NULL FROM workspaces WHERE id = $1",
+    )
+    .bind(workspace)
+    .fetch_optional(exec)
+    .await?
+    .unwrap_or(false))
+}
+
 /// The user a workspace is the personal workspace of, if any.
 pub async fn personal_owner_of<'e, E: PgExecutor<'e>>(
     exec: E,
@@ -104,7 +148,7 @@ pub async fn set_personal_owner<'e, E: PgExecutor<'e>>(
     workspace: Uuid,
     user: Uuid,
 ) -> Result<(), DbError> {
-    sqlx::query("UPDATE workspaces SET personal_owner_user_id = $2 WHERE id = $1")
+    sqlx::query("UPDATE workspaces SET personal_owner_user_id = $2, personal = true WHERE id = $1")
         .bind(workspace)
         .bind(user)
         .execute(exec)
@@ -129,7 +173,8 @@ pub async fn org_brief<'e, E: PgExecutor<'e>>(
 /// credentials. Capped; names only.
 pub async fn choices<'e, E: PgExecutor<'e> + Copy>(exec: E, org: Uuid) -> Result<Choices, DbError> {
     let workspaces = sqlx::query_as(
-        "SELECT id, slug, name FROM workspaces WHERE org_id = $1 AND personal_owner_user_id IS NULL
+        "SELECT id, slug, name FROM workspaces WHERE org_id = $1 AND NOT personal
+           AND personal_owner_user_id IS NULL
          ORDER BY name, id LIMIT 500",
     )
     .bind(org)
@@ -163,10 +208,16 @@ pub struct Choices {
     pub connections: Vec<(Uuid, String, String)>,
 }
 
-pub async fn org_count<'e, E: PgExecutor<'e>>(exec: E) -> Result<i64, DbError> {
-    Ok(sqlx::query_scalar("SELECT count(*) FROM organizations")
-        .fetch_one(exec)
-        .await?)
+/// Whether a placement has still to be saved on an instance installed with this release
+/// (FIX-116): ordinary users are refused with `instance_setup_pending` until it is. A missing
+/// row (never written) counts as not pending.
+pub async fn setup_pending<'e, E: PgExecutor<'e>>(exec: E) -> Result<bool, DbError> {
+    Ok(
+        sqlx::query_scalar("SELECT placement_pending FROM instance_setup")
+            .fetch_optional(exec)
+            .await?
+            .unwrap_or(false),
+    )
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]

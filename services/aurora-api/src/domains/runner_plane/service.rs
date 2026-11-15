@@ -23,6 +23,17 @@ pub async fn register(
 ) -> Result<RegisterResponse, ApiError> {
     req.validate()
         .map_err(|e| ApiError::invalid_request(e.to_string(), vec![]))?;
+    // The relay dials this address with a live stream grant (FIX-090): a plain host name or IP
+    // literal with an optional port, never a URL fragment.
+    if !super::preview_streams::advertised_host_ok(&req.advertised_host) {
+        return Err(ApiError::invalid_request(
+            "Invalid request.",
+            vec![aurora_core::FieldError::new(
+                "/advertised_host",
+                "must be a host name or an IP literal with an optional port",
+            )],
+        ));
+    }
     let replica = Uuid::now_v7();
     let caps =
         serde_json::to_value(&req.capabilities).map_err(|e| ApiError::internal(e.to_string()))?;
@@ -306,6 +317,7 @@ pub async fn sandboxes_list(
 
 pub async fn sandboxes_check(
     s: &AppState,
+    runner: &RunnerRow,
     req: SandboxesCheckRequest,
 ) -> Result<SandboxesCheckResponse, ApiError> {
     if req.sandbox_ids.len() > 10_000 {
@@ -313,7 +325,7 @@ pub async fn sandboxes_check(
     }
     let mut conn = s.pool.acquire().await.map_err(DbError::from)?;
     Ok(SandboxesCheckResponse {
-        known: sandboxes::known_ids(&mut conn, &req.sandbox_ids).await?,
+        known: sandboxes::known_ids(&mut conn, runner.id, &req.sandbox_ids).await?,
     })
 }
 

@@ -17,6 +17,12 @@ use tokio::sync::Mutex;
 
 /// Window keys: `<prefix>w:<key>:<period s>:<window start ms>`.
 const PEEK: &str = r"
+local function num(v, dflt)
+  if not v then return dflt end
+  local n = tonumber(v)
+  if not n then error('ERR counter value is not numeric') end
+  return n
+end
 local t = redis.call('TIME')
 local now = t[1] * 1000 + math.floor(t[2] / 1000)
 local prefix = ARGV[1]
@@ -25,12 +31,18 @@ for i = 1, tonumber(ARGV[2]) do
   local key = ARGV[1 + (i - 1) * 2 + 2]
   local per = tonumber(ARGV[1 + (i - 1) * 2 + 3])
   local ws = now - (now % per)
-  out[i] = tonumber(redis.call('GET', prefix .. 'w:' .. key .. ':' .. per .. ':' .. ws)) or 0
+  out[i] = num(redis.call('GET', prefix .. 'w:' .. key .. ':' .. per .. ':' .. ws), 0)
 end
 return out
 ";
 
 const CONSUME: &str = r"
+local function num(v, dflt)
+  if not v then return dflt end
+  local n = tonumber(v)
+  if not n then error('ERR counter value is not numeric') end
+  return n
+end
 local t = redis.call('TIME')
 local now = t[1] * 1000 + math.floor(t[2] / 1000)
 local prefix = ARGV[1]
@@ -43,7 +55,7 @@ for i = 1, n do
   local limit, cost = tonumber(ARGV[b + 3]), tonumber(ARGV[b + 4])
   local ws = now - (now % per)
   local k = prefix .. 'w:' .. key .. ':' .. per .. ':' .. ws
-  local cur = (tonumber(redis.call('GET', k)) or 0) + (pend[k] or 0)
+  local cur = num(redis.call('GET', k), 0) + (pend[k] or 0)
   if cur + cost > limit then
     local ms = ws + per - now
     if ms > worst_ms then worst_ms = ms; worst_i = i end
@@ -62,6 +74,12 @@ return {1, 0, 0}
 
 /// GCRA: allowed iff `max(tat, now) + T - now <= burst * T`.
 const TAKE: &str = r"
+local function num(v, dflt)
+  if not v then return dflt end
+  local n = tonumber(v)
+  if not n then error('ERR counter value is not numeric') end
+  return n
+end
 local t = redis.call('TIME')
 local now = t[1] * 1000 + math.floor(t[2] / 1000)
 local prefix = ARGV[1]
@@ -72,7 +90,7 @@ for i = 1, n do
   local b = 2 + (i - 1) * 3
   local key, tms, burst = ARGV[b + 1], tonumber(ARGV[b + 2]), tonumber(ARGV[b + 3])
   local k = prefix .. 'b:' .. key
-  local tat = pend[k] or tonumber(redis.call('GET', k)) or now
+  local tat = pend[k] or num(redis.call('GET', k), now)
   if tat < now then tat = now end
   local new = tat + tms
   local allow_at = new - burst * tms

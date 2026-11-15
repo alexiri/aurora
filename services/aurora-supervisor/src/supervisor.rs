@@ -52,6 +52,10 @@ pub struct SupervisorConfig {
     /// file points at it. `None`: no service file, no relay, no `PGSERVICEFILE`. Port 0 binds any
     /// free port (tests that exercise the relay directly).
     pub pg: Option<u16>,
+    /// (FIX-138 item 1b) `/run/aurora/harness.env` for the terminal's harness wrappers: the
+    /// agent's own harness's section is rewritten at each session start (the terminal open
+    /// rewrites the sections too; the state is shared with the PTY engine). `None` (tests): no file.
+    pub harness_env: Option<Arc<crate::harness_env::HarnessEnv>>,
 }
 
 impl SupervisorConfig {
@@ -69,6 +73,7 @@ impl SupervisorConfig {
             tools: ToolsConfig::default(),
             process: ProcessConfig::new(PathBuf::from("/workspace")),
             pg: None,
+            harness_env: None,
         }
     }
 }
@@ -276,6 +281,11 @@ impl Supervisor {
         }
     }
 
+    /// The background-process manager (FIX-114: `main` forwards SIGTERM to its groups at exit).
+    pub fn process_manager(&self) -> Arc<ProcessManager> {
+        self.procs.clone()
+    }
+
     /// Runs until `inbound` closes or a `shutdown` frame has been handled.
     pub async fn run(mut self, mut inbound: mpsc::Receiver<RunnerToSupervisor>) {
         let ready = SupervisorReady {
@@ -339,12 +349,21 @@ impl Supervisor {
     }
 
     async fn shutdown(&mut self, grace: Duration, done_rx: &mut mpsc::UnboundedReceiver<Uuid>) {
+        // (FIX-114, `12` §Process model) SIGTERM to every registered process group.
+        self.procs.terminate_all();
         for t in self.turns.values() {
             t.aborted.store(true, Ordering::SeqCst);
             t.abort.notify_one();
             let _ = t.session.lock().await.abort().await;
         }
         let deadline = Instant::now() + grace;
+        // Every terminal and preview stream ends with the sandbox (`12 §Terminal`, `16 §W19`,
+        // `12 §Previews`), within the grace: a wedged engine must not hold shutdown (FIX-091).
+        let _ = tokio::time::timeout_at(
+            deadline,
+            futures::future::join(self.ptys.close_all(), self.streams.close_all()),
+        )
+        .await;
         while !self.turns.is_empty() {
             tokio::select! {
                 Some(id) = done_rx.recv() => { self.finish_turn(id); }
@@ -823,6 +842,13 @@ impl Supervisor {
             env.extend(crate::pg::env(&self.cfg.working_dir));
         }
         env.extend(d.model.client_env.iter().cloned());
+        // The terminal's `claude`/`codex` wrappers reach the LLM with the same model the agent
+        // uses (placeholders only, no secret; `crate::harness_env`).
+        if let Some(h) = &self.cfg.harness_env
+            && let Err(e) = h.apply_turn(self.adapter.id(), &d.model)
+        {
+            tracing::warn!(error = %e, "could not update harness.env for the terminal wrappers");
+        }
         let session = self
             .adapter
             .start_session(SessionOptions {

@@ -24,25 +24,45 @@ use crate::api::session_hash;
 use crate::state::State;
 use crate::stream::{StreamKey, Streams};
 
+mod wire;
+
 /// Response body: streamed (never fully buffered beyond one chunk). `exact` is set for
 /// pre-loaded bodies (status pages) so hyper answers with `content-length` instead of
 /// chunked framing; proxied bodies stream with an unknown size.
 pub struct RelayBody {
     rx: mpsc::Receiver<Result<Frame<Bytes>, std::io::Error>>,
     exact: Option<u64>,
+    /// Set by the producer when the answer ended before it was complete (malformed framing,
+    /// a leg that dropped mid-body): once the queued frames are delivered the body fails with
+    /// an error instead of ending cleanly, so the browser sees a transport error, never a
+    /// silently truncated document. A flag, not a queued error, because the queue may be full
+    /// behind a viewer that stopped reading.
+    aborted: Option<Arc<std::sync::atomic::AtomicBool>>,
 }
 
 impl RelayBody {
     /// A body driven by a sender held elsewhere (the proxy's pump task).
-    pub(crate) fn new(rx: mpsc::Receiver<Result<Frame<Bytes>, std::io::Error>>) -> Self {
-        Self { rx, exact: None }
+    pub(crate) fn new(
+        rx: mpsc::Receiver<Result<Frame<Bytes>, std::io::Error>>,
+        aborted: Arc<std::sync::atomic::AtomicBool>,
+    ) -> Self {
+        Self {
+            rx,
+            exact: None,
+            aborted: Some(aborted),
+        }
     }
 
     /// A body whose bytes are already queued (one frame, sender gone).
     pub(crate) fn ready(bytes: Bytes) -> Self {
         let (tx, rx) = mpsc::channel(1);
         let _ = tx.try_send(Ok(Frame::data(bytes)));
-        Self { rx, exact: None }.with_exact_len()
+        Self {
+            rx,
+            exact: None,
+            aborted: None,
+        }
+        .with_exact_len()
     }
 
     /// Peeks the queued frame to learn the exact length (the sender is gone, so nothing
@@ -69,7 +89,19 @@ impl Body for RelayBody {
         mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
-        std::pin::Pin::new(&mut self.rx).poll_recv(cx)
+        let polled = std::pin::Pin::new(&mut self.rx).poll_recv(cx);
+        if let std::task::Poll::Ready(None) = polled
+            && self
+                .aborted
+                .as_ref()
+                .is_some_and(|a| a.load(std::sync::atomic::Ordering::SeqCst))
+        {
+            return std::task::Poll::Ready(Some(Err(std::io::Error::new(
+                std::io::ErrorKind::ConnectionAborted,
+                "the preview answer was cut short",
+            ))));
+        }
+        polled
     }
 
     fn size_hint(&self) -> hyper::body::SizeHint {
@@ -90,7 +122,11 @@ fn string_body(b: &str) -> RelayBody {
     RelayBody::ready(Bytes::from(b.to_owned()))
 }
 
-/// Hop-by-hop headers (RFC 9110 §7.6.1) plus the ones the relay owns.
+/// Request headers the relay removes before the app sees the request (SEC-85): hop-by-hop
+/// (RFC 9110 §7.6.1), `Host` (rewritten to the runner endpoint), and every client-supplied
+/// forwarding header (the relay owns the chain: it adds its own `X-Forwarded-For`). Not here,
+/// because they are filtered by value: `Cookie` (only Aurora's cookies go,
+/// [`strip_aurora_cookies`]) and `Authorization` (only an Aurora token goes).
 const DROP_REQUEST: &[&str] = &[
     "connection",
     "keep-alive",
@@ -100,22 +136,27 @@ const DROP_REQUEST: &[&str] = &[
     "trailer",
     "transfer-encoding",
     "upgrade",
-    // Aurora credentials never reach the app (SEC-81 rule 3, SEC-85).
-    "authorization",
-    "cookie",
     "host",
-    // The relay owns the forwarding chain; a client-supplied chain is dropped.
+    // Client-supplied forwarding chain (`x-forwarded-*` also matches by prefix below).
     "forwarded",
     "x-forwarded-for",
     "x-forwarded-host",
     "x-forwarded-proto",
+    "x-forwarded-port",
+    "x-forwarded-prefix",
+    "x-real-ip",
+    "true-client-ip",
+    "via",
     // Aurora's own names: a browser cannot legitimately send these to a preview.
     "x-aurora-replica",
     "x-aurora-protocol",
     "x-aurora-runner",
 ];
 
-/// Response headers the relay never forwards as-is: hop-by-hop plus the ones it rewrites.
+/// Response headers the relay never forwards as-is (SEC-85): hop-by-hop, the ones it sets
+/// itself, and the ones that would act on the browser beyond the app (`clear-site-data`,
+/// `alt-svc`, `service-worker-allowed`). The app's `content-security-policy` is passed through
+/// unchanged: the preview origin is the app's own, so its policy is its own to set.
 const DROP_RESPONSE: &[&str] = &[
     "connection",
     "keep-alive",
@@ -128,7 +169,10 @@ const DROP_RESPONSE: &[&str] = &[
     // Security headers are set by the relay, never trusted from the app.
     "strict-transport-security",
     "x-robots-tag",
-    "content-security-policy",
+    // Acts on the browser's storage or routing beyond this preview.
+    "clear-site-data",
+    "alt-svc",
+    "service-worker-allowed",
 ];
 
 const PSTATE_COOKIE: &str = "__Host-aurora_pstate";
@@ -186,6 +230,204 @@ fn simple(
         b = b.header(*k, v);
     }
     b.body(full_body(text)).unwrap()
+}
+
+/// What the API says about a share whose stream could not be opened.
+enum NotReady {
+    /// The sandbox runs and the port listens: try the stream again.
+    Listening,
+    /// A page to show instead (starting, start command exited, too many start attempts).
+    Page(hyper::Response<RelayBody>),
+    /// Nothing more is known: the generic answer applies.
+    Unknown,
+}
+
+/// Asks the API about the share's route, long-polling up to `wait_secs` for the port to
+/// listen (`POST /v1/relay/resolve { wait_secs }`, `docs/11 §Port previews` step 2/3).
+async fn not_ready(state: &State, label: &str, hash: &str, wait_secs: u32) -> NotReady {
+    let Ok(a) = state.api.resolve(label, Some(hash), wait_secs, false).await else {
+        return NotReady::Unknown;
+    };
+    // A denial the holder of a live session may be told (the API only speaks these to one):
+    // paused, frozen, the wake budget.
+    if a.decision == "deny" {
+        return match a
+            .reason
+            .as_deref()
+            .and_then(|r| spoken_deny(r, a.retry_after_secs))
+        {
+            Some(p) => NotReady::Page(p),
+            None => NotReady::Unknown,
+        };
+    }
+    let Some(route) = a.route.filter(|_| a.decision == "allow") else {
+        return NotReady::Unknown;
+    };
+    if route.sandbox == "running" && route.listening {
+        return NotReady::Listening;
+    }
+    match (route.start.as_str(), route.sandbox.as_str()) {
+        ("exited", _) => {
+            let code = route
+                .exit_code
+                .map_or_else(String::new, |c| format!(" with exit code {c}"));
+            NotReady::Page(status_page(
+                StatusCode::BAD_GATEWAY,
+                "Preview",
+                &format!(
+                    "The start command of this preview exited{code}. Reload to start it again; the preview's page in the dashboard shows its output."
+                ),
+            ))
+        }
+        // The start-attempt budget (`PREVIEW_START_ATTEMPTS` per window) is spent.
+        ("limited", _) => NotReady::Page(retry_after(
+            status_page(
+                StatusCode::TOO_MANY_REQUESTS,
+                "Preview",
+                "The start command of this preview was started too often; try again later.",
+            ),
+            u64::from(route.retry_after_secs.unwrap_or(60)),
+        )),
+        (_, "unavailable") => NotReady::Unknown,
+        // A running sandbox with nothing starting and nothing listening (no start command).
+        ("none", "running") => NotReady::Page(status_page(
+            StatusCode::BAD_GATEWAY,
+            "Preview",
+            "Nothing is listening on this preview's port.",
+        )),
+        // Still waking or starting after the wait: a 503 page that refreshes itself.
+        _ => {
+            let mut r = retry_after(
+                status_page(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "Preview",
+                    "This preview is starting. The page refreshes by itself.",
+                ),
+                5,
+            );
+            r.headers_mut()
+                .insert("refresh", HeaderValue::from_static("5"));
+            NotReady::Page(r)
+        }
+    }
+}
+
+/// The page of a deny reason the API speaks only to the holder of a live session of the
+/// share (`16 §W17`): `frozen` 423, `paused` 403, `wake_limited` 429 with `Retry-After`,
+/// `unreachable` 502. `None` for the uniform `not_found` (and anything unknown).
+fn spoken_deny(reason: &str, retry_after_secs: Option<u32>) -> Option<hyper::Response<RelayBody>> {
+    let (code, text) = match reason {
+        "frozen" => (StatusCode::LOCKED, "This preview is frozen.\n"),
+        "paused" => (StatusCode::FORBIDDEN, "This preview is paused.\n"),
+        "wake_limited" => (
+            StatusCode::TOO_MANY_REQUESTS,
+            "Too many wake requests; try again later.\n",
+        ),
+        "unreachable" => (
+            StatusCode::BAD_GATEWAY,
+            "The runner of this preview is unreachable.\n",
+        ),
+        _ => return None,
+    };
+    let page = status_page(code, "Preview", text);
+    Some(if reason == "wake_limited" {
+        retry_after(page, u64::from(retry_after_secs.unwrap_or(60)))
+    } else {
+        page
+    })
+}
+
+/// The answer for a failed API call (FIX-090): a throttled (429), overloaded or briefly
+/// unreachable API is a reason to try again, not a visitor-facing 502 — the 503 try-later page
+/// with `Retry-After`. A refusal that no retry fixes (the token no longer accepted, say) stays 502.
+fn api_unavailable(e: &crate::api::ApiError) -> hyper::Response<RelayBody> {
+    use crate::api::ApiError;
+    let retryable = match e {
+        ApiError::Transport(_) | ApiError::Decode(_) => true,
+        ApiError::Status(s) => matches!(*s, 429 | 500 | 502 | 503 | 504),
+    };
+    if retryable {
+        let mut r = retry_after(
+            status_page(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Preview",
+                "The preview service is busy. Try again in a moment.",
+            ),
+            5,
+        );
+        r.headers_mut()
+            .insert("refresh", HeaderValue::from_static("5"));
+        r
+    } else {
+        simple(
+            StatusCode::BAD_GATEWAY,
+            "The preview service is unavailable.\n",
+            &[],
+        )
+    }
+}
+
+/// Adds `Retry-After: <secs>` to a response.
+fn retry_after(mut r: hyper::Response<RelayBody>, secs: u64) -> hyper::Response<RelayBody> {
+    if let Ok(v) = HeaderValue::from_str(&secs.to_string()) {
+        r.headers_mut().insert("retry-after", v);
+    }
+    r
+}
+
+/// A WebSocket upgrade the relay accepts only to close it with `code` (`4409` limit reached,
+/// `docs/16`): a browser sees an ordinary close event with that code instead of a failed
+/// handshake it cannot tell from a network error.
+fn ws_refusal(
+    headers: &HeaderMap,
+    upgrade: Option<hyper::upgrade::OnUpgrade>,
+    code: u16,
+    reason: &'static str,
+) -> hyper::Response<RelayBody> {
+    use tokio_tungstenite::tungstenite::protocol::{CloseFrame, Role};
+    let (Some(key), Some(up)) = (
+        headers
+            .get("sec-websocket-key")
+            .and_then(|v| v.to_str().ok()),
+        upgrade,
+    ) else {
+        return retry_after(
+            simple(
+                StatusCode::TOO_MANY_REQUESTS,
+                "preview_streams_limit\n",
+                &[],
+            ),
+            1,
+        );
+    };
+    let accept = tokio_tungstenite::tungstenite::handshake::derive_accept_key(key.as_bytes());
+    tokio::spawn(async move {
+        let Ok(upgraded) = up.await else { return };
+        let mut ws = tokio_tungstenite::WebSocketStream::from_raw_socket(
+            hyper_util::rt::TokioIo::new(upgraded),
+            Role::Server,
+            None,
+        )
+        .await;
+        let _ = futures::SinkExt::send(
+            &mut ws,
+            tokio_tungstenite::tungstenite::Message::Close(Some(CloseFrame {
+                code: code.into(),
+                reason: reason.into(),
+            })),
+        )
+        .await;
+        let _ = futures::SinkExt::close(&mut ws).await;
+    });
+    #[expect(clippy::unwrap_used)]
+    hyper::Response::builder()
+        .status(StatusCode::SWITCHING_PROTOCOLS)
+        .header("connection", "upgrade")
+        .header("upgrade", "websocket")
+        .header("sec-websocket-accept", accept)
+        .header("cache-control", "no-store")
+        .body(full_body(""))
+        .unwrap()
 }
 
 /// Everything known about one request before the proxy decision.
@@ -347,12 +589,14 @@ pub enum Nav {
 }
 
 /// One request's full handling. `raw_head` is the exact bytes the parser saw (smuggling checks).
+#[allow(clippy::too_many_arguments)]
 pub async fn handle(
     state: Arc<State>,
     streams: Arc<Streams>,
     req: Request,
     raw_head: Arc<[u8]>,
     client_ip: Option<std::net::IpAddr>,
+    body_max: usize,
     body: hyper::body::Incoming,
     upgrade: Option<hyper::upgrade::OnUpgrade>,
 ) -> hyper::Response<RelayBody> {
@@ -374,7 +618,7 @@ pub async fn handle(
     }
     // ---- 1. the reserved namespace is never forwarded
     if req.path().starts_with(AURORA_PREFIX) {
-        return aurora_path(state, streams, &label, req).await;
+        return aurora_path(state, streams, &label, req, client_ip).await;
     }
     // ---- 2. Fetch Metadata matrix (docs/04 rule 4)
     if cross_site(&req) {
@@ -389,26 +633,42 @@ pub async fn handle(
     // ---- 3. credential check (resolve) + grant exchange
     let token = req.cookie(PREVIEW_COOKIE).map(str::to_owned);
     let hash = token.as_deref().map(session_hash);
+    let mut who: Option<(uuid::Uuid, String)> = None;
     let allowed = match &hash {
-        Some(h) => match state.resolve(&label, Some(h), false).await {
-            Ok(a) => a.decision == "allow",
-            Err(_) => {
+        Some(h) => match state.resolve(&label, Some(h), false, client_ip).await {
+            Ok(a) => {
+                if a.decision == "allow" {
+                    // The share (per-share cap) and the user (per-user cap; the session hash
+                    // stands in when the API named none).
+                    if let Some(sh) = &a.share {
+                        who = Some((sh.id, a.user.map_or_else(|| h.clone(), |u| u.to_string())));
+                    }
+                    true
+                } else {
+                    false
+                }
+            }
+            Err(e) => {
                 outcome("upstream_error");
-                return simple(
-                    StatusCode::BAD_GATEWAY,
-                    "The preview service is unavailable.\n",
-                    &[],
-                );
+                return api_unavailable(&e);
             }
         },
         None => false,
     };
     if !allowed {
-        return login_or_wait(state, &label, req, nav, &token, outcome).await;
+        return login_or_wait(state, &label, req, nav, &token, client_ip, outcome).await;
     }
-    // ---- 4. proxy
+    // ---- 4. proxy (an `allow` without a share cannot be capped: refuse it, never skip the cap)
+    let Some(who) = who else {
+        outcome("upstream_error");
+        return simple(
+            StatusCode::BAD_GATEWAY,
+            "The preview service is unavailable.\n",
+            &[],
+        );
+    };
     proxy(
-        state, streams, label, req, hash, nav, client_ip, body, upgrade, outcome,
+        state, streams, label, who, req, hash, nav, client_ip, body_max, body, upgrade, outcome,
     )
     .await
 }
@@ -420,35 +680,40 @@ async fn login_or_wait(
     req: Request,
     nav: Nav,
     token: &Option<String>,
+    client_ip: Option<std::net::IpAddr>,
     outcome: impl Fn(&'static str),
 ) -> hyper::Response<RelayBody> {
     if token.is_some() {
         // A credential that resolve denied: `deny` (uniform not_found / spoken reasons) or a
         // session past its idle limit → login (restart the flow silently).
         let h = token.as_deref().map(session_hash).unwrap_or_default();
-        let answer = state.resolve(label, Some(&h), false).await.ok();
+        let answer = state.resolve(label, Some(&h), false, client_ip).await.ok();
         let decision = answer
             .as_ref()
             .map(|a| a.decision.clone())
             .unwrap_or_else(|| "deny".into());
         if decision != "login" {
-            outcome("not_found");
+            let retry_secs = answer.as_ref().and_then(|a| a.retry_after_secs);
             let reason = answer.and_then(|a| a.reason).unwrap_or_default();
-            let text = match reason.as_str() {
-                "frozen" => "This preview is frozen.\n",
-                "paused" => "This preview is paused.\n",
-                "wake_limited" => "Too many wake requests; try again later.\n",
-                "unreachable" => "The runner of this preview is unreachable.\n",
-                _ => "Preview not found.\n",
-            };
-            let code = match reason.as_str() {
-                "frozen" => StatusCode::LOCKED,
-                "paused" => StatusCode::FORBIDDEN,
-                "wake_limited" => StatusCode::TOO_MANY_REQUESTS,
-                "unreachable" => StatusCode::BAD_GATEWAY,
-                _ => StatusCode::NOT_FOUND,
-            };
-            return status_page(code, "Preview", text);
+            if reason == "preview_quota" {
+                // The share is past its daily byte quota: 429 until the next UTC midnight.
+                // Only a holder of a live, authorized session gets here (the API decides
+                // after the access check), so the answer reveals nothing to others.
+                outcome("quota");
+                metrics::counter!("aurora_relay_refused_total", "reason" => "quota").increment(1);
+                return retry_after(
+                    status_page(
+                        StatusCode::TOO_MANY_REQUESTS,
+                        "Preview",
+                        "preview_quota: this preview reached its daily transfer limit.",
+                    ),
+                    crate::limits::secs_to_utc_midnight(),
+                );
+            }
+            outcome("not_found");
+            return spoken_deny(&reason, retry_secs).unwrap_or_else(|| {
+                status_page(StatusCode::NOT_FOUND, "Preview", "Preview not found.\n")
+            });
         }
         // `login`: fall through to the navigation redirect (the flow restarts silently).
     }
@@ -494,6 +759,7 @@ async fn aurora_path(
     _streams: Arc<Streams>,
     label: &str,
     req: Request,
+    client_ip: Option<std::net::IpAddr>,
 ) -> hyper::Response<RelayBody> {
     if req.path() != "/_aurora/grant" {
         return simple(StatusCode::NOT_FOUND, "Preview not found.\n", &[]);
@@ -531,6 +797,19 @@ async fn aurora_path(
     let outcome = |r: &'static str| {
         metrics::counter!("aurora_relay_grants_total", "result" => r).increment(1)
     };
+    // `PREVIEW_GRANT_RATE` (30/min per client address, 10/min per share) counts every
+    // redemption attempt that would reach the API, valid or not: grant guessing is bounded
+    // before the API sees it. It runs after the cheap shape checks above (FIX-090): a request
+    // without a well-formed state cookie never reaches the API and so spends nobody's budget —
+    // anonymous noise must not lock the share's real redemptions out.
+    if let Err((why, secs)) = state.grant_rate.check(client_ip, label) {
+        metrics::counter!("aurora_relay_refused_total", "reason" => why.reason()).increment(1);
+        outcome("rate_limited");
+        return retry_after(
+            simple(StatusCode::TOO_MANY_REQUESTS, "grant_rate_limited\n", &[]),
+            secs,
+        );
+    }
     match state.api.redeem(&grant, label, nonce).await {
         Ok(a) => {
             outcome("redeemed");
@@ -562,9 +841,25 @@ async fn aurora_path(
             outcome("invalid");
             simple(StatusCode::BAD_REQUEST, "grant_invalid\n", &[])
         }
-        Err(_) => {
+        // The grant was sound but the person no longer passes the access law: the uniform
+        // not-found page (404), the frozen page (423) or the paused page (403).
+        Err(crate::api::ApiError::Status(404)) => {
+            outcome("denied");
+            status_page(StatusCode::NOT_FOUND, "Preview", "Preview not found.\n")
+        }
+        Err(crate::api::ApiError::Status(423)) => {
+            outcome("denied");
+            spoken_deny("frozen", None).unwrap_or_else(|| simple(StatusCode::LOCKED, "", &[]))
+        }
+        Err(crate::api::ApiError::Status(403)) => {
+            outcome("denied");
+            spoken_deny("paused", None).unwrap_or_else(|| simple(StatusCode::FORBIDDEN, "", &[]))
+        }
+        // A throttled, overloaded or unreachable API: try again (the grant is single use, but
+        // the authorize redirect that brings the visitor back is free).
+        Err(e) => {
             outcome("invalid");
-            simple(StatusCode::BAD_GATEWAY, "grant service unavailable.\n", &[])
+            api_unavailable(&e)
         }
     }
 }
@@ -577,10 +872,12 @@ async fn proxy(
     state: Arc<State>,
     streams: Arc<Streams>,
     label: String,
+    who: (uuid::Uuid, String),
     req: Request,
     hash: Option<String>,
     nav: Nav,
     client_ip: Option<std::net::IpAddr>,
+    body_max: usize,
     body: hyper::body::Incoming,
     upgrade: Option<hyper::upgrade::OnUpgrade>,
     outcome: impl Fn(&'static str),
@@ -609,16 +906,65 @@ async fn proxy(
             return simple(StatusCode::FORBIDDEN, "preview_cross_site\n", &[]);
         }
     }
+    // The concurrent-stream caps (per share, per user; per replica): reserve before the API
+    // mints a grant. The slot is released by every exit path (drop), including a dial error
+    // and a client that goes away.
+    let slot = match streams.reserve(who.0, &who.1) {
+        Ok(s) => s,
+        Err(why) => {
+            outcome("quota");
+            metrics::counter!("aurora_relay_refused_total", "reason" => why.reason()).increment(1);
+            tracing::debug!(share = %who.0, reason = why.reason(), "preview stream cap reached");
+            return if is_ws {
+                ws_refusal(&req.headers, upgrade, 4409, "limit reached")
+            } else {
+                retry_after(
+                    simple(
+                        StatusCode::TOO_MANY_REQUESTS,
+                        "preview_streams_limit\n",
+                        &[],
+                    ),
+                    1,
+                )
+            };
+        }
+    };
     // The runner endpoint + stream grant (aux_) come from the API (`16 §W17`); the relay
     // never names a sandbox or a port.
-    let Ok(sa) = state.api.streams(&label, &h).await else {
-        outcome("unreachable");
-        return simple(
-            StatusCode::BAD_GATEWAY,
-            "The sandbox is not running.\n",
-            &[],
-        );
+    let sa = match state.api.streams(&label, &h).await {
+        Ok(sa) => sa,
+        // The sandbox is not running (parked or booting): the API set the wake demand when the
+        // request was resolved; hold the request until the port listens, at most
+        // `PREVIEW_WAKE_WAIT` (`docs/11 §Port previews`), else answer the refreshing 503 page.
+        Err(_) => {
+            let unreachable = || {
+                simple(
+                    StatusCode::BAD_GATEWAY,
+                    "The sandbox is not running.\n",
+                    &[],
+                )
+            };
+            match not_ready(&state, &label, &h, state.wake_wait_secs).await {
+                NotReady::Listening => match state.api.streams(&label, &h).await {
+                    Ok(sa) => sa,
+                    Err(_) => {
+                        outcome("unreachable");
+                        return unreachable();
+                    }
+                },
+                NotReady::Page(r) => {
+                    outcome("unreachable");
+                    return r;
+                }
+                NotReady::Unknown => {
+                    outcome("unreachable");
+                    return unreachable();
+                }
+            }
+        }
     };
+    let state_for_page = state.clone();
+    let hash_for_page = h.clone();
     // The rebuilt outbound header set: filtered (hop-by-hop, Aurora credentials, client
     // forwarding chain removed), `Host` = the runner endpoint, `X-Forwarded-For` added.
     let runner_host = authority_of(&sa.runner_endpoint).unwrap_or_default();
@@ -655,24 +1001,53 @@ async fn proxy(
     };
     // The rebuilt request head plus the body and the browser's pending upgrade ride the
     // same leg-1 stream; the target keeps the query string.
+    // A plain request asks the app to close after its answer, so the loopback socket and the
+    // supervisor stream are not held by a keep-alive app; an upgrade needs its own handshake.
+    if !req.headers.contains_key("upgrade") {
+        out_headers.insert("connection", HeaderValue::from_static("close"));
+    }
     let head = crate::proxy::build_request_head(&req.method, req.target(), &out_headers, body_len);
     let _ = nav;
-    match crate::proxy::forward(state, streams, key, sa, head, body_len, body, upgrade).await {
+    let exchange = crate::proxy::Exchange {
+        head_request: req.method == Method::HEAD,
+        body_max,
+    };
+    match crate::proxy::forward(
+        state, streams, key, sa, head, body_len, body, upgrade, slot, exchange,
+    )
+    .await
+    {
         Ok(r) => {
             outcome("ok");
             r
         }
         Err(code) => {
             outcome("upstream_error");
+            // A port that refuses the connection while the share's start command runs or
+            // has exited: say so (the refreshing "starting" page, the exit page) instead of
+            // a bare 502. No waiting here: the request body was already consumed.
+            if matches!(code, 502 | 504)
+                && let NotReady::Page(r) =
+                    not_ready(&state_for_page, &label, &hash_for_page, 0).await
+            {
+                return r;
+            }
             let text = match code {
                 502 => "The sandbox refused the connection.\n",
                 504 => "The sandbox timed out.\n",
+                413 => "Request body too large.\n",
                 _ => "The preview is unavailable.\n",
+            };
+            // An oversized upload leaves unread body bytes on the connection: close it.
+            let extra: &[(&'static str, String)] = if code == 413 {
+                &[("connection", "close".to_owned())]
+            } else {
+                &[]
             };
             simple(
                 StatusCode::from_u16(code).unwrap_or(StatusCode::BAD_GATEWAY),
                 text,
-                &[],
+                extra,
             )
         }
     }
@@ -775,15 +1150,60 @@ pub fn ip_text(ip: Option<std::net::IpAddr>) -> String {
         .unwrap_or_else(|| "unknown".to_owned())
 }
 
+/// True for a credential of Aurora's token format (`au<letter>_…`, `aurora-core` `token.rs`).
+fn is_aurora_token(s: &str) -> bool {
+    let b = s.as_bytes();
+    b.len() > 4 && b.starts_with(b"au") && b[2].is_ascii_lowercase() && b[3] == b'_'
+}
+
+/// The browser's `Cookie` headers without Aurora's own cookies (`__Host-aurora_*`,
+/// `aurora_*`: the preview, state and session cookies), as one header; `None` when nothing
+/// else remains. The app's cookies keep their order.
+fn strip_aurora_cookies(headers: &HeaderMap) -> Option<HeaderValue> {
+    let mut kept: Vec<&str> = Vec::new();
+    for v in headers.get_all("cookie") {
+        let Ok(s) = v.to_str() else { continue };
+        for pair in s.split(';') {
+            let pair = pair.trim();
+            if pair.is_empty() {
+                continue;
+            }
+            let name = pair.split_once('=').map_or(pair, |(k, _)| k).trim();
+            if name.starts_with("__Host-aurora_") || name.starts_with("aurora_") {
+                continue;
+            }
+            kept.push(pair);
+        }
+    }
+    if kept.is_empty() {
+        return None;
+    }
+    HeaderValue::from_str(&kept.join("; ")).ok()
+}
+
 /// Builds the outbound `Request` headers once (tests assert on this exact set).
 pub fn outbound_headers(req_headers: &HeaderMap, host_value: &str, client_ip: &str) -> HeaderMap {
     let mut h = HeaderMap::new();
     for (name, value) in req_headers {
         let n = name.as_str();
-        if DROP_REQUEST.iter().any(|d| d.eq_ignore_ascii_case(n)) {
+        if DROP_REQUEST.iter().any(|d| d.eq_ignore_ascii_case(n))
+            || n.starts_with("x-forwarded-")
+            || n == "cookie"
+        {
             continue;
         }
-        h.insert(name, value.clone());
+        // An Aurora token never reaches the app; the app's own `Authorization` does.
+        if n == "authorization"
+            && value
+                .to_str()
+                .map_or(true, |v| v.split_whitespace().any(is_aurora_token))
+        {
+            continue;
+        }
+        h.append(name, value.clone());
+    }
+    if let Some(c) = strip_aurora_cookies(req_headers) {
+        h.insert("cookie", c);
     }
     h.insert(
         "host",
@@ -885,14 +1305,27 @@ async fn serve_conn(
 ) {
     let state2 = state.clone();
     let streams2 = streams.clone();
+    // The wire-level smuggling guard sees the bytes before hyper normalises them.
+    let wire = wire::Wire::default();
+    let guarded = wire.guard(tcp);
+    let wire2 = wire.clone();
     let svc = hyper::service::service_fn(move |mut req: hyper::Request<Incoming>| {
         let state = state2.clone();
         let streams = streams2.clone();
+        let wire = wire2.clone();
         async move {
+            if wire.is_bad() {
+                metrics::counter!("aurora_relay_requests_total", "outcome" => "bad_request")
+                    .increment(1);
+                return Ok::<_, std::convert::Infallible>(simple(
+                    StatusCode::BAD_REQUEST,
+                    "Bad request.\n",
+                    &[("connection", "close".to_owned())],
+                ));
+            }
             let headers = req.headers().clone();
-            // hyper does not expose the raw head; the smuggling checks run on the parsed
-            // header map (duplicate Content-Length survives there; obsolete line folding and
-            // bad TE make hyper's own parser fail with 400 first — defense in depth).
+            // The wire guard refuses ambiguous framing before this point; this second check
+            // runs on the parsed header map (defense in depth).
             let mut raw = Vec::new();
             for (n, v) in headers.iter() {
                 raw.extend_from_slice(n.as_str().as_bytes());
@@ -932,13 +1365,40 @@ async fn serve_conn(
                 headers: parts.headers,
                 cookies,
             };
-            Ok(handle(state, streams, req, raw_head, ip, body, Some(upgrade)).await)
+            // The visitor's address: the socket peer, or behind a trusted edge proxy the
+            // rightmost untrusted `X-Forwarded-For` entry (FIX-090).
+            let xff: Vec<&str> = headers
+                .get_all("x-forwarded-for")
+                .iter()
+                .filter_map(|v| v.to_str().ok())
+                .collect();
+            let client = crate::limits::client_address(ip, &xff, &state.trusted_proxies);
+            let mut res = handle(
+                state,
+                streams,
+                req,
+                raw_head,
+                client,
+                body_max,
+                body,
+                Some(upgrade),
+            )
+            .await;
+            // After an upgrade request the guard no longer inspects the connection: only a
+            // `101` may keep it open.
+            if wire.upgrade_seen() && res.status() != StatusCode::SWITCHING_PROTOCOLS {
+                res.headers_mut()
+                    .insert("connection", HeaderValue::from_static("close"));
+            }
+            Ok(res)
         }
     });
+    // The request head must arrive within `PREVIEW_HEADER_TIMEOUT` (slow-loris): a connection
+    // that dribbles its headers is closed.
     let _ = hyper::server::conn::http1::Builder::new()
-        .header_read_timeout(HEADER_TIMEOUT)
+        .header_read_timeout(streams.timeouts().header)
         .timer(hyper_util::rt::TokioTimer::new())
-        .serve_connection(hyper_util::rt::TokioIo::new(tcp), svc)
+        .serve_connection(hyper_util::rt::TokioIo::new(guarded), svc)
         .with_upgrades()
         .await;
 }
@@ -1040,6 +1500,132 @@ mod tests {
         assert_eq!(out.get("host").unwrap(), "runner.example:4108");
         // The client-supplied XFF is dropped, then re-added with the relay's own value.
         assert_eq!(out.get("x-forwarded-for").unwrap(), "10.0.0.1");
+    }
+
+    /// SEC-85, request side: each listed header is removed, the app's own cookies and
+    /// `Authorization` are not.
+    #[test]
+    fn request_header_lists() {
+        for gone in [
+            "connection",
+            "keep-alive",
+            "proxy-authorization",
+            "te",
+            "trailer",
+            "transfer-encoding",
+            "upgrade",
+            "forwarded",
+            "x-forwarded-for",
+            "x-forwarded-host",
+            "x-forwarded-proto",
+            "x-forwarded-port",
+            "x-forwarded-prefix",
+            "x-forwarded-anything",
+            "x-real-ip",
+            "true-client-ip",
+            "via",
+            "x-aurora-replica",
+        ] {
+            let out = outbound_headers(&headers(&[(gone, "v")]), "runner:4108", "10.0.0.1");
+            if gone == "x-forwarded-for" {
+                // The relay's own value replaces the client's.
+                assert_eq!(out.get(gone).unwrap(), "10.0.0.1");
+                continue;
+            }
+            assert!(out.get(gone).is_none(), "{gone} must not reach the app");
+        }
+        // The app's own credentials reach the app; an Aurora token does not.
+        let out = outbound_headers(
+            &headers(&[("authorization", "Basic dXNlcjpwdw==")]),
+            "r:1",
+            "10.0.0.1",
+        );
+        assert_eq!(out.get("authorization").unwrap(), "Basic dXNlcjpwdw==");
+        for tok in [
+            "Bearer auv_abc",
+            "Bearer aux_abc",
+            "auk_abc",
+            "Bearer aul_x",
+        ] {
+            let out = outbound_headers(&headers(&[("authorization", tok)]), "r:1", "10.0.0.1");
+            assert!(out.get("authorization").is_none(), "{tok}");
+        }
+        // Not a token: only looks similar.
+        for ok in ["Bearer audit_log", "Bearer authz", "Bearer au_x"] {
+            let out = outbound_headers(&headers(&[("authorization", ok)]), "r:1", "10.0.0.1");
+            assert!(out.get("authorization").is_some(), "{ok}");
+        }
+    }
+
+    #[test]
+    fn aurora_cookies_are_removed_and_the_apps_kept() {
+        let mut h = HeaderMap::new();
+        h.append(
+            "cookie",
+            HeaderValue::from_static("app=1; __Host-aurora_preview=auv_x; theme=dark"),
+        );
+        h.append(
+            "cookie",
+            HeaderValue::from_static("aurora_session=s; __Host-aurora_pstate=n.p; b=2"),
+        );
+        let out = outbound_headers(&h, "r:1", "10.0.0.1");
+        assert_eq!(out.get("cookie").unwrap(), "app=1; theme=dark; b=2");
+        assert_eq!(out.get_all("cookie").iter().count(), 1);
+        // Nothing left: no header at all. A look-alike name is the app's.
+        let h = headers(&[("cookie", "__Host-aurora_preview=auv_x; aurora_session=s")]);
+        assert!(
+            outbound_headers(&h, "r:1", "10.0.0.1")
+                .get("cookie")
+                .is_none()
+        );
+        let h = headers(&[("cookie", "aurorax=1; my_aurora_pref=2")]);
+        assert_eq!(
+            outbound_headers(&h, "r:1", "10.0.0.1")
+                .get("cookie")
+                .unwrap(),
+            "aurorax=1; my_aurora_pref=2"
+        );
+    }
+
+    /// SEC-85, response side: each listed header is removed; the app's CSP passes.
+    #[test]
+    fn response_header_lists() {
+        for gone in [
+            "connection",
+            "keep-alive",
+            "proxy-authenticate",
+            "te",
+            "trailer",
+            "transfer-encoding",
+            "upgrade",
+            "clear-site-data",
+            "alt-svc",
+            "service-worker-allowed",
+        ] {
+            let out = rewrite_response_headers(&headers(&[(gone, "v")]));
+            assert!(out.get(gone).is_none(), "{gone} must not reach the browser");
+        }
+        // The relay's own value replaces the app's.
+        let out = rewrite_response_headers(&headers(&[
+            ("strict-transport-security", "max-age=1"),
+            ("x-robots-tag", "all"),
+        ]));
+        assert_eq!(out.get("x-robots-tag").unwrap(), "noindex");
+        assert!(
+            out.get("strict-transport-security")
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .contains("31536000")
+        );
+        let out = rewrite_response_headers(&headers(&[(
+            "content-security-policy",
+            "default-src 'self'",
+        )]));
+        assert_eq!(
+            out.get("content-security-policy").unwrap(),
+            "default-src 'self'"
+        );
     }
 
     #[test]

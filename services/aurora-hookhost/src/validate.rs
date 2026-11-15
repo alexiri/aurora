@@ -73,6 +73,44 @@ impl Ctx<'_> {
         }
     }
 
+    /// (FIX-107) The user is sent to this URL: its host is one the package declared — an egress
+    /// host of `connect.authorize` or `connect.exchange`, a host the app claims, or the
+    /// authorize endpoint of one of the package's OAuth clients — never an arbitrary host.
+    fn authorize_host_ok(&self, url: &str) -> Result<(), CallError> {
+        let (host, port) = https_host(url)?;
+        let egress = [Hook::ConnectAuthorize, Hook::ConnectExchange]
+            .iter()
+            .filter_map(|h| self.package.egress.get(h))
+            .flatten()
+            .any(|p| HostPattern::lenient(p).matches(&host, port));
+        let claimed = self
+            .snapshot
+            .hosts
+            .iter()
+            .filter(|h| h.app_id == self.app.app_id)
+            .any(|h| HostPattern::lenient(&h.host).matches(&host, port));
+        if egress || claimed || self.oauth_authorize_host(&host, port) {
+            Ok(())
+        } else {
+            Err(bad("authorize url host is not declared"))
+        }
+    }
+
+    fn oauth_authorize_host(&self, host: &str, port: u16) -> bool {
+        self.snapshot
+            .oauth_clients
+            .iter()
+            .filter(|c| c.package_id == self.package.package_id)
+            .any(|c| match &c.authorize_url {
+                aurora_registry::manifest::UrlOrTemplate::Url(a) => Url::parse(a)
+                    .ok()
+                    .is_some_and(|u| u.host_str().is_some_and(|h| h.eq_ignore_ascii_case(host))),
+                aurora_registry::manifest::UrlOrTemplate::Templated(z) => {
+                    HostPattern::lenient(&z.zone).matches(host, port)
+                }
+            })
+    }
+
     fn continue_host_ok(&self, url: &str) -> Result<(), CallError> {
         let (host, port) = https_host(url)?;
         let declared = self
@@ -108,7 +146,7 @@ impl Ctx<'_> {
 pub fn validate(ctx: &Ctx<'_>, o: Outcome) -> Result<Outcome, CallError> {
     match &o {
         Outcome::Authorize(a) => {
-            https_host(&a.url)?;
+            ctx.authorize_host_ok(&a.url)?;
         }
         Outcome::Exchange(types::ExchangeOutput::Connected(c)) => {
             ctx.creds_ok(&c.credentials)?;

@@ -30,7 +30,8 @@ function BoundGroup({ wsId, b, canOwn, onError }: { wsId: string; b: GroupAccess
   const put = usePutGroupAccess(wsId);
   const del = useDeleteGroupAccess(wsId);
   const [confirm, setConfirm] = useState(false);
-  const impact = useGroupImpact(b.group.id, null, confirm);
+  // Unbinding takes away this workspace only, not the whole group (C-464 `unbind_workspace`).
+  const impact = useGroupImpact(b.group.id, null, confirm, wsId);
   return (
     <tr>
       <Td>
@@ -122,7 +123,7 @@ function AddGroup({ wsId, orgId, bound }: { wsId: string; orgId: string; bound: 
             <option value="owner">owner</option>
           </select>
         </Field>
-        <Button type="submit" disabled={!group || put.isPending} className="sm:mt-[1.625rem]">
+        <Button type="submit" disabled={!group || put.isPending} className="sm:mt-label-offset">
           Add
         </Button>
         {put.error ? (

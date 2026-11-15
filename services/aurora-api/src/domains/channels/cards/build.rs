@@ -40,9 +40,13 @@ fn decide_buttons(
     ])
 }
 
-/// Gateway approval card: header, summary title and fields, context, Approve/Deny and, for
-/// batches with more than one approval, Approve all / Deny all.
-pub fn approval(m: &Minter<'_>, row: &ApprovalRow) -> Result<Card, ApiError> {
+/// Gateway approval card: header, summary title (and fields in a 1:1 conversation), context,
+/// Approve/Deny and, for batches with more than one approval, Approve all / Deny all.
+///
+/// D-178 (Q-R5-9): in a **shared** space (`shared`: every member of the channel sees the card, not
+/// only people who may use the agent) the card carries the title, agent, rule and expiry only. The
+/// request's details (method, host, path, body keys) are on the dashboard page the card links to.
+pub fn approval(m: &Minter<'_>, row: &ApprovalRow, shared: bool) -> Result<Card, ApiError> {
     let title = row
         .summary
         .get("title")
@@ -53,6 +57,7 @@ pub fn approval(m: &Minter<'_>, row: &ApprovalRow) -> Result<Card, ApiError> {
         .summary
         .get("fields")
         .and_then(Value::as_array)
+        .filter(|_| !shared)
         .map(|a| {
             a.iter()
                 .filter_map(|f| {

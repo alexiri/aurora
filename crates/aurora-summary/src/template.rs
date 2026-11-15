@@ -170,15 +170,32 @@ pub fn run_steps(steps: &[Decoder], body: &[u8]) -> Option<String> {
 
 fn step(d: &Decoder, v: &Val) -> Option<Val> {
     match d {
+        Decoder::Json(ptr) if ptr.split('/').any(|s| s == "*") => {
+            // (FIX-118) `*` visits every element of an array (or member of an object); the scalar
+            // leaves are listed, comma-separated, so every recipient or attendee is shown.
+            let j: serde_json::Value = serde_json::from_slice(v.bytes()).ok()?;
+            let mut nodes = vec![&j];
+            for seg in ptr.split('/').skip(1) {
+                let mut next = Vec::new();
+                for n in nodes {
+                    if seg == "*" {
+                        match n {
+                            serde_json::Value::Array(a) => next.extend(a.iter()),
+                            serde_json::Value::Object(o) => next.extend(o.values()),
+                            _ => {}
+                        }
+                    } else if let Some(c) = n.pointer(&format!("/{seg}")) {
+                        next.push(c);
+                    }
+                }
+                nodes = next;
+            }
+            let leaves: Vec<String> = nodes.into_iter().filter_map(scalar_text).collect();
+            (!leaves.is_empty()).then(|| Val::Text(leaves.join(", ")))
+        }
         Decoder::Json(ptr) => {
             let j: serde_json::Value = serde_json::from_slice(v.bytes()).ok()?;
-            match j.pointer(ptr)? {
-                serde_json::Value::String(s) => Some(Val::Text(s.clone())),
-                x @ (serde_json::Value::Number(_) | serde_json::Value::Bool(_)) => {
-                    Some(Val::Text(x.to_string()))
-                }
-                _ => None,
-            }
+            scalar_text(j.pointer(ptr)?).map(Val::Text)
         }
         Decoder::Form(name) => {
             let t = v.text()?;
@@ -198,23 +215,52 @@ fn step(d: &Decoder, v: &Val) -> Option<Val> {
         }
         Decoder::MimeHeader(name) => {
             let msg = MessageParser::default().parse(v.bytes())?;
-            let h = msg.headers().get(name.as_str())?;
-            let s = match h.value() {
-                HeaderValue::Text(t) => t.to_owned(),
-                HeaderValue::Address(list) => list
-                    .mailboxes()
-                    .map(|m| match (m.name(), m.address()) {
-                        (Some(n), Some(a)) => format!("{n} <{a}>"),
-                        (None, Some(a)) => a.to_owned(),
-                        (Some(n), None) => n.to_owned(),
-                        (None, None) => String::new(),
-                    })
-                    .filter(|s| !s.is_empty())
-                    .collect::<Vec<_>>()
-                    .join(", "),
-                other => other.as_text()?.to_owned(),
+            // (FIX-118) Every header of that name: a second `To:` or `Cc:` line is a recipient
+            // too, and an approval must show who gets the mail.
+            let mut parts = Vec::new();
+            for h in msg.headers().all(name.as_str()) {
+                let s = match h.value() {
+                    HeaderValue::Text(t) => t.to_owned(),
+                    HeaderValue::Address(list) => list
+                        .mailboxes()
+                        .map(|m| match (m.name(), m.address()) {
+                            (Some(n), Some(a)) => format!("{n} <{a}>"),
+                            (None, Some(a)) => a.to_owned(),
+                            (Some(n), None) => n.to_owned(),
+                            (None, None) => String::new(),
+                        })
+                        .filter(|s| !s.is_empty())
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                    other => other.as_text()?.to_owned(),
+                };
+                if !s.is_empty() {
+                    parts.push(s);
+                }
+            }
+            if parts.is_empty() {
+                return None;
+            }
+            Some(Val::Text(parts.join(", ")))
+        }
+        Decoder::MimeAttachments(_) => {
+            let msg = MessageParser::default().parse(v.bytes())?;
+            Some(Val::Text(msg.attachments().len().to_string()))
+        }
+        Decoder::JsonCount(ptr) => {
+            let j: serde_json::Value = serde_json::from_slice(v.bytes()).ok()?;
+            let n = match j.pointer(ptr) {
+                Some(serde_json::Value::Array(a)) => a.len(),
+                Some(_) => return None,
+                None => 0,
             };
-            Some(Val::Text(s))
+            Some(Val::Text(n.to_string()))
+        }
+        Decoder::JsonText(ptr) => {
+            let j: serde_json::Value = serde_json::from_slice(v.bytes()).ok()?;
+            let mut out = Vec::new();
+            collect_text(j.pointer(ptr)?, &mut out, 0);
+            (!out.is_empty()).then(|| Val::Text(out.join(" ")))
         }
         Decoder::MimeText(_) => {
             let msg = MessageParser::default().parse(v.bytes())?;
@@ -224,6 +270,37 @@ fn step(d: &Decoder, v: &Val) -> Option<Val> {
             let t = part.text_prefix(SUMMARY_TEXT_MAX)?;
             Some(Val::Text(t.into_owned()))
         }
+    }
+}
+
+fn scalar_text(v: &serde_json::Value) -> Option<String> {
+    match v {
+        serde_json::Value::String(s) => Some(s.clone()),
+        x @ (serde_json::Value::Number(_) | serde_json::Value::Bool(_)) => Some(x.to_string()),
+        _ => None,
+    }
+}
+
+/// Every string stored under a `text` or `content` key below `v` (nested document and rich-text
+/// block formats), in document order; a string `v` is its own text.
+fn collect_text(v: &serde_json::Value, out: &mut Vec<String>, depth: usize) {
+    if depth > 32 {
+        return;
+    }
+    match v {
+        serde_json::Value::String(s) if depth == 0 => out.push(s.clone()),
+        serde_json::Value::Array(a) => a.iter().for_each(|x| collect_text(x, out, depth + 1)),
+        serde_json::Value::Object(o) => {
+            for (k, x) in o {
+                match x {
+                    serde_json::Value::String(s) if k == "text" || k == "content" => {
+                        out.push(s.clone());
+                    }
+                    _ => collect_text(x, out, depth + 1),
+                }
+            }
+        }
+        _ => {}
     }
 }
 
@@ -409,6 +486,66 @@ mod tests {
             true,
         );
         assert!(s.fields.is_empty());
+    }
+
+    /// (FIX-118, PKG-1) Every recipient — repeated `To:` lines, Cc and Bcc — and the attachment
+    /// count reach the approval card.
+    #[test]
+    fn mail_shows_every_recipient_and_the_attachment_count() {
+        let mime = "To: a@example.com\r\nTo: b@example.com, \"C\" <c@example.com>\r\nCc: cc@example.com\r\nBcc: spy@evil.example\r\nSubject: Status\r\nContent-Type: multipart/mixed; boundary=b\r\n\r\n--b\r\nContent-Type: text/plain\r\n\r\nSee attached\r\n--b\r\nContent-Type: application/pdf\r\nContent-Disposition: attachment; filename=\"x.pdf\"\r\n\r\nPDF\r\n--b--\r\n";
+        let body = serde_json::to_vec(&json!({ "raw": URL_SAFE_NO_PAD.encode(mime) })).unwrap();
+        let step = |h: &str| json!([{"json":"/raw"},{"base64url":{}},{"mime_header":h}]);
+        let s = run(
+            json!({"title":"Send","fields":[
+              {"label":"To","source":"body","steps":step("To")},
+              {"label":"Cc","source":"body","steps":step("Cc")},
+              {"label":"Bcc","source":"body","steps":step("Bcc")},
+              {"label":"Attachments","source":"body","steps":[{"json":"/raw"},{"base64url":{}},{"mime_attachments":{}}]}]}),
+            "/",
+            None,
+            &body,
+            false,
+        );
+        assert_eq!(
+            val(&s, "To").as_deref(),
+            Some("a@example.com, b@example.com, C <c@example.com>")
+        );
+        assert_eq!(val(&s, "Cc").as_deref(), Some("cc@example.com"));
+        assert_eq!(val(&s, "Bcc").as_deref(), Some("spy@evil.example"));
+        assert_eq!(val(&s, "Attachments").as_deref(), Some("1"));
+    }
+
+    #[test]
+    fn json_wildcards_counts_and_nested_text() {
+        let st = |v: serde_json::Value| -> Vec<Decoder> { serde_json::from_value(v).unwrap() };
+        let body = br#"{"message":{"toRecipients":[{"emailAddress":{"address":"a@x.io"}},{"emailAddress":{"address":"b@x.io"}}],"attachments":[{},{},{}]},
+            "body":{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"first"}]},{"type":"paragraph","content":[{"type":"text","text":"second"},{"type":"text","text":"third"}]}]},
+            "children":[{"paragraph":{"rich_text":[{"type":"text","text":{"content":"block words"}}]}}]}"#;
+        assert_eq!(
+            run_steps(
+                &st(json!([{"json":"/message/toRecipients/*/emailAddress/address"}])),
+                body
+            )
+            .as_deref(),
+            Some("a@x.io, b@x.io")
+        );
+        assert!(run_steps(&st(json!([{"json":"/message/nobody/*/x"}])), body).is_none());
+        assert_eq!(
+            run_steps(&st(json!([{"json_count":"/message/attachments"}])), body).as_deref(),
+            Some("3")
+        );
+        assert_eq!(
+            run_steps(&st(json!([{"json_count":"/message/ccRecipients"}])), body).as_deref(),
+            Some("0")
+        );
+        assert_eq!(
+            run_steps(&st(json!([{"json_text":"/body"}])), body).as_deref(),
+            Some("first second third")
+        );
+        assert_eq!(
+            run_steps(&st(json!([{"json_text":"/children"}])), body).as_deref(),
+            Some("block words")
+        );
     }
 
     #[test]

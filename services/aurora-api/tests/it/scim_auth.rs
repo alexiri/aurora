@@ -107,6 +107,48 @@ async fn every_auth_failure_is_one_identical_401() {
     }
 }
 
+/// The SCIM runbook's "alert on a rising 401 rate" rests on these counters: every failed
+/// authentication adds to `aurora_scim_auth_failures_total` and to the `unauthorized`
+/// request outcome, a good request to `ok`. Other tests share the process-wide recorder
+/// and only ever add, so the assertions are lower bounds on the delta.
+#[tokio::test]
+async fn failed_auth_increments_the_scim_auth_failure_counter() {
+    const FAILS: &str = "aurora_scim_auth_failures_total";
+    const R401: &str = "aurora_scim_requests_total{outcome=\"unauthorized\"}";
+    const ROK: &str = "aurora_scim_requests_total{outcome=\"ok\"}";
+    // Installs the recorder before the first request, so nothing is lost.
+    let (f0, u0, ok0) = (
+        counter_value(FAILS),
+        counter_value(R401),
+        counter_value(ROK),
+    );
+    let fx = ScimFx::new().await;
+    for hdrs in [
+        vec![],
+        vec![("authorization", "Bearer not-a-token")],
+        vec![(
+            "authorization",
+            "Bearer aud_0000000000000000000000000000000000000000",
+        )],
+    ] {
+        let (s, _, _) = fx.h.send(Method::GET, USERS, &hdrs, None).await;
+        assert_eq!(s, http::StatusCode::UNAUTHORIZED);
+    }
+    assert!(counter_value(FAILS) >= f0 + 3.0, "auth failures counted");
+    assert!(counter_value(R401) >= u0 + 3.0, "401 outcomes counted");
+    let bearer = format!("Bearer {}", fx.token);
+    let (s, _, _) =
+        fx.h.send(
+            Method::GET,
+            USERS,
+            &[("authorization", bearer.as_str())],
+            None,
+        )
+        .await;
+    assert_eq!(s, http::StatusCode::OK);
+    assert!(counter_value(ROK) >= ok0 + 1.0, "ok outcome counted");
+}
+
 #[tokio::test]
 async fn revoked_and_expired_and_org_disabled_are_401() {
     let fx = ScimFx::new().await;
@@ -296,7 +338,7 @@ async fn token_expiring_notices_14d_and_1d() {
         .execute(fx.h.pool())
         .await
         .unwrap();
-    aurora_api::jobs::sweep_scim_token_expiry(fx.h.pool())
+    aurora_api::jobs::sweep_scim_token_expiry(fx.h.pool(), None)
         .await
         .unwrap();
     let n14 = count(
@@ -307,7 +349,7 @@ async fn token_expiring_notices_14d_and_1d() {
     .await;
     assert_eq!(n14, 1, "the 14-day notice fires once");
     // Re-running the same day does not duplicate it.
-    aurora_api::jobs::sweep_scim_token_expiry(fx.h.pool())
+    aurora_api::jobs::sweep_scim_token_expiry(fx.h.pool(), None)
         .await
         .unwrap();
     let n = count(
@@ -322,7 +364,7 @@ async fn token_expiring_notices_14d_and_1d() {
         .execute(fx.h.pool())
         .await
         .unwrap();
-    aurora_api::jobs::sweep_scim_token_expiry(fx.h.pool())
+    aurora_api::jobs::sweep_scim_token_expiry(fx.h.pool(), None)
         .await
         .unwrap();
     let n = count(
@@ -332,6 +374,53 @@ async fn token_expiring_notices_14d_and_1d() {
     )
     .await;
     assert_eq!(n, 2, "the 1-day notice fires");
+}
+
+/// FIX-081: the expiry notice reaches the org's owners and admins by e-mail (the channel quota
+/// notices use), once per recipient and threshold, and never carries token material.
+#[tokio::test]
+async fn token_expiry_notice_is_mailed_once_per_owner_and_threshold() {
+    let fx = ScimFx::new().await;
+    let admin = fx.h.user("admin-notice@x.io", false).await;
+    fx.h.member(fx.org, admin, "admin", "active").await;
+    let mail = aurora_api::domains::attachments::sweep::QuotaMail {
+        mailer: fx.h.mail.clone(),
+        external_url: "https://aurora.example".to_owned(),
+    };
+    fx.h.mail.clear();
+    let sweep = || aurora_api::jobs::sweep_scim_token_expiry(fx.h.pool(), Some(&mail));
+    sqlx::query("UPDATE scim_tokens SET expires_at = now() + interval '13 days'")
+        .execute(fx.h.pool())
+        .await
+        .unwrap();
+    sweep().await.unwrap();
+    let recipients = |n: usize| {
+        let mut to: Vec<String> = fx.h.mail.sent().into_iter().map(|m| m.to).collect();
+        to.sort();
+        assert_eq!(to.len(), n, "{to:?}");
+        to
+    };
+    assert_eq!(
+        recipients(2),
+        vec!["admin-notice@x.io".to_owned(), "owner@x.io".to_owned()]
+    );
+    // The next pass of the same day mails nobody again.
+    sweep().await.unwrap();
+    recipients(2);
+    // The 1-day threshold is a second notice per recipient.
+    sqlx::query("UPDATE scim_tokens SET expires_at = now() + interval '6 hours'")
+        .execute(fx.h.pool())
+        .await
+        .unwrap();
+    sweep().await.unwrap();
+    recipients(4);
+    for m in fx.h.mail.sent() {
+        assert!(m.link.ends_with("/settings/directory"), "{}", m.link);
+        assert!(
+            !m.body.contains(&fx.token) && !m.subject.contains(&fx.token),
+            "token material in a notice"
+        );
+    }
 }
 
 #[tokio::test]

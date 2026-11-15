@@ -27,6 +27,9 @@ impl OrgRole {
 pub enum MemberStatus {
     Active,
     Suspended,
+    /// (D-175, FIX-082) Prepared by SCIM for an existing account; confers nothing until that
+    /// person's next verified sign-in. Read-only: never accepted as a `PATCH` value.
+    Pending,
 }
 
 impl MemberStatus {
@@ -34,6 +37,7 @@ impl MemberStatus {
         match self {
             Self::Active => "active",
             Self::Suspended => "suspended",
+            Self::Pending => "pending",
         }
     }
 }
@@ -131,10 +135,10 @@ pub fn parse_ws_role(s: &str) -> WorkspaceRole {
 }
 
 pub fn parse_status(s: &str) -> MemberStatus {
-    if s == "active" {
-        MemberStatus::Active
-    } else {
-        MemberStatus::Suspended
+    match s {
+        "active" => MemberStatus::Active,
+        "pending" => MemberStatus::Pending,
+        _ => MemberStatus::Suspended,
     }
 }
 

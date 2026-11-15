@@ -14,7 +14,7 @@
 | **Connector** (per platform) | `aurora-connector-<id>` | Chat platform transport, translation, provisioning | platform callbacks only (e.g. 4110) | none | its chat platform only |
 | **Connector host** (phase 4, P4-MCON) | `aurora-connector-host` | Runs the built-in connector types as **managed connectors** added from the dashboard (`13 §3.1`); speaks the connector contract on their behalf | 4110 platform callbacks (`/connectors/<id>/…` via the edge); 4192 health/metrics | none | edge (platform callbacks) |
 | **Preview relay** (phase 4, P4-PRV-2; **only when `previews.enabled`**) | `aurora-relay` | Browser-facing HTTP/WebSocket reverse proxy for preview hostnames: authenticates the browser (`04 §Preview access`), resolves hostnames through the API, opens byte streams to a sandbox port through the runner (`16 §W17`, `§W18`) | 4112 (edge-routed wildcard host); 4193 health/metrics | none (in-memory caches only) | edge (wildcard preview host) |
-| **SSH terminator** (phase 4) | `aurora-terminator` | Certificate-authenticated SSH into sandboxes | 2222 | none | users |
+| **SSH terminator** (phase 5, D-138; P4-SSH-2, D-239; **only when `ssh.enabled`**) | `aurora-terminator` | Public SSH server (Rust, `russh`): certificate-only authentication of people, then a session opened with the API and one byte stream per SSH channel to the sandbox through the runner's stream listener (`16 §W20`, the web terminal's path); holds no signing key, no database and no cluster credential (`11 §SSH access`) | 2222 (published by a LoadBalancer Service, port 22 by default); 4194 health/metrics | none (in-memory session table only) | SSH clients (LoadBalancer) |
 | **PostgreSQL** | — | System of record, queue, event bus | 5432 | yes | API, gateway |
 | **Migrations job** | `aurora-api migrate` | Forward-only schema migrations before API starts | — | — | — |
 | **CLI** | `aurora` | Login, BYO `run`, management, plugin tooling | — | `~/.config/aurora` | — |
@@ -44,7 +44,7 @@ backend). Trust boundary 4 (gateway ↔ database) gains one grant: the counter t
 │           │  │  │       (wasm hooks)         │       └──────────────────────────────────┘
 │           │  │  └──── connectors ◄─► chat platforms (outbound sockets, own callbacks)
 │           │  └─────── runner ◄── supervisor (WebSocket, per sandbox)
-│           └────────── SSH terminator (phase 4)
+│           └────────── SSH terminator (phase 5)
 └──────────────────────────────────────────────┘
                               COMPUTE PLANE: sandbox (container/pod) + durable home
                                  supervisor ─► harness ─► loopback proxy ─► gateway only
@@ -94,7 +94,14 @@ database, no keys, no ambient network. It is called only on slow paths.
 4. **Gateway ↔ database.** The gateway uses a least-privilege database role:
    read on configuration tables; write only on approvals, request log,
    refreshed connection credentials (compare-and-set), reauth flags and its own
-   instance rows.
+   instance rows (nothing on `api_keys`). The role is **required** (FIX-106,
+   D-178 Q-R5-11): the Helm chart's bundled evaluation Postgres creates it
+   automatically; with an external database the chart refuses to render without
+   `database.gatewayRole` + `database.gatewayExistingSecret` unless
+   `database.allowSharedLogin` explicitly lets the gateway share the main login
+   (`15`, `23`). A non-Helm install configures `database.gateway_role` and gives the
+   gateway its own `AURORA_DATABASE_URL`; sharing the login there is the
+   operator's explicit exception.
 5. **Gateway control port (4103)** is internal: reachable from API replicas
    only (network policy), authenticated with the internal secret. It is never
    on the sandbox network. (phase 4, P4-GSL) It also serves `POST /internal/v1/library-fetch`,
@@ -117,7 +124,7 @@ database, no keys, no ambient network. It is called only on slow paths.
    plaintext per call. Connectors see their own platform credentials.
 9. **Chat traffic** to platforms is platform traffic, not agent traffic: it
    does not pass through the gateway.
-10. **Optional external stores** (phase 4, P4-CNT, P4-S3). The **API** may talk to an
+10. **Optional external stores** (phase 4, P4-CNT; the S3 half, P4-S3, is phase 5, D-138). The **API** may talk to an
     S3-compatible bucket (attachment bytes, nothing else) and the API and gateway
     to a Redis (rate-limit counters, nothing else). Both are operator-run
     infrastructure reached outbound over TLS with credentials from the workload
@@ -132,7 +139,7 @@ database, no keys, no ambient network. It is called only on slow paths.
     create or touch an owner, link a person by `externalId`, reach another org, or read any
     Aurora data. Its writes pass the same authorization, limits and critical audit as the
     dashboard's (SEC-72, SEC-73).
-12. **Browser push services** (phase 4, RFE-011b). When `push.enabled`, the **API** (only)
+12. **Browser push services** (phase 5 (D-138, moved from phase 4), RFE-011b). When `push.enabled`, the **API** (only)
     makes outbound HTTPS requests to the push service named by a user's subscription (FCM,
     Mozilla, Apple, WNS), through the destination guard and only to allow-listed hosts. The push
     service is untrusted for confidentiality: the payload is encrypted to the browser and
@@ -151,6 +158,22 @@ database, no keys, no ambient network. It is called only on slow paths.
     is the only inbound path into a sandbox; there is no listening socket in the sandbox other than
     the app's own, and the sandbox network policy is unchanged (it still reaches only the gateway
     and runner channel ports, SEC-02).
+14. **SSH terminator** (phase 5, P4-SSH-1/2, D-239, SEC-92..SEC-96). When `ssh.enabled`, the
+    terminator is the only component that faces SSH clients, on its own LoadBalancer port. It is
+    **untrusted with respect to authorization**, like the relay (boundary 13): it holds the SSH
+    host key and its `aut_` anchor, but **no CA signing key**, no database access and no
+    Kubernetes or podman credential. The user-certificate CA key lives in the API only (a signer
+    seam: local key now, KMS later). Every decision — which person, which agent, whether the
+    access law still holds — is made by the API at session open, at every channel open and at
+    every 30 s heartbeat, and re-enforced by the runner (an `auz_` grant names the sandbox and
+    boot, never the terminator) and the supervisor (session channels only, no forwarding). A
+    compromised terminator can deny service, read the bytes of sessions it carries, and open
+    sessions only for certificates it has seen while they are valid (`ssh.cert_ttl_secs`) and
+    only within those people's access (17 residual risk *A compromised terminator*); it cannot
+    mint a certificate, name a sandbox, reach a sandbox network or skip the API's audit and caps.
+    The path *SSH client → terminator → runner :4108 → supervisor → PTY or process* is the web
+    terminal's path (boundary 13's runner and supervisor hops); the sandbox gains no listening
+    socket and its network policy is unchanged (SEC-02).
 
 ## End-to-end flows
 
@@ -210,7 +233,7 @@ Detail: `10`, `11`, `12`.
 4. The holding gateway replica wakes, releases or refuses the request; the card
    is updated to its settled state.
 
-(phase 4, RFE-011b, opt-in) **Long deadlines park instead of hold.** In step 1, for an approval
+(phase 5 (D-138, moved from phase 4), RFE-011b, opt-in) **Long deadlines park instead of hold.** In step 1, for an approval
 whose deadline is above `approvals.park.threshold_secs`, the gateway does not hold: it records the
 approval as *parked* with a salted fingerprint of the request and answers the agent at once
 `403 approval_parked` ("not sent; end your turn, you will be messaged"). Steps 2–3 are unchanged

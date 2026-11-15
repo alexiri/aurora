@@ -40,6 +40,9 @@ config:
     # P4-ONB-1: a fresh open instance admits only instance admins until a placement is saved;
     # scripts/e2e/lib-placement.sh signs in as this user and saves one (docs/operator/install-kind-dev.md).
     instance_admins: ["placement-admin@e2e.test"]
+  # FIX-116: log-only mail writes invitation links to the API log (development only).
+  email:
+    log_links: true
   # FIX-010 (D-87): no gateway address override. Hosted sandboxes default to
   # gateway.sandbox_proxy_url = https://aurora-gateway:4102 on the Kubernetes backend (the host alias the
   # runner writes into each Pod; the name is on the proxy certificate), while BYO agents keep the

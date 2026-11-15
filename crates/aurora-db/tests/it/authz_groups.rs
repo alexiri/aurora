@@ -247,6 +247,54 @@ async fn suspended_member_derives_nothing_from_any_group(pool: PgPool) {
     assert!(!workspace_has_active_owner(&pool, f.ws).await.unwrap());
 }
 
+/// D-175 (FIX-082): a `pending` membership (SCIM prepared it, the person has not signed in) is
+/// listed in groups but derives nothing from any of them, holds no direct binding's access, and
+/// is not an `active` member for any law; activation makes the group-derived access effective.
+#[sqlx::test(migrator = "aurora_db::MIGRATOR")]
+async fn pending_member_derives_nothing_until_activated(pool: PgPool) {
+    let f = fx(&pool).await;
+    let u = member(&pool, f.org, "member").await;
+    sqlx::query("UPDATE org_members SET status = 'pending' WHERE user_id = $1")
+        .bind(u)
+        .execute(&pool)
+        .await
+        .unwrap();
+    bind(&pool, f.ws, u, "owner").await;
+    let g = group(&pool, f.org, "g", Some("admin")).await;
+    gbind(&pool, g, f.ws, f.org, "owner").await.unwrap();
+    add(&pool, g, f.org, u).await.unwrap();
+    assert_eq!(role(&pool, u, f.ws).await, None);
+    assert!(!can_use(&pool, u, f.ws).await.unwrap());
+    assert_eq!(
+        authz::effective_org_role(&pool, u, f.org).await.unwrap(),
+        None
+    );
+    assert!(
+        !authz::org_membership(&pool, u, f.org)
+            .await
+            .unwrap()
+            .unwrap()
+            .is_active()
+    );
+    assert!(groups::is_member(&pool, g, u).await.unwrap());
+    assert!(groups::groups_of_user(&pool, u).await.unwrap().is_empty());
+    assert!(
+        aurora_db::repo::gateway::speaker_group_ids(&pool, f.org, u)
+            .await
+            .unwrap()
+            .is_empty(),
+        "no group-derived identity for the gateway"
+    );
+    assert!(!workspace_has_active_owner(&pool, f.ws).await.unwrap());
+    // The person's own sign-in activates it: everything the group gives applies.
+    assert!(
+        aurora_db::repo::members::activate_pending(&pool, f.org, u)
+            .await
+            .unwrap()
+    );
+    assert!(can_own(&pool, u, f.ws).await.unwrap());
+}
+
 #[sqlx::test(migrator = "aurora_db::MIGRATOR")]
 async fn a_group_never_makes_a_non_member_a_member(pool: PgPool) {
     let f = fx(&pool).await;
@@ -496,4 +544,131 @@ async fn manual_rows_are_untouched_by_the_idp_sync(pool: PgPool) {
         .await
         .unwrap();
     assert!(groups::is_member(&pool, manual, u).await.unwrap());
+}
+
+async fn idp_group_sql(pool: &PgPool, org: Uuid, n: usize) -> Uuid {
+    let id = Uuid::now_v7();
+    sqlx::query(
+        "INSERT INTO groups (id, org_id, name, source, idp_provider, idp_value) \
+         VALUES ($1, $2, $3, 'idp', 'cern', $4)",
+    )
+    .bind(id)
+    .bind(org)
+    .bind(format!("g{n}"))
+    .bind(format!("v{n}"))
+    .execute(pool)
+    .await
+    .unwrap();
+    id
+}
+
+async fn count_rows(pool: &PgPool, u: Uuid) -> i64 {
+    sqlx::query_scalar("SELECT count(*) FROM group_members WHERE user_id = $1")
+        .bind(u)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+#[sqlx::test(migrator = "aurora_db::MIGRATOR")]
+async fn idp_sync_stops_at_the_per_user_cap_and_is_stable(pool: PgPool) {
+    let f = fx(&pool).await;
+    let u = member(&pool, f.org, "member").await;
+    let mut gs = Vec::new();
+    for n in 0..101 {
+        gs.push(idp_group_sql(&pool, f.org, n).await);
+    }
+    let values: Vec<String> = (0..101).map(|n| format!("v{n}")).collect();
+    let mut c = pool.acquire().await.unwrap();
+    let out = groups::sync_idp_memberships_report(&mut c, u, "cern", &values)
+        .await
+        .unwrap();
+    assert_eq!(out.changes.len(), 100);
+    assert_eq!(out.cap_skipped, vec![(f.org, 1)]);
+    assert_eq!(count_rows(&pool, u).await, 100);
+    // deterministic: the group with the highest id is the one skipped
+    gs.sort();
+    assert!(
+        !groups::is_member(&pool, *gs.last().unwrap(), u)
+            .await
+            .unwrap()
+    );
+    // a second sync keeps the same rows and adds/removes nothing
+    let again = groups::sync_idp_memberships_report(&mut c, u, "cern", &values)
+        .await
+        .unwrap();
+    assert!(again.changes.is_empty());
+    assert_eq!(again.cap_skipped, vec![(f.org, 1)]);
+    assert_eq!(count_rows(&pool, u).await, 100);
+}
+
+#[sqlx::test(migrator = "aurora_db::MIGRATOR")]
+async fn idp_sync_leaves_the_rows_of_a_suspended_membership_alone(pool: PgPool) {
+    let f = fx(&pool).await;
+    let u = member(&pool, f.org, "member").await;
+    let a = idp_group_sql(&pool, f.org, 0).await;
+    let mut c = pool.acquire().await.unwrap();
+    groups::sync_idp_memberships(&mut c, u, "cern", &["v0".into()])
+        .await
+        .unwrap();
+    assert!(groups::is_member(&pool, a, u).await.unwrap());
+    sqlx::query("UPDATE org_members SET status = 'suspended' WHERE user_id = $1")
+        .bind(u)
+        .execute(&pool)
+        .await
+        .unwrap();
+    // a sign-in elsewhere with an empty claim: the suspended org's row stays, nothing reported
+    let ch = groups::sync_idp_memberships(&mut c, u, "cern", &[])
+        .await
+        .unwrap();
+    assert!(ch.is_empty());
+    assert!(groups::is_member(&pool, a, u).await.unwrap());
+    // reactivation restores the access without a new sign-in
+    sqlx::query("UPDATE org_members SET status = 'active' WHERE user_id = $1")
+        .bind(u)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert!(groups::is_member(&pool, a, u).await.unwrap());
+}
+
+#[sqlx::test(migrator = "aurora_db::MIGRATOR")]
+async fn uses_any_workspace_counts_group_granted_access(pool: PgPool) {
+    let f = fx(&pool).await;
+    let u = member(&pool, f.org, "member").await;
+    assert!(!authz::uses_any_workspace(&pool, u, f.org).await.unwrap());
+    // the only access is a group binding
+    let g = Uuid::now_v7();
+    sqlx::query("INSERT INTO groups (id, org_id, name) VALUES ($1, $2, 'g')")
+        .bind(g)
+        .bind(f.org)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO group_workspace_access (group_id, workspace_id, org_id, role) \
+         VALUES ($1, $2, $3, 'member')",
+    )
+    .bind(g)
+    .bind(f.ws)
+    .bind(f.org)
+    .execute(&pool)
+    .await
+    .unwrap();
+    assert!(!authz::uses_any_workspace(&pool, u, f.org).await.unwrap());
+    sqlx::query("INSERT INTO group_members (group_id, org_id, user_id) VALUES ($1, $2, $3)")
+        .bind(g)
+        .bind(f.org)
+        .bind(u)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert!(authz::uses_any_workspace(&pool, u, f.org).await.unwrap());
+    // a suspended member still has nothing
+    sqlx::query("UPDATE org_members SET status = 'suspended' WHERE user_id = $1")
+        .bind(u)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert!(!authz::uses_any_workspace(&pool, u, f.org).await.unwrap());
 }

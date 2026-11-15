@@ -6,12 +6,12 @@
     method: POST
     url: "https://api.atlassian.com/ex/jira/site-fixture-1/rest/api/3/issue"
     headers: { content-type: application/json }
-    body: '{"fields":{"project":{"key":"DEMO"},"issuetype":{"name":"Task"},"summary":"Fix the login page"}}'
+    body: '{"fields":{"project":{"key":"DEMO"},"issuetype":{"name":"Task"},"summary":"Fix the login page","description":{"type":"doc","version":1,"content":[{"type":"paragraph","content":[{"type":"text","text":"Users land on a 404."}]},{"type":"paragraph","content":[{"type":"text","text":"Seen on staging and production."}]}]}}}'
   expect:
     app: jira
     tool: create_issue
     upstream: { headers: { authorization: "Bearer tok-fixture-1" } }
-    summary: { title: "Create Jira issue", fields: { Project: "DEMO", Type: "Task", Summary: "Fix the login page" } }
+    summary: { title: "Create Jira issue", fields: { Project: "DEMO", Type: "Task", Summary: "Fix the login page", Description: "Users land on a 404. Seen on staging and production." } }
 - name: "negative create_issue: GET on the issue collection selects no tool"
   connection: { credentials: { access_token: "tok-fixture-1" } }
   request: { method: GET, url: "https://api.atlassian.com/ex/jira/site-fixture-1/rest/api/3/issue" }
@@ -22,11 +22,11 @@
     method: PUT
     url: "https://api.atlassian.com/ex/jira/site-fixture-1/rest/api/3/issue/DEMO-7"
     headers: { content-type: application/json }
-    body: '{"fields":{"summary":"Fix the login page redirect"}}'
+    body: '{"fields":{"summary":"Fix the login page redirect","description":{"type":"doc","version":1,"content":[{"type":"paragraph","content":[{"type":"text","text":"Redirect loops."}]}]}}}'
   expect:
     app: jira
     tool: edit_issue
-    summary: { title: "Edit Jira issue", fields: { Issue: "DEMO-7", Summary: "Fix the login page redirect" } }
+    summary: { title: "Edit Jira issue", fields: { Issue: "DEMO-7", Summary: "Fix the login page redirect", Description: "Redirect loops." } }
 - name: "negative edit_issue: PATCH selects no tool"
   connection: { credentials: { access_token: "tok-fixture-1" } }
   request: { method: PATCH, url: "https://api.atlassian.com/ex/jira/site-fixture-1/rest/api/3/issue/DEMO-7" }
@@ -37,11 +37,11 @@
     method: POST
     url: "https://api.atlassian.com/ex/jira/site-fixture-1/rest/api/3/issue/DEMO-7/comment"
     headers: { content-type: application/json }
-    body: '{"body":{"type":"doc","version":1,"content":[{"type":"paragraph","content":[{"type":"text","text":"Deployed to staging."}]}]}}'
+    body: '{"body":{"type":"doc","version":1,"content":[{"type":"paragraph","content":[{"type":"text","text":"Deployed to staging."}]},{"type":"paragraph","content":[{"type":"text","text":"Rolling back if tests fail."}]}]}}'
   expect:
     app: jira
     tool: add_issue_comment
-    summary: { title: "Comment on Jira issue", fields: { Issue: "DEMO-7", Comment: "Deployed to staging." } }
+    summary: { title: "Comment on Jira issue", fields: { Issue: "DEMO-7", Comment: "Deployed to staging. Rolling back if tests fail." } }
 - name: "negative add_issue_comment: PUT selects no tool"
   connection: { credentials: { access_token: "tok-fixture-1" } }
   request: { method: PUT, url: "https://api.atlassian.com/ex/jira/site-fixture-1/rest/api/3/issue/DEMO-7/comment" }

@@ -1,23 +1,23 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ConnectionsTab } from "@/components/apps/connections-tab";
 import { AvailabilityEditor } from "@/components/apps/availability-view";
 import { DynamicForm } from "@/components/apps/dynamic-form";
-import { Markdown, safeHref } from "@/components/apps/markdown";
+import { Markdown, safeHref } from "@/components/ui/markdown";
 import { OAuthClientsPanel } from "@/components/apps/oauth-clients-panel";
 import {
   buildClientPatchFields,
   buildConnectFields,
-  parseConnectedMessage,
+  parseConnectMessage,
   parseJsonFile,
   toggleAllow,
   validateFields,
   type FormField,
 } from "@/lib/api/apps";
 
-vi.mock("next/navigation", () => ({ useParams: () => ({ org: "o1", ws: "w1" }) }));
+vi.mock("next/navigation", () => ({ useParams: () => ({ org: "o1", ws: "w1" }), useSearchParams: () => new URLSearchParams() }));
 
 const json = (status: number, body: unknown) =>
   new Response(body === null ? null : JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -69,25 +69,35 @@ describe("dynamic form", () => {
   });
 });
 
-describe("postMessage origin check", () => {
-  const data = { type: "aurora:connected", connection_id: "c1" };
-  it("accepts same-origin only", () => {
-    expect(parseConnectedMessage({ origin: "http://a", data }, "http://a")).toBe("c1");
-    expect(parseConnectedMessage({ origin: "http://evil", data }, "http://a")).toBeNull();
-    expect(parseConnectedMessage({ origin: "http://a", data: { type: "other" } }, "http://a")).toBeNull();
-    expect(parseConnectedMessage({ origin: "http://a", data: null }, "http://a")).toBeNull();
+describe("connect channel messages (C-842)", () => {
+  it("accepts the callback page's two shapes and nothing else", () => {
+    expect(parseConnectMessage({ type: "aurora:connected", app_id: "a", connection_id: "c1", missing_scopes: ["x"] })).toEqual({
+      type: "connected", appId: "a", connectionId: "c1", missingScopes: ["x"],
+    });
+    expect(parseConnectMessage({ type: "aurora:connect-failed", app_id: "a", error: "oauth_exchange_failed" })).toEqual({
+      type: "failed", appId: "a", error: "oauth_exchange_failed",
+    });
+    expect(parseConnectMessage({ type: "aurora:connect-failed", error: "oauth_state_invalid" })).toEqual({
+      type: "failed", appId: null, error: "oauth_state_invalid",
+    });
+    expect(parseConnectMessage({ type: "aurora:connected", connection_id: "c1" })).toBeNull();
+    expect(parseConnectMessage({ type: "aurora:connect-ack", connection_id: "c1" })).toBeNull();
+    expect(parseConnectMessage({ type: "other" })).toBeNull();
+    expect(parseConnectMessage(null)).toBeNull();
   });
 });
 
 describe("markdown", () => {
-  it("does not render raw HTML or unsafe links, and shows link targets", () => {
-    const { container } = render(<Markdown source={'<script>x</script> [ok](https://e.com/a) [bad](javascript:alert(1))'} />);
+  it("does not render disallowed raw HTML or unsafe links, and keeps the full target in the tooltip", () => {
+    const { container } = render(<Markdown source={'<script>x</script>\n\n[ok](https://e.com/a) [bad](javascript:alert(1))'} />);
     expect(container.querySelector("script")).toBeNull();
-    expect(container.textContent).toContain("<script>");
+    // D-227: raw HTML outside the allowlist is dropped (a script's content with it, as on github.com).
+    expect(container.textContent).not.toContain("<script>");
     const links = container.querySelectorAll("a");
     expect(links).toHaveLength(1);
     expect(links[0]).toHaveAttribute("href", "https://e.com/a");
-    expect(links[0].textContent).toContain("https://e.com/a");
+    expect(links[0]).toHaveAttribute("title", "https://e.com/a");
+    expect(container.textContent).toContain("bad");
     expect(safeHref("javascript:alert(1)")).toBeNull();
   });
 });
@@ -97,18 +107,36 @@ describe("availability editor", () => {
     expect(toggleAllow([], "a", null)).toEqual([{ app_id: "a" }]);
     expect(toggleAllow([{ app_id: "a" }], "a", null)).toEqual([]);
   });
-  it("PUTs the whole list", async () => {
-    let body: unknown;
+  const availabilityFetch = (state: { posture: string; allow: unknown[] }, puts: unknown[]) =>
     vi.stubGlobal("fetch", vi.fn(async (input: Request) => {
-      body = await input.json();
-      return json(200, body);
+      if (input.method === "PUT") {
+        const b = (await input.json()) as { posture: string; allow: unknown[] };
+        puts.push(b);
+        return json(200, b);
+      }
+      return json(200, state);
     }));
-    wrap(<AvailabilityEditor orgId="o1" initial={{ posture: "open", allow: [] }} apps={[{ app_id: "gh", name: "GitHub" }]} canEdit />);
-    fireEvent.click(screen.getByLabelText(/Restricted/));
+
+  it("PUTs the whole list with the posture as it is (restricted: the toggles show)", async () => {
+    const puts: unknown[] = [];
+    availabilityFetch({ posture: "restricted", allow: [] }, puts);
+    wrap(<AvailabilityEditor orgId="o1" orgSlug="acme" initial={{ posture: "restricted", allow: [] }} apps={[{ app_id: "gh", name: "GitHub" }]} canEdit />);
+    // the posture is not set here any more (FIX-130): no radio, a link to Governance
+    expect(screen.queryByLabelText(/Restricted/)).toBeNull();
+    expect(screen.getByRole("link", { name: "Governance" })).toHaveAttribute("href", "/o/acme/governance");
     fireEvent.click(screen.getByLabelText("GitHub"));
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
-    await waitFor(() => expect(body).toEqual({ posture: "restricted", allow: [{ app_id: "gh" }] }));
+    await waitFor(() => expect(puts).toEqual([{ posture: "restricted", allow: [{ app_id: "gh" }] }]));
     await screen.findByText("Saved.");
+  });
+
+  it("while the posture is open it says so and links to Governance, with no toggles", () => {
+    availabilityFetch({ posture: "open", allow: [] }, []);
+    wrap(<AvailabilityEditor orgId="o1" orgSlug="acme" initial={{ posture: "open", allow: [] }} apps={[{ app_id: "gh", name: "GitHub" }]} canEdit />);
+    expect(screen.getByText(/Every app is available/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Governance" })).toHaveAttribute("href", "/o/acme/governance");
+    expect(screen.queryByLabelText("GitHub")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
   });
 });
 
@@ -163,6 +191,56 @@ describe("connection missing scopes", () => {
     const note = screen.getByLabelText("How to connect to me@acme.io");
     expect(note).toHaveTextContent("psql service=orders-prod -c 'select 1'");
     expect(note).toHaveTextContent("0190a1b2");
+  });
+  it("shows when a database connection does not verify the server certificate (D-178 Q-R5-7)", async () => {
+    await show(conn({ app_id: "postgresql", database: { engine: "postgres", service: "orders" }, metadata: { tls_verification: "off" } }));
+    expect(screen.getByLabelText("TLS verification is off for me@acme.io")).toHaveTextContent("does not verify");
+  });
+  it("shows no TLS warning for a verified database connection", async () => {
+    await show(conn({ app_id: "postgresql", database: { engine: "postgres", service: "orders" }, metadata: {} }));
+    expect(screen.queryByLabelText(/TLS verification is off/)).toBeNull();
+  });
+  it("shows the scopes a classic token reported and warns that repo allows writes (FIX-133)", async () => {
+    await show(conn({ metadata: { token_scopes: "repo, read:org" } }));
+    expect(screen.getByText(/Token scopes/)).toHaveTextContent("repo, read:org");
+    expect(screen.getByText(/Token scopes/)).toHaveTextContent("make this connection read-only");
+  });
+  it("shows no repo warning on a read-only connection or without a repo scope", async () => {
+    await show(conn({ access: "read", metadata: { token_scopes: "repo" } }));
+    expect(screen.getByText(/Token scopes/).textContent).not.toMatch(/make this connection read-only/);
+    cleanup();
+    await show(conn({ metadata: { token_scopes: "read:user, public_repo" } }));
+    expect(screen.getByText(/Token scopes/).textContent).not.toMatch(/make this connection read-only/);
+  });
+  it("shows a pasted token's declared scopes and saves an edit (FIX-136)", async () => {
+    const methods = [
+      {
+        id: "token", kind: "fields", fields: [], default_scopes: [], access_levels: [], probe_scopes: ["read:a"],
+        scopes: [{ scope: "read:a", name: "Read A", access: "read" }, { scope: "write:a", name: "Write A", access: "write" }],
+      },
+    ];
+    const patched: unknown[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (req: Request) => {
+        const url = new URL(req.url);
+        if (req.method === "PATCH") {
+          patched.push(await req.json());
+          return json(200, conn({ connect_method: "token", scopes: ["read:a", "write:a"] }));
+        }
+        if (url.pathname.startsWith("/v1/apps/") && !url.pathname.endsWith("/apps")) return json(200, { app_id: "acme", connect: methods, tools: [] });
+        return json(200, { items: [conn({ connect_method: "token", scopes: ["read:a"] })], next_cursor: null });
+      }),
+    );
+    wrap(<ConnectionsTab scope={{ kind: "workspace", id: "w1" }} canOwn />);
+    await screen.findByText("me@acme.io");
+    const box = await screen.findByLabelText("Token scopes of me@acme.io");
+    expect(box).toHaveTextContent("as you declared");
+    expect(box).toHaveTextContent("Read A");
+    fireEvent.click(screen.getByRole("button", { name: "Edit scopes" }));
+    fireEvent.click(within(await screen.findByRole("radiogroup", { name: "Write A" })).getByLabelText("On"));
+    fireEvent.click(screen.getByRole("button", { name: "Save scopes" }));
+    await waitFor(() => expect(patched).toEqual([{ scopes: ["read:a", "write:a"] }]));
   });
   it("shows no connection help for other apps", async () => {
     await show(conn({ database: null }));

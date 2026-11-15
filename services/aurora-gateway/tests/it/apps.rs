@@ -36,6 +36,10 @@ use uuid::Uuid;
 
 const TOKEN: &str = "aug_good";
 
+// (D-251) The LDAP lane's pipeline tests share this file's harness.
+#[path = "ldap_lane.rs"]
+mod ldap_lane;
+
 #[derive(Clone, Copy)]
 struct World {
     org: Uuid,
@@ -156,6 +160,11 @@ async fn upstream(req: Request<Incoming>) -> Result<Response<Full<Bytes>>, Infal
         out.push_str(&format!("{}: {}\n", k, v.to_str().unwrap_or("?")));
     }
     out.push_str(&format!("body={}\n", String::from_utf8_lossy(&body)));
+    // (FIX-104) The gateway withholds a response that echoes a value it put in the URL; a test
+    // that wants to see the whole request asks for it hex-encoded (`x-echo-hex`).
+    if parts.headers.contains_key("x-echo-hex") {
+        out = out.bytes().map(|b| format!("{b:02x}")).collect();
+    }
     let mut r = Response::new(Full::new(Bytes::from(out)));
     if parts.uri.path().ends_with("/401") {
         *r.status_mut() = http::StatusCode::UNAUTHORIZED;
@@ -216,6 +225,9 @@ fn conn(w: &World, app: &str, path: &str, tenant: Option<&str>) -> AppConnection
         metadata: json!({"sub": "tenant1", "region": "eu-west-1"}),
         tenant_host: tenant.map(str::to_owned),
         instance_id: None,
+        connect_method: None,
+        access: "write".into(),
+        scopes: Vec::new(),
     }
 }
 
@@ -239,6 +251,17 @@ async fn start(
     snap: Value,
     creds: &[(&str, &str)],
     mk: impl FnOnce(&World) -> Rows,
+) -> (Env, Arc<Src>, Arc<SnapshotStore>) {
+    start_with_ca(snap, creds, mk, None).await
+}
+
+/// [`start`] with an extra CA bundle the gateway trusts for its own upstream TLS (the LDAP lane's
+/// fake directory server presents a certificate of a private CA).
+async fn start_with_ca(
+    snap: Value,
+    creds: &[(&str, &str)],
+    mk: impl FnOnce(&World) -> Rows,
+    extra_ca_pem: Option<String>,
 ) -> (Env, Arc<Src>, Arc<SnapshotStore>) {
     let w = World {
         org: Uuid::now_v7(),
@@ -279,14 +302,17 @@ async fn start(
     );
     let resolver = Arc::new(Resolver::new(src.clone(), llm).with_snapshots(store.clone()));
     let plaintext = Arc::new(PlaintextCache::new(Arc::new(SecretVault::new(reg))));
-    let handler = Arc::new(PolicyHandler::new(PolicyHandlerParts {
-        resolver,
-        plaintext,
-        log: RequestLog::new(Arc::new(Null)),
-        external_url: "https://aurora.test/".into(),
-        holds: None,
-        touch_pool: None,
-    }));
+    let handler = Arc::new(
+        PolicyHandler::new(PolicyHandlerParts {
+            resolver,
+            plaintext,
+            log: RequestLog::new(Arc::new(Null)),
+            external_url: "https://aurora.test/".into(),
+            holds: None,
+            touch_pool: None,
+        })
+        .with_insecure_loopback_injection(true),
+    );
     let gw = ca::generate("gw").unwrap();
     let pl = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let proxy = pl.local_addr().unwrap();
@@ -299,7 +325,7 @@ async fn start(
         handler,
         guard,
         header_timeout: Duration::from_secs(5),
-        extra_ca_pem: None,
+        extra_ca_pem: extra_ca_pem.map(String::into_bytes),
         egress_proxy: None,
     })
     .unwrap();
@@ -417,10 +443,19 @@ async fn inject_mechanisms_overwrite_and_escape() {
     let r = get(
         &env,
         "/botX/send?api_key=agent&z=1",
-        "Authorization: Bearer agent\r\nX-Key: agent\r\nX-Remove: yes\r\n",
+        "Authorization: Bearer agent\r\nX-Key: agent\r\nX-Remove: yes\r\nX-Echo-Hex: 1\r\n",
     )
     .await;
     assert_eq!(r.status, 200, "{}", r.body);
+    let r = Reply {
+        body: String::from_utf8_lossy(
+            &(0..r.body.trim().len() / 2)
+                .filter_map(|i| u8::from_str_radix(&r.body.trim()[2 * i..2 * i + 2], 16).ok())
+                .collect::<Vec<u8>>(),
+        )
+        .into_owned(),
+        ..r
+    };
     assert!(r.body.contains("authorization: Bearer a b/&"), "{}", r.body);
     assert!(r.body.contains("x-key: k-a b/&"), "{}", r.body);
     assert!(
@@ -1036,10 +1071,16 @@ fn inst_snapshot(extra_apps: Vec<Value>, extra_hosts: Vec<Value>) -> Value {
 }
 
 fn instance_row(id: Uuid, host: &str) -> InstanceHostRow {
+    instance_row_at(id, "inst", host, None)
+}
+
+/// A registration with a base path (D-231).
+fn instance_row_at(id: Uuid, app: &str, host: &str, base: Option<&str>) -> InstanceHostRow {
     InstanceHostRow {
         id,
-        app_id: "inst".into(),
+        app_id: app.into(),
         host: host.into(),
+        base_path: base.map(str::to_owned),
     }
 }
 
@@ -1251,7 +1292,7 @@ async fn refresh_targets(
                 &serde_json::Map::new(),
                 &serde_json::Map::new(),
                 None,
-                c.instance_host.as_deref(),
+                c.instance_base(),
             )
             .map(|r| r.url)
             .unwrap_or_else(|_| "unavailable".into());
@@ -1350,6 +1391,134 @@ fn derived_custom(c: &AppConnectionRow) -> Vec<(Uuid, Value)> {
                    "targets":[{"type":"connection","id":c.id}]}),
         ),
     ]
+}
+
+/// FIX-133 (D-240): a read-only connection allows the app's read tools and blocks its write tools
+/// and untooled requests under a `full` grant; an existing (`write`) connection is unchanged.
+#[tokio::test]
+async fn read_only_connection_blocks_write_and_untooled_even_under_a_full_grant() {
+    let (env, ..) = start(
+        indico_like(false, false),
+        &[("c1", r#"{"tok":"RO-TOKEN"}"#)],
+        |w| {
+            let mut c = conn(w, "demo", "c1", None);
+            c.access = "read".into();
+            let mut r = Rows::default();
+            r.ws.rules.push(allow_conn(&c, None));
+            r.conns.push(c);
+            r
+        },
+    )
+    .await;
+    let r = get(&env, "/items", "").await;
+    assert_eq!(r.status, 200, "{}", r.body);
+    assert!(
+        r.body.contains("authorization: Bearer RO-TOKEN"),
+        "{}",
+        r.body
+    );
+    for (method, path) in [("POST", "/items"), ("GET", "/anything/else")] {
+        let r = send(&env, method, path, "", "{}").await;
+        assert_eq!(r.status, 403, "{method} {path}: {}", r.body);
+        assert_eq!(r.code(), "blocked_by_policy");
+        let v: Value = serde_json::from_str(&r.body).unwrap();
+        assert_eq!(
+            v["error"]["details"]["reason"], "read_only_connection",
+            "{method} {path}: {}",
+            r.body
+        );
+        assert!(!r.body.contains("RO-TOKEN"));
+    }
+}
+
+/// Two read tools (`/items` needs `read:a`, `/other` needs `read:b`) and one with no requirement.
+fn scoped(annotated: bool) -> Value {
+    let sc = |s: &str| if annotated { json!([s]) } else { json!([]) };
+    let mut app = app_json(
+        "demo",
+        json!({"read": {"items": [
+            {"id": "needs_a", "name": "a", "host": "127.0.0.1", "path": "/items", "methods": ["GET"], "scopes": sc("read:a")},
+            {"id": "needs_b", "name": "b", "host": "127.0.0.1", "path": "/other", "methods": ["GET"], "scopes": sc("read:b")},
+            {"id": "needs_none", "name": "n", "host": "127.0.0.1", "path": "/free", "methods": ["GET"]}
+        ]}}),
+        false,
+    );
+    app["grants"] = json!({"custom_only": false, "block_untooled": false});
+    snapshot(
+        vec![app],
+        vec![host_json(
+            "demo",
+            None,
+            json!({"inject": [{"bearer": "{credentials.tok}"}]}),
+        )],
+    )
+}
+
+/// FIX-136 (D-241): a tool whose scopes the connection lacks is refused before injection with
+/// `tool_scope_missing` and the token is not sent; a covered tool and a tool with no requirement
+/// pass; unknown scopes (empty) and packages without annotations behave exactly as before.
+#[tokio::test]
+async fn a_tool_needing_a_scope_the_connection_lacks_is_refused_before_injection() {
+    for (annotated, scopes, path, status) in [
+        (true, vec!["read:a"], "/items", 200),
+        (true, vec!["read:a"], "/other", 403),
+        (true, vec!["read:a"], "/free", 200),
+        (true, vec!["read:b", "read:a"], "/other", 200),
+        // Unknown scopes never refuse.
+        (true, vec![], "/other", 200),
+        // No annotations: unchanged.
+        (false, vec!["read:a"], "/other", 200),
+    ] {
+        let (env, ..) = start(scoped(annotated), &[("c1", r#"{"tok":"SC-TOKEN"}"#)], |w| {
+            let mut c = conn(w, "demo", "c1", None);
+            c.scopes = scopes.iter().map(|s| (*s).to_owned()).collect();
+            let mut r = Rows::default();
+            r.ws.rules.push(allow_conn(&c, None));
+            r.conns.push(c);
+            r
+        })
+        .await;
+        let r = get(&env, path, "").await;
+        assert_eq!(
+            r.status, status,
+            "{annotated} {scopes:?} {path}: {}",
+            r.body
+        );
+        if status == 403 {
+            assert_eq!(r.code(), "tool_scope_missing", "{}", r.body);
+            let v: Value = serde_json::from_str(&r.body).unwrap();
+            assert_eq!(v["error"]["details"]["tool_id"], "needs_b");
+            assert_eq!(v["error"]["details"]["needs"], json!(["read:b"]));
+            assert!(
+                !r.body.contains("SC-TOKEN"),
+                "the token is never sent: {}",
+                r.body
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_write_connection_is_unchanged_by_the_read_only_check() {
+    let (env, ..) = start(
+        indico_like(false, false),
+        &[("c1", r#"{"tok":"RW-TOKEN"}"#)],
+        |w| {
+            let c = conn(w, "demo", "c1", None); // access = write, as every existing connection
+            let mut r = Rows::default();
+            r.ws.rules.push(allow_conn(&c, None));
+            r.conns.push(c);
+            r
+        },
+    )
+    .await;
+    let r = send(&env, "POST", "/items", "", "{}").await;
+    assert_eq!(r.status, 200, "{}", r.body);
+    assert!(
+        r.body.contains("authorization: Bearer RW-TOKEN"),
+        "{}",
+        r.body
+    );
 }
 
 #[tokio::test]
@@ -1564,5 +1733,237 @@ async fn sts_credential_minting_actions_are_blocked_and_never_signed() {
         r.body.contains("authorization: Bearer STSKEY"),
         "{}",
         r.body
+    );
+}
+
+// ---- D-231 / SEC-59: a registration under a base path -----------------------------------------
+
+/// `GET http://{host}:{port}{path}` through the proxy with extra header lines.
+async fn get_host_with(env: &Env, host: &str, path: &str, extra: &str) -> Reply {
+    let mut s = crate::common::connect(env.proxy).await;
+    let auth = base64::engine::general_purpose::STANDARD.encode(format!("agent:{TOKEN}"));
+    let req = format!(
+        "GET http://{host}:{port}{path} HTTP/1.1\r\nHost: {host}:{port}\r\nProxy-Authorization: Basic {auth}\r\n{extra}Content-Length: 0\r\nConnection: close\r\n\r\n",
+        port = env.up.port()
+    );
+    s.write_all(req.as_bytes()).await.unwrap();
+    let mut out = Vec::new();
+    let _ = tokio::time::timeout(Duration::from_secs(5), s.read_to_end(&mut out)).await;
+    let text = String::from_utf8_lossy(&out).into_owned();
+    let (head, body) = text.split_once("\r\n\r\n").unwrap_or((&text, ""));
+    Reply {
+        status: head
+            .split_whitespace()
+            .nth(1)
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0),
+        head: head.to_owned(),
+        body: dechunk(body),
+    }
+}
+
+/// An instance-bound app with a read tool on `{instance}`; the manifest knows nothing of any base
+/// path (`{instance}` is the whole registration).
+fn jira_like(id: &str, tool: &str, path: &str) -> Value {
+    let mut a = app_json(
+        id,
+        json!({"read": {"items": [
+            {"id": tool, "name": "r", "host": "{instance}", "path": path, "methods": ["GET"]}
+        ]}}),
+        false,
+    );
+    a["instances"] = json!({"label": id});
+    a
+}
+
+fn inst_host_entry(app: &str) -> Value {
+    let mut ih = host_json(
+        app,
+        None,
+        json!({"inject": [{"bearer": "{credentials.tok}"}]}),
+    );
+    ih["host"] = json!("{instance}");
+    ih
+}
+
+fn token_on(r: &Reply, token: &str) -> bool {
+    r.body.contains(&format!("authorization: Bearer {token}"))
+}
+
+fn derived_allow(c: &AppConnectionRow, tools: &[&str]) -> (Uuid, Value) {
+    (
+        Uuid::now_v7(),
+        json!({"name":"d","enabled":true,"identities":[],"action":"allow",
+               "targets":[{"type":"connection","id":c.id,"tools":tools}]}),
+    )
+}
+
+/// A connection on `localhost` + `/jira` gets its credential on `/jira/...`, is matched to the
+/// manifest tool on the app path, and gets nothing anywhere else on the host.
+#[tokio::test]
+async fn a_base_path_registration_is_injected_only_under_its_base_path() {
+    let inst = Uuid::now_v7();
+    let mut snap = snapshot(
+        vec![jira_like("jira", "myself", "/rest/api/2/myself")],
+        vec![],
+    );
+    snap["instance_hosts"] = json!([inst_host_entry("jira")]);
+    let conn_id = Arc::new(Mutex::new(Uuid::nil()));
+    let cid = conn_id.clone();
+    let (env, ..) = start(snap, &[("c1", r#"{"tok":"JIRASECRET"}"#)], move |w| {
+        let mut c = conn(w, "jira", "c1", None);
+        c.instance_id = Some(inst);
+        *cid.lock().unwrap() = c.id;
+        let mut r = Rows::default();
+        r.ws.default_action = "block".into();
+        r.ws.derived.push(derived_allow(&c, &["myself"]));
+        r.conns.push(c);
+        r.instances
+            .push(instance_row_at(inst, "jira", "localhost", Some("/jira")));
+        r
+    })
+    .await;
+    // Inside the base path: injected; the tool is matched on the app path (`/rest/api/2/myself`),
+    // the upstream request keeps the full path.
+    let r = get_host(&env, "localhost", "/jira/rest/api/2/myself").await;
+    assert_eq!(r.status, 200, "{}", r.body);
+    assert!(token_on(&r, "JIRASECRET"), "{}", r.body);
+    assert!(
+        r.body.contains("path=/jira/rest/api/2/myself\n"),
+        "{}",
+        r.body
+    );
+    // A catalogued path that is not granted is still judged as a tool on the app path.
+    let r = get_host(&env, "localhost", "/jira/rest/api/2/other").await;
+    assert_eq!(r.code(), "blocked_by_default_policy", "{}", r.body);
+    assert!(!token_on(&r, "JIRASECRET"));
+    // `/%6Aira` is `/jira` for the gateway and the upstream alike: inside, injected.
+    let r = get_host(&env, "localhost", "/%6Aira/rest/api/2/myself").await;
+    assert_eq!(r.status, 200, "{}", r.body);
+    assert!(token_on(&r, "JIRASECRET"), "{}", r.body);
+    assert!(
+        r.body.contains("path=/jira/rest/api/2/myself\n"),
+        "{}",
+        r.body
+    );
+    // Nothing is injected outside the base path, in any spelling that leaves it.
+    for p in [
+        "/rest/api/2/myself",
+        "/jira2/rest/api/2/myself",
+        "/JIRA/rest/api/2/myself",
+        "//rest/api/2/myself",
+        "/jira/../rest/api/2/myself",
+        "/jira/%2e%2e/rest/api/2/myself",
+        "/./jira/rest/api/2/myself",
+        "/",
+    ] {
+        let r = get_host(&env, "localhost", p).await;
+        assert!(!token_on(&r, "JIRASECRET"), "{p}: {}", r.body);
+        assert!(!r.head.contains("JIRASECRET"), "{p}");
+    }
+    // Used by name outside its base path, the connection is refused like one on the wrong host,
+    // with where to send the request.
+    let id = *conn_id.lock().unwrap();
+    let r = get_host_with(
+        &env,
+        "localhost",
+        "/rest/api/2/myself",
+        &format!("x-aurora-connection-id: {id}\r\n"),
+    )
+    .await;
+    assert_eq!(r.status, 421, "{}", r.body);
+    assert_eq!(r.code(), "host_mismatch");
+    let v: Value = serde_json::from_str(&r.body).unwrap();
+    assert_eq!(v["error"]["details"]["expected_host"], "localhost");
+    assert_eq!(
+        v["error"]["details"]["expected_base_url"],
+        "https://localhost/jira"
+    );
+    assert!(!r.body.contains("JIRASECRET"));
+}
+
+/// Two registrations on one host (`/jira` and `/confluence`) each get only their own credential,
+/// and a registration without a base path serves the rest of the host.
+#[tokio::test]
+async fn registrations_on_one_host_get_only_their_own_credentials() {
+    let (ji, ci) = (Uuid::now_v7(), Uuid::now_v7());
+    let mut snap = snapshot(
+        vec![
+            jira_like("jira", "j_me", "/rest/api/2/myself"),
+            jira_like("conf", "c_me", "/rest/api/user/current"),
+        ],
+        vec![],
+    );
+    snap["instance_hosts"] = json!([inst_host_entry("jira"), inst_host_entry("conf")]);
+    let (env, ..) = start(
+        snap,
+        &[
+            ("cj", r#"{"tok":"JIRASECRET"}"#),
+            ("cc", r#"{"tok":"CONFSECRET"}"#),
+        ],
+        move |w| {
+            let mut j = conn(w, "jira", "cj", None);
+            j.instance_id = Some(ji);
+            let mut c = conn(w, "conf", "cc", None);
+            c.instance_id = Some(ci);
+            let mut r = Rows::default();
+            r.ws.default_action = "block".into();
+            r.ws.derived.push(derived_allow(&j, &["j_me"]));
+            r.ws.derived.push(derived_allow(&c, &["c_me"]));
+            r.conns = vec![j, c];
+            r.instances
+                .push(instance_row_at(ji, "jira", "localhost", Some("/jira")));
+            r.instances.push(instance_row_at(
+                ci,
+                "conf",
+                "localhost",
+                Some("/confluence"),
+            ));
+            r
+        },
+    )
+    .await;
+    let r = get_host(&env, "localhost", "/jira/rest/api/2/myself").await;
+    assert_eq!(r.status, 200, "{}", r.body);
+    assert!(
+        token_on(&r, "JIRASECRET") && !token_on(&r, "CONFSECRET"),
+        "{}",
+        r.body
+    );
+    let r = get_host(&env, "localhost", "/confluence/rest/api/user/current").await;
+    assert_eq!(r.status, 200, "{}", r.body);
+    assert!(
+        token_on(&r, "CONFSECRET") && !token_on(&r, "JIRASECRET"),
+        "{}",
+        r.body
+    );
+    // Each app's tools exist only under its own registration.
+    let r = get_host(&env, "localhost", "/confluence/rest/api/2/myself").await;
+    assert!(!token_on(&r, "JIRASECRET"), "{}", r.body);
+    let r = get_host(&env, "localhost", "/jira/rest/api/user/current").await;
+    assert!(!token_on(&r, "CONFSECRET"), "{}", r.body);
+}
+
+/// A refresh goes to the registration's own address, base path included (D-231).
+#[tokio::test]
+async fn refresh_targets_the_registrations_base_path() {
+    let inst = Uuid::now_v7();
+    let got = refresh_targets("desk.acme.test", move |w| {
+        let mut r = granted(bound(w, "c2", Some(inst)))(w);
+        r.instances.push(instance_row_at(
+            inst,
+            "inst",
+            "desk.acme.test",
+            Some("/jira"),
+        ));
+        r
+    })
+    .await;
+    assert_eq!(
+        got,
+        vec![(
+            Some("desk.acme.test".to_owned()),
+            "https://desk.acme.test/jira/oauth/token".to_owned()
+        )]
     );
 }

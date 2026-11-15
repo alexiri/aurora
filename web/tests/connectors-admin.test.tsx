@@ -9,6 +9,7 @@ vi.mock("next/navigation", () => ({
   usePathname: () => "/",
 }));
 
+import { AddConnectorFlow } from "@/components/connectors/add-connector";
 import { ConnectorsAdminView } from "@/components/connectors/connectors-admin-view";
 
 const json = (status: number, body: unknown) =>
@@ -116,6 +117,45 @@ async function openAdd(routes: Record<string, Handler>) {
   return calls;
 }
 
+describe("Connector host tokens (FIX-120)", () => {
+  const row = (o: Record<string, unknown>) => ({
+    id: "t1", name: "mm", prefix: "auh_abcd", type_ids: ["mattermost"], state: "active",
+    created_at: T, last_used_at: null, revoked_at: null, ...o,
+  });
+
+  it("lists bound types and token state, issues a token once and revokes", async () => {
+    let items = [row({ id: "s", name: null, prefix: null, type_ids: null, state: "refused" }), row({})];
+    const calls = mockFetch({
+      "GET /v1/admin/connectors": () => json(200, { items: [] }),
+      "GET /v1/admin/connector-host-tokens": () => json(200, { items }),
+      "POST /v1/admin/connector-host-tokens": () => json(201, { ...row({ id: "t2", name: "mm2" }), token: "auh_once" }),
+      "DELETE /v1/admin/connector-host-tokens/t1": () => {
+        items = items.filter((i) => i.id !== "t1");
+        return json(204, null);
+      },
+    });
+    vi.stubGlobal("confirm", () => true);
+    wrap(<ConnectorsAdminView />);
+    expect(await screen.findByText("Shared bootstrap token")).toBeInTheDocument();
+    expect(screen.getByText("refused")).toBeInTheDocument();
+    expect(screen.getByText("mattermost")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "mm2" } });
+    fireEvent.change(screen.getByLabelText("Connector types"), { target: { value: "mattermost, fake" } });
+    fireEvent.click(screen.getByRole("button", { name: "Issue token" }));
+    expect(await screen.findByText("auh_once")).toBeInTheDocument();
+    expect(calls.find((c) => c.key === "POST /v1/admin/connector-host-tokens")?.body).toEqual({
+      name: "mm2",
+      type_ids: ["mattermost", "fake"],
+    });
+    fireEvent.click(screen.getByRole("button", { name: "I have saved it" }));
+    await waitFor(() => expect(screen.queryByText("auh_once")).toBeNull());
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Revoke" })[0]);
+    await waitFor(() => expect(calls.some((c) => c.key === "DELETE /v1/admin/connector-host-tokens/t1")).toBe(true));
+  });
+});
+
 describe("Add connector flow", () => {
   it("says the connector host is not running and keeps the self-hosted path", async () => {
     await openAdd({ "GET /v1/admin/connector-types": () => json(200, types([], false)) });
@@ -144,8 +184,8 @@ describe("Add connector flow", () => {
       "POST /v1/admin/connectors": () => json(201, { connector: mmConnector }),
       "GET /v1/admin/connectors": () => json(200, { items: [] }),
     });
-    fireEvent.click(await screen.findByRole("button", { name: "Add Mattermost" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Continue" }));
+    // (FIX-127, D-219) Nothing is required: the settings sit collapsed under "Advanced".
+    expect(await screen.findByText("Advanced")).toBeInTheDocument();
     const url = await screen.findByLabelText("Callback URL (optional)");
     expect(url).toHaveAttribute("placeholder", "https://aurora.example.org/connectors/mattermost");
     // The placeholder is not repeated as help text; the help is its own sentence.
@@ -158,10 +198,27 @@ describe("Add connector flow", () => {
     // No server URL or admin token at instance level.
     expect(screen.queryByLabelText(/Server URL/)).toBeNull();
     fireEvent.change(screen.getByLabelText("Catch-up window (seconds) (optional)"), { target: { value: "900" } });
-    fireEvent.click(screen.getByRole("button", { name: "Add connector" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add Mattermost" }));
     await waitFor(() => expect(add(calls)).toHaveLength(1));
     expect(add(calls)[0].body).toEqual({
       id: "mattermost", managed: true, approve_manifest_digest: "sha256:mm", settings: { catchup_window_secs: 900 }, secrets: {},
+    });
+  });
+
+  it("adds an all-optional type with one click and zero typed fields, approving the digest shown", async () => {
+    const onAdded = vi.fn();
+    const calls = mockFetch({
+      "GET /v1/admin/connector-types": () => json(200, types([mattermost])),
+      "POST /v1/admin/connectors": () => json(201, { connector: mmConnector }),
+    });
+    wrap(<AddConnectorFlow onAdded={onAdded} />);
+    // The manifest summary is inline (collapsed), no Continue step exists.
+    expect(await screen.findByText("What Mattermost can do")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Continue" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Add Mattermost" }));
+    await waitFor(() => expect(onAdded).toHaveBeenCalledWith("mattermost"));
+    expect(calls.find((c) => c.key === "POST /v1/admin/connectors")?.body).toEqual({
+      id: "mattermost", managed: true, approve_manifest_digest: "sha256:mm", settings: {}, secrets: {},
     });
   });
 
@@ -420,6 +477,32 @@ describe("Managed connector detail", () => {
     fireEvent.click(screen.getByLabelText(/I have reviewed/));
     fireEvent.click(screen.getByRole("button", { name: "Approve manifest" }));
     await waitFor(() => expect(calls.find((c) => c.key.endsWith("/approve"))?.body).toEqual({ manifest_digest: "sha256:two" }));
+  });
+
+  it("a manifest that changes under the open panel un-ticks the review box (FIX-067)", async () => {
+    const pending = (digest: string) => ({ ...fakeConnector(), status: "pending_approval", manifest_digest: digest, widening: ["adds capability edits"] });
+    let current = pending("sha256:two");
+    mockFetch({
+      "GET /v1/admin/connectors": () => json(200, { items: [current] }),
+      "GET /v1/admin/connector-types": () => json(200, types([fakeType()])),
+    });
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <ConnectorsAdminView />
+      </QueryClientProvider>,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: /^Manage / }));
+    const box = await screen.findByLabelText(/I have reviewed/);
+    fireEvent.click(box);
+    expect(box).toBeChecked();
+    expect(screen.getByRole("button", { name: "Approve manifest" })).toBeEnabled();
+    // The manifest changes on the server while the admin is looking at the old one.
+    current = pending("sha256:three");
+    await qc.invalidateQueries({ queryKey: ["admin", "connectors"] });
+    await qc.invalidateQueries();
+    await waitFor(() => expect(screen.getByLabelText(/I have reviewed/)).not.toBeChecked());
+    expect(screen.getByRole("button", { name: "Approve manifest" })).toBeDisabled();
   });
 
   it("shows Mattermost's own instance settings in its detail view", async () => {

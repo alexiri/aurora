@@ -13,10 +13,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-use crate::claims::{ConflictGroup, claim_key, claims, conflict_groups, static_host};
+use crate::claims::{ConflictGroup, claim_key, claims, conflict_groups, static_hosts};
 use crate::manifest::{
     About, Agent, Approval, BodyFormat, ClientAuth, ClientField, Connect, CredentialDecl, Database,
-    Finalize, Grants, Hook, HostRule, INSTANCE_HOST, Inject, Instances, Intercept, Library,
+    Finalize, Grants, Hook, HostRule, INSTANCE_HOST, Inject, Instances, Intercept, Ldap, Library,
     Manifest, MetadataDecl, Passthrough, RewriteHost, Tenant, Token, Tools, Transform,
     UrlOrTemplate, de_opt, de_vec,
 };
@@ -117,6 +117,9 @@ pub struct AppEntry {
     pub approvals: BTreeMap<String, Approval>,
     pub agent: Option<Agent>,
     pub database: Option<Database>,
+    /// (D-251) the gateway LDAP lane; absent in older snapshots.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ldap: Option<Ldap>,
     /// (P4-GRANTS, D-123) copied from the manifest; absent in older snapshots = both false.
     #[serde(default)]
     pub grants: Grants,
@@ -175,6 +178,14 @@ impl Snapshot {
 
     pub fn app(&self, app_id: &str) -> Option<&AppEntry> {
         self.apps.iter().find(|a| a.app_id == app_id)
+    }
+}
+
+impl AppEntry {
+    /// (FIX-123, D-195) The `token` of a connection made with `method` (the method's own, else
+    /// the app's); `None` method = the app's.
+    pub fn token_for(&self, method: Option<&str>) -> Option<&Token> {
+        crate::manifest::token_for(&self.connect, self.token.as_ref(), method)
     }
 }
 
@@ -353,6 +364,7 @@ pub fn compile(
                 approvals: a.approvals.clone(),
                 agent: a.agent.clone(),
                 database: a.database.clone(),
+                ldap: a.ldap.clone(),
                 grants: a.grants,
                 library: a.library.clone(),
             });
@@ -362,7 +374,8 @@ pub fn compile(
                         .push(host_entry(&app_id, INSTANCE_HOST, r, false));
                 }
                 // An `{instance}` rule is also an ordinary static claim on `default_host`.
-                if let Some(h) = static_host(a, r) {
+                // (FIX-134, D-243) So is each preset instance's host.
+                for h in static_hosts(a, r) {
                     snap.hosts.push(host_entry(
                         &app_id,
                         h,

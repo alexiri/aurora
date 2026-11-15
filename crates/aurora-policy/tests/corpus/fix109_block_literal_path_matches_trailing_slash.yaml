@@ -1,0 +1,4 @@
+description: FIX-109 - a block on the literal path /v1/users also stops /v1/users/ (a trailing slash is not significant)
+workspace: {ordered_rules: [{logical_id: 00000000-0000-0000-0000-0000000000b1, name: ws-block-users, action: block, targets: [{type: network, host: api.example.com, path: '/v1/users'}]}]}
+facts: {host: api.example.com, port: 443, path: /v1/users/, method: GET, identity: {agent_id: 00000000-0000-0000-0000-000000000001}}
+expect: {verdict: block, reason: rule, workspace_rule: ws-block-users}

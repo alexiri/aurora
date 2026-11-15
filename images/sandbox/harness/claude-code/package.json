@@ -1,0 +1,9 @@
+{
+  "name": "aurora-sandbox-claude-code",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The pinned Claude Code CLI of the sandbox image (FIX-103). The version must match PINNED_VERSION in services/aurora-supervisor/src/adapters/claude_code/mod.rs; the lockfile pins the whole tree and the image installs it with `npm ci`.",
+  "dependencies": {
+    "@anthropic-ai/claude-code": "2.1.319"
+  }
+}

@@ -168,6 +168,9 @@ async fn fixture(kind: &str, token_url: &str, refresh: &str) -> Fx {
         metadata: json!({}),
         tenant_host: None,
         instance_id: None,
+        connect_method: None,
+        access: "write".into(),
+        scopes: Vec::new(),
     };
     Fx {
         db,
@@ -341,6 +344,49 @@ async fn mint_under_the_same_lock() {
     assert_eq!(*stub.0.lock().unwrap(), 1);
 }
 
+/// Records the `aurora_access` metadata key every mint sees.
+struct AccessProbe(Mutex<Vec<Option<String>>>);
+
+#[async_trait::async_trait]
+impl Minter for AccessProbe {
+    async fn mint(&self, i: MintInput) -> Result<MintOutput, MintError> {
+        let seen = i
+            .metadata
+            .get("aurora_access")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        self.0.lock().unwrap().push(seen);
+        let mut c = serde_json::Map::new();
+        c.insert("access_token".into(), json!("minted"));
+        Ok(MintOutput {
+            credentials: c,
+            expires_at: chrono::Utc::now().timestamp() + 600,
+        })
+    }
+}
+
+/// FIX-133 (D-240): the gateway puts the connection's access in the mint metadata under the
+/// reserved `aurora_access` key (read-only = `read`), so a hook can narrow the token.
+#[tokio::test]
+async fn mint_metadata_carries_the_connection_access() {
+    for read_only in [true, false] {
+        let mut fx = fixture("hook", "http://unused/token", "r0").await;
+        fx.cand.read_only = read_only;
+        let probe = Arc::new(AccessProbe(Mutex::new(Vec::new())));
+        let m = Arc::new(TokenManager::new(
+            fx.db.pool().clone(),
+            fx.vault.clone(),
+            Some(probe.clone()),
+        ));
+        let ctx = HashMap::from([("org_id".to_owned(), "o1".to_owned())]);
+        m.ensure_fresh(&fx.loaded, &fx.cand, &ctx, false)
+            .await
+            .unwrap();
+        let want = if read_only { "read" } else { "write" };
+        assert_eq!(*probe.0.lock().unwrap(), vec![Some(want.to_owned())]);
+    }
+}
+
 /// RFE-022: a reseal after a mint (and after a refresh) records the NAMES of the sealed fields.
 #[tokio::test]
 async fn reseal_records_credential_key_names() {
@@ -442,7 +488,8 @@ async fn http_minter_follows_w9() {
             credentials: serde_json::Map::new(),
             metadata: json!({"a": "b"}),
             tenant_host: None,
-            instance_host: None,
+            instance_host: Some("its.cern.ch".into()),
+            instance_base_path: Some("/jira".into()),
             client: serde_json::Map::new(),
             client_secret: serde_json::Map::new(),
             context: Default::default(),
@@ -453,6 +500,9 @@ async fn http_minter_follows_w9() {
     let b = seen.lock().unwrap().clone();
     assert_eq!(b["package_digest"], "dg");
     assert_eq!(b["input"]["metadata"][0]["key"], "a");
+    // (C-249, D-231) The hook host request names the registration's host and its base path.
+    assert_eq!(b["instance_host"], "its.cern.ch");
+    assert_eq!(b["instance_base_path"], "/jira");
 }
 
 // ---- RFE-007: internal-secret ring on the gateway ----
@@ -494,6 +544,7 @@ async fn minter_presents_active_key_id_and_status_checks_the_ring() {
         metadata: json!({}),
         tenant_host: None,
         instance_host: None,
+        instance_base_path: None,
         client: serde_json::Map::new(),
         client_secret: serde_json::Map::new(),
         context: Default::default(),

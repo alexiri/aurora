@@ -62,6 +62,32 @@ pub struct CreateIntegrationRequest {
     pub credentials: serde_json::Value,
 }
 
+/// `POST /orgs/{org}/channel-integrations:probe` body (C-711): the create shapes.
+#[derive(Deserialize, ToSchema)]
+pub struct ProbeIntegrationRequest {
+    pub connector_id: String,
+    #[serde(default)]
+    #[schema(value_type = Object)]
+    pub config: serde_json::Value,
+    /// Write-only: used once, never stored or logged.
+    #[schema(value_type = Object)]
+    pub credentials: serde_json::Value,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct ProbeChoice {
+    pub value: String,
+    pub label: String,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct ProbeIntegrationResponse {
+    /// Per setup field that declares `choices: "from_validate"`.
+    pub choices: std::collections::BTreeMap<String, Vec<ProbeChoice>>,
+    pub tenant_label: Option<String>,
+    pub warnings: Vec<String>,
+}
+
 #[derive(Deserialize, ToSchema)]
 pub struct PatchIntegrationRequest {
     /// Replaces the whole config (re-validated).
@@ -235,6 +261,40 @@ pub struct SpaceBindingList {
     pub items: Vec<SpaceBinding>,
 }
 
+/// `POST /agents/{agent}/space-bindings` (C-713).
+#[derive(Deserialize, ToSchema)]
+pub struct CreateBindingRequest {
+    pub integration_id: Uuid,
+    pub space_ref: String,
+    /// Default `mentions`.
+    pub listen: Option<Listen>,
+}
+
+/// `GET /integrations/{id}/spaces` query (C-714).
+#[derive(Deserialize, utoipa::IntoParams)]
+pub struct MySpacesQuery {
+    /// Must be `true`.
+    pub mine: Option<bool>,
+    pub query: Option<String>,
+    /// 1..=50, default 25.
+    pub limit: Option<u32>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct MySpace {
+    pub space_ref: String,
+    pub label: String,
+    /// `channel` or `private`.
+    pub kind: String,
+    /// Always true: `spaces.list` is the bot's own view (C-714).
+    pub bot_present: bool,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct MySpacesList {
+    pub items: Vec<MySpace>,
+}
+
 #[derive(Deserialize, ToSchema)]
 pub struct PatchBindingRequest {
     pub listen: Option<Listen>,
@@ -284,6 +344,30 @@ pub struct CreateUserLinkRequest {
 
 #[derive(Deserialize, ToSchema)]
 pub struct ConfirmLinkRequest {
+    /// The `aui_…` token from the sign-in link.
+    pub token: String,
+    /// The platform user the confirm page showed (`LinkPreview.platform_user_ref`); the request is
+    /// refused (422 `link_reference_mismatch`) when it is not the token's chat account.
+    pub platform_user_ref: String,
+}
+
+/// `GET /channel-links/preview?token=`: the chat account a sign-in link would bind (docs/13 §5.9).
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct LinkPreview {
+    pub integration_id: Uuid,
+    pub connector_id: String,
+    pub tenant_label: String,
+    /// The platform's reference for the person (what the confirm request repeats).
+    pub platform_user_ref: String,
+    /// What the platform called the person when the link was requested, if known.
+    pub platform_display_name: Option<String>,
+    /// The email the platform asserted, if any (a hint, never an authorization).
+    pub platform_email_hint: Option<String>,
+    pub expires_at: DateTime<Utc>,
+}
+
+#[derive(Deserialize, utoipa::IntoParams)]
+pub struct LinkPreviewParams {
     /// The `aui_…` token from the sign-in link.
     pub token: String,
 }
@@ -353,4 +437,7 @@ pub struct ReachDecisionRequest {
     /// Defaults to the grant's current listen mode.
     pub listen: Option<Listen>,
     pub revision: i64,
+    /// (FIX-111) Approve only: the grant expires this many seconds from now (60 s to 365 days)
+    /// and then needs a new approval; without it a grant does not expire.
+    pub expires_in: Option<u32>,
 }

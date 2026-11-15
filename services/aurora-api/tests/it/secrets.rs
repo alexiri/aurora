@@ -24,6 +24,8 @@ struct World {
     mem: Arc<MemoryStore>,
     _litellm: MockServer,
     _anthropic: MockServer,
+    /// (FIX-105) answers 503 on `/v1/models`.
+    _flaky: MockServer,
 }
 
 fn endpoint(id: &str, base: &str, rule: Option<KeyOrigin>) -> LlmEndpoint {
@@ -102,8 +104,14 @@ async fn world() -> World {
         .mount(&anthropic)
         .await;
     let _ = query_param("limit", "1");
+    let flaky = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/v1/models"))
+        .respond_with(ResponseTemplate::new(503))
+        .mount(&flaky)
+        .await;
 
-    let (lu, au) = (litellm.uri(), anthropic.uri());
+    let (lu, au, fu) = (litellm.uri(), anthropic.uri(), flaky.uri());
     let h = Harness::with_config(move |c| {
         c.llm.endpoints = vec![
             endpoint(
@@ -115,6 +123,23 @@ async fn world() -> World {
                 }),
             ),
             endpoint("dead", "http://127.0.0.1:1", None),
+            // (FIX-105) a static model list must not turn an endpoint that answers 503 into a
+            // verified key.
+            LlmEndpoint {
+                models: vec!["gpt-a".into()],
+                ..endpoint("flaky", &fu, None)
+            },
+            LlmEndpoint {
+                models: vec!["gpt-a".into()],
+                ..endpoint(
+                    "flaky_rule",
+                    &fu,
+                    Some(KeyOrigin {
+                        method: "endpoint".into(),
+                        ..KeyOrigin::default()
+                    }),
+                )
+            },
             endpoint(
                 "team",
                 &lu,
@@ -180,7 +205,8 @@ async fn world() -> World {
         .bind(org)
         .bind(json!({"llm": {"endpoints": {
             "central": {"key_scopes": ["organization"]},
-            "dead": {}, "dead_rule": {}, "anthropic": {}, "team": {}, "team_req": {}
+            "dead": {}, "dead_rule": {}, "anthropic": {}, "team": {}, "team_req": {},
+            "flaky": {}, "flaky_rule": {}
         }}}))
         .execute(h.pool())
         .await
@@ -206,6 +232,7 @@ async fn world() -> World {
         mem,
         _litellm: litellm,
         _anthropic: anthropic,
+        _flaky: flaky,
     }
 }
 
@@ -769,6 +796,47 @@ async fn litellm_team_teamless_and_refusal_detail() {
     assert_eq!(v["origin"]["detail"], "key_reports_no_team", "{v}");
 }
 
+/// (FIX-105, CRED-6) An endpoint that answers 503 on `/v1/models` is unreachable for key
+/// verification even when a static model list is configured: with a key-origin rule the key is
+/// refused (422 `llm_endpoint_unreachable`, nothing saved); without one it is saved `pending`,
+/// never `verified`.
+#[tokio::test]
+async fn a_static_model_list_does_not_verify_a_key_the_endpoint_never_saw() {
+    let w = world().await;
+    let (s, v) = w
+        .call(
+            Method::POST,
+            &w.org_url(),
+            &w.owner,
+            Some(json!({
+                "name": "flaky-rule", "kind": "llm", "llm": {"endpoint_id": "flaky_rule"},
+                "value": "sk-mistyped"})),
+        )
+        .await;
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (422, Some("llm_endpoint_unreachable")),
+        "{v}"
+    );
+    let n: i64 = sqlx::query_scalar("SELECT count(*) FROM secrets WHERE name = 'flaky-rule'")
+        .fetch_one(w.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(n, 0, "nothing saved");
+    let (s, v) = w
+        .call(
+            Method::POST,
+            &w.org_url(),
+            &w.owner,
+            Some(json!({
+                "name": "flaky", "kind": "llm", "llm": {"endpoint_id": "flaky"},
+                "value": "sk-mistyped"})),
+        )
+        .await;
+    assert_eq!(s, 201, "{v}");
+    assert_eq!(v["origin"]["status"], "pending", "{v}");
+}
+
 #[tokio::test]
 async fn unreachable_endpoint_with_and_without_rule() {
     let w = world().await;
@@ -1113,4 +1181,61 @@ async fn org_secret_visibility_and_foreign_access() {
         .call(Method::GET, &format!("/v1/secrets/{id}"), &tok, None)
         .await;
     assert_eq!(s, 404);
+}
+
+/// (D-178 Q-R5-21, FIX-115) An org-level secret's creator (and, for LLM keys, origin) is shown
+/// to org admins only: a workspace owner who lists or reads it to grant it gets the secret
+/// without those fields; a workspace secret is unchanged.
+#[tokio::test]
+async fn org_secret_provenance_is_for_org_admins_only() {
+    let w = world().await;
+    let (s, v) = w
+        .call(
+            Method::POST,
+            &w.org_url(),
+            &w.admin,
+            Some(json!({
+        "name": "orgkey2", "kind": "generic", "host_pattern": "api.example.com", "value": "v"})),
+        )
+        .await;
+    assert_eq!(s, 201, "{v}");
+    let id = v["id"].as_str().unwrap().to_owned();
+    // Admin: creator visible.
+    let (s, v) = w
+        .call(Method::GET, &format!("/v1/secrets/{id}"), &w.admin, None)
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert!(v["created_by"].is_object(), "{v}");
+    // A plain org member who owns a workspace (can discover org secrets to grant them): no
+    // creator, no origin.
+    let wo = w.h.user("wso@x.io", false).await;
+    w.h.member(w.org, wo, "member", "active").await;
+    w.h.bind_ws(w.ws, wo, "owner").await;
+    let (_, wo) = w.h.good_session(wo).await;
+    let (s, v) = w
+        .call(Method::GET, &format!("/v1/secrets/{id}"), &wo, None)
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert!(v["created_by"].is_null() && v["origin"].is_null(), "{v}");
+    assert_eq!(v["name"], "orgkey2");
+    let (s, v) = w.call(Method::GET, &w.org_url(), &wo, None).await;
+    assert_eq!(s, 200, "{v}");
+    let item = v["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["id"] == id.as_str())
+        .unwrap();
+    assert!(
+        item["created_by"].is_null() && item["origin"].is_null(),
+        "{v}"
+    );
+    let (_, v) = w.call(Method::GET, &w.org_url(), &w.admin, None).await;
+    let item = v["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["id"] == id.as_str())
+        .unwrap();
+    assert!(item["created_by"].is_object(), "{v}");
 }

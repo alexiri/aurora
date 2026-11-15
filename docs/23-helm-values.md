@@ -8,6 +8,54 @@ through an install step by step. The chart is checked with `helm lint` and
 `helm template` on every change; keys are consumed by `templates/`, so a key
 that is not in this table does not exist.
 
+## Where does a key go? (read this first)
+
+**The rule:**
+- **Top level** holds everything **Kubernetes** has to know about: images, replicas, Secrets, volumes, ingress, network policies. It also holds every feature that adds a workload, a listener, an edge route or a network flow.
+- **`config:`** holds the **application's own settings**. They are copied verbatim into `aurora.toml` and change nothing in the Kubernetes objects. The key names are the TOML names from [15 §Configuration reference](15-deployment-operations.md#configuration-reference-keys-and-defaults), in snake_case.
+
+**Ask yourself whether turning it on needs something new in the cluster.** If yes, it is a top-level switch. If it only changes how Aurora behaves, it goes under `config:`.
+
+**Features with a top-level switch.** Set only the top-level key, and the chart writes the matching `config` key for you. Don't set the `config` side yourself. For the three on/off switches (`terminal`, `relay`/previews, `scim`), turning it on only in `config`, or giving the two sides different values, fails the render with a message. For the others, your `config` entry is overridden by the chart's (§The config block).
+
+| Set this (top level) | Not this | Because it also renders |
+|---|---|---|
+| `terminal.enabled` | `config.terminal.enabled` | the runner's stream listener :4108 and the NetworkPolicy flows to it |
+| `relay.enabled` | `config.previews.enabled` | the preview relay workload, its Service and flows |
+| `scim.enabled` | `config.scim.enabled` | the `/scim/v2` edge route |
+| `vault.*` | `config.secrets.stores` (the Vault entry) | service-account tokens and Vault wiring for api and gateway |
+| `counters.*` | `config.ratelimit.counters` | the Redis connection and NetworkPolicy peers |
+| `externalUrl` | `config.server.external_url` | ingress hosts, gateway TLS names, every service's public origin |
+| `plugins.*` | `config.plugins.dir` | the package volume |
+
+The limits and tuning of those features stay under `config:`, for example `config.terminal.awake_cap_secs` and `config.previews.*` caps. The full list of keys the chart injects is §The config block below.
+
+**Everything else is under `config:`**, including e-mail, sign-in (`auth.*`, OIDC providers), LLM endpoints, governance, approvals, retention, `gateway.allowed_private` and hosted defaults.
+
+**Secrets are never values.** A password goes in a Kubernetes Secret, referenced through an environment variable (`api.extraEnv`) whose name the key's row gives. Examples: `AURORA_SMTP_PASSWORD`, or `client_secret_env` for OIDC. From phase 5 (SET-*), it can also be entered in the dashboard.
+
+**A typical install:**
+
+```yaml
+externalUrl: https://aurora.example.org
+
+terminal:
+  enabled: true            # top level: it adds a listener and network flows
+
+config:
+  email:                   # application setting: aurora.toml [email]
+    smtp_url: "smtp://mail.example.org:587?tls=required"   # STARTTLS required; see the e-mail row
+    from: aurora-noreply@example.org
+    # smtp_username: aurora   # only with AURORA_SMTP_PASSWORD in api.extraEnv (from a Secret)
+  terminal:
+    awake_cap_secs: 3600   # a terminal limit: under config, while the switch stays top level
+
+api:
+  extraEnv: []             # e.g. AURORA_SMTP_PASSWORD from a Secret, when the server needs a login
+```
+
+From phase 5 (SET-1), setting a `config` key also **locks** it in the dashboard (§Instance settings and Helm locks). Leave a key out to let admins change it in Admin › Settings.
+
 **Reading the tables.** "Value" is the YAML type (and the allowed values where
 one is constrained — the chart fails the render on a wrong enum, and the
 service refuses to start naming the key on a wrong value that reaches
@@ -52,6 +100,7 @@ a conflicting `config` entry is merged away or fails the render:
 | `gateway.ca_dir` | — | always `/var/lib/aurora/ca` |
 | `gateway.proxy_tls.names` / `cert_file` / `key_file` | `gateway.proxy.tls.*` | Service names + `externalHost` + `names`; `existingSecret` sets the cert/key files |
 | `gateway.trusted_proxies` | `gateway.proxy.trustedProxies` | |
+| `gateway.insecure_loopback_injection` | **none, by design** | test-only (FIX-104, D-180); the chart refuses it even in `config`, and the gateway refuses it in a cluster |
 | `plugins.dir` | `plugins.dir` | do not set it in `config` |
 | `tls.extra_ca_bundle` | `extraCaBundle.*` | set when either `existingConfigMap` or `existingSecret` is set |
 | `auth.dev_idp.*` | `devIdp.*` | only when `devIdp.enabled` |
@@ -70,6 +119,64 @@ their semantics live in
 reference names them (TOML-style keys, e.g. `hosted:
 {enabled_harnesses:
 ["claude-code"]}`).
+
+## Instance settings and Helm locks (phase 5, SET-1, D-195(c), D-236..D-238)
+
+Not built yet (SET-1 and the section briefs SET-2..SET-5, FIX-124). From then on most of the
+`config.*` keys that tune behaviour — governance and BYO floors, LLM endpoints, sign-in and OIDC
+providers, e-mail, secret stores, agent and hosted defaults, approvals, retention, skills, SCIM,
+preview and terminal caps, API rate-limit tuning and `allowed_private` — are **instance settings**
+edited on Admin › Settings. The full list, by section and Admin page, is
+[15 §Instance settings](15-deployment-operations.md#instance-settings-phase-5-spec-settings-d-236d-238-sec-89-sec-90).
+
+For each of those keys the values file is **optional**:
+
+- **Unset** (the chart's default): the key is edited in the dashboard; its default is the
+  application's (the *Default* column of `15`), never the chart's.
+- **Set** under `config.*` (or through the chart value that renders it): the setting is
+  **locked** — the dashboard shows "Configured in Helm (`config.<key>`)" and no edit control, and
+  the API refuses changes (409 `setting_locked`). Lists lock as a whole, except the keyed lists
+  `auth.oidc_providers`, `secrets.stores` and `config.llm.endpoints` (per entry `id`; the `vault.*`
+  store is one such entry) and `ratelimit.api.classes` (per class): an entry you define is locked
+  ("Managed by Helm"), admins add entries with other ids beside it, and an app-defined entry may not
+  reuse a Helm entry's id. `config.llm.enabled_providers` and `config.llm.provider_preference` lock
+  as whole values.
+- **Removed later** from the values file: the setting moves to the dashboard **with the value
+  Helm had** (the API keeps a copy of every locked value), so a `helm upgrade` that drops a key
+  never silently reverts it. (phase 5, P4-LLM spec batch, D-262) One exception in effect, not in
+  value: an LLM endpoint on a **private address** passes the gateway's destination guard
+  implicitly only while it is defined here; before dropping such an endpoint from the values
+  file, add its host to `gateway.allowed_private` (Admin › Limits, or `config.gateway.allowed_private`),
+  otherwise agents' requests to it are refused `destination_refused` after the upgrade
+  (Admin › LLM endpoints marks the entry `needs_allowed_private`).
+
+**Upgrading an existing install changes nothing**: every key your values file sets stays locked;
+the release notes and a banner on Admin › Settings list them. To hand a key to the dashboard,
+delete it from the values file and upgrade.
+
+Chart rules that keep this meaningful (SET-1, D-237(c)/(d)):
+
+- `values.yaml` renders **no default for a movable key**: its `config` block keeps only
+  infrastructure keys (`server.*`, binds, `telemetry.log_level`); movable keys appear only as
+  comments with their documented default. The `config.hosted.enabled` example line is removed
+  (the application default is the same), and the chart value `scim.ratePerMinute` defaults to
+  unset (rendered as `config.scim.rate_per_minute` only when you set it; the application default is
+  600). A chart guard renders the defaults and fails if any key of the movable-key list appears in
+  `aurora.toml`.
+- `terminal.enabled` and `scim.enabled` keep rendering their wiring (runner :4108 listener and
+  NetworkPolicy flows; the `/scim` edge route) and render the Helm-only keys
+  `config.terminal.available` / `config.scim.available` instead of mirroring the feature switch.
+  The dashboard switch defaults to that value — the chart switch on still means the feature is on —
+  and an admin can turn it off (or on again) live; it cannot be turned on while the chart switch is
+  off.
+- Secrets never move into values: dashboard-entered secrets are sealed in the database's inline
+  store. A secret supplied through the environment (`client_secret_env` + `api.extraEnv`,
+  `AURORA_SMTP_PASSWORD`) locks that field, as before.
+
+What stays a Helm value or configuration-only key in any case: secrets and key rings, the database,
+binds, ingress and Services, certificates, the runner and sandbox configuration (sizes and
+`runner.max_sandboxes` included; D-235(a)), previews' switch and domain, counters, telemetry,
+`push.*`, `blobs.*`, `auth.instance_admins` (the break-glass list) and every development switch.
 
 ## Global
 
@@ -91,7 +198,7 @@ reference names them (TOML-style keys, e.g. `hosted:
 | `secrets.generatedName` | Secret name | `<release>-aurora-secrets` | name of the generated Secret | naming conventions |
 | `secrets.rotate.signing` / `.internal` | bool | `false` | on the **next** `helm upgrade`, append one entry to the `AURORA_SIGNING_KEY` / `AURORA_INTERNAL_SECRET` ring (never activates; a pending entry blocks another append); set the flag, upgrade, then follow the rotation doc | key rotation ([key-rotation.md](operator/key-rotation.md)) |
 | `gateway.ca.existingSecret` | Secret name (`ca.pem`, `ca.key`) | `""` | reuse an operator CA for the proxy listener; empty: the `gateway-ca` hook mints one (never overwritten) | importing a CA ([gateway-posture §TLS proxy listener](operator/gateway-posture.md#tls-proxy-listener)) |
-| `extraCaBundle.existingConfigMap` / `.existingSecret` / `.key` | names / string | `""` / `""` / `ca-bundle.pem` | mount a PEM bundle of extra trusted CAs read-only into every workload; rendered as `tls.extra_ca_bundle` (org CA in front of Vault, OIDC, an internal LLM endpoint); set ConfigMap **or** Secret, never both | private CA in the chain (`15 §Configuration reference`, `tls.extra_ca_bundle`) |
+| `extraCaBundle.existingConfigMap` / `.existingSecret` / `.key` | names / string | `""` / `""` / `ca-bundle.pem` | mount a PEM bundle of extra trusted CAs read-only into every workload; rendered as `tls.extra_ca_bundle` (org CA in front of Vault, OIDC, an internal LLM endpoint); set ConfigMap **or** Secret, never both. (FIX-139) The connector host and every `connectors[]` workload also get `AURORA_TLS_EXTRA_CA_BUNDLE` pointing at the mounted file (the Mattermost connector reads that variable, not `aurora.toml`); no separate connector value exists | private CA in the chain (`15 §Configuration reference`, `tls.extra_ca_bundle`) |
 
 ## Database
 
@@ -99,11 +206,12 @@ reference names them (TOML-style keys, e.g. `hosted:
 |---|---|---|---|---|
 | `database.existingSecret` | Secret name (key `AURORA_DATABASE_URL`) | `""` = `<release>-aurora-database` | Secret the api, hookhost and migrate Job read the URL from; the gateway too, unless the least-privilege pair below is set | always in production ([install-helm §Database](operator/install-helm.md#database)) |
 | `database.maxConnections.api` / `.gateway` | int | `20` / `10` | `database.max_connections` per service | sized to your Postgres `max_connections` |
-| `database.gatewayRole` + `database.gatewayExistingSecret` | role name + Secret name (key `AURORA_DATABASE_URL`) | `""` / `""` | least-privilege gateway login (FIX-016); **both or neither** (`helm` fails otherwise): `migrate` grants the role exactly the gateway privileges of `03`, the gateway logs in with the second Secret's URL | DBA co-operation available ([install-helm §Database](operator/install-helm.md#database)) |
+| `database.gatewayRole` + `database.gatewayExistingSecret` | role name + Secret name (key `AURORA_DATABASE_URL`) | `""` / `""` | least-privilege gateway login (FIX-016); **both or neither** (`helm` fails otherwise): `migrate` grants the role exactly the gateway privileges of `03`, the gateway logs in with the second Secret's URL. **Required with an external database** unless `database.allowSharedLogin` is set (FIX-106, D-178 Q-R5-11: `helm` refuses to render otherwise, with a message naming both ways out). With the bundled `postgres.enabled` and neither the pair nor `allowSharedLogin`, the chart creates the role `aurora_gateway` itself (a `<release>-gateway-role` pre-install/pre-upgrade hook Job, password generated into the generated Secret as `POSTGRES_GATEWAY_PASSWORD`, URL as `AURORA_GATEWAY_DATABASE_URL`) and the gateway logs in as it; with `secrets.existingSecret` you add those two keys yourself | DBA co-operation available ([install-helm §Database](operator/install-helm.md#database)) |
+| `database.allowSharedLogin` | bool | `false` | the explicit, **not recommended** opt-in to the gateway sharing the main database login (every privilege the API has). Mutually exclusive with the pair (`helm` fails); with `postgres.enabled` it switches the automatic role off | never in production |
 | `database.cidrs` / `.port` | CIDR list / int | `[]` / `5432` | NetworkPolicy egress to an **external** database (ignored when `postgres.enabled`) | external DB on a private range |
 | `postgres.enabled` | bool | `false` | bundled single-node Postgres 16, **evaluation only**; its StatefulSet/Service/PVC are pre-install hook resources, so `helm uninstall` leaves them (NOTES.txt has the cleanup commands) | never in production ([install-helm §Database](operator/install-helm.md#database)) |
-| `postgres.image` / `.storage` / `.storageClass` | image / quantity / class | `postgres:16` / `5Gi` / `""` | the evaluation database's image, PVC size and class | evaluation only |
-| `postgres.initScriptsConfigMap` | ConfigMap name | `""` | `*.sql`/`*.sh` run once on an empty data dir (e.g. to create `database.gatewayRole`) | evaluation with the gateway role |
+| `postgres.image` / `.storage` / `.storageClass` | image / quantity / class | `postgres:16` pinned by digest (FIX-103) / `5Gi` / `""` | the evaluation database's image, PVC size and class | evaluation only |
+| `postgres.initScriptsConfigMap` | ConfigMap name | `""` | `*.sql`/`*.sh` run once on an empty data dir (the gateway role is created by the chart; an init script is for other objects, or for the explicit role pair) | evaluation |
 
 ## Workloads
 
@@ -132,6 +240,7 @@ ports-per-service table.
 | `runner.k8s.nodeSelector` / `.tolerations` | map / list | `{}` / `[]` | node selector and tolerations **of sandbox pods** | dedicated sandbox nodes |
 | `connectorHost.enabled` | bool | `true` | the built-in connector host (phase 4, P4-MCON; Mattermost); `false` = no managed connectors (self-hosted `connectors[]` unaffected) | no managed connectors |
 | `connectorHost.replicas` | int ≥ 1 | `1` | every replica runs every enabled managed connector | — |
+| `connectorHost.perHostToken` | bool | `true` | (FIX-120, D-189) the hooks job generates a token bound to the connector types this Deployment runs (`mattermost`, plus `fake` with `testTypes`) into the instance Secret (`AURORA_CONNECTOR_HOST_TOKEN_BOUND`, and `AURORA_BOOTSTRAP_CONNECTOR_HOST_TOKENS` JSON for the api); the host presents it instead of the shared token, and the api then refuses the shared one (`15 §Upgrades`) | `false` keeps the instance-wide shared token |
 | `connectorHost.testTypes` | bool | `false` | also announce the `fake` connector type + test control API on the ops port; the host warns at start; **dev/e2e only** | local testing ([install-helm §Connector host](operator/install-helm.md#connector-host)) |
 | `connectors[]` | list of `{id, image, callbackPort (4190), tokenSecret: {name, key}, callbackIngress: {enabled, host, path}, replicas, resources, env}` | `[]` | self-hosted connectors the chart runs (types Aurora does not ship); each gets its own Deployment/Service/Ingress | a self-hosted connector ([install-helm §Connectors](operator/install-helm.md#connectors-optional)) |
 
@@ -141,7 +250,11 @@ Renders a `hashicorp-vault` store into the api **and** a gateway-specific
 `aurora-gateway.toml`; the store is additive — with `vault.enabled: false`
 nothing is rendered and the inline store stays the default. Full setup:
 [vault.md](operator/vault.md), keys: `15 §Configuration reference`
-(`secrets.stores[]`).
+(`secrets.stores[]`). (phase 5, FIX-124 on SET-1) Stores are also instance settings: a store
+rendered from `vault.*` is a locked entry of the keyed list `secrets.stores` (and `vault.makeDefault`
+locks `secrets.default_store`); with `vault.enabled: false` stores are added on Admin › Secret
+stores. The Kubernetes-auth token projection (`vault.auth.audience`, `.tokenExpirationSeconds`) and
+`vault.auth.approle.existingSecret` stay chart values in either case.
 
 | Value | Type / values | Default | What it does | Set it when / details |
 |---|---|---|---|---|
@@ -195,6 +308,45 @@ and failure policy: `15 §Shared rate-limit counters`, `06 §Rate limiting`.
 | `gatewayApi.hostnames` | list | `[]` = host of `externalUrl` | route hostnames | — |
 | `gatewayApi.requestTimeout` | duration | `600s` | HTTPRoute request timeout (SSE/long-poll need long timeouts; the implementation must not buffer) | — |
 
+## Port previews (relay)
+
+The preview relay (P4-PRV-2, FIX-056; [15 §Port previews](15-deployment-operations.md#port-previews-phase-4-p4-prv-1-p4-prv-2-d-144d-147-sec-80sec-82-sec-85),
+[11 §Port previews](11-runner-sandboxes.md)). `relay.enabled` is the **single switch**: it renders the relay
+Deployment, Service and PodDisruptionBudget, the wildcard `*.<relay.domain>` edge rules (relay only) and the relay
+NetworkPolicy, and mirrors `config.previews.enabled`. The relay's `[relay]` section is chart-owned. The relay may
+reach only the api (:4101), the runners' stream listener (:4108) and DNS — it has **no** external egress (FIX-069).
+The generic per-service keys `<svc>.replicas`, `.resources`, `.nodeSelector`, `.tolerations` and `.extraEnv`
+([§Workloads](#workloads)) apply to `relay` too; their relay defaults are in the table.
+
+| Value | Type / values | Default | What it does | Set it when / details |
+|---|---|---|---|---|
+| `relay.enabled` | bool | `false` | the single previews switch: relay workload + wildcard edge + policies; mirrors `config.previews.enabled` — set only this; both set and unequal, or `config.previews.enabled: true` alone, fails the render | enabling port previews |
+| `relay.domain` | DNS suffix | `""` (**required when `relay.enabled`**; the render fails without it) | the preview DNS suffix: sessions are served at `<label>.<relay.domain>`; must equal `config.previews.domain` (the relay refuses a mismatch after registering) | always with `relay.enabled`; needs wildcard DNS and a wildcard certificate for `*.<domain>` |
+| `relay.replicas` | int ≥ 1 | `1` | relay Deployment replicas | previews carry load or must survive a node loss |
+| `relay.resources` | resources | requests `100m` / `128Mi`, memory limit `512Mi` | relay pod resources | many concurrent streams |
+| `relay.nodeSelector` / `relay.tolerations` | map / list | `{}` / `[]` | scheduling of the relay pods | a dedicated edge node pool |
+| `relay.extraEnv` | list of env entries | `[]` | extra environment for the relay container (`valueFrom` supported) | corporate proxy / tracing variables |
+| `relay.max_streams` | int | `2048` | `[relay] max_streams`: concurrent proxied streams per relay replica | tuning edge capacity |
+| `relay.max_streams_per_user` | int | `64` | `[relay] max_streams_per_user`: the per-user share of them | tuning fairness |
+| `relay.request_body_max_bytes` | bytes | `33554432` (32 MiB) | `[relay] request_body_max_bytes`: request-body cap on a preview request | previews that upload large bodies |
+| `relay.trusted_proxies` | CIDR list | `[]` | `[relay] trusted_proxies` (same semantics and default as `server.trusted_proxies`): the edge proxies / ingress pods in front of the relay. When the socket peer is inside one, the visitor's address is the rightmost untrusted `X-Forwarded-For` entry; without it the peer address is the client address (every visitor behind an ingress would share one grant-redemption bucket). `/0` is refused | an ingress or load balancer sits in front of the relay |
+
+## SCIM
+
+| Value | Type / values | Default | What it does | Set it when / details |
+|---|---|---|---|---|
+| `scim.enabled` | bool | `false` | the instance switch for the SCIM plane (P4-GRP-2, SEC-72): `true` routes `/scim` to the API in the Ingress and the HTTPRoute; `false` renders no `/scim` route and the API answers 404 for the whole surface | directory sync (IdP → Aurora provisioning; [15 §SCIM directory sync](15-deployment-operations.md)). (phase 5, SET-5, D-237(d)) It renders `config.scim.available`; the SCIM switch itself becomes an instance setting defaulting to it |
+| `scim.ratePerMinute` | int | `600` | `[scim] rate_per_minute`: the per-SCIM-token limit (burst is a fifth of it). (phase 5, SET-5) Default becomes unset, and a set value locks the setting (otherwise edit it on Admin › Settings › Directory sync) | an IdP that syncs in large bursts |
+
+## Plugin packages
+
+| Value | Type / values | Default | What it does | Set it when / details |
+|---|---|---|---|---|
+| `plugins.source` | `none` \| `configMap` \| `pvc` | `none` | where the api pods find `*.aurora-plugin` packages: no volume, a ConfigMap (its keys are package files, 1 MiB Kubernetes limit; an init container copies them into an emptyDir) or an existing PVC | operator-supplied plugin packages ([15 §Production](15-deployment-operations.md)) |
+| `plugins.dir` | path | `/var/lib/aurora/plugins` | rendered into `[plugins] dir`; the package volume is mounted here (do not set it in `config`) | almost never |
+| `plugins.configMapName` | ConfigMap name | `""` | the ConfigMap for `source: configMap` (restart the api pods after changing it; no auto-reload) | `source: configMap` |
+| `plugins.pvcName` | PVC name | `""` | the PersistentVolumeClaim for `source: pvc` (every api replica scans it: use ReadWriteMany when `api.replicas` > 1) | `source: pvc` |
+
 ## Sandboxes namespace
 
 | Value | Type / values | Default | What it does | Set it when / details |
@@ -216,13 +368,17 @@ nothing opens the sandboxes to the cluster.
 | `networkPolicy.enabled` | bool | `true` | render any policies at all (leave on unless the cluster forbids them) | never off in production |
 | `networkPolicy.edgeNamespaceSelector` | label selector | `kubernetes.io/metadata.name: ingress-nginx` | which namespace's pods may reach api:4101, web:4100, connector callbacks | another ingress namespace |
 | `networkPolicy.dnsNamespaceSelector` | label selector | `kube-system` | DNS egress | custom DNS |
-| `networkPolicy.kubeApiCidrs` / `.kubeApiPorts` | CIDR list / port list | `[]` (= any:443/6443) / `[443, 6443]` | runner and `secrets` hook → Kubernetes API egress | pinned API-server endpoints |
+| `networkPolicy.kubeApiCidrs` / `.kubeApiPorts` | CIDR list / port list | `[]` (= the addresses of the `kubernetes` EndpointSlice in `default`, read at install/upgrade; no rule where unreadable) / `[443, 6443]` | runner and `secrets` hook → Kubernetes API egress | pinned API-server endpoints; any cluster where the installing identity cannot read endpointslices |
+| `networkPolicy.kubeApiOpen` | bool | `false` | explicitly allow any:`kubeApiPorts` for the runner and the `secrets` hook (the pre-FIX-102 default); never silent | only when the API server addresses cannot be pinned |
+| `networkPolicy.monitoringFrom` | list of NetworkPolicy peers | `[]` | peers allowed to scrape every ops/metrics port (4101, 4103, 4104, 4106, 4192, 4193); nothing opens them by default | Prometheus in another namespace |
+| `monitoring.podMonitor.enabled` / `.interval` / `.labels` | bool / duration / map | `false` / `30s` / `{}` | one Prometheus Operator `PodMonitor` per component (ops listeners have no Service); needs the Prometheus Operator CRDs (API group monitoring.coreos.com) | Prometheus Operator |
+| `secrets.allowRegenerate` | bool | `false` | let an **upgrade** create fresh encryption keys when the generated Secret is absent (otherwise the hook refuses: stored credentials would become undecryptable) | deliberately starting over after a restore without the Secret |
 | `networkPolicy.cilium.enabled` | bool | `false` | add CiliumNetworkPolicies for runner and `secrets` hook → kube-apiserver (Cilium matches those as entities, not ipBlocks) and admit the `ingress` entity on the edge ports | Cilium cluster (`15 §Production`) |
 | `networkPolicy.cilium.edgeEntities` | list of Cilium entities | `[ingress]` | entities admitted on the edge ports (host-network ingresses: `[host, remote-node]`) | host-network ingress |
 | `networkPolicy.externalEgress.cidr` / `.except` | CIDR / list | `0.0.0.0/0` / private ranges | external egress (OIDC, SMTP, LLM endpoints, push services) for api/gateway/hookhost/connectors; `except` carves private ranges out (they need explicit rules) | lock egress down |
-| `networkPolicy.gatewayExtraEgress` | raw NP `egress` entries | `[]` | appended to the gateway policy (a private-range LLM endpoint; must also be in `gateway.allowed_private`) | private LLM endpoints |
+| `networkPolicy.gatewayExtraEgress` | raw NP `egress` entries | `[]` | appended to the gateway policy (a private-range LLM endpoint; an endpoint defined under `config.llm.endpoints` passes the gateway's destination guard implicitly, one added in the dashboard must also be in `gateway.allowed_private`, D-262) | private LLM endpoints |
 | `networkPolicy.connectorHostExtraEgress` | raw NP `egress` entries | `[]` | appended to the connector host's policy (a chat platform on a private range) | private Mattermost |
-| `terminal.enabled` | bool | `false` | the web terminal (P4-TERM, C-622): the single switch — it renders `config.terminal.enabled` (mirrored; set `config.terminal.enabled` only when you want it to agree explicitly — both set and unequal fails the render, and `config.terminal.enabled=true` alone fails too, because only the top-level switch renders the chart wiring), opens the runner's stream listener :4108 beside previews (either switch opens it) and the NetworkPolicy flows api → runner:4108 (the terminal's leg 1, C-617) and relay/api → runner:4108. While off the API answers 404 `terminal_disabled` and nothing renders. The limits (`terminal.awake_cap_secs`, …) stay `config.terminal.*` keys | the Terminal tab is wanted |
+| `terminal.enabled` | bool | `false` | the web terminal (P4-TERM, C-622): the single switch — it renders `config.terminal.enabled` (mirrored; set `config.terminal.enabled` only when you want it to agree explicitly — both set and unequal fails the render, and `config.terminal.enabled=true` alone fails too, because only the top-level switch renders the chart wiring), opens the runner's stream listener :4108 beside previews (either switch opens it) and the NetworkPolicy flows api → runner:4108 (the terminal's leg 1, C-617) and relay/api → runner:4108. While off the API answers 404 `terminal_disabled` and nothing renders. The limits (`terminal.awake_cap_secs`, …) stay `config.terminal.*` keys. (phase 5, SET-5, D-237(d)) It renders `config.terminal.available` instead of mirroring the feature switch, which becomes an instance setting defaulting to it | the Terminal tab is wanted |
 
 ## Development IdP
 
@@ -250,7 +406,9 @@ Many `aurora.toml` keys look like chart values but are **not** — they go in
   (limits `previews.session_ttl_secs`, …; the switch is the chart value
   `relay.enabled`, which mirrors `config.previews.enabled`), the web terminal
   (limits `terminal.awake_cap_secs`, …; the switch is the chart value
-  `terminal.enabled`, which mirrors `config.terminal.enabled`), SCIM
+  `terminal.enabled`, which mirrors `config.terminal.enabled`), SSH access
+  (phase 5: `ssh.public_host`, `ssh.cert_ttl_secs`, `ssh.ca.previous_public_keys`, … in
+  `config.ssh.*`; the switch will be the chart value `ssh.enabled`), SCIM
   (`scim.enabled`, …), Web Push (`push.*`),
   the S3 blob store (`blobs.*`), approval parking (`approvals.park.*`) —
   set these in `config`, the sections' keys and limits are in
@@ -268,11 +426,33 @@ These Helm keys are **specified** (with config keys in `15`) but not yet
 implemented in the chart — a brief names them so the chart work lands with the
 feature:
 
-- previews: `previews.domain`, `previews.tls.certManager.issuerRef` / `previews.tls.secretName`, `relay.enabled`, `relay.resources`, `relay.networkPolicy.runnerEgressTo` (P4-PRV-1/2; `15 §Port previews` — note: `previews.domain` is a config key, set via `config.previews.domain`; the switch itself is the chart value `relay.enabled`, above — it mirrors `config.previews.enabled`, so set only the chart value)
+- previews: `previews.domain` is a **config** key (set via `config.previews.domain`, `15 §Port previews`); the chart values are `relay.*` ([§Port previews (relay)](#port-previews-relay)). There are no `previews.tls.*` chart values: the wildcard certificate is the operator's own edge configuration (the chart renders no TLS block for `*.<relay.domain>`), and the relay's egress is fixed (api, runners, DNS).
 - web terminal: `terminal.awake_cap_secs`, `terminal.wake_window_secs`, `terminal.wake_wait_secs` (P4-TERM, D-161; `15`, `11 §Web terminal` — note: config keys, set via `config.terminal.*`; the switch itself is the chart value `terminal.enabled`, above — it mirrors `config.terminal.enabled`, so set only the chart value)
-- SCIM: `scim.enabled`, `scim.allowedEmailDomains`, `scim.ratePerMinute`, `scim.tokenMaxDays` (P4-GRP-2; `15 §SCIM directory sync`)
-- approval park + Web Push: `approvals.park.*`, `push.enabled`, `push.vapid.*`, `push.allowedEndpointHosts`, `push.networkPolicy.egressTo` (RFE-011b; `15 §Approval park-and-resume and Web Push`)
-- S3 blob store: `blobs.s3.existingSecret`, `blobs.s3.networkPolicy` (P4-S3; `15 §S3-compatible blob store`)
+- SCIM: `scim.enabled` and `scim.ratePerMinute` are implemented ([§SCIM](#scim)); the remaining SCIM keys (`scim.allowed_email_domains`, `scim.token_max_days`) are config keys (`config.scim.*`, `15 §SCIM directory sync`)
+- Web Push (phase 5, D-138; not in the chart yet — P4-011B-3 adds them to `values.yaml` and moves these rows into a new `## Web Push` section; RFE-011b, D-266(a), C-837; `15 §Approval park-and-resume and Web Push`):
+  - `push.enabled` — bool, default `false`. The single switch: renders `config.push.enabled` (mirrored like `relay.enabled`: both set and unequal, or `config.push.enabled` alone, fails the render) and the api's egress NetworkPolicy rule to `push.networkPolicy.egressTo`.
+  - `push.networkPolicy.egressTo` — list of NetworkPolicy peers, default `[]`; **required** while `push.enabled` (the render fails while empty; the push services are public hosts, so an explicit `0.0.0.0/0` with the private-range `except` is the usual value).
+  - `push.vapid.existingSecret` / `push.vapid.key` — strings, default unset: an operator-managed VAPID private key, mounted into the api pods only as `AURORA_PUSH_VAPID_KEY` and named in `config.push.vapid.private_key_env`; unset = Aurora generates and rotates its own (sealed in the database).
+  - `push.allowedEndpointHosts` — list, default unset (the application's list of `15` applies); rendered into `config.push.allowed_endpoint_hosts` only when set.
+  - `push.vapid.subject`, `push.concurrency`, `push.timeout_secs` are config keys (`config.push.*`); `push.dev_endpoint_overrides` is never rendered.
+- Approval parking (phase 5, P4-011B): **no chart values** — `approvals.park.*` are instance settings edited in Admin › Approvals (D-265(c)); set `config.approvals.park.*` only to lock them.
+- S3 blob store (phase 5, D-138; not in the chart yet): `blobs.s3.existingSecret`, `blobs.s3.networkPolicy` (P4-S3; `15 §S3-compatible blob store`)
+- SSH access (phase 5, P4-SSH-2, D-239, C-797; not in the chart yet — P4-SSH-2 adds them to `values.yaml`, moves these rows into a new `## SSH access (terminator)` section and into §NetworkPolicy, and adds `ssh`/`terminator` to the chart-key list of §The config block; `15 §SSH access`):
+  - `ssh.enabled` — bool, default `false`. The single switch: renders the terminator Deployment, its LoadBalancer and ops Services, PodDisruptionBudget and NetworkPolicies, makes the `secrets` hook generate `AURORA_TERMINATOR_TOKEN`, `AURORA_SSH_CA_KEY` and `AURORA_SSH_HOST_KEY` when absent, mounts the CA key into the api pods and the host key into the terminator pods only, opens the runner's :4108 (beside previews and the terminal) and mirrors `config.ssh.enabled` (both set and unequal, or the config key alone, fails the render).
+  - `terminator.replicas` (int ≥ 1, default `2`), `terminator.resources` (requests `100m`/`128Mi`, memory limit `512Mi`), `terminator.nodeSelector` / `terminator.tolerations` (`{}` / `[]`), `terminator.extraEnv` (`[]`) — the generic per-service keys.
+  - `terminator.service.port` — int, default `22`: the published SSH port (container port 2222); set `config.ssh.public_port` to the same value when it is not 22.
+  - `terminator.service.annotations` — map, default `{}` (cloud load-balancer annotations).
+  - `terminator.service.loadBalancerSourceRanges` — CIDR list, default `[]` (no restriction at the balancer; `networkPolicy.sshFrom` still applies).
+  - `terminator.service.externalTrafficPolicy` — `Local` \| `Cluster`, default `Local` (keeps the client address for the per-address limits).
+  - `terminator.service.type` — `LoadBalancer` \| `NodePort`, default `LoadBalancer` (`NodePort` on kind, `deploy/kind`).
+  - `terminator.max_preauth` / `terminator.max_preauth_per_ip` — ints, defaults `256` / `8`, rendered into `[terminator]`.
+  - `networkPolicy.sshFrom` — list of NetworkPolicy peers, default `[]`; **required** when `ssh.enabled` (the render fails while empty, so admitting the whole Internet is an explicit `0.0.0.0/0` + `::/0`, never a silent default, FIX-102 posture).
+- request tracing (phase 5, FIX-146, D-232, C-732 (5); not in the chart yet — FIX-146 Part C moves these into [§NetworkPolicy](#networkpolicy) and §Workloads):
+  - `networkPolicy.telemetryTo` — list of raw NetworkPolicy `to` entries, default `[]`. Rendered into the egress of every exporting workload (api, gateway, hookhost, runner, relay, connector host, connector Deployments; never the sandboxes namespace) so they can reach the OTLP collector named by `config.telemetry.otlp_endpoint`; the default-deny policies block it otherwise. Set it whenever an endpoint is set; with an endpoint and an empty `telemetryTo` the chart's `NOTES.txt` warns.
+  - web workload environment: `AURORA_TRACING_SAMPLE_RATIO` is rendered **only when `config.telemetry.otlp_endpoint` is set**, with the value of `config.telemetry.sample_ratio` (default `1.0`). The dashboard's root layout reads it at request time; absent, the dashboard loads no tracing code and posts nothing. Not a chart value of its own: it follows the two config keys (`15 §Configuration reference`).
+  - kind dev only: `deploy/kind/values-tracing.yaml` (used by `deploy/dev/kind-dev.sh up --tracing`) sets the endpoint to the dev Jaeger's OTLP/HTTP port 4318 and `telemetryTo` to it.
+
+- instance settings (phase 5, SET-1, SET-5; [§Instance settings and Helm locks](#instance-settings-and-helm-locks-phase-5-set-1-d-195c-d-236d-238)): `scim.ratePerMinute` default changes to unset; `terminal.enabled` and `scim.enabled` render `config.terminal.available` / `config.scim.available` instead of the feature switch; `values.yaml`'s `config` block loses `hosted.enabled`; a chart guard (`scripts/guards/settings-chart.sh`) checks that the default render contains no movable key. No new chart value.
 
 Until a feature's chart work merges, set its `config.*` keys directly (the
 chart passes `config` through verbatim).

@@ -585,6 +585,93 @@ async fn terminal_keep_awake_requires_the_runner_credential() {
     assert_eq!(s.as_u16(), 401, "{v}");
 }
 
+// ---------------------------------------------------------------- shell choice (FIX-138)
+
+/// `?shell=` is an enumeration: `bash`/`zsh` pass, anything else (a path, another shell, an
+/// empty value) is 422 `invalid_shell` before any grant exists; the accepted value is stored
+/// on the grant row (it reaches the runner through the redemption answer, tested below).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn shell_query_accepts_only_bash_or_zsh() {
+    let r = term_rig().await;
+    let (url, _api) = served::serve(&r).await;
+    let (agent, _sb, _boot) = sandbox_on(&r, "shell-sb", "running").await;
+    for bad in ["fish", "%2Fbin%2Fsh", "", "ZSH", "bash%20-c"] {
+        let s = served::status(
+            &url,
+            &r.cookie,
+            &format!("/v1/agents/{agent}/terminal?shell={bad}"),
+            ORIGIN,
+        )
+        .await;
+        assert_eq!(s, 422, "shell={bad:?}");
+    }
+    assert!(
+        r.grant_rows(agent).await.is_empty(),
+        "no grant for a bad shell"
+    );
+    for (q, want) in [("?shell=zsh", "zsh"), ("?shell=bash", "bash"), ("", "bash")] {
+        sqlx::query("DELETE FROM terminal_stream_grants WHERE agent_id = $1")
+            .bind(agent)
+            .execute(r.h.pool())
+            .await
+            .unwrap();
+        // The runner endpoint does not resolve in the test host: 502 after the mint.
+        let s = served::status(
+            &url,
+            &r.cookie,
+            &format!("/v1/agents/{agent}/terminal{q}"),
+            ORIGIN,
+        )
+        .await;
+        assert_eq!(s, 502, "{q}");
+        let shell: String =
+            sqlx::query_scalar("SELECT shell FROM terminal_stream_grants WHERE agent_id = $1")
+                .bind(agent)
+                .fetch_one(r.h.pool())
+                .await
+                .unwrap();
+        assert_eq!(shell, want, "{q}");
+    }
+}
+
+/// The redemption answer carries the grant's shell (the runner's `pty.open.shell`).
+#[tokio::test]
+async fn redemption_answer_carries_the_chosen_shell() {
+    let r = term_rig().await;
+    let (agent, sb, boot) = sandbox_on(&r, "redeem-shell", "running").await;
+    let replica: Uuid = sqlx::query_scalar("SELECT id FROM runner_replicas LIMIT 1")
+        .fetch_one(r.h.pool())
+        .await
+        .unwrap();
+    for shell in ["zsh", "bash"] {
+        let grant = token::generate(TokenPrefix::TerminalStream);
+        sqlx::query(
+            "INSERT INTO terminal_stream_grants (id, agent_id, sandbox_id, boot_id, granted_by, grant_hash, expires_at, shell) \
+             VALUES ($1,$2,$3,$4,$5,$6, now() + interval '30 seconds', $7)",
+        )
+        .bind(Uuid::now_v7())
+        .bind(agent)
+        .bind(sb)
+        .bind(boot)
+        .bind(Uuid::now_v7())
+        .bind(hex(&token::hash(grant.expose())))
+        .bind(shell)
+        .execute(r.h.pool())
+        .await
+        .unwrap();
+        let (s, v) = r.redeem(grant.expose(), replica).await;
+        assert_eq!(s, 200, "{v}");
+        assert_eq!(v["shell"], json!(shell), "{v}");
+        // (C-750 (4)) The agent has no LLM key: the enabled terminal harness is reported
+        // unavailable (`no_key`) and the other, not enabled, is absent.
+        assert_eq!(
+            v["models"],
+            json!({ "claude_code": { "unavailable": "no_key" } }),
+            "{v}"
+        );
+    }
+}
+
 // ---------------------------------------------------------------- redemption (C-617)
 
 /// A grant minted by hand (as the upgrade would) redeems once with `kind: "terminal"`:
@@ -1007,6 +1094,113 @@ async fn served_upgrade_refuses_anonymous_and_cross_origin() {
     // Cross-origin: 403.
     let s = served::status(&url, &r.cookie, &path, "http://evil.example.org").await;
     assert_eq!(s, 403, "cross-origin, no upgrade");
+}
+
+/// FIX-092 (STRM-8): a browser text frame above 256 bytes is a violation — the leg closes
+/// `4502` and nothing is forwarded (the echo runner would answer binary only, so the proof is
+/// the close code; a resize-sized text message still passes).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_oversized_text_frame_closes_4502() {
+    use tokio_tungstenite::tungstenite::Message;
+    let r = term_rig().await;
+    let (url, _api) = served::serve(&r).await;
+    served::fake_runner_multi(&r).await;
+    let (agent, _, _) = sandbox_on(&r, "text-cap", "running").await;
+    let (mut ws, leg) = open_term(&url, &r.cookie, agent).await;
+    assert_eq!(leg, Leg::Open);
+    // A normal resize control is fine.
+    ws.send(Message::text(
+        json!({"kind": "pty.resize", "pty_id": 0, "cols": 80, "rows": 24}).to_string(),
+    ))
+    .await
+    .unwrap();
+    assert_eq!(probe(&mut ws).await, Leg::Open);
+    // 1 KiB of text is not.
+    ws.send(Message::text("x".repeat(1024))).await.unwrap();
+    assert_eq!(probe(&mut ws).await, Leg::Closed(4502));
+}
+
+/// FIX-092 (STRM-8): `?wait=true` on a parked sandbox long-polls for the wake and upgrades
+/// when it comes up (here after ~2 s); without `wait` the answer stays 202.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn wait_true_upgrades_when_the_sandbox_becomes_running() {
+    let r = term_rig().await;
+    let (url, api) = served::serve(&r).await;
+    served::fake_runner(&r, &api, true).await;
+    let (agent, sb, _boot) = sandbox_on(&r, "wait-sb", "stopped").await;
+    let pool = r.h.pool().clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        sqlx::query("UPDATE sandboxes SET state = 'running' WHERE id = $1")
+            .bind(sb)
+            .execute(&pool)
+            .await
+            .unwrap();
+    });
+    let t = std::time::Instant::now();
+    let (mut ws, resp) = served::dial(
+        &url,
+        &r.cookie,
+        &format!("/v1/agents/{agent}/terminal?wait=true"),
+    )
+    .await
+    .expect("the long-poll ends in the upgrade");
+    assert_eq!(resp.status(), 101);
+    assert!(
+        t.elapsed() >= std::time::Duration::from_secs(1),
+        "it waited for the wake: {:?}",
+        t.elapsed()
+    );
+    assert_eq!(probe(&mut ws).await, Leg::Open);
+}
+
+/// D-178 (Q-R5-22, C-618): a closed terminal session leaves an `agent.terminal.close` audit
+/// row carrying the close code and the duration — and nothing byte-shaped.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_closed_terminal_is_audited_with_code_and_duration_only() {
+    let r = term_rig().await;
+    let (url, _api) = served::serve(&r).await;
+    served::fake_runner_multi(&r).await;
+    let (agent, _, _) = sandbox_on(&r, "close-audit", "running").await;
+    let (mut ws, leg) = open_term(&url, &r.cookie, agent).await;
+    assert_eq!(leg, Leg::Open);
+    ws.send(tokio_tungstenite::tungstenite::Message::binary(
+        b"secret-keystrokes".to_vec(),
+    ))
+    .await
+    .unwrap();
+    hang_up(ws).await;
+    let mut row = None;
+    for _ in 0..100 {
+        if let Ok(m) = sqlx::query_as::<_, (Value, String)>(
+            "SELECT metadata, source FROM audit_log \
+             WHERE action = 'agent.terminal.close' AND target_id = $1",
+        )
+        .bind(agent.to_string())
+        .fetch_one(r.h.pool())
+        .await
+        {
+            row = Some(m);
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    let (meta, src) = row.expect("the agent.terminal.close audit row");
+    assert_eq!(src, "dashboard");
+    assert_eq!(meta["close_code"], json!(1000));
+    assert!(meta["duration_secs"].is_u64(), "{meta}");
+    let keys: std::collections::BTreeSet<_> = meta
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    assert_eq!(
+        keys,
+        ["agent", "close_code", "duration_secs", "workspace"].into(),
+        "metadata is the code and the duration only: {meta}"
+    );
+    assert!(!meta.to_string().contains("secret-keystrokes"));
 }
 
 fn hex(h: &[u8]) -> String {

@@ -129,6 +129,8 @@ impl From<ApprovalRow> for Approval {
 pub struct ListQuery {
     /// `pending` | `approved` | `denied` | `expired` | `abandoned`
     pub status: Option<String>,
+    /// (C-700) Only this agent's approvals; an unknown or foreign agent yields an empty page.
+    pub agent_id: Option<Uuid>,
     pub limit: Option<u32>,
     pub cursor: Option<String>,
 }
@@ -171,7 +173,7 @@ pub struct BatchDecided {
 /// SSE `data:` payload of `event: approval` (C-10).
 #[derive(Serialize, ToSchema)]
 pub struct ApprovalEvent {
-    /// `created` | `decided` | `expired`
+    /// `created` | `decided` | `expired` | `abandoned`
     pub event: String,
     pub approval: Approval,
     /// (phase 2, RFE-011a) Only on `created`: what the dashboard needs for a browser

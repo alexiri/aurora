@@ -69,6 +69,100 @@ async fn post(h: &Harness, uri: &str, auth: (&str, &str), body: Value) -> (u16, 
     (s.as_u16(), v)
 }
 
+/// (FIX-109, 07 §Approval deadlines "Expiry still denies") An approval still `pending` past its
+/// deadline (the 10 s sweep with its 30 s grace has not run, or is down) cannot be approved,
+/// denied or batch-approved: the answer is 409 `already_decided` and the approval is `expired`
+/// in the same transaction.
+#[tokio::test]
+async fn a_decision_after_the_deadline_is_refused_and_expires_the_approval() {
+    let h = Harness::new().await;
+    let f = fixture(&h).await;
+    let approver = h.user("ap@x.io", false).await;
+    h.member(f.org, approver, "member", "active").await;
+    h.bind_ws(f.ws, approver, "approver").await;
+    let (_, t) = h.good_session(approver).await;
+    let c = cookie(&t);
+    let overdue = |id: Uuid| {
+        let pool = h.pool().clone();
+        async move {
+            sqlx::query(
+                "UPDATE approvals SET deadline = now() - interval '5 seconds' WHERE id = $1",
+            )
+            .bind(id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+    };
+    let status = |id: Uuid| {
+        let pool = h.pool().clone();
+        async move {
+            sqlx::query_scalar::<_, String>("SELECT status FROM approvals WHERE id = $1")
+                .bind(id)
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+        }
+    };
+    for decision in ["approve", "deny"] {
+        let id = approval(&h, &f, f.ws, f.agent, None).await;
+        overdue(id).await;
+        let (s, v) = post(
+            &h,
+            &format!("/v1/approvals/{id}/decision"),
+            ("cookie", &c),
+            json!({"decision": decision}),
+        )
+        .await;
+        assert_eq!(
+            (s, v["error"]["code"].as_str()),
+            (409, Some("already_decided")),
+            "{decision}: {v}"
+        );
+        assert_eq!(status(id).await, "expired", "{decision}");
+    }
+    // Batch: every member overdue -> 409 and all expired; a mixed batch decides the live ones.
+    let (b1, b2) = (
+        approval(&h, &f, f.ws, f.agent, Some("late")).await,
+        approval(&h, &f, f.ws, f.agent, Some("late")).await,
+    );
+    overdue(b1).await;
+    overdue(b2).await;
+    let (s, v) = post(
+        &h,
+        "/v1/approvals/batches/late/decision",
+        ("cookie", &c),
+        json!({"decision": "approve", "agent_id": f.agent}),
+    )
+    .await;
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (409, Some("already_decided")),
+        "{v}"
+    );
+    assert_eq!(
+        (status(b1).await.as_str(), status(b2).await.as_str()),
+        ("expired", "expired")
+    );
+    let (m1, m2) = (
+        approval(&h, &f, f.ws, f.agent, Some("mixed")).await,
+        approval(&h, &f, f.ws, f.agent, Some("mixed")).await,
+    );
+    overdue(m1).await;
+    let (s, v) = post(
+        &h,
+        "/v1/approvals/batches/mixed/decision",
+        ("cookie", &c),
+        json!({"decision": "approve", "agent_id": f.agent}),
+    )
+    .await;
+    assert_eq!((s, v["decided"].as_u64()), (200, Some(1)), "{v}");
+    assert_eq!(
+        (status(m1).await.as_str(), status(m2).await.as_str()),
+        ("expired", "approved")
+    );
+}
+
 #[tokio::test]
 async fn decide_first_wins_authz_and_notify() {
     let h = Harness::new().await;
@@ -280,6 +374,98 @@ async fn list_filters_and_pagination() {
     assert_eq!(v["items"].as_array().unwrap().len(), 0);
 }
 
+/// P5-AGENT-1 (C-700): `agent_id` filters in SQL before pagination, combines with `status`,
+/// yields an empty page for foreign/unknown agents and 400 for a malformed id.
+#[tokio::test]
+async fn list_filters_by_agent_id() {
+    let h = Harness::new().await;
+    let f = fixture(&h).await;
+    let other = agent(&h, f.org, f.ws, "other").await;
+    let member = h.user("m@x.io", false).await;
+    h.member(f.org, member, "member", "active").await;
+    h.bind_ws(f.ws, member, "approver").await;
+    let (_, mt) = h.good_session(member).await;
+    let c = cookie(&mt);
+    let mut mine = vec![];
+    for i in 0..3 {
+        mine.push(approval(&h, &f, f.ws, f.agent, None).await);
+        // interleave the other agent's rows so a post-filter would short-page
+        approval(&h, &f, f.ws, other, None).await;
+        if i == 0 {
+            sqlx::query("UPDATE approvals SET status='denied' WHERE id=$1")
+                .bind(mine[0])
+                .execute(h.pool())
+                .await
+                .unwrap();
+        }
+    }
+    let base = format!("/v1/workspaces/{}/approvals", f.ws);
+    let ids_of = |v: &Value| -> Vec<String> {
+        v["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|i| i["id"].as_str().unwrap().to_owned())
+            .collect()
+    };
+    let (s, v) = h
+        .get(&format!("{base}?agent_id={}", f.agent), &[("cookie", &c)])
+        .await;
+    assert_eq!(s, 200);
+    assert_eq!(ids_of(&v).len(), 3);
+    assert!(
+        v["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|i| i["agent"]["id"] == json!(f.agent))
+    );
+    // status + agent_id combine
+    let (_, v) = h
+        .get(
+            &format!("{base}?agent_id={}&status=pending", f.agent),
+            &[("cookie", &c)],
+        )
+        .await;
+    assert_eq!(ids_of(&v).len(), 2);
+    // the cursor walks only the filtered set
+    let (_, p1) = h
+        .get(
+            &format!("{base}?agent_id={}&limit=2", f.agent),
+            &[("cookie", &c)],
+        )
+        .await;
+    assert_eq!(ids_of(&p1).len(), 2);
+    let cur = p1["next_cursor"].as_str().unwrap().to_owned();
+    let (_, p2) = h
+        .get(
+            &format!("{base}?agent_id={}&limit=2&cursor={cur}", f.agent),
+            &[("cookie", &c)],
+        )
+        .await;
+    assert_eq!(ids_of(&p2).len(), 1);
+    assert!(p2["next_cursor"].is_null());
+    // unknown agent, and an agent of another workspace: empty page
+    let org2 = h.org().await;
+    let ws2 = h.workspace(org2).await;
+    let foreign = agent(&h, org2, ws2, "foreign").await;
+    for a in [Uuid::now_v7(), foreign] {
+        let (s, v) = h
+            .get(&format!("{base}?agent_id={a}"), &[("cookie", &c)])
+            .await;
+        assert_eq!(s, 200);
+        assert!(ids_of(&v).is_empty());
+    }
+    // malformed
+    let (s, _) = h
+        .get(&format!("{base}?agent_id=nope"), &[("cookie", &c)])
+        .await;
+    assert_eq!(s, 400);
+    // without the filter: both agents
+    let (_, v) = h.get(&base, &[("cookie", &c)]).await;
+    assert_eq!(ids_of(&v).len(), 6);
+}
+
 #[tokio::test]
 async fn long_poll_returns_early_and_times_out_empty() {
     let h = Harness::new().await;
@@ -406,6 +592,48 @@ async fn sse_emits_created_decided_and_keepalive() {
         txt.push_str(&next_text(&mut stranger_body, 5).await);
     }
     assert!(!txt.contains("event: approval"), "{txt}");
+}
+
+/// FIX-099 / C-10: a stream whose receiver lagged (the bus replays nothing) says so with a `resync`
+/// frame, so the dashboard refetches instead of showing decided approvals as pending.
+#[tokio::test]
+async fn sse_lagged_receiver_gets_a_resync_frame() {
+    let h = Harness::new().await;
+    let f = fixture(&h).await;
+    let member = h.user("m@x.io", false).await;
+    h.member(f.org, member, "member", "active").await;
+    h.bind_ws(f.ws, member, "approver").await;
+    let (_, mt) = h.good_session(member).await;
+    let app = test_router(h.state.clone());
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/v1/approvals/stream")
+                .header("cookie", cookie(&mt))
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 200);
+    let mut body = res.into_body();
+    // The body is not read while the bus broadcasts more than its 256-message capacity: the
+    // stream's receiver lags.
+    let id = approval(&h, &f, f.ws, f.agent, None).await;
+    for _ in 0..300 {
+        notify(&h, id, f.ws, "created").await;
+    }
+    let mut seen = String::new();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+    while !seen.contains("event: resync") {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "no resync frame in: {seen}"
+        );
+        seen.push_str(&next_text(&mut body, 5).await);
+    }
+    assert!(!seen.contains("\nid:"), "no SSE ids (C-10)");
 }
 
 /// SEC-32: an approval decision is audited.

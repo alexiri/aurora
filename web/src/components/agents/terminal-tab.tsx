@@ -12,16 +12,20 @@
 // as notices, never a silent close. wterm never touches the clipboard itself: an application's
 // OSC 52 write surfaces a "Copy to clipboard" confirmation (C-622); selection copy is the
 // browser's own.
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useParams } from "next/navigation";
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps, type RefObject } from "react";
 
 import { GhosttyCore } from "@wterm/ghostty";
 import { Terminal, useTerminal } from "@wterm/react";
 import "@wterm/react/css";
 
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Notice } from "@/components/ui/notice";
 import { useSandbox } from "@/lib/api/conversations";
 
-// The vendored, version-hashed Ghostty WASM (`web/public`, served same-origin as
+import { readShell } from "./terminal-shell";
+
+// The vendored, version-named Ghostty WASM (sha256 recorded in scripts/guards/ghostty-wasm.sha256) (`web/public`, served same-origin as
 // `application/wasm`; the CSP's `'wasm-unsafe-eval'` in script-src is what lets it compile —
 // SEC-87: it grants no script evaluation).
 const WASM_URL = "/ghostty-vt-0.5.10.wasm";
@@ -34,6 +38,9 @@ const WASM_URL = "/ghostty-vt-0.5.10.wasm";
  * silently dropped and the shell never sees it.
  */
 const encoder = new TextEncoder();
+
+/** wterm's terminal instance, as `onReady` hands it over (`@wterm/dom` is not a direct dependency). */
+type WTerm = Parameters<NonNullable<ComponentProps<typeof Terminal>["onReady"]>>[0];
 /**
  * `TERMINAL_CHUNK` (`crates/aurora-core/src/limits.rs`): the runner closes the leg on any
  * Binary frame larger than this, so input — a clipboard paste arrives as one `onData`
@@ -60,19 +67,29 @@ const CLOSE_COPY: Record<number, string> = {
   4504: "The terminal session timed out.",
 };
 
-/** Close codes a reconnect can plausibly fix (transient): everything else ends the pane. */
-const RETRYABLE = new Set([4502, 4503]);
+/**
+ * Close codes a reconnect can plausibly fix (transient): everything else ends the pane. 1006 is an
+ * abnormal close — a dropped connection, or the failed handshake the browser reports while a sandbox
+ * wakes or the API restarts. The terminal ones (4403 revoked, 4404 gone, 4409 limit) stay final.
+ */
+const RETRYABLE = new Set([1006, 4502, 4503]);
 
 type Phase =
   | { kind: "connecting" }
   | { kind: "open" }
-  | { kind: "reconnecting"; attempt: number }
+  | { kind: "reconnecting"; attempt: number; max: number }
   | { kind: "ended"; code: number | null; message: string };
 
 /** Backoff for a dropped socket: 1 s, 2 s, 4 s, capped at 8 s (`docs/14 §Terminal tab`). */
 const backoff = (attempt: number) => Math.min(8000, 1000 * 2 ** attempt);
 /** `docs/14`: a dropped socket retries "a few times" — four failed attempts then stop. */
 const MAX_ATTEMPTS = 4;
+/**
+ * While a sandbox wakes, every handshake is a wake demand (C-621: 12 per hour per agent), so the
+ * free retries are capped too — at the wake budget. A sandbox stuck `starting` ends the pane
+ * with a notice instead of one handshake every 8 s forever.
+ */
+const MAX_WAKE_ATTEMPTS = 12;
 
 /**
  * The Ghostty core, loaded once and shared by every (re)mount of the pane: `GhosttyCore.load`
@@ -102,9 +119,89 @@ function useGhosttyCore(disabled: boolean) {
   return core;
 }
 
+/** (FIX-138) The grid keeps this much history; older lines scroll away (the pane's own scrollback, never the page). */
+const SCROLLBACK_LINES = 5000;
+/** (FIX-138) A person who pressed Esc and then Tab within this window leaves the terminal (WCAG 2.1.2: no keyboard trap). */
+const ESCAPE_CHORD_MS = 1500;
+
+/**
+ * The agent's Terminal page (docs/14 §Terminal tab): the pane plus an **Open in new window** button. The pop-out is a
+ * second, independent shell on the same route and grant as the tab (FIX-138; it counts against the sandbox's leg cap
+ * and the pane says so when the cap refuses it).
+ */
 export function TerminalTab({ agentId, frozen }: { agentId: string; frozen: boolean }) {
+  const { org, ws, handle } = useParams<{ org: string; ws: string; handle: string }>();
+  const popOutRef = useRef<HTMLButtonElement>(null);
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-sm text-ink-2">
+          A shell inside the agent&apos;s sandbox (bash or zsh, chosen on the Computer page). Tab completes in the
+          shell; to leave the terminal with the keyboard, press Esc, then Tab.
+        </p>
+        <button
+          ref={popOutRef}
+          type="button"
+          className={buttonVariants({ variant: "outline", size: "sm" })}
+          disabled={frozen}
+          onClick={() => window.open(`/o/${org}/w/${ws}/agents/${handle}/terminal`, "_blank", "noopener,noreferrer")}
+        >
+          Open in new window
+        </button>
+      </div>
+      <TerminalPane agentId={agentId} frozen={frozen} exitFocusRef={popOutRef} />
+    </div>
+  );
+}
+
+/**
+ * The terminal itself (used by the tab and by the standalone window route). The pane has a bounded height (CSS,
+ * `.term-pane`), so `autoResize` derives a fixed grid from it and output scrolls inside the pane's scrollback instead
+ * of growing the page. `variant="window"` fills the viewport.
+ */
+export function TerminalPane({
+  agentId,
+  frozen,
+  variant = "tab",
+  exitFocusRef,
+}: {
+  agentId: string;
+  frozen: boolean;
+  variant?: "tab" | "window";
+  /** Where Esc, Tab leaves to (the control after the pane). */
+  exitFocusRef?: RefObject<HTMLElement | null>;
+}) {
   const sandbox = useSandbox(agentId);
   const { ref, write } = useTerminal();
+  // The pane element, for "Jump to latest": set when wterm is ready.
+  const paneEl = useRef<HTMLElement | null>(null);
+  const [scrolledUp, setScrolledUp] = useState(false);
+  // True while the view follows the cursor (the person has not scrolled up): new output and resizes re-pin the pane to
+  // its bottom. wterm renders the scrollback into the pane but does not keep it pinned, so the pane does (FIX-138).
+  const followRef = useRef(true);
+  const wtRef = useRef<WTerm | null>(null);
+  // (Owner 2026-11-14) A full-screen app (claude, vim, less, htop) is on the alternate screen, which has no scrollback.
+  // wterm still renders the shell's history above it, so while it is up the pane is pinned to the app's screen and does
+  // not scroll (CSS `[data-alt-screen]`); the wheel goes to the app instead (`onAltWheel`).
+  const altRef = useRef(false);
+  const [altScreen, setAltScreen] = useState(false);
+  const follow = useCallback(() => {
+    const el = paneEl.current;
+    const alt = wtRef.current?.bridge?.usingAltScreen() === true;
+    if (alt !== altRef.current) {
+      altRef.current = alt;
+      setAltScreen(alt);
+      if (alt) {
+        followRef.current = true;
+        setScrolledUp(false);
+      }
+    }
+    if (el && (alt || followRef.current)) el.scrollTop = el.scrollHeight;
+  }, []);
+  // Wheel lines not yet sent as arrow keys (trackpads send many small deltas).
+  const wheelLines = useRef(0);
+  const lastEscape = useRef(0);
+  const [left, setLeft] = useState(false);
   const [phase, setPhase] = useState<Phase>({ kind: "connecting" });
   // Bumped by the pane's Reconnect button: a final close ended the socket effect, so a fresh
   // run of it (not a fresh core) is what re-opens the session.
@@ -115,16 +212,20 @@ export function TerminalTab({ agentId, frozen }: { agentId: string; frozen: bool
   const waking = sandbox.data?.state === "starting";
   // The close handler reads it without re-subscribing the socket effect on every poll tick.
   const wakingRef = useRef(waking);
+  const attemptRef = useRef(0);
   useEffect(() => {
+    // The wake finished: the running sandbox gets the ordinary retry budget afresh.
+    if (wakingRef.current && !waking) attemptRef.current = 0;
     wakingRef.current = waking;
   }, [waking]);
+  // Set when a keystroke arrived while the socket was not open (never sent, never queued).
+  const [droppedInput, setDroppedInput] = useState(false);
   // The OSC 52 clipboard-write confirmation (C-622: never automatic, always confirmed).
   const [copied, setCopied] = useState<string | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   // The latest measured grid: a reconnect re-opens at the current size, and the first
   // `pty.resize` rides the freshly opened socket.
   const sizeRef = useRef({ cols: 80, rows: 24 });
-  const attemptRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const paused = frozen;
@@ -143,14 +244,21 @@ export function TerminalTab({ agentId, frozen }: { agentId: string; frozen: bool
 
     const connect = () => {
       if (disposed) return;
-      setPhase(attemptRef.current === 0 ? { kind: "connecting" } : { kind: "reconnecting", attempt: attemptRef.current });
-      ws = new WebSocket(`/v1/agents/${agentId}/terminal`);
+      setPhase(
+        attemptRef.current === 0
+          ? { kind: "connecting" }
+          : { kind: "reconnecting", attempt: attemptRef.current, max: wakingRef.current ? MAX_WAKE_ATTEMPTS : MAX_ATTEMPTS },
+      );
+      // The shell is chosen on the Computer page (D-246) and read at each connect, so a change applies to the next
+      // session only. bash is the server's default, so only zsh names itself (`?shell=` is an enumeration, 422 otherwise).
+      ws = new WebSocket(`/v1/agents/${agentId}/terminal${readShell(agentId) === "zsh" ? "?shell=zsh" : ""}`);
       ws.binaryType = "arraybuffer";
       wsRef.current = ws;
 
       ws.onopen = () => {
         attemptRef.current = 0;
         setPhase({ kind: "open" });
+        setDroppedInput(false);
         // The runner seeds the PTY at 80×24 (`16 §W19`); catch the pane up as soon as the
         // socket is live — the laid-out geometry rides `onResize` below.
         const { cols, rows } = sizeRef.current;
@@ -163,30 +271,34 @@ export function TerminalTab({ agentId, frozen }: { agentId: string; frozen: bool
         // text control, `pty.resize`, is browser → runner) — ignore, never parse as text.
         if (typeof ev.data === "string") return;
         write(new Uint8Array(ev.data as ArrayBuffer));
+        // After wterm has laid the new output out (it renders on the next frame), keep the bottom in view.
+        requestAnimationFrame(() => requestAnimationFrame(follow));
       };
       ws.onclose = (ev) => {
         if (disposed || wsRef.current !== ws) return;
         wsRef.current = null;
         const message = CLOSE_COPY[ev.code] ?? "The terminal session ended unexpectedly.";
-        // A wake in flight (C-621) retries freely: the sandbox poll flips `waking` while the
-        // API records the demand, and the answer only becomes connectable once running.
-        if (wakingRef.current) {
-          attemptRef.current += 1;
-          setPhase({ kind: "reconnecting", attempt: attemptRef.current });
-          timerRef.current = setTimeout(connect, backoff(attemptRef.current));
-          return;
-        }
-        // A clean end (the shell exited, or the pane closed its own socket) is final.
-        if (ev.code === 1000 || ev.wasClean) {
-          setPhase({ kind: "ended", code: ev.code, message });
-          return;
-        }
-        // Transient failures retry with backoff, a few times, visibly; anything else
-        // (revoked, not-found, limit, timeout) ends the pane with its reason.
-        if (RETRYABLE.has(ev.code) && attemptRef.current < MAX_ATTEMPTS) {
-          attemptRef.current += 1;
-          setPhase({ kind: "reconnecting", attempt: attemptRef.current });
-          timerRef.current = setTimeout(connect, backoff(attemptRef.current));
+        // The code decides first (FIX-098): only a transient code is ever retried, whether or not
+        // the close frame was clean (the API sends 4502/4503 as real close frames, so
+        // `wasClean` is true for them) and whether or not a wake is in flight. 4403 (revoked),
+        // 4404, 4409, 4504, a shell's 1000 end the pane with their reason, always.
+        if (RETRYABLE.has(ev.code)) {
+          // A wake in flight (C-621) retries while the sandbox poll flips `waking`; the answer
+          // only becomes connectable once running. Both budgets are capped and shown.
+          const max = wakingRef.current ? MAX_WAKE_ATTEMPTS : MAX_ATTEMPTS;
+          if (attemptRef.current < max) {
+            attemptRef.current += 1;
+            setPhase({ kind: "reconnecting", attempt: attemptRef.current, max });
+            timerRef.current = setTimeout(connect, backoff(attemptRef.current));
+            return;
+          }
+          setPhase({
+            kind: "ended",
+            code: ev.code,
+            message: wakingRef.current
+              ? "The sandbox is still starting. Try again in a moment."
+              : message,
+          });
           return;
         }
         setPhase({ kind: "ended", code: ev.code, message });
@@ -205,10 +317,38 @@ export function TerminalTab({ agentId, frozen }: { agentId: string; frozen: bool
     };
     // `write` is stable (`useTerminal`'s callback is `useCallback(..., [])`); `retryNonce`
     // re-runs the effect after the pane's explicit Reconnect.
-  }, [agentId, core, paused, write, retryNonce]);
+  }, [agentId, core, paused, write, follow, retryNonce]);
+
+  /**
+   * The wheel over a full-screen app (capture phase on the pane's wrapper, before wterm's own handler). The pane is kept
+   * on the app's screen, so wterm forwards the wheel when the app asked for mouse reports; without them the wheel moves
+   * the app like the arrow keys, as Ghostty and xterm do on the alternate screen ("alternate scroll"). On the normal
+   * screen nothing changes: the wheel scrolls the pane's history.
+   */
+  const onAltWheel = useCallback((e: WheelEvent) => {
+    const core = wtRef.current?.bridge;
+    const el = paneEl.current;
+    if (!core || !el || !core.usingAltScreen()) return;
+    el.scrollTop = el.scrollHeight;
+    if ((core.mouseTracking?.() ?? 0) !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.deltaY === 0) return;
+    const rows = Math.max(1, core.getRows());
+    const lines = e.deltaMode === 1 ? e.deltaY : e.deltaMode === 2 ? e.deltaY * rows : e.deltaY / (el.clientHeight / rows);
+    wheelLines.current += lines;
+    const n = Math.trunc(wheelLines.current);
+    if (n === 0) return;
+    wheelLines.current -= n;
+    const app = core.cursorKeysApp();
+    const key = n < 0 ? (app ? "\x1bOA" : "\x1b[A") : app ? "\x1bOB" : "\x1b[B";
+    const ws = wsRef.current;
+    if (ws?.readyState === WebSocket.OPEN) sendInput(ws, key.repeat(Math.min(Math.abs(n), 5)));
+  }, []);
 
   const onResize = (cols: number, rows: number) => {
     sizeRef.current = { cols, rows };
+    requestAnimationFrame(follow);
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({ kind: "pty.resize", pty_id: 0, cols, rows }));
     }
@@ -221,7 +361,11 @@ export function TerminalTab({ agentId, frozen }: { agentId: string; frozen: bool
       case "connecting":
         return "Connecting…";
       case "reconnecting":
-        return "Reconnecting…";
+        return (
+          <>
+            Reconnecting…<span className="text-muted"> (attempt {phase.attempt} of {phase.max})</span>
+          </>
+        );
       case "open":
         return null;
       case "ended":
@@ -232,7 +376,7 @@ export function TerminalTab({ agentId, frozen }: { agentId: string; frozen: bool
   if (paused) {
     return (
       <Notice tone="neutral" role="status">
-        This agent is paused. The terminal is unavailable while paused.
+        This agent is frozen. The terminal is unavailable while it is frozen.
       </Notice>
     );
   }
@@ -250,6 +394,11 @@ export function TerminalTab({ agentId, frozen }: { agentId: string; frozen: bool
         <Notice tone="pending" role="status" aria-live="polite">
           {status}
         </Notice>
+      ) : null}
+      {phase.kind !== "open" ? (
+        <p data-testid="terminal-not-connected" className="text-xs text-muted" role="status">
+          Not connected{droppedInput ? " — what you typed was not sent." : " — typing is not sent until the terminal connects."}
+        </p>
       ) : null}
       {phase.kind === "ended" && phase.code !== 1000 ? (
         <Notice tone="danger" role="alert">
@@ -290,21 +439,87 @@ export function TerminalTab({ agentId, frozen }: { agentId: string; frozen: bool
           </span>
         </Notice>
       ) : null}
-      <Terminal
-        ref={ref}
-        className="term-pane border-line"
-        core={core}
-        autoResize
-        announceOutput
-        aria-label="Agent terminal"
-        onData={(data) => {
-          if (wsRef.current?.readyState === WebSocket.OPEN) {
-            sendInput(wsRef.current, data);
+      <div
+        className="relative"
+        // Esc, then Tab leaves the terminal (the shell still gets Esc; Tab on its own is the shell's completion key).
+        onKeyDownCapture={(e) => {
+          if (e.key === "Escape") {
+            lastEscape.current = Date.now();
+            setLeft(false);
+          } else if (e.key === "Tab" && Date.now() - lastEscape.current < ESCAPE_CHORD_MS) {
+            lastEscape.current = 0;
+            e.preventDefault();
+            e.stopPropagation();
+            exitFocusRef?.current?.focus();
+            setLeft(true);
           }
         }}
-        onResize={onResize}
-        onClipboardWrite={setCopied}
-      />
+      >
+        <Terminal
+          ref={ref}
+          className={variant === "window" ? "term-pane term-pane-window border-line" : "term-pane border-line"}
+          core={core}
+          autoResize
+          announceOutput
+          scrollbackLines={SCROLLBACK_LINES}
+          aria-label="Agent terminal"
+          data-alt-screen={altScreen ? "" : undefined}
+          onReady={(wt) => {
+            wtRef.current = wt;
+            paneEl.current = wt.element;
+            const el = wt.element;
+            // Capture on the wrapper runs before wterm's wheel handler on the pane itself.
+            el.parentElement?.addEventListener("wheel", onAltWheel, { capture: true, passive: false });
+            el.addEventListener(
+              "scroll",
+              () => {
+                // A full-screen app has no history to scroll to: stay on its screen.
+                if (altRef.current) {
+                  if (el.scrollHeight - el.scrollTop - el.clientHeight > 1) el.scrollTop = el.scrollHeight;
+                  return;
+                }
+                const up = el.scrollHeight - el.scrollTop - el.clientHeight > 40;
+                followRef.current = !up;
+                setScrolledUp(up);
+              },
+              { passive: true },
+            );
+          }}
+          onData={(data) => {
+            if (wsRef.current?.readyState === WebSocket.OPEN) {
+              sendInput(wsRef.current, data);
+            } else {
+              // Not connected: the keystroke is not sent and not queued (it could replay into a
+              // different session); say so instead of dropping it silently.
+              setDroppedInput(true);
+            }
+          }}
+          onResize={onResize}
+          onClipboardWrite={setCopied}
+        />
+        {scrolledUp && !altScreen ? (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="absolute bottom-3 right-4 shadow-pop"
+            onClick={() => {
+              const el = paneEl.current;
+              followRef.current = true;
+              if (el) el.scrollTop = el.scrollHeight;
+              setScrolledUp(false);
+              ref.current?.focus();
+            }}
+          >
+            Jump to latest
+          </Button>
+        ) : null}
+      </div>
+      {left ? (
+        <p role="status" className="text-xs text-muted">
+          Left the terminal.
+        </p>
+      ) : null}
       <p className="text-xs text-muted">The shell runs inside the agent&apos;s sandbox as its own user. Terminal output is never logged.</p>
     </div>
   );

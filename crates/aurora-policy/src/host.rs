@@ -67,6 +67,11 @@ impl HostPattern {
         self.parsed.is_some()
     }
 
+    /// The port the pattern names, if any (`None` for an invalid pattern too).
+    pub fn port(&self) -> Option<u16> {
+        self.parsed.as_ref().and_then(|p| p.port)
+    }
+
     /// `host` has no port and no trailing dot; comparison is case-insensitive.
     pub fn matches(&self, host: &str, port: u16) -> bool {
         let Some(p) = &self.parsed else { return false };

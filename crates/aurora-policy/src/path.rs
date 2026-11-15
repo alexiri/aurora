@@ -28,6 +28,10 @@ pub struct PathPattern {
 fn split(path: &str) -> Vec<&str> {
     let path = path.split('?').next().unwrap_or("");
     let rest = path.strip_prefix('/').unwrap_or(path);
+    // (FIX-109, 07 §Matching primitives) One trailing `/` is not significant: `/a/b` and `/a/b/`
+    // are the same path to most frameworks, so a block on `/v1/users` must also stop
+    // `/v1/users/` ("doubt only tightens"). A second empty segment (`/a//`) still counts.
+    let rest = rest.strip_suffix('/').unwrap_or(rest);
     if rest.is_empty() {
         Vec::new()
     } else {
@@ -135,7 +139,18 @@ mod tests {
     #[test]
     fn examples() {
         assert!(m("/v1/users", "/v1/users"));
-        assert!(!m("/v1/users", "/v1/users/"));
+        // (FIX-109) A trailing `/` is not significant, on the path and on the pattern.
+        assert!(m("/v1/users", "/v1/users/"));
+        assert!(m("/v1/users/", "/v1/users"));
+        assert!(m("/v1/users/", "/v1/users/"));
+        assert!(
+            !m("/v1/users", "/v1/users//"),
+            "a second empty segment still counts"
+        );
+        assert!(
+            !m("/v1/*", "/v1/"),
+            "a wildcard segment still needs a segment"
+        );
         assert!(!m("/v1/users", "/v1/users/1"));
         assert!(m("/v1/*/x", "/v1/a/x"));
         assert!(!m("/v1/*/x", "/v1//x"));

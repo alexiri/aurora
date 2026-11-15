@@ -21,12 +21,17 @@ use crate::events::{
     Bots, MmChannel, MmFileInfo, MmPost, MmUser, WsEvent, command_from_text, dedupe_posts,
     mentioned_usernames, message_posted, now_ms, rfc3339_ms, space,
 };
+use crate::lanes::Lanes;
 use crate::render::{Lookups, MentionRefs, mention_refs};
 use crate::ws::{WsConn, WsError};
 
 const USER_TTL: Duration = Duration::from_secs(300);
 const CHANNEL_TTL: Duration = Duration::from_secs(600);
 const MAX_BACKOFF: Duration = Duration::from_secs(30);
+/// Catch-up reads a channel this many posts at a time, for at most this many pages: 10 000 posts
+/// per channel (docs/20 §Transport).
+const CATCHUP_PER_PAGE: usize = 200;
+const CATCHUP_MAX_PAGES: usize = 50;
 
 pub fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
@@ -70,6 +75,8 @@ pub struct Settings {
     /// Test profile: declare only these capabilities.
     pub capabilities: Option<Vec<String>>,
     pub test_control: bool,
+    /// Which addresses the tenant-supplied server URL may point at (docs/20 §Platform URL).
+    pub net: crate::api::NetPolicy,
 }
 
 impl Settings {
@@ -91,6 +98,8 @@ pub struct Integ {
     pub settings: Settings,
     users: Mutex<HashMap<String, (Instant, MmUser)>>,
     names: Mutex<HashMap<String, (Instant, Option<MmUser>)>>,
+    /// `@name` → user / group / neither (D-271(c)).
+    mention_names: crate::mentions::NameCache,
     channels: Mutex<HashMap<String, (Instant, MmChannel)>>,
     ready: AtomicBool,
     catching_up: AtomicBool,
@@ -104,6 +113,8 @@ pub struct Integ {
     /// `(kind, channel, user)` of recent membership events: the same change is seen
     /// on every bot's socket.
     recent_membership: Mutex<HashMap<String, (Instant, Option<Uuid>)>>,
+    /// Per-channel ordered handling of socket events (docs/20 §Event ordering).
+    lanes: Lanes<(WsEvent, Option<Uuid>)>,
 }
 
 /// Capabilities left after the integration's own narrowing (`config._capabilities`).
@@ -160,7 +171,7 @@ impl Integ {
     ) -> Result<Self, String> {
         let server =
             str_field(&integration.config, "server_url").ok_or("config.server_url missing")?;
-        let mm = Mm::new(&server)?;
+        let mm = Mm::with_policy(&server, &settings.net)?;
         let bot_token = str_field(&integration.credentials, "bot_token")
             .ok_or("credentials.bot_token missing")?;
         let bot = integration
@@ -194,6 +205,7 @@ impl Integ {
             settings,
             users: Mutex::new(HashMap::new()),
             names: Mutex::new(HashMap::new()),
+            mention_names: crate::mentions::NameCache::default(),
             channels: Mutex::new(HashMap::new()),
             ready: AtomicBool::new(false),
             catching_up: AtomicBool::new(false),
@@ -201,6 +213,7 @@ impl Integ {
             bot_sockets: Mutex::new(HashMap::new()),
             bots_gen: tokio::sync::watch::channel(0).0,
             recent_membership: Mutex::new(HashMap::new()),
+            lanes: Lanes::default(),
         })
     }
 
@@ -386,6 +399,20 @@ impl Integ {
                 lk.spaces.insert(id.clone(), c.name);
             }
         }
+        // D-271(c): which typed `@name`s are a user and which a group; a lookup that fails
+        // leaves the rest to be treated as groups.
+        // (Always: it also records that a lookup ran, so a name it was not asked about — one a
+        // conversion joined — is treated as a group.)
+        let d = self.snapshot();
+        crate::mentions::resolve(
+            &self.mm,
+            &d.bot_token,
+            d.admin_token.as_deref(),
+            &self.mention_names,
+            &refs.names,
+            &mut lk,
+        )
+        .await;
         lk
     }
 
@@ -626,6 +653,11 @@ impl Integ {
         let Some(channel) = p.get("channel_id").and_then(Value::as_str) else {
             return;
         };
+        // Like posts and edits: a reaction in another team's channel is not ours.
+        match self.channel(channel).await {
+            Ok(c) if c.team_id.is_empty() || c.team_id == self.team_id => {}
+            _ => return,
+        }
         let at = r
             .get("create_at")
             .and_then(Value::as_i64)
@@ -676,6 +708,18 @@ impl Integ {
         .await;
     }
 
+    /// Queues a socket event on its channel's lane: events of one channel are handled in the
+    /// order they arrived (a post and its deletion must not swap places while a lookup is slow),
+    /// channels in parallel. Events that name no channel share one lane.
+    pub fn dispatch_ws_event(self: &Arc<Self>, ev: WsEvent, via: Option<Uuid>) {
+        let key = ev.lane_key();
+        let me = self.clone();
+        self.lanes.dispatch(&key, (ev, via), move |(ev, via)| {
+            let me = me.clone();
+            async move { me.handle_ws_event(ev, via).await }
+        });
+    }
+
     pub async fn handle_ws_event(self: &Arc<Self>, ev: WsEvent, via: Option<Uuid>) {
         tracing::debug!(event = %ev.event, seq = ev.seq, "websocket event");
         match ev.event.as_str() {
@@ -707,6 +751,70 @@ impl Integ {
     /// Re-reads recent posts of the bot's channels and DMs and emits them again;
     /// the core's deduplication on `event_id` makes replays harmless.
     pub async fn catch_up(&self) {
+        self.catch_up_paged(CATCHUP_PER_PAGE, CATCHUP_MAX_PAGES)
+            .await;
+    }
+
+    /// The posts of `channel` created at or after `since`, read newest-first a page at a time
+    /// (`GET /channels/{id}/posts?page=&per_page=`; `?since=` is not used: Mattermost answers it
+    /// with one capped batch and no way to continue, so a longer gap lost its oldest messages).
+    /// Stops at a short page, at a page that reaches back past `since`, or after `max_pages`.
+    /// Past the cap the oldest posts of the gap are not replayed (the newest `max_pages ×
+    /// per_page` are), and that is logged: the window is bounded, not silently shortened.
+    async fn channel_posts_since(
+        &self,
+        token: &str,
+        channel: &str,
+        since: i64,
+        per_page: usize,
+        max_pages: usize,
+    ) -> Vec<MmPost> {
+        let per = per_page.to_string();
+        let mut out = Vec::new();
+        for page in 0..max_pages {
+            let p = page.to_string();
+            let v = match self
+                .mm
+                .get_q(
+                    token,
+                    &format!("/channels/{channel}/posts"),
+                    &[("page", &p), ("per_page", &per)],
+                )
+                .await
+            {
+                Ok(v) => v,
+                Err(e) => {
+                    tracing::warn!(error = %e.message, %channel, page, "catch-up fetch failed");
+                    return out;
+                }
+            };
+            let in_page = v.get("order").and_then(Value::as_array).map_or(0, Vec::len);
+            let batch = posts_of(&v);
+            // The oldest post of the page decides whether the gap is covered: `posts` also holds
+            // thread roots outside the page, so only the page's own `order` is looked at.
+            let oldest = v
+                .get("order")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .filter_map(|id| batch.iter().find(|b| b.id == id))
+                .map(|b| b.create_at)
+                .min();
+            out.extend(batch);
+            if in_page < per_page || oldest.is_none_or(|t| t < since) {
+                return out;
+            }
+        }
+        tracing::warn!(
+            %channel,
+            pages = max_pages,
+            "catch-up reached its page cap: older posts of the gap are not replayed"
+        );
+        out
+    }
+
+    async fn catch_up_paged(&self, per_page: usize, max_pages: usize) {
         let window = self.settings.catchup_window;
         let since = now_ms() - i64::try_from(window.as_millis()).unwrap_or(i64::MAX / 2);
         let d = self.snapshot();
@@ -736,21 +844,10 @@ impl Integ {
                 .iter()
                 .filter(|c| c.kind != "O" || !c.id.is_empty())
             {
-                let s = since.to_string();
-                match self
-                    .mm
-                    .get_q(
-                        token,
-                        &format!("/channels/{}/posts", ch.id),
-                        &[("since", &s)],
-                    )
-                    .await
-                {
-                    Ok(v) => posts.extend(posts_of(&v)),
-                    Err(e) => {
-                        tracing::warn!(error = %e.message, channel = %ch.id, "catch-up fetch failed")
-                    }
-                }
+                posts.extend(
+                    self.channel_posts_since(token, &ch.id, since, per_page, max_pages)
+                        .await,
+                );
             }
         }
         let posts = dedupe_posts(posts, since);
@@ -871,9 +968,8 @@ impl Integ {
                                     tokio::spawn(async move { me.catch_up_once().await });
                                 }
                                 last_seq = Some(ev.seq);
-                                let me = self.clone();
                                 let via = bot.as_ref().map(|(id, _)| *id);
-                                tokio::spawn(async move { me.handle_ws_event(ev, via).await });
+                                self.dispatch_ws_event(ev, via);
                             }
                             Ok(None) => break,
                             Err(e) => {
@@ -958,5 +1054,271 @@ mod tests {
         ids.sort();
         assert_eq!(ids, ["a", "b"]);
         assert!(posts_of(&json!({})).is_empty());
+    }
+
+    // ------------------------------------------------ a fake Mattermost + a fake core (FIX-139)
+
+    use aurora_connector_sdk::{CoreClient, RetryPolicy, spawn_event_poster};
+    use aurora_protocol::connector::{EventsRequest, EventsResponse, SharedBot};
+    use wiremock::matchers::{method, path, path_regex};
+    use wiremock::{Mock, MockServer, Request as WmRequest, Respond, ResponseTemplate};
+
+    const TEAM: &str = "team0000000000000000000001";
+    const CH: &str = "chan0000000000000000000001";
+    const BOT: &str = "bot00000000000000000000001";
+    const USER: &str = "user0000000000000000000001";
+
+    /// The fake core accepts every event it is sent.
+    struct AcceptAll;
+    impl Respond for AcceptAll {
+        fn respond(&self, req: &WmRequest) -> ResponseTemplate {
+            let ev: EventsRequest = serde_json::from_slice(&req.body).unwrap();
+            ResponseTemplate::new(200).set_body_json(EventsResponse {
+                accepted: ev.events.iter().map(|e| e.event_id.clone()).collect(),
+                duplicates: vec![],
+                rejected: vec![],
+            })
+        }
+    }
+
+    /// `GET /channels/{id}/posts` over a fixed history, newest first, answering `page`/`per_page`
+    /// like Mattermost (default 60 per page). `since` is ignored, as Mattermost ignores `page` with it.
+    struct PagedPosts {
+        newest_first: Vec<Value>,
+    }
+    impl Respond for PagedPosts {
+        fn respond(&self, req: &WmRequest) -> ResponseTemplate {
+            let q: HashMap<String, String> = req.url.query_pairs().into_owned().collect();
+            let page: usize = q.get("page").and_then(|v| v.parse().ok()).unwrap_or(0);
+            let per: usize = q.get("per_page").and_then(|v| v.parse().ok()).unwrap_or(60);
+            let slice: Vec<&Value> = self
+                .newest_first
+                .iter()
+                .skip(page * per)
+                .take(per)
+                .collect();
+            let order: Vec<&Value> = slice.iter().map(|p| &p["id"]).collect();
+            let posts: serde_json::Map<String, Value> = slice
+                .iter()
+                .map(|p| (p["id"].as_str().unwrap().to_owned(), (*p).clone()))
+                .collect();
+            ResponseTemplate::new(200).set_body_json(json!({"order": order, "posts": posts}))
+        }
+    }
+
+    struct Rig {
+        integ: Arc<Integ>,
+        mm: MockServer,
+        core: MockServer,
+    }
+
+    async fn rig() -> Rig {
+        let core = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/connector/events"))
+            .respond_with(AcceptAll)
+            .mount(&core)
+            .await;
+        let mm = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path(format!("/api/v4/channels/{CH}")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "id": CH, "team_id": TEAM, "type": "O", "name": "general", "display_name": "General"
+            })))
+            .mount(&mm)
+            .await;
+        let client =
+            Arc::new(CoreClient::new(&core.uri(), "aun_test", RetryPolicy::default()).unwrap());
+        let (tx, rx) = tokio::sync::watch::channel(false);
+        let sink = spawn_event_poster(client, rx);
+        std::mem::forget(tx);
+        let settings = Settings {
+            public_url: Some("https://connector.test".into()),
+            hmac_key: b"k".to_vec(),
+            catchup_window: Duration::from_secs(60),
+            api_url: None,
+            token_check: Duration::from_secs(3600),
+            capabilities: None,
+            test_control: false,
+            net: crate::api::NetPolicy::allow_all(),
+        };
+        let id = Uuid::from_u128(1);
+        let integration = Integration {
+            id,
+            org_id: Uuid::nil(),
+            tenant_ref: format!("mm.test/{TEAM}"),
+            tenant_label: "T".into(),
+            config: json!({"server_url": mm.uri()}),
+            credentials: json!({"bot_token": "bot"}),
+            credentials_version: 1,
+            shared_bot: Some(SharedBot {
+                platform_user_ref: BOT.into(),
+                handle: "aurora".into(),
+                display_name: "Aurora".into(),
+            }),
+            status: "active".into(),
+        };
+        let integ = Integ::from_config(
+            &integration,
+            &[],
+            &BTreeSet::new(),
+            sink,
+            IntegrationHandle::new(id),
+            settings,
+        )
+        .unwrap();
+        Rig {
+            integ: Arc::new(integ),
+            mm,
+            core,
+        }
+    }
+
+    impl Rig {
+        async fn user_lookup(&self, delay: Duration) {
+            Mock::given(method("GET"))
+                .and(path(format!("/api/v4/users/{USER}")))
+                .respond_with(
+                    ResponseTemplate::new(200)
+                        .set_delay(delay)
+                        .set_body_json(json!({"id": USER, "username": "alice"})),
+                )
+                .mount(&self.mm)
+                .await;
+        }
+
+        /// `(kind, event_id)` of the events the core received, in arrival order.
+        async fn core_events(&self) -> Vec<(String, String)> {
+            let mut out = Vec::new();
+            for r in self.core.received_requests().await.unwrap() {
+                if let Ok(req) = serde_json::from_slice::<EventsRequest>(&r.body) {
+                    out.extend(
+                        req.events
+                            .iter()
+                            .map(|e| (e.kind.as_str().to_owned(), e.event_id.clone())),
+                    );
+                }
+            }
+            out
+        }
+
+        /// Waits (bounded) until the core has `n` events, then returns them.
+        async fn core_events_n(&self, n: usize) -> Vec<(String, String)> {
+            let end = Instant::now() + Duration::from_secs(30);
+            loop {
+                let ev = self.core_events().await;
+                if ev.len() >= n || Instant::now() >= end {
+                    return ev;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        }
+    }
+
+    fn mm_post(id: &str, create_at: i64, deleted: bool) -> Value {
+        json!({"id": id, "create_at": create_at, "update_at": create_at,
+               "delete_at": if deleted { create_at + 1 } else { 0 },
+               "user_id": USER, "channel_id": CH, "message": "hello", "type": ""})
+    }
+
+    fn ws_post_event(kind: &str, post: &Value, seq: i64) -> WsEvent {
+        serde_json::from_value(json!({
+            "event": kind, "data": {"post": post.to_string()},
+            "broadcast": {"channel_id": CH}, "seq": seq
+        }))
+        .unwrap()
+    }
+
+    /// A person posts and deletes straight away while the author lookup is slow: the core must
+    /// see `message.posted` and then `message.deleted`, never the deletion first and a "posted"
+    /// with the original text after it (a message that would stay visible).
+    #[tokio::test]
+    async fn a_post_and_its_immediate_deletion_reach_the_core_in_order() {
+        let rig = rig().await;
+        rig.user_lookup(Duration::from_millis(400)).await;
+        let post = mm_post("post0000000000000000000001", now_ms(), false);
+        rig.integ
+            .dispatch_ws_event(ws_post_event("posted", &post, 1), None);
+        rig.integ
+            .dispatch_ws_event(ws_post_event("post_deleted", &post, 2), None);
+        let ev = rig.core_events_n(2).await;
+        let kinds: Vec<&str> = ev.iter().map(|(k, _)| k.as_str()).collect();
+        assert_eq!(kinds, ["message.posted", "message.deleted"], "{ev:?}");
+    }
+
+    /// A gap longer than one page: catch-up delivers every post of it, oldest first.
+    #[tokio::test]
+    async fn catch_up_pages_through_a_gap_longer_than_one_page() {
+        const N: usize = 450;
+        let rig = rig().await;
+        let ids = mount_history(&rig, N).await;
+
+        rig.integ.catch_up().await;
+
+        let got = posted_ids(rig.core_events_n(N).await);
+        assert_eq!(got.len(), N, "catch-up lost messages");
+        assert_eq!(got, ids, "catch-up replayed out of order");
+    }
+
+    /// Past the page cap the oldest posts of the gap are dropped (and logged), the newest are
+    /// delivered in order, and the fetch does not go on forever.
+    #[tokio::test]
+    async fn catch_up_stops_at_its_page_cap_keeping_the_newest_posts() {
+        let rig = rig().await;
+        let ids = mount_history(&rig, 20).await;
+
+        rig.integ.catch_up_paged(5, 3).await;
+
+        let got = posted_ids(rig.core_events_n(15).await);
+        assert_eq!(got, ids[5..], "the newest 15 of 20, oldest first");
+        let pages = rig
+            .mm
+            .received_requests()
+            .await
+            .unwrap()
+            .iter()
+            .filter(|r| r.url.path().ends_with("/posts"))
+            .count();
+        assert_eq!(pages, 3, "a fourth page was fetched");
+    }
+
+    /// Mounts a channel list and a history of `n` posts (ids ascending with age) and returns
+    /// the `posted:` event ids the core should see, oldest first.
+    async fn mount_history(rig: &Rig, n: usize) -> Vec<String> {
+        rig.user_lookup(Duration::ZERO).await;
+        Mock::given(method("GET"))
+            .and(path(format!("/api/v4/users/{BOT}/teams/{TEAM}/channels")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([{
+                "id": CH, "team_id": TEAM, "type": "O", "name": "general"
+            }])))
+            .mount(&rig.mm)
+            .await;
+        let base = now_ms() - 30_000;
+        let mut history: Vec<Value> = (0..n)
+            .map(|i| {
+                mm_post(
+                    &format!("post{i:022}"),
+                    base + i64::try_from(i).unwrap() * 10,
+                    false,
+                )
+            })
+            .collect();
+        let ids = history
+            .iter()
+            .map(|p| format!("posted:{}", p["id"].as_str().unwrap()))
+            .collect();
+        history.reverse();
+        Mock::given(method("GET"))
+            .and(path_regex(format!("^/api/v4/channels/{CH}/posts$")))
+            .respond_with(PagedPosts {
+                newest_first: history,
+            })
+            .mount(&rig.mm)
+            .await;
+        ids
+    }
+
+    fn posted_ids(events: Vec<(String, String)>) -> Vec<String> {
+        events.into_iter().map(|(_, id)| id).collect()
     }
 }

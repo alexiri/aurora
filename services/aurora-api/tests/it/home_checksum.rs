@@ -8,8 +8,8 @@
 //! renders and the supervisor installs is *not* harvested as an edit, and every kind of tampering
 //! is.
 //!
-//! Location: `aurora-api` already depends on `aurora-supervisor` (and has it as a dev-dependency),
-//! so the test lives here; the supervisor cannot dev-depend on the API without a cycle.
+//! Location: the test needs the API's test harness, so it lives here and `aurora-api` has
+//! `aurora-supervisor` as a dev-dependency only (VEL-007: the library never uses it).
 
 use crate::common::*;
 use aurora_db::repo::hosted::HomeSyncClaim;

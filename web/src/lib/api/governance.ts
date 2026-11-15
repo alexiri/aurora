@@ -1,8 +1,9 @@
 "use client";
 
-import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api, ApiError } from "./client";
+import { fetchAllPages } from "./paging";
 import type { components } from "./schema";
 import { unwrap } from "./unwrap";
 
@@ -74,22 +75,43 @@ export interface BlockedHost {
   count: number;
 }
 
-/** Hosts recently refused by egress policy, from the workspaces the viewer can see. */
+/** Activity pages read per workspace (100 rows each): the count is of *recent* refusals, not an audit. */
+const BLOCKED_PAGES_PER_WORKSPACE = 3;
+/** Workspaces read at once (the count aggregates all of them; no API count exists yet, so this is client-side). */
+const BLOCKED_CONCURRENCY = 4;
+
+/**
+ * Hosts recently refused by egress policy, aggregated over **every** workspace the viewer can see (FIX-117; the
+ * API has no count, so each workspace's most recent refusals are read, a few pages deep, a few workspaces at a time).
+ */
 export function useBlockedHosts(workspaceIds: string[], enabled: boolean): BlockedHost[] {
-  const results = useQueries({
-    queries: workspaceIds.slice(0, 10).map((ws) => ({
-      queryKey: ["governance", "blocked", ws],
-      enabled,
-      retry: false,
-      queryFn: () =>
-        unwrap(
-          api.GET("/v1/workspaces/{ws}/activity", {
-            params: { path: { ws }, query: { decision: "egress_denied", limit: 100 } },
-          }),
-        ),
-    })),
+  const q = useQuery({
+    queryKey: ["governance", "blocked", workspaceIds] as const,
+    enabled: enabled && workspaceIds.length > 0,
+    retry: false,
+    queryFn: async () => {
+      const rows: { host: string }[] = [];
+      for (let i = 0; i < workspaceIds.length; i += BLOCKED_CONCURRENCY) {
+        const batch = workspaceIds.slice(i, i + BLOCKED_CONCURRENCY);
+        const pages = await Promise.all(
+          batch.map((ws) =>
+            fetchAllPages(
+              (cursor) =>
+                unwrap(
+                  api.GET("/v1/workspaces/{ws}/activity", {
+                    params: { path: { ws }, query: { decision: "egress_denied", limit: 100, cursor } },
+                  }),
+                ),
+              BLOCKED_PAGES_PER_WORKSPACE,
+            ),
+          ),
+        );
+        for (const p of pages) rows.push(...p.items);
+      }
+      return rows;
+    },
   });
-  return countBlockedHosts(results.flatMap((r) => r.data?.items ?? []));
+  return countBlockedHosts(q.data ?? []);
 }
 
 export function countBlockedHosts(items: { host: string }[]): BlockedHost[] {

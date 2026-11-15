@@ -25,11 +25,31 @@ Other admin actions:
 
 | Action | Route | Result |
 |--------|-------|--------|
-| List | `GET /v1/admin/runners` | Runners, replicas, capacity |
-| Rotate token | `POST /v1/admin/runners/{id}/token` | `200` with a new `aur_` token, shown once |
+| List | `GET /v1/admin/runners` | Runners, replicas, capacity (`max_sandboxes`, `running_sandboxes`, live replicas, versions, last seen) |
+| Rotate token | `POST /v1/admin/runners/{id}/token?grace_secs=600` | `200` with a new `aur_` token, shown once; the replaced token keeps working for the grace (0 to 86400 s, default 600) |
 | Delete | `DELETE /v1/admin/runners/{id}` | `204`. `409` while sandboxes run on it. |
 
-Every change is audited (`admin.runner_create`, `admin.runner_delete`, `admin.runner_rotate`).
+Every change is audited (`admin.runner_create`, `admin.runner_delete`, `admin.runner_rotate`
+with the grace in its metadata).
+
+Adding and removing runners is Helm/CLI work, not a dashboard action (D-211). **Admin ›
+Runners** shows the capacity table and has a **Rotate token** action.
+
+### Rotate a runner's token (D-211)
+
+1. Rotate: Admin › Runners › **Rotate token** (choose the grace, default 10 minutes), or
+   `POST /v1/admin/runners/{id}/token?grace_secs=…`. Copy the new token; it is shown once.
+2. Put the new token where the runner reads `AURORA_RUNNER_TOKEN` (Helm: update the runner
+   token Secret, e.g. `kubectl -n aurora create secret generic … --dry-run=client -o yaml | kubectl apply -f -`,
+   or the value behind `api.bootstrap.runnerToken` for the `default` runner) and roll the
+   runner Deployment (`kubectl rollout restart`).
+3. The old token works until the grace ends (the runners list shows "old token valid until");
+   after that it gets `401`. A second rotation inside the grace replaces the first old token.
+   Roll within the grace: the sandboxes' `aurora.installation` label is the hash of the **new**
+   token, so a runner still on the old token no longer recognises sandboxes the API started
+   after the rotation as its own until it is rolled.
+4. With `AURORA_BOOTSTRAP_RUNNER_TOKEN` set, the API re-applies that value to the runner `default`
+   at every start, which undoes a rotation of `default`: change the configured value as well.
 
 ### Bootstrap alternative
 
@@ -47,7 +67,7 @@ installs. It does not replace the admin route for a second runner.
 | `AURORA_RUNNER_SESSION_KEY` | — (required) | 32 random bytes, base64. Must match the API. |
 | `runner.api_url` | — | Where the runner reaches the API, for example `http://aurora-api:4101`. |
 | `runner.backend` | — (required) | `podman`, `kubernetes` or `fake`. Set in config, never detected. |
-| `runner.ops_bind` | `server.bind` | Address of the ops listener (4106, health and metrics). Must not be sandbox-reachable (SEC-09). |
+| `runner.ops_bind` | `127.0.0.1` on podman, `server.bind` otherwise | Address of the ops listener (4106, health and metrics). Must not be sandbox-reachable (SEC-09). On podman an address that is, or covers, the sandbox-facing `server.bind` is refused at startup; on Kubernetes the chart sets it and a NetworkPolicy isolates the port. |
 | `runner.advertised_host` | — | Host sandboxes use to reach the runner's WebSocket. |
 | `runner.image` | `aurora-sandbox:<version>` | Sandbox image. The single source of truth: the runner starts it, advertises it at registration and the API reports it as the sandbox `image`. |
 | `runner.max_sandboxes` | `4` | Concurrent sandboxes on this runner. |
@@ -78,7 +98,7 @@ For development and single-host installs (docs/11 §Backend podman).
 | Key | Default | Notes |
 |-----|---------|-------|
 | `runner.podman_socket` | unset | Podman API socket. When unset, the runner uses `$XDG_RUNTIME_DIR/podman/podman.sock`, or `/run/podman/podman.sock` when `XDG_RUNTIME_DIR` is not set (`services/aurora-runner/src/backends/podman.rs`). |
-| `runner.sandbox_network` | `aurora-sandbox` | Must be created `--internal --disable-dns`. The runner verifies the flag at startup and refuses to run otherwise. |
+| `runner.sandbox_network` | `aurora-sandbox` | Must be created `--internal --disable-dns`. The runner verifies both settings at startup (`internal` from the network inspect, `dns_enabled` from podman's own network JSON) and refuses to run otherwise. |
 | `runner.sandbox_hosts` | `{}` | Map of host names to IPs injected into sandboxes as `/etc/hosts` entries, for example `{ "aurora-gateway" = "10.89.250.2", "aurora-runner" = "10.89.250.3" }`. |
 | `runner.dev_allow_external_network` | `false` | Escape hatch for development. It logs a warning on every start. Never set it in a deployment. |
 | `runner.dev_supervisor_binary` | unset | Development only (OPS-018, `docs/ops/live-reload.md`): absolute path of a host-built `aurora-supervisor`, bind-mounted read-only over the image's copy in new podman sandboxes. Config validation refuses it unless the backend is `podman` and `server.bind`, `server.external_url` and `runner.api_url` are loopback. It logs a warning on every start. Never set it in a deployment. |

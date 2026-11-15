@@ -186,6 +186,28 @@ pub struct Owner {
     pub workspace: Option<Uuid>,
 }
 
+/// Own (non-library) skills of an agent (FIX-110 cap).
+pub async fn count_agent_own(conn: &mut PgConnection, agent: Uuid) -> Result<i64, DbError> {
+    Ok(
+        sqlx::query_scalar(
+            "SELECT count(*) FROM skills WHERE agent_id = $1 AND library_id IS NULL",
+        )
+        .bind(agent)
+        .fetch_one(conn)
+        .await?,
+    )
+}
+
+/// Files of one skill (FIX-110 cap).
+pub async fn count_files(conn: &mut PgConnection, skill: Uuid) -> Result<i64, DbError> {
+    Ok(
+        sqlx::query_scalar("SELECT count(*) FROM skill_files WHERE skill_id = $1")
+            .bind(skill)
+            .fetch_one(conn)
+            .await?,
+    )
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn insert(
     conn: &mut PgConnection,

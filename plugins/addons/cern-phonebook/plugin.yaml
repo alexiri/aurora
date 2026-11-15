@@ -1,0 +1,80 @@
+package:
+  id: cern-phonebook
+  version: 0.1.0
+  contract: 1
+  min_core: 0.1.0
+  publisher: cern
+  name: CERN Phonebook
+  description: Look up people and e-groups in CERN's central directory (xldap.cern.ch) through the Aurora gateway — e-mail addresses, offices, departments and managers; read-only and anonymous
+  homepage: https://github.com/alexiri/aurora-addons-cern
+apps:
+  - about:
+      id: cern-phonebook
+      name: CERN Phonebook
+      description: Let agents find a person's e-mail address, where they work and who their manager is, and list the members of an e-group, from CERN's public directory service. The gateway performs every lookup as an anonymous, read-only LDAP search over LDAPS; there is nothing to sign in to.
+      category: directory
+      api_docs: https://phonebook.cern.ch
+      connect_note:
+        text: "Nothing to enter: the directory is read anonymously. Connect it to give an agent the right to search it; every search is checked against your rules and logged."
+        url: https://phonebook.cern.ch
+      label_hint: CERN directory
+    connect:
+      - id: anonymous
+        kind: fields
+        fields: []
+    # (D-251) The gateway LDAP lane: one search at a time against this server, below this base,
+    # for these attributes only. A change to any of it is a widening that needs re-approval.
+    ldap:
+      server: xldap.cern.ch
+      port: 636
+      base_dn: "DC=cern,DC=ch"
+      max_entries: 50
+      attributes:
+        - uid
+        - cn
+        - displayName
+        - mail
+        - telephoneNumber
+        - physicalDeliveryOfficeName
+        - cernDepartment
+        - cernGroup
+        - cernSection
+        - cernInstituteName
+        - manager
+        - cernReportTo
+        - memberOf
+        - member
+        - description
+    hosts:
+      - match: { host: cern-phonebook.ldap.aurora.internal }
+        inject: []
+    tools:
+      read:
+        items:
+          - { id: search, name: "Search the CERN directory (people and e-groups)", host: cern-phonebook.ldap.aurora.internal, path: /search, methods: [POST] }
+    agent:
+      instructions: |
+        CERN's directory is searched with one HTTPS call to the Aurora gateway:
+        POST https://cern-phonebook.ldap.aurora.internal/search with a JSON body
+        {"filter": "<LDAP filter>", "attributes": ["mail", ...], "scope": "sub", "limit": 10}
+        (use curl or any HTTP client; the proxy and CA are already configured). Only `filter` is
+        required; `attributes` defaults to every attribute below, `scope` is `sub` (default),
+        `one` or `base`, `base` may narrow the search to a DN under DC=cern,DC=ch. The answer is
+        {"entries": [{"dn": "...", "attributes": {"mail": ["..."]}}], "truncated": false}.
+        Attributes you may ask for or filter on: uid, cn, displayName, mail, telephoneNumber,
+        physicalDeliveryOfficeName, cernDepartment, cernGroup, cernSection, cernInstituteName,
+        manager, cernReportTo, memberOf, member, description. Nothing else can be read.
+        Filters are RFC 4515 (at most 1 KiB): `(uid=jdoe)`, `(displayName=Jane Do*)`,
+        `(mail=jane.doe@*)`; escape `*`, `(`, `)` and `\` in a value as \2a \28 \29 \5c.
+        Recipes. Find a person: `(|(displayName=Jane Do*)(mail=jane.do*)(cn=jane do*))` with the
+        attributes uid, displayName, mail, cernDepartment, physicalDeliveryOfficeName,
+        telephoneNumber. Exact person: `(uid=<login>)`. Where someone works: ask for
+        physicalDeliveryOfficeName, cernDepartment, cernGroup, cernSection. Manager: read
+        `manager` (a DN) from the person, then look that person up with
+        {"filter": "(uid=<login>)"} or by DN with "scope": "base" and "base" set to the DN;
+        repeat for each hop, at most five. E-groups: `(&(objectClass=group)(cn=<name>*))` and the
+        group's `member` values are DNs to look up the same way. A person page is
+        https://phonebook.cern.ch/phonebook/#/search?q=<name>.
+        Keep searches narrow: at most 50 entries come back and `truncated: true` means more
+        exist. Do not ask for contract status or nationality (not offered) and do not try to
+        change anything: the lane can only search.

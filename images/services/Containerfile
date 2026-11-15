@@ -18,7 +18,9 @@
 #     (possibly empty) local directory; if sccache cannot start at all the build runs without it.
 # Cache keys are stable because the build path is always /build and the env (RUSTFLAGS, CARGO_INCREMENTAL=0)
 # is fixed in this file. sccache caches only lib/rlib crates; binaries and proc-macros always compile.
-ARG RUST_IMAGE=docker.io/library/rust:1-bookworm
+# (FIX-103) Every base image is pinned by digest (scripts/guards/image-pins.sh); bump the tag and the digest together.
+ARG RUST_IMAGE=docker.io/library/rust:1-bookworm@sha256:ade39a710ef85f3506cffcfec3e8a24ba090badef1dff2fb798f71d878833fea
+ARG DISTROLESS_IMAGE=gcr.io/distroless/cc-debian12:nonroot@sha256:9dac0a79194e45a7da0158a9c6da57b217585af0786db3845d1f0ec1a0dd182f
 
 FROM ${RUST_IMAGE} AS chef
 ARG CARGO_CHEF_VERSION=0.1.78
@@ -145,24 +147,24 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     AURORA_CONNECTOR_SIGNATURES_DIR=/sigs with-sccache cargo build --release --locked -p aurora-connector-host \
     && cp target/release/aurora-connector-host /out/aurora-connector-host
 
-FROM gcr.io/distroless/cc-debian12:nonroot AS api
+FROM ${DISTROLESS_IMAGE} AS api
 COPY --from=builder /out/aurora-api /usr/local/bin/aurora-api
 COPY --from=plugin-archives /out-plugins/ /usr/share/aurora/plugins/
 EXPOSE 4101 4111
 ENTRYPOINT ["/usr/local/bin/aurora-api"]
 CMD ["serve"]
 
-FROM gcr.io/distroless/cc-debian12:nonroot AS gateway
+FROM ${DISTROLESS_IMAGE} AS gateway
 COPY --from=builder /out/aurora-gateway /usr/local/bin/aurora-gateway
 EXPOSE 4102 4103
 ENTRYPOINT ["/usr/local/bin/aurora-gateway"]
 
-FROM gcr.io/distroless/cc-debian12:nonroot AS hookhost
+FROM ${DISTROLESS_IMAGE} AS hookhost
 COPY --from=builder /out/aurora-hookhost /usr/local/bin/aurora-hookhost
 EXPOSE 4104
 ENTRYPOINT ["/usr/local/bin/aurora-hookhost"]
 
-FROM gcr.io/distroless/cc-debian12:nonroot AS runner
+FROM ${DISTROLESS_IMAGE} AS runner
 COPY --from=builder /out/aurora-runner /usr/local/bin/aurora-runner
 # 4105 sandbox channel, 4106 ops, 4108 relay stream listener (P4-PRV-2, opened when previews are on).
 EXPOSE 4105 4106 4108
@@ -171,20 +173,20 @@ ENTRYPOINT ["/usr/local/bin/aurora-runner"]
 # The port-previews relay (P4-PRV-2, docs/15 §Port previews): previews HTTP/WebSocket on 4112,
 # health and metrics on 4193.
 #   podman build -f images/services/Containerfile --target relay -t aurora-relay .
-FROM gcr.io/distroless/cc-debian12:nonroot AS relay
+FROM ${DISTROLESS_IMAGE} AS relay
 COPY --from=builder /out/aurora-relay /usr/local/bin/aurora-relay
 EXPOSE 4112 4193
 ENTRYPOINT ["/usr/local/bin/aurora-relay"]
 CMD ["serve"]
 
-FROM gcr.io/distroless/cc-debian12:nonroot AS connector-fake
+FROM ${DISTROLESS_IMAGE} AS connector-fake
 COPY --from=builder /out/aurora-connector-fake /usr/local/bin/aurora-connector-fake
 EXPOSE 4190
 ENTRYPOINT ["/usr/local/bin/aurora-connector-fake"]
 
 # The Mattermost connector: public callbacks (/mm/actions, /mm/commands) on 4110, health on 4191.
 #   podman build -f images/services/Containerfile --target connector-mattermost -t aurora-connector-mattermost .
-FROM gcr.io/distroless/cc-debian12:nonroot AS connector-mattermost
+FROM ${DISTROLESS_IMAGE} AS connector-mattermost
 COPY --from=builder /out/aurora-connector-mattermost /usr/local/bin/aurora-connector-mattermost
 EXPOSE 4110 4191
 ENTRYPOINT ["/usr/local/bin/aurora-connector-mattermost"]
@@ -192,7 +194,7 @@ CMD ["serve"]
 
 # The connector host: public callbacks (/connectors/<id>/...) on 4110, health and metrics on 4192.
 #   podman build -f images/services/Containerfile --target connector-host -t aurora-connector-host .
-FROM gcr.io/distroless/cc-debian12:nonroot AS connector-host
+FROM ${DISTROLESS_IMAGE} AS connector-host
 COPY --from=connector-host-signed /out/aurora-connector-host /usr/local/bin/aurora-connector-host
 EXPOSE 4110 4192
 ENTRYPOINT ["/usr/local/bin/aurora-connector-host"]

@@ -19,6 +19,8 @@ function SecretGrants({ agentId, wsId, orgId }: { agentId: string; wsId: string;
   if (wsSecrets.isPending || grants.isPending) return <Loading />;
   if (wsSecrets.isError) return <ErrorState error={wsSecrets.error} onRetry={() => wsSecrets.refetch()} />;
   if (grants.isError) return <ErrorState error={grants.error} onRetry={() => grants.refetch()} />;
+  // A failed org-secret list must not read as "no org secrets" (WEBX-14).
+  if (orgSecrets.isError) return <ErrorState error={orgSecrets.error} onRetry={() => orgSecrets.refetch()} />;
 
   const granted = new Set(grants.data.secrets.map((g) => g.secret_id));
   const secrets = [...wsSecrets.data.items, ...(orgSecrets.data?.items ?? [])].filter((s) => s.status === "active");

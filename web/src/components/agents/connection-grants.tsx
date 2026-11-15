@@ -11,6 +11,7 @@ import { Notice } from "@/components/ui/notice";
 import { ItemList, ListRow, Section } from "@/components/ui/section";
 import { errorMessage } from "@/lib/api/errors";
 import { appRestrictions, useApps, useConnections, type Connection } from "@/lib/api/apps";
+import { appDisplayName } from "@/lib/api/app-name";
 import { useRemoveAgentConnectionGrant } from "@/lib/api/credential-grants";
 import { useEffective, useGrants } from "@/lib/api/policy";
 import { grantState } from "@/lib/grant-editor";
@@ -56,7 +57,7 @@ export function ConnectionGrants({ agentId, wsId, orgId }: { agentId: string; ws
       {/* A conversion by an app update (P4-GRANTS, D-123): the grant is custom now, with every tool allowed. */}
       {(grants.data?.converted_by_app ?? []).map((c) => (
         <Notice key={c.connection_id} tone="pending" role="status" aria-label="Access converted">
-          Access for {appNames.get(c.app_id)?.name ?? c.app_id} was converted from full to custom by an app update. The
+          Access for {appNames.has(c.app_id) ? appDisplayName(appNames.get(c.app_id)!) : c.app_id} was converted from full to custom by an app update. The
           agent can use every tool the app has today; tools added later start blocked. Review the choices with Edit.
         </Notice>
       ))}
@@ -143,7 +144,7 @@ export function ConnectionGrants({ agentId, wsId, orgId }: { agentId: string; ws
 export function ConnectionGrantsReadOnly({ agentId, wsId }: { agentId: string; wsId: string }) {
   const effective = useEffective(agentId);
   const apps = useApps(wsId);
-  const names = useMemo(() => new Map((apps.data?.items ?? []).map((a) => [a.app_id, a.name])), [apps.data]);
+  const names = useMemo(() => new Map((apps.data?.items ?? []).map((a) => [a.app_id, appDisplayName(a)])), [apps.data]);
 
   const rows = useMemo(() => {
     const m = new Map<string, { appId: string; allow: number; ask: number; block: number }>();

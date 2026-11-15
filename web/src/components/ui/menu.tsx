@@ -41,5 +41,5 @@ export function MenuSeparator() {
 }
 
 export function MenuLabel({ children }: { children: ReactNode }) {
-  return <M.Label className="px-2 py-1 text-[11px] font-semibold uppercase tracking-[0.06em] text-muted">{children}</M.Label>;
+  return <M.Label className="px-2 py-1 text-label font-semibold uppercase tracking-label text-muted">{children}</M.Label>;
 }

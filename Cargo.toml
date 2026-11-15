@@ -94,7 +94,7 @@ rcgen = "0.13"
 x509-parser = "0.16"
 futures = "0.3"
 tokio-tungstenite = { version = "0.28", default-features = false, features = ["connect", "handshake"] }
-lru = "0.18"
+lru = "0.19"
 openidconnect = { version = "4.1", default-features = false, features = ["reqwest", "rustls-tls"] }
 
 # containers (podman API)
@@ -117,7 +117,7 @@ uuid = { version = "1.22", features = ["v7", "serde"] }
 chrono = { version = "0.4", default-features = false, features = ["std", "clock", "serde"] }
 chrono-tz = "0.10"
 croner = "3"
-toml = "0.9"
+toml = "1.2"
 graphql-parser = "0.4"
 mail-parser = "1.0"
 regex = "1"
@@ -127,6 +127,8 @@ flate2 = "1"
 tar = "0.4"
 psl = "2"
 pulldown-cmark = { version = "0.13", default-features = false }
+# WHATWG URL parsing for the deceptive-label check of markdown_safe (FIX-142 review): the host a browser would use.
+url = "2"
 sha2 = "0.10"
 # avatar re-encode (I-31): png/jpeg/webp decoders + png encoder only
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }

@@ -12,6 +12,7 @@ import { inputClass } from "@/components/ui/field";
 import { Notice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
 import { EmptyState, ErrorState, Loading } from "@/components/states";
+import { checkSummary, useAddonSources, useCheckAllAddonSources } from "@/lib/api/addon-sources";
 import { ApiError } from "@/lib/api/client";
 import { errorMessage } from "@/lib/api/errors";
 import { usePlugins, useUploadPlugin, type PluginViolation } from "@/lib/api/plugins";
@@ -91,12 +92,49 @@ export function UploadForm({ onDone }: { onDone?: () => void }) {
   );
 }
 
+/** Where a package came from: the addon source's name, or the plain source kind. */
+export function sourceLabel(p: { source: string; source_name?: string | null }): string {
+  if (p.source === "addon") return p.source_name ?? "Addon source (removed)";
+  return p.source;
+}
+
+/** "Check for updates": checks every addon source at once and reports each one's outcome. */
+function CheckForUpdates() {
+  const sources = useAddonSources();
+  const checkAll = useCheckAllAddonSources();
+  const items = sources.data?.items ?? [];
+  if (items.length === 0) return null;
+  const names = new Map(items.map((s) => [s.id, s.name]));
+  return (
+    <div className="space-y-2">
+      <Button variant="outline" disabled={checkAll.isPending} onClick={() => checkAll.mutate()}>
+        {checkAll.isPending ? "Checking…" : "Check for updates"}
+      </Button>
+      {checkAll.isError ? (
+        <Notice tone="danger" role="alert">
+          {errorMessage(checkAll.error)}
+        </Notice>
+      ) : null}
+      {checkAll.data ? (
+        <Notice tone="neutral" role="status" aria-label="Update check results">
+          <ul className="space-y-0.5">
+            {checkAll.data.items.map((r) => (
+              <li key={r.source_id}>{checkSummary(r, names.get(r.source_id) ?? "Addon source")}</li>
+            ))}
+          </ul>
+        </Notice>
+      ) : null}
+    </div>
+  );
+}
+
 export function PluginsView() {
   const [status, setStatus] = useState("");
   const [open, setOpen] = useState(false);
   const q = usePlugins(status);
+  const updates = (q.data?.items ?? []).filter((p) => p.update_available).length;
   return (
-    <div className="max-w-[1160px] space-y-4">
+    <div className="max-w-page space-y-4">
       <PageHeader
         title="Plugins"
         description="Signed packages that add apps and connectors to this instance."
@@ -112,6 +150,15 @@ export function PluginsView() {
           </Dialog>
         }
       />
+      {updates > 0 ? (
+        <Notice tone="pending" role="status">
+          {`${updates} ${updates === 1 ? "plugin has" : "plugins have"} a newer version in an addon source. `}
+          <Link href="/admin/addon-sources" className="font-medium underline">
+            See the addon sources
+          </Link>
+        </Notice>
+      ) : null}
+      <CheckForUpdates />
       <div className="max-w-xs space-y-1.5">
         <label htmlFor="plugin-status" className="block text-sm font-medium text-ink">
           Status
@@ -133,6 +180,7 @@ export function PluginsView() {
             <tr>
               <Th>Package</Th>
               <Th>Version</Th>
+              <Th>Source</Th>
               <Th>Signer</Th>
               <Th>Status</Th>
               <Th>Added</Th>
@@ -148,9 +196,25 @@ export function PluginsView() {
                   <div className="text-muted">{p.publisher}</div>
                 </Td>
                 <Td className="font-mono text-xs">{p.version}</Td>
+                <Td>
+                  {p.source === "addon" && p.source_id ? (
+                    <Link href={`/admin/addon-sources#${p.source_id}`} className="text-link underline">
+                      {sourceLabel(p)}
+                    </Link>
+                  ) : (
+                    sourceLabel(p)
+                  )}
+                </Td>
                 <Td>{p.signer.kind === "trusted_key" ? (p.signer.name ?? "trusted key") : p.signer.kind}</Td>
                 <Td>
-                  <Badge tone={statusTone(p.status)}>{p.status.replace("_", " ")}</Badge>
+                  <div className="flex flex-wrap items-center gap-1">
+                    <Badge tone={statusTone(p.status)}>{p.status.replace("_", " ")}</Badge>
+                    {p.update_available ? (
+                      <Link href={p.source_id ? `/admin/addon-sources#${p.source_id}` : "/admin/addon-sources"}>
+                        <Badge tone="pending">Update available</Badge>
+                      </Link>
+                    ) : null}
+                  </div>
                 </Td>
                 <Td className="whitespace-nowrap text-ink-2">{fmtDate(p.created_at)}</Td>
               </tr>

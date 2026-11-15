@@ -148,7 +148,8 @@ matrix:
     | `upload` | `POST /v1/conversations/{id}/attachments`, avatar/skill-file/plugin uploads | 20 / min, burst 5 |
     | `simulate` | `POST …/policy/simulate`, `GET /v1/agents/{agent}/effective` | 20 / min, burst 5 |
     | `search` | `GET …/memories/search` and any future search route | 30 / min, burst 10 |
-    | `export` | `GET /v1/conversations/{id}/export`, `GET /v1/admin/storage`, `GET /v1/orgs/{org}/storage` | 6 / hour, burst 2 |
+    | `export` | `GET /v1/conversations/{id}/export`, `POST /v1/admin/storage/refresh`, `POST /v1/orgs/{org}/storage/refresh` (FIX-126: the Storage *pages* are cached snapshots read in the ordinary buckets; only the deliberate Refresh buttons are strict); (phase 5, SET-1, SET-4) `GET /v1/admin/settings/export`, `POST /v1/admin/settings/email/test` | 6 / hour, burst 2 |
+    | `telemetry` | (phase 5, FIX-146, D-232) `POST /v1/telemetry/traces` (instead of `write`, so browser telemetry never spends the budget of real writes) | 60 / min, burst 20 |
     | `org` | every authenticated request touching an org's resources (all principals together) | 3 000 / min, burst 600 |
 
   - **Concurrency cap** for streams: at most `API_STREAMS_PER_PRINCIPAL` (20)
@@ -211,7 +212,9 @@ matrix:
       Health, metrics, the machine planes and the exempt routes are never
       affected. The 503 carries `code = counter_unavailable`, `retry-after: 5`,
       `details.limiter`. The refusal is never returned as 429 (a client must not
-      mistake an outage for its own rate).
+      mistake an outage for its own rate). Each class has its own breaker and its
+      own connection budget; a failure in one class never changes another class's
+      verdict (FIX-087).
     - *Metrics:* `aurora_api_rate_limited_total{class,scope}` unchanged; plus the
       `aurora_counters_*` series of `15 §Shared rate-limit counters`.
     - *Cost.* Every authenticated request costs one store round-trip (three
@@ -220,6 +223,17 @@ matrix:
       total) and is the default shared choice because it adds no infrastructure.
       Operators can keep the API limiter local and share only the gateway with
       `ratelimit.counters.api = "memory"` (`15`).
+- **Request id and trace context (phase 5, FIX-146, D-232, C-732).** Every response of the public
+  listener (`/v1/**` and `/scim/v2/**`), errors and the 404 fallback included, carries
+  `x-request-id: <32 lowercase hex>` — the W3C trace id of the request, also when no tracing backend
+  is configured. It is opaque (shown for support, never parsed by clients, not in the body) and is the
+  `request_id` of every server log line of that request (`02 §Coding rules`); the dashboard shows it as
+  the "Reference" of an error. A request may send `traceparent`/`tracestate`; sending them is never an
+  error, and how they are treated depends on the route (SEC-88): parent-based on the machine planes
+  (`/v1/runner/*`, `/v1/connector-host/*`, `/v1/relay/*`), trace id and parent span id kept but the
+  sampled flag ignored and `tracestate` dropped on every other `/v1` route (the sampling rule of
+  C-732 (7) decides), ignored on `/scim/v2/**`, OAuth/OIDC callbacks and webhooks. `/healthz`,
+  `/readyz` and `/metrics` get no span and no access line.
 - (phase 2, RFE-010) The conversation SSE adds the ephemeral `event.redacted
   { seq }` (no `id:`), telling clients to re-read that event.
 - SSE: `Content-Type: text/event-stream`; durable events carry `id: <seq>`;
@@ -259,7 +273,7 @@ index exists.
   shows `promoted` and its new turn's id in `Followup.promoted_turn_id`, phase 3, D-107) — plus the header `Idempotent-Replayed:
   true`. A replay after the turn finished, failed or was aborted returns that state;
   it never re-runs it.
-- **Mismatch**: a replay whose `text` or set of `attachment_ids` differs from the
+- **Mismatch**: a replay whose `text`, set of `attachment_ids` or `reply_to.seq` differs from the
   stored turn's → 422 `idempotency_key_reused` (`details.turn_id` or, for a stored
   follow-up, `details.followup_id`; phase 3, D-107), nothing created.
 - **Concurrency**: simultaneous requests with one key race on the unique index; the
@@ -287,9 +301,10 @@ caches — phase 3, RFE-014: *after* re-subscribing, keeping the caches meanwhil
 | `aurora_ops` | `{ "connector": id }`; (phase 4, P4-MCON) `{ "assignments": true }` when a managed connector changed | API → API connector long-polls; the connector-host `assignments` long poll |
 | `aurora_inbox` | `{}` | API → API inbox workers |
 | `aurora_op_result` | `{ "op_id" }` | API (on connector results) → API callers waiting on correlated operations |
-| `aurora_approval` | `{ "id", "workspace_id", "event": "created"|"decided"|"expired" }` | gateway & API → gateways, API (cards, SSE, long-polls) |
+| `aurora_approval` | `{ "id", "workspace_id", "event": "created"|"decided"|"expired"|"abandoned" }` (FIX-109: `abandoned` for an approval ended by a freeze, by the revocation of what it depended on (FIX-084) or by a gateway that went away, with the status of the same name (FIX-122), and the gateways wake a held request on `decided`, `expired` and `abandoned`; the dashboard treats it like `expired` and shows its own copy) | gateway & API → gateways, API (cards, SSE, long-polls) |
 | `aurora_gateway_invalidate` | `{ "scope": "org"|"workspace"|"agent"|"credential"|"connection"|"user"|"all", "id"?: uuid }` (phase 4, P4-GRP-1: `user`, id = the user; drops the cached identities of that speaker) | API → gateways |
 | `aurora_registry` | `{ "hash": content_hash, "contract": int }` | API → gateways, API replicas (hook hosts have no DB connection and poll `/internal/v1/registry/active` every 60 s and on cache miss) |
+| `aurora_settings` | (phase 5, SET-1, D-236(f)) `{ "section", "generation" }` | API (after a committed settings write, Helm mirroring or CLI reset) → API replicas, gateways: re-read that section, validate the merged view, swap (`15 §Instance settings`); a gateway then drops the caches the section feeds (scope `all` for `governance`, `llm`, `limits`, `secrets`) |
 | `aurora_secret_origin` | `{ "secret_id", "status" }` | gateway (origin preflight/backstop) → API (audit, owner notice, dashboard) |
 | `aurora_auth_revoked` | `{ "kind": "session"|"api_key"|"user", "id" }`; (phase 4, P4-GRP-1) `{ "kind": "access", "id": user_id \| null, "org_id" }`: the user's (or, with `id` null, every user of the org's) effective access changed (`04 §Groups`) | API → API replicas, gateways (replicas re-authorize that user's open SSE streams and long-polls; a stream the user may no longer open is closed with a final `access.changed`; gateways ignore it, they use the `user`/`workspace`/`org` scopes) |
 
@@ -346,25 +361,28 @@ claim-based and safe to run everywhere.
 | Approval card fan-out (`13`) | `aurora_approval created` + every 10 s catch-up | claims (`channel_ops.dedupe_key`) |
 | Approval e-mail notification (phase 2, RFE-011a, `07 §Approvals`): pending approvals older than `APPROVAL_NOTIFY_DELAY` without a live surface → e-mail to deciders | every 10 s | claims (`approval_notifications`) |
 | Approval watcher heartbeat (phase 2, RFE-011a): each replica upserts `approval_watchers` for its open approvals SSE/long-poll connections; stale rows pruned | every 15 s | idempotent |
-| Approval expiry: `pending` past `deadline + 30 s` → `expired` (phase 4, RFE-011b: a **parked** approval expires at `deadline`, nobody holds it); pending rows of gateway instances unseen for 60 s → `abandoned` (phase 4: **never** `parked` rows) | every 10 s | idempotent updates |
-| Approval resume window (phase 4, RFE-011b): `resume_state = 'ready'` past `resume_expires_at` → `expired` (audit best-effort, transcript notice, no turn); parked approvals at 50 % of their time → one reminder | every 10 s | idempotent updates, claims (`approval_push_claims`) |
-| Web Push delivery (phase 4, RFE-011b, `07 §Web Push`): on `aurora_approval created` + `APPROVAL_PUSH_DELAY`, deciders with a live subscription and no watcher; failure handling, subscription disabling, retired-VAPID-key destruction (`PUSH_VAPID_RETIRE`) | event + every 10 s catch-up; daily | claims (`approval_push_claims`) |
+| Approval expiry: `pending` past `deadline + 30 s` → `expired` (phase 5 (D-138, moved from phase 4), RFE-011b: a **parked** approval expires at `deadline`, nobody holds it); pending rows of gateway instances unseen for 60 s → `abandoned` (phase 4: **never** `parked` rows) | every 10 s | idempotent updates |
+| Approval resume window (phase 5 (D-138, moved from phase 4), RFE-011b): `resume_state = 'ready'` past `resume_expires_at` → `expired` (audit best-effort, transcript notice, no turn); parked approvals at 50 % of their time → one reminder (C-828: e-mail claimed in `approval_notifications` with `stage = 'reminder'`, push in `approval_push_claims`); runs whatever `approvals.park.enabled` says now (D-264(b)) | every 10 s | idempotent updates, claims (`approval_notifications`, `approval_push_claims`) |
+| Web Push delivery (phase 5 (D-138, moved from phase 4), RFE-011b, `07 §Web Push`): on `aurora_approval created` + `APPROVAL_PUSH_DELAY`, deciders with a live subscription and no watcher; failure handling, subscription disabling, retired-VAPID-key destruction (`PUSH_VAPID_RETIRE`) | event + every 10 s catch-up; daily | claims (`approval_push_claims`) |
 | Action-approval expiry | every 60 s | idempotent |
 | Attachment pending sweep (`ATTACH_PENDING_TTL`) | hourly | idempotent |
 | Conversation retention sweep (phase 2, RFE-010): delete conversations past the org window through the delete path; blob-orphan sweep | daily | singleton |
-| Attachment sweep (phase 2, RFE-015): purge attachment bytes past the org window, remove orphan blobs, reconcile `org_storage_usage`, quota notices; (phase 4, P4-S3) with the `s3` backend the orphan step lists the bucket prefix and honours `S3_ORPHAN_GRACE` (`10 §Attachments`) | daily | singleton |
-| SCIM token expiry (phase 4, P4-GRP-2): a notice to the org owners and an audit row 14 days and 1 day before a token expires; expired tokens are simply dead (read-time check) | daily | singleton |
+| Attachment sweep (phase 2, RFE-015): purge attachment bytes past the org window, remove orphan blobs, reconcile `org_storage_usage`, quota notices; (phase 5 (D-138, moved from phase 4), P4-S3) with the `s3` backend the orphan step lists the bucket prefix and honours `S3_ORPHAN_GRACE` (`10 §Attachments`) | daily | singleton |
+| SCIM token expiry (phase 4, P4-GRP-2, FIX-081): an audit row (the in-app notice) and an e-mail to the org's owners and admins — the channel quota notices use, where a mailer is configured — 14 days and 1 day before a token expires, once per token and threshold; expired tokens are simply dead (read-time check) | daily | singleton |
 | Counter pruning (phase 4, P4-CNT, `postgres` backend only): delete dead `rate_limit_windows` / `rate_limit_buckets` rows | every `COUNTER_PRUNE_INTERVAL` (60 s) | `SKIP LOCKED` batches |
-| Blob store probe (phase 4, P4-S3, `s3` backend only): `HeadBucket` + versioning/encryption state, sets `aurora_blob_store_up` | every 30 s | per replica |
+| Blob store probe (phase 5 (D-138, moved from phase 4), P4-S3, `s3` backend only): `HeadBucket` + versioning/encryption state, sets `aurora_blob_store_up` | every 30 s | per replica |
 | Skill library refresh (phase 4, P4-GSL, `10 §Skills`): libraries with at least one added skill and `next_refresh_at <= now()` and `status = active` are claimed with `FOR UPDATE SKIP LOCKED` and a per-library lease (`LIBRARY_LEASE` 5 min, `refresh_lease_until`/`lease_owner`), at most `LIBRARY_REFRESH_CONCURRENCY` (4) per replica; resolve → compare head → tree → blob comparison → proposed updates through the gateway's library fetch (`06 §Library fetch`); errors back off 15 min → 1 h → 6 h; never writes skill content (only `skill_library_updates`, `skill_libraries`) and never bumps a home-sync generation | every 60 s | claims (lease) |
 | Skill library retention (phase 4, P4-GSL): prune decided `skill_library_updates` older than 90 days; expire leases; mark libraries whose connection vanished `error` | daily | singleton |
 | Preview housekeeping (phase 4, P4-PRV-1/2): delete expired `preview_sessions`, `preview_grant_uses` and `preview_stream_grants`; clear stale `sandboxes.preview_wake_at`/`preview_start_requested_at`; count shares per org for `aurora_preview_shares` | every 60 s | idempotent (`SKIP LOCKED` batches) |
 | Request-log partition maintenance and retention | daily | singleton |
-| Retention pruning (inbox/ops/cards > `CHANNEL_LEDGER_RETENTION`, used action tokens, expired email/CLI tokens, sessions, expired context credentials) | daily | singleton |
-| Runtime daily rollup | hourly | singleton |
+| Retention pruning (inbox/ops/cards > `CHANNEL_LEDGER_RETENTION`, used action tokens, expired email/CLI tokens, sessions, expired context credentials) (FIX-111: implemented for terminal `channel_inbox`/`channel_ops` rows (a pending deprovision op survives), settled `channel_cards`, expired `link_requests`, sessions and context credentials past `SESSION_PRUNE_GRACE`, `webhook_deliveries` past `WEBHOOK_DELIVERY_RETENTION` or over `WEBHOOK_DELIVERY_MAX_PER_WEBHOOK`, and `cli_logins` past `SESSION_PRUNE_GRACE` after expiry; used action tokens are pruned by the card fan-out, `email_tokens` are no longer written (OIDC-only sign-in); each statement deletes at most `RETENTION_PRUNE_BATCH` rows) | daily | singleton, `SKIP LOCKED` batches |
+| Runtime daily rollup (phase 5, D-138; **specified, not built**: no job exists and `runtime_daily` is never written) | hourly | singleton |
+| Eval run due-work arm (phase 5, P4-EVAL, D-290, C-865): claims `queued` and `running` `eval_runs` under `lease_until`, resumes at the next unfinished question (same `source_event_id`), re-checks authority and freeze before each question | every 5 s (with `aurora_work`) | claims |
+| Eval schedule fires (phase 5, P4-EVAL, D-293): the schedules engine's due-work arm for `eval_schedules` (`SCHEDULE_FIRE_LEASE`, fire-time authority, `skipped_frozen`, `skipped_busy`) | as the schedules arm | claims |
+| Eval retention (phase 5, P4-EVAL, D-294): delete finished `eval_runs` older than `EVAL_RUN_RETENTION` through the conversation delete path (session purge included) | daily | singleton |
 | Plugin directory scan | startup + 60 s | singleton |
 | Snapshot compile & activate | on package state change | singleton |
-| Peer-task and reach expiry | every 60 s | idempotent |
+| Peer-task and reach expiry (FIX-111: `approved` reach grants past `expires_at`, set by `expires_in` on the decision, become `expired`) | every 60 s | idempotent |
 
 ## The due-work engine
 
@@ -453,6 +471,7 @@ aurora_gateway_invalidate` after commit with the narrowest scope:
 | Org governance change (and the stored-origin re-evaluation it triggers) | `org` |
 | (phase 2, RFE-025) Workspace BYO posture change | `workspace` |
 | (phase 2, RFE-025) BYO source list / require-context change of an agent | `agent` |
+| (phase 5, SET-1) Instance settings change of `governance`, `llm`, `limits` or `secrets` | (`aurora_settings` instead: each gateway reloads the section and then flushes as for `all`) |
 | Snapshot activation | (`aurora_registry` instead) |
 
 ## Route catalogue
@@ -460,6 +479,21 @@ aurora_gateway_invalidate` after commit with the narrowest scope:
 Auth column: **S** session, **K** API key (workspace or org), **SO** session
 only, **IA** instance admin (session), **A** agent token, **R** runner, **C**
 connector, **P** public capability. Permission checks per `04`.
+
+**Outside the OpenAPI document (by design).** `web/openapi.json` describes the routes a dashboard or API-key
+client calls. These served routes are not in it — machine planes (their own tokens), SCIM, and the browser
+WebSocket — and each is listed here so a catalogue row without an OpenAPI entry is either one of them or
+unbuilt (phase-tagged). `scripts/guards/docs-routes.sh` checks every catalogue row against this table, the
+OpenAPI document and the phase tags (FIX-119).
+
+| Route | Why it is outside |
+|---|---|
+| GET `/v1/agents/{agent}/terminal` | WebSocket upgrade (C-616): not describable as an OpenAPI operation. Its auth, close codes and refusals are specified only in `API_CONTRACTS` C-616..C-625 and `16 §W19`; the OpenAPI drift test (`openapi_matches_checked_in`) cannot see a change here, so the terminal integration tests (`api it/terminal.rs`) are the only guard |
+| `/scim/v2/**` (Users, Groups, ServiceProviderConfig, ResourceTypes, Schemas) | SCIM 2.0 plane (per-org `aud_` bearer token, SCIM error bodies, `16 §W15`, C-470..C-479): a protocol of its own, not the dashboard API. A change to it is not caught by the OpenAPI drift test; the `scim_*` integration tests and the IdP fixtures (`tests/fixtures/scim/`) are the guard. The token and settings *management* routes under `/v1/orgs/{org}/scim…` are ordinary dashboard routes and are in the document |
+| GET `/v1/previews/authorize` | browser navigation redirect of the preview origin flow (C-540..C-549) |
+| POST `/v1/relay/register` | relay plane (`aul_` token, C-550..C-559) |
+| POST `/v1/runner/preview-streams/open` | runner plane (`aur_` token) |
+| POST `/v1/terminator/register` | (phase 5, P4-SSH-2) terminator plane (`aut_` token, C-794); also `/sessions`, `/sessions/{id}/channels`, `/sessions/{id}/close`, `/heartbeat` |
 
 ### Health and instance
 | Method & path | Auth | Purpose |
@@ -479,6 +513,7 @@ connector, **P** public capability. Permission checks per `04`.
 | POST `/v1/auth/sessions/revoke-others` | SO | |
 | GET `/v1/auth/oidc/{provider}/start`, `/callback` | none | `04 §OIDC`; (phase 1, RFE-004) the only sign-in; `start` accepts `reauth=1` |
 | POST `/v1/auth/cli`, `/v1/auth/cli/token` | none | device flow |
+| GET `/v1/auth/cli/pending?code=` | SO | (FIX-108) `{ hostname, requested_at, expires_at, address?, key_expires_in_days? }` for the approval screen; 404 unknown/expired, 400 malformed code |
 | POST `/v1/auth/cli/approve` | SO | `{ user_code, workspace_id }` |
 | GET/PATCH `/v1/me/onboarding` | S | (phase 4, P4-ONB-2, D-141) the caller's onboarding progress: `{ welcome_seen, guide_dismissed: [workspace_id], tour_completed_at }`; guide step completion itself is computed by the client from real state (model readiness, grants, conversations), never stored |
 | GET/PATCH/DELETE `/v1/me` | S (DELETE: SO) | (phase 1, RFE-004: DELETE needs a recent OIDC re-authentication, 412 `reauth_required`, no body) profile, memberships (phase 2, RFE-012: with the effective role per workspace), default org; (phase 2, RFE-011a) `PATCH { approval_email: bool }`; (phase 2, C-195) `client_address: string \| null`, the caller's address as the API sees it behind `server.trusted_proxies` |
@@ -493,12 +528,13 @@ connector, **P** public capability. Permission checks per `04`.
 | GET/POST `/v1/orgs/{org}/invitations`; DELETE `/v1/invitations/{id}` | S/K | (phase 2, RFE-012) body may carry `approver_workspace_ids` besides `workspace_ids` |
 | GET `/v1/invitations/preview?token=`; POST `/v1/invitations/accept` | none / SO | |
 | GET/POST `/v1/orgs/{org}/api-keys`; DELETE `/v1/api-keys/{id}` | S (POST: SO) | org keys |
+| DELETE `/v1/me/api-key` | K | (FIX-140, C-720) revokes the API key that authenticates this request, and no other: 204; 400 `not_an_api_key` for a session caller; a revoked/expired key never reaches it (401). Audited `api_key.revoke` with `metadata.self = true`. Used by `aurora logout` |
 | GET `/v1/orgs/{org}/audit` | S/K | (phase 2, RFE-008) filters `actor_id`, `action`, `critical=true` (C-290); rows carry `critical` (C-291) |
 | POST `/v1/orgs/{org}/freeze` `{ reason }`; POST `/v1/orgs/{org}/unfreeze` | S/K | (phase 2, RFE-006) org `owner` |
 | GET/PUT `/v1/orgs/{org}/app-availability` | S/K | posture + allow-list |
 | GET/PUT `/v1/orgs/{org}/governance` | S/K | org governance document (`08 §11.2`) with `revision`; PUT validates against the instance ceiling (422 `governance_invalid` / `governance_below_instance_minimum`) |
 | GET `/v1/orgs/{org}/governance/effective` | S/K (any org member) | effective LLM and egress governance (instance ∩ org), each value marked `source: instance|org` (phase 1, RFE-003: includes `egress.open_lane`; phase 2, RFE-025: includes `byo.{posture, source_cidrs, require_context_credentials}`; phase 3, RFE-013: `agent_tokens.max_age_days`); non-compliant LLM secrets of the org |
-| GET `/v1/governance/instance` | S | the instance ceiling (config, without secrets) — read-only |
+| GET `/v1/governance/instance` | S | the instance ceiling (config, without secrets) — read-only; (phase 5, SET-2) the effective `governance` and `llm` settings (helm or dashboard), each clamp naming its setting (C-783) |
 
 ### Workspaces
 | Method & path | Auth | Purpose |
@@ -510,10 +546,11 @@ connector, **P** public capability. Permission checks per `04`.
 | PUT/DELETE `/v1/workspaces/{ws}/access/groups/{group}` | S/K | (phase 4, P4-GRP-1) `PUT { role: "owner"\|"approver"\|"member" }` binds or changes the role of a group; `can_own`; 404 for a group of another org, 422 `group_binding_limit_reached`; DELETE is idempotent; both audited (`group_access.set\|remove`), invalidation scope `workspace` |
 | GET/POST `/v1/workspaces/{ws}/api-keys` | S (POST: SO) | workspace keys |
 | GET `/v1/workspaces/{ws}/audit` | S/K | same filters |
-| GET `/v1/orgs/{org}/storage` | S/K | (phase 2, RFE-015) org `owner`/`admin`: usage vs quota, breakdown by workspace and direction |
+| GET `/v1/orgs/{org}/storage` | S/K | (phase 2, RFE-015) org `owner`/`admin`: usage vs quota, breakdown by workspace and direction; (FIX-126) the file counts and breakdown come from a cached snapshot (`computed_at`), `used_bytes`/`notice` stay live |
+| POST `/v1/orgs/{org}/storage/refresh` | S/K | (FIX-126) org `owner`/`admin`: recompute the org's snapshot now, same body as the GET; `export` class |
 | GET/PUT `/v1/orgs/{org}/retention` | S/K | (phase 2, RFE-010/015) org `owner`/`admin`; `{ conversations_days?, attachments_days?, attachment_quota_mib? }`, `null` = none; 422 `retention_invalid` / `retention_above_instance_maximum` |
 | GET `/v1/workspaces/{ws}/activity` | S/K | request log, filters: agent, conversation, decision, host, app |
-| GET `/v1/workspaces/{ws}/usage` | S/K | runtime + tokens |
+| GET `/v1/workspaces/{ws}/usage` | S/K | (phase 5, D-138; **specified, not built** — no route, no job; the hourly "Runtime daily rollup" and token-usage aggregation of `§Background jobs` and `10` are the same item; `runtime_daily` is never written) runtime + tokens |
 | POST `/v1/workspaces/{ws}/freeze` `{ reason }`; POST `/v1/workspaces/{ws}/unfreeze` | S/K | (phase 2, RFE-006) `can_own`; as for agents |
 
 ### Groups (phase 4, P4-GRP-1, D-130)
@@ -532,7 +569,7 @@ workspace bindings stay editable), 409 `stale_revision`.
 | GET/PATCH/DELETE `/v1/groups/{id}` | S/K | PATCH `{ name?, description?, org_role?: "admin"\|"member"\|null }` with `If-Match`/`revision`; DELETE removes members and bindings and never rewrites policy rules (`07`) |
 | GET `/v1/groups/{id}/members`; PUT/DELETE `/v1/groups/{id}/members/{user}`; POST `/v1/groups/{id}/members:batch` | S/K | org `owner`/`admin`; PUT/DELETE are idempotent; the batch body is `{ add?: [user], remove?: [user] }` (≤ 100 each, one transaction, one audit row per change) |
 | GET `/v1/groups/{id}/workspaces` | S/K | the workspaces the group is bound to, with roles (org `owner`/`admin`) |
-| GET `/v1/groups/{id}/impact?remove_member=<user>` | S/K | org `owner`/`admin`: what deleting the group (or, with `remove_member`, removing that member) would take away, `{ workspaces: [{ workspace, users_losing_access: [...≤ GROUP_IMPACT_LIST_MAX], total, schedules_disabled, webhooks_disabled, api_keys }] }` |
+| GET `/v1/groups/{id}/impact?remove_member=<user>&unbind_workspace=<workspace>` | S/K | org `owner`/`admin`: what deleting the group (or, with `remove_member`, removing that member; with `unbind_workspace`, removing its binding to that one workspace) would take away, `{ workspaces: [{ workspace, users_losing_access: [...≤ GROUP_IMPACT_LIST_MAX], total, schedules_disabled, webhooks_disabled, api_keys }] }` |
 | GET `/v1/me` | S/K | (phase 4) also `groups: [{ id, name, org_id }]` and, per membership, `effective_role` with `sources` (`role` stays the direct role) |
 
 (phase 4, P4-GRP-1) The offboarding views of `§Organizations, members, keys` add
@@ -558,13 +595,13 @@ state, external_id? }` in `GET /v1/orgs/{org}/members`.
 ### Secrets and LLM
 | Method & path | Auth | Purpose |
 |---|---|---|
-| GET/POST `/v1/workspaces/{ws}/secrets`, `/v1/orgs/{org}/secrets` | S/K | create: name, kind, llm fields or host/path/injection, `value` or `reference`; (phase 4, P4-LLM) for `aws_sigv4` the `value` is the JSON `{ access_key_id, secret_access_key, session_token? }` and for `gcp_service_account` the key-file JSON, validated for shape, `token_uri` and key type (422 `llm_key_invalid`) before any provider call; the same validation, governance and origin steps as every LLM secret (`08 §LLM secrets`) |
+| GET/POST `/v1/workspaces/{ws}/secrets`, `/v1/orgs/{org}/secrets` | S/K | create: name, kind, llm fields or host/path/injection, `value` or `reference`; (phase 5 (D-138, moved from phase 4), P4-LLM) for `aws_sigv4` the `value` is the JSON `{ access_key_id, secret_access_key, session_token? }` and for `gcp_service_account` the key-file JSON, validated for shape, `token_uri` and key type (422 `llm_key_invalid`) before any provider call; the same validation, governance and origin steps as every LLM secret (`08 §LLM secrets`); (phase 5, P4-LLM spec batch, D-261, C-801) `aws_assume_role` takes `{ access_key_id, secret_access_key, role_arn, session_duration_secs? }` and `azure_entra` `{ tenant_id, client_id, client_secret }`, validated by a live `AssumeRole` / Entra mint (`details.reason` names the failing step) |
 | GET/PATCH/DELETE `/v1/secrets/{id}` | S/K | metadata only; values never returned |
 | PUT `/v1/secrets/{id}/value` | S/K | replace value |
 | POST `/v1/secrets/{id}/accept` | S | agent proposal: `{ value }` → secret `active` + grant to the proposing agent |
 | POST `/v1/secrets/{id}/reject` | S/K | agent proposal → `rejected`; a notice goes to the proposing conversation |
 | GET `/v1/secret-stores` | S/K | configured stores: id, kind, capabilities (no config) |
-| GET `/v1/llm/providers` | S/K | registry + configured endpoints; (phase 4, P4-LLM) each provider lists its `auth_modes` with their value shape (`string`, `aws_sigv4` fields, `gcp_service_account` file), each endpoint its `dialects`, `region`/`project_id`/`location` where they exist and `models_source` (`listed` \| `static`); never credentials or endpoint internals |
+| GET `/v1/llm/providers` | S/K | registry + configured endpoints; (phase 5 (D-138, moved from phase 4), P4-LLM) each provider lists its `auth_modes` with their value shape (`string`, `aws_sigv4` fields, `gcp_service_account` file), each endpoint its `dialects`, `region`/`project_id`/`location` where they exist and `models_source` (`listed` \| `static`); never credentials or endpoint internals. (phase 5, P4-LLM spec batch, C-802) Auth modes gain `aws_assume_role` (the key form shows the org's `external_id` from `Org`, for the role's trust policy) and `azure_entra`; each endpoint gains `harnesses` (the enabled harnesses it serves, D-260(a)) and `recommended_auth_mode`. (FIX-105) An endpoint's `base_url` is **not secret**: it is the address agents' clients already dial through the proxy and the dashboard shows when keys are added; it is returned to every authenticated caller (S/K), and an operator who must keep an internal address private fronts it with a public name |
 | GET `/v1/secrets/{id}/models` | S/K | model catalogue for an LLM secret (only allowed models) |
 | POST `/v1/secrets/{id}/verify` | S/K | re-run key-origin verification (`08 §11.3`) and return `origin` |
 
@@ -584,11 +621,31 @@ state, external_id? }` in `GET /v1/orgs/{org}/members`.
 | Method & path | Auth | Purpose |
 |---|---|---|
 | GET `/v1/orgs/{org}/app-instances` | S/K | instances usable in the org (instance-wide + the org's own); any member |
-| POST `/v1/orgs/{org}/app-instances` | S/K | `{ app_id, host, label }` → `AppInstance`; org owner/admin; validated per `09 §3.4 Instance-bound hosts` (probe included) |
-| GET/POST `/v1/admin/app-instances` | S | instance-wide instances; instance admins |
-| PATCH/DELETE `/v1/app-instances/{id}` | S/K | label, `status`; delete disables its connections; owner/admin of its scope (instance admin for instance-wide) |
+| POST `/v1/orgs/{org}/app-instances` | S/K | `{ app_id, host, label, base_path? }` → `AppInstance`; org owner/admin; validated per `09 §3.4 Instance-bound hosts` (probe included); (phase 5, C-731) `base_path` as below |
+| GET/POST `/v1/admin/app-instances` | S | instance admins; GET lists the instance-wide ones, or with `scope=all` (and `org=`) every organization's too, each row carrying `org_name`/`org_slug` (FIX-132, C-639); POST registers instance-wide; a refused host's `details.conflict` names the holder (`static_claim`, `llm_host`, `aurora_address`, `instance` — C-639) |
+| POST `/v1/admin/app-instances/{id}/promote` | S | (FIX-132, C-639) make an organization's registration instance-wide (`org_id = NULL`): one transaction, connections keep `instance_id`, audited `app_instance.promote` (critical); 409 `instance_already_wide` / `instance_host_shared` (another registration of the host exists whose base path overlaps, C-731) |
+| PATCH/DELETE `/v1/app-instances/{id}` | S/K | label, `status`; delete disables its connections; owner/admin of its scope (instance admin for instance-wide); `base_path` (like `host`) cannot be changed: an unknown field, 400 |
 
 `POST /v1/apps/{app}/connect` takes `instance_id` for an instance-bound app (absent = `default_host`, refused when the app has none). The connect form and the dashboard list the instances visible to the org.
+
+**Base path** (phase 5, FIX-145, D-231, C-731). Both POST bodies take `base_path?: string | null`
+for an app served under a path (`https://its.cern.ch/jira` → `host: "its.cern.ch"`,
+`base_path: "/jira"`). It is normalized first (a trailing `/` is dropped; `""` and `"/"` mean
+`null`; case is kept), then validated: it starts with `/`, has 1–8 segments, each 1–64 characters
+from `[A-Za-z0-9._~-]` and neither `.` nor `..`, total ≤ 128 characters; otherwise 422
+`instance_base_path_invalid` with `details.fields[].path = "/base_path"`. `AppInstance` gains
+`base_path: string | null` (normalized) and `base_url: string` (`https://<host><base_path or "">`,
+what clients display); `Connection.instance` gains the same two fields. Conflicts:
+`instance_host_conflict` with `details.conflict.kind = "instance"` is raised only when another
+registration visible to this one is on the same host **and** the base paths overlap (either is
+`null`, they are equal, or one is a segment prefix of the other: `/jira` overlaps `/jira/x`, not
+`/jira2`); the conflict then also carries the holder's `base_path` and `base_url`. Registrations on
+one host with disjoint base paths are accepted, for one app or different apps. `static_claim`,
+`llm_host` and `aurora_address` conflicts are per host and ignore `base_path`. Promote's
+`instance_host_shared` uses the same overlap rule. The registration probe, connect probes and OAuth
+URLs resolve `{instance}` to `<host><base_path>`; `instance_probe_failed.details.url` is that full
+URL. A client that omits `base_path` gets today's behaviour; a client must identify a registration
+by `id`, never by `host` alone.
 
 ### Grants and effective views
 | Method & path | Auth | Purpose |
@@ -607,8 +664,9 @@ state, external_id? }` in `GET /v1/orgs/{org}/members`.
 |---|---|---|
 | GET `/v1/workspaces/{ws}/policy`, `/v1/orgs/{org}/policy` | S/K | published + draft + revision; (phase 4, P4-CNT) plus `rate_limit_scope: "replica" \| "shared"` (`shared` when `ratelimit.counters.backend` is `postgres`/`redis` and the gateway share is not `memory`; the editor note of `14`) |
 | PUT `…/policy/draft` | S/K | whole-draft replace with `revision`; (phase 1, RFE-003) workspace scope also carries `open_lane_posture` (`enabled` \| `allowlist_only` \| `disabled`; a workspace can only tighten, so `enabled` simply adds no restriction beyond the org and instance) |
-| POST `…/policy/publish`, `…/policy/rollback` | S/K | `{ revision }` / `{ generation }` |
+| POST `…/policy/publish`, `…/policy/rollback` | S/K | `{ revision }` / `{ generation, expect_revision }` (FIX-109: rollback replaces the current draft, so it needs the draft revision the caller last read; 409 `stale_revision` otherwise) |
 | GET `…/policy/generations` | S/K | history |
+| GET `/v1/policy/approval-limits` | S/K | (phase 5, P4-011B, D-265(d), C-829) any signed-in user: the live approval bounds `{ timeout_secs, max_timeout_secs, park: { enabled, threshold_secs, max_timeout_secs, resume_window_secs } }` for the rule editor and the grant ask timeout; not on the unauthenticated `/v1/instance` |
 | GET `…/policy/warnings` | S/K | overlap/inert-rule warnings for the draft; (phase 2, RFE-025) includes `rule_applies_to_all_agents` (`07 §Injection selection`) |
 | POST `/v1/workspaces/{ws}/policy/simulate` | S/K | `{ agent_id, method, url, body?, use_draft?, lane?, speaker_user_id? }` → decision trace (phase 2, RFE-005: `speaker_user_id` omitted = no speaker); (phase 1, RFE-003) `lane: "open"` evaluates CONNECT-time semantics (`07`) and the open-lane posture |
 
@@ -619,28 +677,30 @@ workspace/approval is not visible); in phase 0/1 the requirement was `can_use`.
 
 | Method & path | Auth | Purpose |
 |---|---|---|
-| GET `/v1/workspaces/{ws}/approvals?status=` | S/K | |
+| GET `/v1/workspaces/{ws}/approvals?status=` | S/K | (phase 5, P5-AGENT-1, C-700) optional `agent_id`: only that agent's approvals, applied in the query with the visibility predicate; another workspace's or an unknown agent gives an empty page (as on `action-approvals`) |
 | GET `/v1/approvals/pending?wait=` | S/K | long-poll across what the caller may decide |
 | GET `/v1/approvals/stream` | S | SSE of created/decided; (phase 2, RFE-011a) `created` carries `{ id, workspace, agent, title, kind: "gateway"\|"action", expires_at }` so the dashboard can raise a browser notification; counts as a live surface (`approval_watchers`) |
-| POST `/v1/approvals/{id}/decision` | S/K | `{ "decision": "approve"|"deny" }`; first decision wins (409 `already_decided`); (phase 4, RFE-011b) for a parked approval the response carries `resume: { state, expires_at }` and the DTOs of the approvals feed, long-poll, SSE and history carry `parked: bool`, `resume_state`, `resume_expires_at` (never the fingerprint or salt) |
-| POST `/v1/approvals/batches/{batch_id}/decision` | S/K | all pending of the batch the caller may decide |
+| POST `/v1/approvals/{id}/decision` | S/K | `{ "decision": "approve"|"deny" }`; first decision wins (409 `already_decided`); (phase 5 (D-138, moved from phase 4), RFE-011b) for a parked approval the response carries `resume: { state, expires_at }` and the DTOs of the approvals feed, long-poll, SSE and history carry `parked: bool`, `resume_state`, `resume_expires_at`, `consumed_at` (never the fingerprint or salt; C-822); the decision, its follow-up and its audit row are one transaction (C-823, C-824) || POST `/v1/approvals/batches/{batch_id}/decision` | S/K | all pending of the batch the caller may decide |
 | GET `/v1/workspaces/{ws}/action-approvals`; POST `/v1/action-approvals/{id}/decision` | S/K | |
 
-### Web Push (phase 4, RFE-011b, D-134)
+### Web Push (phase 5 (D-138, moved from phase 4), RFE-011b, D-134)
 Own-resources only: every route acts on the caller's subscriptions; another user's subscription
 is 404. 404 `push_unavailable` on all of them while `push.enabled = false`. Writes are best-effort
-audited (`push_subscription.create|delete`).
+audited (`push_subscription.create|update|delete|move`, C-838). Contracts C-830..C-834 (P4-011B).
 
 | Method & path | Auth | Purpose |
 |---|---|---|
-| GET `/v1/push/config` | S | `{ available, vapid_public_key, vapid_key_id, allowed_hosts }` for the browser's `pushManager.subscribe` (the key is public) |
-| GET `/v1/me/push-subscriptions` | S | the caller's devices: `{ id, label, show_details, paused, state: "active"\|"paused"\|"disabled"\|"expired"\|"stale_key", this_session, created_at, last_success_at }` — never the endpoint or keys |
-| POST `/v1/me/push-subscriptions` | SO | `{ endpoint, keys: { p256dh, auth }, expiration_time?, label?, show_details?, vapid_key_id }` → 201 `PushSubscription`; 422 `push_endpoint_not_allowed` (not https, host not in `push.allowed_endpoint_hosts`, over 2 048 chars), `push_keys_invalid` (`p256dh` not a 65-byte P-256 point, `auth` not 16 bytes), `push_subscription_limit_reached`, 409 `push_key_stale` (the `vapid_key_id` is retired: re-fetch `config`); an endpoint already registered by another user is **moved** to the caller and its session |
+| GET `/v1/push/config` | S | `{ available, vapid_public_key, allowed_hosts }` for the browser's `pushManager.subscribe` (the key is public; (P4-011B spec batch, D-266(d), C-830) no key id: the browser compares public keys, which works for generated and operator-managed keys alike) |
+| GET `/v1/me/push-subscriptions` | S | the caller's devices: `{ id, label, show_details, paused, state: "active"\|"paused"\|"disabled"\|"expired"\|"stale_key", this_session, created_at, last_success_at, last_failure_at }` — never the endpoint or keys (C-831) |
+| POST `/v1/me/push-subscriptions` | SO | `{ endpoint, keys: { p256dh, auth }, expiration_time?, label?, show_details?, vapid_public_key, rebind? }` → 201 `PushSubscription` (200 when the endpoint already belonged to the caller: its session is re-bound); 422 `push_endpoint_not_allowed` (`details.reason`: `not_https`, `host_not_allowed`, `too_long` over `PUSH_ENDPOINT_MAX`, `userinfo`, `ip_literal`), `push_keys_invalid` (`p256dh` not a 65-byte P-256 point, `auth` not 16 bytes), 409 `push_subscription_limit_reached`, 409 `push_key_stale` (`vapid_public_key` is not the active key: re-fetch `config`); an endpoint already registered by another user is **moved** to the caller and its session — except with `rebind: true`, which (D-266(c)) only re-binds an endpoint already registered to the caller and otherwise answers 404 `push_subscription_not_found` and creates nothing |
 | PATCH/DELETE `/v1/me/push-subscriptions/{id}` | SO | `{ label?, show_details?, paused? }`; DELETE is idempotent |
-| POST `/v1/me/push-subscriptions/{id}/test` | SO | sends a `test` push (`PUSH_TEST_PER_HOUR` 3 per user); 202, the outcome appears in the device state |
+| POST `/v1/me/push-subscriptions/{id}/test` | SO | sends a `test` push (`PUSH_TEST_PER_HOUR` 3 per user, then 429 `push_test_rate_limited` with `Retry-After`); 202, the outcome appears in the device state |
 
-CLI (operator): `aurora-api push rotate-vapid`, `aurora-api push status` (key ids and dates,
-subscription counts by state and host; never key material).
+CLI (operator): `aurora-api push rotate-vapid [--dry-run]`, `aurora-api push status [--json]` (mode,
+key ids and dates, subscription counts by state and host; never key material; C-833). (P4-011B spec
+batch, D-266(c)) Session revocation (sign-out, sign out others, an administrator's revocation,
+deactivation) deletes the session's subscriptions in the same transaction; `GET /v1/instance`
+gains `features.push: bool` (C-830).
 
 ### Agents and sandboxes
 | Method & path | Auth | Purpose |
@@ -655,7 +715,7 @@ subscription counts by state and host; never key material).
 | GET `/v1/agent/container-config`; POST `/v1/agent/context-credentials` | A | BYO self-service (`08`) |
 | PUT/GET `/v1/agents/{agent}/avatar`; GET `/v1/public/avatars/{key}` | S/K; P | |
 | POST `/v1/agents/{agent}/restart` | S/K | restart sandbox (FIX-049, D-164, C-626: from `failed` performs the C-610 recovery — 423 `frozen` applies; from `stopped`/`unprovisioned`/`stopping` 409 `restart_not_applicable`) |
-| GET `/v1/agents/{agent}/terminal` | S | (phase 4, P4-TERM, D-161, C-616) WebSocket upgrade to the sandbox's shell (wterm + Ghostty core in the dashboard); session cookie only, `can_use`, hosted only (BYO 422 `terminal_not_supported`), 404 `terminal_disabled` while off, 423 frozen; mints the single-use `auy_` grant and proxies to the runner; best-effort audit `agent.terminal.open`; bytes never logged |
+| GET `/v1/agents/{agent}/terminal` | S | (phase 4, P4-TERM, D-161, C-616) WebSocket upgrade to the sandbox's shell (wterm + Ghostty core in the dashboard); session cookie only, `can_use`, hosted only (BYO 422 `terminal_not_supported`), 404 `terminal_disabled` while off, 423 frozen; mints the single-use `auy_` grant and proxies to the runner; best-effort audit `agent.terminal.open`; bytes never logged; (FIX-138) optional query `shell=bash\|zsh` (default `bash`; any other value 422 `invalid_shell`) is stored on the grant and reaches the PTY spawn (`12 §Terminal`) |
 | POST `/v1/agents/{agent}/sandbox/retry` | S/K | (phase 4, FIX-029, D-160, C-610; amended FIX-049/D-164) retry a failed start from `failed` only (409 `sandbox_not_failed`, 423 `frozen`; a live failure-backoff lease never refuses): clears the failure, resets `start_failures`, notifies due work for an ordinary start; audited `agent.sandbox_retry` |
 | GET `/v1/agents/{agent}/start-failures` | S/K | (phase 4, FIX-029, C-613) the agent's recent start failures (≤ 20, newest first, C-586 shape) |
 | GET `/v1/admin/agents/{agent}/start-failures` | IA | (phase 4, FIX-029, C-614) the same list with `runner_id` |
@@ -685,6 +745,58 @@ of the agent's workspace); the browser-side authorization is P4-PRV-2 (`04 §Pre
 the share lifecycle: `11 §Port previews`.
 | GET `/v1/gateway/ca.pem` | S/K | gateway CA certificate |
 
+### SSH access (phase 5, P4-SSH-1, P4-SSH-2, D-239; C-790..C-799)
+
+Present on every instance but inert: while `ssh.enabled` is false every route below answers 404
+`ssh_disabled` (the key routes included: no key can be registered on an instance without SSH), and
+`GET /v1/instance` reports `features.ssh: false`. Authority: `04 §SSH access`. Errors use the
+standard body.
+
+| Method & path | Auth | Purpose |
+|---|---|---|
+| PATCH `/v1/agents/{agent}` (`narration_cards`) | S/K | (phase 5, P4-NARR, C-846) boolean, default `false`; the agent's other settings' rules apply |
+| GET `/v1/me/user-tokens` | S/K | (phase 5, P4-UTOK, C-853) `{ tokens: UserToken[] }` |
+| POST `/v1/me/user-tokens` | SO | (phase 5, P4-UTOK, C-853) `{ integration_id, token, label? }` → 201 `UserToken`; the token is sealed and verified (`user_token.verify`) before the response; never returned or logged |
+| PATCH `/v1/me/user-tokens/{id}` | SO | (phase 5, P4-UTOK, C-855) `{ label }`; 404 for another person's token |
+| DELETE `/v1/me/user-tokens/{id}` | SO | (phase 5, P4-UTOK, C-855) 204; revokes, discards the sealed value, cancels pending sends (`credential_revoked`); audit `user_token.revoke` (critical) |
+| PUT / DELETE `/v1/me/user-tokens/{id}/agents/{agent}` | SO | (phase 5, P4-UTOK, C-855) grant / remove one agent; idempotent, 204; grant needs `can_use` on the agent |
+| GET `/v1/me/ssh-keys` | S/K | (phase 5, P4-SSH-1, C-790) the caller's keys: `{ keys: [{ id, name, algorithm: "ssh-ed25519", public_key, fingerprint, created_at, last_used_at }] }` |
+| POST `/v1/me/ssh-keys` | SO | (phase 5, P4-SSH-1, C-790) `{ public_key, name? }` → 201 key; `public_key` is one OpenSSH line (`ssh-ed25519 AAAA… [comment]`, ≤ 4 KiB, no options prefix); 422 `ssh_key_invalid` (unparsable, options, a certificate, private key material), 422 `ssh_key_unsupported_type` (anything but `ssh-ed25519`), 409 `ssh_key_exists`, 409 `ssh_key_limit` (`SSH_KEYS_PER_USER`); audit `ssh_key.create` (critical) |
+| PATCH `/v1/me/ssh-keys/{id}` | SO | (phase 5, P4-SSH-1, C-790) `{ name }`; 404 for another person's key |
+| DELETE `/v1/me/ssh-keys/{id}` | SO | (phase 5, P4-SSH-1, C-790) 204; open sessions authenticated with it are closed at the next heartbeat (`key_deleted`); audit `ssh_key.delete` (critical) |
+| POST `/v1/agents/{agent}/ssh-certificate` | S/K | (phase 5, P4-SSH-1, C-791) `{ public_key }` (an OpenSSH line or the canonical form; must be one of the caller's registered keys) → 201 `{ certificate, serial, principal, valid_after, valid_before, username, host, port, known_hosts: [string] }` (`certificate` is one OpenSSH line `ssh-ed25519-cert-v01@openssh.com AAAA… aurora:<agent id>`; `known_hosts` may be empty until P4-SSH-2 registers a terminator); session or the caller's own API key (service keys and agent credentials 403); `can_ssh`: 404 unknown or invisible agent, 422 `ssh_not_supported` (BYO), 423 `frozen`, 422 `ssh_key_not_registered`, 429 `ssh_mint_rate_limited` (`Retry-After`); audit `agent.ssh_certificate.mint` |
+| GET `/v1/ssh` | S/K | (phase 5, P4-SSH-1, C-792) connection facts for the "Connect with SSH" panel and the CLI: `{ host, port, cert_ttl_secs, host_keys: [{ public_key, fingerprint }], known_hosts: ["[host]:port ssh-ed25519 AAAA…"] }` (the distinct host keys of live terminator replicas; empty with a `terminators_live: 0` flag when none is registered) |
+| GET `/v1/me/ssh-sessions` | S/K | (phase 5, P4-SSH-2, C-793) the caller's open sessions: `{ sessions: [SshSession] }`, `SshSession = { id, agent: { id, name }, workspace_id, key: { id\|null, name\|null, fingerprint }, client_address, opened_at, last_activity_at, channels_total }` (coarse address) |
+| GET `/v1/agents/{agent}/ssh-sessions` | S/K | (phase 5, P4-SSH-2, C-793) open sessions on the agent: `can_own` sees all (each with `user: { id, label }`), a `can_use` caller only their own |
+| DELETE `/v1/ssh-sessions/{id}` | S/K | (phase 5, P4-SSH-2, C-793) disconnect: the session's person or `can_own` of its workspace (404 otherwise); sets `revoke_requested_at`; 202 — the terminator ends the connection within one heartbeat (≤ 30 s); audit `ssh_session.disconnect` |
+| GET `/v1/admin/terminators` | IA | (phase 5, P4-SSH-2, C-793) terminator replicas seen: `{ id, version, host_key_fingerprint, sessions_open, last_seen_at, live }`, shown on Admin › Overview |
+| GET `/v1/instance` | none | (phase 5, P4-SSH-1; existing public route) gains `features.ssh: bool` so the dashboard shows the SSH surfaces only when they can work |
+
+`GET /v1/agents/{agent}/sandbox`'s `keep_awake_reasons` gains `ssh` (phase 5, P4-SSH-2; "SSH session in
+use"). Error codes added: `ssh_disabled` (404), `ssh_not_supported` (422), `ssh_key_invalid` (422),
+`ssh_key_unsupported_type` (422), `ssh_key_exists` (409), `ssh_key_limit` (409),
+`ssh_key_not_registered` (422), `ssh_mint_rate_limited` (429), `ssh_session_not_found` (404).
+
+### Evals (phase 5, P4-EVAL, D-289..D-294; C-860..C-874)
+
+Hosted agents only (BYO: 422 `eval_not_supported`). Reads and writes of questions, settings, runs and schedules need `can_use` of the agent's workspace unless the row says otherwise; setting the judge key and deleting a run need `can_own`; no route is an agent tool. Errors use the standard body (`docs/05 §Conventions`).
+
+| Method & path | Auth | Purpose |
+|---|---|---|
+| GET/POST `/v1/agents/{agent}/eval-questions` | S/K | (phase 5, P4-EVAL, C-861) list in position order / create one `EvalQuestion` (422 `invalid`, 422 `eval_question_limit`) |
+| GET/PATCH/DELETE `/v1/eval-questions/{id}` | S/K | (phase 5, P4-EVAL, C-861) `PATCH` bumps `version`; the expected-answer fields follow C-862 |
+| GET/PUT `/v1/agents/{agent}/eval-settings` | S/K | (phase 5, P4-EVAL, C-863) `{ judge: { secret_id, model_id } \| null, regression_notify: bool }`; a judge change needs `can_own`; 422 `eval_judge_not_granted`, `eval_judge_not_usable`, `eval_judge_not_permitted` |
+| GET `/v1/agents/{agent}/eval-fingerprint` | S/K | (phase 5, P4-EVAL, C-866) the configuration fingerprint a run started now would record: `{ fingerprint, fingerprint_hash, question_set_version }` |
+| POST `/v1/agents/{agent}/eval-runs` | S/K | (phase 5, P4-EVAL, C-864) start a run → 202 `EvalRun` (`queued`); 409 `eval_run_active`, 429 `eval_runs_limited`, 423 `frozen`, 422 `eval_no_questions` |
+| GET `/v1/agents/{agent}/eval-runs` | S/K | (phase 5, P4-EVAL, C-864) runs newest first, cursor page (`05` list convention), filters `status`, `trigger` |
+| GET `/v1/eval-runs/{id}` | S/K | (phase 5, P4-EVAL, C-864/C-867) the run with counts, fingerprint, regression and its results (`?results_after=` cursor, ≤ 100 per page) |
+| POST `/v1/eval-runs/{id}/cancel` | S/K | (phase 5, P4-EVAL, C-865) sets `cancel_requested_at`; 409 `eval_run_finished` for a finished run |
+| DELETE `/v1/eval-runs/{id}` | S/K | (phase 5, P4-EVAL, C-864) `can_own`; a running run is refused (409 `eval_run_active`; cancel first); deletes its eval conversations (`10 §Archive, delete`) |
+| GET/POST `/v1/agents/{agent}/eval-schedules` | S/K | (phase 5, P4-EVAL, C-870) list / create (`{ name, cron, timezone, anchor? }`; interval below `EVAL_SCHEDULE_MIN_INTERVAL` → 422 `invalid`; `anchor` `can_own` only) |
+| GET/PATCH/DELETE `/v1/eval-schedules/{id}` | S/K | (phase 5, P4-EVAL, C-870) same authority as the schedules of `10 §Schedules`; audit `eval.schedule.*` |
+
+Phase 5 rows, each answered with the standard error body; the set of routes and their statuses is the one C-860..C-874 define.
+
 ### Conversations and turns
 | Method & path | Auth | Purpose |
 |---|---|---|
@@ -697,9 +809,10 @@ the share lifecycle: `11 §Port previews`.
 | GET `/v1/conversations/{id}/export` | S/K | (phase 2, RFE-010) JSON `aurora.conversation.v1` (`attachments=zip` → zip); 422 `export_too_large` |
 | GET `/v1/conversations/{id}/events?after_seq=&limit=` | S/K | durable history |
 | GET `/v1/conversations/{id}/stream` | S/K | SSE |
-| POST `/v1/conversations/{id}/messages` | S/K | `{ text, attachment_ids? }` → `{ turn }` or `{ followup }`; (phase 3, RFE-018) optional header `Idempotency-Key` — a retry with the same key returns the original result (`Idempotent-Replayed: true`) and creates nothing; 422 `idempotency_key_invalid` / `idempotency_key_reused` (`### Idempotency keys`) |
+| GET `/v1/workspaces/{ws}/messages/search?q=&agent_id=&conversation_id=&author=&has=&after=&before=&archived=&sort=&limit=&cursor=` | S/K | (phase 5, P5-CHAT-4, D-229, C-727; `search` rate class) workspace member. Searches the text people and agents said in the conversations the caller can see — `turn.queued` text, agent `text`, `attachment` file names and captions, file names of a person's attachments (`10 §Search`). `q` 1–200 chars after trim, ≤ 12 terms: words (the last prefix-matched), `"phrases"`, `-word`, `OR`. `author` `me`\|`agent`\|`others`; `has=file`; `after`/`before` RFC 3339 or `YYYY-MM-DD` (UTC, half-open); `archived` `include` (default)\|`exclude`\|`only`; `sort` `recent` (default)\|`relevance`; `limit` 1–50 (default 20). → `{ items: [{ conversation: { id, title, kind, archived }, agent: { id, name }, seq, type, author: { kind, label }, at, snippet, highlights: [[start, end]] }], next_cursor, index_complete }`; `snippet` is plain text ≤ 300 chars, `highlights` UTF-16 offsets into it; `index_complete: false` while older messages are still being indexed. Visibility (`can_see_conversation`) is applied inside the query. 422 `search_query_invalid` (`details.reason` `empty`\|`too_long`\|`too_many_terms`), 400 `validation_error`, 404 for a `conversation_id` the caller cannot see, 503 `search_timeout` (the 2 s statement bound) |
+| POST `/v1/conversations/{id}/messages` | S/K | `{ text?, attachment_ids?, reply_to?: { seq } }` → `{ turn }` or `{ followup }`; (phase 5, P5-CHAT-1, C-725/C-726) `text` may be empty or absent when `attachment_ids` is non-empty (both empty: 400 `validation_error` on `/text`); `reply_to.seq` quotes an earlier `text`, `turn.queued` or `attachment` event of this conversation — anything else (unknown or another conversation's seq → `not_found`, another type → `not_replyable`, a redacted event → `redacted`) is 422 `reply_target_invalid` with `details.reason`; (phase 3, RFE-018) optional header `Idempotency-Key` — a retry with the same key returns the original result (`Idempotent-Replayed: true`) and creates nothing; 422 `idempotency_key_invalid` / `idempotency_key_reused` (`### Idempotency keys`) |
 | POST `/v1/turns/{id}/abort`, `/v1/turns/{id}/send-now` | S/K | |
-| POST `/v1/conversations/{id}/attachments` | S/K | multipart, returns pending attachment; (phase 2, RFE-015) 422 `attachment_quota_exceeded` when the org quota would be exceeded; (phase 4, P4-S3) with the `s3` blob backend also 503 `blob_store_unavailable` (`retry-after: 5`) and 503 `blob_store_busy`; downloads (`GET /v1/attachments/{id}/content`) add 503 `blob_store_unavailable`, 503 `blob_backend_not_configured` and 502 `blob_store_corrupt`, never 404/410 for a store failure (`10 §Attachments`) |
+| POST `/v1/conversations/{id}/attachments` | S/K | multipart, returns pending attachment; (phase 2, RFE-015) 422 `attachment_quota_exceeded` when the org quota would be exceeded; (phase 5 (D-138, moved from phase 4), P4-S3) with the `s3` blob backend also 503 `blob_store_unavailable` (`retry-after: 5`) and 503 `blob_store_busy`; downloads (`GET /v1/attachments/{id}/content`) add 503 `blob_store_unavailable`, 503 `blob_backend_not_configured` and 502 `blob_store_corrupt`, never 404/410 for a store failure (`10 §Attachments`) |
 | GET `/v1/attachments/{id}/content` | S/K | `Content-Disposition: attachment` always; (phase 2, RFE-015) 410 `attachment_purged` after retention/delete |
 | DELETE `/v1/attachments/{id}` | S/K | (phase 2, RFE-015) purge the bytes now; uploader or `can_own` |
 
@@ -716,7 +829,7 @@ the share lifecycle: `11 §Port previews`.
 | PUT `/v1/schedules/{id}/creator`, PUT `/v1/webhooks/{id}/creator` | S/K | (phase 2, RFE-021) `{ user_id, re_enable? }`; `can_own`; 422 `new_creator_unauthorized`; audited `automation.reassign` |
 | POST `/v1/workspaces/{ws}/automations/reassign` | S/K | (phase 2, RFE-021) `{ from_user_id, to: <user_id> \| "workspace", kinds?: [schedule,webhook], ids? }` → `{ reassigned: n }`; `can_own`; one transaction, one audit row per item |
 | GET/POST `/v1/agents/{agent}/webhooks`; GET/PATCH/DELETE `/v1/webhooks/{id}`; POST `…/rotate`; GET `…/deliveries` | S/K | rotate returns new URL once; (phase 2, RFE-021) same `creator`/`anchor` fields as schedules |
-| POST `/v1/hooks/{token}` | P | webhook receive |
+| POST `/v1/hooks/{token}` | P | webhook receive (D-178 Q-R5-20: replay protection of a signed delivery without a delivery id is the sender's; 60 s dedup only) |
 | GET `/v1/agents/{agent}/links`; PUT `/v1/agent-links/{id}/policy`; GET `/v1/agents/{agent}/peer-tasks` | S/K | |
 
 ### Skill libraries (phase 4, P4-GSL, D-148, D-149; C-570..C-579)
@@ -744,35 +857,59 @@ Items of every skill route gain `source: null | { kind: "library", library_id|nu
 ### Channels (management)
 | Method & path | Auth | Purpose |
 |---|---|---|
-| GET `/v1/connectors` | S/K | active connectors with setup schemas, capabilities |
+| GET `/v1/connectors` | S/K | active connectors with setup schemas, capabilities; (FIX-127, C-715) setup fields may carry `advanced` and `choices: "from_validate"` |
+| GET `/v1/connector-availability` | S/K | (FIX-127, C-712, D-218) `{ items: [{ type_id, name, icon_url, setup_state: active\|not_added\|waiting_for_host\|disabled\|needs_approval, connector_id }], instance_admins: [{ name }] }` — what an org admin sees when no connector is usable: one item per type announced by a live host plus unannounced connector rows; no secrets, no settings; admin names only (≤ 10) |
+| POST `/v1/orgs/{org}/channel-integrations:probe` `{ connector_id, config, credentials }` | S/K | (FIX-127, C-711, D-217) org owner/admin, `write` class: one correlated `credentials.validate` with `mode: "probe"`; 200 `{ choices: { <field>: [{ value, label }] }, tenant_label, warnings[] }`; stores and logs nothing; errors (API-wide conventions) 400 `invalid_request` (body shape, unknown or inactive `connector_id`; `details.fields`), 403, 404 `not_found` (org the caller is not in), 422 `credentials_invalid`/`probe_unsupported`, 502 `connector_error`, 503 `connector_unavailable` |
 | GET/POST `/v1/orgs/{org}/channel-integrations`; GET/PATCH/DELETE `/v1/channel-integrations/{id}` | S/K | create validates via `credentials.validate` op; (phase 1, RFE-001) `config.verified_email_autolink` (bool, default false) is writable by org owner/admin only and refused with 422 `autolink_unsupported` when the integration lacks `email_verified`; changes are audited (security-critical set from phase 2, RFE-008) |
 | GET/POST `/v1/channel-integrations/{id}/user-links`; DELETE `/v1/user-links/{id}` | S/K | admin links; each item carries `method` (`verified_email` \| `sign_in_link` \| `admin`) |
 | GET/POST `/v1/agents/{agent}/presences`; DELETE `/v1/presences/{id}`; POST `/v1/presences/{id}/reattach` | S/K | |
 | GET `/v1/agents/{agent}/space-bindings`; DELETE `/v1/space-bindings/{id}`; PATCH `/v1/space-bindings/{id}` | S/K | owners only |
-| GET `/v1/me/channel-links`; DELETE `/v1/me/channel-links/{id}`; POST `/v1/channel-links/confirm` | S (confirm: SO) | sign-in link flow |
+| POST `/v1/agents/{agent}/space-bindings` `{ integration_id, space_ref, listen? }` | S/K | (FIX-127, C-713, D-218) `can_own`; 201 `SpaceBinding`; only for a space the caller's **linked chat account is a member of** and the shared bot is already in; 422 `no_shared_presence`; 409 `link_required`, `bot_not_in_space` (with `hint`), `already_bound`, `space_already_bound`; 403 `not_a_member`; 422 `space_not_bindable` (direct conversation); 404 `integration_not_found`; 503 `connector_unavailable`; audit `space_binding.create`, the bot announces itself as `bind` does |
+| GET `/v1/integrations/{id}/spaces?mine=true&query=&limit=` | S/K | (FIX-127, C-714) org owner/admin or `can_own` in the org: `{ items: [{ space_ref, label, kind: "channel"\|"private", bot_present: true }] }` (the bot's own `spaces.list` view, so `bot_present` is always true) — `spaces.list` ∩ the caller's memberships, DMs excluded; 409 `link_required`, 404 `integration_not_found`, 503 `connector_unavailable`, 400 without `mine=true` |
+| GET `/v1/me/channel-links`; DELETE `/v1/me/channel-links/{id}`; GET `/v1/channel-links/preview?token=`; POST `/v1/channel-links/confirm` | S (preview, confirm: SO) | sign-in link flow; the preview shows the chat account, confirm repeats its reference (FIX-112) |
 | GET/PUT `/v1/me/dm-defaults` | S | |
 | GET `/v1/agents/{agent}/reach`; POST `/v1/reach-grants/{id}/decision` | S/K | |
 
 ### Instance administration
 | Method & path | Auth | Purpose |
 |---|---|---|
-| GET `/v1/admin/overview` | IA | versions, gateways, hook hosts, runners, connectors, active snapshot; (phase 4) `counters: { backend, state }` (P4-CNT, `15`) and `blobs: { backend, healthy }` (P4-S3) |
+| GET `/v1/admin/overview` | IA | versions, gateways, hook hosts, runners, connectors, active snapshot; (phase 4) `counters: { backend, state }` (P4-CNT, `15`) and `blobs: { backend, healthy }` (phase 5, D-138, P4-S3) |
 | GET/PATCH `/v1/admin/users` | IA | list, instance-admin flag, disable; (phase 4, P4-IDP-1, D-139) each user carries `idp_roles: { provider, values, synced_at, granted: [...] }`; claim-derived instance-admin flags cannot be changed here (409 `managed_by_idp`) |
-| GET `/v1/admin/identity` | IA | (phase 4, P4-IDP-1) per provider the role claim settings and mapping table, read-only (from the Helm values; no secrets) |
-| GET/PUT `/v1/admin/placement` | IA | (phase 4, P4-ONB-1, D-140) the new-user placement (`04 §New-user placement`); PUT validates org/workspace ids, roles, template and starter grants (credentials of the default org only) and is audited; `GET …/placement/preview?template=&sample=` renders a template for a typed sample or the caller's profile (D-151) (C-520..C-529) |
+| GET `/v1/admin/identity` | IA | (phase 4, P4-IDP-1) per provider the role claim settings and mapping table, read-only (from the Helm values; no secrets); (phase 5, SET-4) superseded by the `sign_in` settings section, kept read-only until SET-4 removes it with the Identity page |
+| GET `/v1/admin/settings` | IA | (phase 5, SET-1, D-236, C-771) the settings index: per section its generation, last writer and counts of locked / dashboard keys; plus every locked key with its Helm key (the Admin › Settings banner) |
+| GET `/v1/admin/settings/{section}` | IA | (phase 5, SET-1, C-772) one section: every key's effective value, source (`helm` \| `dashboard` \| `default`), lock, Helm key and default; keyed-list entries with their own source; secrets only as "set"; 404 `setting_section_unknown`. `export` and `import` are not section ids |
+| PUT `/v1/admin/settings/{section}` | IA | (phase 5, SET-1, C-773) replace the section's dashboard values (`{ generation, values }`); session with re-authentication within 600 s (412 `reauth_required`); 409 `stale_revision` / `setting_locked` (a locked key or whole list), 400 `setting_unknown`, 422 `settings_invalid` (including `entry_id_in_helm` when a dashboard entry of a keyed list — OIDC providers, secret stores, LLM endpoints — reuses a Helm entry's id) / `setting_requires_deployment`; security-critical audit `instance_settings.update` with the diff; notifies `aurora_settings` and e-mails every instance admin |
+| POST `/v1/admin/settings/{section}/preview` | IA | (phase 5, SET-1, C-774) the same body as PUT, nothing written: the diff, the keys that loosen, the organizations whose effective values change, warnings |
+| GET `/v1/admin/settings/export` | IA | (phase 5, SET-1, C-775) the dashboard values of every (or the listed) section as YAML or JSON, no secret values; `export` rate class |
+| POST `/v1/admin/settings/import` | IA | (phase 5, SET-1, C-776) a settings document: `dry_run` returns the per-section diff, otherwise all its sections are applied in one transaction (generations checked, re-authentication, `instance_settings.import` critical audit) |
+| GET `/v1/admin/settings/governance/orgs` | IA | (phase 5, SET-2, C-778) where organizations stand against the instance floors: effective LLM / egress / open-lane / BYO postures, stricter-than-minimum and clamped keys per org (metadata only, paginated) |
+| POST `/v1/admin/settings/llm/endpoint-test` | IA | (phase 5, SET-3, C-779) reachability probe of one endpoint entry as typed (no credential sent); (phase 5, P4-LLM, C-803) the probe path is the provider's own and any answer below 500 is reachable |
+| POST `/v1/admin/settings/sign_in/provider-test` | IA | (phase 5, SET-4, C-780) OIDC discovery of one provider entry as typed: issuer match and endpoints, no sign-in |
+| POST `/v1/admin/settings/email/test` | IA | (phase 5, SET-4, C-781) send a test e-mail to the caller with the effective or the proposed e-mail settings; `export` rate class |
+| GET/PUT `/v1/admin/placement` | IA | (phase 4, P4-ONB-1, D-140) the new-user placement (`04 §New-user placement`; (phase 5, SET-4) the sign-up mode it shows read-only is the `sign_in` setting, linked); PUT validates org/workspace ids, roles, template and starter grants (credentials of the default org only) and is audited; `GET …/placement/preview?template=&sample=` renders a template for a typed sample or the caller's profile (D-151) (C-520..C-529) |
 | GET `/v1/admin/setup` | IA | (phase 4, P4-ONB-2, D-141) setup-wizard status per step (roles, placement, LLM endpoints incl. `default_model`, runners, gateway), each `ok` \| `warning` \| `todo` with a reason code |
 | GET/POST `/v1/admin/plugins` (multipart upload); GET `/v1/admin/plugins/{id}`; POST `…/approve`, `…/reject`, `…/disable`, `…/enable`; DELETE `…?force=` | IA | (phase 3, RFE-022) GET `{id}` of a pending major upgrade carries `impact` (`09 §10`: `connections_needing_reauth`, `by_app`); (phase 4, P4-GRANTS) `impact` also carries `grants_to_convert` (count, by app and workspace) for an upgrade that introduces `grants.custom_only`, and approval then converts them atomically (`09 §10`, reason `converts_grants`); `approve` activates and flips the failing connections to `reauth_required` in one transaction and returns the `PluginPackage` plus `connections_reauth: n` (phase 3, D-107); (phase 5, P5-GUIDE-2, C-648) `PluginPackage` carries `agent_guides` (per app: `summary`, `instructions`, `files[]`, `changed` against the active version), and the audit rows `plugin.approve` / `plugin.activate` carry `agent_guide_changed` |
-| GET `/v1/admin/plugins/{id}/agent-guides/{app_id}/{file}` | IA | (phase 5, P5-GUIDE-2, C-648, SEC-90) one agent guide file of the package as `text/plain; charset=utf-8`, `nosniff`, `Content-Disposition: attachment`, `Cache-Control: private, no-store`; 404 for an unknown package, app or file (`24 §9`) |
+| GET `/v1/admin/plugins/{id}/agent-guides/{app_id}/{file}` | IA | (phase 5, P5-GUIDE-2, C-648, SEC-117) one agent guide file of the package as `text/plain; charset=utf-8`, `nosniff`, `Content-Disposition: attachment`, `Cache-Control: private, no-store`; 404 for an unknown package, app or file (`24 §9`) |
 | GET `/v1/admin/host-claims`; PUT `/v1/admin/host-claims/{claim_key}` | IA | conflicts and winners |
 | GET/POST/DELETE `/v1/admin/trusted-keys` | IA | |
+| GET/POST `/v1/admin/addon-sources`; POST `…/preview`, `…/check-all`; GET/PATCH/DELETE `/v1/admin/addon-sources/{id}`; POST `…/{id}/check`, `…/{id}/confirm-key` | IA | (phase 5, P5-ASRC, D-250, C-590..C-609) third-party app-package repositories: registration is TOFU over the manifest's signing key (`09 §10`, format in `22-addon-repos.md`); checks (manual and scheduled) share one lease-protected path; a changed signing key flags the source for re-confirm and never auto-trusts (SEC-86) |
+| GET `/v1/admin/audit` | IA | (FIX-125, C-638) the instance audit log: `scope=instance` (default; rows with `org_id` null) or `all`; `org` (id, implies `all`), `actor_id`, `action` (prefix), `critical`, `since`/`until` (RFC 3339, `until` exclusive); keyset cursor as the org route; rows are `AuditEntry` plus `org_slug`. Unknown `scope` → 400 |
 | GET/POST/DELETE `/v1/admin/connectors`; POST `…/{id}/approve`, `…/{id}/token` | IA | provision token, approve manifest. (phase 4, P4-MCON) `POST` with `managed: true` adds a managed connector (no token; settings, secrets, reviewed digest approved, C-451); PATCH `/v1/admin/connectors/{id}` edits settings, secrets, `enabled` (C-453); `…/token` on a managed connector → 409 `connector_managed` |
 | GET `/v1/admin/connector-types` | IA | (phase 4, P4-MCON) catalogue of built-in connector types announced by live connector hosts (C-450) |
-| GET/POST/DELETE `/v1/admin/runners`; POST `…/{id}/token` | IA | |
-| GET `/v1/admin/storage` | IA | (phase 2, RFE-015) instance storage breakdown (`10 §Attachments`); (phase 4, P4-S3) plus `blobs: { backend, by_backend: [{ backend, attachments, bytes }], s3?: { bucket, prefix, healthy, last_probe_at, sse, versioning } }` (never credentials; counts come from `attachments`, not from listing the bucket) |
+| GET/POST/DELETE `/v1/admin/runners`; POST `…/{id}/token` | IA | (FIX-121, D-211) the list carries each runner's capacity (C-694); the rotation takes `?grace_secs=` and keeps the replaced token working for that long (C-695) |
+| POST `/v1/admin/storage/refresh` | IA | (FIX-126) recompute the instance snapshot now, same body as the GET; `export` class |
+| GET `/v1/admin/storage` | IA | (phase 2, RFE-015) instance storage breakdown (`10 §Attachments`); (FIX-126) served from a snapshot shared by every replica, `computed_at` says how old (`STORAGE_SNAPSHOT_MAX_AGE`, recomputed by the daily sweep, by a read past the bound — once, under a lock — and by the refresh route); (phase 5 (D-138, moved from phase 4), P4-S3) plus `blobs: { backend, by_backend: [{ backend, attachments, bytes }], s3?: { bucket, prefix, healthy, last_probe_at, sse, versioning } }` (never credentials; counts come from `attachments`, not from listing the bucket) |
 | GET `/v1/admin/registry/snapshot` | IA | active snapshot (JSON) |
 | POST `/v1/admin/orgs/{org}/freeze` `{ reason }`; POST `/v1/admin/orgs/{org}/unfreeze` | IA | (phase 2, RFE-006) operator kill-switch; `frozen_authority = instance_admin`; org data stays inaccessible |
-| GET `/v1/admin/orgs` (`frozen=true` filter, paginated) | IA | (phase 2, RFE-006, D-76) organizations with their freeze state: id, slug, name only |
+| GET `/v1/admin/orgs` (`frozen=true` filter, paginated) | IA | (phase 2, RFE-006, D-76) organizations with their freeze state: id, slug, name only; (phase 5, P5-ADMDEL, C-733) also `ownerless`, `member_count`, `workspace_count`, `agent_count`, `created_at` |
+| GET `/v1/admin/orgs/{org}`; GET `/v1/admin/orgs/{org}/workspaces` (paginated) | IA | (phase 5, P5-ADMDEL, D-234, C-733) one organization's row as above; its workspaces: `id`, `slug`, `name`, `personal`, `agent_count`, `created_at` — metadata only |
+| DELETE `/v1/admin/orgs/{org}`; DELETE `/v1/admin/workspaces/{ws}` `{ confirm }` | IA (SO) | (phase 5, P5-ADMDEL, D-234, C-733) delete any organization / workspace: `confirm` = its slug (400 `confirmation_mismatch`), recent OIDC re-authentication (412 `reauth_required`), works on frozen orgs; the owner paths' services; audit `admin.org.delete` / `admin.workspace.delete` (security-critical, instance-level) |
 | GET/POST `/v1/admin/oauth-clients`; PATCH/DELETE `/v1/oauth-clients/{id}` | IA | instance-level OAuth clients (`08 §OAuth clients`) |
+
+### Telemetry (phase 5, FIX-146, D-232; C-732)
+| Method & path | Auth | Purpose |
+|---|---|---|
+| POST `/v1/telemetry/traces` | SO | (phase 5, FIX-146) browser span ingestion, C-732 (6): OTLP/HTTP JSON (`ExportTraceServiceRequest`, `content-type: application/json`) from the dashboard; CSRF and the `telemetry` rate-limit class apply; limits `TELEMETRY_INGEST_BODY_MAX` (256 KiB, 413), `TELEMETRY_INGEST_SPANS_MAX` (512), `TELEMETRY_SPAN_ATTRIBUTES_MAX` (32), `TELEMETRY_SPAN_EVENTS_MAX` (8). The API never trusts the payload: it rebuilds every span (resource replaced, spans failing the sampling rule dropped, names outside the C-732 shapes renamed `browser`, browser attribute allowlist, id-like route/page segments dropped, links and `tracestate` removed, timestamps clamped, SEC-88) and exports through its own exporter. 204 on success (also when every span was dropped); 400 `invalid_request` on malformed input; 401 without a session; 429 over the rate limit; **404 when `telemetry.otlp_endpoint` is not set** (like an unknown route) |
 
 ### Planes (machine callers)
 Runner plane `/v1/runner/*` and connector plane `/v1/connector/*` are specified
@@ -793,5 +930,25 @@ All of it is 404 while `previews.enabled` is false.
 
 Cookie-authenticated API requests with `Sec-Fetch-Site: same-site|cross-site` that are not a top-level
 `GET` navigation are refused 403 `csrf_rejected` while `previews.enabled` (`04 §Preview access`
-rule 5); the `/v1/relay`, `/v1/runner` and `/scim/v2` planes use bearer tokens and are not
-affected.
+rule 5); the `/v1/relay`, `/v1/runner`, `/v1/terminator` and `/scim/v2` planes use bearer tokens and
+are not affected.
+
+### Terminator plane (phase 5, P4-SSH-2, D-239; C-794)
+
+All of it is 404 while `ssh.enabled` is false. Bearer `aut_…` (`AURORA_BOOTSTRAP_TERMINATOR_TOKEN`,
+compared by hash in constant time; an unknown or malformed token is 401 with one body for every
+cause) and, after registration, `X-Aurora-Replica: <replica_id>`. Its own rate class
+(`SSH_API_RATE`, per replica), exempt from the management limiter. Wire shapes: `16 §W20`.
+
+| Method & path | Auth | Purpose |
+|---|---|---|
+| POST `/v1/terminator/register` | `aut_` | `{ version, host_public_key }` → `{ replica_id, protocol: 1, config: { ca_public_keys, heartbeat_secs, lease_secs, wake_wait_secs, idle_timeout_secs, max_lifetime_secs, limits } }`; upserts `ssh_terminator_replicas` |
+| POST `/v1/terminator/sessions` | `aut_` + replica | open a session after the client's signature verified (`04 §SSH access` point 2); `{ certificate, username, client_address }` → 201 `{ session_id, agent_id, sandbox: "running"\|"waking"\|"stopped", lease_secs, expires_at }` or 403 `{ reason }` (`denied` for every access refusal; `limit` over a cap) — the terminator answers both with the same hint-free failure; a parked sandbox gets the wake demand; audit `agent.ssh.open` |
+| POST `/v1/terminator/sessions/{id}/channels` | `aut_` + replica | `{ mode: "shell"\|"exec"\|"sftp", wait_secs?: ≤ 45 }` → `{ grant: "auz_…", expires_in: 30, runner_endpoint }`; 403 `session_closed` (closed, lease passed or `can_ssh` fails: the row is closed at detection); 409 `not_running` with `retry_after_secs` while the sandbox wakes after `wait_secs` (a stopped sandbox gets the wake demand, within the shared budget; over it 429 `wake_limited`); 429 `ssh_channel_limit` |
+| POST `/v1/terminator/heartbeat` | `aut_` + replica | `{ sessions: [{ id, last_activity_at?, channels_open, channels_total, bytes_in, bytes_out }] ≤ 500 }` → `{ revoked: [{ id, reason }], config }`; renews each open session's lease, re-runs `04 §SSH access` point 4, refreshes `ssh_terminator_replicas.last_seen_at`; a listed session that is unknown or already closed comes back revoked |
+| POST `/v1/terminator/sessions/{id}/close` | `aut_` + replica | `{ reason, channels_total, channels_by_mode, bytes_in, bytes_out }` → `{ ok }`; idempotent: the first close wins (close-exactly-once), a repeat answers `{ ok }` and changes nothing |
+| POST `/v1/runner/preview-streams/open` (`kind: "ssh"`) | `aur_` + replica | (runner plane) redeem an `auz_` grant: `16 §W20` |
+| POST `/v1/runner/terminal/keep-awake` (`kind: "ssh"`) | `aur_` + replica | (runner plane) the keep-awake stamp of a byte-carrying SSH channel: `ssh_active_until`, `16 §W20` |
+
+A stale-session sweep (every API replica, every 30 s, claims with `SKIP LOCKED`) closes `open` rows whose
+`lease_until` passed (`lease_expired`) through the same guarded transition.

@@ -61,6 +61,15 @@ pub(crate) struct Rig {
 /// A PTY engine over hand-built ends, rooted at `home` (the cwd parameter replaces the
 /// image's `/workspace`).
 pub(crate) fn rig(home: &std::path::Path, enabled: bool) -> Rig {
+    rig_with_shells(home, enabled, aurora_supervisor::pty::ShellPaths::default())
+}
+
+/// [`rig`] with explicit shell binaries (FIX-138: stand-ins for bash/zsh).
+pub(crate) fn rig_with_shells(
+    home: &std::path::Path,
+    enabled: bool,
+    shells: aurora_supervisor::pty::ShellPaths,
+) -> Rig {
     let (pty_out_tx, pty_out_rx) = mpsc::channel(1024);
     let (pty_in_tx, pty_in_rx) = mpsc::unbounded_channel();
     let (epoch_tx, epoch_rx) = tokio::sync::watch::channel(0u64);
@@ -69,7 +78,14 @@ pub(crate) fn rig(home: &std::path::Path, enabled: bool) -> Rig {
         inbound: pty_in_rx,
         epoch: epoch_rx,
     };
-    let handle = PtyEngine::spawn(ends, enabled, None, home.to_path_buf(), bootstrap_exe());
+    let handle = PtyEngine::spawn_with_shells(
+        ends,
+        enabled,
+        None,
+        home.to_path_buf(),
+        bootstrap_exe(),
+        shells,
+    );
     Rig {
         handle,
         pty_tx: pty_in_tx,
@@ -80,6 +96,11 @@ pub(crate) fn rig(home: &std::path::Path, enabled: bool) -> Rig {
 }
 
 impl Rig {
+    /// The engine's handle, as the supervisor holds it.
+    pub(crate) fn handle(&self) -> aurora_supervisor::pty::PtyHandle {
+        (*self.handle).clone()
+    }
+
     /// Drives a `pty.*` control frame in (as the runner's channel pump would).
     pub(crate) async fn frame(&self, msg: RunnerToSupervisor) {
         let _ = self.pty_tx.send(PtyIn::Frame(msg));
@@ -99,6 +120,11 @@ impl Rig {
             .await
             .expect("engine output timed out")
             .expect("engine output ended")
+    }
+
+    /// The engine's next outgoing unit, or `None` after `d` of silence.
+    pub(crate) async fn next_out_within(&mut self, d: Duration) -> Option<StreamOut> {
+        tokio::time::timeout(d, self.out_rx.recv()).await.ok()?
     }
 
     /// The next `pty.*` text frame (skips binary data and flushes).
@@ -188,6 +214,8 @@ pub(crate) async fn open(rig: &mut Rig, pty_id: u32) -> u64 {
                 window: 131_072,
                 cols: 80,
                 rows: 24,
+                shell: Default::default(),
+                models: None,
             },
         ))
         .await;
@@ -339,6 +367,45 @@ async fn probe_env_assertions() {
 /// trip at the end keeps the input path covered.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn pty_shell_has_a_controlling_terminal_and_job_control() {
+    controlling_terminal_assertions().await;
+}
+
+/// FIX-091 item 7 (production outage 2026-11-13): the same probe, run as the supervisor runs
+/// in a sandbox — PID 1, a **session leader without a controlling terminal**. The libtest
+/// process is not a session leader, so a slave opened without `O_NOCTTY` never became its
+/// ctty and the probe above passed while production failed `__pty-exec: Operation not
+/// permitted` (`TIOCSCTTY` refused: the slave already belonged to the supervisor's
+/// session). The outer half re-executes the test binary; the inner half calls `setsid`
+/// first (the re-exec'd child is not a group leader, so it succeeds) and then runs the rig.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn pty_shell_has_a_controlling_terminal_when_the_supervisor_is_a_session_leader() {
+    if std::env::var_os("PTY_SESSION_LEADER_INNER").is_some() {
+        rustix::process::setsid().expect("setsid: the re-exec'd child is not a group leader");
+        controlling_terminal_assertions().await;
+        return;
+    }
+    let exe = std::env::current_exe().unwrap();
+    let out = aurora_supervisor::spawn::command("sh", std::iter::empty::<(&str, &str)>())
+        .args([
+            "-c",
+            "PTY_SESSION_LEADER_INNER=1 PTY_PROBE_BOOTSTRAP=\"$1\" exec \"$0\" --exact pty_env_probe::pty_shell_has_a_controlling_terminal_when_the_supervisor_is_a_session_leader --nocapture --test-threads=1",
+        ])
+        .arg(exe)
+        .arg(bootstrap_exe())
+        .output()
+        .unwrap();
+    // A slave adopted as the session leader's own ctty hangs the leader up (SIGHUP) when the
+    // failed bootstrap's pty closes, so the inner process may die by signal: name the status.
+    assert!(
+        out.status.success(),
+        "inner run {:?}: {}{}",
+        out.status,
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+async fn controlling_terminal_assertions() {
     let home = TempDir::new();
     let mut r = rig(home.path(), true);
     open(&mut r, 1).await;
@@ -406,6 +473,8 @@ async fn pty_open_without_capability_is_refused_disabled() {
             window: 131_072,
             cols: 80,
             rows: 24,
+            shell: Default::default(),
+            models: None,
         },
     ))
     .await;
@@ -431,6 +500,8 @@ async fn pty_cap_per_sandbox_and_slot_release() {
             window: 131_072,
             cols: 80,
             rows: 24,
+            shell: Default::default(),
+            models: None,
         },
     ))
     .await;

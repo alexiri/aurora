@@ -1,6 +1,6 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "./client";
 import type { components } from "./schema";
@@ -31,7 +31,7 @@ export type BudgetTier = keyof typeof LIBRARY_BUDGET;
 export const libraryKeys = {
   list: (org: string) => ["orgs", org, "skill-libraries"] as const,
   one: (id: string) => ["skill-libraries", id] as const,
-  catalogue: (id: string, q: string, cursor: string) => ["skill-libraries", id, "skills", q, cursor] as const,
+  catalogue: (id: string, q: string) => ["skill-libraries", id, "skills", q] as const,
   content: (id: string, path: string, commit: string) => ["skill-libraries", id, "skill", path, commit] as const,
   info: (skill: string) => ["skills", skill, "library"] as const,
   pending: (scope: SkillScope) => ["skill-library-updates", scope.kind, scope.id] as const,
@@ -91,15 +91,17 @@ export function useCheckLibraryNow(org: string) {
 }
 
 /** The library's current head, live (cached 5 minutes server-side). Nothing is stored by browsing. */
-export function useLibraryCatalogue(id: string | undefined, q: string, cursor: string) {
-  return useQuery({
-    queryKey: libraryKeys.catalogue(id ?? "", q, cursor),
-    queryFn: () =>
+export function useLibraryCatalogue(id: string | undefined, q: string) {
+  return useInfiniteQuery({
+    queryKey: libraryKeys.catalogue(id ?? "", q),
+    initialPageParam: "",
+    queryFn: ({ pageParam }) =>
       unwrap(
         api.GET("/v1/skill-libraries/{id}/skills", {
-          params: { path: { id: id! }, query: { q: q || undefined, cursor: cursor || undefined } },
+          params: { path: { id: id! }, query: { q: q || undefined, cursor: pageParam || undefined } },
         }),
       ),
+    getNextPageParam: (last) => last.next_cursor ?? undefined,
     enabled: !!id,
     retry: false,
     staleTime: 60_000,

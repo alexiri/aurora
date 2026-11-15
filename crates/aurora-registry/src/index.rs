@@ -25,11 +25,13 @@ pub fn tool_serves_host(
 ) -> bool {
     if t.host == INSTANCE_HOST {
         instance
-            || app
-                .instances
-                .as_ref()
-                .and_then(|i| i.default_host.as_deref())
-                .is_some_and(|d| d.eq_ignore_ascii_case(host))
+            || app.instances.as_ref().is_some_and(|i| {
+                i.default_host
+                    .iter()
+                    .map(String::as_str)
+                    .chain(i.presets.iter().map(|p| p.host.as_str()))
+                    .any(|d| d.eq_ignore_ascii_case(host))
+            })
     } else {
         HostPattern::lenient(&t.host).matches(host, port)
     }

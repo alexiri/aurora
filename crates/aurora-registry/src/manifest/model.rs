@@ -56,6 +56,10 @@ pub struct Permissions {
     pub egress: BTreeMap<Hook, Vec<String>>,
     #[serde(default)]
     pub context: Vec<String>,
+    /// (FIX-107, SEC-17) Hosts of static OAuth token or authorize endpoints that are not also a
+    /// claimed host. Exact hosts only; a change is a widening and is shown at approval.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub token_hosts: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -127,8 +131,23 @@ pub struct Instances {
     pub label: String,
     /// The SaaS host, compiled as an ordinary static claim.
     pub default_host: Option<String>,
+    /// (FIX-134, D-243) Hosts the package ships as ready-made instances next to `default_host`
+    /// (a vendor's region hosts): static claims signed with the package, offered in the connect
+    /// window with no registration. Each is served like a registered instance.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub presets: Vec<InstancePreset>,
     /// Optional reachability check run at registration.
     pub probe: Option<InstanceProbe>,
+}
+
+/// One preset instance of an `instances` block (FIX-134, D-243).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InstancePreset {
+    /// A plain lower-case DNS name inside a registrable domain, distinct from `default_host`.
+    pub host: String,
+    /// Shown in the connect picker ("US region").
+    pub label: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -161,6 +180,9 @@ pub struct App {
     pub approvals: BTreeMap<String, Approval>,
     pub agent: Option<Agent>,
     pub database: Option<Database>,
+    /// (phase 5, D-251) the gateway LDAP lane.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ldap: Option<Ldap>,
     #[serde(default)]
     pub grants: Grants,
     /// (phase 4, P4-GSL, D-148, D-149) "this app is a git host that can serve a skill library":
@@ -283,6 +305,24 @@ pub struct About {
     pub web_hosts: Vec<String>,
     pub connect_note: Option<ConnectNote>,
     pub label_hint: Option<String>,
+    /// (FIX-135, D-242) The product this app is a deployment of, shared with the other apps of
+    /// the package that are the same product elsewhere (a vendor's hosted service and its
+    /// self-hosted server): the catalogue and every picker show one product. Presentation only;
+    /// the apps keep their own hosts, tools and token kinds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub family: Option<Family>,
+}
+
+/// `about.family` (FIX-135, D-242).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct Family {
+    /// Lower-case slug, the same on every member.
+    pub id: String,
+    /// The product name shown first, identical on every member.
+    pub name: String,
+    /// This member's deployment, unique within the family (its host, "Self-hosted", "Data Center").
+    pub variant_label: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -317,12 +357,95 @@ pub enum Connect {
 }
 
 impl Connect {
+    /// (FIX-136) The scopes the method can grant or let a person declare (none for a hook).
+    pub fn declared_scopes(&self) -> &[ScopeDecl] {
+        match self {
+            Self::Oauth2(c) => &c.scopes,
+            Self::Fields(c) => &c.scopes,
+            Self::Hook(_) => &[],
+        }
+    }
+
     pub fn id(&self) -> &str {
         match self {
             Self::Oauth2(c) => &c.id,
             Self::Fields(c) => &c.id,
             Self::Hook(c) => &c.id,
         }
+    }
+
+    /// (FIX-123, D-195, D-214) Short method name shown in the connect window's chooser.
+    pub fn label(&self) -> Option<&str> {
+        match self {
+            Self::Oauth2(c) => c.label.as_deref(),
+            Self::Fields(c) => c.label.as_deref(),
+            Self::Hook(c) => c.label.as_deref(),
+        }
+    }
+
+    /// One or two sentences: what the method is and when to use it.
+    pub fn description(&self) -> Option<&str> {
+        match self {
+            Self::Oauth2(c) => c.description.as_deref(),
+            Self::Fields(c) => c.description.as_deref(),
+            Self::Hook(c) => c.description.as_deref(),
+        }
+    }
+
+    /// The method the connect window preselects (at most one per app).
+    pub fn recommended(&self) -> bool {
+        match self {
+            Self::Oauth2(c) => c.recommended,
+            Self::Fields(c) => c.recommended,
+            Self::Hook(c) => c.recommended,
+        }
+    }
+
+    /// The `token` of this method, overriding the app's for connections made with it.
+    pub fn token(&self) -> Option<&Token> {
+        match self {
+            Self::Oauth2(c) => c.token.as_ref(),
+            Self::Fields(c) => c.token.as_ref(),
+            Self::Hook(c) => c.token.as_ref(),
+        }
+    }
+
+    /// The form fields of the method (the credentials and metadata it produces, with `store`).
+    pub fn form_fields(&self) -> &[FormField] {
+        match self {
+            Self::Oauth2(c) => &c.fields,
+            Self::Fields(c) => &c.fields,
+            Self::Hook(c) => &c.fields,
+        }
+    }
+}
+
+/// (FIX-123) The `token` of connections made with `method`: the method's own when it declares
+/// one, else the app's. `None` (a connection with no recorded method) = the app's.
+pub fn token_for<'a>(
+    connect: &'a [Connect],
+    app_token: Option<&'a Token>,
+    method: Option<&str>,
+) -> Option<&'a Token> {
+    method
+        .and_then(|m| connect.iter().find(|c| c.id() == m))
+        .and_then(Connect::token)
+        .or(app_token)
+}
+
+impl App {
+    pub fn token_for(&self, method: Option<&str>) -> Option<&Token> {
+        token_for(&self.connect, self.token.as_ref(), method)
+    }
+}
+
+impl ToolItem {
+    /// (FIX-123) Does the tool apply to connections made with `method`? A tool without
+    /// `connect_methods` applies to every method; so does any tool to a connection that
+    /// records no method (unknown: nothing is hidden).
+    pub fn applies_to(&self, method: Option<&str>) -> bool {
+        self.connect_methods.is_empty()
+            || method.is_none_or(|m| self.connect_methods.iter().any(|x| x == m))
     }
 }
 
@@ -362,6 +485,16 @@ pub struct AccessLevel {
 #[serde(deny_unknown_fields)]
 pub struct Oauth2Connect {
     pub id: String,
+    /// (FIX-123, D-214) Presentation in the connect window's method chooser, and the `token`
+    /// that overrides the app's for connections made with this method.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub recommended: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token: Option<Token>,
     pub client: String,
     #[serde(default)]
     pub scopes: Vec<ScopeDecl>,
@@ -385,14 +518,39 @@ pub struct Oauth2Connect {
 #[serde(deny_unknown_fields)]
 pub struct FieldsConnect {
     pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub recommended: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token: Option<Token>,
     pub fields: Vec<FormField>,
     pub probe: Option<Probe>,
+    /// (FIX-136, D-241) The scopes a pasted token may carry, which the connect form asks the
+    /// person to declare ("Which scopes did you give this token?"); stored as the connection's
+    /// `scopes` and trusted only to *refuse* a tool the token cannot serve, never to widen.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scopes: Vec<ScopeDecl>,
+    /// (FIX-136) Read probes that prefill the declaration: one entry per **read** scope; a probe
+    /// answering one of its `expect_status` ticks the scope. Write scopes are never probed.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub probe_scopes: BTreeMap<String, Probe>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HookConnect {
     pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub recommended: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token: Option<Token>,
     #[serde(default)]
     pub authorize: bool,
     #[serde(default)]
@@ -474,6 +632,10 @@ pub struct Probe {
     pub label: Option<String>,
     #[serde(default)]
     pub metadata: BTreeMap<String, String>,
+}
+
+fn is_false(b: &bool) -> bool {
+    !*b
 }
 
 fn default_status() -> Vec<u16> {
@@ -683,6 +845,15 @@ pub struct ToolItem {
     pub path: String,
     #[serde(default)]
     pub methods: Vec<String>,
+    /// (FIX-123, D-214) Connect method ids this tool works with; empty = every method. The
+    /// brief's `tools[].methods` is spelled `connect_methods` here: `methods` is the HTTP
+    /// methods of the tool.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub connect_methods: Vec<String>,
+    /// (FIX-136, D-241) Scope ids (any of) the tool needs; empty = no requirement. Ids come from
+    /// the scopes of the app's connect methods (`oauth2` `scopes`, `fields` `scopes`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scopes: Vec<String>,
     pub graphql: Option<GraphqlKind>,
     pub git: Option<GitKind>,
     /// (phase 4, P4-GRANTS, Q8, D-124) 1–4 AND-ed parameter conditions (a classifier beside
@@ -768,6 +939,13 @@ pub enum Decoder {
     Base64(NoParams),
     MimeHeader(String),
     MimeText(NoParams),
+    /// (FIX-118) Number of attachments of an RFC 5322 message, as text.
+    MimeAttachments(NoParams),
+    /// (FIX-118) Number of elements of the JSON array at this pointer (`0` when it is absent).
+    JsonCount(String),
+    /// (FIX-118) Every `text`/`content` string below the JSON value at this pointer, joined with
+    /// spaces (nested document and rich-text block formats).
+    JsonText(String),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -803,6 +981,45 @@ pub struct Agent {
 #[serde(deny_unknown_fields)]
 pub struct Database {
     pub engine: String,
+}
+
+/// (phase 5, P5-CERN-ADDONS, D-251) "this app reads a directory over LDAP through the gateway
+/// LDAP lane" (`docs/06 §LDAP lane`, `docs/09 §3 ldap`). Anonymous bind, search only, LDAPS only.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Ldap {
+    /// Exact public DNS name of the directory server.
+    pub server: String,
+    /// LDAPS port; default 636.
+    #[serde(default = "default_ldaps_port")]
+    pub port: u16,
+    /// Every search is confined to this subtree.
+    pub base_dn: String,
+    /// The only attributes a request may ask for and a result may carry.
+    pub attributes: Vec<String>,
+    /// Most entries one search returns (default 50, at most 500).
+    #[serde(default = "default_ldap_max_entries")]
+    pub max_entries: u32,
+}
+
+pub const LDAP_HOST_SUFFIX: &str = ".ldap.aurora.internal";
+pub const LDAP_MAX_ENTRIES: u32 = 500;
+pub const LDAP_MAX_ATTRIBUTES: usize = 64;
+
+fn default_ldaps_port() -> u16 {
+    636
+}
+
+fn default_ldap_max_entries() -> u32 {
+    50
+}
+
+impl Ldap {
+    /// The synthetic request host of an LDAP app: `<app id>.ldap.aurora.internal`.
+    #[must_use]
+    pub fn host_of(app_id: &str) -> String {
+        format!("{app_id}{LDAP_HOST_SUFFIX}")
+    }
 }
 
 /// serde_yaml 0.9 reads enums from `!tag` only; the contract writes them as

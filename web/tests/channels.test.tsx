@@ -20,7 +20,7 @@ const json = (status: number, body: unknown) =>
   new Response(body === null ? null : JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 const err = (status: number, code: string, message = code) => json(status, { error: { code, message } });
 type Handler = (req: Request, body: unknown) => Response | Promise<Response>;
-interface Rec { key: string; body: unknown }
+interface Rec { key: string; body: unknown; url: string }
 function mockFetch(routes: Record<string, Handler>) {
   const calls: Rec[] = [];
   vi.stubGlobal(
@@ -31,7 +31,7 @@ function mockFetch(routes: Record<string, Handler>) {
       const key = `${req.method} ${url.pathname}`;
       const text = req.method === "GET" || req.method === "DELETE" ? "" : await req.clone().text();
       const body = text ? (JSON.parse(text) as unknown) : null;
-      calls.push({ key, body });
+      calls.push({ key, body, url: url.search });
       const h = routes[key];
       return h ? h(req, body) : err(404, "not_found");
     }),
@@ -326,6 +326,9 @@ describe("AgentChannelsTab", () => {
     fireEvent.change(await screen.findByLabelText("Listen mode for #general"), { target: { value: "all" } });
     fireEvent.click(screen.getByLabelText("Follow-ups need a mention"));
     fireEvent.click(screen.getByRole("button", { name: "Remove binding #general" }));
+    // Not removed until confirmed.
+    expect(calls.some((c) => c.key === "DELETE /v1/space-bindings/b1")).toBe(false);
+    fireEvent.click(await screen.findByRole("button", { name: "Remove binding" }));
     await waitFor(() => expect(calls.some((c) => c.key === "DELETE /v1/space-bindings/b1")).toBe(true));
     const patches = calls.filter((c) => c.key.startsWith("PATCH"));
     expect(patches[0].body).toEqual({ listen: "all" });
@@ -352,6 +355,10 @@ describe("AgentChannelsTab", () => {
     expect(await screen.findByText("token revoked")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Re-attach" }));
     fireEvent.click(screen.getByRole("button", { name: "Detach" }));
+    // Not detached until confirmed.
+    expect(calls.some((c) => c.key === "DELETE /v1/presences/p1")).toBe(false);
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Detach" }));
     await waitFor(() => expect(calls.some((c) => c.key === "DELETE /v1/presences/p1")).toBe(true));
     expect(calls.some((c) => c.key === "POST /v1/presences/p1/reattach")).toBe(true);
   });
@@ -361,44 +368,90 @@ describe("LinkConfirmView", () => {
   const me = { user: { id: "u1", display_name: "Ada", email: "ada@x.test" }, memberships: [] };
   const link = { id: "l1", integration_id: "i1", connector_id: "slack", tenant_label: "Acme Slack", platform_user_ref: "U123", user: { id: "u1", display_name: "Ada" }, method: "sign_in_link", created_at: T };
 
-  it("confirms and strips the token from the URL", async () => {
+  const preview = {
+    integration_id: "i1", connector_id: "slack", tenant_label: "Acme Slack", platform_user_ref: "U123",
+    platform_display_name: "Mallory Chat", platform_email_hint: "m@evil.example", expires_at: T,
+  };
+
+  beforeEach(() => {
+    window.sessionStorage.clear();
+  });
+
+  it("shows the chat account being linked, confirms it and strips the token from the URL", async () => {
     const replace = vi.spyOn(window.history, "replaceState");
     const calls = mockFetch({
       "GET /v1/me": () => json(200, me),
+      "GET /v1/channel-links/preview": () => json(200, preview),
       "POST /v1/channel-links/confirm": () => json(200, link),
     });
     wrap(<LinkConfirmView />);
-    fireEvent.click(await screen.findByRole("button", { name: "Confirm link" }));
+    // The account is shown before anything can be confirmed.
+    const account = await screen.findByTestId("link-account");
+    expect(account.textContent).toContain("Acme Slack");
+    expect(account.textContent).toContain("Mallory Chat");
+    expect(account.textContent).toContain("U123");
+    expect(account.textContent).toContain("m@evil.example");
+    expect(calls.find((c) => c.key.startsWith("GET /v1/channel-links/preview"))?.url).toContain("token=aui_secret");
+    fireEvent.click(screen.getByRole("button", { name: "Confirm link" }));
     expect(await screen.findByText(/is now linked to Ada/)).toBeInTheDocument();
-    expect(calls.find((c) => c.key.endsWith("/confirm"))?.body).toEqual({ token: "aui_secret" });
+    // The request repeats the account the page showed.
+    expect(calls.find((c) => c.key.endsWith("/confirm"))?.body).toEqual({ token: "aui_secret", platform_user_ref: "U123" });
     expect(replace).toHaveBeenCalledWith(null, "", "/link/channel");
     expect(window.location.href).not.toContain("aui_secret");
     expect(document.body.textContent).not.toContain("aui_secret");
+    // A used token is not kept.
+    expect(window.sessionStorage.getItem("aurora.channel-link-token")).toBeNull();
   });
 
   it.each([
     [410, "link_expired", "expired or was already used"],
     [409, "already_linked", "already linked to another Aurora user"],
-  ])("handles %s %s and still strips the token", async (status, code, text) => {
-    const replace = vi.spyOn(window.history, "replaceState");
+    [422, "link_reference_mismatch", "not the chat account this link was made for"],
+  ])("handles %s %s on confirm", async (status, code, text) => {
     mockFetch({
       "GET /v1/me": () => json(200, me),
+      "GET /v1/channel-links/preview": () => json(200, preview),
       "POST /v1/channel-links/confirm": () => err(status, code),
     });
     wrap(<LinkConfirmView />);
     fireEvent.click(await screen.findByRole("button", { name: "Confirm link" }));
     expect((await screen.findByRole("alert")).textContent).toContain(text);
-    expect(replace).toHaveBeenCalledWith(null, "", "/link/channel");
     expect(screen.queryByRole("button", { name: "Confirm link" })).toBeNull();
   });
 
-  it("redirects to login with a return URL when signed out", async () => {
+  it("explains an expired link instead of offering to confirm it", async () => {
+    mockFetch({
+      "GET /v1/me": () => json(200, me),
+      "GET /v1/channel-links/preview": () => err(410, "link_expired"),
+    });
+    wrap(<LinkConfirmView />);
+    expect((await screen.findByRole("alert")).textContent).toContain("expired or was already used");
+    expect(screen.queryByRole("button", { name: "Confirm link" })).toBeNull();
+  });
+
+  it("the sign-in return URL carries no token; the token waits in sessionStorage", async () => {
     const assign = vi.fn();
     vi.stubGlobal("location", { ...window.location, assign, pathname: "/link/channel", search: "?token=aui_secret" });
     mockFetch({ "GET /v1/me": () => err(401, "unauthorized") });
     wrap(<LinkConfirmView />);
     await waitFor(() => expect(assign).toHaveBeenCalled());
-    expect(assign.mock.calls[0][0]).toContain("/auth/login?next=");
+    const target = String(assign.mock.calls[0][0]);
+    expect(target).toContain("/auth/login?next=");
+    expect(target).not.toContain("aui_secret");
+    expect(decodeURIComponent(target)).not.toContain("token=");
+    expect(window.sessionStorage.getItem("aurora.channel-link-token")).toBe("aui_secret");
+  });
+
+  it("resumes after sign-in from the stored token", async () => {
+    window.sessionStorage.setItem("aurora.channel-link-token", "aui_stored");
+    search = "";
+    const calls = mockFetch({
+      "GET /v1/me": () => json(200, me),
+      "GET /v1/channel-links/preview": () => json(200, preview),
+    });
+    wrap(<LinkConfirmView />);
+    expect(await screen.findByTestId("link-account")).toBeInTheDocument();
+    expect(calls.find((c) => c.key.startsWith("GET /v1/channel-links/preview"))?.url).toContain("token=aui_stored");
   });
 
   it("rejects a link without a token", async () => {

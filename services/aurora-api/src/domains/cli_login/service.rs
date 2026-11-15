@@ -11,6 +11,7 @@ use aws_lc_rs::rand;
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use http::StatusCode;
 use serde_json::json;
+use std::net::IpAddr;
 use std::time::Duration;
 use uuid::Uuid;
 
@@ -54,7 +55,27 @@ fn oauth_err(code: &'static str, msg: &'static str) -> ApiError {
     ApiError::new(StatusCode::BAD_REQUEST, code, msg)
 }
 
-pub async fn start(s: &AppState, req: StartRequest) -> Result<StartResponse, ApiError> {
+/// The address shown to the approver, coarse on purpose (IPv4 `/24`, IPv6 `/48`): enough to
+/// tell "my office" from "somewhere else" without recording a precise address.
+pub fn coarse_addr(ip: IpAddr) -> String {
+    match ip.to_canonical() {
+        IpAddr::V4(v4) => {
+            let o = v4.octets();
+            format!("{}.{}.{}.0/24", o[0], o[1], o[2])
+        }
+        IpAddr::V6(v6) => {
+            let s = v6.segments();
+            format!("{:x}:{:x}:{:x}::/48", s[0], s[1], s[2])
+        }
+    }
+}
+
+pub async fn start(
+    s: &AppState,
+    req: StartRequest,
+    ip: Option<IpAddr>,
+) -> Result<StartResponse, ApiError> {
+    let addr = ip.map(coarse_addr);
     let hostname = req
         .hostname
         .as_deref()
@@ -74,6 +95,7 @@ pub async fn start(s: &AppState, req: StartRequest) -> Result<StartResponse, Api
             &hash,
             &user_code,
             &hostname,
+            addr.as_deref(),
             i64::from(EXPIRES_IN_SECS),
         )
         .await
@@ -95,6 +117,43 @@ pub async fn start(s: &AppState, req: StartRequest) -> Result<StartResponse, Api
         }
     }
     Err(ApiError::internal("Could not allocate a login code."))
+}
+
+/// What the approval screen shows about the machine asking for a key (session only).
+pub async fn pending(
+    s: &AppState,
+    c: &crate::http::auth::Caller,
+    code: &str,
+) -> Result<PendingResponse, ApiError> {
+    s.rate_limiter.check_quota(
+        "cli_pending",
+        &c.user_id.to_string(),
+        Quota {
+            capacity: 20,
+            per: Duration::from_secs(60),
+        },
+    )?;
+    let code = normalize_user_code(code).ok_or_else(|| {
+        ApiError::invalid_request(
+            "Invalid code.",
+            vec![FieldError::new("/code", "expected format ABCD-EFGH")],
+        )
+    })?;
+    let login = cli_logins::find_pending_by_user_code(&s.pool, &code)
+        .await?
+        .ok_or_else(|| ApiError::not_found("Login code not found or expired."))?;
+    Ok(PendingResponse {
+        hostname: login.hostname.unwrap_or_else(|| "unknown host".to_owned()),
+        requested_at: login.created_at,
+        expires_at: login.expires_at,
+        address: login.requested_addr,
+        key_expires_in_days: key_ttl_days(s),
+    })
+}
+
+/// The lifetime of a CLI-minted key in days (`auth.cli_key_ttl_days`, D-178), `None` = never.
+fn key_ttl_days(s: &AppState) -> Option<u32> {
+    Some(s.config.auth.cli_key_ttl_days).filter(|d| *d > 0)
 }
 
 /// Approve a pending login for a workspace the approver can use.
@@ -218,7 +277,9 @@ pub async fn token(s: &AppState, device_code: &str) -> Result<Consumed, ApiError
             name: &name,
             token_hash: &token::hash(tok),
             display_prefix: &token::display_prefix(tok),
-            expires_at: None,
+            // (FIX-108, D-178 Q-R5-16) A CLI key expires, 90 days by default.
+            expires_at: key_ttl_days(s)
+                .map(|d| chrono::Utc::now() + chrono::Duration::days(i64::from(d))),
         },
     )
     .await?
@@ -258,4 +319,25 @@ pub async fn token(s: &AppState, device_code: &str) -> Result<Consumed, ApiError
         workspace_id: ws,
         org_id: access.org_id,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::coarse_addr;
+
+    #[test]
+    fn addresses_are_coarsened() {
+        assert_eq!(
+            coarse_addr("203.0.113.77".parse().unwrap()),
+            "203.0.113.0/24"
+        );
+        assert_eq!(
+            coarse_addr("2001:db8:abcd:1234::5".parse().unwrap()),
+            "2001:db8:abcd::/48"
+        );
+        assert_eq!(
+            coarse_addr("::ffff:198.51.100.9".parse().unwrap()),
+            "198.51.100.0/24"
+        );
+    }
 }

@@ -6,22 +6,22 @@
     method: POST
     url: "https://github.example.com/api/v3/repos/example/demo/issues"
     headers: { content-type: application/json }
-    body: '{"title":"Broken build"}'
+    body: '{"title":"Broken build","body":"CI is red"}'
   expect:
     app: github-ghes
     tool: create_issue
-    summary: { title: "Create issue", fields: { Owner: example, Repository: demo, Title: "Broken build" } }
+    summary: { title: "Create issue", fields: { Owner: example, Repository: demo, Title: "Broken build", Body: "CI is red" } }
 - name: "ghes update_issue"
   connection: { instance_host: github.example.com, credentials: { access_token: "tok-fixture-1" } }
   request:
     method: PATCH
     url: "https://github.example.com/api/v3/repos/example/demo/issues/7"
     headers: { content-type: application/json }
-    body: '{"state":"closed"}'
+    body: '{"state":"closed","body":"Closing as a duplicate of #5"}'
   expect:
     app: github-ghes
     tool: update_issue
-    summary: { title: "Update issue", fields: { Owner: example, Repository: demo, Issue: "7", State: closed } }
+    summary: { title: "Update issue", fields: { Owner: example, Repository: demo, Issue: "7", State: closed, Body: "Closing as a duplicate of #5" } }
 - name: "ghes create_issue_comment"
   connection: { instance_host: github.example.com, credentials: { access_token: "tok-fixture-1" } }
   request:
@@ -39,11 +39,11 @@
     method: POST
     url: "https://github.example.com/api/v3/repos/example/demo/pulls"
     headers: { content-type: application/json }
-    body: '{"title":"Add feature","head":"feature-x","base":"main"}'
+    body: '{"title":"Add feature","head":"feature-x","base":"main","body":"Adds feature x"}'
   expect:
     app: github-ghes
     tool: create_pull
-    summary: { title: "Create pull request", fields: { Owner: example, Repository: demo, Title: "Add feature", From: feature-x, Into: main } }
+    summary: { title: "Create pull request", fields: { Owner: example, Repository: demo, Title: "Add feature", Body: "Adds feature x", From: feature-x, Into: main } }
 - name: "ghes merge_pull"
   connection: { instance_host: github.example.com, credentials: { access_token: "tok-fixture-1" } }
   request:
@@ -65,7 +65,7 @@
   expect:
     app: github-ghes
     tool: write_contents
-    summary: { title: "Change repository file", fields: { Owner: example, Repository: demo, File: "README.md", Branch: feature-x, Message: "Update readme" } }
+    summary: { title: "Change repository file", fields: { Owner: example, Repository: demo, File: "README.md", Branch: feature-x, Message: "Update readme", Content: hello } }
 - name: "ghes create_ref"
   connection: { instance_host: github.example.com, credentials: { access_token: "tok-fixture-1" } }
   request:

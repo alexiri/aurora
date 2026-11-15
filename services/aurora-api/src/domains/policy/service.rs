@@ -92,8 +92,14 @@ pub async fn replace_draft(
 
 /// Publish the draft (`expect_revision`) or, for rollback, a copy of generation `number`.
 pub enum Source {
-    Draft { revision: i64 },
-    Generation { number: i32 },
+    Draft {
+        revision: i64,
+    },
+    /// `expect_revision` is the draft revision the caller last read (rollback replaces the draft).
+    Generation {
+        number: i32,
+        expect_revision: i64,
+    },
 }
 
 /// Returns the number of the generation that became published.
@@ -112,7 +118,15 @@ pub async fn publish(
                 return Err(stale());
             }
         }
-        Source::Generation { number } => {
+        Source::Generation {
+            number,
+            expect_revision,
+        } => {
+            // (FIX-109) Rollback replaces the draft with the old generation's content: refuse
+            // when the draft moved since the caller read it, as publish does.
+            if draft.draft_revision != expect_revision {
+                return Err(stale());
+            }
             let target = repo::generation_by_number(&mut *tx, s.org, s.ws, number)
                 .await?
                 .filter(|g| g.status != "draft")

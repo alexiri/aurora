@@ -76,7 +76,6 @@ pub async fn apply_gateway_grants(pool: &PgPool, role: &str) -> Result<(), Grant
         "workspace_access",
         "org_members",
         "gateway_users",
-        "api_keys",
         "agents",
         "gateway_credentials",
         "secrets",
@@ -99,6 +98,9 @@ pub async fn apply_gateway_grants(pool: &PgPool, role: &str) -> Result<(), Grant
     for t in SELECT_TABLES {
         stmts.push(format!("GRANT SELECT ON {s}.{t} TO {r}"));
     }
+    // (FIX-106) `api_keys` (hashed user API keys) is the API's: no gateway query reads it. Earlier
+    // releases granted it, so an upgrade takes the grant back.
+    stmts.push(format!("REVOKE ALL ON {s}.api_keys FROM {r}"));
     stmts.push(format!(
         "GRANT INSERT, UPDATE ON {s}.approvals, {s}.gateway_instances TO {r}"
     ));

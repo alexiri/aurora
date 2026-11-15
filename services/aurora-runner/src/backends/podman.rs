@@ -163,6 +163,92 @@ pub async fn verify_network(
     ))
 }
 
+/// (FIX-094, SEC-02) The libpod network JSON as podman answers it (`GET
+/// /libpod/networks/{name}/json`), read over the unix socket with a minimal HTTP/1.0 request:
+/// the Docker-compatible inspect `bollard` returns does not carry `dns_enabled`.
+pub async fn libpod_network_json(socket: &str, name: &str) -> Result<String, String> {
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+    if name.is_empty()
+        || !name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
+    {
+        return Err(format!("sandbox network name `{name}` is not a plain name"));
+    }
+    let fail = |e: &dyn std::fmt::Display| {
+        format!("sandbox network `{name}`: its DNS setting cannot be read from podman: {e}")
+    };
+    let mut s = tokio::time::timeout(
+        Duration::from_secs(API_TIMEOUT_SECS),
+        tokio::net::UnixStream::connect(socket),
+    )
+    .await
+    .map_err(|e| fail(&e))?
+    .map_err(|e| fail(&e))?;
+    let req = format!(
+        "GET /v5.0.0/libpod/networks/{name}/json HTTP/1.0\r\nHost: d\r\nAccept: application/json\r\n\r\n"
+    );
+    s.write_all(req.as_bytes()).await.map_err(|e| fail(&e))?;
+    let mut raw = Vec::new();
+    tokio::time::timeout(
+        Duration::from_secs(API_TIMEOUT_SECS),
+        s.take(1 << 20).read_to_end(&mut raw),
+    )
+    .await
+    .map_err(|e| fail(&e))?
+    .map_err(|e| fail(&e))?;
+    let text = String::from_utf8_lossy(&raw);
+    let (head, body) = text
+        .split_once("\r\n\r\n")
+        .ok_or_else(|| fail(&"malformed answer"))?;
+    if !head.starts_with("HTTP/1.") || !head.lines().next().is_some_and(|l| l.contains(" 200")) {
+        return Err(fail(&head.lines().next().unwrap_or("no status")));
+    }
+    Ok(body.to_owned())
+}
+
+/// Refuses a network whose podman JSON says DNS is enabled (SEC-02: a sandbox "cannot resolve
+/// external DNS names"; `--internal` alone leaves the network's own resolver on). A body that
+/// does not carry `dns_enabled` is refused too — the setting cannot be confirmed.
+pub fn check_dns_disabled(name: &str, body: &str) -> Result<(), String> {
+    let v: serde_json::Value = serde_json::from_str(body)
+        .map_err(|e| format!("sandbox network `{name}`: unreadable podman answer: {e}"))?;
+    match v.get("dns_enabled").and_then(serde_json::Value::as_bool) {
+        Some(false) => Ok(()),
+        Some(true) => Err(format!(
+            "sandbox network `{name}` has DNS enabled; create it with \
+             `--internal --disable-dns` (SEC-02) or set runner.dev_allow_external_network for development"
+        )),
+        None => Err(format!(
+            "sandbox network `{name}`: podman does not report `dns_enabled`, so DNS cannot be \
+             confirmed off; create it with `--internal --disable-dns` (SEC-02)"
+        )),
+    }
+}
+
+/// [`check_dns_disabled`] against the live socket, with the same dev escape as the `internal`
+/// check.
+pub async fn verify_network_dns(
+    socket: &str,
+    name: &str,
+    allow_external: bool,
+) -> Result<(), String> {
+    let checked = match libpod_network_json(socket, name).await {
+        Ok(body) => check_dns_disabled(name, &body),
+        Err(e) => Err(e),
+    };
+    match checked {
+        Err(e) if allow_external => {
+            tracing::warn!(
+                network = name,
+                "runner.dev_allow_external_network is set: {e}"
+            );
+            Ok(())
+        }
+        other => other,
+    }
+}
+
 impl PodmanBackend {
     /// Connects to the socket, pings it and verifies the sandbox network.
     pub async fn connect(s: PodmanSettings) -> Result<Self, String> {
@@ -175,6 +261,7 @@ impl PodmanBackend {
             .await
             .map_err(|e| format!("podman socket `{path}` does not answer: {e}"))?;
         verify_network(&docker, &s.network, s.allow_external_network).await?;
+        verify_network_dns(&path, &s.network, s.allow_external_network).await?;
         if let Some(bin) = &s.dev_supervisor_binary {
             if !std::fs::metadata(bin).is_ok_and(|m| m.is_file()) {
                 return Err(format!(
@@ -684,6 +771,28 @@ impl Backend for PodmanBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// FIX-094 (SEC-02): the podman network JSON decides. A network created `--internal` but
+    /// with DNS left on is refused; only an explicit `dns_enabled: false` passes; a body without
+    /// the field cannot be confirmed and is refused.
+    #[test]
+    fn a_network_with_dns_enabled_is_refused() {
+        let enabled = r#"{"name":"n","internal":true,"dns_enabled":true}"#;
+        let disabled = r#"{"name":"n","internal":true,"dns_enabled":false}"#;
+        let silent = r#"{"name":"n","internal":true}"#;
+        assert!(
+            check_dns_disabled("n", enabled)
+                .unwrap_err()
+                .contains("DNS enabled")
+        );
+        assert!(check_dns_disabled("n", disabled).is_ok());
+        assert!(
+            check_dns_disabled("n", silent)
+                .unwrap_err()
+                .contains("cannot be confirmed")
+        );
+        assert!(check_dns_disabled("n", "not json").is_err());
+    }
 
     #[test]
     fn capabilities_label_is_parsed_fail_closed() {

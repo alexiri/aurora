@@ -167,6 +167,9 @@ fn conn(w: &World, n: usize) -> AppConnectionRow {
         metadata: json!({"sub": "tenant1"}),
         tenant_host: None,
         instance_id: None,
+        connect_method: None,
+        access: "write".into(),
+        scopes: Vec::new(),
     }
 }
 
@@ -251,14 +254,17 @@ async fn start_gateway(up: SocketAddr, n_conns: usize, n_rules: usize) -> Gw {
     );
     let resolver = Arc::new(Resolver::new(src, llm).with_snapshots(store));
     let plaintext = Arc::new(PlaintextCache::new(Arc::new(SecretVault::new(reg))));
-    let handler = Arc::new(PolicyHandler::new(PolicyHandlerParts {
-        resolver: resolver.clone(),
-        plaintext,
-        log: RequestLog::new(Arc::new(Null)),
-        external_url: "https://aurora.test/".into(),
-        holds: None,
-        touch_pool: None,
-    }));
+    let handler = Arc::new(
+        PolicyHandler::new(PolicyHandlerParts {
+            resolver: resolver.clone(),
+            plaintext,
+            log: RequestLog::new(Arc::new(Null)),
+            external_url: "https://aurora.test/".into(),
+            holds: None,
+            touch_pool: None,
+        })
+        .with_insecure_loopback_injection(true),
+    );
     let gw = ca::generate("gw").unwrap();
     let pl = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let proxy = pl.local_addr().unwrap();

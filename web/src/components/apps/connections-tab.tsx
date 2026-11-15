@@ -1,11 +1,11 @@
 "use client";
 
-import { useParams } from "next/navigation";
 import { useCallback, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { AccessDialog } from "@/components/credentials/give-access";
 import { EmptyState, ErrorState, Loading } from "@/components/states";
+import { ScopeGroups } from "@/components/grants/scope-groups";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Notice } from "@/components/ui/notice";
@@ -13,16 +13,18 @@ import { errorMessage } from "@/lib/api/errors";
 import {
   appIsCustomOnly,
   appKeys,
-  connectWindowPath,
-  openConnectWindow,
+  useApp,
   useApps,
-  useConnectedListener,
+  useConnectChannel,
   useConnections,
   useDeleteConnection,
   usePatchConnection,
   type Connection,
   type CredScope,
 } from "@/lib/api/apps";
+
+import { ConnectDialog } from "./connect-dialog";
+import { useUrlDialog } from "./use-url-dialog";
 
 type ListScope = CredScope & { kind: "workspace" | "organization" };
 
@@ -37,15 +39,15 @@ function ConnectionRow({
   scope,
   c,
   canOwn,
-  org,
-  ws,
+  onReconnect,
   customOnly = false,
 }: {
   scope: ListScope;
   c: Connection;
   canOwn: boolean;
-  org?: string;
-  ws?: string;
+  /** Opens the Reconnect dialog; absent where a reconnect is not offered (organization-level connections). */
+  onReconnect?: () => void;
+
   /** The app's manifest allows only custom grants (`app_restrictions.custom_only`, P4-GRANTS). */
   customOnly?: boolean;
 }) {
@@ -64,9 +66,10 @@ function ConnectionRow({
           <span className="font-mono text-xs text-muted">{c.app_id}</span>
           <Badge tone={bad ? "danger" : c.status === "active" ? "accent" : "neutral"}>{STATUS_LABEL[c.status] ?? c.status}</Badge>
           {customOnly ? <Badge>Custom access only</Badge> : null}
+          {c.access === "read" ? <Badge tone="accent">Read-only</Badge> : null}
           {c.instance ? (
             <Badge className="font-mono normal-case tracking-normal" title={`Self-hosted instance: ${c.instance.label}`}>
-              {c.instance.host}
+              {c.instance.base_url}
             </Badge>
           ) : null}
         </div>
@@ -77,8 +80,19 @@ function ConnectionRow({
                 Access
               </Button>
             ) : null}
-            {org && ws && c.status !== "orphaned" ? (
-              <Button size="sm" variant="outline" aria-label={`Reconnect ${c.label}`} onClick={() => openConnectWindow(connectWindowPath(org, ws, c.app_id, c.id))}>
+            {c.status === "active" || c.status === "disabled" ? (
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={patch.isPending}
+                aria-label={c.access === "read" ? `Allow writes: ${c.label}` : `Make read-only: ${c.label}`}
+                onClick={() => patch.mutate({ id: c.id, access: c.access === "read" ? "write" : "read" })}
+              >
+                {c.access === "read" ? "Allow writes" : "Make read-only"}
+              </Button>
+            ) : null}
+            {onReconnect && c.status !== "orphaned" ? (
+              <Button size="sm" variant="outline" aria-label={`Reconnect ${c.label}`} onClick={onReconnect}>
                 Reconnect
               </Button>
             ) : null}
@@ -103,6 +117,8 @@ function ConnectionRow({
             scope: { kind: scope.kind, id: scope.id },
             orgId: c.org_id,
             appId: c.app_id,
+            connectMethod: c.connect_method,
+            scopes: c.scopes,
             appWorkspaceId: c.workspace_id ?? (scope.kind === "workspace" ? scope.id : undefined),
           }}
           title={c.label}
@@ -113,7 +129,7 @@ function ConnectionRow({
       {c.status_reason ? (
         <p className="text-sm text-ink-2">
           {c.status_reason === "instance_deleted"
-            ? "The app instance of this connection was deleted. Connect again."
+            ? "The self-hosted app of this connection was deleted. Connect again."
             : c.status === "reauth_required" && c.status_reason.startsWith("plugin_major_upgrade:")
               ? `${c.app_id} was upgraded to a version with different credential fields. Reconnect to keep using it.`
               : c.status_reason}
@@ -129,6 +145,17 @@ function ConnectionRow({
           Some requested scopes were not granted: {c.missing_scopes.join(", ")}. Reconnect and approve them to restore full access.
         </p>
       ) : null}
+      {c.metadata.token_scopes ? (
+        <p className="text-xs text-ink-2">
+          Token scopes (reported by the provider): <span className="break-words font-mono text-ink">{c.metadata.token_scopes}</span>
+          {c.access !== "read" && /(^|[ ,])repo($|[ ,])/.test(c.metadata.token_scopes)
+            ? ". The repo scope allows writes: make this connection read-only to block them."
+            : null}
+        </p>
+      ) : null}
+      {canOwn && c.connect_method ? (
+        <TokenScopes c={c} ws={c.workspace_id ?? (scope.kind === "workspace" ? scope.id : undefined)} patch={patch} />
+      ) : null}
       {c.database ? (
         <Notice tone="neutral" aria-label={`How to connect to ${c.label}`} className="space-y-1 text-xs">
           <p>
@@ -140,6 +167,12 @@ function ConnectionRow({
             database connections with the same name to one agent, each name gets <code className="font-mono">-</code> and the first 8
             characters of the connection id (<code className="font-mono">{c.id.replaceAll("-", "").slice(0, 8)}</code> here).
           </p>
+        </Notice>
+      ) : null}
+      {c.database && c.metadata.tls_verification === "off" ? (
+        <Notice tone="pending" role="status" aria-label={`TLS verification is off for ${c.label}`} className="text-xs">
+          The gateway does not verify this database server&apos;s TLS certificate: the database password goes to whichever server
+          answers. Store the CA certificate (or use a publicly trusted one) and reconnect to turn verification back on.
         </Notice>
       ) : null}
       {ok.length ? <p className="text-xs text-ink-2">Injecting credentials for: {ok.map((i) => i.host).join(", ")}</p> : null}
@@ -164,15 +197,16 @@ function ConnectionRow({
 }
 
 export function ConnectionsTab({ scope, canOwn }: { scope: ListScope; canOwn: boolean }) {
-  const params = useParams<{ org?: string; ws?: string }>();
   const list = useConnections(scope);
+  // The Reconnect dialog (D-272): opened by a row's button or the deep link `?tab=connections&reconnect=<id>`.
+  const [reconnecting, setReconnecting] = useUrlDialog("reconnect");
   // The catalogue says which apps are custom-access-only (`app_restrictions`); the badge is a hint, so a
   // failing or pending catalogue just shows none.
   const apps = useApps(scope.kind === "workspace" ? scope.id : undefined);
   const customOnly = new Set((apps.data?.items ?? []).filter((a) => appIsCustomOnly(a)).map((a) => a.app_id));
   const qc = useQueryClient();
   const refresh = useCallback(() => void qc.invalidateQueries({ queryKey: appKeys.connections(scope) }), [qc, scope]);
-  useConnectedListener(refresh);
+  useConnectChannel(refresh);
   if (list.isPending) return <Loading />;
   if (list.isError) return <ErrorState error={list.error} onRetry={() => list.refetch()} />;
   if (list.data.items.length === 0)
@@ -185,19 +219,81 @@ export function ConnectionsTab({ scope, canOwn }: { scope: ListScope; canOwn: bo
         A connection links your account in an app, such as GitHub, so an agent can act there.
       </EmptyState>
     );
+  const items = list.data.items;
+  const target = reconnecting ? items.find((c) => c.id === reconnecting) : undefined;
+  const canReconnect = canOwn && scope.kind === "workspace";
   return (
-    <ul className="space-y-2" aria-label="Connections">
-      {list.data.items.map((c) => (
-        <ConnectionRow
-          key={c.id}
-          scope={scope}
-          c={c}
-          canOwn={canOwn}
-          customOnly={customOnly.has(c.app_id)}
-          org={scope.kind === "workspace" ? params.org : undefined}
-          ws={scope.kind === "workspace" ? params.ws : undefined}
+    <>
+      {reconnecting && !(target && target.status !== "orphaned" && canReconnect) ? (
+        <Notice tone="pending" role="status" className="mb-3">
+          {!target
+            ? "That connection no longer exists, or it is not in this workspace."
+            : !canReconnect
+              ? `Only a workspace owner can reconnect ${target.label}.`
+              : `${target.label} cannot be reconnected: its app was removed.`}
+        </Notice>
+      ) : null}
+      <ul className="space-y-2" aria-label="Connections">
+        {items.map((c) => (
+          <ConnectionRow
+            key={c.id}
+            scope={scope}
+            c={c}
+            canOwn={canOwn}
+            customOnly={customOnly.has(c.app_id)}
+            onReconnect={scope.kind === "workspace" ? () => setReconnecting(c.id) : undefined}
+          />
+        ))}
+      </ul>
+      {target && target.status !== "orphaned" && canReconnect ? (
+        <ConnectDialog
+          appId={target.app_id}
+          name={target.app_id}
+          workspaceId={scope.id}
+          orgId={target.org_id}
+          reconnect={target.id}
+          onClose={() => {
+            setReconnecting(null);
+            refresh();
+          }}
         />
-      ))}
-    </ul>
+      ) : null}
+    </>
+  );
+}
+
+/**
+ * (FIX-136, D-241) The scopes of a pasted token, "as you declared": shown for a connection made with a `fields` method that
+ * declares scopes, editable by whoever can manage it. Aurora uses them only to hide and refuse tools the token cannot serve.
+ */
+function TokenScopes({ c, ws, patch }: { c: Connection; ws?: string; patch: ReturnType<typeof usePatchConnection> }) {
+  const app = useApp(c.app_id, ws);
+  const method = app.data?.connect?.find?.((m) => m.id === c.connect_method);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState<string[]>(c.scopes);
+  if (!method || method.kind !== "fields" || !method.scopes || method.scopes.length === 0) return null;
+  const names = c.scopes.map((s) => method.scopes.find((x) => x.scope === s)?.name ?? s);
+  return (
+    <div className="space-y-1.5 text-xs" aria-label={`Token scopes of ${c.label}`}>
+      <p className="text-ink-2">
+        Token scopes (as you declared):{" "}
+        <span className="text-ink">{names.length ? names.join(", ") : "none declared, so no tool is hidden"}</span>{" "}
+        <Button variant="ghost" size="sm" onClick={() => { setDraft(c.scopes); setEditing((e) => !e); }}>
+          {editing ? "Cancel" : "Edit scopes"}
+        </Button>
+      </p>
+      {editing ? (
+        <div className="space-y-2">
+          <ScopeGroups scopes={method.scopes} selected={draft} onChange={setDraft} disabled={patch.isPending} />
+          <Button
+            size="sm"
+            disabled={patch.isPending}
+            onClick={() => patch.mutate({ id: c.id, scopes: draft }, { onSuccess: () => setEditing(false) })}
+          >
+            Save scopes
+          </Button>
+        </div>
+      ) : null}
+    </div>
   );
 }

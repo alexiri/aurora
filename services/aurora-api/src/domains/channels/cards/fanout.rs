@@ -106,7 +106,8 @@ async fn post_approval(state: &AppState, id: Uuid) -> Result<bool, ApiError> {
         keys: &state.derived,
         integration_id: link.integration_id,
     };
-    let card = build::approval(&m, &row)?;
+    // D-178: only a 1:1 conversation (`direct`) gets the request's details on the card.
+    let card = build::approval(&m, &row, link.kind != "direct")?;
     let approvals_url =
         super::workspace_page_url(&mut tx, state, row.workspace_id, "approvals").await?;
     let posted = post_card(

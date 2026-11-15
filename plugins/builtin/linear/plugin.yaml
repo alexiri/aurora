@@ -1,12 +1,15 @@
 package:
   id: linear
-  version: 1.0.1
+  version: 1.0.2
   contract: 1
   min_core: 0.1.0
   publisher: aurora
   name: Linear
   description: Issues, projects, teams and comments in Linear through its GraphQL API, connected with OAuth; queries are read tools and every mutation (create or update an issue, comment) is a separate, approved write tool
   homepage: https://linear.app
+permissions:
+  # The OAuth sign-in endpoint (FIX-107, SEC-17); the token and API hosts are claimed below.
+  token_hosts: [linear.app]
 oauth_clients:
   - id: linear
     authorize_url: https://linear.app/oauth/authorize

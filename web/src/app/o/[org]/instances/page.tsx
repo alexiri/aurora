@@ -13,9 +13,9 @@ export default function Page() {
       {(org) => (
         <div className="max-w-5xl">
           <PageHeader
-            title="Instances"
-            description="Self-hosted deployments of apps, such as your own GitLab."
-            breadcrumb={[{ label: org.name, href: `/o/${slug}` }, { label: "Instances" }]}
+            title="Self-hosted apps"
+            description="Register your own GitLab, GitHub Enterprise Server, Indico … so people can connect to it."
+            breadcrumb={[{ label: org.name, href: `/o/${slug}` }, { label: "Self-hosted apps" }]}
           />
           <InstancesView scope={{ kind: "organization", id: org.id }} canManage />
         </div>

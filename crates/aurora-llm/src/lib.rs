@@ -18,7 +18,7 @@ pub use anthropic::{ANTHROPIC_BASE_URL, AnthropicProvider};
 pub use endpoint::Endpoint;
 pub use error::{LlmError, Result};
 pub use litellm::LitellmProvider;
-pub use model::model_from_request;
+pub use model::{inference_path_permitted, model_from_request};
 pub use registry::{ProviderRegistry, governed_hosts};
 pub use types::{
     AuthMode, Dialect, EndpointKind, InjectionHeader, KeyOrigin, KeyOriginRule, LlmInjection,

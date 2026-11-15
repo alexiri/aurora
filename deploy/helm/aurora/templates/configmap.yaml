@@ -67,6 +67,10 @@
       the operator's config (the chart comment points there) — the edge route follows
       `scim.enabled` below. */ -}}
 {{- $_ := set $cfg "scim" (merge (dict "rate_per_minute" .Values.scim.ratePerMinute) (default (dict) $cfg.scim)) -}}
+{{- /* (FIX-102) half-enabled switches fail the render instead of serving a surface the edge does not route
+      (SCIM) or rendering runner-bound policy without a runner (terminal, previews). */ -}}
+{{- if and (get (default (dict) $cfg.scim) "enabled") (not .Values.scim.enabled) }}{{ fail "config.scim.enabled=true alone serves /scim/v2 with no edge route: set the top-level scim.enabled (the chart then routes /scim to the API)" }}{{ end -}}
+{{- if and (or .Values.terminal.enabled .Values.relay.enabled) (not .Values.runner.enabled) }}{{ fail "terminal.enabled and relay.enabled (previews) need the runner (their streams terminate there): set runner.enabled=true, or turn both features off" }}{{ end -}}
 {{- if .Values.scim.enabled }}{{ $_ := set (default (dict) $cfg).scim "enabled" true }}{{ end -}}
 {{- /* (P4-PRV-2, FIX-056) the chart-level wiring renders only from the top-level switch:
       the relay workload, the wildcard edge rules and the NetworkPolicy posture below all
@@ -77,14 +81,20 @@
 {{- $pv = default (dict) $cfg.previews -}}
 {{- $_ := set $pv "domain" .Values.relay.domain -}}
 {{- $_ := set $cfg "previews" $pv -}}
-{{- $rl := dict "api_url" (printf "http://%s-api:4101" $full) "listen" "0.0.0.0:4112" "ops_port" 4193 "previews_domain" .Values.relay.domain "max_streams" (int .Values.relay.max_streams) "max_streams_per_user" (int .Values.relay.max_streams_per_user) "request_body_max_bytes" (int .Values.relay.request_body_max_bytes) -}}
+{{- $rl := dict "api_url" (printf "http://%s-api:4101" $full) "listen" "0.0.0.0:4112" "ops_port" 4193 "previews_domain" .Values.relay.domain "max_streams" (int .Values.relay.max_streams) "max_streams_per_user" (int .Values.relay.max_streams_per_user) "request_body_max_bytes" (int .Values.relay.request_body_max_bytes) "trusted_proxies" (default (list) .Values.relay.trusted_proxies) -}}
 {{- $_ := set $cfg "relay" (merge $rl (default (dict) $cfg.relay)) -}}
 {{- end -}}
 {{- /* (P4-GSL, D-154) the API reaches the gateway's internal port (library fetch) by this release's Service name */ -}}
 {{- $_ := set $cfg "api" (merge (dict "gateway_internal_url" (printf "http://%s-gateway:4103" $full)) (default (dict) $cfg.api)) -}}
 {{- $_ := set $cfg "database" (merge (dict "max_connections" .Values.database.maxConnections.api) (default (dict) $cfg.database)) -}}
 {{- if ne (not (not .Values.database.gatewayRole)) (not (not .Values.database.gatewayExistingSecret)) }}{{ fail "database.gatewayRole and database.gatewayExistingSecret go together: set both (the gateway then connects as that least-privilege role) or neither (the gateway uses the main database user). See docs/operator/install-helm.md, Database." }}{{ end -}}
+{{- /* (FIX-106, D-178 Q-R5-11) The gateway's least-privilege role is the rule: the bundled evaluation Postgres creates it
+      automatically; with an external database the chart refuses to render without the pair unless the operator says,
+      explicitly, that the gateway may share the main login (database.allowSharedLogin). */ -}}
+{{- if and .Values.database.allowSharedLogin (or .Values.database.gatewayRole .Values.database.gatewayExistingSecret) }}{{ fail "database.allowSharedLogin and the least-privilege pair (database.gatewayRole + database.gatewayExistingSecret) contradict each other: set the pair (recommended) or allowSharedLogin, not both. See docs/operator/install-helm.md, Database." }}{{ end -}}
+{{- if and (not .Values.postgres.enabled) (not .Values.database.gatewayRole) (not .Values.database.allowSharedLogin) }}{{ fail "the gateway needs its own least-privilege database role with an external database. Create the role and a Secret that logs in as it, then set database.gatewayRole and database.gatewayExistingSecret (docs/operator/install-helm.md, Database); or, knowing that the gateway then runs with the main database login and every privilege it has, set database.allowSharedLogin=true." }}{{ end -}}
 {{- if .Values.database.gatewayRole }}{{ $_ := set $cfg.database "gateway_role" .Values.database.gatewayRole }}{{ end -}}
+{{- if include "aurora.gatewayRoleAuto" . }}{{ $_ := set $cfg.database "gateway_role" (include "aurora.gatewayAutoRole" .) }}{{ end -}}
 {{- /* (RFE-002) proxy listener certificate: the Service names, the external host and extra names */ -}}
 {{- $px := printf "%s-gateway-proxy" $full -}}
 {{- $ptNames := list "aurora-gateway" $px (printf "%s.%s" $px .Release.Namespace) (printf "%s.%s.svc" $px .Release.Namespace) (printf "%s.%s.svc.cluster.local" $px .Release.Namespace) -}}
@@ -95,6 +105,8 @@
 {{- $gw := dict "ca_dir" "/var/lib/aurora/ca" "proxy_tls" $pt -}}
 {{- /* (RFE-025) layer-4 load balancers that send a PROXY protocol header (gateway.trusted_proxies) */ -}}
 {{- with .Values.gateway.proxy.trustedProxies }}{{ $_ := set $gw "trusted_proxies" . }}{{ end -}}
+{{- /* (FIX-104, D-180) gateway.insecure_loopback_injection is a test-only key: the chart never renders it, not even through the free-form `config` values */ -}}
+{{- if hasKey (default (dict) $cfg.gateway) "insecure_loopback_injection" }}{{ fail "config.gateway.insecure_loopback_injection is for tests only and cannot be set through the chart (docs/15, docs/23)" }}{{ end -}}
 {{- $_ := set $cfg "gateway" (merge $gw (default (dict) $cfg.gateway)) -}}
 {{- if not (has .Values.plugins.source (list "none" "configMap" "pvc")) }}{{ fail "plugins.source must be none, configMap or pvc" }}{{ end -}}
 {{- if and (eq .Values.plugins.source "configMap") (not .Values.plugins.configMapName) }}{{ fail "plugins.configMapName is required when plugins.source is configMap" }}{{ end -}}
@@ -105,6 +117,17 @@
 {{- if or .Values.extraCaBundle.existingConfigMap .Values.extraCaBundle.existingSecret }}
 {{- $_ := set $cfg "tls" (merge (dict "extra_ca_bundle" (printf "/etc/aurora-tls/%s" .Values.extraCaBundle.key)) (default (dict) $cfg.tls)) -}}
 {{- end -}}
+{{- /* (FIX-116) development-only switches: refused unless externalUrl is a loopback origin, like the binaries do; no credentials inside URLs of the rendered file */ -}}
+{{- $loopback := regexMatch "^https?://(localhost|127\\.0\\.0\\.1|\\[::1\\]|[A-Za-z0-9.-]+\\.localhost)(:[0-9]+)?/?$" .Values.externalUrl -}}
+{{- if not $loopback }}
+{{- if .Values.connectorHost.testTypes }}{{ fail "connectorHost.testTypes is development only: externalUrl must be a loopback origin" }}{{ end -}}
+{{- if get (default (dict) $cfg.plugins) "allow_unsigned" }}{{ fail "config.plugins.allow_unsigned is development only: externalUrl must be a loopback origin" }}{{ end -}}
+{{- if get (default (dict) $cfg.hosted) "allow_fake_harness" }}{{ fail "config.hosted.allow_fake_harness is development only: externalUrl must be a loopback origin" }}{{ end -}}
+{{- if get (default (dict) $cfg.runner) "dev_allow_external_network" }}{{ fail "config.runner.dev_allow_external_network is development only: externalUrl must be a loopback origin" }}{{ end -}}
+{{- if eq (toString (get (default (dict) (default (dict) $cfg.ratelimit).api) "enabled")) "false" }}{{ fail "config.ratelimit.api.enabled=false is development only: externalUrl must be a loopback origin" }}{{ end -}}
+{{- end -}}
+{{- if regexMatch "^[a-z]+://[^/@]*@" (toString (get (default (dict) $cfg.email) "smtp_url")) }}{{ fail "config.email.smtp_url must not contain credentials: use config.email.smtp_username and AURORA_SMTP_PASSWORD (api.extraEnv with a secretKeyRef)" }}{{ end -}}
+{{- if regexMatch "^[a-z]+://[^/@]*@" (toString (get (default (dict) $cfg.gateway) "egress_proxy")) }}{{ fail "config.gateway.egress_proxy must not contain credentials" }}{{ end -}}
 {{- if .Values.devIdp.enabled }}
 {{- if not (regexMatch "^https?://(localhost|127\\.0\\.0\\.1|\\[::1\\]|[A-Za-z0-9.-]+\\.localhost)(:[0-9]+)?/?$" .Values.externalUrl) }}{{ fail "devIdp.enabled is development only: externalUrl must be a loopback origin (localhost, *.localhost, 127.0.0.1, [::1])" }}{{ end -}}
 {{- $auth := default (dict) $cfg.auth -}}

@@ -49,5 +49,7 @@ tracing = { workspace = true }
 uuid = { workspace = true, features = ["v4", "v5"] }
 
 [dev-dependencies]
+# (FIX-101) the skip policy of the env-gated podman tests (`require_or_skip`).
+aurora-testkit = { workspace = true }
 tower = { workspace = true }
 wiremock = { workspace = true }

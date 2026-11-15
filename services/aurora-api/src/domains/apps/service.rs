@@ -103,6 +103,12 @@ pub async fn summary(state: &AppState, a: &AppEntry, p: &PackageEntry, av: &Avai
         has_dark_icon: assets::has_dark_icon(state, &p.digest).await,
         app_restrictions: a.grants.into(),
         serves_library: a.library.is_some(),
+        family: a.about.family.as_ref().map(|f| AppFamily {
+            id: f.id.clone(),
+            name: f.name.clone(),
+            variant_label: f.variant_label.clone(),
+            instance_bound: a.instances.is_some(),
+        }),
     }
 }
 
@@ -143,15 +149,33 @@ fn method(c: &Connect) -> ConnectMethod {
     let empty = |id: &str, kind: &str, fields: Vec<FormField>| ConnectMethod {
         id: id.to_owned(),
         kind: kind.to_owned(),
+        label: c.label().map(str::to_owned),
+        description: c.description().map(str::to_owned),
+        recommended: c.recommended(),
         fields,
         scopes: Vec::new(),
         default_scopes: Vec::new(),
         access_levels: Vec::new(),
         client_key: None,
         callback: None,
+        probe_scopes: Vec::new(),
     };
     match c {
-        Connect::Fields(f) => empty(&f.id, "fields", f.fields.iter().map(field).collect()),
+        // (FIX-136) A `fields` method that declares scopes asks the person which the pasted
+        // token has; `default_scopes` are the ones a read probe is defined for.
+        Connect::Fields(f) => ConnectMethod {
+            scopes: f
+                .scopes
+                .iter()
+                .map(|x| ScopeInfo {
+                    scope: x.scope.clone(),
+                    name: x.name.clone(),
+                    access: s(&x.access),
+                })
+                .collect(),
+            probe_scopes: f.probe_scopes.keys().cloned().collect(),
+            ..empty(&f.id, "fields", f.fields.iter().map(field).collect())
+        },
         Connect::Hook(h) => empty(&h.id, "hook", h.fields.iter().map(field).collect()),
         Connect::Oauth2(o) => ConnectMethod {
             scopes: o
@@ -204,6 +228,8 @@ pub fn tools(a: &AppEntry) -> Vec<Tool> {
                 },
                 path: "/*".to_owned(),
                 methods: methods.into_iter().map(str::to_owned).collect(),
+                connect_methods: Vec::new(),
+                scopes: Vec::new(),
                 graphql: None,
                 git: None,
             });
@@ -218,6 +244,8 @@ pub fn tools(a: &AppEntry) -> Vec<Tool> {
                 host: i.host.clone(),
                 path: i.path.clone(),
                 methods: i.methods.clone(),
+                connect_methods: i.connect_methods.clone(),
+                scopes: i.scopes.clone(),
                 graphql: i.graphql.as_ref().map(s),
                 git: i.git.as_ref().map(s),
             });
@@ -285,6 +313,7 @@ pub async fn detail(
         has_dark_icon: sm.has_dark_icon,
         app_restrictions: sm.app_restrictions,
         serves_library: sm.serves_library,
+        family: sm.family,
         api_docs: a.about.api_docs.clone(),
         connect_note: a.about.connect_note.as_ref().map(|n| ConnectNote {
             text: n.text.clone(),

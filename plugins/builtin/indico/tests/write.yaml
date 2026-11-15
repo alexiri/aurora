@@ -62,6 +62,43 @@
         Admin override: "false"
         Linked to: "event"
         Linked id: "1234"
+- name: "create_booking: the minimal find-and-book body (no user: Indico books for the session user)"
+  connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://indico.example.org/rooms/api/booking/create"
+    headers: { content-type: application/json }
+    body: '{"room_id":1234,"start_dt":"2026-11-15T10:00:00","end_dt":"2026-11-15T11:00:00","repeat_frequency":"NEVER","reason":"Team sync"}'
+  expect:
+    app: indico
+    tool: create_booking
+    summary:
+      title: "Book room"
+      fields:
+        Room ID: "1234"
+        Start: "2026-11-15T10:00:00"
+        End: "2026-11-15T11:00:00"
+        Repeats: "NEVER"
+        Reason: "Team sync"
+- name: "book_room: tomorrow, same day, no location (the hook looks the room up by id alone)"
+  connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://indico.example.org/api/roomBooking/bookRoom.json"
+    headers: { content-type: application/x-www-form-urlencoded }
+    body: "roomid=1234&from=2026-11-15T10:00&to=2026-11-15T11:00&tz=Europe%2FZurich&username=jdoe&reason=Team+sync"
+  expect:
+    app: indico
+    tool: book_room
+    summary:
+      title: "Book room"
+      fields:
+        Room ID: "1234"
+        From: "2026-11-15T10:00"
+        To: "2026-11-15T11:00"
+        Time zone: "Europe/Zurich"
+        Booked for: "jdoe"
+        Reason: "Team sync"
 - name: "create_booking: a form body is classified but the summary carries only the title (G4)"
   connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
   request:

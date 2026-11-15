@@ -7,6 +7,34 @@ Depends on P5-ASRC (format documentation, ingestion, admin UI). The two tasks ca
 only where the addon content is concerned; the repo manifest's first real-world validation is this
 task.
 
+## Implementation status (lane `p5-platform`, 2026-11-15)
+
+**Done in this repository (branch `alexiri/p5-platform`):** the gateway LDAP lane (D-251, C-760..C-763,
+SEC-110; `06 §LDAP lane`, `09 §3 ldap`): manifest `ldap` block + linter rules + the synthetic-host
+exception, snapshot copy, `Widening::Directory`, the hand-written BER/RFC 4515/LDAPS client, the
+request translation and the proxy hook, unit tests and pipeline ITs against a fake LDAPS directory.
+A staging copy of the `cern-phonebook` package (`plugins/addons/cern-phonebook/`: `plugin.yaml`,
+`docs/setup.md`, `tests/search.yaml`, monogram icons — **icons flagged for owner review**, see Part
+D) validates and passes `aurora plugin test` with the CLI built from this branch.
+**Owner, 2026-11-15 (D-277):** the deviations below and the monogram icons are **accepted**; the
+external repo work is **approved** (write and push the content to `aurora-addons-cern`). The signing key
+pair already exists in the root of the local checkout `/home/alex/agent-platform/aurora-addons-cern/`
+(`cern-release.key`, mode 0600, and `cern-release.key.pub`; public key
+`H8ZeIj/CtmFqdOQl4Kfw7JrNEtFIv/R+LgwVksZ7mBc=` → the manifest's `signing_key`). It is excluded from git
+by `.git/info/exclude` and by an uncommitted `.gitignore` that the lane commits. Never print, copy or
+commit the private key. The owner sets up the GitHub `release` environment and the
+`AURORA_CERN_SIGNING_KEY` secret: **do not push a `v*` tag until the owner confirms the secret exists.**
+**Design deviations (accepted, D-277(c)):** (1) the policy catalogue is one read tool `search`,
+the brief's `search_people`/`get_person`/`get_manager_chain`/`search_groups`/`get_group_members` are
+recipes in the package's agent instructions (a gateway tool is exactly one directory operation, so a
+manager chain is one search per hop, ≤ 5; the "cached per turn" resolution is the agent's); (2)
+`compare` is not implemented (search only); (3) the lane needs a granted connection (`fields: []`
+connect flow), it is not open egress.
+**Not done (needs the external repository, credentials or a live cluster):** `aurora-addons-cern`
+repo content (`aurora-addons.yaml`, `README.md`, `scripts/release.sh`, `release.yml`), the repo's
+ed25519 key and the `release` environment secret, the `cern-maps` package (Part C), a live check
+against `xldap.cern.ch` and the kind e2e. Nothing was pushed.
+
 ## Part A — the repo
 
 Create in `aurora-addons-cern`:
@@ -78,6 +106,7 @@ Simpler fallback if the lane proves too heavy for phase 5: a single declarative 
 executed **in the sandbox** (agent-side binary, no secrets needed for anonymous binds), with the
 host allow-listed in the manifest so the gateway still sees and logs egress. Trade-off documented
 in the brief for the owner to pick at implementation start. **Default: the gateway lane.**
+**Owner, 2026-11-14 (D-235(d)): the gateway lane.**
 
 ### Tools (permission catalogue)
 

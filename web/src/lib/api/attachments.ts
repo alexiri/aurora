@@ -23,6 +23,22 @@ export function formatBytes(n: number): string {
   return `${(n / 1024 / 1024).toFixed(1)} MiB`;
 }
 
+/**
+ * The name and size of an attachment the transcript only knows by id (a person's message lists ids): a HEAD of the
+ * content route, whose `Content-Disposition` (C-30) carries the stored filename. Nothing is rendered from the bytes.
+ */
+export async function fetchAttachmentFacts(id: string): Promise<{ filename: string | null; size: number | null }> {
+  const res = await fetch(attachmentUrl(id), { method: "HEAD", credentials: "same-origin" });
+  if (!res.ok) return { filename: null, size: null };
+  const disposition = res.headers.get("content-disposition") ?? "";
+  const filename = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(disposition)?.[1];
+  const length = Number(res.headers.get("content-length"));
+  return {
+    filename: filename ? decodeURIComponent(filename) : null,
+    size: Number.isFinite(length) && length > 0 ? length : null,
+  };
+}
+
 /** Multipart upload (`file` field). Typed with the generated `Attachment`; the browser sets the boundary. */
 export async function uploadAttachment(conversationId: string, file: File): Promise<Attachment> {
   const form = new FormData();

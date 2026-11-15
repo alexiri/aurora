@@ -46,6 +46,20 @@ impl Signature {
     }
 }
 
+/// The canonical key id of `key`: standard base64 with padding.
+pub fn canonical_key_id(key: &VerifyingKey) -> String {
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD.encode(key.to_bytes())
+}
+
+/// Canonical spelling of a stored or supplied public key (any accepted base64 alphabet), `None`
+/// when it is not a public key.
+pub fn canonicalize_key_id(s: &str) -> Option<String> {
+    aurora_crypto::parse_public_key_b64(s.trim())
+        .ok()
+        .map(|k| canonical_key_id(&k))
+}
+
 #[derive(Debug, Clone)]
 pub struct TrustedKey {
     pub publisher: String,
@@ -147,6 +161,14 @@ pub fn verify_digest(
     }
     let key = aurora_crypto::parse_public_key_b64(&sig.key_id)
         .map_err(|_| v("signature_malformed", "key id is not a public key"))?;
+    // (FIX-107, SEC-15) One spelling per key: revocation, `enable` and the signer column compare
+    // key ids as strings, so a URL-safe or unpadded spelling must not verify.
+    if canonical_key_id(&key) != sig.key_id {
+        return Err(v(
+            "signature_malformed",
+            "key id must be the canonical standard-base64 encoding of the public key",
+        ));
+    }
     if trust.project_key.as_ref() == Some(&key) {
         return project(&key);
     }

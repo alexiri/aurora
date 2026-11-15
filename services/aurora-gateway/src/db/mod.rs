@@ -46,7 +46,9 @@ pub enum SslMode {
     Disable,
     Allow,
     Prefer,
-    /// TLS without verification (verifies the chain when a `ca_pem` is stored, as libpq does).
+    /// TLS, verified (FIX-106, D-178 Q-R5-7): the chain against the stored `ca_pem` (as libpq),
+    /// or, without one, chain and host name against the system roots; the connection's explicit
+    /// `tls_verification = off` opt-out skips verification.
     Require,
     VerifyCa,
     VerifyFull,
@@ -76,6 +78,9 @@ pub struct DbEndpoint {
     pub password: Zeroizing<String>,
     pub sslmode: SslMode,
     pub ca_pem: Option<String>,
+    /// (FIX-106, D-178 Q-R5-7) `false` only for the connection's explicit opt-out of server
+    /// certificate verification under `sslmode=require` without a stored `ca_pem`.
+    pub verify_server: bool,
 }
 
 impl std::fmt::Debug for DbEndpoint {
@@ -87,14 +92,17 @@ impl std::fmt::Debug for DbEndpoint {
             .field("user", &self.user)
             .field("password", &"<redacted>")
             .field("sslmode", &self.sslmode)
+            .field("verify_server", &self.verify_server)
             .finish()
     }
 }
 
 impl DbEndpoint {
     /// Parses the decrypted credentials document. A missing `sslmode` is `require`: TLS is the
-    /// default, plaintext needs an explicit `disable`/`allow`/`prefer`.
-    pub fn from_credentials(raw: &[u8]) -> Result<Self, String> {
+    /// default, plaintext needs an explicit `disable`/`allow`/`prefer`. `metadata` is the
+    /// connection's non-secret metadata: `tls_verification = "off"` is the opt-out of server
+    /// certificate verification (a `ca_pem` stored with the credentials always wins).
+    pub fn from_credentials(raw: &[u8], metadata: &serde_json::Value) -> Result<Self, String> {
         let v: serde_json::Value =
             serde_json::from_slice(raw).map_err(|_| "credentials are not JSON".to_owned())?;
         let s = |k: &str| v.get(k).and_then(|x| x.as_str()).map(str::to_owned);
@@ -119,6 +127,7 @@ impl DbEndpoint {
             password: Zeroizing::new(s("password").unwrap_or_default()),
             sslmode,
             ca_pem: s("ca_pem").filter(|p| !p.trim().is_empty()),
+            verify_server: metadata.get("tls_verification").and_then(|v| v.as_str()) != Some("off"),
         })
     }
 }
@@ -175,21 +184,43 @@ mod tests {
 
     #[test]
     fn endpoint_parsing() {
+        let none = serde_json::json!({});
         let e = DbEndpoint::from_credentials(
             br#"{"host":"h","port":"6543","dbname":"d","user":"u","password":"p"}"#,
+            &none,
         )
         .unwrap();
         assert_eq!((e.port, e.sslmode), (6543, SslMode::Require));
+        assert!(e.verify_server, "verification is the default");
         assert!(!format!("{e:?}").contains("\"p\""));
         assert!(
-            DbEndpoint::from_credentials(br#"{"host":"h","dbname":"d","user":"u","sslmode":"x"}"#)
-                .is_err()
+            DbEndpoint::from_credentials(
+                br#"{"host":"h","dbname":"d","user":"u","sslmode":"x"}"#,
+                &none
+            )
+            .is_err()
         );
-        assert!(DbEndpoint::from_credentials(br#"{"dbname":"d","user":"u"}"#).is_err());
+        assert!(DbEndpoint::from_credentials(br#"{"dbname":"d","user":"u"}"#, &none).is_err());
         let e = DbEndpoint::from_credentials(
             br#"{"host":"h","dbname":"d","user":"u","sslmode":"verify-full"}"#,
+            &none,
         )
         .unwrap();
         assert_eq!((e.port, e.sslmode), (5432, SslMode::VerifyFull));
+    }
+
+    #[test]
+    fn only_the_explicit_metadata_opt_out_disables_verification() {
+        let creds = br#"{"host":"h","dbname":"d","user":"u"}"#;
+        for (meta, verify) in [
+            (serde_json::json!({"tls_verification": "off"}), false),
+            (serde_json::json!({"tls_verification": "verify"}), true),
+            (serde_json::json!({"tls_verification": "OFF"}), true),
+            (serde_json::json!({"tls_verification": false}), true),
+            (serde_json::json!({}), true),
+        ] {
+            let e = DbEndpoint::from_credentials(creds, &meta).unwrap();
+            assert_eq!(e.verify_server, verify, "{meta}");
+        }
     }
 }

@@ -198,6 +198,14 @@
   connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
   request: { method: GET, url: "https://indico.example.org/rooms/api/rooms/search?start_dt=2026-11-10T09:00:00&end_dt=2026-11-10T10:00:00&repeat_frequency=NEVER&repeat_interval=1&capacity=8" }
   expect: { app: indico, tool: search_rooms }
+- name: "search_rooms: the find-and-book request (one building, capacity, free slot, repeat_frequency=NEVER)"
+  connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://indico.example.org/rooms/api/rooms/search?building=513&capacity=5&start_dt=2026-11-15T10:00:00&end_dt=2026-11-15T11:00:00&repeat_frequency=NEVER" }
+  expect: { app: indico, tool: search_rooms, upstream: { headers: { authorization: "Bearer tok-fixture-1" } } }
+- name: "get_room_details: names a room found by the search (ids only come back)"
+  connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://indico.example.org/rooms/api/rooms/1234" }
+  expect: { app: indico, tool: get_room_details, upstream: { headers: { authorization: "Bearer tok-fixture-1" } } }
 - name: "negative search_rooms: a room id selects get_room_details"
   connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
   request: { method: GET, url: "https://indico.example.org/rooms/api/rooms/57" }

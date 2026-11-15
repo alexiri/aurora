@@ -225,6 +225,38 @@ fn widening_zone() {
     assert_eq!(widens(&old, &new), vec![Widening::Zone("*.x.com".into())]);
 }
 
+/// (FIX-107, SEC-17) A static token endpoint on a new host, or a new `token_hosts` entry, is a
+/// widening; the same host (or a narrower set) is not.
+#[test]
+fn widening_token_host() {
+    let with = |url: &str, extra: &str| {
+        manifest(&pkg_yaml(
+            "pa",
+            "aa",
+            &[("api.x.com", None)],
+            &format!(
+                "oauth_clients:\n  - id: cli\n    authorize_url: https://api.x.com/authorize\n    token_url: {url}\n{extra}"
+            ),
+        ))
+    };
+    let old = with("https://api.x.com/token", "");
+    assert!(widens(&old, &old).is_empty());
+    assert!(widens(&old, &with("https://api.x.com/other-path", "")).is_empty());
+    assert_eq!(
+        widens(&old, &with("https://evil.example/token", "")),
+        vec![Widening::TokenHost("evil.example".into())]
+    );
+    let listed = with(
+        "https://api.x.com/token",
+        "permissions:\n  token_hosts: [auth.x.com]\n",
+    );
+    assert_eq!(
+        widens(&old, &listed),
+        vec![Widening::TokenHost("auth.x.com".into())]
+    );
+    assert!(widens(&listed, &old).is_empty());
+}
+
 fn snap(hosts: &[(&str, Option<&str>, &str)], lost: &[&str]) -> Snapshot {
     // apps need unique ids; build one package per app
     let pk: Vec<ActivePackage> = hosts
@@ -350,4 +382,43 @@ fn full_fixture_roundtrips() {
     let snap = Snapshot::from_slice(&c.json).unwrap();
     let again = serde_json::to_value(&snap).unwrap();
     assert_eq!(aurora_registry::snapshot::canonical_bytes(&again), c.json);
+}
+
+/// (FIX-123, D-195(a)) A fresh instance: every shipped built-in package compiles into one snapshot
+/// with NO host-claim decision, and there is one GitHub and one AWS app (the former GitHub App and
+/// assume-role apps are connect methods, not apps of their own).
+#[test]
+fn the_shipped_builtin_packages_compile_without_a_host_claim_decision() {
+    let dir = format!("{}/../../plugins/builtin", env!("CARGO_MANIFEST_DIR"));
+    let mut pkgs = Vec::new();
+    for e in std::fs::read_dir(&dir).unwrap() {
+        let p = e.unwrap().path().join("plugin.yaml");
+        if !p.is_file() {
+            continue;
+        }
+        let m = Manifest::parse(&std::fs::read_to_string(&p).unwrap(), "9.9.9").unwrap();
+        pkgs.push(ActivePackage {
+            digest: format!("d-{}", m.package.id),
+            manifest: m,
+            publisher: "aurora".into(),
+            hooks_digest: Some("h".into()),
+        });
+    }
+    let c = compile(&pkgs, &[], &[], 1)
+        .unwrap_or_else(|e| panic!("built-ins conflict on a fresh instance: {e:?}"));
+    let snap = Snapshot::from_slice(&c.json).unwrap();
+    let ids: Vec<&str> = snap.apps.iter().map(|a| a.app_id.as_str()).collect();
+    for retired in ["github-app", "github-app-ghes", "aws-role"] {
+        assert!(
+            !ids.contains(&retired),
+            "{retired} is a connect method now: {ids:?}"
+        );
+    }
+    for app in ["github", "github-ghes", "aws-keys"] {
+        assert!(ids.contains(&app), "{app} missing: {ids:?}");
+    }
+    let gh = snap.apps.iter().find(|a| a.app_id == "github").unwrap();
+    let methods: Vec<&str> = gh.connect.iter().map(|c| c.id()).collect();
+    assert_eq!(methods, ["github_app", "token", "oauth", "oauth_app"]);
+    assert_eq!(gh.connect.iter().filter(|c| c.recommended()).count(), 1);
 }

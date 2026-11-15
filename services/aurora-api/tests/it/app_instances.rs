@@ -136,6 +136,11 @@ async fn install(h: &Harness, who: &str, yaml: &str, key: &SigningKey) {
 }
 
 async fn world_with(probe_override: bool) -> W {
+    world_cfg(probe_override, None).await
+}
+
+/// `extra_ca`: the path of the PEM bundle configured as `tls.extra_ca_bundle`.
+async fn world_cfg(probe_override: bool, extra_ca: Option<String>) -> W {
     let up = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/api/health"))
@@ -157,6 +162,7 @@ async fn world_with(probe_override: bool) -> W {
     // The hook host's host is a reserved name (09 §6): a registered instance may not equal it.
     let mut h = Harness::with_config(|c| {
         c.hookhost_url = "http://hooks.aurora.example.org:4104".into();
+        c.tls.extra_ca_bundle = extra_ca;
     })
     .await;
     if probe_override {
@@ -462,7 +468,7 @@ async fn every_refusal_of_a_host_is_a_422_with_the_path_and_code() {
         ("plain.example.test", "static_claim", Some("plain")),
         ("anything.wild.example.test", "static_claim", Some("plain")),
         ("saas.desk.example", "static_claim", Some("desk")),
-        ("hooks.aurora.example.org", "llm_host", None),
+        ("hooks.aurora.example.org", "aurora_address", None),
     ] {
         let (s, v) = w.register(&w.owner, org, "desk", host).await;
         assert_eq!(s, 422, "{host}: {v}");
@@ -534,6 +540,546 @@ async fn every_refusal_of_a_host_is_a_422_with_the_path_and_code() {
     assert_eq!(n, 3);
 }
 
+impl W {
+    async fn admin_register(&self, app: &str, host: &str) -> (u16, Value) {
+        self.call(
+            &self.root,
+            Method::POST,
+            "/v1/admin/app-instances",
+            Some(json!({"app_id": app, "host": host, "label": "x"})),
+        )
+        .await
+    }
+}
+
+/// FIX-132: the refusal names the holder, permission-aware.
+#[tokio::test]
+async fn a_host_conflict_names_its_holder_without_leaking_other_organizations() {
+    let w = world().await;
+    // a package's static claim: app, package and the claim
+    let (s, v) = w.admin_register("desk", "plain.example.test").await;
+    assert_eq!(s, 422, "{v}");
+    let c = &v["error"]["details"]["conflict"];
+    assert_eq!(c["kind"], "static_claim");
+    assert_eq!(c["app_id"], "plain");
+    assert_eq!(c["app_name"], "Plain");
+    assert_eq!(c["package_id"], "plainpkg");
+    // Aurora's own address: the setting is named to an instance admin, not to an org admin
+    let (_, v) = w.admin_register("desk", "hooks.aurora.example.org").await;
+    let c = &v["error"]["details"]["conflict"];
+    assert_eq!(
+        (c["kind"].as_str(), c["setting"].as_str()),
+        (Some("aurora_address"), Some("hookhost_url")),
+        "{v}"
+    );
+    let (_, v) = w
+        .register(&w.owner, w.org, "desk", "hooks.aurora.example.org")
+        .await;
+    let c = &v["error"]["details"]["conflict"];
+    assert_eq!(c["kind"], "aurora_address");
+    assert!(c["setting"].is_null(), "{v}");
+
+    // an organization's registration blocks the instance admin's, who is told which one
+    let org_inst = w.instance("desk", "desk.acme.example").await;
+    let (s, v) = w.admin_register("desk", "desk.acme.example").await;
+    assert_eq!(s, 422, "{v}");
+    let c = &v["error"]["details"]["conflict"];
+    assert_eq!(c["kind"], "instance");
+    assert_eq!(c["scope"], "org");
+    assert_eq!(c["app_id"], "desk");
+    assert_eq!(c["app_name"], "Desk");
+    assert_eq!(c["instance_id"], json!(org_inst));
+    assert_eq!(c["promotable"], true);
+    assert_eq!(c["org"]["id"], json!(w.org));
+    assert!(c["org"]["name"].is_string() && c["org"]["slug"].is_string());
+
+    // an org admin never learns another org's name: the instance-wide holder carries none
+    let (s, _) = w.admin_register("desk", "wide.example").await;
+    assert_eq!(s, 201);
+    let (s, v) = w
+        .register(&w.owner_b, w.org_b, "desk", "wide.example")
+        .await;
+    assert_eq!(s, 422, "{v}");
+    let c = &v["error"]["details"]["conflict"];
+    assert_eq!(
+        (c["kind"].as_str(), c["scope"].as_str()),
+        (Some("instance"), Some("instance"))
+    );
+    assert!(c.get("org").is_none(), "{v}");
+    assert_eq!(c["promotable"], false);
+    // another org's registration of the same host does not block org B at all
+    let (s, v) = w
+        .register(&w.owner_b, w.org_b, "desk", "desk.acme.example")
+        .await;
+    assert_eq!(s, 201, "{v}");
+}
+
+#[tokio::test]
+async fn the_admin_list_shows_every_registration_and_promote_makes_one_instance_wide() {
+    let w = world().await;
+    let id = w.instance("desk", "desk.acme.example").await;
+    let (s, v) = w.admin_register("desk", "wide.example").await;
+    assert_eq!(s, 201, "{v}");
+    // a connection bound to the org's instance
+    let (s, _, v) = w
+        .connect(&w.owner, "desk", w.body("api_key", Some(id)))
+        .await;
+    assert_eq!(s, 200, "{v}");
+
+    // default: instance-wide only; scope=all: with the org's name; org filter
+    let (s, v) = w
+        .call(&w.root, Method::GET, "/v1/admin/app-instances", None)
+        .await;
+    assert_eq!(s, 200);
+    assert_eq!(v["items"].as_array().unwrap().len(), 1);
+    let (_, v) = w
+        .call(
+            &w.root,
+            Method::GET,
+            "/v1/admin/app-instances?scope=all",
+            None,
+        )
+        .await;
+    let items = v["items"].as_array().unwrap();
+    assert_eq!(items.len(), 2);
+    let mine = items.iter().find(|i| i["id"] == json!(id)).unwrap();
+    assert!(mine["org_name"].is_string() && mine["org_slug"].is_string());
+    let (_, v) = w
+        .call(
+            &w.root,
+            Method::GET,
+            &format!("/v1/admin/app-instances?org={}", w.org),
+            None,
+        )
+        .await;
+    assert_eq!(v["items"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        w.call(
+            &w.root,
+            Method::GET,
+            "/v1/admin/app-instances?scope=x",
+            None
+        )
+        .await
+        .0,
+        400
+    );
+
+    // non-admins: 403; an unknown id: 404
+    let uri = format!("/v1/admin/app-instances/{id}/promote");
+    for who in [&w.owner, &w.member] {
+        assert_eq!(w.call(who, Method::POST, &uri, None).await.0, 403);
+    }
+    assert_eq!(
+        w.call(
+            &w.root,
+            Method::POST,
+            &format!("/v1/admin/app-instances/{}/promote", Uuid::nil()),
+            None
+        )
+        .await
+        .0,
+        404
+    );
+    // org B also holds the host → refused until that one is gone
+    let (s, v) = w
+        .register(&w.owner_b, w.org_b, "desk", "desk.acme.example")
+        .await;
+    assert_eq!(s, 201, "{v}");
+    let b_id = v["id"].as_str().unwrap().to_owned();
+    let (s, v) = w.call(&w.root, Method::POST, &uri, None).await;
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (409, Some("instance_host_shared")),
+        "{v}"
+    );
+    let (s, _) = w
+        .call(
+            &w.owner_b,
+            Method::DELETE,
+            &format!("/v1/app-instances/{b_id}"),
+            None,
+        )
+        .await;
+    assert_eq!(s, 204);
+
+    let (s, v) = w.call(&w.root, Method::POST, &uri, None).await;
+    assert_eq!(s, 200, "{v}");
+    assert!(v["org_id"].is_null() && v["org_name"].is_null());
+    assert_eq!(v["connections"], 1);
+    // connections keep their instance; org B now sees the instance-wide row; a second promote is 409
+    let bound: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM app_connections WHERE instance_id = $1")
+            .bind(id)
+            .fetch_one(w.h.pool())
+            .await
+            .unwrap();
+    assert_eq!(bound, 1);
+    let (_, v) = w
+        .call(
+            &w.owner_b,
+            Method::GET,
+            &format!("/v1/orgs/{}/app-instances", w.org_b),
+            None,
+        )
+        .await;
+    assert!(
+        v["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|i| i["id"] == json!(id))
+    );
+    let (s, v) = w.call(&w.root, Method::POST, &uri, None).await;
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (409, Some("instance_already_wide")),
+        "{v}"
+    );
+    // audited, critical, in the former org's log
+    let (org_id, critical): (Option<Uuid>, bool) = sqlx::query_as(
+        "SELECT org_id, critical FROM audit_log WHERE action = 'app_instance.promote'",
+    )
+    .fetch_one(w.h.pool())
+    .await
+    .unwrap();
+    assert_eq!((org_id, critical), (Some(w.org), true));
+}
+
+// ---- D-231 / C-731: a base path ------------------------------------------------------------
+
+impl W {
+    async fn register_at(
+        &self,
+        who: &str,
+        org: Uuid,
+        app: &str,
+        host: &str,
+        base: Value,
+    ) -> (u16, Value) {
+        self.call(
+            who,
+            Method::POST,
+            &format!("/v1/orgs/{org}/app-instances"),
+            Some(json!({"app_id": app, "host": host, "base_path": base, "label": "l"})),
+        )
+        .await
+    }
+
+    /// The upstream answers the probe under these paths only (`/<p>/api/health`).
+    async fn serve_health_under(&self, paths: &[&str]) {
+        self.up.reset().await;
+        for p in paths {
+            Mock::given(method("GET"))
+                .and(path(format!("{p}/api/health")))
+                .respond_with(ResponseTemplate::new(200))
+                .mount(&self.up)
+                .await;
+        }
+    }
+}
+
+/// An instance served under a path registers once the base path is given: the probe runs against
+/// `https://<host><base_path><probe path>`; without it the failed check says to enter the Path.
+#[tokio::test]
+async fn a_server_under_a_path_registers_with_its_base_path() {
+    let w = world().await;
+    w.serve_health_under(&["/jira"]).await;
+    // Without the base path the probe gets a 404 (FIX-144's message, now pointing at the field).
+    let (s, v) = w.register(&w.owner, w.org, "desk", "its.cern.ch").await;
+    assert_eq!(s, 422, "{v}");
+    assert_eq!(v["error"]["details"]["status"], 404, "{v}");
+    assert_eq!(
+        v["error"]["details"]["url"],
+        "https://its.cern.ch/api/health"
+    );
+    assert!(
+        v["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("enter it in Path."),
+        "{v}"
+    );
+    // With it: registered; the stored path is normalized.
+    let (s, v) = w
+        .register_at(&w.owner, w.org, "desk", "its.cern.ch", json!("/jira/"))
+        .await;
+    assert_eq!(s, 201, "{v}");
+    assert_eq!(v["base_path"], "/jira");
+    assert_eq!(v["base_url"], "https://its.cern.ch/jira");
+    assert_eq!(v["host"], "its.cern.ch");
+    let id = v["id"].as_str().unwrap().to_owned();
+    // The list carries it, and the registration probe ran under it.
+    let (_, v) = w
+        .call(
+            &w.owner,
+            Method::GET,
+            &format!("/v1/orgs/{}/app-instances", w.org),
+            None,
+        )
+        .await;
+    assert_eq!(v["items"][0]["base_url"], "https://its.cern.ch/jira");
+    let reqs = w.up.received_requests().await.unwrap();
+    assert!(reqs.iter().any(|r| r.url.path() == "/jira/api/health"));
+    // The base path cannot be changed (like the host).
+    let (s, _) = w
+        .call(
+            &w.owner,
+            Method::PATCH,
+            &format!("/v1/app-instances/{id}"),
+            Some(json!({"base_path": "/x"})),
+        )
+        .await;
+    assert_eq!(s, 400);
+    let stored: Option<String> =
+        sqlx::query_scalar("SELECT base_path FROM app_instances WHERE id = $1")
+            .bind(id.parse::<Uuid>().unwrap())
+            .fetch_one(w.h.pool())
+            .await
+            .unwrap();
+    assert_eq!(stored.as_deref(), Some("/jira"));
+}
+
+#[tokio::test]
+async fn every_base_path_rule_has_a_refusal_and_normalization_is_stored() {
+    let w = world().await;
+    w.serve_health_under(&["", "/a", "/x.y_z~w-1"]).await;
+    let long = format!("/{}", "a".repeat(65));
+    let many = "/1/2/3/4/5/6/7/8/9";
+    let toolong = format!("/{}/{}/{}", "a".repeat(60), "b".repeat(60), "c".repeat(10));
+    for bad in [
+        "jira",
+        "//jira",
+        "/a//b",
+        "/a/./b",
+        "/a/..",
+        "/a b",
+        "/a?x=1",
+        "/a#f",
+        "/a%2Fb",
+        "/a:8080",
+        "/a\\b",
+        long.as_str(),
+        many,
+        toolong.as_str(),
+    ] {
+        let (s, v) = w
+            .register_at(&w.owner, w.org, "nodefault", "nd.acme.example", json!(bad))
+            .await;
+        assert_eq!(s, 422, "{bad}: {v}");
+        assert_eq!(
+            v["error"]["code"], "instance_base_path_invalid",
+            "{bad}: {v}"
+        );
+        assert_eq!(field_path(&v), "/base_path", "{bad}");
+    }
+    // `/` and `""` mean no base path; a trailing slash is dropped; case and unreserved characters
+    // are kept.
+    for (i, (given, stored)) in [
+        (json!("/"), Value::Null),
+        (json!(""), Value::Null),
+        (json!(null), Value::Null),
+        (json!("/Kept/Case/"), json!("/Kept/Case")),
+        (json!("/x.y_z~w-1"), json!("/x.y_z~w-1")),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        // distinct hosts, so nothing conflicts
+        let host = format!("h{i}.acme.example");
+        let (s, v) = w
+            .register_at(&w.owner, w.org, "nodefault", &host, given.clone())
+            .await;
+        assert_eq!(s, 201, "{given}: {v}");
+        assert_eq!(v["base_path"], stored, "{given}");
+    }
+    // the database CHECK refuses what the API would never send
+    let bad = sqlx::query("UPDATE app_instances SET base_path = '/a/../b'")
+        .execute(w.h.pool())
+        .await;
+    assert!(bad.is_err());
+    let none: i64 = sqlx::query_scalar("SELECT count(*) FROM app_instances WHERE base_path = '/'")
+        .fetch_one(w.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(none, 0);
+}
+
+/// Registrations on one host conflict only when their base paths overlap.
+#[tokio::test]
+async fn registrations_on_one_host_conflict_only_when_their_paths_overlap() {
+    let w = world().await;
+    w.serve_health_under(&["", "/jira", "/jira2", "/jira/x", "/confluence"])
+        .await;
+    let host = "its.cern.ch";
+    let (s, v) = w
+        .register_at(&w.owner, w.org, "desk", host, json!("/jira"))
+        .await;
+    assert_eq!(s, 201, "{v}");
+    // overlapping: no base path, equal, a segment prefix of it, or it a prefix
+    for (given, app) in [
+        (json!(null), "nodefault"),
+        (json!("/jira"), "nodefault"),
+        (json!("/jira/x"), "nodefault"),
+        (json!("/jira"), "desk"),
+    ] {
+        let (s, v) = w
+            .register_at(&w.owner, w.org, app, host, given.clone())
+            .await;
+        assert_eq!(s, 422, "{given}: {v}");
+        assert_eq!(v["error"]["code"], "instance_host_conflict", "{given}: {v}");
+        let c = &v["error"]["details"]["conflict"];
+        assert_eq!(c["kind"], "instance");
+        assert_eq!(c["base_path"], "/jira", "{given}: {v}");
+        assert_eq!(c["base_url"], "https://its.cern.ch/jira", "{given}: {v}");
+    }
+    // disjoint: accepted, for the same app and for another one
+    for (given, app) in [
+        (json!("/jira2"), "desk"),
+        (json!("/confluence"), "nodefault"),
+        (json!("/JIRA"), "nodefault"),
+    ] {
+        let (s, v) = w
+            .register_at(&w.owner, w.org, app, host, given.clone())
+            .await;
+        assert_eq!(s, 201, "{given}: {v}");
+    }
+    // a registration without a base path blocks every other one on the host
+    let (s, v) = w
+        .register_at(
+            &w.owner,
+            w.org,
+            "nodefault",
+            "root.acme.example",
+            json!(null),
+        )
+        .await;
+    assert_eq!(s, 201, "{v}");
+    let (s, v) = w
+        .register_at(
+            &w.owner,
+            w.org,
+            "nodefault",
+            "root.acme.example",
+            json!("/x"),
+        )
+        .await;
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (422, Some("instance_host_conflict")),
+        "{v}"
+    );
+    // a static claim refuses the host whatever the path
+    let (s, v) = w
+        .register_at(&w.owner, w.org, "desk", "plain.example.test", json!("/a"))
+        .await;
+    assert_eq!(s, 422, "{v}");
+    assert_eq!(
+        v["error"]["details"]["conflict"]["kind"], "static_claim",
+        "{v}"
+    );
+}
+
+/// The connect probe and the OAuth authorize URL resolve `{instance}` to `<host><base_path>`.
+#[tokio::test]
+async fn connect_probe_and_oauth_urls_carry_the_base_path() {
+    let w = world().await;
+    w.serve_health_under(&["/jira"]).await;
+    Mock::given(method("GET"))
+        .and(path("/jira/api/me"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"name": "alice"})))
+        .mount(&w.up)
+        .await;
+    let (s, v) = w
+        .register_at(&w.owner, w.org, "desk", "its.cern.ch", json!("/jira"))
+        .await;
+    assert_eq!(s, 201, "{v}");
+    let id: Uuid = v["id"].as_str().unwrap().parse().unwrap();
+    // pasted-token connect: the probe `https://{instance}/api/me` ran under the base path
+    let (s, _, v) = w
+        .connect(&w.owner, "desk", w.body("api_key", Some(id)))
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["connection"]["label"], "alice");
+    assert_eq!(
+        v["connection"]["instance"]["base_url"],
+        "https://its.cern.ch/jira"
+    );
+    assert_eq!(v["connection"]["instance"]["base_path"], "/jira");
+    let reqs = w.up.received_requests().await.unwrap();
+    assert!(
+        reqs.iter().any(|r| r.url.path() == "/jira/api/me"),
+        "{:?}",
+        reqs.iter()
+            .map(|r| r.url.path().to_owned())
+            .collect::<Vec<_>>()
+    );
+    // OAuth: the authorize URL (and the token URL, checked on the way) are under it too
+    let oauth_uri = format!("/v1/orgs/{}/oauth-clients", w.org);
+    let (s, v) = w
+        .call(
+            &w.owner,
+            Method::POST,
+            &oauth_uri,
+            Some(
+                json!({"package_id": "selfhost", "client_key": "oa", "instance_id": id,
+                        "fields": {"client_id": "cid", "client_secret": "sec"}}),
+            ),
+        )
+        .await;
+    assert_eq!(s, 201, "{v}");
+    let (s, _, v) = w.connect(&w.owner, "desk", w.body("oauth", Some(id))).await;
+    assert_eq!(s, 200, "{v}");
+    let url = v["url"].as_str().unwrap();
+    assert!(
+        url.starts_with("https://its.cern.ch/jira/oauth/authorize?"),
+        "{url}"
+    );
+}
+
+/// Promote follows the same overlap rule: another organization's disjoint registration on the
+/// host does not stand in the way, an overlapping one does.
+#[tokio::test]
+async fn promote_is_refused_only_by_an_overlapping_registration() {
+    let w = world().await;
+    w.serve_health_under(&["/jira", "/other", "/jira/x"]).await;
+    let host = "its.cern.ch";
+    let (s, v) = w
+        .register_at(&w.owner, w.org, "desk", host, json!("/jira"))
+        .await;
+    assert_eq!(s, 201, "{v}");
+    let id = v["id"].as_str().unwrap().to_owned();
+    let uri = format!("/v1/admin/app-instances/{id}/promote");
+    // org B: disjoint path -> promote is fine; overlapping -> refused
+    let (s, v) = w
+        .register_at(&w.owner_b, w.org_b, "desk", host, json!("/jira/x"))
+        .await;
+    assert_eq!(s, 201, "{v}");
+    let b_id = v["id"].as_str().unwrap().to_owned();
+    let (s, v) = w.call(&w.root, Method::POST, &uri, None).await;
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (409, Some("instance_host_shared")),
+        "{v}"
+    );
+    let (s, _) = w
+        .call(
+            &w.owner_b,
+            Method::DELETE,
+            &format!("/v1/app-instances/{b_id}"),
+            None,
+        )
+        .await;
+    assert_eq!(s, 204);
+    let (s, v) = w
+        .register_at(&w.owner_b, w.org_b, "desk", host, json!("/other"))
+        .await;
+    assert_eq!(s, 201, "{v}");
+    let (s, v) = w.call(&w.root, Method::POST, &uri, None).await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["base_path"], "/jira");
+}
+
 #[tokio::test]
 async fn the_probe_runs_and_a_failure_registers_nothing() {
     let w = world().await;
@@ -576,6 +1122,219 @@ async fn the_probe_runs_and_a_failure_registers_nothing() {
     assert_eq!(w.up.received_requests().await.unwrap().len(), 1);
 }
 
+/// Point the probe at `origin` (replacing the instance host, tests only) with an optional timeout.
+fn reroute(w: &mut W, origin: &str, timeout: Option<std::time::Duration>) {
+    w.h.state = w.h.state.clone().with_connect_override(origin);
+    if let Some(t) = timeout {
+        w.h.state = w.h.state.clone().with_probe_timeout(t);
+    }
+    w.h.app = test_router(w.h.state.clone());
+}
+
+async fn probe_details(w: &W, host: &str) -> Value {
+    let (s, v) = w.register(&w.owner, w.org, "desk", host).await;
+    assert_eq!(s, 422, "{v}");
+    assert_eq!(v["error"]["code"], "instance_probe_failed");
+    assert_eq!(field_path(&v), "/host");
+    let mut d = v["error"]["details"].clone();
+    d["message"] = v["error"]["message"].clone();
+    d
+}
+
+/// (FIX-144, C-730) A 404 says what was probed and what was expected; a 3xx carries its location.
+#[tokio::test]
+async fn a_failed_probe_names_the_status_the_url_and_the_redirect() {
+    let w = world().await;
+    w.up.reset().await; // no mock: the upstream answers 404
+    let d = probe_details(&w, "its.cern.ch").await;
+    assert_eq!(d["reason"], "unexpected_status");
+    assert_eq!(d["status"], 404);
+    assert_eq!(d["url"], "https://its.cern.ch/api/health");
+    assert_eq!(d["expected"], json!([200]));
+    assert!(d.get("location").is_none(), "{d}");
+    let m = d["message"].as_str().unwrap();
+    assert!(
+        m.contains("its.cern.ch answered 404 Not Found at /api/health."),
+        "{m}"
+    );
+
+    Mock::given(method("GET"))
+        .and(path("/api/health"))
+        .respond_with(ResponseTemplate::new(302).insert_header("location", "/jira/api/health"))
+        .mount(&w.up)
+        .await;
+    let d = probe_details(&w, "its.cern.ch").await;
+    assert_eq!(d["status"], 302);
+    assert_eq!(d["location"], "https://its.cern.ch/jira/api/health");
+    assert!(
+        d["message"]
+            .as_str()
+            .unwrap()
+            .contains("redirected /api/health to https://its.cern.ch/jira/api/health."),
+        "{d}"
+    );
+
+    w.up.reset().await;
+    Mock::given(method("GET"))
+        .and(path("/api/health"))
+        .respond_with(ResponseTemplate::new(302).insert_header("location", "https://sso.cern.ch/x"))
+        .mount(&w.up)
+        .await;
+    let d = probe_details(&w, "its.cern.ch").await;
+    assert_eq!(d["location"], "https://sso.cern.ch/x");
+    assert!(
+        d["message"]
+            .as_str()
+            .unwrap()
+            .contains("Register that host instead.")
+    );
+    let n: i64 = sqlx::query_scalar("SELECT count(*) FROM app_instances")
+        .fetch_one(w.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(n, 0);
+}
+
+#[tokio::test]
+async fn a_probe_to_a_closed_port_is_a_connect_failure() {
+    let mut w = world().await;
+    reroute(&mut w, "http://127.0.0.1:1", None);
+    let d = probe_details(&w, "its.cern.ch").await;
+    assert_eq!(d["reason"], "connect", "{d}");
+    assert!(d["status"].is_null());
+    assert!(
+        d["message"]
+            .as_str()
+            .unwrap()
+            .contains("refused the connection")
+    );
+}
+
+#[tokio::test]
+async fn a_slow_upstream_is_a_timeout() {
+    let mut w = world().await;
+    w.up.reset().await;
+    Mock::given(method("GET"))
+        .and(path("/api/health"))
+        .respond_with(ResponseTemplate::new(200).set_delay(std::time::Duration::from_secs(5)))
+        .mount(&w.up)
+        .await;
+    let origin = w.up.uri();
+    reroute(&mut w, &origin, Some(std::time::Duration::from_millis(200)));
+    let d = probe_details(&w, "its.cern.ch").await;
+    assert_eq!(d["reason"], "timeout", "{d}");
+}
+
+/// (FIX-144 follow-up) An instance served under a private CA (CERN's) passes the registration
+/// check once the CA is in `tls.extra_ca_bundle`, and fails with `tls` while it is not.
+#[tokio::test]
+async fn a_private_ca_in_the_extra_bundle_is_trusted_by_the_probe() {
+    use rcgen::{BasicConstraints, CertificateParams, IsCa, KeyPair};
+    let ca_key = KeyPair::generate().unwrap();
+    let mut ca_params = CertificateParams::new(vec![]).unwrap();
+    ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+    let ca = ca_params.self_signed(&ca_key).unwrap();
+    let leaf_key = KeyPair::generate().unwrap();
+    let leaf = CertificateParams::new(vec!["127.0.0.1".to_owned()])
+        .unwrap()
+        .signed_by(&leaf_key, &ca, &ca_key)
+        .unwrap();
+    let key = rustls::pki_types::PrivateKeyDer::Pkcs8(rustls::pki_types::PrivatePkcs8KeyDer::from(
+        leaf_key.serialize_der(),
+    ));
+    let cfg = rustls::ServerConfig::builder_with_provider(std::sync::Arc::new(
+        rustls::crypto::aws_lc_rs::default_provider(),
+    ))
+    .with_safe_default_protocol_versions()
+    .unwrap()
+    .with_no_client_auth()
+    .with_single_cert(vec![leaf.der().clone()], key)
+    .unwrap();
+    let acceptor = tokio_rustls::TlsAcceptor::from(std::sync::Arc::new(cfg));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let server = tokio::spawn(async move {
+        loop {
+            let Ok((tcp, _)) = listener.accept().await else {
+                return;
+            };
+            let a = acceptor.clone();
+            tokio::spawn(async move {
+                use tokio::io::{AsyncReadExt, AsyncWriteExt};
+                let Ok(mut tls) = a.accept(tcp).await else {
+                    return;
+                };
+                let mut buf = [0u8; 1024];
+                let _ = tls.read(&mut buf).await;
+                let _ = tls
+                    .write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\nconnection: close\r\n\r\n")
+                    .await;
+                let _ = tls.shutdown().await;
+            });
+        }
+    });
+    let bundle = std::env::temp_dir().join(format!("aurora-test-ca-{}.pem", Uuid::now_v7()));
+    std::fs::write(&bundle, ca.pem()).unwrap();
+    let origin = format!("https://127.0.0.1:{port}");
+
+    // The CA is not trusted: the platform's roots do not know it.
+    let mut w = world_cfg(false, None).await;
+    reroute(&mut w, &origin, None);
+    let d = probe_details(&w, "its.cern.ch").await;
+    assert_eq!(d["reason"], "tls", "{d}");
+
+    // The CA is in `tls.extra_ca_bundle`: the same server passes the check.
+    let mut w = world_cfg(false, Some(bundle.to_string_lossy().into_owned())).await;
+    reroute(&mut w, &origin, None);
+    let (s, v) = w.register(&w.owner, w.org, "desk", "its.cern.ch").await;
+    server.abort();
+    let _ = std::fs::remove_file(&bundle);
+    assert_eq!(s, 201, "{v}");
+}
+
+/// An untrusted certificate is a `tls` failure (a real handshake against a self-signed server).
+#[tokio::test]
+async fn an_untrusted_certificate_is_a_tls_failure() {
+    let ck = rcgen::generate_simple_self_signed(vec!["127.0.0.1".to_owned()]).unwrap();
+    let key = rustls::pki_types::PrivateKeyDer::Pkcs8(rustls::pki_types::PrivatePkcs8KeyDer::from(
+        ck.key_pair.serialize_der(),
+    ));
+    let cfg = rustls::ServerConfig::builder_with_provider(std::sync::Arc::new(
+        rustls::crypto::aws_lc_rs::default_provider(),
+    ))
+    .with_safe_default_protocol_versions()
+    .unwrap()
+    .with_no_client_auth()
+    .with_single_cert(vec![ck.cert.der().clone()], key)
+    .unwrap();
+    let acceptor = tokio_rustls::TlsAcceptor::from(std::sync::Arc::new(cfg));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let server = tokio::spawn(async move {
+        loop {
+            let Ok((tcp, _)) = listener.accept().await else {
+                return;
+            };
+            let a = acceptor.clone();
+            // the client aborts the handshake: nothing to serve
+            tokio::spawn(async move {
+                let _ = a.accept(tcp).await;
+            });
+        }
+    });
+    let mut w = world().await;
+    reroute(&mut w, &format!("https://127.0.0.1:{port}"), None);
+    let d = probe_details(&w, "its.cern.ch").await;
+    server.abort();
+    assert_eq!(d["reason"], "tls", "{d}");
+    assert!(
+        d["message"]
+            .as_str()
+            .unwrap()
+            .contains("certificate is not trusted")
+    );
+}
+
 #[tokio::test]
 async fn the_probe_goes_through_the_destination_guard() {
     // No test override: the real guarded client. The name cannot resolve to a public address
@@ -586,9 +1345,13 @@ async fn the_probe_goes_through_the_destination_guard() {
         .await;
     assert_eq!(s, 422, "{v}");
     assert_eq!(v["error"]["code"], "instance_probe_failed");
-    let reason = v["error"]["details"]["reason"].as_str().unwrap();
+    // (FIX-144) the name does not resolve: a typed `dns`, not a generic failure
+    assert_eq!(v["error"]["details"]["reason"], "dns", "{v}");
     assert!(
-        ["unreachable", "destination_refused"].contains(&reason),
+        v["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("could not be found"),
         "{v}"
     );
     let n: i64 = sqlx::query_scalar("SELECT count(*) FROM app_instances")
@@ -751,7 +1514,8 @@ async fn connect_binds_the_connection_to_the_instance_or_the_default_host() {
     assert_eq!(s, 200, "{v}");
     assert_eq!(
         v["connection"]["instance"],
-        json!({"id": id, "host": "desk.acme.example", "label": "desk.acme.example label"})
+        json!({"id": id, "host": "desk.acme.example", "base_path": null,
+               "base_url": "https://desk.acme.example", "label": "desk.acme.example label"})
     );
     assert_eq!(v["connection"]["label"], "alice");
     let injecting: Vec<&str> = v["connection"]["injecting"]

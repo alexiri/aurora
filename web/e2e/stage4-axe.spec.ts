@@ -4,7 +4,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { ACCESS_SCREENS, openAccess } from "./support/access";
 import { ROUTES } from "./support/mock-api";
 import { CONNECTOR_SCREENS, openConnectorScreen } from "./support/connectors";
-import { openRoute } from "./support/open";
+import { openRoute, titled } from "./support/open";
 
 // P2-UI stage 4 (docs/18 §Dashboard visual design): zero serious/critical axe violations,
 // including color-contrast, in BOTH themes. Every route at 1280 px, and the five pages named in
@@ -12,13 +12,16 @@ import { openRoute } from "./support/open";
 // No rule is disabled and nothing is excluded.
 
 async function serious(page: Page) {
+  // A soft navigation (the root's redirect) leaves the page untitled for a few ms: check the settled page.
+  await titled(page);
   const { violations } = await new AxeBuilder({ page }).analyze();
   return violations
     .filter((v) => v.impact === "serious" || v.impact === "critical")
     .map((v) => `${v.id} (${v.impact}): ${v.nodes.map((n) => n.target.join(" ")).slice(0, 5).join(" | ")}`);
 }
 
-const NAMED = ["ws-overview", "ws-approvals", "ws-agent", "org-workspaces", "sign-in"];
+// (FIX-123, FIX-149) the Connect dialog's "How do you want to connect?" chooser is checked at 390 px too.
+const NAMED = ["ws-overview", "ws-approvals", "ws-agent", "org-workspaces", "sign-in", "ws-app-connect"];
 
 for (const scheme of ["light", "dark"] as const) {
   test.describe(`${scheme} theme, 1280 px`, () => {

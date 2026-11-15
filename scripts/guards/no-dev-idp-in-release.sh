@@ -32,9 +32,19 @@ if bad:
 ' || fail "aurora-testkit (dev IdP, test sign-in helpers) must be a [dev-dependencies] entry only"
 
 # 2. The release image set does not build it.
-if grep -n -i -E 'aurora-testkit|dev-idp' images/services/Containerfile >/dev/null; then
-  fail "images/services/Containerfile must not build or ship the development IdP"
+# (FIX-101) every Containerfile under images/ (services, web, sandbox), not one file.
+containerfiles="$(find images -type f \( -name 'Containerfile*' -o -name '*.Containerfile' \) | sort)"
+[ -n "$containerfiles" ] || fail "no Containerfiles found under images/"
+dev_idp_scan() { grep -n -i -E 'aurora-testkit|dev-idp' "$@" 2>/dev/null; }
+# shellcheck disable=SC2086
+if hits="$(dev_idp_scan $containerfiles)"; then
+  fail "a Containerfile under images/ builds or ships the development IdP: $hits"
 fi
+# Self-test: a planted reference must be found by the same scan.
+planted="$(mktemp)"
+trap 'rm -f "$planted"' EXIT
+printf 'RUN cargo build -p aurora-testkit --bin aurora-dev-idp\n' >"$planted"
+dev_idp_scan "$planted" >/dev/null || fail "self-test: the scan missed a planted dev-idp build line"
 
 # 3. Chart defaults: off.
 grep -q -E '^devIdp:' deploy/helm/aurora/values.yaml || fail "devIdp block missing from values.yaml"
@@ -45,8 +55,12 @@ m = re.search(r"^devIdp:\n((?:[ \t]+.*\n|\n)*)", t, re.M)
 if not m or not re.search(r"^\s+enabled:\s*false\b", m.group(1), re.M):
     sys.exit(1)
 PY
-if command -v helm >/dev/null 2>&1; then
-  out="$(helm template guard deploy/helm/aurora)"
+# shellcheck source=scripts/guards/lib.sh
+source scripts/guards/lib.sh
+if require_helm no-dev-idp-in-release; then
+  # (FIX-106) allowSharedLogin: an external database needs the role pair or this explicit value to render.
+  out="$(helm template guard deploy/helm/aurora --set database.allowSharedLogin=true)" || fail "the default chart render failed"
+  [ -n "$out" ] || fail "the default chart render is empty"
   if grep -q -E 'dev-idp|dev_idp|aurora-dev-idp' <<<"$out"; then
     fail "the chart's default render contains the development IdP"
   fi

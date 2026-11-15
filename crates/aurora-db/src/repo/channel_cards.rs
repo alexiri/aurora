@@ -16,12 +16,14 @@ pub struct CardRow {
     pub space_ref: String,
     pub thread_ref: String,
     pub message_ref: Option<String>,
+    /// The platform user a DMed card was sent to (FIX-112); `None` for channel cards.
+    pub addressee_ref: Option<String>,
     pub state: String,
     pub created_at: DateTime<Utc>,
 }
 
 const COLS: &str = "id, subject_kind, subject_id, integration_id, post_op_id, space_ref, \
-    thread_ref, message_ref, state, created_at";
+    thread_ref, message_ref, addressee_ref, state, created_at";
 
 pub struct NewCard<'a> {
     pub id: Uuid,
@@ -31,14 +33,16 @@ pub struct NewCard<'a> {
     pub post_op_id: Uuid,
     pub space_ref: &'a str,
     pub thread_ref: &'a str,
+    /// Set when the card is DMed to one person.
+    pub addressee_ref: Option<&'a str>,
 }
 
 /// Insert a `posting` card.
 pub async fn insert<'e, E: PgExecutor<'e>>(exec: E, n: &NewCard<'_>) -> Result<(), DbError> {
     sqlx::query(
         "INSERT INTO channel_cards (id, subject_kind, subject_id, integration_id, post_op_id,
-             space_ref, thread_ref, state)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,'posting')",
+             space_ref, thread_ref, addressee_ref, state)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'posting')",
     )
     .bind(n.id)
     .bind(n.subject_kind)
@@ -47,6 +51,7 @@ pub async fn insert<'e, E: PgExecutor<'e>>(exec: E, n: &NewCard<'_>) -> Result<(
     .bind(n.post_op_id)
     .bind(n.space_ref)
     .bind(n.thread_ref)
+    .bind(n.addressee_ref)
     .execute(exec)
     .await?;
     Ok(())

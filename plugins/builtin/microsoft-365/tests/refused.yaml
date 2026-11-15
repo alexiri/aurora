@@ -1,0 +1,6 @@
+# Dangerous endpoints no tool offers (FIX-118): the request is classified but selects no tool, so
+# custom grants and `block_untooled` refuse it. All credentials and ids are fake.
+- name: "refused mail deletion: DELETE a message selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: DELETE, url: "https://graph.microsoft.com/v1.0/me/messages/msg-fixture-1" }
+  expect: { app: microsoft-365 }

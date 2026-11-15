@@ -133,7 +133,7 @@ function PlacementForm({ saved, embedded, onSaved }: { saved: Placement; embedde
   const connections = choices.data?.connections ?? [];
 
   return (
-    <div className="max-w-[1160px] space-y-6">
+    <div className="max-w-page space-y-6">
       {embedded ? null : (
         <PageHeader
           title="Sign-up & placement"
@@ -335,7 +335,7 @@ function PlacementForm({ saved, embedded, onSaved }: { saved: Placement; embedde
                       .filter((g) => g.items.length > 0)
                       .map((g) => (
                         <div key={g.title} className="space-y-2">
-                          <h3 className="text-xs font-semibold uppercase tracking-[0.06em] text-muted">{g.title}</h3>
+                          <h3 className="text-xs font-semibold uppercase tracking-label text-muted">{g.title}</h3>
                           {g.items.map((i) => (
                             <CheckboxField
                               key={i.k}

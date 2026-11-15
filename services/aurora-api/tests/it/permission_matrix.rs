@@ -46,6 +46,19 @@ enum P {
     Unbound,
     /// Membership suspended (still has an owner binding).
     Suspended,
+    /// (D-175, FIX-082) Membership `pending`: SCIM prepared it for an existing account and the
+    /// person has not signed in since. Denied everywhere a non-member is, even with an owner
+    /// binding and group-derived access in place.
+    Pending,
+    /// (FIX-083, D-130) Plain org member whose **group** maps to the org role `admin`: an
+    /// effective admin everywhere, though `org_members.role` says `member`.
+    GroupAdmin,
+    /// (FIX-083) Org member with no direct binding whose group is bound to the workspace as
+    /// `owner`: a group-only workspace owner, an ordinary member of the org.
+    GroupWsOwner,
+    /// (FIX-083, SEC-71) Membership suspended, but still in the admin-mapped and the
+    /// workspace-owner groups: derives nothing from either.
+    SuspendedGroupAdmin,
     /// No membership in the org.
     NonMember,
     /// Instance admin, non-member of the org.
@@ -60,7 +73,7 @@ enum P {
     OrgKeyMember,
 }
 
-const ALL: [P; 14] = [
+const ALL: [P; 18] = [
     P::Anon,
     P::Owner,
     P::Admin,
@@ -69,6 +82,10 @@ const ALL: [P; 14] = [
     P::WsOwner,
     P::Unbound,
     P::Suspended,
+    P::Pending,
+    P::GroupAdmin,
+    P::GroupWsOwner,
+    P::SuspendedGroupAdmin,
     P::NonMember,
     P::InstAdmin,
     P::WsKeySame,
@@ -100,8 +117,8 @@ enum WsAccess {
 
 fn ws_access(p: P) -> WsAccess {
     match p {
-        P::Owner | P::Admin | P::OrgKeyAdmin => WsAccess::Owner,
-        P::WsOwner | P::WsKeySame => WsAccess::Owner,
+        P::Owner | P::Admin | P::OrgKeyAdmin | P::GroupAdmin => WsAccess::Owner,
+        P::WsOwner | P::WsKeySame | P::GroupWsOwner => WsAccess::Owner,
         P::WsApprover => WsAccess::Approver,
         P::WsMember | P::OrgKeyMember => WsAccess::Member,
         _ => WsAccess::None,
@@ -112,11 +129,14 @@ fn ws_access(p: P) -> WsAccess {
 fn org_role(p: P) -> Option<(&'static str, bool)> {
     match p {
         P::Owner => Some(("owner", true)),
-        P::Admin | P::OrgKeyAdmin => Some(("admin", true)),
-        P::WsMember | P::WsApprover | P::WsOwner | P::Unbound | P::OrgKeyMember => {
-            Some(("member", true))
-        }
-        P::Suspended => Some(("member", false)),
+        P::Admin | P::OrgKeyAdmin | P::GroupAdmin => Some(("admin", true)),
+        P::WsMember
+        | P::WsApprover
+        | P::WsOwner
+        | P::Unbound
+        | P::OrgKeyMember
+        | P::GroupWsOwner => Some(("member", true)),
+        P::Suspended | P::Pending | P::SuspendedGroupAdmin => Some(("member", false)),
         _ => None,
     }
 }
@@ -168,6 +188,25 @@ const fn r(m: &'static str, p: &'static str, g: G, so: bool) -> Row {
 
 /// Routes that are not checked against the principal matrix, with reasons.
 const EXEMPT: &[(&str, &str, &str)] = &[
+    (
+        "POST",
+        "/v1/agents/{agent}/space-bindings",
+        "FIX-127 (C-713): can_own of the agent's workspace, but the body names an integration and \
+         an unseeded one is the specified 404 `integration_not_found`, which this matrix reads as \
+         a denial; the denial side (member 403, outsider 404) is in channels_mgmt.rs",
+    ),
+    (
+        "GET",
+        "/v1/integrations/{id}/spaces",
+        "FIX-127 (C-714): authorization resolves through the integration's org and the caller's \
+         linked chat account (can_own in the org, 403 otherwise); covered by channels_mgmt.rs",
+    ),
+    (
+        "DELETE",
+        "/v1/scim/tokens/{id}",
+        "authorization resolves through the token's org (owner only); an unknown id is an \
+         idempotent 204 — covered by scim_auth.rs (FIX-081 lists the route)",
+    ),
     (
         "GET",
         "/v1/public/avatars/{key}",
@@ -327,12 +366,23 @@ const ROWS: &[Row] = &[
     // ---- instance admin ----
     // (phase 2, RFE-006) operator kill-switch for organizations.
     r("GET", "/v1/admin/orgs", G::Inst, false),
+    // (phase 5, P5-ADMDEL, C-733) metadata and deletes; the deletes need a recent re-auth.
+    r("GET", "/v1/admin/orgs/{org}", G::Inst, false),
+    r("GET", "/v1/admin/orgs/{org}/workspaces", G::Inst, false),
+    r("DELETE", "/v1/admin/orgs/{org}", G::Inst, false),
+    r("DELETE", "/v1/admin/workspaces/{ws}", G::Inst, false),
     r("POST", "/v1/admin/orgs/{org}/freeze", G::Inst, false),
     r("POST", "/v1/admin/orgs/{org}/unfreeze", G::Inst, false),
     r("GET", "/v1/admin/host-claims", G::Inst, false),
     r("PUT", "/v1/admin/host-claims/{group_key}", G::Inst, false),
     r("GET", "/v1/admin/app-instances", G::Inst, false),
     r("POST", "/v1/admin/app-instances", G::Inst, false),
+    r(
+        "POST",
+        "/v1/admin/app-instances/{id}/promote",
+        G::Inst,
+        false,
+    ),
     r("GET", "/v1/admin/oauth-clients", G::Inst, false),
     r("POST", "/v1/admin/oauth-clients", G::Inst, false),
     r("GET", "/v1/admin/plugins", G::Inst, false),
@@ -369,12 +419,37 @@ const ROWS: &[Row] = &[
     r("GET", "/v1/admin/overview", G::Inst, false),
     r("POST", "/v1/admin/connectors/{id}/approve", G::Inst, false),
     r("POST", "/v1/admin/connectors/{id}/token", G::Inst, false),
+    r("GET", "/v1/admin/connector-host-tokens", G::Inst, false),
+    r("POST", "/v1/admin/connector-host-tokens", G::Inst, false),
+    r(
+        "DELETE",
+        "/v1/admin/connector-host-tokens/{id}",
+        G::Inst,
+        false,
+    ),
     r("GET", "/v1/admin/trusted-keys", G::Inst, false),
     r("POST", "/v1/admin/trusted-keys", G::Inst, false),
     r("DELETE", "/v1/admin/trusted-keys/{id}", G::Inst, false),
+    // (P5-ASRC, C-590..C-602) addon sources: instance administrators only
+    r("GET", "/v1/admin/addon-sources", G::Inst, false),
+    r("POST", "/v1/admin/addon-sources", G::Inst, false),
+    r("POST", "/v1/admin/addon-sources/preview", G::Inst, false),
+    r("POST", "/v1/admin/addon-sources/check-all", G::Inst, false),
+    r("GET", "/v1/admin/addon-sources/{id}", G::Inst, false),
+    r("PATCH", "/v1/admin/addon-sources/{id}", G::Inst, false),
+    r("DELETE", "/v1/admin/addon-sources/{id}", G::Inst, false),
+    r("POST", "/v1/admin/addon-sources/{id}/check", G::Inst, false),
+    r(
+        "POST",
+        "/v1/admin/addon-sources/{id}/confirm-key",
+        G::Inst,
+        false,
+    ),
+    r("GET", "/v1/admin/audit", G::Inst, false),
     r("GET", "/v1/admin/users", G::Inst, false),
     r("PATCH", "/v1/admin/users/{id}", G::Inst, false),
     r("GET", "/v1/admin/storage", G::Inst, false),
+    r("POST", "/v1/admin/storage/refresh", G::Inst, false),
     // (P4-IDP-1, C-511) read-only role mapping table
     r("GET", "/v1/admin/identity", G::Inst, false),
     // (P4-GRP-1, C-460..C-469, SEC-71) directory groups: the org-addressed and the
@@ -415,6 +490,7 @@ const ROWS: &[Row] = &[
     r("POST", "/v1/auth/logout", G::Auth, false),
     r("POST", "/v1/auth/sessions/revoke-others", G::Auth, true),
     r("POST", "/v1/auth/cli/approve", G::Auth, true),
+    r("GET", "/v1/auth/cli/pending", G::Auth, true),
     r("POST", "/v1/invitations/accept", G::Auth, true),
     r("GET", "/v1/orgs", G::Auth, false),
     r("GET", "/v1/resolve", G::Auth, false),
@@ -431,10 +507,18 @@ const ROWS: &[Row] = &[
     r("GET", "/v1/approvals/pending", G::Auth, false),
     r("GET", "/v1/approvals/stream", G::Auth, false),
     r("DELETE", "/v1/api-keys/{id}", G::Auth, false),
+    // (FIX-140, C-720) Revoke the presenting key; a session gets 400 inside the handler.
+    r("DELETE", "/v1/me/api-key", G::Auth, false),
     // ---- org-level ----
     r("GET", "/v1/orgs/{org}", G::Member, false),
     r("PATCH", "/v1/orgs/{org}", G::Owner, false),
     r("DELETE", "/v1/orgs/{org}", G::Owner, false),
+    // (FIX-081, C-471/C-472) Directory-sync management: org owner only, session only.
+    r("GET", "/v1/orgs/{org}/scim", G::Owner, true),
+    r("PUT", "/v1/orgs/{org}/scim", G::Owner, true),
+    r("GET", "/v1/orgs/{org}/scim/status", G::Owner, true),
+    r("GET", "/v1/orgs/{org}/scim/tokens", G::Owner, true),
+    r("POST", "/v1/orgs/{org}/scim/tokens", G::Owner, true),
     // (phase 2, RFE-006) freeze / unfreeze: org owner; workspace and agent: `can_own`.
     r("POST", "/v1/orgs/{org}/freeze", G::Owner, false),
     r("POST", "/v1/orgs/{org}/unfreeze", G::Owner, false),
@@ -500,6 +584,13 @@ const ROWS: &[Row] = &[
         false,
     ),
     r("GET", "/v1/workspaces/{ws}/activity", G::WsUse, false),
+    // (P5-CHAT-4, C-727) message search: workspace member; visibility is applied inside the query.
+    r(
+        "GET",
+        "/v1/workspaces/{ws}/messages/search",
+        G::WsUse,
+        false,
+    ),
     r(
         "GET",
         "/v1/workspaces/{ws}/members/{user}/offboarding",
@@ -796,6 +887,7 @@ const ROWS: &[Row] = &[
     r("GET", "/v1/orgs/{org}/retention", G::Admin, false),
     r("PUT", "/v1/orgs/{org}/retention", G::Admin, false),
     r("GET", "/v1/orgs/{org}/storage", G::Admin, false),
+    r("POST", "/v1/orgs/{org}/storage/refresh", G::Admin, false),
     // BE-074 (M6): channel management.
     r(
         "GET",
@@ -825,6 +917,14 @@ const ROWS: &[Row] = &[
         false,
     ),
     r("DELETE", "/v1/user-links/{id}", G::Admin, false),
+    // FIX-127 (C-711..C-713).
+    r(
+        "POST",
+        "/v1/orgs/{org}/channel-integrations:probe",
+        G::Admin,
+        false,
+    ),
+    r("GET", "/v1/connector-availability", G::Auth, false),
     r("GET", "/v1/agents/{agent}/presences", G::WsUse, false),
     r(
         "GET",
@@ -840,6 +940,7 @@ const ROWS: &[Row] = &[
     r("DELETE", "/v1/space-bindings/{id}", G::WsOwn, false),
     r("GET", "/v1/me/channel-links", G::Auth, true),
     r("DELETE", "/v1/me/channel-links/{id}", G::Auth, true),
+    r("GET", "/v1/channel-links/preview", G::Auth, true),
     r("POST", "/v1/channel-links/confirm", G::Auth, true),
     r("GET", "/v1/me/dm-defaults", G::Auth, true),
     r("PUT", "/v1/me/dm-defaults", G::Auth, true),
@@ -1005,6 +1106,10 @@ async fn seed(h: &Harness, n: u32) -> Fx {
     let wo = h.user(&format!("wo{n}@x.io"), false).await;
     let u = h.user(&format!("u{n}@x.io"), false).await;
     let s_user = h.user(&format!("s{n}@x.io"), false).await;
+    let pend = h.user(&format!("pend{n}@x.io"), false).await;
+    let g_adm = h.user(&format!("gadm{n}@x.io"), false).await;
+    let g_wso = h.user(&format!("gwso{n}@x.io"), false).await;
+    let g_susp = h.user(&format!("gsusp{n}@x.io"), false).await;
     let nm = h.user(&format!("nm{n}@x.io"), false).await;
     let ia = h.user(&format!("ia{n}@x.io"), true).await;
     let victim = h.user(&format!("victim{n}@x.io"), false).await;
@@ -1017,10 +1122,56 @@ async fn seed(h: &Harness, n: u32) -> Fx {
     h.bind_ws(ws, ap, "approver").await;
     h.member(org, u, "member", "active").await;
     h.member(org, s_user, "member", "suspended").await;
+    h.member(org, pend, "member", "pending").await;
+    h.member(org, g_adm, "member", "active").await;
+    h.member(org, g_wso, "member", "active").await;
+    h.member(org, g_susp, "member", "suspended").await;
+    // Two groups (FIX-083, D-130): one maps to the org role `admin`, one is bound to the
+    // workspace as `owner`. The suspended member sits in both and must derive nothing.
+    let grp_admin = Uuid::now_v7();
+    let grp_ws = Uuid::now_v7();
+    for (id, name, role) in [
+        (grp_admin, "matrix-admins", Some("admin")),
+        (grp_ws, "matrix-ws", None),
+    ] {
+        sqlx::query("INSERT INTO groups (id, org_id, name, org_role) VALUES ($1, $2, $3, $4)")
+            .bind(id)
+            .bind(org)
+            .bind(format!("{name}-{n}"))
+            .bind(role)
+            .execute(h.pool())
+            .await
+            .unwrap();
+    }
+    sqlx::query(
+        "INSERT INTO group_workspace_access (group_id, workspace_id, org_id, role) VALUES ($1, $2, $3, 'owner')",
+    )
+    .bind(grp_ws)
+    .bind(ws)
+    .bind(org)
+    .execute(h.pool())
+    .await
+    .unwrap();
+    for (grp, user) in [
+        (grp_admin, g_adm),
+        (grp_admin, g_susp),
+        (grp_ws, g_wso),
+        (grp_ws, g_susp),
+    ] {
+        sqlx::query("INSERT INTO group_members (group_id, org_id, user_id) VALUES ($1, $2, $3)")
+            .bind(grp)
+            .bind(org)
+            .bind(user)
+            .execute(h.pool())
+            .await
+            .unwrap();
+    }
     h.member(org, victim, "member", "active").await;
     h.bind_ws(ws, m, "member").await;
     h.bind_ws(ws, wo, "owner").await;
     h.bind_ws(ws, s_user, "owner").await;
+    // The pending member holds an owner binding too: it must not be honoured.
+    h.bind_ws(ws, pend, "owner").await;
     h.bind_ws(ws, victim, "member").await;
 
     let mut auth = HashMap::new();
@@ -1032,6 +1183,13 @@ async fn seed(h: &Harness, n: u32) -> Fx {
     auth.insert(P::WsOwner, Auth::Cookie(h.good_session(wo).await.1));
     auth.insert(P::Unbound, Auth::Cookie(h.good_session(u).await.1));
     auth.insert(P::Suspended, Auth::Cookie(h.good_session(s_user).await.1));
+    auth.insert(P::Pending, Auth::Cookie(h.good_session(pend).await.1));
+    auth.insert(P::GroupAdmin, Auth::Cookie(h.good_session(g_adm).await.1));
+    auth.insert(P::GroupWsOwner, Auth::Cookie(h.good_session(g_wso).await.1));
+    auth.insert(
+        P::SuspendedGroupAdmin,
+        Auth::Cookie(h.good_session(g_susp).await.1),
+    );
     auth.insert(P::NonMember, Auth::Cookie(h.good_session(nm).await.1));
     auth.insert(P::InstAdmin, Auth::Cookie(h.good_session(ia).await.1));
     auth.insert(
@@ -1129,7 +1287,13 @@ fn body_for(method: &str, path: &str, fx: &Fx) -> Value {
             json!({"app_id": "x", "host": "x.example.test", "label": "x"})
         }
         // wrong confirmation text: an authorized caller gets a validation error, nothing is deleted
-        ("DELETE", "/v1/orgs/{org}" | "/v1/workspaces/{ws}") => json!({"confirm": "not-the-slug"}),
+        (
+            "DELETE",
+            "/v1/orgs/{org}"
+            | "/v1/workspaces/{ws}"
+            | "/v1/admin/orgs/{org}"
+            | "/v1/admin/workspaces/{ws}",
+        ) => json!({"confirm": "not-the-slug"}),
         (
             "POST",
             "/v1/orgs/{org}/freeze"
@@ -1138,11 +1302,19 @@ fn body_for(method: &str, path: &str, fx: &Fx) -> Value {
             | "/v1/admin/orgs/{org}/freeze",
         ) => json!({"reason": "matrix"}),
         ("POST", "/v1/orgs") => json!({"name": "Matrix second org"}),
+        ("POST", "/v1/orgs/{org}/scim/tokens") => json!({"name": "matrix"}),
         ("POST", "/v1/orgs/{org}/groups") => json!({"name": "matrix group"}),
         ("PUT", "/v1/workspaces/{ws}/access/groups/{group}") => json!({"role": "member"}),
         ("POST", "/v1/admin/runners") => json!({"name": "matrix-runner"}),
         ("POST", "/v1/admin/trusted-keys") => {
             json!({"publisher": "x", "name": "x", "public_key": "x"})
+        }
+        ("POST", "/v1/admin/addon-sources" | "/v1/admin/addon-sources/preview") => {
+            json!({"url": "https://matrix.example/repo"})
+        }
+        ("PATCH", "/v1/admin/addon-sources/{id}") => json!({"update_interval": "1d"}),
+        ("POST", "/v1/admin/addon-sources/{id}/confirm-key") => {
+            json!({"new_key_fingerprint": "sha256:000000000000"})
         }
         ("POST", "/v1/agents/{agent}/conversations") => json!({"external_ref": "matrix"}),
         ("PUT", "/v1/agents/{agent}/grants/connections/{conn}") => json!({"mode": "full"}),
@@ -1190,7 +1362,7 @@ fn body_for(method: &str, path: &str, fx: &Fx) -> Value {
             json!({"revision": 0})
         }
         ("POST", "/v1/orgs/{org}/policy/rollback" | "/v1/workspaces/{ws}/policy/rollback") => {
-            json!({"generation": 1})
+            json!({"generation": 1, "expect_revision": 0})
         }
         ("POST", "/v1/orgs/{org}/secrets" | "/v1/workspaces/{ws}/secrets") => {
             json!({"name": "matrix-secret", "kind": "generic"})
@@ -1211,6 +1383,9 @@ fn body_for(method: &str, path: &str, fx: &Fx) -> Value {
         ("POST", "/v1/orgs/{org}/channel-integrations") => {
             json!({"connector_id": "matrix-none", "config": {}, "credentials": {"token": "x"}})
         }
+        ("POST", "/v1/orgs/{org}/channel-integrations:probe") => {
+            json!({"connector_id": "matrix-none", "config": {}, "credentials": {"token": "x"}})
+        }
         ("PATCH", "/v1/channel-integrations/{id}") => json!({"status": "disabled"}),
         ("POST", "/v1/channel-integrations/{id}/user-links") => {
             json!({"platform_user_ref": "U1", "user_id": fx.victim})
@@ -1218,7 +1393,9 @@ fn body_for(method: &str, path: &str, fx: &Fx) -> Value {
         ("POST", "/v1/agents/{agent}/presences") => {
             json!({"integration_id": Uuid::now_v7(), "mode": "shared"})
         }
-        ("POST", "/v1/channel-links/confirm") => json!({"token": "aui_matrix"}),
+        ("POST", "/v1/channel-links/confirm") => {
+            json!({"token": "aui_matrix", "platform_user_ref": "U1"})
+        }
         ("PUT", "/v1/me/dm-defaults") => {
             json!({"integration_id": Uuid::now_v7(), "agent_id": fx.agent})
         }
@@ -1233,8 +1410,11 @@ fn body_for(method: &str, path: &str, fx: &Fx) -> Value {
 
 async fn fire(h: &Harness, fx: &Fx, row: &Row, p: P) -> (u16, Value) {
     let mut uri = fill(row.p, fx);
-    if row.p.ends_with("/memories/search") {
+    if row.p.ends_with("/memories/search") || row.p.ends_with("/messages/search") {
         uri.push_str("?q=matrix");
+    }
+    if row.p == "/v1/channel-links/preview" {
+        uri.push_str("?token=aui_matrix");
     }
     let method = Method::from_bytes(row.m.as_bytes()).unwrap();
     let body = (matches!(method, Method::POST | Method::PUT | Method::PATCH)
@@ -1428,7 +1608,37 @@ async fn permission_matrix_routes_by_principal() {
         failures.len(),
         failures.join("\n")
     );
+    // (FIX-101) An INCONCLUSIVE row proves nothing about its denial side (the request failed validation before
+    // authorization ran), so it fails the test unless it is on the explicit list below. Fix the row by giving
+    // `body_for` a valid minimal body; do not grow the list to make a run pass.
+    let unexplained: Vec<&String> = inconclusive
+        .iter()
+        .filter(|r| {
+            !ACCEPTED_INCONCLUSIVE
+                .iter()
+                .any(|(row, _)| *row == r.as_str())
+        })
+        .collect();
+    assert!(
+        unexplained.is_empty(),
+        "{} permission-matrix rows are INCONCLUSIVE (validation before authorization) and not on ACCEPTED_INCONCLUSIVE: {unexplained:?}",
+        unexplained.len()
+    );
+    let stale: Vec<&str> = ACCEPTED_INCONCLUSIVE
+        .iter()
+        .map(|(row, _)| *row)
+        .filter(|row| !inconclusive.contains(*row))
+        .collect();
+    assert!(
+        stale.is_empty(),
+        "ACCEPTED_INCONCLUSIVE lists rows that are conclusive now (remove them): {stale:?}"
+    );
 }
+
+/// Rows allowed to stay INCONCLUSIVE, as `("<METHOD> <path template>", "why a valid body cannot be built")`.
+/// Empty at FIX-101: all 315 routes answer their denial side with a valid minimal body (checked on
+/// 2026-11-14: `INCONCLUSIVE rows: 0`). The list may only shrink.
+const ACCEPTED_INCONCLUSIVE: &[(&str, &str)] = &[];
 
 /// Org-scope single-resource reads (I-27 amendment): rows for `/v1/secrets/{id}` etc. use
 /// unseeded ids and only exercise workspace scope, so seed an org secret and an org connection

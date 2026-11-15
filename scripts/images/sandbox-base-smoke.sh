@@ -152,6 +152,18 @@ compare_target() { # <target>
   if [ "$target" = sandbox ] && [ "$la" != browser ]; then
     echo "FAIL [$target]: the full image no longer declares org.aurora.capabilities=browser (got '${la}')"; fail=1
   fi
+  # (FIX-103) A declared `browser` capability must be true: the runner schedules browser boots from the
+  # label, so an image that carries it without Chromium would accept boots it cannot serve.
+  for img in "$a" "$b"; do
+    case ",$(podman image inspect -f '{{index .Config.Labels "org.aurora.capabilities"}}' "$img")," in
+      *,browser,*)
+        if podman run --rm --entrypoint /bin/sh "$img" -c 'for c in /usr/bin/chromium-browser /usr/bin/chromium; do [ -x "$c" ] && exec "$c" --version; done; exit 127' >/dev/null 2>&1; then
+          echo "ok   [$target] $img declares browser and chromium --version runs"
+        else
+          echo "FAIL [$target]: $img declares org.aurora.capabilities=browser but chromium --version does not run"; fail=1
+        fi ;;
+    esac
+  done
 }
 
 compare_target sandbox-min

@@ -23,7 +23,9 @@ Instance ── instance admins (user flag) · plugins · trusted keys · connec
 
 ## Sign-up and organization creation
 
-Configuration `auth.signup_mode`:
+Configuration `auth.signup_mode` ((phase 5, SET-4) with `auth.org_creation` an instance setting
+edited on Admin › Sign-in unless the configuration sets it; applied from the next sign-in or org
+creation):
 
 | Mode | Behaviour |
 |------|-----------|
@@ -114,6 +116,11 @@ interface"); stored in the database, audited):
   the old `personal_org` behaviour stay; their owner can delete them (`§Deletion
   semantics`). The admin page lists them ("12 personal orgs from before") so the admin
   can tell people.
+- Placement creates an org membership, so it passes the default org's SCIM admission gate
+  and seat cap like every other membership-creating path (`§SCIM`, "Admission gate and
+  seat cap", D-179): in an `exclusive` org, or one at `max_members`, a new person is not
+  placed, the refusal is audited (denied `member.add`, `path = placement`) and the
+  sign-in goes on without a membership.
 - Under `open`, mode `none` admits only users with an invitation, a mapped role claim or a
   `jit` org; others get `signup_closed`. Starter grants whose credential has gone away are
   skipped and audited; they never fail a sign-in (D-151, `API_CONTRACTS` C-524..C-527).
@@ -124,8 +131,12 @@ interface"); stored in the database, audited):
   (`personal_org` under `open`, so nothing changes on upgrade), and the admin page
   shows a warning while that holds. The **instance setup wizard** (`14 §Onboarding`)
   asks for the placement before anything else and proposes `shared_org` with a personal
-  workspace. While it is unsaved on a fresh instance (no organization exists yet), users
-  who are not instance admins signing in under `open` see "This instance is being set up — try again shortly" (no user row is created).
+  workspace. Until a placement is first saved on an instance installed with this release or later, users
+  who are not instance admins signing in under `open` are refused with `instance_setup_pending`
+  ("This instance is being set up — try again shortly"; no user row is created); an administrator's own
+  sign-in does not end that state (a persisted marker, `03 §instance_setup`, not "no organization exists").
+  An instance that already had organizations or a placement when this release was installed is not
+  pending.
 
 ## Instance admins
 
@@ -151,6 +162,24 @@ interface"); stored in the database, audited):
   e-mail list, this source **is** revoked by the sync when the value disappears from
   the token, at the next sign-in.
 - Instance admin is **not** an org role: it grants no access to org data.
+  (phase 5, P5-ADMDEL, D-234) The one exception is **removal**: an instance admin may
+  delete any organization or any workspace (session only, a recent OIDC
+  re-authentication, the slug typed to confirm), and to choose what to delete sees
+  per-organization metadata — name, slug, frozen and ownerless state, member,
+  workspace and agent counts — and each workspace's name, slug, personal marker and
+  agent count (C-733). Never members' names, conversations, agents' configuration,
+  credentials or any other content.
+- (phase 5, SPEC-SETTINGS, D-195(b), D-236) **Instance settings**: instance admins edit
+  the instance-wide settings on Admin › Settings (`15 §Instance settings`): governance and
+  BYO floors, LLM endpoints, sign-in and OIDC providers, e-mail, secret stores, agent and
+  operational defaults and limits. Every write needs a **session** (never an API key) with a
+  re-authentication within 600 s (as account deletion; 412 `reauth_required`), is
+  security-critical audited with a before/after diff (§Audit) and is e-mailed to every
+  instance admin; a key the deployment configuration sets is locked (409 `setting_locked`,
+  SEC-89). **Break-glass** (D-238(b)): this e-mail list (`auth.instance_admins`) stays in the
+  configuration and keeps granting the flag at sign-in, a provider defined in Helm keeps
+  working whatever the stored settings say, and `aurora-api settings reset` restores any
+  section from a shell on the deployment.
 
 ## Authentication
 
@@ -199,11 +228,27 @@ ID token lacks `email_verified = true`, for IdPs that never send the claim.
 Exact, case-insensitive domain match, no subdomains; any other address still
 needs the claim. Only list domains whose mailboxes the provider's own accounts
 own: a federated IdP that also admits external accounts must not let them
-assert an address in the domain), `jit`
+assert an address in the domain), (FIX-108, D-178 Q-R5-12) `link_existing_users`
+(optional boolean: may a first sign-in through this provider link to an existing
+account that was created through **another** provider with the same e-mail? Unset =
+yes, except for a provider that lists `trusted_email_domains`, which is then
+refused `email_linked_elsewhere`: its addresses are asserted by the operator, not
+proven by an `email_verified` claim, so linking would take that account over;
+accounts without any identity — `bootstrap-admin`, SCIM-provisioned — still bind by
+the e-mail), `jit`
 (optional: `{ org_slug, role: member|admin, workspace_slugs: [] }`; phase 2, RFE-012: optional `workspace_role: member|approver`, default `member`).
 (phase 1, RFE-004) At least one provider MUST be configured, or startup fails
 (`no_oidc_provider`) unless the development IdP is enabled
-(*Development and end-to-end sign-in* below). Provider-specific MFA/step-up is
+(*Development and end-to-end sign-in* below).
+(phase 5, SET-4, D-235(b), D-237) **Providers are an instance setting** (section `sign_in`,
+keyed list `auth.oidc_providers` by `id`): providers the configuration defines are locked and
+shown "Managed by Helm"; instance admins add, edit and remove others on Admin › Sign-in with
+the same fields, the client secret entered once and sealed (`instance_setting`, `08 §1`), never
+shown again. "At least one provider" counts both sources: startup refuses a merged view with
+none, and a write that would remove the last one is refused (422 `last_oidc_provider`). A
+provider's `id` cannot change once saved (`user_identities.provider_id` refers to it; removing
+a provider leaves its identities, which cannot sign in until a provider with that id returns);
+the preview names the identities affected. The provider registry is rebuilt live. Provider-specific MFA/step-up is
 the IdP's concern; Aurora requests `prompt=login&max_age=0` only for
 re-authentication (below) and never assumes an `acr`/`amr` claim.
 
@@ -223,8 +268,14 @@ Flow:
    applies). A user created here has `email_verified_at = now()` (the provider
    verified it) and no local password. A disabled user (`users.disabled_at`)
    is refused (`user_disabled`).
-4. JIT: if the provider has a `jit` block and the user is not a member of that
-   org, add membership with the configured role and workspace bindings.
+4. JIT: if the provider has a `jit` block, add membership with the configured
+   role and workspace bindings. (FIX-108) JIT membership and bindings are applied
+   on the sign-in that creates the user, and later only for an org the user has
+   never been a member of: **a membership removed by an admin is not restored by
+   JIT.** The mechanism is a removal marker per `(org, user)` (`org_member_removals`),
+   written by the admin removal, consulted by JIT, and cleared when anything creates
+   the membership again (an accepted invitation, an admin add, a claim, SCIM).
+   Removals made before the marker existed leave none.
 5. Create a session; 302 to `return_to`.
 
 (phase 4, P4-GRP-2, D-132, SEC-73) **SCIM and sign-in.** SCIM provisions *directory
@@ -240,8 +291,11 @@ re-enter through JIT while their IdP session lingers (*SCIM*).
 
 **Re-authentication** (phase 1, RFE-004). `GET /v1/auth/oidc/{provider}/start?
 return_to=…&reauth=1` sends `prompt=login` and `max_age=0`; on the callback the
-core requires the same user and (when the IdP returns `auth_time`) a value within
-60 s, then stamps `sessions.reauth_at = now()`. Operations that formerly
+core requires the same user, and a re-authentication is accepted only when the ID
+token carries `auth_time` within 60 s (allowing clock skew, so a value up to 60 s in
+the future passes and further ahead is refused); a missing claim is refused
+`reauth_stale` (OIDC Core requires the claim once `max_age` is sent, so an IdP that
+ignores `prompt=login` cannot let a stolen session stamp it). Then it stamps `sessions.reauth_at = now()`. Operations that formerly
 required the password (account deletion) require `reauth_at` within 10 minutes
 (412 `reauth_required` otherwise; the dashboard starts the flow).
 
@@ -262,7 +316,12 @@ the token to **Aurora roles**.
 **Configuration** (per provider in `auth.oidc_providers[]`, `15`; set in the **Helm
 values** (`config.auth.oidc_providers`) like the rest of the provider, never editable in
 the dashboard, because it can create instance admins and owners; the dashboard only
-shows it, read-only):
+shows it, read-only — (phase 5, SET-4, D-235(b), D-237(g)) superseded: the mappings are part
+of a provider and editable with it on Admin › Sign-in for providers not defined in Helm. Because
+a mapping can create instance admins and owners, a change that adds or widens a mapping to
+`instance_admin` or an org `owner`, or widens a JIT block, is flagged as a loosening in the
+preview and confirmed before saving, and SEC-90's re-authentication, critical audit and admin
+e-mail apply; the values a mapping grants are validated as today):
 
 ```yaml
 auth:
@@ -340,7 +399,8 @@ mapped to. That is the claim debugger an operator needs when "it doesn't work".
 
 **Audit** (security-critical): `instance_admin.grant|revoke`, `org_member.add|update|remove`
 and `workspace_access.set|remove` rows written by the sync carry `actor_kind = service`,
-`actor_label = idp:<provider>` and `metadata.claim_value`.
+`actor_label = idp:<provider>` and `metadata.claim_value`. (FIX-108) The admission of a
+new user by a role claim (`user.admit_by_claim`, D-143) is security-critical too.
 
 ### Development and end-to-end sign-in (phase 1, RFE-004)
 
@@ -378,6 +438,10 @@ With OIDC-only there must be a way to sign in without a corporate IdP:
   `Path=/`, `Secure` when the external URL is https. Stored hashed in
   `sessions`. (phase 4, P4-PRV-2) It is **host-only: it never has a `Domain`
   attribute** (an invariant, `§Preview access`), so no other host, preview hostnames included, ever receives it.
+- (phase 5, SET-4) `auth.session_idle_secs` / `auth.session_absolute_secs` are instance
+  settings: a shorter value applies to existing sessions at their next request
+  (the expiry is the earlier of the stored one and the one the new value gives), a longer one
+  only to sessions created afterwards.
 - Idle expiry `SESSION_IDLE`, absolute `SESSION_ABSOLUTE`. Revocation is
   immediate (every request reads the session row; a 30 s in-process cache keyed
   by token hash is allowed, flushed on sign-out by `NOTIFY`).
@@ -411,9 +475,16 @@ With OIDC-only there must be a way to sign in without a corporate IdP:
 1. `POST /v1/auth/cli` → `{ device_code, user_code, verification_url, interval, expires_in }`.
 2. The person opens `<external>/auth/cli?code=ABCD-EFGH`, signs in (phase 1:
    through OIDC, returning to this page), chooses a workspace, approves.
+   (FIX-108) The approval screen first shows what the code asks for, read with
+   `GET /v1/auth/cli/pending?code=` (session only): the requesting **hostname**
+   (as reported by the program: unverified), the **start time** and a **coarse
+   address** (IPv4 /24, IPv6 /48, from the request to `POST /v1/auth/cli`), and it
+   states that approval creates a key that acts as the approver and when it expires.
 3. CLI polls `POST /v1/auth/cli/token { device_code }` → `authorization_pending`
    | `{ api_key, workspace }` once (status → `consumed`). The key is a `user`
-   workspace key named `CLI on <hostname>`.
+   workspace key named `CLI on <hostname>`. (D-178, Q-R5-16) It **expires** after
+   `auth.cli_key_ttl_days` (default 90; `0` = never). Keys minted before the setting
+   have no expiry and keep working until revoked (no migration).
 
 ### Rate limits (auth)
 
@@ -440,7 +511,7 @@ values are stored only as keyed hashes.
 | Layer | Values | Notes |
 |-------|--------|-------|
 | Org role | `owner` > `admin` > `member` | Always enforced. |
-| Membership status | `active`, `suspended` | Suspended = non-member for **every** check including API keys, channel clicks, schedules. |
+| Membership status | `active`, `suspended`, `pending` (phase 4, D-175) | Suspended = non-member for **every** check including API keys, channel clicks, schedules. `pending` (SCIM prepared it for an existing account; becomes `active` only in that person's next verified sign-in) is the same: a non-member for every check, but it counts against the seat cap and may sit in SCIM groups. An admin can neither set nor leave `pending` (409 `member_pending`), only remove the member. |
 | Workspace access | `owner`, `member` — phase 0/1. **From phase 2 (RFE-012): `owner` > `approver` > `member`** | Org owners and admins are implicit workspace owners of every workspace in their org. `approver` is one deliberate notch between chatting and owning: it adds the authority to decide approvals. |
 | Group (phase 4, P4-GRP-1) | member of zero or more org groups | A group can hold workspace roles (`owner`, `approver`, `member`) and map to an org role (`admin`, `member`; never `owner`). The **effective** role is the strongest of the direct and group-derived ones, see *Groups* below. A group never creates membership. |
 | Freeze state (phase 2, RFE-006) | not frozen / `frozen` — per **agent**, **workspace** and **organization** | A reversible, audited emergency switch, see *Freeze* below. |
@@ -537,14 +608,20 @@ the frozen payload.
 | Freeze / unfreeze an **agent** (phase 2, RFE-006) | `can_own`; lifting a freeze imposed by a higher authority needs that authority (below) |
 | Freeze / unfreeze a **workspace** (phase 2, RFE-006) | `can_own` (org owners/admins included); same lifting rule |
 | Freeze / unfreeze an **organization** (phase 2, RFE-006) | org `owner`, or instance admin |
+| Delete any **organization** or **workspace**; list organizations with their counts and an organization's workspaces (phase 5, P5-ADMDEL, D-234, C-733) | instance admin (session, recent re-authentication for the deletes) |
 | Create, rename, delete a group; add/remove members of a `manual` group; set or clear a group's org-role mapping (phase 4, P4-GRP-1) | org `owner`/`admin` (a mapping to `admin` is as powerful as granting `admin` by role change, which admins may already do; `owner` can never be mapped) |
 | List groups with names, source and member counts; read a group's members (phase 4, P4-GRP-1) | members and the impact view: org `owner`/`admin`; names and counts only (for the binding picker): `can_own` of any workspace of the org; a member sees only the groups they belong to (`/v1/me`) |
 | Bind / unbind / change the role of a **group** on a workspace, read the workspace's group bindings and the group-derived members (phase 4, P4-GRP-1) | `can_own` of the workspace (the same authority as user bindings, including granting `owner`); the group must belong to the workspace's org |
-| Register a Web Push subscription for the caller's browser, list, pause, remove one's own, send oneself a test (phase 4, RFE-011b) | any signed-in user, own subscriptions only; session only (an API key cannot register a browser); a push is delivered only to the live session that registered it |
+| Register a Web Push subscription for the caller's browser, list, pause, remove one's own, send oneself a test (phase 5 (D-138, moved from phase 4), RFE-011b) | any signed-in user, own subscriptions only; session only (an API key cannot register a browser); a push is delivered only to the live session that registered it; (P4-011B spec batch, D-266(c)) revoking a session deletes its subscriptions, and a silent re-bind to a new session works only for an endpoint already registered to the same person |
 | Enable SCIM and set its e-mail domains / `exclusive`; create, list, revoke SCIM tokens; read Directory sync status (phase 4, P4-GRP-2) | org `owner` only; session only; enabling and token creation need a recent re-authentication (412 `reauth_required`) |
 | Switch **Port previews** on or off for the org (`settings.previews_enabled`, default off) (phase 4, P4-PRV-1) | org `owner`/`admin` (`org.previews.update`, security-critical) |
 | Create, pause/resume, change the start command of, delete a preview share; list the agent's shares; start the app now (phase 4, P4-PRV-1) | `can_use` of the agent's workspace, session or API key; **never an agent tool**; BYO agents have none; frozen agent: 423 |
 | Open a preview in the browser (phase 4, P4-PRV-2) | a **live dashboard session** of a user for whom `can_use(workspace)` holds, re-checked at least every `PREVIEW_AUTH_CACHE` (15 s); never an API key, never an agent credential, no other visibility (`04 §Preview access`) |
+| Register, rename, delete one's own **SSH public keys** (phase 5, P4-SSH-1, D-239) | any signed-in user, own keys only; **session only** (403 `session_required` for API keys, like creating an API key); no re-authentication (the terminal needs none either) |
+| Mint an **SSH user certificate** for an agent; connect to its sandbox over SSH (phase 5, P4-SSH-1/2, D-239) | the web terminal's rule, unchanged: `can_use` of the agent's workspace, hosted agents only, agent not frozen, instance `ssh.enabled`; session or the user's own API key for the mint (never a service key or an agent credential), re-checked by the API at session open, channel open and every heartbeat (`§SSH access`); **never an agent tool** |
+| Read, create, edit and delete one's eval questions and eval schedules, read results, start and cancel eval runs (phase 5, P4-EVAL, D-289) | `can_use` of the agent's workspace (session or API key); hosted agents only; frozen agent: 423 for starts; **never an agent tool**; expected answers and answers are agent-audience data (SEC-116); deleting a run `can_own` (`10 §Evals`, Q-EVAL-1) |
+| Set or clear an agent's eval **judge key** and the regression notice setting (phase 5, P4-EVAL, D-292, C-863) | `can_own` of the agent's workspace; the key must be granted to the agent and admitted by governance (SEC-115); session only |
+| List and disconnect SSH sessions (phase 5, P4-SSH-2) | one's own: the session's person; all sessions of an agent: `can_own` of its workspace; terminator replicas: instance admin |
 | Create, edit, pause, delete a **skill library**; "Check now"; read library settings and status (phase 4, P4-GSL) | org `owner`/`admin`; the connection must be org-scoped |
 | Browse a skill library's catalogue and read one skill at a commit (phase 4, P4-GSL) | any user who `can_use` a workspace of the org (names, descriptions and content an agent could be told; nothing is stored) |
 | Add a library skill to an agent / a workspace / the org; approve, reject a proposed library update; detach; remove (phase 4, P4-GSL) | the **tier's write authority**, unchanged from manual skills (SEC-56): agent `can_use`, workspace `can_own`, org `owner`/`admin`; **never an agent tool**; session or API key for adds, **session only** for approve/reject/detach |
@@ -663,7 +740,7 @@ fire, so a creator whose only access came through a group stops firing when remo
 survive as before. The offboarding views (RFE-021) are computed from effective access
 and add `via_groups` to each row (the groups that currently give the person access), so
 "what would break" is accurate for people who have no direct binding. A **group impact
-view** (`GET /v1/groups/{id}/impact`, optional `?remove_member=<user>`) answers the same
+view** (`GET /v1/groups/{id}/impact`, optional `?remove_member=<user>` and `&unbind_workspace=<workspace>`) answers the same
 question for deleting a group, unbinding it, or removing one member: per workspace the
 users who would lose all access (at most 200 listed, with the total), the automations
 that would be disabled, and the API-key count; the dashboard shows it before it confirms.
@@ -737,7 +814,13 @@ maintains the list twice.
   org they are an **active member** of are set to exactly the groups whose value the
   validated claim contains: added if present, removed if absent (an absent claim removes
   them all). Only rows with `group_members.source = idp` of that provider are touched;
-  values that link no group are ignored and stored nowhere. A group never creates or
+  values that link no group are ignored and stored nowhere. **When a person's
+  membership of an org leaves `active`** (suspended or removed, in the dashboard or by
+  SCIM), their IdP-linked rows in that org are deleted in the same transaction, and the
+  next sign-in after reactivation adds back whatever the claim then says: access the IdP
+  took away during a suspension never returns with the reactivation (SEC-71; REVIEW-5,
+  FIX-083). A provider whose `group_claim` is removed from the configuration syncs as an
+  absent claim. A group never creates or
   reactivates an org membership (above): a user who is not a member of the org gains
   nothing from the claim, and admission stays with invitations, JIT, D-143 role claims,
   placement and SCIM.
@@ -814,8 +897,18 @@ data, or change a global attribute of a person who has signed in (*Users*).
    80); it can do nothing until its first OIDC sign-in binds it (*OIDC step 3*); (b) a user
    exists → link it and leave the `users` row **untouched**; (c) an unremoved link of this
    org exists → 409.
-3. Create the `org_members` row (role `member`, status `active`; `active: false` → `suspended`),
-   or adopt an existing membership as it is (an invited admin keeps their role). The seat
+3. Create the `org_members` row (role `member`; `active: false` → `suspended`), or adopt an
+   existing membership as it is (an invited admin keeps their role). Its status depends on
+   who the user is (D-175, REVIEW-5; implemented by FIX-082): for a **new pre-provisioned
+   user** (2a) it is `active`, and inert until the first sign-in; for an **existing account
+   that is not yet a member of this org** (2b) it is **`pending`** — it counts against the
+   seat cap and can be placed in SCIM groups, but confers no access of any kind (every
+   check treats `pending` as a non-member) until that person's **next verified OIDC
+   sign-in**, which makes it `active` in the sign-in transaction and writes the
+   `member.add` audit row (`via: "scim"`). The directory's assertion prepares a membership;
+   only the person's own sign-in grants it (SEC-73). `active: false` or `DELETE` before
+   that sign-in removes the pending membership. SCIM responses carry the IdP's own
+   `active` value throughout. The seat
    cap `max_members` applies (403 with `detail` `member_limit_reached`). Group membership
    comes from SCIM groups, never from the user resource. No e-mail is sent, no session or
    key is created, a pending invitation is left alone.
@@ -880,14 +973,28 @@ invalidation (`org` and `user` scopes, `aurora_auth_revoked` kinds `access` and 
 SCIM never deletes a `users` row or an account and never touches other orgs: a person in two
 orgs deprovisioned by one remains a user of the other.
 
-**`exclusive` mode** (org setting, default `false`). When on, JIT and invitation acceptance for
-this org are refused for people without an `active` SCIM link: the IdP is then the only way in.
-It never changes existing members.
+**`exclusive` mode** (org setting, default `false`). When on, JIT, invitation acceptance,
+new-user placement and IdP role-claim sync for this org are refused for people without an
+`active` SCIM link: the IdP is then the only way in. It never changes existing members.
+
+**Admission gate and seat cap (D-179, FIX-080).** *Every* path that creates an `org_members`
+row — invitation acceptance, JIT, new-user placement and IdP role-claim sync — passes the
+admission gate of that org (a `removed` or `suspended` link refuses, `exclusive` without an
+`active` link refuses, SEC-73) and then its seat cap (`max_members`), decided under the org
+lock the SCIM writers take, so a directory removal that has committed is always seen and one
+that has not waits. A refusal writes a denied `member.add` audit row (`metadata.path` =
+`invitation` | `jit` | `placement` | `idp_sync`, `metadata.reason` = `scim_removed` |
+`scim_suspended` | `scim_exclusive` | `member_limit_reached`) **on its own connection**, so it
+survives a rolled-back request or an abandoned savepoint. A refused role claim, placement or
+seat-capped JIT never fails the sign-in itself (the person signs in without that
+membership); a JIT refused by the directory gate (`removed`, `suspended`, `exclusive`) still
+fails it with `scim_refused`, and a refused invitation answers 403 `scim_refused` (seat cap:
+422 `member_limit_reached`) and stays pending.
 
 **Rate limits and size.** Per token `SCIM_RATE` (600 requests/min, burst 120) through the
 `CounterStore` (class `management`, `05 §Conventions`), request bodies ≤ `SCIM_BODY_MAX` (1 MiB),
 `SCIM_MAX_PATCH_OPS` (100) operations per PATCH, `SCIM_MAX_MEMBERS_PER_REQUEST` (1 000),
-list pages ≤ `SCIM_PAGE_MAX` (100, default 50). Requests with a rejected `aud_` bearer fall
+list pages ≤ `SCIM_PAGE_MAX` (100, default 50) — a list pages **in SQL** (count plus `OFFSET`/`LIMIT`), with no bound on the size of the directory (`totalResults` is the true count; FIX-081). Requests with a rejected `aud_` bearer fall
 under the existing 30/min/IP rejected-bearer limit (class `security`, never fails open). A refusal
 is `429` in SCIM error format with `retry-after`.
 
@@ -988,6 +1095,58 @@ effort, not security-critical), `preview.session.revoked` is not written (it is 
 Denials are metrics only (`aurora_relay_requests_total{outcome}`), never audit rows (volume,
 unauthenticated sources).
 
+## SSH access (phase 5, P4-SSH-1, P4-SSH-2, D-239, SEC-92..SEC-96)
+
+Who may SSH into which sandbox is **the web terminal's rule** (`11 §Web terminal`, SEC-87), applied
+by the API at four points. No new role, no org toggle: the instance switch `ssh.enabled` (default
+off) is the deployment's choice, like `terminal.enabled`, and the two are independent.
+
+**The SSH access predicate** `can_ssh(user, agent)`: `ssh.enabled` **and** the user is not
+disabled **and** `can_use(user, agent.workspace)` (active membership, effective role, groups —
+*The access law*) **and** the agent is hosted (BYO: 422 `ssh_not_supported`) **and** no freeze
+applies to the agent, its workspace or its org (423 `frozen`). It is implemented once in
+`aurora-db::authz` beside `can_use` and evaluated:
+
+1. **at certificate mint** (`POST /v1/agents/{agent}/ssh-certificate`, session or the person's own
+   API key; an `auk_` key only for agents of its workspace): additionally the presented public key
+   must be one of the caller's registered `ssh_keys` (422 `ssh_key_not_registered`) and the mint
+   counter must allow it (429 `ssh_mint_rate_limited`);
+2. **at session open** (the terminator's `POST /v1/terminator/sessions`, after the client proved
+   possession of the certified key): the API re-verifies the certificate against its own CA keys
+   (signature, `user` type, validity window, principal = the SSH username = the agent id, no
+   critical options, key id naming this user, key and agent), requires the certified key to be
+   **still registered** to that user with the same fingerprint, re-runs `can_ssh` and the session
+   caps; any failure is a refusal the client sees as a plain authentication failure;
+3. **at every channel open** (grant mint, `POST /v1/terminator/sessions/{id}/channels`): the session is
+   open and lease-current and `can_ssh` still holds;
+4. **at every heartbeat** (30 s): for each open session `can_ssh` still holds, the key is still
+   registered, no disconnect was requested and the lifetime is not exceeded; a failure closes the
+   row server-side at detection (so keep-awake drops even if a hostile terminator keeps
+   heartbeating) and answers the session revoked; the terminator ends the connection.
+
+Revocation therefore takes effect within one heartbeat (≤ 30 s) plus the terminator's close —
+slower than the terminal's 10 s re-check, by design of the pull-shaped lease (the API cannot dial
+the terminator); a freeze, a removed membership, a deleted key, `ssh.enabled: false` and a
+disconnect all use it. Deleting the agent, its workspace or org closes its sessions (`agent_deleted`)
+and cascades the rows.
+
+**Certificates.** A user certificate is the proof that the access law passed recently for one
+person, one key and one agent, not a standing credential: type `user`, key
+`ssh-ed25519` (the registered key), CA `ssh-ed25519` (the API's signer), `valid_principals = [<agent id>]`,
+`key_id = "aurora:u=<user id>:k=<ssh key id>:a=<agent id>:w=<workspace id>"`, a random non-zero
+64-bit `serial`, `valid_after = now − 60 s`, `valid_before = now + ssh.cert_ttl_secs` (default 900 s),
+**no critical options**, and the single extension `permit-pty` (no `permit-port-forwarding`,
+`permit-agent-forwarding`, `permit-X11-forwarding` or `permit-user-rc`; the terminator refuses those
+whatever a certificate says, `12 §SSH channels`). The CA private key lives in the API only (a signer
+seam: `local` loads it from `AURORA_SSH_CA_KEY`; a KMS signer is a later registry entry); the
+terminator receives only the CA **public** keys (active and `ssh.ca.previous_public_keys`).
+
+**Hint-free refusal.** Unknown agent, wrong principal, expired or foreign certificate, a plain key,
+an unregistered or deleted key, no access, frozen, BYO, a session cap: the client sees the same
+`Permission denied (publickey)`, after the same delay, with no banner and no reason. The reason is
+recorded only in the terminator's metrics (no ids in labels) and, for refusals the API made, in the
+API's debug log (never the certificate itself).
+
 ## Freeze (phase 2, RFE-006, D-50)
 
 An emergency, **reversible** switch that stops an agent, every agent of a
@@ -1011,8 +1170,13 @@ an incident such as a compromised org account, and lifts only as described
 next). **Lifting** requires at least the authority that froze (`frozen_authority`
 = the caller's highest applicable authority at freeze time): a workspace owner
 cannot unfreeze what an org admin froze, an org owner cannot lift an
-instance-admin freeze. All of it is idempotent (freezing a frozen scope keeps the
-original record, returns 200).
+instance-admin freeze. All of it is idempotent and returns 200. (FIX-109) **Freezing a
+scope that is already frozen by a lower authority raises the record to the caller's
+authority** (who, reason, authority; `frozen_at` stays; audited as `*.freeze` with
+`escalated: true` and `previous_authority`), so a higher authority's freeze is never
+reversible by a lower one (D-50, SEC-45); freezing by an equal or lower authority changes
+nothing and says so (`outcome: "unchanged"`; the response always carries the resulting
+record and authority).
 
 **Effects** (all effective at the next gateway cache refresh ≤ 5 s, by
 `aurora_gateway_invalidate` scope `agent`/`workspace`/`org`, except where noted):
@@ -1050,6 +1214,10 @@ original record, returns 200).
    (phase 4, P4-PRV-1/2) **Previews** of an effectively frozen agent answer 423 `frozen`, never
    wake or start anything, and their open streams close within `PREVIEW_AUTH_CACHE`; the shares
    and preview sessions are kept (`11 §Port previews`, `§Preview access`).
+   (FIX-097) **Retention is suspended** for a frozen agent, workspace or organization: the
+   conversation retention sweep (`§Deletion semantics`, `10`) skips every conversation of an
+   effectively frozen scope, because freeze keeps every byte of state for forensics; the
+   sweep resumes at unfreeze and then deletes what has aged out meanwhile.
 7. **Reversal**: unfreezing clears the flags, invalidates the gateway and wakes due
    work. Nothing is replayed: aborted turns stay aborted, schedules resume at
    their next occurrence, sandboxes start on demand.
@@ -1075,13 +1243,39 @@ original record, returns 200).
   within 10 min; phase 1: recent OIDC re-authentication only, RFE-004): refused while the user is the last owner of any org
   (409 `last_owner`). Removes memberships, bindings, (phase 4) group memberships, sessions, keys, identities;
   conversations of kind `direct` with that user are deleted; authored content
-  keeps a denormalized label.
+  keeps a denormalized label. (FIX-097) The `direct` conversations go through the
+  **conversation-deletion path** in the same transaction (the harness session file is
+  queued for purge, SEC-47; one content-free `conversation.delete` audit row each), never by
+  the SQL cascade alone. The person's **personal workspace** (`§New-user placement`) is
+  deleted with the account when they are its only member (no other binding, direct or
+  through a group); otherwise it stays, keeps its `personal` marker after its owner id is
+  cleared, and is **never offered as a shared workspace** (placement choices) nor accepted by
+  `PUT /v1/admin/placement`.
 - **Workspace deletion**: cascades; agents' sandboxes are destroyed through
   runner reconciliation (`11`); channel presences on platforms are
   deprovisioned through connector operations enqueued before the delete.
+  (FIX-097) The managed secret values of the workspace's secrets, connections and OAuth
+  clients are discarded in their store after the commit (`08 §Secret stores`) and the
+  gateways are invalidated (`workspace` scope); deleting an **agent** also removes the
+  compiled rules of its grants.
 - **Org deletion**: owner only, typed confirmation; hand-written service deletes
-  children in dependency order, enqueues connector deprovisioning, then deletes
-  the org. Ledgers (`audit_log`, `request_log`, `runtime_*`) remain.
+  children in dependency order (including directory groups, SCIM tokens and SCIM links,
+  which restrict the organization row), enqueues connector deprovisioning, then deletes
+  the org; the managed secret values of every secret, connection and OAuth client of
+  the org are discarded after the commit and the gateways invalidated (`org` scope).
+  Ledgers (`audit_log`, `request_log`, `runtime_*`) remain.
+- **Deletion by an instance admin** (phase 5, P5-ADMDEL, D-234): `DELETE
+  /v1/admin/orgs/{org}` and `DELETE /v1/admin/workspaces/{ws}` (C-733) run **the same
+  services** as the owner paths above (same order, deprovisioning, secret discard,
+  gateway invalidation, sandbox teardown); nothing is skipped and there is no second
+  implementation. They also work on a frozen organization (freeze stops use, not
+  removal). Both remove the deleted workspaces from `instance_placement.shared_workspaces`
+  in the same transaction (the owner paths do too from this phase); deleting the
+  placement's default organization leaves `default_org_id` null as before. Audit:
+  `admin.org.delete` / `admin.workspace.delete`, security-critical, written as
+  instance-level rows (`org_id` null, so the instance Audit page shows them by default)
+  with the target and its slug, name and the counts in `metadata`; the deleted
+  organization's own ledgers remain as for an owner delete. No e-mail is sent.
 - **Deprovision ordering and content (phase 3, RFE-024).** For agent, workspace and
   org deletion the connector `presence.deprovision` operations are **inserted in
   the same transaction as the delete, before the cascade**, and are
@@ -1135,10 +1329,10 @@ strings are the ones the API already used and are listed in `SECURITY_CRITICAL_A
 
 | Area | Actions |
 |------|---------|
-| Keys and credentials | `api_key.create`, `api_key.revoke` (personal, workspace, org), `agent.token_regenerate`, `agent.byo_settings.update` (source CIDRs, require-context; RFE-025), `workspace.byo_posture.update` (RFE-025), `cli_login.approve`, `secret.create`, `secret.update`, `secret.value_replace`, `secret.delete`, `secret.accept`, `connection.create`, `connection.update`, `connection.delete`, `oauth_client.create\|update\|delete`, `app_instance.create\|update\|delete` (D-74), `runner.provision\|token\|delete`, `connector.provision\|token\|approve\|delete` |
+| Keys and credentials | `api_key.create`, `api_key.revoke` (personal, workspace, org), (phase 5, P4-SSH-1) `ssh_key.create`, `ssh_key.delete`, `agent.token_regenerate`, `agent.byo_settings.update` (source CIDRs, require-context; RFE-025), `workspace.byo_posture.update` (RFE-025), `cli_login.approve`, `secret.create`, `secret.update`, `secret.value_replace`, `secret.delete`, `secret.accept`, `connection.create`, `connection.update`, `connection.delete`, `oauth_client.create\|update\|delete`, `app_instance.create\|update\|delete` (D-74), `runner.provision\|token\|delete`, `connector.provision\|token\|approve\|delete` |
 | Grants | `grant.put`, `grant.delete` (connection and secret grants) |
 | Policy | `policy.publish`, `policy.rollback` (org and workspace) |
-| Plugins and registry | `plugin.approve\|reject\|disable\|enable\|uninstall`, `trusted_key.add\|remove`, `host_claim.decide` |
+| Plugins and registry | `plugin.approve\|reject\|disable\|enable\|uninstall`, `plugin.supersede` (FIX-123: connections of a superseded app moved to its successor, counts only), `trusted_key.add\|remove`, `host_claim.decide`, (phase 5, P5-ASRC, D-250, C-608; all security-critical) `addon_source.add\|update\|remove\|check`, `addon.ingest` |
 | Approval decisions | `approval.decide`, `approval.batch_decide`, `action_approval.decide`, `reach.decide`, `agent_link.decide` (whatever the door: dashboard, API, channel click) |
 | Roles and membership | `org_member.add\|role_change\|suspend\|reactivate\|remove`, `org.transfer_ownership`, `invitation.create\|accept\|cancel`, `workspace_access.put\|delete`, `user.instance_admin_grant\|revoke`, `user.disable\|enable`, `user.delete` |
 | Previews (phase 4, P4-PRV-1) | `preview.share.create\|update\|delete`, `org.previews.update` (emitted as written; `11 §Port previews`) |
@@ -1146,9 +1340,11 @@ strings are the ones the API already used and are listed in `SECURITY_CRITICAL_A
 | Freeze (RFE-006) | `agent.freeze\|unfreeze`, `workspace.freeze\|unfreeze`, `org.freeze\|unfreeze` |
 | Groups (phase 4, P4-GRP-1) | `group.create\|update\|delete`, `group_member.add\|remove`, `group_access.set\|remove` (emitted as written; `§Groups`) |
 | SCIM (phase 4, P4-GRP-2) | `scim_token.create\|revoke`, `scim.update`; membership and group changes made by the IdP are the ordinary `member.add\|update\|remove` and `group*` rows with `metadata.via = "scim"` (`§SCIM`) |
-| Governance and tenant settings | `governance.update`, `app_availability.update`, `org.update`, `org.delete`, `workspace.delete`, `retention.update` (RFE-010/015) |
+| Governance and tenant settings | `governance.update`, `app_availability.update`, `org.update`, `org.delete`, `workspace.delete`, `retention.update` (RFE-010/015); (phase 5, D-234) `admin.org.delete`, `admin.workspace.delete` |
+| Instance settings (phase 5, SET-1, D-236, C-777) | `instance_settings.update` (dashboard), `instance_settings.import`, `instance_settings.reset` (CLI, source `cli`); instance-level rows (`org_id` null), `metadata.change` = per key `{ key, entry_id?, before, after }` with secret fields as `"(secret changed)"` and each value truncated at `SETTINGS_AUDIT_VALUE_MAX`. The Helm mirroring row `instance_settings.helm_sync` is a best-effort system row (it never changes an effective value) |
 | Channels | `channel_integration.create\|update\|delete\|autolink_enable\|autolink_disable` (RFE-001), `user_link.create\|delete` |
 | Data erasure and reassignment | `conversation.delete`, `transcript_event.redact`, `memory.redact`, `automation.reassign` (RFE-021) |
+| Evals (phase 5, P4-EVAL, C-873) | `eval.question.create\|update\|delete`, `eval.settings.update` (the judge key by id only, never a value), `eval.run.start\|cancel\|delete`, `eval.schedule.create\|update\|delete`; metadata carries ids and counts only, never an expected answer, an answer, a rationale or a token; `eval.run.start` also records `trigger` and `fingerprint_hash`. Not security-critical (best-effort), except `eval.settings.update` when the judge key changes (critical, `metadata.change` of ids) |
 
 Critical rows record `metadata.change` — the changed field names and, where
 non-secret, old → new values (e.g. `role: member → admin`) — and use `outcome =
@@ -1160,7 +1356,14 @@ schedules, webhooks, conversation reads, `conversation.owner_view`,
 `agent.sandbox_retry` (FIX-029: retrying a failed sandbox start, metadata: the
 previous `failure_code`; the start failure itself is not an audited action, the
 `sandbox_start_failures` row is its record), `agent.terminal.open` (P4-TERM:
-opening a web-terminal session, metadata: agent and workspace; the terminal's
+opening a web-terminal session, metadata: agent and workspace) and
+`agent.terminal.close` (D-178: its end, metadata: agent, workspace, close code and duration in seconds); the terminal's
 bytes are never recorded anywhere, the `terminal_stream_grants` row is its
-record) — is
-best-effort.
+record), (phase 5, P4-SSH, D-239) `agent.ssh_certificate.mint` (metadata: agent, workspace, key
+fingerprint, serial, `valid_before`), `agent.ssh.open` (agent, workspace, key fingerprint, serial,
+coarse client address, terminator replica), `agent.ssh.close` (agent, workspace, close reason, duration,
+channel counts per mode, byte totals; written once by the close-exactly-once transition) and
+`ssh_session.disconnect` (a person or owner ended a session; metadata: session, agent, `by`) — is
+best-effort. SSH channel bytes and `exec` command lines are never recorded anywhere.
+(phase 5, P4-SSH-1) `ssh_key.create` and `ssh_key.delete` (metadata: name, fingerprint; never the key
+blob) are **security-critical** (Keys and credentials).

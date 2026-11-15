@@ -32,11 +32,14 @@ pub struct TurnRow {
     pub finished_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub attachment_ids: Vec<Uuid>,
+    /// (P5-CHAT-1, C-725) The `seq` of the event this message replies to.
+    pub reply_to_seq: Option<i64>,
 }
 
 const COLS: &str = "turns.id, turns.conversation_id, turns.agent_id, turns.role, turns.status, \
     turns.parent_turn_id, turns.door, turns.speaker_kind, turns.speaker_user_id, \
-    turns.speaker_label, turns.text, turns.source_event_id, turns.abort_requested_at, \
+    turns.speaker_label, turns.text, turns.source_event_id, turns.reply_to_seq, \
+    turns.abort_requested_at, \
     turns.send_now_requested_at, turns.error_code, turns.error_message, turns.usage, \
     turns.started_at, turns.finished_at, turns.created_at, \
     COALESCE((SELECT array_agg(a.id ORDER BY a.created_at, a.id) FROM attachments a \
@@ -54,6 +57,8 @@ pub struct NewTurn<'a> {
     pub speaker_label: &'a str,
     pub text: &'a str,
     pub source_event_id: Option<&'a str>,
+    /// (C-725) validated by the caller.
+    pub reply_to_seq: Option<i64>,
 }
 
 pub enum Created {
@@ -105,8 +110,8 @@ async fn insert(
     let id = Uuid::now_v7();
     sqlx::query(
         "INSERT INTO turns (id, conversation_id, agent_id, role, status, parent_turn_id, door,
-            speaker_kind, speaker_user_id, speaker_label, text, source_event_id)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)",
+            speaker_kind, speaker_user_id, speaker_label, text, source_event_id, reply_to_seq)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)",
     )
     .bind(id)
     .bind(n.conversation_id)
@@ -120,6 +125,7 @@ async fn insert(
     .bind(n.speaker_label)
     .bind(n.text)
     .bind(n.source_event_id)
+    .bind(n.reply_to_seq)
     .execute(&mut *conn)
     .await?;
     get(&mut *conn, id).await?.ok_or(DbError::NotFound)
@@ -316,6 +322,7 @@ pub async fn promote_followup(
         speaker_label: &f.speaker_label,
         text: &f.text,
         source_event_id: None,
+        reply_to_seq: f.reply_to_seq,
     };
     match insert(&mut sp, &n, "turn", "queued", None).await {
         Ok(row) => {

@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Field, inputClass } from "@/components/ui/field";
 import { Form, FormActions } from "@/components/ui/form";
 import { Notice } from "@/components/ui/notice";
+import { appDisplayName } from "@/lib/api/app-name";
 import { errorMessage } from "@/lib/api/errors";
 import {
   buildClientPatchFields,
@@ -51,7 +52,7 @@ function useDefinitions(scope: CredScope) {
     for (const d of q.data?.oauth_clients ?? [])
       defs.set(`${q.data!.package_id}|${d.client_key}`, {
         package_id: q.data!.package_id,
-        app_name: q.data!.name,
+        app_name: appDisplayName(q.data!),
         def: d,
         instance_bound: q.data!.instances != null,
         default_host: q.data!.instances?.default_host ?? null,
@@ -177,13 +178,13 @@ function CreateForm({
       {selected?.instance_bound ? (
         <Field
           id="oc-instance"
-          label="Instance"
-          hint="Each self-hosted instance has its own OAuth application. Leave on the default host for the SaaS application."
+          label="Self-hosted app"
+          hint="Each self-hosted server has its own OAuth application. Leave on the default host for the SaaS application."
         >
           <select id="oc-instance" className={inputClass} value={instanceId} onChange={(e) => setInstanceId(e.target.value)}>
             <option value="">{selected.default_host ? `${selected.default_host} (default host)` : "Select…"}</option>
             {choices.map((i) => (
-              <option key={i.id} value={i.id}>{`${i.label} (${i.host})`}</option>
+              <option key={i.id} value={i.id}>{`${i.label} (${i.base_url})`}</option>
             ))}
           </select>
         </Field>
@@ -246,7 +247,7 @@ function ClientRow({
         <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
           <span className="font-medium text-ink">{c.package_id}</span>{" "}
           <span className="font-mono text-xs text-muted">{c.client_key} · {c.scope} · {c.connection_count} connection{c.connection_count === 1 ? "" : "s"}</span>
-          {c.instance_id ? <Badge className="font-mono normal-case tracking-normal">{instanceHost ?? "self-hosted instance"}</Badge> : null}
+          {c.instance_id ? <Badge className="font-mono normal-case tracking-normal">{instanceHost ?? "self-hosted app"}</Badge> : null}
           {!c.enabled ? <Badge>Disabled</Badge> : null}
         </div>
         {canOwn && mine ? (
@@ -304,7 +305,7 @@ export function OAuthClientsPanel({ scope, canOwn, orgId }: { scope: CredScope; 
           ? { kind: "organization", id: orgId }
           : undefined;
   const instances = useAppInstances(instScope).data?.items ?? [];
-  const hosts = new Map(instances.map((i) => [i.id, i.host]));
+  const hosts = new Map(instances.map((i) => [i.id, i.base_url]));
   const [adding, setAdding] = useState(false);
   if (list.isPending) return <Loading />;
   if (list.isError) return <ErrorState error={list.error} onRetry={() => list.refetch()} />;

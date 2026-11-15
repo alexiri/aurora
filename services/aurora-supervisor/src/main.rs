@@ -46,8 +46,14 @@ enum Command {
     /// TIOCSCTTY, then exec the shell); not an operator command.
     #[command(hide = true, name = "__pty-exec")]
     PtyExec {
+        /// A one-line notice printed on the pty before the shell starts (FIX-138).
+        #[arg(long)]
+        notice: Option<String>,
         /// The shell to exec (`pty_exec::run`).
         shell: String,
+        /// Its arguments (`-l`: a login shell).
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
     },
 }
 
@@ -72,7 +78,11 @@ async fn main() -> ExitCode {
             .await;
             ExitCode::SUCCESS
         }
-        Command::PtyExec { shell } => aurora_supervisor::pty_exec::run(&shell),
+        Command::PtyExec {
+            notice,
+            shell,
+            args,
+        } => aurora_supervisor::pty_exec::run(&shell, &args, notice.as_deref()),
     }
 }
 
@@ -162,10 +172,25 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         doc.bootstrap_token.clone(),
     ));
     let streams = aurora_supervisor::streams::Streams::spawn(chan.streams);
+    // (FIX-138 item 1b) What the terminal's `claude`/`codex` wrappers source: the machine proxy,
+    // the CA, the placeholder and the enabled harnesses; no secret. Written now (before any
+    // turn), rewritten with the agent's models by each `pty.open` (before the shell starts) and
+    // by each session start (the agent's own harness's section).
+    let harness_env = std::sync::Arc::new(aurora_supervisor::harness_env::HarnessEnv::new(
+        aurora_supervisor::harness_env::HarnessEnvConfig {
+            path: PathBuf::from(aurora_supervisor::harness_env::DEFAULT_PATH),
+            enabled: doc.terminal_harnesses(),
+            proxy_url: format!("http://127.0.0.1:{MACHINE_PROXY_PORT}"),
+            ca_path: boot::DEFAULT_CA_PATH.to_owned(),
+        },
+    ));
+    if let Err(e) = harness_env.write_current() {
+        tracing::warn!(error = %e, "could not write harness.env for the terminal wrappers");
+    }
     // (P4-TERM, W19/C-623) The terminal PTY engine beside the stream engine: the boot
     // document's `terminal` capability gates it (the operator's `terminal.enabled` at start
     // time); the agent uid is the process manager's.
-    let ptys = aurora_supervisor::pty::PtyEngine::spawn(
+    let ptys = aurora_supervisor::pty::PtyEngine::spawn_with_harness_env(
         chan.ptys,
         doc.has_capability("terminal"),
         Some(1000),
@@ -174,8 +199,16 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             tracing::error!(error = %e, "cannot locate this supervisor for the pty bootstrap");
             e
         })?,
+        aurora_supervisor::pty::ShellPaths::default(),
+        Some(harness_env.clone()),
     );
     let mut cfg = SupervisorConfig::new(upstream, boot_token);
+    if let Err(e) =
+        aurora_supervisor::harness_env::ensure_state_dirs(Path::new(boot::HOME_DIR), 1000, 1000)
+    {
+        tracing::warn!(error = %e, "could not create the terminal harness state directories");
+    }
+    cfg.harness_env = Some(harness_env);
     cfg.pg = Some(aurora_supervisor::pgrelay::RELAY_PORT);
     cfg.tools.socket = Some(PathBuf::from(aurora_supervisor::tools::DEFAULT_SOCKET));
     if let Ok(exe) = std::env::current_exe() {
@@ -189,9 +222,16 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         (*ptys).clone(),
     );
     let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+    // (FIX-114) PID 1 reaps orphans, and forwards SIGTERM to registered process groups.
+    let _reaper = aurora_supervisor::process::spawn_reaper(std::time::Duration::from_secs(1));
+    let procs = sup.process_manager();
     tokio::select! {
         () = sup.run(chan.inbound) => Ok(()),
         r = chan.task => Ok(r??),
-        _ = term.recv() => Ok(()),
+        _ = term.recv() => {
+            procs.terminate_all();
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            Ok(())
+        }
     }
 }

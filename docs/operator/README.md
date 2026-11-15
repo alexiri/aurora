@@ -31,6 +31,8 @@ public origin, so the full URL is `https://<your-host>/v1/admin/runners`.
 | [upgrades.md](upgrades.md) | Upgrade order, migrations, running sandboxes during an upgrade |
 | [sign-in.md](sign-in.md) | OIDC-only sign-in (`auth.oidc_providers`), first administrator, the development IdP (`auth.dev_idp`, loopback only) |
 | [scim-provisioning.md](scim-provisioning.md) | Directory sync (phase 4, P4-GRP-2): `scim.enabled`, org tokens, IdP setup for Entra ID, Okta and Keycloak, rotation and monitoring |
+| [previews.md](previews.md) | Port previews and the relay (phase 4): `relay.*`, wildcard DNS/TLS, the edge, NetworkPolicy flows, limits, troubleshooting, metrics |
+| [terminal.md](terminal.md) | The web terminal (phase 4): `terminal.enabled`, the runner's :4108 listener, flows, close codes, caps per API replica, the edge WebSocket recipe |
 | [gateway-posture.md](gateway-posture.md) | TLS proxy listener (`gateway.proxy_tls.*`), open-lane posture, BYO posture and source allow-lists (`byo.*`, `gateway.trusted_proxies`, PROXY protocol), the database lane |
 | [retention-and-quota.md](retention-and-quota.md) | `retention.conversation_days_max`, `attachments.*`, org settings and the daily sweeps |
 | [limits-and-approvals.md](limits-and-approvals.md) | API rate limits (`ratelimit.api.*`), approval timeouts (`approvals.*`), approval e-mail (`email.*`) and streaming fan-out (`events.*`) |
@@ -38,6 +40,7 @@ public origin, so the full URL is `https://<your-host>/v1/admin/runners`.
 | [deployment-defaults.md](deployment-defaults.md) | The neutral default agent brief (and the opt-in Daneel example) and the build-time `SANDBOX_BASE_IMAGE` override (phase 3, RFE-019) |
 | [vault.md](vault.md) | The HashiCorp Vault secret store (phase 3): Vault-side setup (KV v2, `max_versions`, policies, auth), `secrets.stores[]`, Helm values, org-id `reference_scopes`, outage behaviour, `aurora-api secrets migrate` and rollback |
 | [outage-and-alerts.md](outage-and-alerts.md) | Gateway behaviour during a Postgres outage (phase 3, RFE-014): `readyz` states (`?strict=true`), what is served from cache and for how long, refusal codes, recovery, the alert rules and a recovery check |
+| [audit-log.md](audit-log.md) | The instance audit log (FIX-125): Admin → Audit, scopes, filters, the route |
 | [freeze.md](freeze.md) | The emergency freeze of an agent, workspace or organization |
 | [harnesses.md](harnesses.md) | Harnesses (phase 4, P4-HAR): enabling the Codex harness (`hosted.enabled_harnesses`, `runner.image_harnesses`, the sandbox image build argument `SANDBOX_HARNESSES`), switching an agent's harness, failure codes |
 | [skill-libraries.md](skill-libraries.md) | Git skill libraries (phase 4, P4-GSL): connecting a repository, `skills.library.*`, `api.gateway_internal_url`, what is read and stored, the review of proposed updates, metrics and audit |
@@ -111,6 +114,13 @@ OPS-013, and gaps 1, 2, 7 and 8 were fixed in FIX-003; all are listed as resolve
 - **7. OpenTelemetry export.** When `telemetry.otlp_endpoint` is set, every service exports
   traces over OTLP/HTTP protobuf (rustls; a base URL gets `/v1/traces` appended) and propagates
   W3C `traceparent` on its calls to the hook host. Without the key nothing is installed.
+  **(phase 5, FIX-146, D-232; not yet implemented)** This changes: every service will always
+  install the propagator and a tracer provider, so every log line inside a request carries
+  `request_id` (the trace id, also returned as `x-request-id`) and `kubectl logs … | grep <id>`
+  follows a request across services without any collector; the key only adds the exporter.
+  `telemetry.sample_ratio` (default 1.0) sets the sampled fraction, and in Kubernetes the
+  collector must be listed in `networkPolicy.telemetryTo` or the default-deny policies block it.
+  See [`15 §Observability`](../15-deployment-operations.md#observability).
 - **8. Parsed but unused keys.** `gateway.condition_body_bytes` sets the body prefix buffered
   for policy conditions (never below the 16 KiB approval peek), `gateway.resolve_cache_ttl_secs`
   the host-resolution cache TTL, and `runner.held_awake_ceiling` overrides the derived
@@ -121,7 +131,8 @@ OPS-013, and gaps 1, 2, 7 and 8 were fixed in FIX-003; all are listed as resolve
 
 - **3. Gateway database URL.** The Helm values comment no longer mentions
   `AURORA_GATEWAY_DATABASE_URL`. The gateway uses `AURORA_DATABASE_URL`, and
-  `database.gatewayRole` is the least-privilege switch.
+  `database.gatewayRole` (with `database.gatewayExistingSecret`) is the least-privilege login, required
+  with an external database (FIX-106); the bundled evaluation Postgres creates it automatically.
 - **4. Sandbox node selector and tolerations.** `runner.k8s.nodeSelector` and
   `runner.k8s.tolerations` render into `[runner.k8s] node_selector` and `tolerations`.
 - **5. Plugin packages in Helm.** `plugins.source` mounts packages from a ConfigMap (copied by

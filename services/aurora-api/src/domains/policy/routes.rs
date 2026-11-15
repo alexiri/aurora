@@ -92,7 +92,9 @@ async fn do_publish(
 ) -> Result<Json<PolicyDocument>, ApiError> {
     let (action, meta) = match &source {
         Source::Draft { revision } => ("policy.publish", json!({"revision": revision})),
-        Source::Generation { number } => ("policy.rollback", json!({"from_generation": number})),
+        Source::Generation { number, .. } => {
+            ("policy.rollback", json!({"from_generation": number}))
+        }
     };
     let ev = event(caller, action, s, meta);
     service::publish(state, s, caller.user_id, source, ev).await?;
@@ -192,6 +194,7 @@ async fn rollback_ws(
         s,
         Source::Generation {
             number: req.generation,
+            expect_revision: req.expect_revision,
         },
     )
     .await
@@ -327,6 +330,7 @@ async fn rollback_org(
         s,
         Source::Generation {
             number: req.generation,
+            expect_revision: req.expect_revision,
         },
     )
     .await

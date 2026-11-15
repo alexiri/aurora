@@ -730,13 +730,24 @@ async fn fresh_open_instance_admits_a_listed_admin() {
     e.sign_in().await.unwrap();
     // Unsaved: today's behaviour (own org) for the admin.
     assert_eq!(e.n("SELECT count(*) FROM organizations").await, 1);
+    // FIX-116: the administrator's own sign-in created an organization, yet the gate stays
+    // closed for everyone else until a placement is saved.
+    e.who("s2", "bob@example.com", Some("bobj"));
+    assert_eq!(e.sign_in().await.unwrap_err(), "instance_setup_pending");
+    assert_eq!(
+        e.n("SELECT count(*) FROM users WHERE email = 'bob@example.com'")
+            .await,
+        0
+    );
 }
 
 #[tokio::test]
 async fn unsaved_and_personal_org_modes_keep_todays_behaviour() {
     let e = env(SignupMode::Open).await;
-    // An organization exists, so the instance is no longer fresh.
+    // An organization exists and the instance predates the setup gate (FIX-116), so it is not
+    // fresh.
     e.h.org().await;
+    e.h.mark_upgraded_instance().await;
     e.who("s1", "bob@example.com", Some("bobj"));
     e.sign_in().await.unwrap();
     assert_eq!(e.n("SELECT count(*) FROM organizations").await, 2);
@@ -866,6 +877,101 @@ async fn choices_offer_org_level_credentials_and_never_personal_workspaces() {
         )
         .await;
     assert_eq!(s, 404);
+}
+
+/// (FIX-097 6, docs/04 §Deletion semantics) Account deletion deletes the person's personal
+/// workspace when they are its only member; a personal workspace somebody else is bound to
+/// stays, keeps its `personal` marker after `personal_owner_user_id` is nulled, and is never
+/// offered as a shared workspace again (choices) nor accepted by `PUT /v1/admin/placement`.
+#[tokio::test]
+async fn deleting_an_account_deletes_a_solely_used_personal_workspace_and_keeps_a_shared_one_personal()
+ {
+    let e = env(SignupMode::Open).await;
+    let org = e.shared(json!({})).await;
+    let mut cookies = Vec::new();
+    for (sub, email) in [("s1", "bob@example.com"), ("s2", "cy@example.com")] {
+        e.who(sub, email, None);
+        cookies.push(e.sign_in().await.unwrap());
+    }
+    let (bob, cy) = (
+        e.user("bob@example.com").await,
+        e.user("cy@example.com").await,
+    );
+    let ws_of = |u: Uuid| {
+        let pool = e.h.pool().clone();
+        async move {
+            sqlx::query_scalar::<_, Uuid>(
+                "SELECT id FROM workspaces WHERE personal_owner_user_id = $1",
+            )
+            .bind(u)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        }
+    };
+    let (bws, cws) = (ws_of(bob).await, ws_of(cy).await);
+    // Cy is bound to Bob's personal workspace too: it is not Bob's alone.
+    e.h.bind_ws(bws, cy, "member").await;
+    for u in [bob, cy] {
+        sqlx::query("UPDATE sessions SET reauth_at = now() WHERE user_id = $1")
+            .bind(u)
+            .execute(e.h.pool())
+            .await
+            .unwrap();
+    }
+    let (s, v) = e.call(&cookies[0], Method::DELETE, "/v1/me", None).await;
+    assert_eq!(s, 204, "{v}");
+    let (owner, personal): (Option<Uuid>, bool) =
+        sqlx::query_as("SELECT personal_owner_user_id, personal FROM workspaces WHERE id = $1")
+            .bind(bws)
+            .fetch_one(e.h.pool())
+            .await
+            .unwrap();
+    assert_eq!(
+        (owner, personal),
+        (None, true),
+        "kept, still marked personal"
+    );
+    let (s, v) = e
+        .call(
+            &e.admin,
+            Method::GET,
+            &format!("/v1/admin/placement/choices?org_id={org}"),
+            None,
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert!(
+        v["workspaces"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|w| w["id"] != json!(bws)),
+        "a departed person's workspace is not offered: {v}"
+    );
+    let (s, v) = e
+        .put(json!({"mode": "shared_org", "default_org_id": org,
+            "shared_workspaces": [{"workspace_id": bws, "role": "member"}],
+            "personal_workspace": {"enabled": true}}))
+        .await;
+    assert_eq!(s, 400, "cannot be saved as shared: {v}");
+    // Cy's own workspace has no other member: it goes with the account.
+    let (s, v) = e.call(&cookies[1], Method::DELETE, "/v1/me", None).await;
+    assert_eq!(s, 204, "{v}");
+    assert_eq!(
+        e.n(&format!(
+            "SELECT count(*) FROM workspaces WHERE id = '{cws}'"
+        ))
+        .await,
+        0
+    );
+    assert_eq!(
+        e.n(&format!(
+            "SELECT count(*) FROM workspaces WHERE id = '{bws}'"
+        ))
+        .await,
+        1
+    );
 }
 
 // ---- FIX-045 (D-162): the default template names workspaces from the OIDC-unique `sub` ----
@@ -1156,7 +1262,8 @@ apps:
     )
 }
 
-const FIX038_CUSTOM_ONLY: &str = "    grants: { custom_only: true }\n";
+// (FIX-085) `custom_only` implies `block_untooled`; the manifest says both.
+const FIX038_CUSTOM_ONLY: &str = "    grants: { custom_only: true, block_untooled: true }\n";
 
 impl Env {
     /// An org-level connection of `pkg_app`, installed from `yaml`.
@@ -1300,8 +1407,8 @@ async fn fix038_pre_fix_custom_only_starter_row_skips_and_audits_without_blockin
         .execute(e.h.pool())
         .await
         .unwrap();
-    // Sign-in must not be blocked: the starter is skipped and the skip is audited with the
-    // established (wrong-cause but fail-open) reason.
+    // Sign-in must not be blocked: the starter is skipped and the skip is audited with its own
+    // reason (FIX-064: not `credential_unavailable`, the wrong cause FIX-038 left).
     e.who("s1", "bob@example.com", Some("bobj"));
     e.sign_in().await.unwrap();
     let (slug, _, _) = e.personal("bob@example.com").await.unwrap();
@@ -1314,5 +1421,144 @@ async fn fix038_pre_fix_custom_only_starter_row_skips_and_audits_without_blockin
     .await
     .unwrap();
     assert_eq!(ev["starter"], json!(true));
-    assert_eq!(ev["reason"], "credential_unavailable");
+    assert_eq!(ev["reason"], "full_grant_forbidden");
+}
+
+/// FIX-064: a database error inside a starter grant is not "a credential that went away": it is
+/// never audited as `credential_unavailable`, and a refusal before it (skipped in a savepoint)
+/// does not poison the shared sign-in transaction.
+#[tokio::test]
+async fn fix064_a_database_error_in_a_starter_grant_is_not_reported_as_unavailable() {
+    let e = env(SignupMode::Open).await;
+    let org = e
+        .shared(json!({"personal_workspace": {"enabled": true,
+            "name_template": "{preferred_username}|{email_local}"}}))
+        .await;
+    // The package also carries a plain app (FIX-084, SEC-67: an app the snapshot does not hold
+    // is `custom_only`, so the second starter's app must be installed for its grant to be tried).
+    let plain_app = r#"  - about: { id: plain_app, name: Plain }
+    credentials: [ { name: api_token, secret: true } ]
+    connect:
+      - id: api_key
+        kind: fields
+        fields: [ { name: api_token, label: T, type: secret, required: true } ]
+    hosts:
+      - match: { host: "api.plain.example" }
+        inject:
+          - bearer: "{credentials.api_token}"
+"#;
+    let conn = e
+        .fix038_connection(&format!(
+            "{}{plain_app}",
+            fix038_yaml("1.0.0", FIX038_CUSTOM_ONLY)
+        ))
+        .await;
+    let key = Uuid::now_v7();
+    sqlx::query("UPDATE instance_placement SET starter_grants = $2 WHERE default_org_id = $1")
+        .bind(org)
+        .bind(json!([{"kind": "connection", "id": conn}, {"kind": "connection", "id": key}]))
+        .execute(e.h.pool())
+        .await
+        .unwrap();
+    // The second starter: a live connection of a plain app whose grant insert fails in the
+    // database (an injected trigger), i.e. a real `Db` error, not a refusal.
+    sqlx::query("INSERT INTO app_connections (id, org_id, workspace_id, app_id, package_id, app_version, label, status, credentials_ref) VALUES ($1,$2,NULL,'plain_app','pkg','1.0.0','pc','active','x')")
+        .bind(key)
+        .bind(org)
+        .execute(e.h.pool())
+        .await
+        .unwrap();
+    sqlx::query(&format!(
+        "CREATE FUNCTION fix064_boom() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN \
+         IF NEW.connection_id = '{key}' THEN RAISE EXCEPTION 'injected'; END IF; RETURN NEW; END $$"
+    ))
+    .execute(e.h.pool())
+    .await
+    .unwrap();
+    sqlx::query(
+        "CREATE TRIGGER fix064_boom BEFORE INSERT ON grants FOR EACH ROW EXECUTE FUNCTION fix064_boom()",
+    )
+    .execute(e.h.pool())
+    .await
+    .unwrap();
+    e.who("s1", "bob@example.com", Some("bobj"));
+    let r = e.sign_in().await;
+    assert!(r.is_err(), "the real failure surfaces: {r:?}");
+    let unavailable = e
+        .n("SELECT count(*) FROM audit_log WHERE action = 'grant.create' AND metadata->>'reason' = 'credential_unavailable'")
+        .await;
+    assert_eq!(
+        unavailable, 0,
+        "a database error is not a vanished credential"
+    );
+}
+
+/// FIX-080 (SEC-73, docs/04 §SCIM exclusive, §Invitations seat cap): placement creates an
+/// `org_members` row, so it passes the same admission gate and seat cap as JIT and
+/// invitations. A refusal is audited as a denied `member.add` and the sign-in goes on.
+#[tokio::test]
+async fn fix080_placement_obeys_the_exclusive_gate_and_the_seat_cap() {
+    let e = env(SignupMode::Open).await;
+    let org = e.shared(json!({})).await;
+    let denied = |email: &'static str, reason: &'static str| {
+        let e = &e;
+        async move {
+            let u = e.user(email).await;
+            e.n(&format!(
+                "SELECT count(*) FROM audit_log WHERE org_id = '{org}' AND action = 'member.add' \
+                 AND outcome = 'denied' AND target_id = '{u}' AND metadata->>'path' = 'placement' \
+                 AND metadata->>'reason' = '{reason}'"
+            ))
+            .await
+        }
+    };
+    let member_of = |email: &'static str| {
+        let e = &e;
+        async move {
+            e.n(&format!(
+                "SELECT count(*) FROM org_members m JOIN users u ON u.id = m.user_id \
+                 WHERE m.org_id = '{org}' AND u.email = '{email}'"
+            ))
+            .await
+        }
+    };
+    // `exclusive`: the directory never provisioned this person.
+    sqlx::query(
+        "UPDATE organizations SET settings = settings || '{\"scim\": {\"exclusive\": true}}'::jsonb WHERE id = $1",
+    )
+    .bind(org)
+    .execute(e.h.pool())
+    .await
+    .unwrap();
+    e.who("s-bob", "bob@example.com", Some("bobj"));
+    e.sign_in().await.expect("the sign-in itself goes on");
+    assert_eq!(member_of("bob@example.com").await, 0, "no membership");
+    assert_eq!(denied("bob@example.com", "scim_exclusive").await, 1);
+    // Seat cap: not exclusive any more, but every seat is taken.
+    let seats = e
+        .n(&format!(
+            "SELECT count(*) FROM org_members WHERE org_id = '{org}' AND status = 'active'"
+        ))
+        .await;
+    sqlx::query(
+        "UPDATE organizations SET settings = jsonb_build_object('max_members', $2::int) WHERE id = $1",
+    )
+    .bind(org)
+    .bind(seats as i32)
+    .execute(e.h.pool())
+    .await
+    .unwrap();
+    e.who("s-ada", "ada@example.com", Some("ada"));
+    e.sign_in().await.expect("the sign-in itself goes on");
+    assert_eq!(member_of("ada@example.com").await, 0, "seat cap holds");
+    assert_eq!(denied("ada@example.com", "member_limit_reached").await, 1);
+    // Room again: the next person is placed as before.
+    sqlx::query("UPDATE organizations SET settings = '{}'::jsonb WHERE id = $1")
+        .bind(org)
+        .execute(e.h.pool())
+        .await
+        .unwrap();
+    e.who("s-cy", "cy@example.com", Some("cy"));
+    e.sign_in().await.unwrap();
+    assert_eq!(member_of("cy@example.com").await, 1);
 }

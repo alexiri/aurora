@@ -47,13 +47,36 @@ not yet received the new key refuses what the others sign with it.
 
 2. **Confirm convergence, then activate.** Every replica must show the new id:
 
+   The internal listeners are closed to every pod but their own peers by NetworkPolicy, and the service images
+   have no `curl`, so ask each replica **through `kubectl port-forward`** from where you run `kubectl`
+   (a port-forward goes through the API server to the pod and is not subject to NetworkPolicy), once per
+   replica (`kubectl get pods` lists them; port-forward to the pod, not the Service, so every replica is asked):
+
    ```bash
-   aurora-api keys status                        # reads this process's environment
-   curl -s -H "Authorization: Bearer $SECRET_B64" -H "X-Aurora-Key-Id: $ID" \
-     http://<gateway-internal>:4103/internal/v1/status   # gateway
-   curl ... http://<hookhost>:4104/internal/v1/status     # hookhost
-   curl ... http://<api-internal>:4111/internal/v1/status # api (both rings)
+   # the internal secret as stored in the Secret (<fullname>-secrets; `kubectl get secret` lists it)
+   SECRET="$(kubectl -n aurora get secret <fullname>-secrets -o jsonpath='{.data.AURORA_INTERNAL_SECRET}' | base64 -d)"
+   # A bare value (no ':') is ring entry `v0`: ID=v0, KEY=$SECRET. For a ring `id:key,id2:key2`, use the
+   # entry you want to ask about: ID=<id before ':'>, KEY=<the base64 after it>.
+   ID=v0; KEY="$SECRET"
+
+   for pod in $(kubectl -n aurora get pods -l app.kubernetes.io/component=gateway -o name); do
+     kubectl -n aurora port-forward "$pod" 14103:4103 >/dev/null & pf=$!; sleep 2
+     curl -s -H "Authorization: Bearer $KEY" -H "X-Aurora-Key-Id: $ID" http://127.0.0.1:14103/internal/v1/status
+     kill $pf
+   done
+   # hookhost: component=hookhost, port 4104;  api: component=api, port 4111 (both rings)
    ```
+
+   Rehearsed on kind (2026-11-14, a bare-value install): each replica answers
+   `{"internal_secret":{"active":"v0","keys":[{"fingerprint":"4a24fe9e","id":"v0"}]},"service":"hookhost"}`
+   (the gateway adds its state, the api also the `signing_key` ring); ids and fingerprints only, never values.
+
+   `aurora-api keys status` reads only the environment of the process it runs in: run it with
+   `kubectl exec deploy/aurora-api -- /usr/local/bin/aurora-api keys status` for one api replica (the release
+   image's path, as in the `secrets rekey` step below; not rehearsed: the kind e2e uses thin dev images). (The first-draft instruction
+   to `curl` the internal addresses directly could not be performed from anywhere an operator runs commands.
+   If `kubectl port-forward` is not allowed in your cluster, check the ids from each pod's log line at start —
+   the services log the ring ids, never values — before activating.)
 
    The status endpoints and `keys status` print key **ids**, the active id and an 8-hex-char
    fingerprint of each entry. They never print values. Only when every replica of every service
@@ -112,7 +135,7 @@ old ones under the active key so the old key can be retired.
    kubectl -n aurora exec deploy/aurora-api -- /usr/local/bin/aurora-api secrets rekey
    ```
 
-   It visits every managed inline value (all six purposes, or one with `--purpose`) whose
+   It visits every managed inline value (all eight purposes, or one with `--purpose`) whose
    envelope uses a key other than the active one, and re-seals it under the active key with
    the guarantees of [`secrets migrate`](vault.md#4-migrating-values): per row a
    compare-and-swap update in one transaction, so a row that changed meanwhile is skipped, never

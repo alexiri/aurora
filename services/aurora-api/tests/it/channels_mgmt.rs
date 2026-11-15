@@ -43,6 +43,7 @@ struct W {
 
 struct Users {
     owner: Uuid,
+    wsowner: Uuid,
     wsmember: Uuid,
     plain: Uuid,
     outsider: Uuid,
@@ -212,6 +213,7 @@ impl W {
             outsider: ck(outsider).await,
             users: Users {
                 owner,
+                wsowner: wso,
                 wsmember: wsm,
                 plain,
                 outsider,
@@ -1534,30 +1536,31 @@ async fn link_url(w: &W, integ: Uuid, platform: &str) -> String {
 async fn confirm_flow_expired_used_and_cross_user() {
     let w = W::new().await;
     let integ = w.integration(&w.fake, "T1").await;
-    let confirm = |who: &str, token: &str| {
+    let confirm = |who: &str, token: &str, platform: &str| {
         let who = who.to_owned();
         let token = token.to_owned();
+        let platform = platform.to_owned();
         let w = &w;
         async move {
             w.call(
                 &who,
                 Method::POST,
                 "/v1/channel-links/confirm",
-                Some(json!({"token": token})),
+                Some(json!({"token": token, "platform_user_ref": platform})),
             )
             .await
         }
     };
     let t1 = link_url(&w, integ, "U-1").await;
     // Not a member of the org: the token stays usable.
-    assert_eq!(confirm(&w.outsider, &t1).await.0, 404);
-    let (s, v) = confirm(&w.wsmember, &t1).await;
+    assert_eq!(confirm(&w.outsider, &t1, "U-1").await.0, 404);
+    let (s, v) = confirm(&w.wsmember, &t1, "U-1").await;
     assert_eq!(s, 200, "{v}");
     assert_eq!(v["method"], "sign_in_link");
     assert_eq!(v["platform_user_ref"], "U-1");
     assert_eq!(v["user"]["id"], json!(w.users.wsmember));
     // Used.
-    let (s, v) = confirm(&w.wsmember, &t1).await;
+    let (s, v) = confirm(&w.wsmember, &t1, "U-1").await;
     assert_eq!(
         (s, v["error"]["code"].as_str()),
         (410, Some("link_expired")),
@@ -1569,40 +1572,122 @@ async fn confirm_flow_expired_used_and_cross_user() {
         .execute(w.h.pool())
         .await
         .unwrap();
-    let (s, v) = confirm(&w.wsmember, &t2).await;
+    let (s, v) = confirm(&w.wsmember, &t2, "U-2").await;
     assert_eq!(
         (s, v["error"]["code"].as_str()),
         (410, Some("link_expired")),
         "{v}"
     );
     // Unknown token.
-    assert_eq!(confirm(&w.wsmember, "aui_unknown").await.0, 410);
+    assert_eq!(confirm(&w.wsmember, "aui_unknown", "U-1").await.0, 410);
     // Cross-user: the platform user already belongs to another Aurora user.
     let t3 = link_url(&w, integ, "U-1").await;
-    let (s, v) = confirm(&w.plain, &t3).await;
+    let (s, v) = confirm(&w.plain, &t3, "U-1").await;
     assert_eq!(
         (s, v["error"]["code"].as_str()),
         (409, Some("already_linked")),
         "{v}"
     );
     // The same user confirming again is idempotent and consumes the token.
-    let (s, _) = confirm(&w.wsmember, &t3).await;
+    let (s, _) = confirm(&w.wsmember, &t3, "U-1").await;
     assert_eq!(s, 200);
-    assert_eq!(confirm(&w.wsmember, &t3).await.0, 410);
+    assert_eq!(confirm(&w.wsmember, &t3, "U-1").await.0, 410);
     // Session only.
     let (_, key) = w.h.api_key(w.users.wsmember, w.org, None, false).await;
-    let (s, _, v) =
-        w.h.send(
+    for (method, uri, body) in [
+        (
             Method::POST,
             "/v1/channel-links/confirm",
-            &[("authorization", bearer(&key).as_str())],
-            Some(json!({"token": "aui_x"})),
+            Some(json!({"token": "aui_x", "platform_user_ref": "U-1"})),
+        ),
+        (Method::GET, "/v1/channel-links/preview?token=aui_x", None),
+    ] {
+        let (s, _, v) =
+            w.h.send(
+                method,
+                uri,
+                &[("authorization", bearer(&key).as_str())],
+                body,
+            )
+            .await;
+        assert_eq!(
+            (s, v["error"]["code"].as_str()),
+            (StatusCode::FORBIDDEN, Some("session_required")),
+            "{uri}"
+        );
+    }
+}
+
+/// FIX-112 (CHAN-1): the confirm page can show which chat account a link binds, and confirming
+/// repeats that account: a request naming another one is refused and leaves the token unused.
+#[tokio::test]
+async fn link_preview_shows_the_chat_account_and_confirm_must_repeat_it() {
+    let w = W::new().await;
+    let integ = w.integration(&w.fake, "T1").await;
+    let tok = link_url(&w, integ, "U-77").await;
+    sqlx::query("UPDATE link_requests SET platform_display_name='Mallory Chat', platform_email_hint='m@evil.example'")
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+    let uri = format!("/v1/channel-links/preview?token={tok}");
+    let (s, v) = w.call(&w.wsmember, Method::GET, &uri, None).await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["platform_user_ref"], "U-77");
+    assert_eq!(v["platform_display_name"], "Mallory Chat");
+    assert_eq!(v["platform_email_hint"], "m@evil.example");
+    assert_eq!(v["integration_id"], json!(integ));
+    assert_eq!(v["connector_id"], "fake");
+    // Not a member of the org: nothing is revealed.
+    assert_eq!(w.call(&w.outsider, Method::GET, &uri, None).await.0, 404);
+    // Unknown token.
+    let (s, v) = w
+        .call(
+            &w.wsmember,
+            Method::GET,
+            "/v1/channel-links/preview?token=aui_nope",
+            None,
         )
         .await;
     assert_eq!(
         (s, v["error"]["code"].as_str()),
-        (StatusCode::FORBIDDEN, Some("session_required"))
+        (410, Some("link_expired"))
     );
+    // A confirm that repeats another account is refused and consumes nothing.
+    for body in [
+        json!({"token": tok, "platform_user_ref": "U-1"}),
+        json!({"token": tok, "platform_user_ref": ""}),
+    ] {
+        let (s, v) = w
+            .call(
+                &w.wsmember,
+                Method::POST,
+                "/v1/channel-links/confirm",
+                Some(body),
+            )
+            .await;
+        assert_eq!(
+            (s, v["error"]["code"].as_str()),
+            (422, Some("link_reference_mismatch")),
+            "{v}"
+        );
+    }
+    let linked: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM user_links WHERE platform_user_ref='U-77'")
+            .fetch_one(w.h.pool())
+            .await
+            .unwrap();
+    assert_eq!(linked, 0);
+    let (s, v) = w
+        .call(
+            &w.wsmember,
+            Method::POST,
+            "/v1/channel-links/confirm",
+            Some(json!({"token": tok, "platform_user_ref": "U-77"})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    // Used tokens no longer preview.
+    assert_eq!(w.call(&w.wsmember, Method::GET, &uri, None).await.0, 410);
 }
 
 // ------------------------------------------------------------------ DM defaults
@@ -1803,6 +1888,108 @@ async fn reach_decision_and_stale_revision() {
     );
 }
 
+/// (FIX-111 4) A person reach grant approved with `expires_in` is ineffective after it and the
+/// 60 s sweep marks it `expired`; one approved without an expiry persists; `expires_in` is
+/// refused on a block and out of bounds.
+#[tokio::test]
+async fn reach_grant_expiry_is_set_by_the_decision_and_swept() {
+    let w = W::new().await;
+    let integ = w.integration(&w.fake, "T1").await;
+    let agent = w.agent("a1").await;
+    let mk = |subject: &'static str| {
+        let (pool, id) = (w.h.pool().clone(), Uuid::now_v7());
+        async move {
+            sqlx::query("INSERT INTO reach_grants (id, agent_id, integration_id, subject_kind, subject_ref, subject_label, state) VALUES ($1,$2,$3,'person',$4,'p','pending')")
+                .bind(id).bind(agent).bind(integ).bind(subject).execute(&pool).await.unwrap();
+            id
+        }
+    };
+    let (timed, plain) = (mk("U-timed").await, mk("U-plain").await);
+    let effective = |who: &'static str| {
+        let pool = w.h.pool().clone();
+        async move {
+            aurora_db::repo::reach_grants::approved_person_reach(
+                &pool,
+                agent,
+                integ,
+                &[who.to_owned()],
+            )
+            .await
+            .unwrap()
+        }
+    };
+    let path = |g: Uuid| format!("/v1/reach-grants/{g}/decision");
+    for bad in [
+        json!({"decision": "block", "revision": 0, "expires_in": 3600}),
+        json!({"decision": "approve", "revision": 0, "expires_in": 5}),
+        json!({"decision": "approve", "revision": 0, "expires_in": 999_999_999}),
+    ] {
+        let (s, v) = w
+            .call(&w.wsowner, Method::POST, &path(timed), Some(bad))
+            .await;
+        assert_eq!(s, 400, "{v}");
+    }
+    let (s, v) = w
+        .call(
+            &w.wsowner,
+            Method::POST,
+            &path(timed),
+            Some(json!({"decision": "approve", "revision": 0, "expires_in": 3600})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert!(v["expires_at"].is_string(), "{v}");
+    let (s, v) = w
+        .call(
+            &w.wsowner,
+            Method::POST,
+            &path(plain),
+            Some(json!({"decision": "approve", "revision": 0})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert!(v["expires_at"].is_null(), "{v}");
+    assert!(effective("U-timed").await && effective("U-plain").await);
+    // Not yet due: the sweep changes nothing.
+    assert_eq!(
+        aurora_api::jobs::expire_reach_grants(w.h.pool())
+            .await
+            .unwrap(),
+        0
+    );
+    // Time passes.
+    sqlx::query("UPDATE reach_grants SET expires_at = now() - interval '1 minute' WHERE id = $1")
+        .bind(timed)
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+    assert!(
+        !effective("U-timed").await,
+        "ineffective after its expiry, before the sweep"
+    );
+    assert!(effective("U-plain").await);
+    assert_eq!(
+        aurora_api::jobs::expire_reach_grants(w.h.pool())
+            .await
+            .unwrap(),
+        1
+    );
+    let st = |g: Uuid| {
+        let pool = w.h.pool().clone();
+        async move {
+            sqlx::query_scalar::<_, String>("SELECT state FROM reach_grants WHERE id = $1")
+                .bind(g)
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+        }
+    };
+    assert_eq!(
+        (st(timed).await.as_str(), st(plain).await.as_str()),
+        ("expired", "approved")
+    );
+}
+
 // ------------------------------------------------------------ credential_dead
 
 #[tokio::test]
@@ -1979,14 +2166,7 @@ async fn presence_options_for_members_are_metadata_only() {
 // ------------------------------------------- self-contained deprovision (RFE-024, SEC-58)
 
 fn failed_total() -> f64 {
-    use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
-    static H: std::sync::OnceLock<PrometheusHandle> = std::sync::OnceLock::new();
-    let h = H.get_or_init(|| PrometheusBuilder::new().install_recorder().unwrap());
-    h.render()
-        .lines()
-        .find(|l| l.starts_with("aurora_channel_deprovision_failed_total"))
-        .and_then(|l| l.split_whitespace().last()?.parse().ok())
-        .unwrap_or(0.0)
+    counter_value("aurora_channel_deprovision_failed_total")
 }
 
 impl W {
@@ -2662,6 +2842,427 @@ async fn deprovision_failure_audit_metric_and_dropped() {
             .await
             .unwrap();
     assert!(!at_rest.contains(SECRET) && !audit.contains(SECRET));
+}
+
+// ------------------------------------------------------------ FIX-127 (C-710..C-714)
+
+fn probe_ok() -> Value {
+    json!({"outcome": "ok", "data": {
+        "tenant_ref": "", "tenant_label": "@daneel on mm.test",
+        "choices": {"team": [{"value": "T1", "label": "Team One"}, {"value": "T2", "label": "Team Two"}]},
+        "warnings": ["No admin token."]}})
+}
+
+/// C-711: the probe returns choices and warnings, sends `mode: "probe"`, needs an org admin,
+/// stores nothing and leaves no plaintext credential in the op payload.
+#[tokio::test]
+async fn probe_returns_choices_stores_nothing_and_scrubs_the_op() {
+    let w = W::new().await;
+    let path = format!("/v1/orgs/{}/channel-integrations:probe", w.org);
+    let body = w.create_body(&w.fake);
+    // Not an org admin: refused before any op exists.
+    assert_eq!(
+        w.call(&w.wsowner, Method::POST, &path, Some(body.clone()))
+            .await
+            .0,
+        403
+    );
+    let ((s, v), ops) = tokio::join!(
+        w.call(&w.admin, Method::POST, &path, Some(body.clone())),
+        w.serve(&w.fake, 1, |_| probe_ok())
+    );
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(ops[0]["kind"], "credentials.validate");
+    assert_eq!(ops[0]["payload"]["mode"], "probe");
+    assert_eq!(v["choices"]["team"][1]["label"], "Team Two");
+    assert_eq!(v["tenant_label"], "@daneel on mm.test");
+    assert_eq!(v["warnings"][0], "No admin token.");
+    assert!(!v.to_string().contains(SECRET), "{v}");
+    let n: i64 = sqlx::query_scalar("SELECT count(*) FROM channel_integrations")
+        .fetch_one(w.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(n, 0, "a probe stores no integration");
+    let payloads: Vec<(Value,)> = sqlx::query_as("SELECT payload FROM channel_ops")
+        .fetch_all(w.h.pool())
+        .await
+        .unwrap();
+    assert!(
+        payloads.iter().all(|(p,)| !p.to_string().contains(SECRET)),
+        "the probe payload is scrubbed"
+    );
+}
+
+#[tokio::test]
+async fn probe_maps_connector_refusals() {
+    let w = W::new().await;
+    let path = format!("/v1/orgs/{}/channel-integrations:probe", w.org);
+    let body = w.create_body(&w.fake);
+    // A connector without probe support.
+    let ((s, v), _) = tokio::join!(
+        w.call(&w.admin, Method::POST, &path, Some(body.clone())),
+        w.serve(&w.fake, 1, |_| op_err("unsupported", "no probe"))
+    );
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (422, Some("probe_unsupported")),
+        "{v}"
+    );
+    // The platform refuses (what the URL guard answers: `invalid`) → like create.
+    let ((s, v), _) = tokio::join!(
+        w.call(&w.admin, Method::POST, &path, Some(body)),
+        w.serve(&w.fake, 1, |_| op_err(
+            "invalid",
+            "server_url must point at a public address"
+        ))
+    );
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (422, Some("credentials_invalid")),
+        "{v}"
+    );
+}
+
+/// C-712: states per connector row, and a plain member sees names but no ids or e-mails.
+#[tokio::test]
+async fn connector_availability_states_and_instance_admin_names_only() {
+    let w = W::new().await;
+    let (s, v) = w
+        .call(&w.plain, Method::GET, "/v1/connector-availability", None)
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let state = |v: &Value, id: &str| {
+        v["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|i| i["type_id"] == id)
+            .map(|i| i["setup_state"].as_str().unwrap().to_owned())
+    };
+    assert_eq!(state(&v, "fake").as_deref(), Some("active"));
+    assert_eq!(v["instance_admins"], json!([{"name": "U"}]));
+    let text = v.to_string();
+    assert!(!text.contains("root@x.io"), "{text}");
+    let root: Uuid = sqlx::query_scalar("SELECT id FROM users WHERE is_instance_admin")
+        .fetch_one(w.h.pool())
+        .await
+        .unwrap();
+    assert!(!text.contains(&root.to_string()), "{text}");
+    for (status, want) in [
+        ("disabled", "disabled"),
+        ("pending_approval", "needs_approval"),
+        ("awaiting_registration", "waiting_for_host"),
+    ] {
+        sqlx::query("UPDATE connectors SET status=$1 WHERE id='fake'")
+            .bind(status)
+            .execute(w.h.pool())
+            .await
+            .unwrap();
+        let (_, v) = w
+            .call(&w.plain, Method::GET, "/v1/connector-availability", None)
+            .await;
+        assert_eq!(state(&v, "fake").as_deref(), Some(want), "{v}");
+    }
+    // A type announced by a live host with no connector row: `not_added`.
+    let m = manifest("newtype", json!({"fields": []}));
+    aurora_db::repo::connector_hosts::upsert_host(
+        w.h.pool(),
+        Uuid::now_v7(),
+        "1.0.0",
+        &json!([{"type_id": "newtype", "manifest": m, "manifest_digest": "d".repeat(64)}]),
+    )
+    .await
+    .unwrap();
+    let (s, v) = w
+        .call(&w.plain, Method::GET, "/v1/connector-availability", None)
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(state(&v, "newtype").as_deref(), Some("not_added"), "{v}");
+    let item = v["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["type_id"] == "newtype")
+        .unwrap();
+    assert!(item["connector_id"].is_null(), "{v}");
+}
+
+/// C-714: a caller without a linked chat account gets `link_required`; the probe never echoes a
+/// credential, not even in its refusals.
+#[tokio::test]
+async fn my_spaces_need_a_link_and_probe_errors_do_not_echo_credentials() {
+    let w = W::new().await;
+    let integ = w.integration(&w.fake, "T1").await;
+    let mine = format!("/v1/integrations/{integ}/spaces?mine=true");
+    let (s, v) = w.call(&w.wsowner, Method::GET, &mine, None).await;
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (409, Some("link_required")),
+        "{v}"
+    );
+    // A linked workspace member without can_own is refused.
+    let link = format!("/v1/channel-integrations/{integ}/user-links");
+    let (s, v) = w
+        .call(
+            &w.admin,
+            Method::POST,
+            &link,
+            Some(json!({"platform_user_ref": "U-2", "user_id": w.users.wsmember})),
+        )
+        .await;
+    assert_eq!(s, 201, "{v}");
+    assert_eq!(w.call(&w.wsmember, Method::GET, &mine, None).await.0, 403);
+    let path = format!("/v1/orgs/{}/channel-integrations:probe", w.org);
+    let body = w.create_body(&w.fake);
+    for (code, want) in [
+        ("invalid", "credentials_invalid"),
+        ("credential_dead", "credentials_invalid"),
+    ] {
+        let ((s, v), _) = tokio::join!(
+            w.call(&w.admin, Method::POST, &path, Some(body.clone())),
+            w.serve(&w.fake, 1, |_| op_err(code, "rejected"))
+        );
+        assert_eq!(
+            (s, v["error"]["code"].as_str()),
+            (422, Some(want)),
+            "{code}: {v}"
+        );
+        assert!(!v.to_string().contains(SECRET), "{v}");
+    }
+}
+
+fn user_json(r: &str, bot: bool) -> Value {
+    json!({"ref": r, "display_name": r, "handle": r, "email_verified": false, "is_bot": bot})
+}
+
+/// The platform: spaces C1 (the caller and the bot are in), C3 (the bot is in, the caller is
+/// not), D1 (a direct conversation); C9 is not the bot's (members: forbidden).
+fn platform(op: &Value) -> Value {
+    match op["kind"].as_str().unwrap() {
+        "spaces.list" => json!({"outcome": "ok", "data": {"spaces": [
+            {"ref": "C1", "kind": "channel", "label": "general"},
+            {"ref": "C3", "kind": "private", "label": "secret"},
+            {"ref": "D1", "kind": "dm", "label": "dm"}]}}),
+        "space.members" => match op["payload"]["space_ref"].as_str().unwrap() {
+            "C1" => {
+                json!({"outcome": "ok", "data": {"users": [user_json("U-1", false), user_json("B1", true)]}})
+            }
+            "C3" => {
+                json!({"outcome": "ok", "data": {"users": [user_json("U-9", false), user_json("B1", true)]}})
+            }
+            "D1" => {
+                json!({"outcome": "ok", "data": {"users": [user_json("U-1", false), user_json("B1", true)]}})
+            }
+            _ => op_err("forbidden", "bot not in channel"),
+        },
+        _ => json!({"outcome": "ok", "data": {"message_ref": "m1", "thread_ref": "m1"}}),
+    }
+}
+
+/// C-713/C-714: bind from the dashboard only a space the caller is in and the bot is in.
+#[tokio::test]
+async fn dashboard_binding_requires_membership_and_the_bot() {
+    let w = W::new().await;
+    let integ = w.integration(&w.fake, "T1").await;
+    let agent = w.agent("a1").await;
+    assert_eq!(w.attach(&w.owner, agent, integ, "shared").await.0, 201);
+    let url = format!("/v1/agents/{agent}/space-bindings");
+    let body = |space: &str| json!({"integration_id": integ, "space_ref": space});
+
+    // Not linked yet.
+    let (s, v) = w
+        .call(&w.wsowner, Method::POST, &url, Some(body("C1")))
+        .await;
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (409, Some("link_required")),
+        "{v}"
+    );
+    let link = format!("/v1/channel-integrations/{integ}/user-links");
+    let (s, v) = w
+        .call(
+            &w.admin,
+            Method::POST,
+            &link,
+            Some(json!({"platform_user_ref": "U-1", "user_id": w.users.wsowner})),
+        )
+        .await;
+    assert_eq!(s, 201, "{v}");
+
+    // A workspace member without can_own.
+    assert_eq!(
+        w.call(&w.wsmember, Method::POST, &url, Some(body("C1")))
+            .await
+            .0,
+        403
+    );
+    // Someone outside the org cannot see the agent at all.
+    assert_eq!(
+        w.call(&w.outsider, Method::POST, &url, Some(body("C1")))
+            .await
+            .0,
+        404
+    );
+    // Another integration id is a 404.
+    let (s, v) = w
+        .call(
+            &w.wsowner,
+            Method::POST,
+            &url,
+            Some(json!({"integration_id": Uuid::now_v7(), "space_ref": "C1"})),
+        )
+        .await;
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (404, Some("integration_not_found")),
+        "{v}"
+    );
+
+    // The caller is not in the space.
+    let ((s, v), _) = tokio::join!(
+        w.call(&w.wsowner, Method::POST, &url, Some(body("C3"))),
+        w.serve(&w.fake, 2, platform)
+    );
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (403, Some("not_a_member")),
+        "{v}"
+    );
+    // A direct conversation.
+    let ((s, v), _) = tokio::join!(
+        w.call(&w.wsowner, Method::POST, &url, Some(body("D1"))),
+        w.serve(&w.fake, 1, platform)
+    );
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (422, Some("space_not_bindable")),
+        "{v}"
+    );
+    // The bot is not in the space: 409 with the invite hint.
+    let ((s, v), _) = tokio::join!(
+        w.call(&w.wsowner, Method::POST, &url, Some(body("C9"))),
+        w.serve(&w.fake, 2, platform)
+    );
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (409, Some("bot_not_in_space")),
+        "{v}"
+    );
+    assert!(
+        v["error"]["details"]["hint"]
+            .as_str()
+            .unwrap()
+            .contains("@daneel"),
+        "{v}"
+    );
+
+    // Member and bot present: created, audited, announced.
+    let ((s, v), ops) = tokio::join!(
+        w.call(&w.wsowner, Method::POST, &url, Some(body("C1"))),
+        w.serve(&w.fake, 3, platform)
+    );
+    assert_eq!(s, 201, "{v}");
+    assert_eq!(v["listen"], "mentions");
+    assert_eq!(v["space_label"], "general");
+    assert_eq!(v["bound_by"]["id"], json!(w.users.wsowner));
+    assert!(ops.iter().any(|o| o["kind"] == "message.post"), "announced");
+    let audits: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM audit_log WHERE action='space_binding.create'")
+            .fetch_one(w.h.pool())
+            .await
+            .unwrap();
+    assert_eq!(audits, 1);
+    // Again: already bound.
+    let ((s, v), _) = tokio::join!(
+        w.call(&w.wsowner, Method::POST, &url, Some(body("C1"))),
+        w.serve(&w.fake, 2, platform)
+    );
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (409, Some("already_bound")),
+        "{v}"
+    );
+
+    // C-714: only spaces the caller is in (C1), never the DM.
+    let mine = format!("/v1/integrations/{integ}/spaces?mine=true");
+    let ((s, v), _) = tokio::join!(
+        w.call(&w.wsowner, Method::GET, &mine, None),
+        w.serve(&w.fake, 3, platform)
+    );
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["items"].as_array().unwrap().len(), 1, "{v}");
+    assert_eq!(v["items"][0]["space_ref"], "C1");
+    assert_eq!(v["items"][0]["bot_present"], true);
+    let no_mine = format!("/v1/integrations/{integ}/spaces");
+    assert_eq!(w.call(&w.wsowner, Method::GET, &no_mine, None).await.0, 400);
+}
+
+/// FIX-127: `POST /agents/{agent}/space-bindings` and `GET /integrations/{id}/spaces` are exempt from
+/// the permission matrix (the matrix has no per-resource role), so each role's answer is pinned
+/// here: nobody below `can_own` reaches the connector, and a caller who cannot see the resource gets
+/// the same 404 as for an unknown id. Nothing is served by the fake platform: any connector op would
+/// stall the call, so a 403/404 also proves no op was enqueued.
+#[tokio::test]
+async fn dashboard_binding_routes_refuse_every_role_below_can_own() {
+    let w = W::new().await;
+    let integ = w.integration(&w.fake, "T1").await;
+    let agent = w.agent("a1").await;
+    assert_eq!(w.attach(&w.owner, agent, integ, "shared").await.0, 201);
+    // The workspace roles are owner, approver and member (there is no separate viewer role: a
+    // member is the read-only role); and an admin of another organization.
+    let viewer = w.h.user("approver@x.io", false).await;
+    w.h.member(w.org, viewer, "member", "active").await;
+    w.h.bind_ws(w.ws, viewer, "approver").await;
+    let other_org = w.h.org().await;
+    let other_admin = w.h.user("other-admin@x.io", false).await;
+    w.h.member(other_org, other_admin, "admin", "active").await;
+    let viewer_c = cookie(&w.h.good_session(viewer).await.1);
+    let other_c = cookie(&w.h.good_session(other_admin).await.1);
+    let post = format!("/v1/agents/{agent}/space-bindings");
+    let get = format!("/v1/integrations/{integ}/spaces?mine=true");
+    let body = json!({"integration_id": integ, "space_ref": "C1"});
+
+    // Session callers: (who, POST status, GET status).
+    for (who, name, want_post, want_get) in [
+        (&w.wsmember, "workspace member", 403, 403),
+        (&viewer_c, "workspace approver", 403, 403),
+        (&w.plain, "org member outside the workspace", 404, 403),
+        (&other_c, "admin of another org", 404, 404),
+        (&w.outsider, "not in the org at all", 404, 404),
+    ] {
+        let (s, v) = w.call(who, Method::POST, &post, Some(body.clone())).await;
+        assert_eq!(s, want_post, "POST as {name}: {v}");
+        let (s, v) = w.call(who, Method::GET, &get, None).await;
+        assert_eq!(s, want_get, "GET as {name}: {v}");
+    }
+
+    // API keys follow the session rules (C-713).
+    for (user, org, name, want_post, want_get) in [
+        (
+            w.users.wsmember,
+            w.org,
+            "key of a workspace member",
+            403,
+            403,
+        ),
+        (
+            other_admin,
+            other_org,
+            "key of another org's admin",
+            404,
+            404,
+        ),
+    ] {
+        let (_, key) = w.h.api_key(user, org, None, false).await;
+        let auth = [("authorization", bearer(&key))];
+        let hdrs: Vec<(&str, &str)> = auth.iter().map(|(k, v)| (*k, v.as_str())).collect();
+        let (s, _, v) =
+            w.h.send(Method::POST, &post, &hdrs, Some(body.clone()))
+                .await;
+        assert_eq!(s, want_post, "POST with {name}: {v}");
+        let (s, _, v) = w.h.send(Method::GET, &get, &hdrs, None).await;
+        assert_eq!(s, want_get, "GET with {name}: {v}");
+    }
 }
 
 /// A shared presence has no bot of its own: nothing is enqueued by any delete.

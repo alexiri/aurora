@@ -293,6 +293,37 @@ fn unmodified_projection_pruned_and_unmanaged_paths_refused() {
     assert!(!root.parent().unwrap().join("escape.txt").exists());
 }
 
+/// (FIX-114) A memory file four times the content limit is skipped with one notice and never
+/// read whole: `read_bounded` stops at the bound; a file within it is still harvested.
+#[test]
+fn harvest_skips_an_oversized_memory_file_with_a_notice() {
+    use aurora_supervisor::harvest::{MEMORY_FILE_READ_MAX, read_bounded};
+    let d = TempDir::new();
+    let root = d.path();
+    fs::create_dir_all(root.join("memory")).unwrap();
+    let big = root.join("memory/huge.md");
+    // Sparse: the file claims four times the bound without occupying the disk.
+    let f = fs::File::create(&big).unwrap();
+    f.set_len(4 * MEMORY_FILE_READ_MAX).unwrap();
+    drop(f);
+    assert!(read_bounded(&big, MEMORY_FILE_READ_MAX).unwrap().is_none());
+    fs::write(
+        root.join("memory/ok.md"),
+        "---\ntitle: T\ndescription: D\n---\nbody\n",
+    )
+    .unwrap();
+    let mut h = Harvester::new(root);
+    let w = h.scan();
+    assert_eq!(w.len(), 1, "only the small file is harvested");
+    assert_eq!(w[0].key, "ok");
+    let notices = h.take_notices();
+    assert_eq!(notices.len(), 1);
+    assert!(notices[0].contains("huge.md") && notices[0].contains("larger than"));
+    // The oversized file is reported once, not on every scan.
+    assert!(h.scan().is_empty());
+    assert!(h.take_notices().is_empty());
+}
+
 #[test]
 fn harvest_detects_edits_and_ignores_unchanged() {
     let d = TempDir::new();

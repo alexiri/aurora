@@ -26,7 +26,7 @@ function LinkRow({ agentId, link }: { agentId: string; link: AgentLink }) {
         </label>
         <select
           id={`pol-${link.id}`}
-          className={`${inputClass} max-w-[10rem]`}
+          className={`${inputClass} max-w-40`}
           value={link.self.policy}
           disabled={set.isPending}
           onChange={(e) => set.mutate({ link, policy: e.target.value as LinkPolicy })}

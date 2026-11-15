@@ -26,7 +26,6 @@ Monograms: rounded tile in `--subtle`/`--line-strong` with the letter in `--prim
 |---|---|---|---|---|---|
 | `atlassian` | Simple Icons 16.37.0 | `atlassian` | `#0052CC` | `88a88e7a09df2ab7d2e6beefc1c6d8393073fdea18616a4bcc25a30145228edf` | white (2.59:1) |
 | `github` | Simple Icons 16.37.0 | `github` | `#181717` | `3bf8cceead820aec50d4ee825a3fd02c5a1cd6665cc9cf4cbf3d9c8861a204bb` | white (1.01:1) |
-| `github-app` | Simple Icons 16.37.0 | `github` | `#181717` | `3bf8cceead820aec50d4ee825a3fd02c5a1cd6665cc9cf4cbf3d9c8861a204bb` | white (1.01:1) |
 | `gitlab` | Simple Icons 16.37.0 | `gitlab` | `#FC6D26` | `c7c39058bd1b6f9f40334383bd5136bb8c5ba5e6a24200f2d1f18365e2526e28` | same as light (6.19:1) |
 | `google-workspace` | Simple Icons 16.37.0 (Google; no Workspace icon) | `google` | `#4285F4` | `d8cf9fb2d5e234e03254f1d6400d8cc8160c309b010d031a64f37084b5a21d01` | same as light (4.96:1) |
 | `linear` | Simple Icons 16.37.0 | `linear` | `#5E6AD2` | `90b91b61090f4f9c94f9cb24769642278f03e8eedcfe5680738cf3a186bfc00f` | same as light (3.76:1) |
@@ -35,7 +34,6 @@ Monograms: rounded tile in `--subtle`/`--line-strong` with the letter in `--prim
 | `sentry` | Simple Icons 16.37.0 | `sentry` | `#362D59` | `8ba32902ffbac503784607374f57df5e3cbcf57a99d0adff03e735575500adc6` | white (1.41:1) |
 | `microsoft-365` | monogram "M" | none | n/a | n/a | monogram, dark theme colours |
 | `aws-keys` | official vendor source (AWS), see below | none | n/a | see below | AWS's own dark-squid-ink tile |
-| `aws-role` | official vendor source (AWS), see below | none | n/a | see below | AWS's own dark-squid-ink tile |
 | `indico` | official vendor source (Indico repository), see below | none | n/a | see below | same file as light |
 
 Simple Icons 16.37.0 has no Microsoft 365 / Microsoft, Amazon Web Services or Indico icon (vendors
@@ -47,7 +45,7 @@ record the new slug, version and sha256 here and bump the package's patch versio
 
 All fetched on 2026-11-08 from the vendor's own domain; only the rendered PNG is committed.
 
-### `aws-keys`, `aws-role`: AWS Architecture Icons
+### `aws-keys`: AWS Architecture Icons (shared with the retired `aws-role`, merged into `aws-keys` by FIX-123)
 
 - Page: <https://aws.amazon.com/architecture/icons/>
 - Package: `https://d1.awsstatic.com/onedam/marketing-channels/website/public/shared/architecture-icon-release/Icon-package_07312026.5846e92413caa21490223536cc97f1269e44fa92.zip`

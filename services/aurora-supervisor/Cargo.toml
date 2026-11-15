@@ -43,3 +43,5 @@ aurora-testkit = { workspace = true }
 insta = { workspace = true }
 rcgen = { workspace = true }
 toml = { workspace = true }
+# `start_paused` / `advance` for the violation-window test (FIX-091).
+tokio = { workspace = true, features = ["test-util"] }

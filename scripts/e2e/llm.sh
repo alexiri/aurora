@@ -93,7 +93,9 @@ free_kb=$(df --output=avail -k . | tail -1)
 if [ "$free_kb" -lt $((15 * 1024 * 1024)) ]; then echo "less than 15 GB free; stopping" >&2; exit 1; fi
 cargo build -p aurora-api -p aurora-gateway -p aurora-runner || { echo "cargo build failed" >&2; exit 1; }
 if [ "${SKIP_IMAGE_BUILD:-}" != "1" ]; then
-  podman image exists "$BASE_IMAGE" || scripts/images/build-sandbox-min.sh "${BASE_IMAGE#localhost/}" || { echo "base image build failed" >&2; exit 1; }
+  # (FIX-103) Always rebuild the base (a cached layer build is quick): reusing an existing image tested an
+  # old supervisor. SKIP_IMAGE_BUILD=1 reuses the images as they are.
+  scripts/images/build-sandbox-min.sh "${BASE_IMAGE#localhost/}" || { echo "base image build failed" >&2; exit 1; }
   podman build -f scripts/e2e/llm.Containerfile --build-arg "BASE=$BASE_IMAGE" -t "$IMAGE" . || { echo "llm sandbox image build failed" >&2; exit 1; }
 fi
 podman image exists "$IMAGE" || { echo "missing $IMAGE" >&2; exit 1; }

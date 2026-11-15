@@ -228,6 +228,70 @@ async fn identity_carries_the_speakers_group_ids_and_none_without_a_speaker() {
     assert_eq!((id.speaker_user_id, id.speaker_group_ids.len()), (None, 0));
 }
 
+/// FIX-083 (SEC-71): a deleted group's id leaves every identity at the next request — the dead id
+/// is in no principal set, so a rule naming only that group (`p4grp_04`/`p4grp_08` in the policy
+/// corpus) matches nobody; and a member who is not `active` carries no group ids either.
+#[tokio::test]
+async fn a_deleted_group_and_a_suspended_member_leave_no_group_id_in_the_identity() {
+    let db = TestDb::new().await;
+    let p = db.pool();
+    let w = world(p).await;
+    sqlx::query(
+        "INSERT INTO workspace_access (workspace_id, user_id, role) VALUES ($1,$2,'member')",
+    )
+    .bind(w.ws)
+    .bind(w.alice)
+    .execute(p)
+    .await
+    .unwrap();
+    let doomed = group(p, w.org, "doomed", None).await;
+    let kept = group(p, w.org, "kept", None).await;
+    member(p, doomed, w.org, w.alice).await;
+    member(p, kept, w.org, w.alice).await;
+    cred(p, w.hosted, "auc_alice", "context", Some(w.alice)).await;
+    let r = live(p).await;
+    let mut ids = resolve(&r, "auc_alice").await.speaker_group_ids;
+    ids.sort();
+    let mut both = vec![doomed, kept];
+    both.sort();
+    assert_eq!(ids, both);
+
+    // The group is deleted (the dashboard and SCIM delete both end with a `user` invalidation
+    // per member).
+    sqlx::query("DELETE FROM groups WHERE id = $1")
+        .bind(doomed)
+        .execute(p)
+        .await
+        .unwrap();
+    ping(
+        p,
+        Channel::GatewayInvalidate,
+        json!({"scope": "user", "id": w.alice}),
+    )
+    .await;
+    assert!(
+        until(&r, "auc_alice", |id| id.speaker_group_ids == vec![kept]).await,
+        "the deleted group's id is gone at the next request"
+    );
+    // A suspended member derives nothing from the groups they are still listed in.
+    sqlx::query("UPDATE org_members SET status = 'suspended' WHERE org_id = $1 AND user_id = $2")
+        .bind(w.org)
+        .bind(w.alice)
+        .execute(p)
+        .await
+        .unwrap();
+    ping(
+        p,
+        Channel::GatewayInvalidate,
+        json!({"scope": "user", "id": w.alice}),
+    )
+    .await;
+    assert!(
+        until(&r, "auc_alice", |id| id.speaker_group_ids.is_empty()).await,
+        "a suspended member carries no group ids"
+    );
+}
+
 #[tokio::test]
 async fn user_invalidation_re_resolves_the_group_set_mid_turn() {
     let db = TestDb::new().await;
@@ -389,4 +453,50 @@ async fn a_request_already_in_the_pipeline_keeps_the_identity_it_started_with() 
         vec![g],
         "the owned identity is unchanged"
     );
+}
+
+#[tokio::test]
+async fn a_speaker_in_more_than_100_groups_is_refused_never_truncated() {
+    // Truncating to 100 ids (ORDER BY group id) would hide the highest-id group from the
+    // policy: a block rule naming it would never match and the request would pass.
+    let db = TestDb::new().await;
+    let p = db.pool();
+    let w = world(p).await;
+    sqlx::query(
+        "INSERT INTO workspace_access (workspace_id, user_id, role) VALUES ($1,$2,'member')",
+    )
+    .bind(w.ws)
+    .bind(w.alice)
+    .execute(p)
+    .await
+    .unwrap();
+    let mut ids = Vec::new();
+    for i in 0..100 {
+        let g = group(p, w.org, &format!("g{i}"), None).await;
+        member(p, g, w.org, w.alice).await;
+        ids.push(g);
+    }
+    cred(p, w.hosted, "auc_alice", "context", Some(w.alice)).await;
+    let r = live(p).await;
+    // exactly at the limit: resolves with every id
+    assert_eq!(resolve(&r, "auc_alice").await.speaker_group_ids.len(), 100);
+    // a 101st membership (the cap bypassed, inserted directly) whose id sorts last
+    let last = group(p, w.org, "last", None).await;
+    member(p, last, w.org, w.alice).await;
+    assert!(last > *ids.iter().max().unwrap());
+    ping(
+        p,
+        Channel::GatewayInvalidate,
+        json!({"scope": "user", "id": w.alice}),
+    )
+    .await;
+    let mut refused = false;
+    for _ in 0..100 {
+        if r.resolve("auc_alice").await.is_err() {
+            refused = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(refused, "resolution must fail closed above 100 groups");
 }

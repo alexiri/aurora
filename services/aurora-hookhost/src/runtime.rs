@@ -124,6 +124,8 @@ pub struct Ctx {
     denied: u32,
     logs: Vec<String>,
     log_overflow: bool,
+    /// The OS random source could not be read during this call (FIX-107).
+    rng_failed: bool,
     secrets: Vec<String>,
     package_id: String,
     app_id: String,
@@ -195,10 +197,15 @@ impl aurora::plugin::host::Host for Ctx {
     async fn random_bytes(&mut self, len: u32) -> Vec<u8> {
         let len = (len as usize).min(64 * 1024);
         let mut v = vec![0u8; len];
-        // Same OS source the WASI random interface uses.
-        if let Ok(mut f) = std::fs::File::open("/dev/urandom") {
+        // Same OS source the WASI random interface uses. (FIX-107) A source that cannot be read
+        // fails the whole call: all-zero "random" bytes would make OAuth state/nonce values
+        // predictable.
+        let ok = std::fs::File::open("/dev/urandom").is_ok_and(|mut f| {
             use std::io::Read;
-            let _ = f.read_exact(&mut v);
+            f.read_exact(&mut v).is_ok()
+        });
+        if !ok {
+            self.rng_failed = true;
         }
         v
     }
@@ -309,6 +316,7 @@ impl Runtime {
                 denied: 0,
                 logs: Vec::new(),
                 log_overflow: false,
+                rng_failed: false,
                 secrets: spec.secrets,
                 package_id: spec.package_id,
                 app_id: spec.app_id,
@@ -367,6 +375,12 @@ impl Runtime {
             }
             Ok(Ok(Ok(o))) => Ok(o),
             Ok(Ok(Err(he))) => Err(map_hook_error(he, store.data(), &stats)),
+        };
+        let out = if out.is_ok() && store.data().rng_failed {
+            tracing::error!("hook call used an unreadable random source");
+            Err(CallError::new("internal", "random source unavailable"))
+        } else {
+            out
         };
         (out, stats)
     }

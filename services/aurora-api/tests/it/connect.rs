@@ -21,6 +21,7 @@ permissions:
     connect.exchange: [auth.acme.example]
     token.mint: [auth.acme.example]
   context: [org_id]
+  token_hosts: [accounts.example.com]
 oauth_clients:
   - id: goog
     authorize_url: https://accounts.example.com/auth
@@ -41,12 +42,20 @@ apps:
       - { name: api_token, secret: true, optional: true }
       - { name: access_token, secret: true, optional: true }
       - { name: refresh_token, secret: true, optional: true }
-    metadata: [ { name: org } ]
+    metadata: [ { name: org }, { name: tls_verification }, { name: token_scopes } ]
     connect:
       - id: api_key
         kind: fields
-        fields: [ { name: api_token, label: T, type: secret, required: true } ]
-        probe: { url: "https://api.acme.example/me", label: /email, metadata: { org: /org/name } }
+        fields:
+          - { name: api_token, label: T, type: secret, required: true }
+          - { name: tls_verification, label: TLS, type: select, store: metadata, options: [ { value: verify, label: V }, { value: "off", label: Off } ] }
+        scopes:
+          - { scope: "read:a", name: Read A, access: read }
+          - { scope: "read:b", name: Read B, access: read }
+          - { scope: "write:a", name: Write A, access: write }
+        probe_scopes:
+          "read:a": { url: "https://api.acme.example/me" }
+        probe: { url: "https://api.acme.example/me", label: /email, metadata: { org: /org/name, token_scopes: "header:x-oauth-scopes" } }
       - id: oauth
         kind: oauth2
         client: goog
@@ -56,9 +65,20 @@ apps:
         default_scopes: [read, write]
         callback: query
         probe: { url: "https://api.acme.example/me", label: /email }
+      - id: oauth_app
+        kind: oauth2
+        client: goog
+        scopes: []
+        default_scopes: []
+        callback: query
+        probe: { url: "https://api.acme.example/me", label: /email }
       - id: hook
         kind: hook
         authorize: true
+        fields: [ { name: account, label: Account, type: text, store: metadata, required: false } ]
+      - id: hook_form
+        kind: hook
+        authorize: false
         fields: [ { name: account, label: Account, type: text, store: metadata, required: false } ]
     agent: { default_blocklist: [ "blocked.example" ] }
     token: { kind: hook, max_lifetime_secs: 3600 }
@@ -286,6 +306,11 @@ async fn fields_connect_with_probe_blocklist_and_no_credentials_leak() {
     assert_eq!(v["kind"], "connected");
     assert_eq!(v["connection"]["label"], "me@acme.io");
     assert_eq!(v["connection"]["metadata"]["org"], "Acme");
+    // (FIX-133) A probe metadata pointer `header:<name>` stores a response header.
+    assert_eq!(
+        v["connection"]["metadata"]["token_scopes"],
+        "repo, read:org"
+    );
     assert_eq!(v["missing_scopes"], json!([]));
     assert!(!v.to_string().contains("sekret-token"));
     let id: Uuid = v["connection"]["id"].as_str().unwrap().parse().unwrap();
@@ -336,6 +361,44 @@ async fn fields_connect_with_probe_blocklist_and_no_credentials_leak() {
         .0,
         400
     );
+}
+
+/// (FIX-106, D-178 Q-R5-7) The opt-out of server certificate verification is a named, audited,
+/// visible per-connection choice: it lands in the connection's metadata (which the dashboard
+/// shows) and in the `connection.create` audit row; a connection without it records neither.
+#[tokio::test]
+async fn a_tls_verification_opt_out_is_audited_and_visible_on_the_connection() {
+    let w = world(None).await;
+    let audit = |id: Uuid| {
+        let pool = w.h.pool().clone();
+        async move {
+            sqlx::query_scalar::<_, Option<String>>(
+                "SELECT metadata->>'tls_verification' FROM audit_log \
+                 WHERE action = 'connection.create' AND target_id = $1",
+            )
+            .bind(id.to_string())
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        }
+    };
+    let mut b = w.connect_body("api_key");
+    b["fields"] = json!({"api_token": "t1", "tls_verification": "off"});
+    let (s, _, v) = w
+        .call(&w.owner, Method::POST, "/v1/apps/acme_app/connect", Some(b))
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["connection"]["metadata"]["tls_verification"], "off");
+    let id: Uuid = v["connection"]["id"].as_str().unwrap().parse().unwrap();
+    assert_eq!(audit(id).await.as_deref(), Some("off"));
+    let mut b = w.connect_body("api_key");
+    b["fields"] = json!({"api_token": "t2", "tls_verification": "verify"});
+    let (s, _, v) = w
+        .call(&w.owner, Method::POST, "/v1/apps/acme_app/connect", Some(b))
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let id: Uuid = v["connection"]["id"].as_str().unwrap().parse().unwrap();
+    assert_eq!(audit(id).await, None);
 }
 
 #[tokio::test]
@@ -415,9 +478,22 @@ async fn oauth_happy_path_pkce_cookie_and_state_checks() {
     assert_eq!(n, 0);
 
     let (pg, cleared) = w.page(&w.owner, Some(&ck), &cb).await;
+    // (FIX-149, C-842) The result goes over the same-origin channel with the app id; nothing refers
+    // to `window.opener`, and the window closes only on the dialog's ack.
+    assert!(pg.contains("BroadcastChannel(\"aurora-connect\")"), "{pg}");
     assert!(
-        pg.contains("aurora:connected") && pg.contains("window.close()"),
+        pg.contains("type:\"aurora:connected\"")
+            && pg.contains("app_id:\"acme_app\"")
+            && pg.contains("connection_id:\""),
         "{pg}"
+    );
+    assert!(!pg.contains("opener"), "{pg}");
+    let (before_ack, after_ack) = pg.split_once("aurora:connect-ack").expect("ack handler");
+    assert!(!before_ack.contains("window.close"), "{pg}");
+    assert!(after_ack.contains("window.close()"), "{pg}");
+    assert!(
+        pg.contains("tab=connections"),
+        "link to the Connections tab: {pg}"
     );
     assert!(cleared);
     let (scopes, label, uid): (Vec<String>, String, Uuid) =
@@ -434,6 +510,137 @@ async fn oauth_happy_path_pkce_cookie_and_state_checks() {
     assert!(req.contains_key("code_verifier") && req["client_id"] == "cid");
 }
 
+/// (FIX-136, D-241) A pasted token's scopes: prefilled by the method's read probes, or declared by
+/// the person (each one of the method's scopes), stored as the connection's `scopes`, editable with
+/// `PATCH` (only a declared-scope token connection; each one of the method's scopes).
+#[tokio::test]
+async fn a_token_connections_scopes_are_probed_declared_and_editable() {
+    let w = world(None).await;
+    let connect = |scopes: Option<Value>, token: &str| {
+        let mut b = w.connect_body("api_key");
+        b["fields"] = json!({"api_token": token});
+        if let Some(s) = scopes {
+            b["scopes"] = s;
+        }
+        b
+    };
+    let post = |b: Value| {
+        let w = &w;
+        async move {
+            w.call(&w.owner, Method::POST, "/v1/apps/acme_app/connect", Some(b))
+                .await
+        }
+    };
+    // No declaration: the read probe (`read:a`) passes for a good token, so only it is ticked; the
+    // write scope is never probed.
+    let (s, _, v) = post(connect(None, "t1")).await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["connection"]["scopes"], json!(["read:a"]));
+    // A token the probe refuses has none ticked.
+    let (s, _, v) = post(connect(None, "bad")).await;
+    assert_eq!(s, 422, "the main probe fails for a bad token: {v}");
+    // Declared by the person.
+    let (s, _, v) = post(connect(Some(json!(["read:b", "write:a"])), "t2")).await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["connection"]["scopes"], json!(["read:b", "write:a"]));
+    let id = v["connection"]["id"].as_str().unwrap().to_owned();
+    // A scope the method does not declare is a 400.
+    let (s, _, v) = post(connect(Some(json!(["nope"])), "t3")).await;
+    assert_eq!(s, 400, "{v}");
+    // Editable afterwards, within the method's scopes.
+    let path = format!("/v1/connections/{id}");
+    let (s, _, v) = w
+        .call(
+            &w.owner,
+            Method::PATCH,
+            &path,
+            Some(json!({"scopes": ["read:a"]})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["scopes"], json!(["read:a"]));
+    let (s, _, v) = w
+        .call(
+            &w.owner,
+            Method::PATCH,
+            &path,
+            Some(json!({"scopes": ["nope"]})),
+        )
+        .await;
+    assert_eq!(s, 400, "{v}");
+    // An OAuth connection's scopes are what the provider granted: not editable.
+    w.oauth_client().await;
+    w.oauth.set_extra(json!({"scope": "read"}));
+    let (url, ck) = w.start_oauth().await;
+    let loc = w.oauth.approve(&url).await;
+    let (pg, _) = w.page(&w.owner, Some(&ck), &local(&loc)).await;
+    assert!(pg.contains("aurora:connected"), "{pg}");
+    let oid: Uuid =
+        sqlx::query_scalar("SELECT id FROM app_connections WHERE connect_method = 'oauth'")
+            .fetch_one(w.h.pool())
+            .await
+            .unwrap();
+    let (s, _, v) = w
+        .call(
+            &w.owner,
+            Method::PATCH,
+            &format!("/v1/connections/{oid}"),
+            Some(json!({"scopes": ["read"]})),
+        )
+        .await;
+    assert_eq!(s, 400, "{v}");
+}
+
+/// (FIX-133) A scope-less OAuth method (GitHub App user authorization: permissions live on the app,
+/// not in the request): the authorization URL carries no `scope`, the code exchange still uses
+/// PKCE, and the expiring token with its rotating refresh token is stored with its expiry.
+#[tokio::test]
+async fn a_scopeless_oauth_method_connects_with_an_expiring_token() {
+    let w = world(None).await;
+    w.oauth_client().await;
+    w.oauth.set_extra(json!({
+        "expires_in": 28800, "refresh_token": "ghr_fixture", "refresh_token_expires_in": 15_897_600,
+        "scope": ""
+    }));
+    let (s, sc, v) = w
+        .call(
+            &w.owner,
+            Method::POST,
+            "/v1/apps/acme_app/connect",
+            Some(w.connect_body("oauth_app")),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let url = v["url"].as_str().unwrap().to_owned();
+    let ck = sc[0].1.split(';').next().unwrap().to_owned();
+    assert!(
+        url.contains("code_challenge_method=S256") && !url.contains("scope="),
+        "{url}"
+    );
+    let loc = w.oauth.approve(&url).await;
+    let (pg, _) = w.page(&w.owner, Some(&ck), &local(&loc)).await;
+    assert!(pg.contains("aurora:connected"), "{pg}");
+    let (scopes, expires, keys): (
+        Vec<String>,
+        Option<chrono::DateTime<chrono::Utc>>,
+        Option<Vec<String>>,
+    ) = sqlx::query_as(
+        "SELECT scopes, credentials_expires_at, credential_keys FROM app_connections",
+    )
+    .fetch_one(w.h.pool())
+    .await
+    .unwrap();
+    assert!(scopes.is_empty());
+    let left = expires.unwrap() - chrono::Utc::now();
+    assert!(
+        left.num_seconds() > 28_000 && left.num_seconds() <= 28_800,
+        "{left}"
+    );
+    let mut keys = keys.unwrap();
+    keys.sort();
+    assert_eq!(keys, ["access_token", "refresh_token"]);
+}
+
 #[tokio::test]
 async fn expired_state_and_fragment_bridge() {
     let w = world(None).await;
@@ -448,6 +655,52 @@ async fn expired_state_and_fragment_bridge() {
         .page(&w.owner, Some(&ck), &format!("{cb}&error=access_denied"))
         .await;
     assert!(pg.contains("error=oauth_exchange_failed"));
+    // (FIX-149, C-842) The failure page reports on the channel too, for the flow's app.
+    assert!(pg.contains("type:\"aurora:connect-failed\""), "{pg}");
+    assert!(pg.contains("app_id:\"acme_app\""), "{pg}");
+    assert!(pg.contains("error:\"oauth_exchange_failed\""), "{pg}");
+    assert!(!pg.contains("opener"), "{pg}");
+    // A flow that is not this user's reveals no app id.
+    let (pg, _) = w.page(&w.member, Some(&ck), &cb).await;
+    assert!(pg.contains("error=oauth_state_invalid"), "{pg}");
+    assert!(!pg.contains("acme_app"), "{pg}");
+}
+
+/// (FIX-149, C-842) Both callback scripts carry the response's CSP nonce.
+#[tokio::test]
+async fn callback_scripts_carry_the_response_nonce() {
+    let w = world(None).await;
+    w.oauth_client().await;
+    let (url, ck) = w.start_oauth().await;
+    let loc = w.oauth.approve(&url).await;
+    let cb = local(&loc);
+    for uri in [cb.clone(), format!("{cb}&error=access_denied")] {
+        let req = Request::builder()
+            .uri(&uri)
+            .header("cookie", format!("{}; {ck}", w.owner))
+            .body(Body::empty())
+            .unwrap();
+        let res = w.h.app.clone().oneshot(req).await.unwrap();
+        let csp = res
+            .headers()
+            .get("content-security-policy")
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_owned();
+        let body = res.into_body().collect().await.unwrap().to_bytes();
+        let pg = String::from_utf8(body.to_vec()).unwrap();
+        let nonce = csp
+            .split("'nonce-")
+            .nth(1)
+            .and_then(|r| r.split('\'').next())
+            .expect("nonce in the CSP");
+        assert!(
+            pg.contains(&format!("<script nonce=\"{nonce}\">")),
+            "{csp} {pg}"
+        );
+        assert_eq!(pg.matches("<script").count(), 1, "{pg}");
+    }
 }
 
 #[tokio::test]
@@ -482,6 +735,128 @@ async fn reconnect_updates_in_place_and_clears_reauth() {
     let (n, ver): (i64, i64) = sqlx::query_as("SELECT (SELECT count(*) FROM app_connections), credentials_version FROM app_connections WHERE id=$1")
         .bind(id).fetch_one(w.h.pool()).await.unwrap();
     assert_eq!((n, ver), (1, 2));
+}
+
+/// (FIX-123, D-195(a), D-214) A connection records the connect method that created it, the DTO
+/// shows it, and a reconnect writes the method of that reconnect (a row of unknown method, as
+/// before the column, gets it recorded).
+#[tokio::test]
+async fn a_connection_records_its_connect_method_and_a_reconnect_rewrites_it() {
+    let w = world(None).await;
+    let mut b = w.connect_body("api_key");
+    b["fields"] = json!({"api_token": "t1"});
+    let (s, _, v) = w
+        .call(
+            &w.owner,
+            Method::POST,
+            "/v1/apps/acme_app/connect",
+            Some(b.clone()),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["connection"]["connect_method"], "api_key");
+    let id: Uuid = v["connection"]["id"].as_str().unwrap().parse().unwrap();
+    let stored: Option<String> =
+        sqlx::query_scalar("SELECT connect_method FROM app_connections WHERE id = $1")
+            .bind(id)
+            .fetch_one(w.h.pool())
+            .await
+            .unwrap();
+    assert_eq!(stored.as_deref(), Some("api_key"));
+    // A row from before the column (unknown method) is filled in by the next reconnect.
+    sqlx::query("UPDATE app_connections SET connect_method = NULL WHERE id = $1")
+        .bind(id)
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+    b["fields"] = json!({"api_token": "t2"});
+    b["reconnect_connection_id"] = json!(id);
+    let (s, _, v) = w
+        .call(&w.owner, Method::POST, "/v1/apps/acme_app/connect", Some(b))
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["connection"]["connect_method"], "api_key");
+}
+
+/// (FIX-133, D-240) A connection is `write` unless connected read-only; a reconnect without `access`
+/// keeps it; the connection can be changed afterwards with `PATCH`; anything else is a 400.
+#[tokio::test]
+async fn a_connection_can_be_read_only_from_connect_time_and_changed_later() {
+    let w = world(None).await;
+    let mut b = w.connect_body("api_key");
+    b["fields"] = json!({"api_token": "t1"});
+    // Default: write.
+    let (s, _, v) = w
+        .call(
+            &w.owner,
+            Method::POST,
+            "/v1/apps/acme_app/connect",
+            Some(b.clone()),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["connection"]["access"], "write");
+    // An unknown value is refused before anything is stored.
+    b["access"] = json!("admin");
+    let (s, _, v) = w
+        .call(
+            &w.owner,
+            Method::POST,
+            "/v1/apps/acme_app/connect",
+            Some(b.clone()),
+        )
+        .await;
+    assert_eq!(s, 400, "{v}");
+    // Read-only from the start.
+    b["access"] = json!("read");
+    b["fields"] = json!({"api_token": "t2"});
+    let (s, _, v) = w
+        .call(
+            &w.owner,
+            Method::POST,
+            "/v1/apps/acme_app/connect",
+            Some(b.clone()),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["connection"]["access"], "read");
+    let id: Uuid = v["connection"]["id"].as_str().unwrap().parse().unwrap();
+    let stored: String = sqlx::query_scalar("SELECT access FROM app_connections WHERE id = $1")
+        .bind(id)
+        .fetch_one(w.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(stored, "read");
+    // A reconnect that does not say keeps it.
+    b.as_object_mut().unwrap().remove("access");
+    b["fields"] = json!({"api_token": "t3"});
+    b["reconnect_connection_id"] = json!(id);
+    let (s, _, v) = w
+        .call(&w.owner, Method::POST, "/v1/apps/acme_app/connect", Some(b))
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["connection"]["access"], "read");
+    // PATCH changes it; a bad value is refused.
+    let path = format!("/v1/connections/{id}");
+    let (s, _, v) = w
+        .call(
+            &w.owner,
+            Method::PATCH,
+            &path,
+            Some(json!({"access": "write"})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["access"], "write");
+    let (s, _, v) = w
+        .call(
+            &w.owner,
+            Method::PATCH,
+            &path,
+            Some(json!({"access": "everything"})),
+        )
+        .await;
+    assert_eq!(s, 400, "{v}");
 }
 
 #[tokio::test]
@@ -585,6 +960,72 @@ async fn hook_authorize_and_exchange_via_stub_host() {
     assert_eq!(label, "Hooked");
     // hook host down => connect_hook_failed
     drop(stub);
+}
+
+/// (FIX-133, D-240) A form-only hook method gets the connection's access in the exchange form
+/// under the reserved `aurora_access` key (so the hook can narrow its token); a reconnect without
+/// `access` passes the connection's current one; a user-supplied `aurora_access` is refused.
+#[tokio::test]
+async fn hook_exchange_form_carries_the_connection_access() {
+    let stub = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/internal/v1/hooks/connect.exchange"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(json!({"ok": {"connected": {
+            "credentials": [{"key": "access_token", "value": "hat"}], "metadata": [],
+            "scopes": [], "label": "Hooked", "expires_at": null, "tenant_host": null}}})),
+        )
+        .mount(&stub)
+        .await;
+    let w = world(Some(stub.uri())).await;
+    let mut b = w.connect_body("hook_form");
+    let go = |b: Value| {
+        let w = &w;
+        async move {
+            w.call(&w.owner, Method::POST, "/v1/apps/acme_app/connect", Some(b))
+                .await
+        }
+    };
+    // Default and explicit access.
+    let (s, _, v) = go(b.clone()).await;
+    assert_eq!(s, 200, "{v}");
+    b["access"] = json!("read");
+    let (s, _, v) = go(b.clone()).await;
+    assert_eq!(s, 200, "{v}");
+    let id = v["connection"]["id"].clone();
+    // A reconnect that does not say passes the current access.
+    b.as_object_mut().unwrap().remove("access");
+    b["reconnect_connection_id"] = id;
+    let (s, _, v) = go(b.clone()).await;
+    assert_eq!(s, 200, "{v}");
+    let forms: Vec<Option<String>> = stub
+        .received_requests()
+        .await
+        .unwrap()
+        .iter()
+        .map(|r| {
+            let input = &r.body_json::<Value>().unwrap()["input"];
+            input["source"]["form"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|e| e["key"] == "aurora_access")
+                .map(|e| e["value"].as_str().unwrap().to_owned())
+        })
+        .collect();
+    assert_eq!(
+        forms,
+        [
+            Some("write".into()),
+            Some("read".into()),
+            Some("read".into())
+        ]
+    );
+    // The reserved key is not a form field: a user cannot set it.
+    b.as_object_mut().unwrap().remove("reconnect_connection_id");
+    b["fields"] = json!({"aurora_access": "write"});
+    let (s, _, v) = go(b).await;
+    assert_eq!(s, 400, "{v}");
 }
 
 #[tokio::test]
@@ -734,4 +1175,72 @@ async fn tenant_oauth_callback_stores_host_and_exchanges_against_it() {
         .await
         .unwrap();
     assert_eq!(host.as_deref(), Some("acme.tenant.example.test"));
+}
+
+/// (FIX-109) Reconnecting to a package version whose blocklist is empty removes the derived
+/// `blocklist` rule an earlier version left (the app has no `default_blocklist`, as after an
+/// upgrade that dropped it); a first connect writes none.
+#[tokio::test]
+async fn reconnect_with_an_empty_blocklist_leaves_no_blocklist_rule() {
+    let w = world(None).await;
+    w.tenant_client().await;
+    let mut b = w.connect_body("oauth");
+    b["fields"] = json!({"subdomain": "acme.tenant.example.test"});
+    let (s, sc, v) = w
+        .call(
+            &w.owner,
+            Method::POST,
+            "/v1/apps/tenant_app/connect",
+            Some(b.clone()),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let url = v["url"].as_str().unwrap().to_owned();
+    let ck = sc[0].1.split(';').next().unwrap().to_owned();
+    let loc = w.oauth.approve(&url).await;
+    let (pg, _) = w.page(&w.owner, Some(&ck), &local(&loc)).await;
+    assert!(pg.contains("aurora:connected"), "{pg}");
+    let id: Uuid = sqlx::query_scalar("SELECT id FROM app_connections")
+        .fetch_one(w.h.pool())
+        .await
+        .unwrap();
+    let rules = || async {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM derived_rules WHERE source_kind = 'blocklist' AND source_id = $1",
+        )
+        .bind(id)
+        .fetch_one(w.h.pool())
+        .await
+        .unwrap()
+    };
+    assert_eq!(
+        rules().await,
+        0,
+        "a first connect of a blocklist-free app writes none"
+    );
+    // The previous package version had a blocklist: its rule is still in the table.
+    sqlx::query("INSERT INTO derived_rules (id, org_id, workspace_id, source_kind, source_id, ordinal, logical_id, rule) VALUES ($1,$2,$3,'blocklist',$4,0,$5,'{}')")
+        .bind(Uuid::now_v7()).bind(w.org).bind(w.ws).bind(id).bind(Uuid::now_v7())
+        .execute(w.h.pool()).await.unwrap();
+    assert_eq!(rules().await, 1);
+    b["reconnect_connection_id"] = json!(id);
+    let (s, sc, v) = w
+        .call(
+            &w.owner,
+            Method::POST,
+            "/v1/apps/tenant_app/connect",
+            Some(b),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let url = v["url"].as_str().unwrap().to_owned();
+    let ck = sc[0].1.split(';').next().unwrap().to_owned();
+    let loc = w.oauth.approve(&url).await;
+    let (pg, _) = w.page(&w.owner, Some(&ck), &local(&loc)).await;
+    assert!(pg.contains("aurora:connected"), "{pg}");
+    assert_eq!(
+        rules().await,
+        0,
+        "the old blocklist rule is gone after the reconnect"
+    );
 }

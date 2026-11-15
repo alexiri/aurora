@@ -10,7 +10,7 @@ const eslintConfig = [
       "react/no-danger": "error",
     },
   },
-  { ignores: [".next/**", "out/**", "next-env.d.ts", "src/lib/api/schema.d.ts", "playwright-report/**", "test-results/**"] },
+  { ignores: [".next/**", ".next-*/**","out/**", "next-env.d.ts", "src/lib/api/schema.d.ts", "playwright-report/**", "test-results/**"] },
 ];
 
 export default eslintConfig;

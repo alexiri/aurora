@@ -39,6 +39,7 @@ impl Hooks for G {
                 Ok(AuthorizeOutput { url: "https://login.example.com/a".into(), continuation: None })
             }
             "badurl" => Ok(AuthorizeOutput { url: "http://login.example.com/a".into(), continuation: None }),
+            "foreign" => Ok(AuthorizeOutput { url: "https://evil.com/a".into(), continuation: None }),
             _ => Ok(AuthorizeOutput {
                 url: format!("https://login.example.com/a?state={}", i.state),
                 continuation: Some("k".into()),

@@ -1,0 +1,92 @@
+import { expect, test } from "@playwright/test";
+
+import { mockWithTerminal } from "./support/terminal";
+import { CANVAS, overflow, type Scheme } from "./support/open";
+
+// FIX-129 + P5-AGENT-2 (D-200, docs/14 §Agent page (phase 5)): the agent page is five sections (Chat · Behaviour ·
+// Triggers · Computer · Access) with a segmented row of pages inside a section that has several. Every page id of
+// `?tab=` still opens its page, at 390, 768, 1280 and 1920 px, both themes: the page does not scroll
+// horizontally. The API is mocked.
+
+/** Page id → the section that shows it (docs/14: the section is derived from the page). */
+const PAGES: [string, string][] = [
+  ["chat", "Chat"],
+  ["instructions", "Behaviour"],
+  ["memory", "Behaviour"],
+  ["skills", "Behaviour"],
+  ["schedules", "Triggers"],
+  ["webhooks", "Triggers"],
+  ["peers", "Triggers"],
+  ["channels", "Triggers"],
+  ["computer", "Computer"],
+  ["previews", "Computer"],
+  ["terminal", "Computer"],
+  ["access", "Access"],
+];
+
+/** The shared mock plus the terminal socket, and the Access tab's grants (empty) the shared mock does not serve. */
+async function mockAgent(page: import("@playwright/test").Page) {
+  await mockWithTerminal(page, { output: new Uint8Array(), resizes: [] });
+  await page.route("**/v1/agents/*/grants", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ secrets: [], connections: [] }) }),
+  );
+  await page.route("**/v1/agents/*/effective", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ credentials: [], tools: [] }) }),
+  );
+}
+
+const tablistOverflow = (page: import("@playwright/test").Page) =>
+  page.getByRole("tablist").evaluateAll((els) => Math.max(0, ...els.map((el) => el.scrollWidth - el.clientWidth)));
+
+for (const scheme of ["light", "dark"] as const satisfies readonly Scheme[]) {
+  for (const width of [390, 768, 1280, 1920]) {
+    test.describe(`agent page sections (${width} px, ${scheme})`, () => {
+      test.use({ viewport: { width, height: 900 } });
+
+      test("every page: its section is selected, no horizontal scroll on the page or a tablist", async ({ page }) => {
+        const errors: string[] = [];
+        page.on("pageerror", (e) => errors.push(e.message));
+        await mockAgent(page);
+        await page.emulateMedia({ colorScheme: scheme });
+        for (const [tab, section] of PAGES) {
+          await page.goto(`/o/acme/w/main/agents/daneel?tab=${tab}`);
+          await expect.poll(() => page.locator("html").getAttribute("data-theme"), { timeout: 20_000 }).toBe(scheme);
+          const sections = page.getByRole("tablist", { name: "Agent sections" });
+          await expect(sections.getByRole("tab", { selected: true }), `${tab}: its section is selected`).toHaveText(section);
+          await page.waitForLoadState("networkidle");
+          expect(await page.evaluate(() => getComputedStyle(document.body).backgroundColor)).toBe(CANVAS[scheme]);
+          expect(await overflow(page), `${tab} @${width}: the page scrolls sideways`).toBeLessThanOrEqual(0);
+          expect(await tablistOverflow(page), `${tab} @${width}: a tablist scrolls sideways`).toBeLessThanOrEqual(0);
+        }
+        expect(errors).toEqual([]);
+      });
+    });
+  }
+}
+
+test.describe("agent page width", () => {
+  test.use({ viewport: { width: 1280, height: 900 } });
+
+  test("the content is wider than the old 896 px cap at 1280 px", async ({ page }) => {
+    await mockAgent(page);
+    await page.goto("/o/acme/w/main/agents/daneel?tab=skills");
+    const panel = page.getByRole("tabpanel").first();
+    await expect(panel).toBeVisible();
+    await page.waitForLoadState("networkidle");
+    const width = await panel.evaluate((el) => el.getBoundingClientRect().width);
+    expect(width).toBeGreaterThan(896);
+  });
+
+  test("a hosted agent opens on Chat; switching section opens its first page and keeps the page id in the URL", async ({ page }) => {
+    await mockAgent(page);
+    await page.goto("/o/acme/w/main/agents/daneel");
+    const sections = page.getByRole("tablist", { name: "Agent sections" });
+    await expect(sections.getByRole("tab")).toHaveText(["Chat", "Behaviour", "Triggers", "Computer", "Access"]);
+    await expect(sections.getByRole("tab", { name: "Chat" })).toHaveAttribute("aria-selected", "true");
+    await sections.getByRole("tab", { name: "Triggers" }).click();
+    await expect(page).toHaveURL(/tab=schedules/);
+    await expect(page.getByRole("tablist", { name: "Triggers pages" }).getByRole("tab")).toHaveText(["Schedules", "Webhooks", "Channels", "Peers"]);
+    await page.getByRole("tablist", { name: "Triggers pages" }).getByRole("tab", { name: "Peers" }).click();
+    await expect(page).toHaveURL(/tab=peers/);
+  });
+});

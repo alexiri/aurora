@@ -3,6 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 
 import { api } from "./client";
+import { fetchAllPages, PAGE_LIMIT } from "./paging";
 import type { components } from "./schema";
 import { unwrap } from "./unwrap";
 
@@ -67,10 +68,17 @@ export function useOrgAttentionTokens(orgId: string, enabled: boolean) {
     retry: false,
     queryFn: async (): Promise<AgentTokenEntry[]> => {
       const path = { org: orgId };
+      // Every page of both lists: the oldest (most stale) tokens are the ones a first page would drop (FIX-117).
       const [stale, expiring] = await Promise.all([
-        unwrap(api.GET("/v1/orgs/{org}/agent-tokens", { params: { path, query: { stale: true, limit: 100 } } })),
-        unwrap(
-          api.GET("/v1/orgs/{org}/agent-tokens", { params: { path, query: { expiring_within_days: 14, limit: 100 } } }),
+        fetchAllPages((cursor) =>
+          unwrap(api.GET("/v1/orgs/{org}/agent-tokens", { params: { path, query: { stale: true, limit: PAGE_LIMIT, cursor } } })),
+        ),
+        fetchAllPages((cursor) =>
+          unwrap(
+            api.GET("/v1/orgs/{org}/agent-tokens", {
+              params: { path, query: { expiring_within_days: 14, limit: PAGE_LIMIT, cursor } },
+            }),
+          ),
         ),
       ]);
       return mergeTokens([...expiring.items, ...stale.items]);

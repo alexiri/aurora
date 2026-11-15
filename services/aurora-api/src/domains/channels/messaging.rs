@@ -13,8 +13,10 @@
 //!   `dedupe_key` is `tool-msg:<conversation>:<key>`, which is what `list/edit/delete_my_message`
 //!   read (own messages, same conversation, 24 h). Deletions are recorded by a `message.delete`
 //!   op with key `tool-del:<post op id>`;
-//! * model text always goes out through [`Content::untrusted`] (no broadcast, no active markup);
-//!   the approval summary is composed from labels only, never from the message text;
+//! * the agent's message body goes out through [`Content::agent_markdown`] (D-226/D-227: its
+//!   Markdown kept, the four security exceptions applied, a standalone `@here` the only
+//!   broadcast); the approval summary is composed from labels only, never from the message text
+//!   (a held message that carries `@here` says so with a fixed sentence);
 //! * direct messages cannot be edited or deleted unless the connector's post result carries a
 //!   `space_ref` (the neutral result has only the message and thread refs).
 
@@ -393,7 +395,7 @@ async fn own_thread(
 
 fn bad_text(text: &str, platform: &Platform) -> Option<String> {
     let max = TEXT_MAX.min((platform.ctx.message_max_chars() / 2).max(200));
-    if Content::untrusted(text).is_empty() {
+    if Content::agent_markdown(text).is_empty() {
         Some("The message text is empty.".into())
     } else if text.chars().count() > max {
         Some(format!(
@@ -404,10 +406,18 @@ fn bad_text(text: &str, platform: &Platform) -> Option<String> {
     }
 }
 
-/// Text as the platform sees it: untrusted data, with the "via" line for the shared bot.
-fn compose(agent: &AgentRow, platform: &Platform, sender: &Sender, text: &str) -> Content {
-    let body = Content::untrusted(text).text.unwrap_or_default();
-    let text = if matches!(sender, Sender::Shared(_)) {
+/// Text as the platform sees it: the agent's Markdown with D-227's exceptions applied, with the
+/// "via" line (platform voice) for the shared bot, except in a 1:1 DM (`direct`), where one agent
+/// answers and the line only adds noise (docs/13 §5.2).
+fn compose(
+    agent: &AgentRow,
+    platform: &Platform,
+    sender: &Sender,
+    text: &str,
+    direct: bool,
+) -> Content {
+    let body = Content::agent_markdown(text).text.unwrap_or_default();
+    let text = if matches!(sender, Sender::Shared(_)) && !direct {
         let a = format!(
             "{} · via {}",
             sanitize::label(&agent.name),
@@ -465,7 +475,12 @@ async fn post_message(
             },
         ),
     };
-    let content = compose(agent, platform, &sender, text);
+    // A thread link of kind `direct`, or a DM to one person, is a 1:1 conversation with the bot.
+    let direct = match link {
+        Some(l) => l.kind == "direct",
+        None => matches!(r.kind, RKind::User),
+    };
+    let content = compose(agent, platform, &sender, text, direct);
     Ok(send::post(
         conn,
         &platform.ctx,
@@ -724,13 +739,21 @@ pub async fn send_message(
             Ok(json!({"status": "sent", "message_id": op}))
         }
         _ => {
-            let summary = format!(
+            let mut summary = format!(
                 "{} wants to send a message to {} {} on {}",
                 sanitize::label(&agent.name),
                 r.kind.as_str(),
                 sanitize::label(&r.label),
                 sanitize::label(&platform.ctx.integ.tenant_label)
             );
+            // (D-226(b)) A standalone `@here` is a broadcast: the approver is told, in words the
+            // core wrote (never the message text).
+            if Content::agent_markdown(a.text)
+                .text
+                .is_some_and(|t| t.contains("<@here>"))
+            {
+                summary.push_str(". Notifies everyone online in the channel (@here)");
+            }
             let payload = json!({
                 "agent_id": agent.id,
                 "conversation_id": w.conversation_id,
@@ -986,7 +1009,13 @@ pub async fn edit_my_message(
     if let Some(m) = bad_text(text, &platform) {
         return invalid(m);
     }
-    let content = compose(&agent, &platform, &own.sender, text);
+    let direct: bool =
+        sqlx::query_scalar("SELECT kind = 'direct' FROM conversations WHERE id = $1")
+            .bind(conversation)
+            .fetch_optional(&mut *tx)
+            .await?
+            .unwrap_or(false);
+    let content = compose(&agent, &platform, &own.sender, text, direct);
     let payload = json!(MessageUpdateOp {
         space_ref: own.space_ref,
         message_ref: own.message_ref,

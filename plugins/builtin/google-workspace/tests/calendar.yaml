@@ -68,10 +68,10 @@
     method: POST
     url: "https://www.googleapis.com/calendar/v3/calendars/primary/events"
     headers: { content-type: application/json }
-    body: '{"summary":"Design review","start":{"dateTime":"2026-03-02T10:00:00Z"},"end":{"dateTime":"2026-03-02T11:00:00Z"},"attendees":[{"email":"bob@example.com"}]}'
+    body: '{"summary":"Design review","start":{"dateTime":"2026-03-02T10:00:00Z"},"end":{"dateTime":"2026-03-02T11:00:00Z"},"attendees":[{"email":"bob@example.com"},{"email":"eve@example.org"}]}'
   expect:
     tool: create_event
-    summary: { title: "Create calendar event", fields: { Calendar: "primary", Title: "Design review", Starts: "2026-03-02T10:00:00Z" } }
+    summary: { title: "Create calendar event", fields: { Calendar: "primary", Title: "Design review", Starts: "2026-03-02T10:00:00Z", Attendees: "bob@example.com, eve@example.org" } }
 - name: "negative create_event: PUT selects no tool"
   connection: { credentials: { access_token: "tok-fixture-1" } }
   request: { method: PUT, url: "https://www.googleapis.com/calendar/v3/calendars/primary/events" }
@@ -82,10 +82,10 @@
     method: PATCH
     url: "https://www.googleapis.com/calendar/v3/calendars/primary/events/evt0fixture1"
     headers: { content-type: application/json }
-    body: '{"summary":"Design review (moved)"}'
+    body: '{"summary":"Design review (moved)","attendees":[{"email":"bob@example.com"},{"email":"frank@example.net"}]}'
   expect:
     tool: update_event
-    summary: { title: "Change calendar event", fields: { Calendar: "primary", Event: "evt0fixture1", Title: "Design review (moved)" } }
+    summary: { title: "Change calendar event", fields: { Calendar: "primary", Event: "evt0fixture1", Title: "Design review (moved)", Attendees: "bob@example.com, frank@example.net" } }
 - name: "negative update_event: PUT selects no tool"
   connection: { credentials: { access_token: "tok-fixture-1" } }
   request: { method: PUT, url: "https://www.googleapis.com/calendar/v3/calendars/primary/events/evt0fixture1" }

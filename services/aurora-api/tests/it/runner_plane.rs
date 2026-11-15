@@ -37,6 +37,10 @@ fn caps_base(max: u32) -> Value {
 }
 
 async fn rig() -> Rig {
+    rig_cfg(|_| {}).await
+}
+
+async fn rig_cfg(extra: impl FnOnce(&mut aurora_config::ApiConfig) + 'static) -> Rig {
     let dir = std::env::temp_dir().join(format!("aurora-ca-{}", Uuid::now_v7()));
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("ca.pem"), "-----BEGIN CERTIFICATE-----\nX\n").unwrap();
@@ -44,6 +48,7 @@ async fn rig() -> Rig {
     let h = Harness::with_config(move |c| {
         c.gateway_ca_dir = d;
         c.hosted.allow_fake_harness = true;
+        extra(c);
     })
     .await;
     let admin = h.user("admin@x.io", true).await;
@@ -106,6 +111,19 @@ impl Rig {
             .await;
         assert_eq!(s, 200, "{v}");
         v["replica_id"].as_str().unwrap().parse().unwrap()
+    }
+
+    /// A registration attempt that must be refused; returns (status, body).
+    async fn register_raw(&self, host: &str) -> (u16, Value) {
+        self.call(
+            None,
+            "/v1/runner/register",
+            Some(
+                json!({"version": "0.1", "backend": "fake", "capabilities": caps(1),
+                        "advertised_host": host}),
+            ),
+        )
+        .await
     }
 
     async fn work(&self, replica: Uuid, wait: u32) -> Value {
@@ -193,6 +211,40 @@ impl Rig {
     }
 }
 
+/// FIX-090: the relay dials `advertised_host` with a live stream grant, so a runner credential
+/// may register only a host name or IP literal with an optional port.
+#[tokio::test]
+async fn registration_refuses_an_advertised_host_that_is_not_a_plain_authority() {
+    let r = rig().await;
+    for bad in [
+        "evil.example/x",
+        "user@evil.example",
+        "evil.example?x=1",
+        "evil example",
+        "ws://evil.example",
+        "evil.example:0",
+    ] {
+        let (s, v) = r.register_raw(bad).await;
+        assert_eq!(s, 400, "{bad}: {v}");
+        assert_eq!(v["error"]["code"], "invalid_request", "{bad}: {v}");
+    }
+    // Nothing was registered by the refused attempts; plain forms are accepted.
+    let n: i64 = sqlx::query_scalar("SELECT count(*) FROM runner_replicas")
+        .fetch_one(r.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(n, 0);
+    for ok in [
+        "runner-a",
+        "runner-a.ns.svc:4108",
+        "10.0.0.7",
+        "[fd00::1]:4108",
+    ] {
+        let (s, v) = r.register_raw(ok).await;
+        assert_eq!(s, 200, "{ok}: {v}");
+    }
+}
+
 fn first<'a>(w: &'a Value, kind: &str) -> &'a Value {
     w["items"]
         .as_array()
@@ -245,12 +297,12 @@ async fn admin_provision_register_and_list() {
     assert_eq!(v["items"][0]["live_replicas"], 1);
     assert_eq!(v["items"][0]["replicas"][0]["advertised_host"], "runner-a");
     assert!(v["items"][0].get("token").is_none());
-    // Rotate: old token dies, new works once.
+    // Rotate with no grace: the old token dies at once.
     let id = r.runner_id;
     let (s, _, v2) =
         r.h.send(
             Method::POST,
-            &format!("/v1/admin/runners/{id}/token"),
+            &format!("/v1/admin/runners/{id}/token?grace_secs=0"),
             &[("cookie", &c), ("origin", ORIGIN)],
             None,
         )
@@ -268,6 +320,108 @@ async fn admin_provision_register_and_list() {
         )
         .await;
     assert_eq!(s, 409);
+}
+
+/// (FIX-121, C-694) The admin list carries each runner's capacity and replicas; only an
+/// instance admin may read it.
+#[tokio::test]
+async fn admin_runner_list_shows_capacity_and_refuses_non_admins() {
+    let r = rig().await;
+    r.register("runner-cap", 7).await;
+    let admin = r.h.user("cap-admin@x.io", true).await;
+    let (_, sess) = r.h.good_session(admin).await;
+    let c = cookie(&sess);
+    let (s, _, v) =
+        r.h.send(Method::GET, "/v1/admin/runners", &[("cookie", &c)], None)
+            .await;
+    assert_eq!(s, 200, "{v}");
+    let item = &v["items"][0];
+    assert_eq!(item["max_sandboxes"], 7);
+    assert_eq!(item["backend"], "fake");
+    assert_eq!(item["live_replicas"], 1);
+    assert_eq!(item["running_sandboxes"], 0);
+    assert_eq!(item["replicas"][0]["version"], "0.1");
+    assert!(item["previous_token_expires_at"].is_null());
+    let plain = r.h.user("cap-plain@x.io", false).await;
+    let (_, sess) = r.h.good_session(plain).await;
+    let (s, _, _) =
+        r.h.send(
+            Method::GET,
+            "/v1/admin/runners",
+            &[("cookie", &cookie(&sess))],
+            None,
+        )
+        .await;
+    assert_eq!(s, 403);
+}
+
+/// (FIX-121, C-695) A rotation keeps the replaced token working for the grace period, then
+/// refuses it; the new token works throughout and the rotation is audited with its grace.
+#[tokio::test]
+async fn rotated_runner_token_works_during_the_grace_and_is_refused_after() {
+    let r = rig().await;
+    let rep = r.register("runner-g", 4).await;
+    let admin = r.h.user("rot-admin@x.io", true).await;
+    let (_, sess) = r.h.good_session(admin).await;
+    let c = cookie(&sess);
+    let id = r.runner_id;
+    let (s, _, v) =
+        r.h.send(
+            Method::POST,
+            &format!("/v1/admin/runners/{id}/token?grace_secs=300"),
+            &[("cookie", &c), ("origin", ORIGIN)],
+            None,
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let new_tok = v["token"].as_str().unwrap().to_owned();
+    assert!(v["runner"]["previous_token_expires_at"].is_string());
+    let poll = |tok: String| {
+        let h = &r.h;
+        let rep = rep.to_string();
+        async move {
+            let b = bearer(&tok);
+            h.send(
+                Method::POST,
+                "/v1/runner/work",
+                &[("authorization", b.as_str()), ("x-aurora-replica", &rep)],
+                Some(json!({"wait_secs":0,"capacity":{"running":0,"max":1}})),
+            )
+            .await
+            .0
+            .as_u16()
+        }
+    };
+    assert_eq!(poll(r.tok.clone()).await, 200, "old token within the grace");
+    assert_eq!(poll(new_tok.clone()).await, 200, "new token");
+    // The grace ends (the clock is the row: drive it deterministically).
+    sqlx::query(
+        "UPDATE runners SET previous_token_expires_at = now() - interval '1 second' WHERE id = $1",
+    )
+    .bind(id)
+    .execute(r.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(poll(r.tok.clone()).await, 401, "old token after the grace");
+    assert_eq!(poll(new_tok).await, 200, "new token after the grace");
+    let audited: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM audit_log WHERE action = 'admin.runner_rotate' AND target_id = $1 AND metadata->>'grace_secs' = '300'",
+    )
+    .bind(id.to_string())
+    .fetch_one(r.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(audited, 1);
+    // An out-of-range grace is refused.
+    let (s, _, _) =
+        r.h.send(
+            Method::POST,
+            &format!("/v1/admin/runners/{id}/token?grace_secs=86401"),
+            &[("cookie", &c), ("origin", ORIGIN)],
+            None,
+        )
+        .await;
+    assert_eq!(s, 400);
 }
 
 #[tokio::test]
@@ -557,6 +711,8 @@ async fn channel_claim_is_single_use_and_hold_is_fenced() {
         ),
         (sb, boot)
     );
+    // FIX-094 (SEC-25): the claim is idempotent while the boot has never held a channel — a
+    // claim whose response was lost is answered again with the same `(sandbox, boot)`.
     let (s, v) = r
         .call(
             Some(rep),
@@ -564,8 +720,15 @@ async fn channel_claim_is_single_use_and_hold_is_fenced() {
             Some(json!({"bootstrap_token": tok})),
         )
         .await;
-    assert_eq!(s, 409);
-    assert_eq!(v["error"]["code"], "bootstrap_spent");
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(
+        (
+            v["sandbox_id"].as_str().unwrap(),
+            v["boot_id"].as_str().unwrap()
+        ),
+        (sb, boot),
+        "the same (sandbox, boot) is returned"
+    );
     let (s, _) = r
         .call(
             Some(rep),
@@ -582,6 +745,16 @@ async fn channel_claim_is_single_use_and_hold_is_fenced() {
         )
         .await;
     assert_eq!(s, 200);
+    // Once a channel was held the token is spent, even after the channel is released.
+    let (s, v) = r
+        .call(
+            Some(rep),
+            "/v1/runner/channel/claim",
+            Some(json!({"bootstrap_token": tok})),
+        )
+        .await;
+    assert_eq!(s, 409);
+    assert_eq!(v["error"]["code"], "bootstrap_spent");
     let (s, v) = r
         .call(
             Some(rep),
@@ -612,11 +785,58 @@ async fn channel_claim_is_single_use_and_hold_is_fenced() {
         .await;
     assert_eq!(s, 200);
     assert_eq!(v["known"].as_array().unwrap().len(), 1);
+    // After the release the spent token still answers 409 (the boot did hold a channel).
+    let (s, _) = r
+        .call(
+            Some(rep),
+            "/v1/runner/channel/claim",
+            Some(json!({"bootstrap_token": tok})),
+        )
+        .await;
+    assert_eq!(s, 409, "a released channel does not unspend the token");
     let (s, v) = r
         .call(Some(rep), "/v1/runner/tool-calls", Some(json!({})))
         .await;
     // Implemented by BE-053 (see tests/tools.rs): an empty body is now a 4xx.
     assert_eq!(s, 400, "{v}");
+}
+
+/// FIX-094 (SEC-1): `sandboxes/check` answers only for the calling runner's own sandboxes — a
+/// runner cannot learn (or keep alive) another runner's sandbox ids.
+#[tokio::test]
+async fn sandboxes_check_knows_only_the_callers_sandboxes() {
+    let r = rig().await;
+    let rep = r.register("runner-a", 4).await;
+    r.agent_with_turn("chk").await;
+    let w = r.work(rep, 0).await;
+    let sb: Uuid = first(&w, "sandbox.start")["sandbox_id"]
+        .as_str()
+        .unwrap()
+        .parse()
+        .unwrap();
+    // The owner knows it (through the route)…
+    let (s, v) = r
+        .call(
+            Some(rep),
+            "/v1/runner/sandboxes/check",
+            Some(json!({"sandbox_ids": [sb]})),
+        )
+        .await;
+    assert_eq!(s, 200);
+    assert_eq!(v["known"].as_array().unwrap().len(), 1);
+    // …another runner does not.
+    let mut conn = r.h.pool().acquire().await.unwrap();
+    let other = aurora_db::repo::sandboxes::known_ids(&mut conn, Uuid::now_v7(), &[sb])
+        .await
+        .unwrap();
+    assert!(
+        other.is_empty(),
+        "another runner's id is not known: {other:?}"
+    );
+    let own = aurora_db::repo::sandboxes::known_ids(&mut conn, r.runner_id, &[sb])
+        .await
+        .unwrap();
+    assert_eq!(own, [sb]);
 }
 
 #[tokio::test]
@@ -831,11 +1051,24 @@ async fn supervisor_that_never_connects_fails_the_turn_as_supervisor_unreachable
     assert_eq!(status, "failed");
     assert_eq!(code.as_deref(), Some("supervisor_unreachable"));
     let msg = msg.unwrap();
+    // (FIX-093) The turn text (member-facing) carries no address; the admin record does.
     assert!(
-        msg.contains("aurora-runner.aurora (10.0.0.9):4105"),
+        !msg.contains("10.0.0.9") && !msg.contains("aurora-runner.aurora"),
         "{msg}"
     );
     assert!(msg.contains("networkPolicy.cilium.enabled"), "{msg}");
+    let admin_msg: String = sqlx::query_scalar(
+        "SELECT message FROM sandbox_start_failures WHERE sandbox_id = $1::uuid
+           AND code = 'supervisor_unreachable'",
+    )
+    .bind(&sb)
+    .fetch_one(r.h.pool())
+    .await
+    .unwrap();
+    assert!(
+        admin_msg.contains("aurora-runner.aurora (10.0.0.9):4105"),
+        "{admin_msg}"
+    );
     // The chat shows it as an error event.
     let ev: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM transcript_events WHERE turn_id = $1 AND type = 'error'
@@ -1488,6 +1721,35 @@ async fn start_caps(
     (doc["capabilities"].clone(), db)
 }
 
+/// FIX-092 (STRM-12, C-623): `terminal` rides the boot document only when the operator enabled
+/// it **and** the runner advertised it — a runner that did not could not serve the `pty.*`
+/// frames the boot would promise.
+#[tokio::test]
+async fn boot_terminal_capability_needs_the_runner_to_advertise_it() {
+    let r = rig_cfg(|c| c.terminal.enabled = true).await;
+    // runner-a registers without `terminal`.
+    let (doc, db) = start_caps(&r, "runner-a", Some(&[]), "daneel").await;
+    assert_eq!(
+        doc,
+        json!([]),
+        "no terminal without the runner's advertisement"
+    );
+    assert!(db.is_empty(), "{db:?}");
+}
+
+/// The other half: the same instance with a runner that advertised `terminal` gets it.
+#[tokio::test]
+async fn boot_terminal_capability_is_present_when_both_sides_agree() {
+    let r = rig_cfg(|c| c.terminal.enabled = true).await;
+    let mut caps = caps_with_image(&[]);
+    caps["terminal"] = json!(true);
+    let rep = r.register_with("runner-a", caps).await;
+    r.agent_with_turn("daneel").await;
+    let w = r.work(rep, 0).await;
+    let doc = boot_doc(first(&w, "sandbox.start"));
+    assert_eq!(doc["capabilities"], json!(["terminal"]));
+}
+
 #[tokio::test]
 async fn image_label_sets_boot_capability_and_credential_capability() {
     let r = rig().await;
@@ -1611,6 +1873,135 @@ async fn give_up_on_a_dead_runner_keeps_runner_unavailable_and_ends_failed() {
     }
 }
 
+/// (FIX-071) A sandbox selected as hello-overdue whose supervisor connects before the update —
+/// but which is not yet fully ready (no channel/harness/home) — is not given up as
+/// `supervisor_unreachable`; while still unconnected it is.
+#[tokio::test]
+async fn hello_overdue_give_up_is_fenced_on_still_unconnected() {
+    let r = rig().await;
+    let rep = r.register("runner-a", 4).await;
+    let agent = r.agent("half-ready").await;
+    let (sb, boot, _turn) = claimed_start(&r, rep, agent).await;
+    sqlx::query(
+        "UPDATE sandboxes SET state = 'running', running_at = now() - interval '1 hour',
+             bootstrap_used_at = NULL WHERE id = $1",
+    )
+    .bind(sb)
+    .execute(r.h.pool())
+    .await
+    .unwrap();
+    let mut conn = r.h.pool().acquire().await.unwrap();
+    let overdue = aurora_db::repo::sandboxes::hello_overdue(&mut conn, 60.0, 10)
+        .await
+        .unwrap();
+    assert!(
+        overdue.iter().any(|(s, b, _)| (*s, *b) == (sb, boot)),
+        "selected"
+    );
+    // The supervisor connects (hello) but the sandbox is not ready: no channel, harness, home.
+    sqlx::query("UPDATE sandboxes SET bootstrap_used_at = now() WHERE id = $1")
+        .bind(sb)
+        .execute(r.h.pool())
+        .await
+        .unwrap();
+    let ran = aurora_db::repo::sandboxes::fail_attempt_unconnected(
+        &mut conn,
+        sb,
+        boot,
+        "supervisor_unreachable",
+        "x",
+    )
+    .await
+    .unwrap();
+    assert!(ran.is_none(), "a connected supervisor is not given up on");
+    let (st, failures): (String, i32) =
+        sqlx::query_as("SELECT state, start_failures FROM sandboxes WHERE id = $1")
+            .bind(sb)
+            .fetch_one(r.h.pool())
+            .await
+            .unwrap();
+    assert_eq!((st.as_str(), failures), ("running", 0));
+    // Still unconnected: given up.
+    sqlx::query("UPDATE sandboxes SET bootstrap_used_at = NULL WHERE id = $1")
+        .bind(sb)
+        .execute(r.h.pool())
+        .await
+        .unwrap();
+    let ran = aurora_db::repo::sandboxes::fail_attempt_unconnected(
+        &mut conn,
+        sb,
+        boot,
+        "supervisor_unreachable",
+        "x",
+    )
+    .await
+    .unwrap();
+    assert!(ran.is_some());
+}
+
+/// (FIX-071) The hello-overdue give-up goes through `fail_attempt`: a sandbox selected as
+/// hello-overdue whose supervisor then connected and became ready before the update is not
+/// failed, and is no longer selected on the next pass.
+#[tokio::test]
+async fn hello_overdue_selection_that_became_ready_is_not_failed() {
+    let r = rig().await;
+    let rep = r.register("runner-a", 4).await;
+    let agent = r.agent("late-hello").await;
+    let (sb, boot, _turn) = claimed_start(&r, rep, agent).await;
+    sqlx::query(
+        "UPDATE sandboxes SET state = 'running', running_at = now() - interval '1 hour',
+             bootstrap_used_at = NULL WHERE id = $1",
+    )
+    .bind(sb)
+    .execute(r.h.pool())
+    .await
+    .unwrap();
+    let mut conn = r.h.pool().acquire().await.unwrap();
+    let overdue = aurora_db::repo::sandboxes::hello_overdue(&mut conn, 60.0, 10)
+        .await
+        .unwrap();
+    assert!(
+        overdue.iter().any(|(s, b, _)| (*s, *b) == (sb, boot)),
+        "selected"
+    );
+    // Between the selection and the update the supervisor connects and the sandbox is ready.
+    sqlx::query(
+        "UPDATE sandboxes SET bootstrap_used_at = now(), channel_replica_id = $2,
+             resource_profile = '{\"harness\": {}}', home_applied_generation = 1000000
+         WHERE id = $1",
+    )
+    .bind(sb)
+    .bind(rep)
+    .execute(r.h.pool())
+    .await
+    .unwrap();
+    let ran = aurora_db::repo::sandboxes::fail_attempt(
+        &mut conn,
+        sb,
+        boot,
+        "supervisor_unreachable",
+        "x",
+        false,
+    )
+    .await
+    .unwrap();
+    assert!(ran.is_none(), "a sandbox that became ready is not failed");
+    let (st, failures): (String, i32) =
+        sqlx::query_as("SELECT state, start_failures FROM sandboxes WHERE id = $1")
+            .bind(sb)
+            .fetch_one(r.h.pool())
+            .await
+            .unwrap();
+    assert_eq!((st.as_str(), failures), ("running", 0));
+    let overdue = aurora_db::repo::sandboxes::hello_overdue(&mut conn, 60.0, 10)
+        .await
+        .unwrap();
+    assert!(
+        overdue.iter().all(|(s, _, _)| *s != sb),
+        "no longer selected"
+    );
+}
+
 /// (FIX-058) A sandbox the sweep selected as overdue that became ready before the update is left
 /// alone: `fail_attempt` returns `None` and counts no failure; a not-yet-ready one is failed.
 #[tokio::test]
@@ -1660,4 +2051,273 @@ async fn fail_attempt_leaves_a_sandbox_that_became_ready() {
         .await
         .unwrap();
     assert_eq!(st, "stopping");
+}
+
+/// Make a claimed `starting` sandbox ready for dispatch (supervisor, channel, harness, home).
+async fn make_ready(r: &Rig, sb: Uuid, rep: Uuid) {
+    sqlx::query(
+        "UPDATE sandboxes SET state = 'running', running_at = now(), bootstrap_used_at = now(),
+             channel_replica_id = $2, resource_profile = '{\"harness\": {}}',
+             home_applied_generation = 1000000 WHERE id = $1",
+    )
+    .bind(sb)
+    .bind(rep)
+    .execute(r.h.pool())
+    .await
+    .unwrap();
+}
+
+/// (FIX-093) The sweep works from a snapshot. A sandbox that became ready — and a turn dispatch
+/// handed to it — between the snapshot and the transaction is not failed: not when the turn is
+/// already `dispatched`, and not when it is still `queued` (dispatch owns it now).
+#[tokio::test]
+async fn sweep_never_fails_a_turn_a_ready_sandbox_took() {
+    for dispatched in [true, false] {
+        let r = rig().await;
+        let rep = r.register("runner-a", 4).await;
+        let agent = r.agent("snap").await;
+        let (sb, _boot, turn) = claimed_start(&r, rep, agent).await;
+        sqlx::query("UPDATE turns SET created_at = now() - interval '301 seconds' WHERE id = $1")
+            .bind(turn)
+            .execute(r.h.pool())
+            .await
+            .unwrap();
+        let snapshot = aurora_api::domains::hosted::readiness::overdue_snapshot(&r.h.state)
+            .await
+            .unwrap();
+        assert_eq!(snapshot.len(), 1, "the starting attempt is overdue");
+        // Between the snapshot and the transaction: the sandbox becomes ready, dispatch runs.
+        make_ready(&r, sb, rep).await;
+        if dispatched {
+            sqlx::query("UPDATE turns SET status = 'dispatched' WHERE id = $1")
+                .bind(turn)
+                .execute(r.h.pool())
+                .await
+                .unwrap();
+        }
+        let mut out = aurora_api::domains::hosted::readiness::Swept::default();
+        let mut woke = false;
+        aurora_api::domains::hosted::readiness::sweep_turns(
+            &r.h.state, snapshot, &mut out, &mut woke,
+        )
+        .await
+        .unwrap();
+        let (status, code, _) = turn_error(&r, turn).await;
+        assert_eq!(
+            (status.as_str(), code),
+            (if dispatched { "dispatched" } else { "queued" }, None),
+            "dispatched = {dispatched}"
+        );
+        assert_eq!(out.turns_failed, 0);
+        assert_eq!(r.sandbox_state(&sb.to_string()).await, "running");
+    }
+}
+
+/// (FIX-093, C-580) A start with no queued turn (a preview or terminal demand, a due schedule) is
+/// bounded too. Runner gone: failed with `runner_unavailable` and the runner pin cleared, so
+/// another runner can claim the next start; runner live past the deadline: given up as
+/// `sandbox_start_failed`.
+#[tokio::test]
+async fn starting_without_a_turn_is_bounded_and_the_pin_is_cleared() {
+    let r = rig().await;
+    let rep = r.register("runner-a", 4).await;
+    let agent = r.agent("demand").await;
+    let (sb, _boot, turn) = claimed_start(&r, rep, agent).await;
+    // No waiting turn: the start was claimed for some other demand.
+    sqlx::query("UPDATE turns SET status = 'aborted' WHERE id = $1")
+        .bind(turn)
+        .execute(r.h.pool())
+        .await
+        .unwrap();
+    // Within the deadline nothing happens.
+    assert_eq!(sweep(&r).await.starts_failed, 0);
+    assert_eq!(r.sandbox_state(&sb.to_string()).await, "starting");
+    // The runner dies and the lease lapses.
+    sqlx::query("UPDATE runner_replicas SET last_seen_at = now() - interval '1 hour'")
+        .execute(r.h.pool())
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE sandboxes SET lifecycle_lease_until = now() - interval '1 second' WHERE id = $1",
+    )
+    .bind(sb)
+    .execute(r.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(sweep(&r).await.starts_failed, 1);
+    let (state, code, runner, failures): (String, Option<String>, Option<Uuid>, i32) =
+        sqlx::query_as(
+            "SELECT state, failure_code, runner_id, start_failures FROM sandboxes WHERE id = $1",
+        )
+        .bind(sb)
+        .fetch_one(r.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(
+        (state.as_str(), code.as_deref(), runner, failures),
+        ("failed", Some("runner_unavailable"), None, 1)
+    );
+    // Another runner claims the next start (demand again, backoff over).
+    let rep_b = r.register("runner-b", 4).await;
+    sqlx::query("UPDATE sandboxes SET lifecycle_lease_until = NULL WHERE id = $1")
+        .bind(sb)
+        .execute(r.h.pool())
+        .await
+        .unwrap();
+    let _turn2 = r.turn(agent).await;
+    let w = r.work(rep_b, 0).await;
+    assert_eq!(first(&w, "sandbox.start")["sandbox_id"], sb.to_string());
+
+    // A live runner that never progresses: the attempt is older than the deadline.
+    sqlx::query(
+        "UPDATE sandboxes SET start_attempt_at = now() - interval '301 seconds' WHERE id = $1",
+    )
+    .bind(sb)
+    .execute(r.h.pool())
+    .await
+    .unwrap();
+    sqlx::query("UPDATE turns SET status = 'aborted' WHERE agent_id = $1")
+        .bind(agent)
+        .execute(r.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(sweep(&r).await.starts_failed, 1);
+    let code: Option<String> =
+        sqlx::query_scalar("SELECT failure_code FROM sandboxes WHERE id = $1")
+            .bind(sb)
+            .fetch_one(r.h.pool())
+            .await
+            .unwrap();
+    assert_eq!(code.as_deref(), Some("sandbox_start_failed"));
+}
+
+/// (FIX-115, `10` §The answer rule) A turn the API ends (here the readiness sweep) keeps the
+/// answer text buffered after its last tool call: a durable `text` event before the `error`,
+/// and no buffer row left behind.
+#[tokio::test]
+async fn failed_turn_keeps_its_buffered_answer_text() {
+    let r = rig().await;
+    let agent = r.agent("answerer").await;
+    let turn = r.turn(agent).await;
+    sqlx::query("INSERT INTO turn_answer_buffers (turn_id, msgs) VALUES ($1, $2)")
+        .bind(turn)
+        .bind(json!([{"id": "m1", "text": "Here is what I found so far.", "reply_to": null}]))
+        .execute(r.h.pool())
+        .await
+        .unwrap();
+    sqlx::query("UPDATE turns SET created_at = now() - interval '301 seconds' WHERE id = $1")
+        .bind(turn)
+        .execute(r.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(sweep(&r).await.turns_failed, 1);
+    let (status, ..) = turn_error(&r, turn).await;
+    assert_eq!(status, "failed");
+    let kinds: Vec<(String, Option<String>)> = sqlx::query_as(
+        "SELECT type, payload->>'text' FROM transcript_events WHERE turn_id = $1
+           AND type IN ('text', 'error') ORDER BY seq",
+    )
+    .bind(turn)
+    .fetch_all(r.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        kinds,
+        vec![
+            (
+                "text".to_owned(),
+                Some("Here is what I found so far.".to_owned())
+            ),
+            ("error".to_owned(), None)
+        ]
+    );
+    let left: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM turn_answer_buffers WHERE turn_id = $1")
+            .bind(turn)
+            .fetch_one(r.h.pool())
+            .await
+            .unwrap();
+    assert_eq!(left, 0);
+}
+
+/// (FIX-093) After the API's give-up, the runner's late `failed` for the same boot lands the
+/// sandbox in `failed` without counting a second failure or overwriting the specific reason.
+#[tokio::test]
+async fn late_runner_failed_report_after_give_up_counts_once() {
+    let r = rig().await;
+    let rep = r.register("runner-a", 4).await;
+    let agent = r.agent("late").await;
+    let (sb, boot, turn) = claimed_start(&r, rep, agent).await;
+    sqlx::query("UPDATE turns SET created_at = now() - interval '301 seconds' WHERE id = $1")
+        .bind(turn)
+        .execute(r.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(sweep(&r).await.turns_failed, 1);
+    assert_eq!(r.sandbox_state(&sb.to_string()).await, "stopping");
+    post_reports(
+        &r,
+        rep,
+        json!([{"report_id": Uuid::now_v7(), "kind": "sandbox.status",
+            "sandbox_id": sb, "boot_id": boot, "state": "failed",
+            "reason_code": "pod_failed", "message": "the pod crashed"}]),
+    )
+    .await;
+    let (state, code, failures): (String, Option<String>, i32) =
+        sqlx::query_as("SELECT state, failure_code, start_failures FROM sandboxes WHERE id = $1")
+            .bind(sb)
+            .fetch_one(r.h.pool())
+            .await
+            .unwrap();
+    assert_eq!(
+        (state.as_str(), code.as_deref(), failures),
+        ("failed", Some("sandbox_start_failed"), 1)
+    );
+}
+
+/// FIX-116: `terminal.awake_cap_secs` bounds a terminal-only keep-awake on its own clock: with
+/// the terminal cap at 600 s and the preview cap at 4 h, a boot whose terminal stamp is 700 s
+/// old is stopped by the arm-2 sweep (the preview cap used to decide, so it stayed awake).
+#[tokio::test]
+async fn terminal_awake_cap_is_its_own_clock() {
+    let r = rig_cfg(|c| {
+        c.terminal.enabled = true;
+        c.terminal.awake_cap_secs = 600;
+        c.previews.awake_cap_secs = 4 * 3600;
+    })
+    .await;
+    let rep = r.register("runner-a", 4).await;
+    let agent = r.agent_with_turn("term").await;
+    let (sb, boot) = r.boot_running(rep).await;
+    r.finish_turns(agent).await;
+    // Idle past IDLE_STOP, with a live terminal stamp.
+    r.age(&sb, 3).await;
+    let stamp = |secs: i32| {
+        let sb = sb.clone();
+        let pool = r.h.pool().clone();
+        async move {
+            sqlx::query(
+                "UPDATE sandboxes SET terminal_active_until = now() + interval '2 minutes',
+                     terminal_awake_since = now() - make_interval(secs => $2) WHERE id = $1::uuid",
+            )
+            .bind(&sb)
+            .bind(secs)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+    };
+    // Within the terminal cap the stamp keeps the box awake.
+    stamp(300).await;
+    assert!(r.work(rep, 0).await["items"].as_array().unwrap().is_empty());
+    assert_eq!(r.sandbox_state(&sb).await, "running");
+    // Past the terminal cap (but far inside the preview cap) it is stopped.
+    stamp(700).await;
+    let w = r.work(rep, 0).await;
+    let stop = first(&w, "sandbox.stop");
+    assert_eq!(
+        (stop["reason"].as_str(), stop["boot_id"].as_str()),
+        (Some("idle"), Some(boot.as_str())),
+        "{w}"
+    );
 }

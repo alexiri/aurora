@@ -217,3 +217,33 @@
   connection: *conn
   request: { method: POST, url: "https://sts.eu-west-1.amazonaws.com/", headers: { x-amz-target: "AWSSecurityTokenServiceV20110615.GetCallerIdentity", content-type: application/x-amz-json-1.1 }, body: "{}" }
   expect: { app: aws-keys, no_tool: true }
+# FIX-085 (SEC-68): a raw `;` may separate pairs for the upstream, and parameter names may be
+# read without case. One `Action` for us can be two for it, so none of these is a tool.
+- name: "negative ec2_describe: a semicolon may start a second Action"
+  connection: *conn
+  request:
+    method: POST
+    url: "https://ec2.eu-west-1.amazonaws.com/"
+    headers: { content-type: application/x-www-form-urlencoded }
+    body: "Action=DescribeInstances;Action=TerminateInstances&Version=2016-11-15"
+  expect: { tool: ec2_call }
+- name: "negative ec2_describe: the same parameter in two spellings is repeated"
+  connection: *conn
+  request:
+    method: POST
+    url: "https://ec2.eu-west-1.amazonaws.com/"
+    headers: { content-type: application/x-www-form-urlencoded }
+    body: "ACTION=TerminateInstances&Action=DescribeInstances&Version=2016-11-15"
+  expect: { tool: ec2_call }
+- name: "negative sts_get_caller_identity: a semicolon may start a second Action"
+  connection: *conn
+  request: { method: POST, url: "https://sts.eu-west-1.amazonaws.com/", headers: { content-type: application/x-www-form-urlencoded }, body: "Action=GetCallerIdentity;Action=AssumeRole&Version=2011-06-15" }
+  expect: { app: aws-keys, no_tool: true }
+- name: "negative sts_get_caller_identity: ACTION=AssumeRole beside Action=GetCallerIdentity"
+  connection: *conn
+  request: { method: POST, url: "https://sts.eu-west-1.amazonaws.com/", headers: { content-type: application/x-www-form-urlencoded }, body: "ACTION=AssumeRole&Action=GetCallerIdentity&Version=2011-06-15" }
+  expect: { app: aws-keys, no_tool: true }
+- name: "sts_get_caller_identity: a percent-encoded semicolon is an ordinary character"
+  connection: *conn
+  request: { method: POST, url: "https://sts.eu-west-1.amazonaws.com/", headers: { content-type: application/x-www-form-urlencoded }, body: "Action=GetCallerIdentity&Version=2011-06-15%3Bx" }
+  expect: { app: aws-keys, tool: sts_get_caller_identity }

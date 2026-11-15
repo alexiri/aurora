@@ -132,7 +132,25 @@ pub async fn create(
     Ok(row)
 }
 
-pub async fn patch(pool: &PgPool, mut r: ScheduleRow, p: Patch) -> Result<ScheduleRow, ApiError> {
+pub async fn patch(pool: &PgPool, seen: ScheduleRow, p: Patch) -> Result<ScheduleRow, ApiError> {
+    patch_with(pool, seen, p, async {}).await
+}
+
+/// [`patch`] with a hook that runs after the caller's read and before the row lock is taken
+/// (tests interleave a fire there).
+pub async fn patch_with(
+    pool: &PgPool,
+    seen: ScheduleRow,
+    p: Patch,
+    between: impl std::future::Future<Output = ()>,
+) -> Result<ScheduleRow, ApiError> {
+    between.await;
+    // (FIX-110) Start from the locked current row, not the caller's possibly stale read.
+    let mut tx = pool.begin().await.map_err(aurora_db::DbError::from)?;
+    let mut r = repo::get_for_update(&mut tx, seen.id)
+        .await?
+        .ok_or_else(not_found)?;
+    let mut reschedule = false;
     if let Some(v) = p.name {
         check_name(&v)?;
         r.name = v;
@@ -161,11 +179,13 @@ pub async fn patch(pool: &PgPool, mut r: ScheduleRow, p: Patch) -> Result<Schedu
             r.disabled_reason = None;
             r.consecutive_failures = 0;
             r.next_fire_at = Some(cron::validate(&r.cron, &r.timezone, Utc::now())?);
+            reschedule = true;
         }
         Some(false) if r.enabled => {
             r.enabled = false;
             r.disabled_reason = Some("user".into());
             r.next_fire_at = None;
+            reschedule = true;
         }
         _ => {}
     }
@@ -174,9 +194,9 @@ pub async fn patch(pool: &PgPool, mut r: ScheduleRow, p: Patch) -> Result<Schedu
         if r.enabled {
             r.next_fire_at = Some(next);
         }
+        reschedule = true;
     }
-    let mut tx = pool.begin().await.map_err(aurora_db::DbError::from)?;
-    let row = repo::update(&mut tx, &r).await?;
+    let row = repo::update(&mut tx, &r, reschedule).await?;
     tx.commit().await.map_err(aurora_db::DbError::from)?;
     Ok(row)
 }

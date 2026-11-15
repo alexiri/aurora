@@ -56,6 +56,12 @@ pub enum BlockReason {
     /// (P4-GRANTS, D-123) The winning connection's app is `block_untooled` and no catalogue tool
     /// matched the request; decided before any rule.
     AppUntooledBlocked,
+    /// (FIX-133, D-240) The winning connection is read-only and the request is a write tool or
+    /// matches no catalogue tool; decided before any rule.
+    ReadOnlyConnection,
+    /// (FIX-136, D-241) The matched tool needs a scope the winning connection does not have;
+    /// decided before any rule.
+    ToolScopeMissing,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -166,6 +172,10 @@ pub enum Via {
     Nothing,
     /// (P4-GRANTS, D-123) `block_untooled` decided before any rule was consulted.
     AppUntooledBlocked,
+    /// (FIX-133, D-240) `ReadOnlyConnection` decided before any rule was consulted.
+    ReadOnlyBlocked,
+    /// (FIX-136, D-241) `ToolScopeMissing` decided before any rule was consulted.
+    ToolScopeBlocked,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -236,16 +246,36 @@ fn allowlisted(p: &ScopePolicy, f: &RequestFacts) -> bool {
 }
 
 /// The winning credential is a connection of a `block_untooled` app and no tool matched.
+/// (FIX-085, SEC-67) `custom_only` implies `block_untooled`: its tools "are the only way to use
+/// the app" (docs/09), so a request outside them is blocked before any rule, hand-written
+/// `network` allow rules included. The manifest linter requires both flags together; this keeps a
+/// snapshot that carries `custom_only` alone (one built before that rule) just as strict.
 fn blocks_untooled(f: &RequestFacts) -> bool {
     !f.connect_time
         && f.tool_id.is_none()
         && matches!(
             f.winning_credential,
             Some(crate::facts::Credential::Connection {
-                block_untooled: true,
+                block_untooled,
+                custom_only,
+                ..
+            }) if block_untooled || custom_only
+        )
+}
+
+/// (FIX-133, D-240) The winning credential is a read-only connection and the request is not a
+/// read tool: a write tool, or no catalogue tool at all (an untooled request cannot be proven a
+/// read). Not at `CONNECT` time (nothing is injected into a tunnel).
+fn blocks_read_only(f: &RequestFacts) -> bool {
+    !f.connect_time
+        && matches!(
+            f.winning_credential,
+            Some(crate::facts::Credential::Connection {
+                read_only: true,
                 ..
             })
         )
+        && (f.tool_id.is_none() || f.tool_tags.write)
 }
 
 fn eval_scope(p: &ScopePolicy, f: &RequestFacts, counters: &dyn RateCounter) -> ScopeResult {
@@ -269,6 +299,36 @@ fn eval_scope(p: &ScopePolicy, f: &RequestFacts, counters: &dyn RateCounter) -> 
             Via::AppUntooledBlocked,
             Some(Verdict::Block {
                 reason: BlockReason::AppUntooledBlocked,
+            }),
+            None,
+        );
+    }
+    if blocks_read_only(f) {
+        return finish(
+            Vec::new(),
+            None,
+            Via::ReadOnlyBlocked,
+            Some(Verdict::Block {
+                reason: BlockReason::ReadOnlyConnection,
+            }),
+            None,
+        );
+    }
+    // (FIX-136, D-241) The token cannot serve this tool: refused before any rule (not at CONNECT
+    // time, nothing is injected into a tunnel).
+    if !f.connect_time
+        && f.tool_tags.scope_missing
+        && matches!(
+            f.winning_credential,
+            Some(crate::facts::Credential::Connection { .. })
+        )
+    {
+        return finish(
+            Vec::new(),
+            None,
+            Via::ToolScopeBlocked,
+            Some(Verdict::Block {
+                reason: BlockReason::ToolScopeMissing,
             }),
             None,
         );

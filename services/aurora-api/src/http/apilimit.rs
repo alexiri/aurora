@@ -87,8 +87,10 @@ pub fn classify(method: &Method, path: &str) -> Option<Class> {
         ["admin", "plugins"] if post => return Some(Class::Upload),
         ["agents", _, "effective"] if is_get => return Some(Class::Simulate),
         ["conversations", _, "export"] if is_get => return Some(Class::Export),
-        ["admin", "storage"] if is_get => return Some(Class::Export),
-        ["orgs", _, "storage"] if is_get => return Some(Class::Export),
+        // (FIX-126) The Storage pages are cached snapshots read in the `general` bucket; only
+        // the deliberate Refresh buttons are `export`-class.
+        ["admin", "storage", "refresh"] if post => return Some(Class::Export),
+        ["orgs", _, "storage", "refresh"] if post => return Some(Class::Export),
         _ => {}
     }
     if post && last == "simulate" && rest.len() >= 2 && rest[rest.len() - 2] == "policy" {
@@ -569,8 +571,23 @@ enum Who {
     Anonymous { rejected: bool },
 }
 
-async fn resolve(state: &AppState, headers: &http::HeaderMap, ip: ClientIp) -> Who {
+async fn resolve(state: &AppState, headers: &http::HeaderMap, ip: ClientIp, path: &str) -> Who {
     let had_bearer = bearer(headers);
+    // (FIX-090) A relay-plane request carries an `aul_` bearer, which none of the management
+    // extractors accepts: without this branch every relay call was charged as a rejected bearer
+    // to the relay pod's address (30/min). A live relay token is a `Principal` of its own
+    // preview-class bucket; a dead one stays on the rejected-bearer path.
+    if path.starts_with("/v1/relay/")
+        && let Some(Some(tok)) = had_bearer
+        && tok.starts_with(TokenPrefix::Relay.as_str())
+    {
+        use crate::domains::relay::auth::{LimiterIdentity, limiter_identity};
+        return match limiter_identity(state, headers).await {
+            LimiterIdentity::Live(key) => Who::Principal(key, None),
+            LimiterIdentity::Dead => Who::Anonymous { rejected: true },
+            LimiterIdentity::Unknown => Who::Anonymous { rejected: false },
+        };
+    }
     let has_cookie =
         crate::http::auth::cookie_value(headers, crate::http::auth::SESSION_COOKIE).is_some();
     if had_bearer.is_none() && !has_cookie {
@@ -620,7 +637,7 @@ pub async fn middleware(State(state): State<AppState>, req: Request, next: Next)
         .copied()
         .unwrap_or_default();
     let headers = req.headers().clone();
-    match resolve(&state, &headers, ip).await {
+    match resolve(&state, &headers, ip, &path).await {
         Who::Anonymous { rejected } => {
             let ip = ip_key(&req);
             let charge = if rejected {
@@ -820,8 +837,17 @@ mod tests {
             c(Method::GET, "/v1/conversations/1/export"),
             Some(Class::Export)
         );
-        assert_eq!(c(Method::GET, "/v1/admin/storage"), Some(Class::Export));
-        assert_eq!(c(Method::GET, "/v1/orgs/1/storage"), Some(Class::Export));
+        // (FIX-126) the Storage pages are plain reads; only the Refresh buttons are `export`.
+        assert_eq!(c(Method::GET, "/v1/admin/storage"), None);
+        assert_eq!(c(Method::GET, "/v1/orgs/1/storage"), None);
+        assert_eq!(
+            c(Method::POST, "/v1/admin/storage/refresh"),
+            Some(Class::Export)
+        );
+        assert_eq!(
+            c(Method::POST, "/v1/orgs/1/storage/refresh"),
+            Some(Class::Export)
+        );
         assert_eq!(c(Method::DELETE, "/v1/agents/1"), Some(Class::Write));
         assert_eq!(c(Method::PATCH, "/v1/agents/1"), Some(Class::Write));
         assert_eq!(c(Method::GET, "/v1/agents/1"), None);

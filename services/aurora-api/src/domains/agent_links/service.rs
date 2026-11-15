@@ -72,6 +72,12 @@ pub async fn set_policy(
             e
         }
     })?;
+    // (FIX-110, docs/07 §Agent links, RFE-012) Consenting to cross-workspace messaging (`allow`)
+    // is an approver's decision; `ask` and `blocked` only restrict and stay with `can_use`.
+    if b.policy == LinkPolicy::Allow {
+        let auth = c.workspace(s, agent.workspace_id).await?;
+        crate::http::auth::require_approve(&auth)?;
+    }
     let mut tx = s.pool.begin().await.map_err(DbError::from)?;
     let cur = repo::get_for_update(&mut tx, id)
         .await?

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # cargo-deny over every built-in hook crate (P2-OPS-1, D-100). The plugins/builtin/*/hooks crates are
 # standalone projects with their own Cargo.lock, so the workspace `cargo deny check` never sees them.
-# Each crate carries its own deny.toml (the github-app one holds a scoped RUSTSEC-2023-0071 waiver).
+# Each crate carries its own deny.toml (the github one holds a scoped RUSTSEC-2023-0071 waiver).
 # Also fails if a hook crate has no deny.toml, so a new hook cannot slip past the scan.
 #
 #   bash scripts/plugins/deny-hooks.sh

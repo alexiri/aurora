@@ -35,7 +35,19 @@ fn effective(rows: Vec<PackageRow>) -> Vec<PackageRow> {
 async fn groups(conn: &mut PgConnection) -> Result<Vec<ConflictGroup>, ApiError> {
     let rows = plugins::list_by_status(&mut *conn, &["active", "pending_approval"]).await?;
     let mut all: Vec<(String, Claim)> = Vec::new();
-    for r in effective(rows) {
+    let rows = effective(rows);
+    // (FIX-123, D-215) A package whose apps a present package supersedes is on its way out: its
+    // claims are not a conflict for the admin to decide (approval moves the apps and retires it).
+    let retiring: Vec<&'static str> = rows
+        .iter()
+        .filter_map(|r| serde_json::from_value::<Manifest>(r.manifest.clone()).ok())
+        .filter(|m| !aurora_registry::upgrade::supersedes(m).is_empty())
+        .flat_map(|m| aurora_registry::upgrade::retired_by(&m.package.id))
+        .collect();
+    for r in rows
+        .into_iter()
+        .filter(|r| !retiring.contains(&r.package_id.as_str()))
+    {
         if let Ok(m) = serde_json::from_value::<Manifest>(r.manifest) {
             all.extend(
                 claims::claims(&m)

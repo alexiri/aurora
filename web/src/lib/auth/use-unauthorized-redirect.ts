@@ -7,7 +7,8 @@ import { ApiError } from "@/lib/api/client";
 
 /** Accept only same-origin absolute paths for `?next=`; anything else becomes `/`. */
 export function safeNext(next: string | null | undefined): string {
-  if (!next || !next.startsWith("/") || next.startsWith("//") || next.includes("\\")) return "/";
+  // Control characters (CR, LF, NUL, DEL …) are refused by the server's own `next` check; refuse them here too (WEBC-5).
+  if (!next || !next.startsWith("/") || next.startsWith("//") || next.includes("\\") || /[\u0000-\u001f\u007f]/.test(next)) return "/";
   return next;
 }
 

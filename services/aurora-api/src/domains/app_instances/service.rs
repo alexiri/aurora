@@ -1,6 +1,7 @@
 use super::dto::*;
 use crate::app::AppState;
 use crate::audit::{self, AuditActor, AuditEvent, Outcome};
+use crate::domains::connect::env::classify_send_error;
 use crate::domains::plugins::{ingest, registry};
 use crate::http::pagination::{Page, Pagination};
 use aurora_core::{ApiError, FieldError, ids};
@@ -9,6 +10,7 @@ use aurora_db::repo::credentials;
 use aurora_db::{DbError, conflict_code};
 use aurora_policy::HostPattern;
 use aurora_registry::claims::hosts_overlap;
+use aurora_registry::instance::{InstanceBase, normalize_base_path, overlaps};
 use aurora_registry::manifest::{InstanceProbe, ProbeMethod};
 use aurora_registry::snapshot::Snapshot;
 use aurora_registry::validate::plain_dns_name;
@@ -58,12 +60,17 @@ pub fn check_host_shape(host: &str) -> Result<(), ApiError> {
 
 /// The conflict an instance host would create with the active static claims or a governed LLM host
 /// (a claim overlaps when some request host matches both, ignoring ports).
-fn static_conflict(state: &AppState, snap: &Snapshot, host: &str) -> Option<ApiError> {
-    let conflict = |kind: &str, app_id: Option<&str>| {
-        let c = match app_id {
-            Some(a) => json!({ "kind": kind, "app_id": a }),
-            None => json!({ "kind": kind }),
-        };
+///
+/// The error names the holder (FIX-132, `details.conflict`): `static_claim` (app, package),
+/// `llm_host` (the endpoint id) or `aurora_address` (the setting). Operator configuration (the
+/// endpoint id, the setting name) is only named to an instance administrator (`reveal`).
+fn static_conflict(
+    state: &AppState,
+    snap: &Snapshot,
+    host: &str,
+    reveal: bool,
+) -> Option<ApiError> {
+    let conflict = |c: Value| {
         field_error(
             "instance_host_conflict",
             "/host",
@@ -76,31 +83,113 @@ fn static_conflict(state: &AppState, snap: &Snapshot, host: &str) -> Option<ApiE
         .iter()
         .find(|e| hosts_overlap(&e.host, host) || HostPattern::lenient(&e.host).matches(host, 443))
     {
-        return Some(conflict("static_claim", Some(&e.app_id)));
+        let app = snap.app(&e.app_id);
+        return Some(conflict(json!({
+            "kind": "static_claim",
+            "app_id": e.app_id,
+            "app_name": app.map(|a| a.about.name.as_str()),
+            "package_id": app.map(|a| a.package_id.as_str()),
+            "claim_host": e.host,
+        })));
     }
-    let llm = state.llm.is_endpoint_host(host)
-        || snap.reserved_hosts.iter().any(|p| hosts_overlap(p, host))
+    if state.llm.is_endpoint_host(host) {
+        let lower = host.to_ascii_lowercase();
+        let bare = lower.split_once(':').map_or(lower.as_str(), |(h, _)| h);
+        let endpoint = state
+            .llm
+            .endpoints()
+            .iter()
+            .find(|ep| {
+                state.llm.provider_for(ep).is_some_and(|p| {
+                    p.hosts(ep)
+                        .iter()
+                        .any(|h| *h == lower || (!h.contains(':') && h == bare))
+                })
+            })
+            .map(|ep| ep.id.as_str());
+        return Some(conflict(json!({
+            "kind": "llm_host",
+            "endpoint_id": if reveal { endpoint } else { None },
+        })));
+    }
+    if let Some(setting) = own_address_setting(state, host) {
+        return Some(conflict(json!({
+            "kind": "aurora_address",
+            "setting": reveal.then_some(setting),
+        })));
+    }
+    let reserved = snap.reserved_hosts.iter().any(|p| hosts_overlap(p, host))
         || ingest::reserved_names(state)
             .iter()
             .any(|p| hosts_overlap(p, host));
-    llm.then(|| conflict("llm_host", None))
+    reserved.then(|| conflict(json!({ "kind": "aurora_address", "setting": null })))
+}
+
+/// Which of Aurora's own address settings names `host`.
+fn own_address_setting(state: &AppState, host: &str) -> Option<&'static str> {
+    let cfg = &state.config;
+    [
+        ("external_url", &cfg.external_url),
+        ("hookhost_url", &cfg.hookhost_url),
+        ("advertised_proxy_url", &cfg.advertised_proxy_url),
+    ]
+    .into_iter()
+    .find(|(_, url)| {
+        let rest = url.split_once("://").map_or(url.as_str(), |(_, r)| r);
+        let auth = rest.split(['/', '?', '#']).next().unwrap_or("");
+        let auth = auth.rsplit_once('@').map_or(auth, |(_, h)| h);
+        let name = auth.rsplit_once(':').map_or(auth, |(h, _)| h);
+        !name.is_empty() && hosts_overlap(name, host)
+    })
+    .map(|(setting, _)| setting)
 }
 
 /// Run the manifest's probe against the host through the destination guard.
-async fn run_probe(state: &AppState, host: &str, probe: &InstanceProbe) -> Result<(), ApiError> {
-    let fail = |reason: &str, status: Option<u16>| {
-        field_error(
-            "instance_probe_failed",
-            "/host",
-            "The instance did not answer the probe as expected.",
-            Some(json!({ "status": status, "reason": reason })),
-        )
-    };
+async fn run_probe(
+    state: &AppState,
+    host: &str,
+    base_path: Option<&str>,
+    app_name: &str,
+    probe: &InstanceProbe,
+) -> Result<(), ApiError> {
     let env = &state.connect;
-    let raw = format!("https://{host}{}", probe.path);
+    // (D-231) The probe path is relative to the registration: `https://<host><base_path><path>`.
+    let raw = format!(
+        "{}{}",
+        InstanceBase::new(host, base_path).base_url(),
+        probe.path
+    );
+    let probed_path = format!("{}{}", base_path.unwrap_or(""), probe.path);
+    // The URL shown to the person: what was probed, without a query (C-730).
+    let shown = reqwest::Url::parse(&raw).ok().map(|mut u| {
+        u.set_query(None);
+        u
+    });
+    let fail = |reason: &str, status: Option<u16>, location: Option<String>| {
+        let url = shown.as_ref().map_or(raw.clone(), ToString::to_string);
+        let message = probe_message(
+            reason,
+            status,
+            &MessageCtx {
+                host,
+                path: &probed_path,
+                base_path,
+                app: app_name,
+                expected: &probe.expect_status,
+            },
+            location.as_deref(),
+        );
+        let mut d = json!({
+            "status": status, "reason": reason, "url": url, "expected": probe.expect_status,
+        });
+        if let (Some(l), Some(o)) = (location, d.as_object_mut()) {
+            o.insert("location".into(), Value::String(l));
+        }
+        field_error("instance_probe_failed", "/host", &message, Some(d))
+    };
     let url = env
         .prepare(&raw)
-        .map_err(|_| fail("destination_refused", None))?;
+        .map_err(|_| fail("destination_refused", None, None))?;
     let method = match probe.method {
         ProbeMethod::Get => reqwest::Method::GET,
         ProbeMethod::Head => reqwest::Method::HEAD,
@@ -109,26 +198,126 @@ async fn run_probe(state: &AppState, host: &str, probe: &InstanceProbe) -> Resul
     let resp = env
         .http_instance
         .request(method, url)
-        .timeout(std::time::Duration::from_secs(10))
+        .timeout(env.probe_timeout())
         .send()
         .await
-        .map_err(|e| {
-            let refused = format!("{e:?}").contains("destination refused");
-            fail(
-                if refused {
-                    "destination_refused"
-                } else {
-                    "unreachable"
-                },
-                None,
-            )
-        })?;
+        .map_err(|e| fail(classify_send_error(&e), None, None))?;
     let status = resp.status().as_u16();
     if probe.expect_status.contains(&status) {
-        Ok(())
-    } else {
-        Err(fail("unexpected_status", Some(status)))
+        return Ok(());
     }
+    let location = resp
+        .status()
+        .is_redirection()
+        .then(|| {
+            let l = resp
+                .headers()
+                .get(reqwest::header::LOCATION)?
+                .to_str()
+                .ok()?;
+            let base = shown.as_ref()?;
+            let abs = base.join(l).ok()?.to_string();
+            (abs.len() <= 512).then_some(abs)
+        })
+        .flatten();
+    Err(fail("unexpected_status", Some(status), location))
+}
+
+/// The person-readable sentence for a failed registration check (the dashboard words it the same
+/// way, `probeFailedMessage`).
+struct MessageCtx<'a> {
+    host: &'a str,
+    /// The probed path, base path included.
+    path: &'a str,
+    base_path: Option<&'a str>,
+    app: &'a str,
+    expected: &'a [u16],
+}
+
+fn probe_message(
+    reason: &str,
+    status: Option<u16>,
+    ctx: &MessageCtx<'_>,
+    location: Option<&str>,
+) -> String {
+    let MessageCtx {
+        host,
+        path,
+        base_path,
+        app,
+        expected,
+    } = *ctx;
+    let hint =
+        format!("If {app} is served under a path, such as https://{host}/wiki, enter it in Path.");
+    match (reason, status) {
+        ("unexpected_status", Some(404)) => match base_path {
+            Some(b) => format!(
+                "{host} answered 404 Not Found at {path}. {app} answers there when it is served under {b} on {host}. Check the Path."
+            ),
+            None => format!(
+                "{host} answered 404 Not Found at {path}. {app} answers there when it is served at the root of the host. {hint}"
+            ),
+        },
+        ("unexpected_status", Some(s)) if (300..400).contains(&s) => {
+            let mut m = format!("{host} redirected {path}");
+            match location {
+                Some(l) => {
+                    m.push_str(&format!(" to {l}."));
+                    let same = reqwest::Url::parse(l)
+                        .ok()
+                        .and_then(|u| u.host_str().map(|h| h.eq_ignore_ascii_case(host)))
+                        .unwrap_or(true);
+                    if same {
+                        m.push(' ');
+                        m.push_str(&hint);
+                    } else {
+                        m.push_str(" Register that host instead.");
+                    }
+                }
+                None => m.push('.'),
+            }
+            m
+        }
+        ("unexpected_status", Some(s)) => {
+            let phrase = reqwest::StatusCode::from_u16(s)
+                .ok()
+                .and_then(|c| c.canonical_reason())
+                .unwrap_or("");
+            let want = expected
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(" or ");
+            format!(
+                "{host} answered {s} {phrase} at {path}; {app} answers {want} there. Check that this host runs {app}."
+            )
+        }
+        ("destination_refused", _) => format!(
+            "The gateway may not connect to {host}: it resolves to a private address. An operator can allow it with gateway.allowed_private."
+        ),
+        ("dns", _) => format!(
+            "{host} could not be found from the Aurora server. Check the spelling. An internal name must resolve in the cluster's DNS."
+        ),
+        ("timeout", _) => format!(
+            "{host} did not answer within 10 seconds. Check that the Aurora server can reach it (firewall, proxy)."
+        ),
+        ("connect", _) => format!("{host} refused the connection on port 443."),
+        ("tls", _) => format!(
+            "{host}'s TLS certificate is not trusted by Aurora. If a private CA signed it, an operator can add that CA (extra CA bundle)."
+        ),
+        _ => format!("{host} could not be reached from the Aurora server."),
+    }
+}
+
+/// (FIX-134, D-243, C-742) A package's preset instance is the package's: nobody changes it.
+fn refuse_builtin(row: &InstanceRow) -> Result<(), ApiError> {
+    if row.builtin {
+        return Err(ApiError::conflict(
+            "instance_builtin",
+            "This instance is built into the app and cannot be changed or removed.",
+        ));
+    }
+    Ok(())
 }
 
 fn invalidate_scope(org: Option<Uuid>) -> (&'static str, Uuid) {
@@ -191,11 +380,107 @@ fn map_page(page: Page<InstanceRow>) -> Page<AppInstance> {
     }
 }
 
-/// Register an instance (`org = None`: instance-wide). The caller has authorized the scope.
+/// Registrations for the instance admin: instance-wide only (`all = false`) or every
+/// organization's too, optionally of one org.
+pub async fn list_admin(
+    state: &AppState,
+    q: &AdminListQuery,
+) -> Result<Page<AppInstance>, ApiError> {
+    let all = match q.scope.as_deref() {
+        None | Some("instance") => false,
+        Some("all") => true,
+        Some(_) => return Err(bad("/scope", "scope must be instance or all")),
+    };
+    if !all && q.org.is_none() {
+        return list_instance_wide(
+            state,
+            &ListQuery {
+                app_id: q.app_id.clone(),
+                limit: q.limit,
+                cursor: q.cursor.clone(),
+            },
+        )
+        .await;
+    }
+    let p = Pagination::new(q.limit, q.cursor.as_deref())?;
+    let rows = repo::list_all(
+        &state.pool,
+        q.org,
+        q.app_id.as_deref(),
+        p.after.map(|c| (c.t, c.id)),
+        p.fetch(),
+    )
+    .await?;
+    Ok(map_page(Page::from_rows(rows, p.limit, |r| {
+        (r.created_at, r.id)
+    })))
+}
+
+/// Make an organization's registration instance-wide (FIX-132, `app_instance.promote`): one
+/// transaction moves it to `org_id = NULL` (its connections keep their `instance_id`; every
+/// organization then sees it) and audits it. Refused while another registration holds the host
+/// (that one must be removed first, or two rows would claim it in one scope).
+pub async fn promote(
+    state: &AppState,
+    actor: &AuditActor,
+    id: Uuid,
+) -> Result<InstanceRow, ApiError> {
+    let row = repo::get(&state.pool, id)
+        .await?
+        .ok_or_else(|| ApiError::not_found("App instance not found."))?;
+    let mut tx = state.pool.begin().await.map_err(DbError::from)?;
+    repo::lock_host(&mut tx, &row.host).await?;
+    // Re-read under the host lock: a concurrent promote or delete decides.
+    let row = repo::get(&mut *tx, id)
+        .await?
+        .ok_or_else(|| ApiError::not_found("App instance not found."))?;
+    refuse_builtin(&row)?;
+    let Some(from_org) = row.org_id else {
+        return Err(ApiError::conflict(
+            "instance_already_wide",
+            "This registration is already instance-wide.",
+        ));
+    };
+    // (D-231) Only a registration whose base path overlaps this one is in the way.
+    let others = repo::other_base_paths(&mut tx, &row.host, id)
+        .await?
+        .iter()
+        .filter(|b| overlaps(b.as_deref(), row.base_path.as_deref()))
+        .count();
+    if others > 0 {
+        return Err(ApiError::conflict(
+            "instance_host_shared",
+            "Another registration of this host exists. Delete it first, then make this one instance-wide.",
+        )
+        .with_details(json!({ "others": others })));
+    }
+    repo::promote(&mut tx, id).await?;
+    let promoted = repo::get(&mut *tx, id)
+        .await?
+        .ok_or_else(|| ApiError::not_found("App instance not found."))?;
+    // The event carries the former org (`org_id` of the row is now null): the org's audit log
+    // shows the widening too.
+    let ev = event(
+        actor,
+        "app_instance.promote",
+        &promoted,
+        json!({"app_id": promoted.app_id, "host": promoted.host, "from_org": from_org,
+               "connections": promoted.connections}),
+    )
+    .org(from_org);
+    audit::insert_tx(&mut tx, &ev).await?;
+    credentials::notify_gateway_invalidate(&mut *tx, "all", Uuid::nil()).await?;
+    tx.commit().await.map_err(DbError::from)?;
+    Ok(promoted)
+}
+
+/// Register an instance (`org = None`: instance-wide). The caller has authorized the scope;
+/// `reveal` = the caller is an instance administrator (operator detail may be named in a refusal).
 pub async fn create(
     state: &AppState,
     actor: &AuditActor,
     org: Option<Uuid>,
+    reveal: bool,
     req: CreateAppInstanceRequest,
 ) -> Result<InstanceRow, ApiError> {
     let label = clean_label(&req.label)?;
@@ -214,28 +499,64 @@ pub async fn create(
             )
         })?;
     check_host_shape(&req.host)?;
-    if let Some(e) = static_conflict(state, &snap, &req.host) {
+    let base_path = normalize_base_path(req.base_path.as_deref().unwrap_or("")).map_err(|e| {
+        field_error(
+            "instance_base_path_invalid",
+            "/base_path",
+            &e.to_string(),
+            None,
+        )
+    })?;
+    // Static claims, LLM hosts and Aurora's own addresses stay host-level: a path never gets
+    // around them.
+    if let Some(e) = static_conflict(state, &snap, &req.host, reveal) {
         return Err(e);
     }
-    let instance_conflict = |app_id: String| {
+    // The holder of the host: another registration visible from this scope. Only an instance
+    // admin registering instance-wide sees other organizations' registrations (and then learns
+    // which one, and that it can be made instance-wide); an org admin only ever sees the
+    // instance-wide ones and their own organization's.
+    let instance_conflict = |h: repo::HostHolder| {
+        let scope = if h.org_id.is_some() {
+            "org"
+        } else {
+            "instance"
+        };
+        let name_of = |id: &str| snap.app(id).map(|a| a.about.name.clone());
+        let mut c = json!({
+            "kind": "instance", "scope": scope, "app_id": h.app_id,
+            "app_name": name_of(&h.app_id), "instance_id": h.id,
+            "promotable": reveal && org.is_none() && h.org_id.is_some(),
+            "base_path": h.base_path,
+            "base_url": InstanceBase::new(&h.host, h.base_path.as_deref()).base_url(),
+        });
+        if let (true, Some(o)) = (reveal && org.is_none(), h.org_id) {
+            c["org"] = json!({ "id": o, "name": h.org_name, "slug": h.org_slug });
+        }
         field_error(
             "instance_host_conflict",
             "/host",
             "The host is already registered as an app instance.",
-            Some(json!({ "conflict": { "kind": "instance", "app_id": app_id } })),
+            Some(json!({ "conflict": c })),
         )
     };
-    if let Some((a, _)) = repo::visible_with_host(&state.pool, org, &req.host).await? {
-        return Err(instance_conflict(a));
+    // (D-231) Registrations with disjoint base paths share a host; only an overlapping one
+    // (either has none, equal, or a segment prefix) holds it.
+    let overlapping = |hs: Vec<repo::HostHolder>| {
+        hs.into_iter()
+            .find(|h| overlaps(h.base_path.as_deref(), base_path.as_deref()))
+    };
+    if let Some(h) = overlapping(repo::visible_on_host(&state.pool, org, &req.host).await?) {
+        return Err(instance_conflict(h));
     }
     if let Some(p) = app.instances.as_ref().and_then(|i| i.probe.as_ref()) {
-        run_probe(state, &req.host, p).await?;
+        run_probe(state, &req.host, base_path.as_deref(), &app.about.name, p).await?;
     }
     let id = ids::new_id();
     let mut tx = state.pool.begin().await.map_err(DbError::from)?;
     repo::lock_host(&mut tx, &req.host).await?;
-    if let Some((a, _)) = repo::visible_with_host(&mut *tx, org, &req.host).await? {
-        return Err(instance_conflict(a));
+    if let Some(h) = overlapping(repo::visible_on_host(&mut *tx, org, &req.host).await?) {
+        return Err(instance_conflict(h));
     }
     let res = repo::insert(
         &mut *tx,
@@ -245,6 +566,7 @@ pub async fn create(
             package_id: &app.package_id,
             app_id: &app.app_id,
             host: &req.host,
+            base_path: base_path.as_deref(),
             label: &label,
             created_by: actor.id,
         },
@@ -262,7 +584,8 @@ pub async fn create(
             actor,
             "app_instance.create",
             &row,
-            json!({"app_id": row.app_id, "package_id": row.package_id, "host": row.host, "label": row.label}),
+            json!({"app_id": row.app_id, "package_id": row.package_id, "host": row.host,
+                   "base_path": row.base_path, "label": row.label}),
         ),
     )
     .await?;
@@ -278,6 +601,7 @@ pub async fn patch(
     row: &InstanceRow,
     req: PatchAppInstanceRequest,
 ) -> Result<InstanceRow, ApiError> {
+    refuse_builtin(row)?;
     let label = req.label.as_deref().map(clean_label).transpose()?;
     if let Some(s) = req.status.as_deref()
         && !["active", "disabled"].contains(&s)
@@ -314,6 +638,7 @@ pub async fn delete(
     actor: &AuditActor,
     row: &InstanceRow,
 ) -> Result<(), ApiError> {
+    refuse_builtin(row)?;
     let mut tx = state.pool.begin().await.map_err(DbError::from)?;
     repo::lock_host(&mut tx, &row.host).await?;
     let clients = repo::client_secret_refs(&mut tx, row.id).await?;

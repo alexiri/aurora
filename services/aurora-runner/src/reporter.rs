@@ -1,6 +1,7 @@
 //! Report queue: batches (<= 200 reports, <= 1 MiB) and posts with retry.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use aurora_protocol::common::Validate;
 use aurora_protocol::runner::{
@@ -43,8 +44,22 @@ impl ReportSink {
 }
 
 pub fn spawn(api: Arc<ApiClient>, shutdown: watch::Receiver<bool>) -> (ReportSink, JoinHandle<()>) {
+    spawn_with_drain(api, shutdown, Duration::from_secs(30))
+}
+
+/// [`spawn`] with the time the final flush may keep retrying after shutdown began
+/// (`drain_timeout`): `stopped`/`failed` reports of a clean shutdown are delivered through a
+/// transient API outage instead of being dropped (FIX-094).
+pub fn spawn_with_drain(
+    api: Arc<ApiClient>,
+    shutdown: watch::Receiver<bool>,
+    drain: Duration,
+) -> (ReportSink, JoinHandle<()>) {
     let (tx, rx) = mpsc::unbounded_channel();
-    (ReportSink { tx }, tokio::spawn(run(api, rx, shutdown)))
+    (
+        ReportSink { tx },
+        tokio::spawn(run(api, rx, shutdown, drain)),
+    )
 }
 
 fn size_of(r: &Report) -> usize {
@@ -55,6 +70,7 @@ async fn run(
     api: Arc<ApiClient>,
     mut rx: mpsc::UnboundedReceiver<Msg>,
     shutdown: watch::Receiver<bool>,
+    drain: Duration,
 ) {
     let mut carry: Option<(Report, usize)> = None;
     let mut stop = false;
@@ -98,22 +114,39 @@ async fn run(
                 Err(_) => break,
             }
         }
-        deliver(&api, batch, &shutdown).await;
+        deliver(&api, batch, &shutdown, drain).await;
     }
 }
 
-async fn deliver(api: &ApiClient, reports: Vec<Report>, shutdown: &watch::Receiver<bool>) {
+async fn deliver(
+    api: &ApiClient,
+    reports: Vec<Report>,
+    shutdown: &watch::Receiver<bool>,
+    drain: Duration,
+) {
     let req = ReportsRequest { reports };
     let mut round = 0u32;
+    // Once shutdown has begun, retry until this deadline instead of dropping on the first 503.
+    let mut deadline: Option<tokio::time::Instant> = None;
     loop {
         match api.post_reports(&req).await {
             Ok(results) => {
                 log_results(&results);
                 return;
             }
-            Err(e) if e.retryable() && !*shutdown.borrow() => {
+            Err(e) if e.retryable() => {
+                let mut wait = Duration::from_secs(1 << round.min(4));
+                if *shutdown.borrow() {
+                    let d = *deadline.get_or_insert_with(|| tokio::time::Instant::now() + drain);
+                    let left = d.saturating_duration_since(tokio::time::Instant::now());
+                    if left.is_zero() {
+                        tracing::error!(error = %e, count = req.reports.len(), "dropping report batch at the drain deadline");
+                        return;
+                    }
+                    wait = wait.min(left).min(Duration::from_secs(1));
+                }
                 tracing::warn!(error = %e, count = req.reports.len(), "report post failed; retrying");
-                tokio::time::sleep(std::time::Duration::from_secs(1 << round.min(4))).await;
+                tokio::time::sleep(wait).await;
                 round += 1;
             }
             Err(e) => {

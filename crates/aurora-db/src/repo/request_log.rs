@@ -172,11 +172,40 @@ pub async fn drop_expired(
                 .execute(pool)
                 .await?;
             dropped.push(name);
+        } else if month_start(y, m).and_hms_opt(0, 0, 0).map(|s| s.and_utc()) < Some(cutoff) {
+            // (FIX-111) The partition that straddles the cutoff holds rows up to a month past
+            // the retention period: delete the aged rows in bounded batches (`name` is built
+            // from integers above).
+            delete_older_in_batches(pool, &name, cutoff).await?;
         }
     }
-    sqlx::query("DELETE FROM request_log_default WHERE ts < $1")
-        .bind(cutoff)
-        .execute(pool)
-        .await?;
+    delete_older_in_batches(pool, "request_log_default", cutoff).await?;
     Ok(dropped)
+}
+
+/// Rows removed per `DELETE` while trimming a request-log partition (no unbounded statement).
+pub const TRIM_BATCH: i64 = 10_000;
+
+/// Delete rows of `table` older than `cutoff`, [`TRIM_BATCH`] per statement. `table` must be a
+/// partition name this module generated.
+async fn delete_older_in_batches(
+    pool: &PgPool,
+    table: &str,
+    cutoff: DateTime<Utc>,
+) -> Result<u64, DbError> {
+    let mut total = 0;
+    loop {
+        let n = sqlx::query(&format!(
+            "DELETE FROM {table} WHERE ctid IN (SELECT ctid FROM {table} WHERE ts < $1 LIMIT $2)"
+        ))
+        .bind(cutoff)
+        .bind(TRIM_BATCH)
+        .execute(pool)
+        .await?
+        .rows_affected();
+        total += n;
+        if i64::try_from(n).unwrap_or(i64::MAX) < TRIM_BATCH {
+            return Ok(total);
+        }
+    }
 }

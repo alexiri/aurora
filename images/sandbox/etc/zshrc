@@ -1,0 +1,32 @@
+# Aurora sandbox image (FIX-138): minimal interactive zsh defaults (no frameworks). A person's
+# own ~/.zshrc (in /workspace) is read after this file and wins.
+export COLORTERM="${COLORTERM:-truecolor}"
+if command -v dircolors >/dev/null 2>&1; then
+    eval "$(dircolors -b)"
+fi
+alias ls='ls --color=auto'
+alias ll='ls -l'
+alias la='ls -A'
+alias l='ls -CF'
+alias grep='grep --color=auto'
+
+HISTFILE="${HISTFILE:-$HOME/.zsh_history}"
+HISTSIZE=10000
+SAVEHIST=20000
+setopt HIST_IGNORE_ALL_DUPS HIST_IGNORE_SPACE SHARE_HISTORY INTERACTIVE_COMMENTS
+
+# Completion, with the menu and coloured candidates.
+autoload -Uz compinit && compinit -u
+zstyle ':completion:*' menu select
+zstyle ':completion:*' list-colors "${(s.:.)LS_COLORS}"
+
+# Emacs-style line editing and the keys terminals send.
+bindkey -e
+bindkey '^[[A' up-line-or-search
+bindkey '^[[B' down-line-or-search
+bindkey '^[[H' beginning-of-line
+bindkey '^[[F' end-of-line
+bindkey '^[[3~' delete-char
+
+# user@host:cwd — the sandbox's hostname carries the agent's handle (`sbx-<handle>-<boot>`).
+PROMPT='%B%F{green}%n@%m%f%b:%B%F{blue}%~%f%b%# '

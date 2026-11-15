@@ -28,6 +28,22 @@ pub enum ReadError {
     Unreachable(String),
     /// The tree is truncated or longer than `LIBRARY_TREE_MAX`: narrow `path`.
     TreeTooLarge,
+    /// The git host answered 429/503: not a failure of the library, retry after this many
+    /// seconds (the host's `Retry-After`, capped; FIX-096).
+    Throttled(u64),
+}
+
+/// Pause after a throttled answer without a usable `Retry-After`, and the cap on one.
+const THROTTLE_DEFAULT_SECS: u64 = 300;
+const THROTTLE_MAX_SECS: u64 = 3600;
+
+/// `Retry-After` as delta-seconds (an HTTP date is not honoured: the default applies), capped.
+#[must_use]
+pub fn throttle_secs(header: Option<&str>) -> u64 {
+    header
+        .and_then(|h| h.trim().parse::<u64>().ok())
+        .unwrap_or(THROTTLE_DEFAULT_SECS)
+        .clamp(1, THROTTLE_MAX_SECS)
 }
 
 impl ReadError {
@@ -35,6 +51,7 @@ impl ReadError {
     pub fn reason(&self) -> String {
         match self {
             Self::Unreachable(r) => r.clone(),
+            Self::Throttled(_) => "the git host is rate limiting requests; retry later".into(),
             Self::TreeTooLarge => {
                 "the repository tree is too large; set a narrower folder (path)".into()
             }
@@ -93,9 +110,9 @@ impl Reader<'_> {
             403 | 404 => Err(ReadError::Unreachable(
                 "the repository, ref or file was not found, or the connection cannot see it".into(),
             )),
-            429 => Err(ReadError::Unreachable(
-                "the git host is rate limiting requests; retry later".into(),
-            )),
+            429 | 503 => Err(ReadError::Throttled(throttle_secs(
+                ok.retry_after.as_deref(),
+            ))),
             300..=399 => Err(ReadError::Unreachable(
                 "the git host answered with a redirect (the repository may have moved)".into(),
             )),
@@ -416,6 +433,62 @@ pub fn clean_text(s: &str) -> String {
         .collect()
 }
 
+/// The two keys that matter; every other key is ignored (and, with anchors refused, bounded by the
+/// file size).
+#[derive(serde::Deserialize)]
+struct Frontmatter {
+    name: Option<serde_yaml::Value>,
+    description: Option<serde_yaml::Value>,
+}
+
+/// Whether any YAML token starts with `&` (anchor) or `*` (alias): at the start of a line (after
+/// block-sequence dashes), after `:`/`,`/`[`/`{` and spaces. Conservative on purpose: a plain
+/// scalar that merely *contains* `*emphasis*` is fine, one that *starts* with `*` is an alias.
+fn has_anchor_or_alias(fm: &str) -> bool {
+    fm.lines().any(|line| {
+        let mut l = line.trim_start();
+        while let Some(r) = l.strip_prefix("- ") {
+            l = r.trim_start();
+        }
+        // A token can start here, or after an indicator (`: `, `,`, `[`, `{`, `? `) outside quotes.
+        let chars: Vec<char> = l.chars().collect();
+        let mut quote: Option<char> = None;
+        let mut token_start = true;
+        let mut flow = false;
+        for (i, &ch) in chars.iter().enumerate() {
+            if let Some(q) = quote {
+                if ch == q {
+                    quote = None;
+                }
+                continue;
+            }
+            let next_blank = chars.get(i + 1).is_none_or(|n| matches!(n, ' ' | '\t'));
+            match ch {
+                '&' | '*' if token_start => return true,
+                '"' | '\'' if token_start => quote = Some(ch),
+                ' ' | '\t' => continue,
+                '[' | '{' if token_start => flow = true,
+                '[' | '{' => {}
+                ':' | '?' if next_blank => {
+                    token_start = true;
+                    continue;
+                }
+                ',' if flow => {
+                    token_start = true;
+                    continue;
+                }
+                _ => {}
+            }
+            token_start = false;
+            if matches!(ch, '[' | '{') {
+                // a flow collection opens a value position
+                token_start = true;
+            }
+        }
+        false
+    })
+}
+
 /// `(description, body)` of a `SKILL.md`: YAML frontmatter with a single-line `description`
 /// (and optionally a `name` equal to the directory name), then the body. Failures are fixed,
 /// sanitized texts.
@@ -438,19 +511,26 @@ pub fn parse_skill_md(raw: &[u8], dir: &str) -> Result<(String, String), String>
     let Some((fm_end, body_start)) = end else {
         return Err("SKILL.md frontmatter is not closed with ---".into());
     };
-    let value: serde_yaml::Value = serde_yaml::from_str(&rest[..fm_end])
-        .map_err(|_| "SKILL.md frontmatter is not valid YAML".to_owned())?;
-    let Some(map) = value.as_mapping() else {
-        return Err("SKILL.md frontmatter must be a mapping".into());
+    // (FIX-096) Anchors and aliases are refused before the parser sees them: nested aliases
+    // multiply (the parser bounds jumps, not the product), and repository text is untrusted.
+    if has_anchor_or_alias(&rest[..fm_end]) {
+        return Err("SKILL.md frontmatter must not use YAML anchors or aliases".into());
+    }
+    let fm: Frontmatter = match serde_yaml::from_str::<serde_yaml::Value>(&rest[..fm_end]) {
+        Ok(serde_yaml::Value::Mapping(m)) => serde_yaml::from_value(serde_yaml::Value::Mapping(m))
+            .map_err(|_| "SKILL.md frontmatter is not valid YAML".to_owned())?,
+        Ok(_) => return Err("SKILL.md frontmatter must be a mapping".into()),
+        Err(_) => return Err("SKILL.md frontmatter is not valid YAML".into()),
     };
-    let get = |k: &str| map.get(serde_yaml::Value::String(k.into()));
-    if let Some(n) = get("name") {
+    if let Some(n) = &fm.name {
         match n.as_str() {
             Some(n) if n == dir => {}
             _ => return Err("the frontmatter name must equal the directory name".into()),
         }
     }
-    let desc = get("description")
+    let desc = fm
+        .description
+        .as_ref()
         .and_then(serde_yaml::Value::as_str)
         .ok_or_else(|| "SKILL.md frontmatter needs a description".to_owned())?;
     let desc = clean_text(desc);
@@ -616,6 +696,48 @@ pub fn finish(
 ) -> Result<LoadedSkill, LoadError> {
     skills::validate_name(&name)
         .map_err(|_| invalid("the directory name is not a valid skill name"))?;
+    // (FIX-096, SEC-83) The same rules the refresh applied, again: an approval re-validates what
+    // the stored proposal says, never trusting its JSON.
+    if description.trim().is_empty() {
+        return Err(invalid("the description must not be empty"));
+    }
+    if description.chars().count() > limits::SKILL_DESCRIPTION_MAX {
+        return Err(invalid(format!(
+            "the description is longer than {} characters",
+            limits::SKILL_DESCRIPTION_MAX
+        )));
+    }
+    if description.contains(['\n', '\r']) || clean_text(&description) != description {
+        return Err(invalid("the description must be one line of plain text"));
+    }
+    if body.chars().count() > limits::SKILL_BODY_MAX {
+        return Err(invalid(format!(
+            "the body is longer than {} characters",
+            limits::SKILL_BODY_MAX
+        )));
+    }
+    if clean_text(&body) != body {
+        return Err(invalid("the body has control characters"));
+    }
+    if files.len() > FILES_PER_SKILL_MAX {
+        return Err(invalid(format!("more than {FILES_PER_SKILL_MAX} files")));
+    }
+    let mut seen = std::collections::BTreeSet::new();
+    for f in &files {
+        if skills::validate_path(&f.path).is_err() {
+            return Err(invalid(format!("an unsupported file path ({})", f.path)));
+        }
+        if !seen.insert(f.path.as_str()) {
+            return Err(invalid(format!("a file appears twice ({})", f.path)));
+        }
+        if f.content.len() > limits::LIBRARY_FILE_MAX {
+            return Err(invalid(format!(
+                "a file is larger than {} bytes ({})",
+                limits::LIBRARY_FILE_MAX,
+                f.path
+            )));
+        }
+    }
     let size = body.chars().count()
         + files
             .iter()
@@ -637,4 +759,58 @@ pub fn finish(
         content_sha256,
         size,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn md(front: &str) -> Vec<u8> {
+        format!("---\n{front}\n---\nbody\n").into_bytes()
+    }
+
+    /// FIX-096: nested aliases multiply (the parser bounds jumps, not the product); they are
+    /// refused before parsing, so the cost is the file size, not the expansion. (This one is a
+    /// scaled-down bomb — about 10^7 nodes — so a regression fails the time bound instead of
+    /// taking the test host down.)
+    #[test]
+    fn a_nested_alias_document_is_refused_fast() {
+        let mut y = String::from("description: x\na: &a [");
+        y.push_str(&vec!["1"; 2000].join(","));
+        y.push_str("]\nb: &b [");
+        y.push_str(&vec!["*a"; 200].join(","));
+        y.push_str("]\nc: [");
+        y.push_str(&vec!["*b"; 25].join(","));
+        y.push_str("]\n");
+        assert!(y.len() < 64 * 1024);
+        let t = std::time::Instant::now();
+        let e = parse_skill_md(&md(&y), "s").unwrap_err();
+        assert!(e.contains("anchors or aliases"), "{e}");
+        assert!(t.elapsed() < Duration::from_secs(1), "{:?}", t.elapsed());
+    }
+
+    #[test]
+    fn anchors_and_aliases_are_refused_in_every_position_and_plain_text_is_not() {
+        for bad in [
+            "description: &a x",
+            "description: x\nb: *a",
+            "description: x\nl:\n  - *a",
+            "description: x\nl: [*a]",
+            "description: x\nl: {k: *a}",
+            "description: x\nl: [1, *a]",
+            "&a description: x",
+            "description: x\n? *a\n: 1",
+        ] {
+            let e = parse_skill_md(&md(bad), "s").unwrap_err();
+            assert!(e.contains("anchors or aliases"), "{bad}: {e}");
+        }
+        for ok in [
+            "description: Use *emphasis* and a & b, or x",
+            "description: \"quoted, *star* and &amp\"",
+            "description: 'a: *b'",
+            "name: s\ndescription: Fine; see a*b",
+        ] {
+            assert!(parse_skill_md(&md(ok), "s").is_ok(), "{ok}");
+        }
+    }
 }

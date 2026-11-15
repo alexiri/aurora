@@ -10,8 +10,8 @@ use tokio::sync::Notify;
 
 pub use aurora_db::repo::gateway::RequestLogRow as Row;
 
-pub const FLUSH_INTERVAL: Duration = Duration::from_secs(5);
-pub const FLUSH_ROWS: usize = 500;
+pub const FLUSH_INTERVAL: Duration = aurora_core::limits::REQUEST_LOG_FLUSH;
+pub const FLUSH_ROWS: usize = aurora_core::limits::REQUEST_LOG_FLUSH_ROWS as usize;
 /// Beyond this, the oldest rows are dropped and counted (`REQUEST_LOG_OUTAGE_BUFFER`, 06
 /// §Operation during a Postgres outage).
 const MAX_BUFFERED: usize = REQUEST_LOG_OUTAGE_BUFFER;

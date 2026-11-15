@@ -39,6 +39,27 @@ pub struct TokenResponse {
     pub workspace: CliWorkspace,
 }
 
+/// (FIX-108) The pending login as the approving session sees it.
+#[derive(Serialize, ToSchema)]
+pub struct PendingResponse {
+    /// The host name the CLI gave (sanitized, **unverified**: anyone can claim any name).
+    pub hostname: String,
+    /// When the login was started.
+    pub requested_at: chrono::DateTime<chrono::Utc>,
+    pub expires_at: chrono::DateTime<chrono::Utc>,
+    /// Coarse address the request came from (IPv4 /24, IPv6 /48); absent when unknown.
+    pub address: Option<String>,
+    /// Lifetime of the key an approval creates, in days; absent = it never expires.
+    pub key_expires_in_days: Option<u32>,
+}
+
+#[derive(Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
+pub struct PendingQuery {
+    /// The `ABCD-EFGH` code shown by the CLI.
+    pub code: String,
+}
+
 #[derive(Deserialize, ToSchema)]
 pub struct ApproveRequest {
     pub user_code: String,

@@ -1,0 +1,178 @@
+# github.com read tools of the GitHub App (the installation token is minted by the token.mint hook;
+# these cases use the stored token). Each tool has a positive case and a `negative <tool>:` case.
+# All credentials are fake.
+- name: "github app: list_installation_repos: bearer is injected on the API host"
+  connection: { method: github_app, credentials: { access_token: "tok-fixture-1", private_key: "key-fixture-1" }, metadata: { app_id: "123456", installation_id: "7" } }
+  request: { method: GET, url: "https://api.github.com/installation/repositories?per_page=50" }
+  expect:
+    app: github
+    tool: list_installation_repos
+    upstream: { url: "https://api.github.com/installation/repositories?per_page=50", headers: { authorization: "Bearer tok-fixture-1" } }
+- name: "negative list_installation_repos: DELETE selects no tool"
+  connection: { method: github_app, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: DELETE, url: "https://api.github.com/installation/repositories" }
+  expect: { app: github }
+- name: "github app: agent supplied authorization is overwritten"
+  connection: { method: github_app, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: GET
+    url: "https://api.github.com/installation/repositories"
+    headers: { authorization: "Bearer agent-guess" }
+  expect:
+    tool: list_installation_repos
+    upstream: { headers: { authorization: "Bearer tok-fixture-1" } }
+- name: "github app: get_repo"
+  connection: { method: github_app, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://api.github.com/repos/example/demo" }
+  expect: { app: github, tool: get_repo }
+- name: "github app: negative get_repo: an unknown sub-resource selects no tool"
+  connection: { method: github_app, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://api.github.com/repos/example/demo/collaborators" }
+  expect: { app: github }
+- name: "github app: list_issues"
+  connection: { method: github_app, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://api.github.com/repos/example/demo/issues?state=open" }
+  expect: { app: github, tool: list_issues }
+- name: "github app: negative list_issues: DELETE selects no tool"
+  connection: { method: github_app, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: DELETE, url: "https://api.github.com/repos/example/demo/issues" }
+  expect: { app: github }
+- name: "github app: get_issue"
+  connection: { method: github_app, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://api.github.com/repos/example/demo/issues/7" }
+  expect: { app: github, tool: get_issue }
+- name: "github app: negative get_issue: DELETE selects no tool"
+  connection: { method: github_app, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: DELETE, url: "https://api.github.com/repos/example/demo/issues/7" }
+  expect: { app: github }
+- name: "github app: list_issue_comments"
+  connection: { method: github_app, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://api.github.com/repos/example/demo/issues/7/comments" }
+  expect: { app: github, tool: list_issue_comments }
+- name: "github app: negative list_issue_comments: DELETE selects no tool"
+  connection: { method: github_app, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: DELETE, url: "https://api.github.com/repos/example/demo/issues/7/comments" }
+  expect: { app: github }
+- name: "github app: list_pulls"
+  connection: { method: github_app, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://api.github.com/repos/example/demo/pulls?state=open" }
+  expect: { app: github, tool: list_pulls }
+- name: "github app: negative list_pulls: DELETE selects no tool"
+  connection: { method: github_app, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: DELETE, url: "https://api.github.com/repos/example/demo/pulls" }
+  expect: { app: github }
+- name: "github app: get_pull"
+  connection: { method: github_app, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://api.github.com/repos/example/demo/pulls/12" }
+  expect: { app: github, tool: get_pull }
+- name: "github app: negative get_pull: DELETE selects no tool"
+  connection: { method: github_app, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: DELETE, url: "https://api.github.com/repos/example/demo/pulls/12" }
+  expect: { app: github }
+- name: "github app: list_pull_files"
+  connection: { method: github_app, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://api.github.com/repos/example/demo/pulls/12/files" }
+  expect: { app: github, tool: list_pull_files }
+- name: "github app: negative list_pull_files: DELETE selects no tool"
+  connection: { method: github_app, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: DELETE, url: "https://api.github.com/repos/example/demo/pulls/12/files" }
+  expect: { app: github }
+- name: "github app: get_contents: a file in a subdirectory"
+  connection: { method: github_app, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://api.github.com/repos/example/demo/contents/src/lib/main.rs?ref=main" }
+  expect: { app: github, tool: get_contents }
+- name: "github app: get_contents: the repository root"
+  connection: { method: github_app, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://api.github.com/repos/example/demo/contents" }
+  expect: { app: github, tool: get_contents }
+- name: "github app: negative get_contents: PATCH selects no tool"
+  connection: { method: github_app, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PATCH, url: "https://api.github.com/repos/example/demo/contents/README.md" }
+  expect: { app: github }
+- name: "github app: list_commits"
+  connection: { method: github_app, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://api.github.com/repos/example/demo/commits?sha=main" }
+  expect: { app: github, tool: list_commits }
+- name: "github app: negative list_commits: DELETE selects no tool"
+  connection: { method: github_app, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: DELETE, url: "https://api.github.com/repos/example/demo/commits" }
+  expect: { app: github }
+- name: "github app: search_issues"
+  connection: { method: github_app, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://api.github.com/search/issues?q=repo%3Aexample%2Fdemo+is%3Aopen" }
+  expect: { app: github, tool: search_issues }
+- name: "github app: negative search_issues: POST selects no tool"
+  connection: { method: github_app, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: POST, url: "https://api.github.com/search/issues" }
+  expect: { app: github }
+- name: "github app: search_code"
+  connection: { method: github_app, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://api.github.com/search/code?q=addClass+repo%3Aexample%2Fdemo" }
+  expect: { app: github, tool: search_code }
+- name: "github app: negative search_code: POST selects no tool"
+  connection: { method: github_app, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: POST, url: "https://api.github.com/search/code" }
+  expect: { app: github }
+- name: "github app: graphql_query: a query selects the read tool"
+  connection: { method: github_app, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://api.github.com/graphql"
+    headers: { content-type: application/json }
+    body: '{"query":"query Repo { repository(owner: \"example\", name: \"demo\") { id } }","operationName":"Repo"}'
+  expect:
+    app: github
+    tool: graphql_query
+    upstream: { headers: { authorization: "Bearer tok-fixture-1" } }
+- name: "github app: negative graphql_query: a mutation does not select the read tool"
+  connection: { method: github_app, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://api.github.com/graphql"
+    headers: { content-type: application/json }
+    body: '{"query":"mutation AddStar { addStar(input: {starrableId: \"R_example\"}) { clientMutationId } }","operationName":"AddStar"}'
+  expect: { app: github, tool: graphql_mutation }
+- name: "github app: unparseable graphql body matches no tool (fail closed)"
+  connection: { method: github_app, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://api.github.com/graphql"
+    headers: { content-type: application/json }
+    body: 'not json'
+  expect: { app: github }
+- name: "github app: git_fetch: the ref advertisement uses basic auth with the installation token"
+  connection: { method: github_app, credentials: { access_token: "tok-git-1" } }
+  request: { method: GET, url: "https://github.com/example/demo.git/info/refs?service=git-upload-pack" }
+  expect:
+    app: github
+    tool: git_fetch
+    upstream: { headers: { authorization: "Basic eC1hY2Nlc3MtdG9rZW46dG9rLWdpdC0x" } }
+- name: "github app: negative git_fetch: a web page on github.com is not a git operation"
+  connection: { method: github_app, credentials: { access_token: "tok-git-1" } }
+  request: { method: GET, url: "https://github.com/example/demo/issues" }
+  expect: { app: github }
+- name: "github app: negative: the token is not injected on a lookalike host"
+  connection: { method: github_app, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://api.github.com.evil.example/installation/repositories" }
+  expect: { unmatched: true }
+# FIX-123 (D-214): tools restricted to a connect method are classified only for its connections.
+- name: "method filter: list_installation_repos is not a tool of a personal-token connection"
+  connection: { method: token, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://api.github.com/installation/repositories" }
+  expect: { app: github, no_tool: true }
+- name: "method filter: list_installation_repos is not a tool of an OAuth connection"
+  connection: { method: oauth, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://api.github.com/installation/repositories" }
+  expect: { app: github, no_tool: true }
+- name: "method filter: get_authenticated_user is not a tool of a GitHub App connection"
+  connection: { method: github_app, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://api.github.com/user" }
+  expect: { app: github, no_tool: true }
+- name: "method filter: list_user_repos is not a tool of a GitHub App connection"
+  connection: { method: github_app, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://api.github.com/user/repos" }
+  expect: { app: github, no_tool: true }
+- name: "method filter: get_authenticated_user is a tool of a personal-token connection"
+  connection: { method: token, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://api.github.com/user" }
+  expect: { app: github, tool: get_authenticated_user }

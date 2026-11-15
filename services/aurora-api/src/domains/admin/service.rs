@@ -46,8 +46,13 @@ pub async fn patch_user(
     if disabled == Some(true) {
         sessions::revoke_all_for_user_except_tx(&mut tx, id, None).await?;
     }
+    // (FIX-108) The cached caller carries `is_instance_admin`: whenever it (or the disabled
+    // state) changes, every replica drops this user's cache entries on commit.
+    if is_instance_admin.is_some() || disabled == Some(true) {
+        aurora_db::repo::notify_auth_revoked(&mut *tx, "user", id).await?;
+    }
     crate::audit::commit_critical(tx, ev).await?;
-    if disabled == Some(true) {
+    if is_instance_admin.is_some() || disabled == Some(true) {
         state
             .session_cache
             .invalidate(&json!({"kind": "user", "id": id}));

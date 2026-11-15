@@ -17,12 +17,16 @@ pub struct CliLogin {
     pub expires_at: DateTime<Utc>,
     /// Sanitized client hostname given at start (spec fix S-04).
     pub hostname: Option<String>,
+    /// (FIX-108) Coarse address the login was requested from (IPv4 /24, IPv6 /48), if known.
+    pub requested_addr: Option<String>,
+    /// When the login was started.
+    pub created_at: DateTime<Utc>,
     /// `expires_at <= now()`, evaluated by the database clock.
     pub expired: bool,
 }
 
-const SEL: &str = "id, status, approved_by, workspace_id, expires_at, hostname,
-    (expires_at <= now()) AS expired";
+const SEL: &str = "id, status, approved_by, workspace_id, expires_at, hostname, requested_addr,
+    created_at, (expires_at <= now()) AS expired";
 
 /// Insert a pending login valid for `ttl_secs`. Also prunes long-dead rows.
 pub async fn create(
@@ -31,19 +35,21 @@ pub async fn create(
     device_hash: &[u8; 32],
     user_code: &str,
     hostname: &str,
+    requested_addr: Option<&str>,
     ttl_secs: i64,
 ) -> Result<(), DbError> {
     sqlx::query("DELETE FROM cli_logins WHERE expires_at < now() - interval '1 day'")
         .execute(pool)
         .await?;
     sqlx::query(
-        "INSERT INTO cli_logins (id, device_code_hash, user_code, hostname, status, expires_at)
-         VALUES ($1,$2,$3,$4,'pending', now() + make_interval(secs => $5))",
+        "INSERT INTO cli_logins (id, device_code_hash, user_code, hostname, requested_addr, status, expires_at)
+         VALUES ($1,$2,$3,$4,$5,'pending', now() + make_interval(secs => $6))",
     )
     .bind(id)
     .bind(&device_hash[..])
     .bind(user_code)
     .bind(hostname)
+    .bind(requested_addr)
     .bind(ttl_secs as f64)
     .execute(pool)
     .await?;

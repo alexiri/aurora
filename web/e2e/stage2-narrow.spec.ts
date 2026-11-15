@@ -31,6 +31,9 @@ async function mockApi(page: Page) {
     if (p.startsWith("/v1/orgs/")) return json(org);
     if (p === `/v1/workspaces/${ws.id}`) return json(ws);
     if (p.endsWith("/agents")) return json({ items: [agent] });
+    // The API always sends `keys` (openapi `ModelReadiness`); the `{ items: [] }` fallback below made
+    // the overview's getting-started guide throw "Cannot read properties of undefined (reading 'filter')".
+    if (/^\/v1\/agents\/[^/]+\/model-readiness$/.test(p)) return json({ harness: "claude-code", override_dropped: false, default: null, keys: [] });
     if (p === "/v1/instance") {
       return json({ version: "0", signup_mode: "closed", features: { hosted: true }, setup_errors: [], oidc_providers: [{ id: "corp", display_name: "Corporate SSO" }] });
     }
@@ -78,12 +81,15 @@ test.describe("390 px", () => {
     });
   }
 
-  test("the agent tab strip scrolls within itself", async ({ page }) => {
+  // FIX-129: the strip no longer scrolls sideways; what does not fit is behind a More menu (the menu itself is covered by
+  // tests/tabs-overflow.test.tsx). P5-AGENT-2 split the agent page into five sections, so each strip now fits at 390 px and
+  // the More button only appears when a section has more pages than fit: assert the invariant, not the button.
+  test("the agent tab strip never scrolls", async ({ page }) => {
     await mockApi(page);
     await page.goto("/o/acme/w/main/agents/daneel");
     const strip = page.getByRole("tablist", { name: "Agent" });
     await strip.waitFor();
-    expect(await strip.evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(true);
+    expect(await strip.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
     expect(await noPageScroll(page)).toBe(true);
   });
 });

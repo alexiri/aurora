@@ -46,6 +46,7 @@ async fn list_approvals(
         c.user_id,
         ws,
         q.status.as_deref(),
+        q.agent_id,
         p.after.map(|a| (a.t, a.id)),
         p.fetch(),
     )
@@ -71,7 +72,7 @@ async fn pending(
     Ok(Json(PendingList { items }))
 }
 
-/// Server-sent events `approval` (`created` | `decided` | `expired`), no SSE ids (C-10).
+/// Server-sent events `approval` (`created` | `decided` | `expired` | `abandoned`), no SSE ids (C-10).
 #[utoipa::path(get, path = "/approvals/stream", operation_id = "streamApprovals", tag = "approvals",
     responses((status = 200, content_type = "text/event-stream", body = ApprovalEvent),
         (status = 401, body = ErrorEnvelope), (status = 403, body = ErrorEnvelope)),
@@ -114,7 +115,12 @@ async fn stream(
                         .unwrap_or_else(|_| Event::default().comment("encode error"));
                     return Some((Ok(ev), (rx, s, watch)));
                 }
-                Ok(BusMsg::Resync) | Err(RecvError::Lagged(_)) => {}
+                // (FIX-099, C-10) Notifications may have been missed (the bus replays nothing): tell the
+                // client to refetch instead of leaving decided or expired approvals shown as pending.
+                Ok(BusMsg::Resync) | Err(RecvError::Lagged(_)) => {
+                    let ev = Event::default().event("resync").data("{}");
+                    return Some((Ok(ev), (rx, s, watch)));
+                }
                 Err(RecvError::Closed) => return None,
             }
         }

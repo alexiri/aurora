@@ -127,6 +127,7 @@ async fn report_outcome(
             text: line,
             source_event_id: None,
             attachment_ids: &[],
+            reply_to_seq: None,
         },
     )
     .await?;

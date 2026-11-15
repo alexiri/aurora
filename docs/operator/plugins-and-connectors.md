@@ -156,6 +156,96 @@ What a managed connector can and cannot do:
 The API routes behind the dashboard: `GET /v1/admin/connector-types`, `POST /v1/admin/connectors`
 with `"managed": true`, and `PATCH /v1/admin/connectors/{id}` (docs/05).
 
+### Connector-host tokens
+
+A connector host proves itself to the API with an `auh_…` token (`AURORA_CONNECTOR_HOST_TOKEN`).
+Since FIX-120 (D-189) a token can be **bound** to the connector types its host runs, so a leaked
+token can only act for those types. Instance administrators manage the tokens (the routes C-690..C-692 in
+[API_CONTRACTS](../API_CONTRACTS.md), `05 §Connectors`):
+
+- **Issue.** Give the token a name (unique among live tokens) and the connector type ids it may
+  serve (for example `mattermost`). The `auh_…` value is **shown once**; the list never shows it again
+  (only a prefix, the types, `last_used_at` and the state). Put it in that connector-host
+  Deployment's `AURORA_CONNECTOR_HOST_TOKEN` and roll the Deployment. Issuing is audited
+  (`admin.connector_host_token_issue`, security-critical).
+- **Rotate.** Issue a new token, roll the Deployment onto it, then revoke the old one. Running connectors
+  keep running while the host rolls, because a failed poll keeps the running set.
+- **Revoke.** The token is refused (401) on its next call. Audited (`admin.connector_host_token_revoke`).
+- **A token bound to type A cannot register type B** (403 `type_not_bound`, naming B).
+- **The shared bootstrap token** (`AURORA_BOOTSTRAP_CONNECTOR_HOST_TOKEN`, unbound) keeps working until
+  the first bound token exists; **from then on it is refused (401)** and listed with the state `refused`. Revoking
+  every bound token makes it work again, which is the rollback. Upgrade steps: [upgrades.md](upgrades.md),
+  `15 §Upgrades`.
+- **The Helm chart** renders one bound token per connector-host Deployment by default
+  (`connectorHost.perHostToken: true`, [23-helm-values.md](../23-helm-values.md)): the hooks job
+  generates it for the types the Deployment runs (`mattermost`, plus `fake` with `connectorHost.testTypes`) and
+  hands it to the API as `AURORA_BOOTSTRAP_CONNECTOR_HOST_TOKENS` (upserted by name; a changed token under the
+  same name revokes the old one). Set `perHostToken: false` only to keep the single shared token.
+
+## Mattermost from zero
+
+The whole path, one actor per step. Each step names who does it and what the next step is;
+design in [docs/13 §5](../13-channels-connectors.md), screens in [docs/14](../14-web-dashboard.md).
+
+**Before you start (in Mattermost).** Bot accounts must be enabled (System Console → Integrations
+→ Integration Management). Create a bot account for Aurora (Integrations → Bot Accounts → Add Bot
+Account), make it a member of the team, and copy its access token. Optionally create a
+personal access token of a system administrator: with it Aurora can reply privately to a person
+and register `/aurora`; without it, replies to individuals arrive as direct messages.
+Agent messages keep their formatting in Mattermost (bold, code, tables, lists, quotes, code
+blocks); footnotes, alerts, math and raw HTML are converted to the nearest Mattermost form
+([docs/20 §Rendering](../20-mattermost-connector.md)). Mattermost's **server** fetches the first
+bare URL of a post by itself, with no click (System Console → Site Configuration → Posts →
+*Enable Link Previews*; checked on 11.7.15: a `GET` from `Mattermost-Bot/1.1` arrives while the
+post is created). Mattermost has no per-post switch, so Aurora writes every URL an agent puts
+in a message as a labelled link (`[url](url)`, which the server never fetches): agent posts
+show no preview cards, and a prompt-injected agent cannot send data out in a URL's query
+string by way of the preview. That is defence in depth with the setting: an administrator who
+wants no server-side fetches at all (people's own messages too) turns *Enable Link Previews*
+off. Aurora also never lets an agent's message ping a whole channel or group: `@channel`,
+`@all`, other spellings of `@here` and group mentions are shown as code and notify nobody
+(only a plain `@here` written by the agent notifies the people online, and a held
+`send_message` says so in its approval); `@username` of one person still works. Math renders when *Enable Latex Rendering* / *Enable Inline Latex Rendering*
+(Site Configuration → Posts) are on; both were on by default on the 11.7.15 server we checked.
+The Mattermost server must be reachable from the connector host; a server on a private
+network needs `AURORA_MM_ALLOW_PRIVATE_NETWORKS` on the connector host
+([docs/20](../20-mattermost-connector.md)), and one behind a private CA needs the CA bundle
+(`extraCaBundle`, which the chart also hands to the connector host as `AURORA_TLS_EXTRA_CA_BUNDLE`,
+[install-helm.md](install-helm.md#connector-host)).
+
+1. **Instance administrator: add the connector.** *Admin → Connectors → Add connector → Add
+   Mattermost.* Nothing needs typing: every Mattermost setting is optional or generated, and
+   the *Advanced* section holds the two you almost never change (the address Mattermost uses
+   to reach Aurora, left empty for this Aurora's own address, and two tuning numbers). *Admin →
+   Setup* shows a callout "Mattermost is available — add it" until you do. Adding is explicit, not
+   automatic: it exposes the connector's public callback endpoints and approves its manifest.
+   Next: tell an organization owner or admin. They see your name on *Channels* until it is added.
+2. **Organization owner or admin: connect the server.** *Organization → Channels → Connect
+   Mattermost.* Enter the server address and the bot token, press **Check** (Aurora checks the
+   credentials and stores nothing yet), choose the team from the list (a single team is
+   preselected), optionally add the admin token, and press **Connect**. The done screen shows
+   "Mattermost is connected as @bot in <team>" with three buttons: attach an agent, link your
+   Mattermost account, open a direct message with the bot. If *Channels* says why Mattermost is
+   not available (not added, waiting for the connector host, disabled, needs approval), that
+   message names who acts next.
+3. **Anyone: link your Mattermost account.** *Account → Channels* (or the "Link your Mattermost
+   account" button on the done screen; or write to the bot, which answers with a sign-in link).
+   Without a link Aurora does not know who you are in Mattermost, and you cannot bind a channel from
+   the dashboard.
+4. **Workspace owner: attach an agent.** *Agent → Channels.* With one integration it is
+   preselected; choose the shared bot and **Attach**. A *Next steps* panel appears: **Open a DM
+   with @bot** to talk to the agent, and **Add to a channel**.
+5. **Workspace owner: put the agent in a channel.** Invite the bot to the channel in Mattermost
+   (a private channel too), then *Add to a channel* in the agent's tab: the list shows the channels you
+   are a member of where the bot is already present; choose one and how the agent listens
+   (*Only when mentioned* by default, or *Every message*), and **Add to this channel**. The bot announces
+   itself in the channel. The alternative is to write `@bot bind <handle>` in the channel.
+
+If a step is refused the message says what to do: *Link your chat account* when you have not
+linked one, *Invite @bot to the channel, then try again* when the bot is not in the channel, and
+a plain "you are not a member" when you are not in the channel (nobody can bind an agent to a
+conversation they are not part of). Direct conversations cannot be bound.
+
 ## Self-hosted connectors (advanced)
 
 A self-hosted connector is a service you deploy yourself, with its own `aun_…` token and the

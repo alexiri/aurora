@@ -35,6 +35,10 @@ pub enum Credential {
         /// which this connection wins and that matches no catalogue tool is blocked.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         block_untooled: bool,
+        /// (FIX-133, D-240) The connection is `access = read`: only read tools pass; a write
+        /// tool or a request that matches no catalogue tool is blocked before any rule.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        read_only: bool,
     },
     Secret {
         id: Uuid,
@@ -80,6 +84,15 @@ pub struct ToolTags {
     pub graphql: bool,
     #[serde(default)]
     pub git: bool,
+    /// (FIX-133, D-240) The matched tool is in the app's `write` group; a read-only connection
+    /// refuses it.
+    #[serde(default)]
+    pub write: bool,
+    /// (FIX-136, D-241) The matched tool declares `scopes` and the winning connection's known
+    /// scopes hold none of them: the request is refused before any rule (the token cannot serve
+    /// it). Never set when the connection's scopes are unknown.
+    #[serde(default)]
+    pub scope_missing: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

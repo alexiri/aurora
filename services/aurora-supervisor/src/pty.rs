@@ -3,7 +3,8 @@
 //!
 //! The supervisor accepts `pty.open { pty_id, window, cols, rows }` only for a boot document
 //! that carries the `terminal` capability (the operator's `terminal.enabled`, C-623), spawns
-//! the image shell (`/bin/sh`, or `$SHELL` if set) under a pseudo-terminal as the agent user
+//! the person's chosen shell (FIX-138: bash or zsh as a login shell, fixed paths; `/bin/sh`
+//! only as a last-resort fallback with a notice) under a pseudo-terminal as the agent user
 //! (uid/gid as the process manager uses, only when the supervisor itself is root), cwd
 //! `/workspace`, own process group, and answers `pty.opened` / `pty.refused`. The environment
 //! is the container environment minus every `AURORA_*` variable and minus the boot document
@@ -16,29 +17,80 @@
 //! **not** a process row, never a turn, never a transcript event and never stamps
 //! `last_engaged_at`. A connection change (channel reset) ends every PTY; nothing is resumed.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::os::fd::OwnedFd;
+use std::os::unix::fs::OpenOptionsExt;
 use std::sync::Arc;
 
 use aurora_core::limits::{TERMINAL_CHUNK, TERMINAL_STREAM_WINDOW, TERMINALS_PER_SANDBOX};
-use aurora_protocol::runner::{PtyCloseReason, PtyRefuseReason};
+use aurora_protocol::runner::{PtyCloseReason, PtyRefuseReason, PtyShell};
 use aurora_protocol::supervisor::SupervisorToRunner;
 use tokio::io::unix::AsyncFd;
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::AbortHandle;
 
 use crate::channel::{self, PtyIn, StreamOut as PtyOut, StreamSender};
+use crate::streams::{ClosedIds, Credit, DATA_QUEUE, Violations};
 
-/// Queue depth of one PTY's runner→shell data queue; the credit window bounds the runner to
-/// `window / TERMINAL_CHUNK` in-flight chunks, so this never fills in practice.
-const DATA_QUEUE: usize = 16;
+/// After the master closed (SIGHUP) a shell has this long to exit before its process group is
+/// killed (`SIGKILL`): a shell that ignores HUP must not keep its terminal slot's process
+/// alive (FIX-091).
+const KILL_GRACE: std::time::Duration = std::time::Duration::from_secs(2);
 
-/// The shell the PTY runs: the image's `$SHELL` when set and plausible, else `/bin/sh`
-/// (`12 §Terminal`).
-fn shell_of() -> String {
-    match std::env::var("SHELL") {
-        Ok(s) if s.starts_with('/') && !s.contains("..") => s,
-        _ => "/bin/sh".to_owned(),
+/// The fixed shell binaries (FIX-138, `12 §Terminal`): the person's enumerated choice is mapped
+/// to one of these, never to a path from the wire. A parameter of the engine so tests can
+/// point at stand-ins.
+#[derive(Debug, Clone)]
+pub struct ShellPaths {
+    pub bash: std::path::PathBuf,
+    pub zsh: std::path::PathBuf,
+    pub sh: std::path::PathBuf,
+}
+
+impl Default for ShellPaths {
+    fn default() -> Self {
+        Self {
+            bash: "/bin/bash".into(),
+            zsh: "/usr/bin/zsh".into(),
+            sh: "/bin/sh".into(),
+        }
+    }
+}
+
+/// What one PTY executes: the binary, its arguments and an optional one-line notice for the
+/// pane (a fallback happened).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedShell {
+    pub program: std::path::PathBuf,
+    pub args: Vec<String>,
+    pub notice: Option<&'static str>,
+}
+
+impl ShellPaths {
+    /// The choice → binary: bash and zsh run as interactive **login** shells (`-l`); zsh missing
+    /// falls back to bash, bash (or both) missing falls back to `sh` — each with a notice.
+    pub fn resolve(&self, choice: PtyShell) -> ResolvedShell {
+        let have = |p: &std::path::Path| p.is_file();
+        let login = |p: &std::path::Path, notice| ResolvedShell {
+            program: p.to_path_buf(),
+            args: vec!["-l".to_owned()],
+            notice,
+        };
+        match choice {
+            PtyShell::Zsh if have(&self.zsh) => login(&self.zsh, None),
+            PtyShell::Zsh if have(&self.bash) => login(
+                &self.bash,
+                Some("zsh is not installed in this sandbox image; starting bash instead."),
+            ),
+            PtyShell::Bash if have(&self.bash) => login(&self.bash, None),
+            _ => ResolvedShell {
+                program: self.sh.clone(),
+                args: Vec::new(),
+                notice: Some(
+                    "bash and zsh are not installed in this sandbox image; starting sh (no completion or history).",
+                ),
+            },
+        }
     }
 }
 
@@ -96,6 +148,16 @@ impl PtyHandle {
         rx.await.unwrap_or(false)
     }
 
+    /// Ends every PTY (the `shutdown` frame: `docs/12`, "closes everything on shutdown"):
+    /// each shell's master closes (SIGHUP) and the runner is told with `pty.close`. Returns
+    /// once the engine has done it.
+    pub async fn close_all(&self) {
+        let (tx, rx) = oneshot::channel();
+        if self.cmd_tx.send(Cmd::CloseAll { tx }).is_ok() {
+            let _ = rx.await;
+        }
+    }
+
     /// Opens a PTY from a sequenced `pty.open` (tests / older runners); the engine enforces
     /// the posture and answers. Waits for the pump to act.
     pub async fn pty_open(&self, o: aurora_protocol::runner::PtyOpen) -> bool {
@@ -135,6 +197,10 @@ enum Cmd {
         open: aurora_protocol::runner::PtyOpen,
         tx: oneshot::Sender<bool>,
     },
+    /// The supervisor is shutting down: end every PTY (`pty.close { channel_lost }`).
+    CloseAll {
+        tx: oneshot::Sender<()>,
+    },
     #[cfg(test)]
     Settle {
         tx: oneshot::Sender<()>,
@@ -143,8 +209,6 @@ enum Cmd {
 
 /// Report from a PTY task to the pump.
 enum TaskMsg {
-    /// Bytes were written onward to the shell (credit accounting).
-    Written { id: u32, bytes: u32 },
     /// The task ended: forward `pty.close` and free the id.
     Finished {
         id: u32,
@@ -156,11 +220,10 @@ enum TaskMsg {
 
 struct Live {
     data_tx: mpsc::Sender<Vec<u8>>,
-    credit_tx: mpsc::Sender<u32>,
-    resize_tx: mpsc::Sender<(u16, u16)>,
+    credit: Arc<Credit>,
+    /// The latest requested size (a `watch`: the pump never waits on the task to resize).
+    resize_tx: watch::Sender<(u16, u16)>,
     abort: AbortHandle,
-    /// Bytes received from the runner not yet written to the shell (violation detection).
-    outstanding: usize,
 }
 
 /// The pump: owns the PTY table, services the channel's terminal side-channel.
@@ -171,7 +234,7 @@ pub struct PtyEngine {
     cmd_rx: mpsc::UnboundedReceiver<Cmd>,
     task_rx: mpsc::UnboundedReceiver<TaskMsg>,
     task_tx: mpsc::UnboundedSender<TaskMsg>,
-    shell: String,
+    shells: ShellPaths,
     /// The boot document's `terminal` capability (`12 §Terminal`).
     enabled: bool,
     uid: Option<u32>,
@@ -180,10 +243,14 @@ pub struct PtyEngine {
     /// This supervisor's own executable: the PTY shell is reached through a re-exec of it
     /// (`crate::pty_exec`; `std::env::current_exe()` in production).
     bootstrap: std::path::PathBuf,
+    /// The terminal wrappers' `harness.env` (`None`: tests, no file).
+    harness_env: Option<Arc<crate::harness_env::HarnessEnv>>,
     live: HashMap<u32, Live>,
-    /// Recent unsequenced-frame violations (`16 §W19` on `16 §W18`): at 4 the channel closes
-    /// with 4400.
-    violations: u32,
+    /// Recent unsequenced-frame violations (`16 §W19` on `16 §W18`): four within 60 s close the
+    /// channel with 4400; reset with the connection.
+    violations: Violations,
+    /// Ids closed on this connection (data for them is dropped, not a violation).
+    closed: ClosedIds,
 }
 
 impl PtyEngine {
@@ -202,6 +269,32 @@ impl PtyEngine {
         cwd: std::path::PathBuf,
         bootstrap: std::path::PathBuf,
     ) -> Arc<PtyHandle> {
+        Self::spawn_with_shells(ends, enabled, uid, cwd, bootstrap, ShellPaths::default())
+    }
+
+    /// [`Self::spawn`] with explicit shell binaries (tests point them at stand-ins).
+    pub fn spawn_with_shells(
+        ends: channel::PtyEnds,
+        enabled: bool,
+        uid: Option<u32>,
+        cwd: std::path::PathBuf,
+        bootstrap: std::path::PathBuf,
+        shells: ShellPaths,
+    ) -> Arc<PtyHandle> {
+        Self::spawn_with_harness_env(ends, enabled, uid, cwd, bootstrap, shells, None)
+    }
+
+    /// [`Self::spawn_with_shells`] with the terminal's `harness.env` state: a `pty.open` that
+    /// carries models rewrites the file before its shell starts (C-750 (4)).
+    pub fn spawn_with_harness_env(
+        ends: channel::PtyEnds,
+        enabled: bool,
+        uid: Option<u32>,
+        cwd: std::path::PathBuf,
+        bootstrap: std::path::PathBuf,
+        shells: ShellPaths,
+        harness_env: Option<Arc<crate::harness_env::HarnessEnv>>,
+    ) -> Arc<PtyHandle> {
         let channel::PtyEnds {
             sender,
             inbound,
@@ -216,13 +309,15 @@ impl PtyEngine {
             cmd_rx,
             task_rx,
             task_tx: task_tx.clone(),
-            shell: shell_of(),
+            shells,
             enabled,
             uid,
             cwd,
             bootstrap,
+            harness_env,
             live: HashMap::new(),
-            violations: 0,
+            violations: Violations::default(),
+            closed: ClosedIds::default(),
         };
         tokio::spawn(pump.run());
         Arc::new(PtyHandle { cmd_tx })
@@ -246,7 +341,8 @@ impl PtyEngine {
                 cmd = self.cmd_rx.recv() => match cmd {
                     Some(Cmd::Credit { id, bytes, tx }) => {
                         let ok = if let Some(l) = self.live.get(&id) {
-                            l.credit_tx.send(bytes).await.is_ok()
+                            l.credit.add(bytes as usize);
+                            true
                         } else {
                             false
                         };
@@ -254,7 +350,8 @@ impl PtyEngine {
                     }
                     Some(Cmd::Resize { id, cols, rows, tx }) => {
                         let ok = if let Some(l) = self.live.get(&id) {
-                            l.resize_tx.send((cols, rows)).await.is_ok()
+                            l.resize_tx.send_replace((cols, rows));
+                            true
                         } else {
                             false
                         };
@@ -262,11 +359,18 @@ impl PtyEngine {
                     }
                     Some(Cmd::Closed { id, tx }) => {
                         let ok = self.live.remove(&id).is_some();
+                        if ok {
+                            self.closed.insert(id);
+                        }
                         let _ = tx.send(ok);
                     }
                     Some(Cmd::Open { open, tx }) => {
                         self.on_open(open).await;
                         let _ = tx.send(true);
+                    }
+                    Some(Cmd::CloseAll { tx }) => {
+                        self.close_live(PtyCloseReason::ChannelLost).await;
+                        let _ = tx.send(());
                     }
                     #[cfg(test)]
                     Some(Cmd::Settle { tx }) => {
@@ -275,14 +379,10 @@ impl PtyEngine {
                     None => return,
                 },
                 msg = self.task_rx.recv() => match msg {
-                    Some(TaskMsg::Written { id, bytes }) => {
-                        if let Some(l) = self.live.get_mut(&id) {
-                            l.outstanding = l.outstanding.saturating_sub(bytes as usize);
-                        }
-                    }
                     Some(TaskMsg::Finished { id, reason, bytes_in, bytes_out }) => {
                         // Only the first end of a PTY answers (kill may have raced us).
                         if self.live.remove(&id).is_some() {
+                            self.closed.insert(id);
                             self.send_close(id, reason, bytes_in, bytes_out).await;
                         }
                     }
@@ -302,13 +402,12 @@ impl PtyEngine {
             M::PtyOpen(o) => self.on_open(o).await,
             M::PtyResize(r) => {
                 if let Some(l) = self.live.get(&r.pty_id) {
-                    // A dead task (channel full/closed) is moot: it is ending anyway.
-                    let _ = l.resize_tx.send((r.cols, r.rows)).await;
+                    l.resize_tx.send_replace((r.cols, r.rows));
                 }
             }
             M::PtyCredit(c) => {
                 if let Some(l) = self.live.get(&c.pty_id) {
-                    let _ = l.credit_tx.send(c.bytes).await;
+                    l.credit.add(c.bytes as usize);
                 }
             }
             M::PtyClose(c) => {
@@ -316,6 +415,7 @@ impl PtyEngine {
                 if let Some(l) = self.live.remove(&c.pty_id) {
                     l.abort.abort();
                 }
+                self.closed.insert(c.pty_id);
             }
             M::Other(u) => {
                 tracing::debug!(kind = u.kind.as_str(), "unknown pty frame ignored");
@@ -341,8 +441,16 @@ impl PtyEngine {
             self.refuse(o.pty_id, PtyRefuseReason::Limit).await;
             return;
         }
+        // The wrappers read `harness.env` when the person types `claude`: it must hold this
+        // agent's models before the shell exists. A failure is a warning, never a refused open.
+        if let (Some(h), Some(models)) = (&self.harness_env, &o.models)
+            && let Err(e) = h.apply_terminal(models.as_ref())
+        {
+            tracing::warn!(error = %e, "could not update harness.env for the terminal wrappers");
+        }
+        let resolved = self.shells.resolve(o.shell);
         let pty = match PtySession::spawn(
-            &self.shell,
+            &resolved,
             self.uid,
             &self.cwd,
             &self.bootstrap,
@@ -366,26 +474,27 @@ impl PtyEngine {
         }
         // The runner's announced window is our send allowance (direction shell → runner).
         let (data_tx, data_rx) = mpsc::channel(DATA_QUEUE);
-        let (credit_tx, credit_rx) = mpsc::channel(8);
-        let (resize_tx, resize_rx) = mpsc::channel(4);
+        let credit = Arc::new(Credit::default());
+        let (resize_tx, resize_rx) = watch::channel((o.cols, o.rows));
         let task = tokio::spawn(pty_task(
             o.pty_id,
             pty,
             o.window as usize,
             data_rx,
-            credit_rx,
+            credit.clone(),
             resize_rx,
             self.out.clone(),
             self.task_tx.clone(),
         ));
+        // A reused id is live again: its old "closed" mark no longer applies.
+        self.closed.remove(o.pty_id);
         self.live.insert(
             o.pty_id,
             Live {
                 data_tx,
-                credit_tx,
+                credit,
                 resize_tx,
                 abort: task.abort_handle(),
-                outstanding: 0,
             },
         );
     }
@@ -394,42 +503,64 @@ impl PtyEngine {
     /// repeated violations close the channel with 4400.
     async fn on_data(&mut self, pty_id: u32, payload: Vec<u8>) {
         let Some(l) = self.live.get_mut(&pty_id) else {
-            tracing::warn!(pty_id, "pty data for unknown id");
-            self.violate().await;
+            if self.closed.contains(pty_id) {
+                // A close race: closed on this connection. Dropped silently.
+                tracing::debug!(pty_id, "pty data after close dropped");
+            } else {
+                tracing::warn!(pty_id, "pty data for unknown id");
+                self.violate().await;
+            }
             return;
         };
-        if l.outstanding + payload.len() > TERMINAL_STREAM_WINDOW {
+        if l.credit.outstanding() + payload.len() > TERMINAL_STREAM_WINDOW {
             tracing::warn!(pty_id, "pty data beyond the credit window");
             self.kill(pty_id, PtyCloseReason::Error).await;
             self.violate().await;
             return;
         }
-        l.outstanding += payload.len();
-        if l.data_tx.send(payload).await.is_err() {
-            tracing::debug!(pty_id, "pty queue closed; task is ending");
+        l.credit.reserve(payload.len());
+        // Never wait on the terminal's task (FIX-091): a full queue means it is wedged.
+        match l.data_tx.try_send(payload) {
+            Ok(()) => {}
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                tracing::warn!(pty_id, "pty queue full; closing the terminal");
+                self.kill(pty_id, PtyCloseReason::Error).await;
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => {
+                tracing::debug!(pty_id, "pty queue closed; task is ending");
+            }
         }
     }
 
-    /// One terminal protocol violation; repeated ones close the channel (`16 §W19`).
+    /// One terminal protocol violation; four within 60 s close the channel (`16 §W19`).
     async fn violate(&mut self) {
-        self.violations += 1;
-        if self.violations >= 4 {
+        if self.violations.record() {
             let _ = self.out.send(PtyOut::Abort).await;
         }
     }
 
-    /// A connection change (or channel end): every PTY ends, none are resumed.
+    /// A connection change: every PTY ends, none are resumed; the violation count and the
+    /// closed-id memory are per connection.
     async fn reset(&mut self, reason: PtyCloseReason) {
+        self.close_live(reason).await;
+        self.violations.clear();
+        self.closed.clear();
+    }
+
+    /// Ends every live PTY (connection change or shutdown).
+    async fn close_live(&mut self, reason: PtyCloseReason) {
         let ids: Vec<u32> = self.live.keys().copied().collect();
         for id in ids {
             self.kill(id, reason.clone()).await;
         }
     }
 
-    /// Ends one PTY: abort the task, free the id, tell the runner.
+    /// Ends one PTY: abort the task (dropping the session ends the shell, see
+    /// [`PtySession`]'s `Drop`), free the id, tell the runner.
     async fn kill(&mut self, id: u32, reason: PtyCloseReason) {
         if let Some(l) = self.live.remove(&id) {
             l.abort.abort();
+            self.closed.insert(id);
             self.send_close(id, reason, 0, 0).await;
         }
     }
@@ -465,7 +596,42 @@ impl PtyEngine {
 /// child handle for reaping.
 struct PtySession {
     master: AsyncFd<OwnedFd>,
-    child: tokio::process::Child,
+    /// Taken by `Drop`, which hands it to a detached reaper.
+    child: Option<tokio::process::Child>,
+}
+
+/// Ending a session (the task finished or was aborted): the master closes with the drop (the
+/// kernel hangs the session up), and a detached task escalates — SIGHUP now, a short grace,
+/// then SIGKILL to the session leader's process group — and reaps the child. Nothing on the
+/// data path waits for the shell (FIX-091); a shell that ignores HUP cannot outlive its
+/// terminal.
+impl Drop for PtySession {
+    fn drop(&mut self) {
+        let Some(mut child) = self.child.take() else {
+            return;
+        };
+        let Ok(rt) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        rt.spawn(async move {
+            // The bootstrap is its own session and group leader (`setsid`): pgid == pid.
+            let group = child
+                .id()
+                .and_then(|p| rustix::process::Pid::from_raw(p as i32));
+            if let Some(g) = group {
+                let _ = rustix::process::kill_process_group(g, rustix::process::Signal::HUP);
+            }
+            if tokio::time::timeout(KILL_GRACE, child.wait())
+                .await
+                .is_err()
+            {
+                if let Some(g) = group {
+                    let _ = rustix::process::kill_process_group(g, rustix::process::Signal::KILL);
+                }
+                let _ = child.wait().await;
+            }
+        });
+    }
 }
 
 impl PtySession {
@@ -482,7 +648,7 @@ impl PtySession {
     /// control`). The bootstrap makes its own session, takes the slave as its controlling
     /// terminal and execs the shell in-process, so the shell *is* the session leader.
     fn spawn(
-        shell: &str,
+        shell: &ResolvedShell,
         uid: Option<u32>,
         cwd: &std::path::Path,
         bootstrap: &std::path::Path,
@@ -503,9 +669,15 @@ impl PtySession {
         rustix::pty::unlockpt(&master)?;
         let name = rustix::pty::ptsname(&master, Vec::new())?;
         let name = name.to_string_lossy().into_owned();
+        // `O_NOCTTY` (FIX-091 item 7, production outage 2026-11-13): the supervisor runs as PID 1,
+        // a session leader without a controlling terminal, so opening the slave without it made
+        // the slave the *supervisor's* ctty — and the FIX-054 bootstrap's `TIOCSCTTY` then failed
+        // `EPERM` ("__pty-exec: Operation not permitted"). The slave must become the shell's ctty
+        // only, in the bootstrap's own new session.
         let slave = std::fs::OpenOptions::new()
             .read(true)
             .write(true)
+            .custom_flags(rustix::fs::OFlags::NOCTTY.bits() as i32)
             .open(&name)?;
         // Seed `TIOCSWINSZ` before the shell starts so nothing reads a 0×0 window.
         winsize(&master, cols, rows);
@@ -518,6 +690,9 @@ impl PtySession {
         let extra = [
             ("TERM", "xterm-256color".to_owned()),
             ("COLORTERM", "truecolor".to_owned()),
+            // (FIX-138) The one image `PATH` (harness wrappers included) and the chosen shell.
+            ("PATH", crate::spawn::IMAGE_PATH.to_owned()),
+            ("SHELL", shell.program.to_string_lossy().into_owned()),
         ];
         let mut cmd = crate::spawn::tokio_command(bootstrap, extra);
         for (k, _) in std::env::vars_os() {
@@ -525,8 +700,12 @@ impl PtySession {
                 cmd.env_remove(&k);
             }
         }
-        cmd.arg(crate::pty_exec::SUBCOMMAND)
-            .arg(shell)
+        cmd.arg(crate::pty_exec::SUBCOMMAND);
+        if let Some(n) = shell.notice {
+            cmd.arg("--notice").arg(n);
+        }
+        cmd.arg(&shell.program)
+            .args(&shell.args)
             .stdin(std::process::Stdio::from(slave.try_clone()?))
             .stdout(std::process::Stdio::from(slave.try_clone()?))
             .stderr(std::process::Stdio::from(slave))
@@ -548,17 +727,15 @@ impl PtySession {
         // this crate forbids `unsafe` (so the replacement is unavailable here).
         #[allow(deprecated)]
         let master = AsyncFd::new(master)?;
-        Ok(Self { master, child })
+        Ok(Self {
+            master,
+            child: Some(child),
+        })
     }
 
     /// Applies `TIOCSWINSZ` on a `pty.resize` (`12 §Terminal`).
     fn resize(&self, cols: u16, rows: u16) {
         winsize(self.master.get_ref(), cols, rows);
-    }
-
-    /// Reaps the child (the PTY ended; a zombie must not outlive the session).
-    async fn reap(&mut self) {
-        let _ = self.child.wait().await;
     }
 }
 
@@ -583,15 +760,19 @@ fn winsize<Fd: std::os::fd::AsFd>(fd: Fd, cols: u16, rows: u16) {
 #[allow(clippy::too_many_arguments)]
 async fn pty_task(
     id: u32,
-    mut pty: PtySession,
+    pty: PtySession,
     send_credit: usize,
     mut data_rx: mpsc::Receiver<Vec<u8>>,
-    mut credit_rx: mpsc::Receiver<u32>,
-    mut resize_rx: mpsc::Receiver<(u16, u16)>,
+    credit_cell: Arc<Credit>,
+    mut resize_rx: watch::Receiver<(u16, u16)>,
     out: StreamSender,
     report: mpsc::UnboundedSender<TaskMsg>,
 ) {
     tracing::debug!(pty_id = id, "terminal pty open");
+    // Runner → shell bytes wait here until the shell reads them (window-bounded by the pump).
+    // The write is a select arm like the others: a program that never reads stdin cannot stop
+    // this task from draining credit, resizes and the queue, or from being aborted (FIX-091).
+    let mut wbuf: VecDeque<u8> = VecDeque::new();
     let mut credit = send_credit;
     let mut bytes_in: u64 = 0;
     let mut bytes_out: u64 = 0;
@@ -603,14 +784,14 @@ async fn pty_task(
             read = pty.master.readable(), if credit > 0 => {
                 let mut guard = match read {
                     Ok(g) => g,
-                    Err(_) => { pty.reap().await; break PtyCloseReason::Hangup; }
+                    Err(_) => break PtyCloseReason::Hangup,
                 };
                 // Read at most the remaining credit (FIX-059): nothing is read that cannot
                 // be sent, so no byte is ever dropped; the kernel's PTY buffer provides the
                 // backpressure and the shell blocks on write.
                 let want = credit.min(TERMINAL_CHUNK);
                 match rustix::io::read(guard.get_ref(), &mut buf[..want]) {
-                    Ok(0) => { pty.reap().await; break PtyCloseReason::Eof; }
+                    Ok(0) => break PtyCloseReason::Eof,
                     Ok(n) => {
                         // Epoll is edge-triggered: clear readiness only when the read
                         // drained the kernel buffer (a short read). A read capped by the
@@ -629,45 +810,33 @@ async fn pty_task(
                     // credit-capped read drained it exactly). Clear readiness or
                     // `readable()` returns at once and the loop busy-spins.
                     Err(rustix::io::Errno::AGAIN) => { guard.clear_ready(); continue }
-                    Err(_) => { pty.reap().await; break PtyCloseReason::Hangup; }
+                    Err(_) => break PtyCloseReason::Hangup,
                 }
             }
             // Runner → shell; credit returns only after the bytes were written onward.
             chunk = data_rx.recv() => {
                 match chunk {
-                    Some(chunk) => {
-                        let mut written = 0usize;
-                        let mut failed = false;
-                        while written < chunk.len() {
-                            let write = pty.master.writable().await;
-                            let mut guard = match write {
-                                Ok(g) => g,
-                                Err(_) => { failed = true; break; }
-                            };
-                            match rustix::io::write(guard.get_ref(), &chunk[written..]) {
-                                Ok(0) => { failed = true; break; }
-                                Ok(n) => {
-                                    guard.clear_ready();
-                                    written += n;
-                                }
-                                // Same as the read arm: clear stale readiness, no spin.
-                                Err(rustix::io::Errno::AGAIN) => { guard.clear_ready(); continue }
-                                Err(_) => { failed = true; break; }
-                            }
-                        }
-                        if failed {
-                            pty.reap().await;
-                            break PtyCloseReason::Hangup;
-                        }
-                        bytes_in += chunk.len() as u64;
-                        let _ = report.send(TaskMsg::Written {
-                            id,
-                            bytes: chunk.len() as u32,
-                        });
+                    Some(chunk) => wbuf.extend(chunk),
+                    // The pump dropped the queue (reset path aborts us anyway).
+                    None => break PtyCloseReason::ChannelLost,
+                }
+            }
+            write = pty.master.writable(), if !wbuf.is_empty() => {
+                let mut guard = match write {
+                    Ok(g) => g,
+                    Err(_) => break PtyCloseReason::Hangup,
+                };
+                match rustix::io::write(guard.get_ref(), wbuf.as_slices().0) {
+                    Ok(0) => break PtyCloseReason::Hangup,
+                    Ok(n) => {
+                        guard.clear_ready();
+                        wbuf.drain(..n);
+                        bytes_in += n as u64;
+                        credit_cell.release(n);
                         let f = SupervisorToRunner::PtyCredit(
                             aurora_protocol::runner::PtyCredit {
                                 pty_id: id,
-                                bytes: chunk.len() as u32,
+                                bytes: n as u32,
                             },
                         );
                         if let Some(t) = channel::encode_pty_frame(f)
@@ -676,18 +845,17 @@ async fn pty_task(
                             break PtyCloseReason::ChannelLost;
                         }
                     }
-                    // The pump dropped the queue (reset path aborts us anyway).
-                    None => break PtyCloseReason::ChannelLost,
+                    // Same as the read arm: clear stale readiness, no spin.
+                    Err(rustix::io::Errno::AGAIN) => { guard.clear_ready(); continue }
+                    Err(_) => break PtyCloseReason::Hangup,
                 }
             }
-            c = credit_rx.recv() => {
-                match c {
-                    Some(c) => credit = (credit + c as usize).min(TERMINAL_STREAM_WINDOW),
-                    None => break PtyCloseReason::ChannelLost,
-                }
+            () = credit_cell.granted() => {
+                credit = (credit + credit_cell.take()).min(TERMINAL_STREAM_WINDOW);
             }
-            r = resize_rx.recv() => {
-                if let Some((cols, rows)) = r {
+            r = resize_rx.changed() => {
+                if r.is_ok() {
+                    let (cols, rows) = *resize_rx.borrow_and_update();
                     pty.resize(cols, rows);
                 } else {
                     break PtyCloseReason::ChannelLost;

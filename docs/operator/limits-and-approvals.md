@@ -6,6 +6,8 @@
 ## API rate limits
 
 Every authenticated `/v1/**` request passes the API limiter, after the caller is identified and before authorization. The caller is an API key, a signed-in user (all of a user's sessions share one budget) or a BYO agent token.
+Webhook replay: a signed webhook delivery without a delivery id is deduplicated for 60 seconds only, so replay protection of older captured requests belongs to the sender (include a delivery id or a timestamp the receiver of your own agent can check). Signed-timestamp checking is a later item.
+
 Not limited here: `/healthz`, `/readyz`, `/metrics`, the runner, connector and `/internal` planes, and webhook deliveries (which have their own limit). Unauthenticated routes have separate per-IP limits.
 
 A request must get a token from **every** bucket that applies: the caller's `general` bucket, the caller's class bucket and the organization's bucket. Buckets are kept in memory **per API replica**, so with N replicas the effective limit can be up to N times higher.
@@ -74,16 +76,29 @@ Approvals of one batch produce one e-mail, and each person gets at most 20 per h
 | Key | Default | Meaning |
 |-----|---------|---------|
 | `approvals.email_notifications` | `true` | `false` disables approval e-mail for the whole instance. |
-| `email.smtp_url` | unset | `smtp://` or `smtps://` URL, which may carry the password. Unset means **log-only**: mail is written to the API log, nothing is sent, and the instance overview warns "approval e-mails disabled". |
+| `email.smtp_url` | unset | `smtp://host:port` or `smtps://host:port`, **without a user name or password in the URL** (FIX-116). Unset means **log-only**: mail is written to the API log, nothing is sent, and the instance overview warns "approval e-mails disabled". The URL also chooses the encryption: `smtps://` is TLS from the start (usually port 465); `smtp://…?tls=required` is STARTTLS and fails if the server does not offer it (usually port 587, or 25 to a relay); `smtp://…?tls=opportunistic` uses STARTTLS when offered; plain `smtp://` with no `tls` option is **cleartext**, and sign-in and invitation links travel unencrypted. |
 | `email.from` | unset | Sender address. **Required** when `email.smtp_url` is set (startup fails otherwise). |
+| `email.smtp_username` | unset | Login for a server that needs one, paired with the password in the `AURORA_SMTP_PASSWORD` environment variable (from a Kubernetes Secret via `api.extraEnv`). A relay that accepts mail from your network needs neither. |
 
 The same mailer sends invitations. Recipients are the people with an explicit `owner` or `approver` workspace binding who can see the conversation; if the workspace has no explicit binding, the organization owners and admins.
 
-```toml
-[email]
-smtp_url = "smtps://aurora:<password>@smtp.example.org:465"
-from = "aurora@example.org"
+With Helm these keys go under `config.email` (application settings; see `docs/23` §Where does a key go?):
+
+```yaml
+config:
+  email:
+    smtp_url: "smtp://smtp.example.org:587?tls=required"
+    from: aurora@example.org
+    smtp_username: aurora          # only if the server needs a login
+api:
+  extraEnv:
+    - name: AURORA_SMTP_PASSWORD   # only with smtp_username
+      valueFrom: {secretKeyRef: {name: aurora-smtp, key: password}}
 ```
+
+The same in `aurora.toml` (without Helm): `[email]` with `smtp_url` and `from`, and `smtp_username` plus `AURORA_SMTP_PASSWORD` when a login is needed.
+
+The mailer verifies the server's certificate against the public Mozilla root list built into it (`webpki-roots`). It reads neither the system trust store nor the chart's `extraCaBundle`, so a relay whose certificate comes from a private CA fails with `tls=required` or `smtps://`.
 
 Verify: with `smtp_url` unset, trigger an approval from a webhook or schedule and look for the e-mail in the API log. With it set, check the mailbox of a workspace owner after about 20 seconds.
 Details: [docs/07 §E-mail when no surface is live](../07-policy-approvals.md).

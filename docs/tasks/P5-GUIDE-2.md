@@ -1,7 +1,7 @@
 # P5-GUIDE-2: Agent guides — home sync, supervisor projection, instruction file, admin API (owner, 2026-11-13)
 
 Second task of "app guides on demand". Normative spec: `docs/24-app-guides.md` (§5.3, §6, §7,
-§9, §11); contracts C-643, C-644, C-645, C-648; decisions D-171; SEC-90, SEC-91. Also read
+§9, §11); contracts C-643, C-644, C-645, C-648; decisions D-171; SEC-117, SEC-91. Also read
 `12 §Home projection` and `10 §Agent instructions`. Depends on **P5-GUIDE-1** (renderer, guide
 blobs, snapshot keys, limits).
 
@@ -46,7 +46,7 @@ package's agent guide through the API. **No gateway, policy, runner or hook-host
    if `services/aurora-gateway`, `crates/aurora-policy` or `services/aurora-hookhost` reference
    `.aurora/apps`. It must fail on a planted reference (prove it in the PR description) and must
    not pass vacuously (see FIX-068 for the failure modes to avoid).
-6. **Docs you update**: `docs/tests/security-coverage.md` (test ids for SEC-90, SEC-91 once they
+6. **Docs you update**: `docs/tests/security-coverage.md` (test ids for SEC-117, SEC-91 once they
    exist), `docs/tests/hosted-coverage.md` if it lists home-sync parts.
 
 ## Out of scope

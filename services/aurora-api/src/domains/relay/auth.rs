@@ -41,6 +41,50 @@ fn check_protocol(parts: &Parts) -> Result<(), ApiError> {
     Ok(())
 }
 
+/// What the management rate limiter learns from an `aul_` bearer on a relay-plane request
+/// (FIX-090).
+pub enum LimiterIdentity {
+    /// A live relay token: the key its preview-class bucket lives under — the registered
+    /// replica when `X-Aurora-Replica` names one of this token's replicas, else the token.
+    Live(String),
+    /// An unknown, rotated-away or malformed token: the ordinary rejected-bearer path.
+    Dead,
+    /// The lookup itself failed (database trouble): not the caller's fault, not charged.
+    Unknown,
+}
+
+/// Authenticates a relay-plane request for the limiter only: no protocol check (a relay
+/// speaking a newer protocol must still be counted as the relay it is, and get its 426), no
+/// side effect. The handler's own extractor decides the request.
+pub async fn limiter_identity(st: &AppState, headers: &http::HeaderMap) -> LimiterIdentity {
+    let Some(tok) = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .filter(|t| token::parse_prefix(t) == Some(TokenPrefix::Relay))
+    else {
+        return LimiterIdentity::Dead;
+    };
+    let token_id = match repo::find_relay_token(&st.pool, &token::hash(tok)).await {
+        Ok(Some(id)) => id,
+        Ok(None) => return LimiterIdentity::Dead,
+        Err(_) => return LimiterIdentity::Unknown,
+    };
+    let replica = headers
+        .get("x-aurora-replica")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| Uuid::parse_str(v).ok());
+    if let Some(r) = replica {
+        match repo::relay_replica_owned(&st.pool, r, token_id).await {
+            Ok(true) => return LimiterIdentity::Live(format!("relay-replica:{r}")),
+            Ok(false) => {}
+            Err(_) => return LimiterIdentity::Unknown,
+        }
+    }
+    // `register` (no replica yet) or a pruned replica: the token's own bucket.
+    LimiterIdentity::Live(format!("relay-token:{token_id}"))
+}
+
 /// `Authorization: Bearer aul_…` only (used by `register`).
 pub struct RelayToken(pub Uuid);
 

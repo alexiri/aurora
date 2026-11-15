@@ -37,10 +37,21 @@ pub const CONDITION_BODY_BUFFER_MIN: usize = 4 * KIB;
 pub const CONDITION_BODY_BUFFER_MAX: usize = 8 * MIB;
 pub const UPSTREAM_HEADER_TIMEOUT: Duration = Duration::from_secs(300);
 pub const WEBSOCKET_IDLE_TIMEOUT: Duration = Duration::from_secs(600);
+/// (FIX-106) Inbound tunnel bounds (`06` §Tunnel limits): the TLS handshake inside a `CONNECT`
+/// tunnel (and the dial of an open-lane tunnel) must finish in this time.
+pub const TUNNEL_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+/// (FIX-106) A request head inside a tunnel must arrive in this time.
+pub const TUNNEL_HEADER_TIMEOUT: Duration = Duration::from_secs(30);
+/// (FIX-106) Every tunnel kind ends after this long without bytes in either direction (and, for
+/// a MITM tunnel, without a request in flight): the WebSocket idle value.
+pub const TUNNEL_IDLE_TIMEOUT: Duration = WEBSOCKET_IDLE_TIMEOUT;
+/// (FIX-106) Concurrent tunnels of one credential; the next `CONNECT` is answered 429.
+pub const TUNNEL_PER_CREDENTIAL_MAX: usize = 64;
+/// (FIX-106) Concurrent tunnels of the whole gateway.
+pub const TUNNEL_TOTAL_MAX: usize = 4096;
 /// flush interval; also flushes at `REQUEST_LOG_FLUSH_ROWS` rows.
 pub const REQUEST_LOG_FLUSH: Duration = Duration::from_secs(5);
 pub const REQUEST_LOG_FLUSH_ROWS: u32 = 500;
-pub const REQUEST_LOG_RETENTION: Duration = Duration::from_secs(2592000);
 pub const BATCH_HEADER_MAX: usize = 128;
 pub const CONNECTION_CHOICE_MAX: u32 = 20;
 pub const REFRESH_MARGIN: Duration = Duration::from_secs(60);
@@ -75,7 +86,6 @@ pub const BACKGROUND_CAP: Duration = Duration::from_secs(43200);
 pub const TURN_CEILING: Duration = Duration::from_secs(21600);
 pub const TURN_CEILING_WARNING: Duration = Duration::from_secs(900);
 pub const TURN_STALL: Duration = Duration::from_secs(600);
-pub const TURN_PROGRESS_INTERVAL: Duration = Duration::from_secs(60);
 pub const STALE_DISPATCH: Duration = Duration::from_secs(90);
 pub const TOOL_CALL_TIMEOUT: Duration = Duration::from_secs(25);
 pub const TOOL_CONSECUTIVE_FAILURES: u32 = 2;
@@ -101,6 +111,12 @@ pub const SKILL_NAME_MAX: usize = 64;
 pub const SKILL_DESCRIPTION_MAX: usize = 500;
 pub const SKILL_BODY_MAX: usize = 24_000;
 pub const SKILL_TOTAL_MAX: usize = 32_000;
+/// (FIX-110, docs/02 §Limits) Own (non-library) skills per agent and files per skill: a looping
+/// `skill_create` cannot grow what every home sync projects without bound.
+pub const SKILL_PER_AGENT_MAX: i64 = 50;
+pub const SKILL_FILES_MAX: i64 = 50;
+/// (FIX-110) Queued peer tasks per ordered (sender, target) pair.
+pub const PEER_TASK_QUEUE_MAX: i64 = 10;
 // Git skill library (phase 4, P4-GSL, D-148, D-149; docs/02 §Limits).
 pub const LIBRARIES_PER_ORG: usize = 10;
 /// Library-sourced bytes (body + files, binary as base64 length) and skill counts per tier.
@@ -125,6 +141,20 @@ pub const LIBRARY_REFRESH_CONCURRENCY: usize = 4;
 pub const LIBRARY_CHECK_NOW_INTERVAL: Duration = Duration::from_secs(60);
 pub const LIBRARY_BROWSE_CACHE: Duration = Duration::from_secs(5 * 60);
 pub const LIBRARY_FETCH_TIMEOUT: Duration = Duration::from_secs(20);
+// Addon sources (phase 5, P5-ASRC, D-250; docs/02 §Limits, docs/22).
+/// The `aurora-addons.yaml` manifest (download cap; a bigger body is refused before parsing).
+pub const ADDON_MANIFEST_MAX: usize = MIB;
+/// Addon entries per manifest and versions per addon.
+pub const ADDON_ADDONS_MAX: usize = 100;
+pub const ADDON_VERSIONS_MAX: usize = 50;
+/// The per-source lease of the poll job and the manual "Check now".
+pub const ADDON_LEASE: Duration = Duration::from_secs(5 * 60);
+/// Sources checked at once per replica.
+pub const ADDON_CHECK_CONCURRENCY: usize = 2;
+/// Manifest and package fetch timeouts.
+pub const ADDON_FETCH_TIMEOUT: Duration = Duration::from_secs(20);
+/// Backoff until a source is re-checked after a failed poll.
+pub const ADDON_FAILURE_BACKOFF: Duration = Duration::from_secs(3600);
 pub const ATTACH_IN_FILE_MAX: u64 = 10 * MIB as u64;
 /// per message.
 pub const ATTACH_IN_COUNT: u32 = 10;
@@ -143,6 +173,10 @@ pub const RETENTION_SWEEP_BATCH: i64 = 200;
 pub const RETENTION_SWEEP_PER_ORG: i64 = 5_000;
 /// (phase 2, RFE-010) one conversation export: bytes and events.
 pub const EXPORT_MAX_BYTES: u64 = 256 * MIB as u64;
+/// `STORAGE_SNAPSHOT_MAX_AGE` (FIX-126): a Storage page is served from a snapshot at most this
+/// old; an older (or missing) one is recomputed once, under a lock, by the next read. The daily
+/// attachment sweep and the refresh buttons recompute it too.
+pub const STORAGE_SNAPSHOT_MAX_AGE: Duration = Duration::from_secs(3600);
 pub const EXPORT_MAX_EVENTS: i64 = 200_000;
 pub const SCHEDULE_FIRE_LEASE: Duration = Duration::from_secs(300);
 /// consecutive failures.
@@ -188,6 +222,19 @@ pub const OP_BACKOFF_MAX: Duration = Duration::from_secs(600);
 /// creation (instead of `OP_MAX_ATTEMPTS`), then `failed`.
 pub const DEPROVISION_RETRY_WINDOW: Duration = Duration::from_secs(24 * 3600);
 pub const CHANNEL_LEDGER_RETENTION: Duration = Duration::from_secs(604800);
+/// (FIX-111) Webhook delivery rows are kept this long, and at most
+/// [`WEBHOOK_DELIVERY_MAX_PER_WEBHOOK`] per webhook (rejected requests write rows too).
+pub const WEBHOOK_DELIVERY_RETENTION: Duration = Duration::from_secs(30 * 24 * 3600);
+pub const WEBHOOK_DELIVERY_MAX_PER_WEBHOOK: i64 = 10_000;
+/// (FIX-111) Revoked or expired sessions and expired context credentials are removed by the
+/// daily retention pass this long after expiry or revocation.
+pub const SESSION_PRUNE_GRACE: Duration = Duration::from_secs(7 * 24 * 3600);
+/// (FIX-111) Rows removed per statement by the daily retention pass (`SKIP LOCKED` batches:
+/// no long lock, no unbounded transaction).
+pub const RETENTION_PRUNE_BATCH: i64 = 1_000;
+/// (FIX-111) Bounds of `expires_in` (seconds) on a reach-grant approval: 1 minute to 365 days.
+pub const REACH_EXPIRES_IN_MIN_SECS: u32 = 60;
+pub const REACH_EXPIRES_IN_MAX_SECS: u32 = 365 * 24 * 3600;
 /// fallback TTL when there is no approval deadline.
 pub const ACTION_TOKEN_TTL: Duration = Duration::from_secs(86400);
 /// consecutive bot-authored turns.
@@ -214,6 +261,8 @@ pub const SUMMARY_FIELDS_MAX: u32 = 12;
 pub const SUMMARY_VALUE_MAX: usize = 200;
 pub const SUMMARY_TEXT_MAX: usize = 1_000;
 pub const PACKAGE_MAX: usize = 20 * MIB;
+/// (FIX-107) `plugin.yaml` of a package (the largest built-in is ~23 KiB).
+pub const PACKAGE_MANIFEST_MAX: usize = 256 * KIB;
 pub const PACKAGE_ICON_MAX: usize = 256 * KIB;
 pub const PACKAGE_SETUP_GUIDE_MAX: usize = 64 * KIB;
 pub const AGENT_SNIPPET_MAX: usize = 2_000;
@@ -284,7 +333,9 @@ pub const PREVIEW_STREAM_GRANT_TTL: Duration = Duration::from_secs(30);
 /// revalidation interval (worst-case revocation latency, SEC-81).
 pub const PREVIEW_AUTH_CACHE: Duration = Duration::from_secs(15);
 pub const PREVIEW_AUTH_CACHE_NEG: Duration = Duration::from_secs(5);
-/// concurrent streams per share / per sandbox / per user (per relay replica).
+/// concurrent streams per share / per sandbox / per user. Per share and per user are counted per
+/// relay replica and enforced in `aurora-relay` (`stream::Streams::reserve`, FIX-072); per
+/// sandbox is enforced in the supervisor.
 pub const PREVIEW_STREAMS_PER_SHARE: u32 = 32;
 pub const PREVIEW_STREAMS_PER_SANDBOX: u32 = 64;
 pub const PREVIEW_STREAMS_PER_USER: u32 = 64;
@@ -337,8 +388,6 @@ pub const TERMINAL_WAKE_WINDOW: Duration = Duration::from_secs(60);
 pub const TERMINAL_WAKE_WAIT: Duration = Duration::from_secs(45);
 /// wakes per agent per hour; beyond it 429.
 pub const TERMINAL_WAKES_PER_AGENT_HOUR: u32 = 12;
-/// revocation cache: freeze/disable closes sessions within this (mirroring previews).
-pub const TERMINAL_AUTH_CACHE: Duration = Duration::from_secs(15);
 /// the `pty.open` round trip to the supervisor (an older supervisor answers nothing → 4502).
 pub const TERMINAL_PTY_OPEN_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -391,7 +440,6 @@ mod tests {
         assert_eq!(TERMINAL_WAKE_WINDOW, Duration::from_secs(60));
         assert_eq!(TERMINAL_WAKE_WAIT, Duration::from_secs(45));
         assert_eq!(TERMINAL_WAKES_PER_AGENT_HOUR, 12);
-        assert_eq!(TERMINAL_AUTH_CACHE, Duration::from_secs(15));
         assert_eq!(TERMINAL_PTY_OPEN_TIMEOUT, Duration::from_secs(5));
         const { assert!(CONDITION_BODY_BUFFER_MIN <= CONDITION_BODY_BUFFER) };
         const { assert!(CONDITION_BODY_BUFFER <= CONDITION_BODY_BUFFER_MAX) };

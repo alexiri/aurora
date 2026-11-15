@@ -12,7 +12,7 @@ use uuid::Uuid;
 const LIB_COLS: &str = "id, org_id, label, connection_id, app_id, repo, ref, path, status, \
     last_head_sha, last_refresh_at, next_refresh_at, refresh_failures, last_error, \
     refresh_lease_until, lease_owner, check_requested_at, created_by_user_id, created_at, \
-    updated_at";
+    updated_at, head_epoch";
 
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct LibraryRow {
@@ -37,6 +37,9 @@ pub struct LibraryRow {
     pub created_by_user_id: Option<Uuid>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    /// Bumped whenever `last_head_sha` is cleared by an add (FIX-096): a refresh that read an
+    /// older epoch must not write its head back.
+    pub head_epoch: i32,
 }
 
 pub struct NewLibrary<'a> {
@@ -564,7 +567,7 @@ pub async fn forget_head(
     commit: &str,
 ) -> Result<(), DbError> {
     sqlx::query(
-        "UPDATE skill_libraries SET last_head_sha = NULL
+        "UPDATE skill_libraries SET last_head_sha = NULL, head_epoch = head_epoch + 1
          WHERE id = $1 AND last_head_sha IS DISTINCT FROM $2",
     )
     .bind(library)
@@ -572,6 +575,51 @@ pub async fn forget_head(
     .execute(conn)
     .await?;
     Ok(())
+}
+
+/// Heads kept per library (the current one and the most recent ones before it).
+pub const HEADS_KEPT: i64 = 20;
+
+/// Remembers that `commit` was the library ref's head (refresh, browse, create, patch): browse
+/// and add accept only the current head and these (D-178 Q-R5-3). Keeps the newest `HEADS_KEPT`.
+pub async fn record_head(
+    conn: &mut PgConnection,
+    library: Uuid,
+    commit: &str,
+) -> Result<(), DbError> {
+    sqlx::query(
+        "INSERT INTO skill_library_heads (library_id, commit_sha) VALUES ($1, $2)
+         ON CONFLICT (library_id, commit_sha) DO UPDATE SET seen_at = now(), updated_at = now()",
+    )
+    .bind(library)
+    .bind(commit)
+    .execute(&mut *conn)
+    .await?;
+    sqlx::query(
+        "DELETE FROM skill_library_heads WHERE library_id = $1 AND commit_sha NOT IN
+           (SELECT commit_sha FROM skill_library_heads WHERE library_id = $1
+            ORDER BY seen_at DESC, commit_sha LIMIT $2)",
+    )
+    .bind(library)
+    .bind(HEADS_KEPT)
+    .execute(conn)
+    .await?;
+    Ok(())
+}
+
+/// Whether `commit` is a head this library has recorded.
+pub async fn is_recorded_head(
+    conn: &mut PgConnection,
+    library: Uuid,
+    commit: &str,
+) -> Result<bool, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM skill_library_heads WHERE library_id = $1 AND commit_sha = $2)",
+    )
+    .bind(library)
+    .bind(commit)
+    .fetch_one(conn)
+    .await?)
 }
 
 pub async fn was_rejected(
@@ -695,6 +743,9 @@ pub struct RefreshDone<'a> {
     pub id: Uuid,
     pub owner: Uuid,
     pub head_sha: Option<&'a str>,
+    /// The library's `head_epoch` when the pass was claimed: the head is written only if no add
+    /// cleared it since (compare-and-set).
+    pub head_epoch: i32,
     /// `active`, `error` or `over_budget`.
     pub status: &'a str,
     pub error: Option<&'a str>,
@@ -706,6 +757,7 @@ pub async fn finish_refresh(conn: &mut PgConnection, d: &RefreshDone<'_>) -> Res
     Ok(sqlx::query(
         "UPDATE skill_libraries SET status = $3, last_error = $4, refresh_failures = $5,
             last_head_sha = CASE WHEN $3 = 'over_budget' THEN NULL
+                                 WHEN head_epoch <> $8 THEN last_head_sha
                                  ELSE COALESCE($6, last_head_sha) END,
             last_refresh_at = now(),
             next_refresh_at = now() + make_interval(secs => $7),
@@ -719,6 +771,7 @@ pub async fn finish_refresh(conn: &mut PgConnection, d: &RefreshDone<'_>) -> Res
     .bind(d.failures)
     .bind(d.head_sha)
     .bind(d.next_in_secs)
+    .bind(d.head_epoch)
     .execute(conn)
     .await?
     .rows_affected()

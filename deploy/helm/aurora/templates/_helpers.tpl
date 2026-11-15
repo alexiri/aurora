@@ -30,6 +30,16 @@ app.kubernetes.io/component: {{ .component }}
 {{- if .Values.postgres.enabled -}}{{ include "aurora.secretName" . }}{{- else -}}{{ default (printf "%s-database" (include "aurora.fullname" .)) .Values.database.existingSecret }}{{- end -}}
 {{- end -}}
 
+{{- /* (FIX-106, D-178 Q-R5-11) The chart-bundled evaluation Postgres creates the gateway's
+       least-privilege role itself: renders "true" when postgres.enabled and the operator set
+       neither the explicit role pair nor database.allowSharedLogin. */ -}}
+{{- define "aurora.gatewayRoleAuto" -}}
+{{- if and .Values.postgres.enabled (not .Values.database.gatewayRole) (not .Values.database.gatewayExistingSecret) (not .Values.database.allowSharedLogin) -}}true{{- end -}}
+{{- end -}}
+
+{{/* The role the chart creates in the bundled Postgres (the name is fixed; its password is generated). */}}
+{{- define "aurora.gatewayAutoRole" -}}aurora_gateway{{- end -}}
+
 {{- define "aurora.caSecretName" -}}
 {{- default (printf "%s-gateway-ca" (include "aurora.fullname" .)) .Values.gateway.ca.existingSecret -}}
 {{- end -}}
@@ -59,8 +69,13 @@ securityContext:
 - {name: AURORA_CONFIG, value: /etc/aurora/{{ default "aurora.toml" .configFile }}}
 {{- if .db }}
 - name: AURORA_DATABASE_URL
-  {{- /* FIX-016: with database.gatewayExistingSecret set, the gateway (gatewayDb) logs in as its least-privilege role. */}}
+  {{- /* FIX-016: with database.gatewayExistingSecret set, the gateway (gatewayDb) logs in as its least-privilege role.
+         FIX-106: with the bundled Postgres and no explicit choice, it logs in as the role the chart creates (key AURORA_GATEWAY_DATABASE_URL of the generated Secret). */}}
+  {{- if and .gatewayDb (include "aurora.gatewayRoleAuto" .root) }}
+  valueFrom: {secretKeyRef: {name: {{ include "aurora.secretName" .root }}, key: AURORA_GATEWAY_DATABASE_URL}}
+  {{- else }}
   valueFrom: {secretKeyRef: {name: {{ if and .gatewayDb .root.Values.database.gatewayExistingSecret }}{{ .root.Values.database.gatewayExistingSecret }}{{ else }}{{ include "aurora.dbSecretName" .root }}{{ end }}, key: AURORA_DATABASE_URL}}
+  {{- end }}
 {{- end }}
 {{- range $k := .keys }}
 - name: {{ $k }}
@@ -145,11 +160,27 @@ spec:
           {{- include "aurora.containerSecurity" $r | nindent 10 }}
           env:
             {{- if .env }}{{ .env | nindent 12 }}{{ end }}
+            {{- /* FIX-139: connector workloads read the PEM bundle named here (the extraCaBundle mount) for their own outbound TLS */}}
+            {{- if and .connectorCa (or $r.Values.extraCaBundle.existingConfigMap $r.Values.extraCaBundle.existingSecret) }}
+            - {name: AURORA_TLS_EXTRA_CA_BUNDLE, value: {{ printf "/etc/aurora-tls/%s" $r.Values.extraCaBundle.key | quote }}}
+            {{- end }}
             {{- with .spec.extraEnv }}{{ toYaml . | nindent 12 }}{{ end }}
           ports:
             {{- range .ports }}
             - {name: {{ .name }}, containerPort: {{ .port }}}
             {{- end }}
+          {{- /* (FIX-102, docs/15 §Health) readiness is plain `/readyz`, liveness `/healthz`, on the port
+                 that serves the ops router (`probePort`). A workload without an ops router (web, the
+                 external connector images) keeps the TCP check on its first port. */}}
+          {{- if .probePort }}
+          readinessProbe:
+            httpGet: {path: /readyz, port: {{ .probePort }}}
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: {path: /healthz, port: {{ .probePort }}}
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          {{- else }}
           readinessProbe:
             tcpSocket: {port: {{ (first .ports).port }}}
             periodSeconds: 10
@@ -157,6 +188,7 @@ spec:
             tcpSocket: {port: {{ (first .ports).port }}}
             initialDelaySeconds: 15
             periodSeconds: 20
+          {{- end }}
           resources: {{- toYaml .spec.resources | nindent 12 }}
           volumeMounts:
             - {name: config, mountPath: /etc/aurora, readOnly: true}
@@ -239,7 +271,8 @@ spec:
     - {name: {{ .name }}, port: {{ .port }}, targetPort: {{ .port }}}
     {{- end }}
     {{- end }}
-{{- if $r.Values.podDisruptionBudget.enabled }}
+{{- /* (FIX-102) minAvailable: 1 on a single replica would block every node drain: a budget only from two replicas */}}
+{{- if and $r.Values.podDisruptionBudget.enabled (ge (int .spec.replicas) 2) }}
 ---
 apiVersion: policy/v1
 kind: PodDisruptionBudget
@@ -251,6 +284,44 @@ spec:
   selector:
     matchLabels: {{- include "aurora.selector" (dict "root" $r "component" .name) | nindent 6 }}
 {{- end }}
+{{- end -}}
+
+{{- /* (FIX-102, FIX-069) The Kubernetes API server addresses a NetworkPolicy matches (the post-DNAT
+       endpoint addresses, not the ClusterIP), as a JSON list of CIDRs. In order: networkPolicy.kubeApiCidrs;
+       the `kubernetes` EndpointSlice in `default` (discovery.k8s.io/v1, GA since 1.21 — the chart floor is
+       1.30; the core v1 Endpoints it replaces is deprecated from 1.33), read by Helm `lookup` at install
+       and upgrade time: `.endpoints[].addresses[]` are plain strings, endpoints with `conditions.ready:
+       false` are skipped, /32 or /128 by `addressType`. When the cluster names the slice differently the
+       namespace's slices are listed and filtered on the label `kubernetes.io/service-name: kubernetes`.
+       Empty when nothing is known (`helm template`, --dry-run, no `get` on endpointslices in `default`): the
+       callers then open nothing, unless networkPolicy.kubeApiOpen is set. */ -}}
+{{- define "aurora.kubeApiCidrs" -}}
+{{- $out := list -}}
+{{- if .Values.networkPolicy.kubeApiCidrs -}}
+{{- $out = .Values.networkPolicy.kubeApiCidrs -}}
+{{- else -}}
+{{- $slices := list -}}
+{{- $one := lookup "discovery.k8s.io/v1" "EndpointSlice" "default" "kubernetes" -}}
+{{- if $one -}}
+{{- $slices = list $one -}}
+{{- else -}}
+{{- $all := lookup "discovery.k8s.io/v1" "EndpointSlice" "default" "" -}}
+{{- range (dig "items" (list) $all) -}}
+{{- if eq (dig "metadata" "labels" "kubernetes.io/service-name" "" .) "kubernetes" }}{{ $slices = append $slices . }}{{ end -}}
+{{- end -}}
+{{- end -}}
+{{- range $s := $slices -}}
+{{- $mask := ternary "128" "32" (eq (dig "addressType" "IPv4" $s) "IPv6") -}}
+{{- range (dig "endpoints" (list) $s) -}}
+{{- if ne (toString (dig "conditions" "ready" true .)) "false" -}}
+{{- range (default (list) .addresses) -}}
+{{- $out = append $out (printf "%s/%s" . $mask) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- toJson (uniq $out) -}}
 {{- end -}}
 
 {{- define "aurora.peer" -}}

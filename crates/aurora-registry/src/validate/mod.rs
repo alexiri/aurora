@@ -20,8 +20,9 @@ use regex::Regex;
 
 use crate::Violation;
 use crate::manifest::{
-    App, Connect, FieldType, FormField, Hook, HostRule, INSTANCE_HOST, Inject, Manifest, Probe,
-    Source, Store, TokenKind, UrlOrTemplate,
+    Access, App, Connect, FieldType, Finalize, FormField, Hook, HostRule, INSTANCE_HOST, Inject,
+    LDAP_MAX_ATTRIBUTES, LDAP_MAX_ENTRIES, Ldap, Manifest, Probe, ProbeMethod, Source, Store,
+    TokenKind, Transform, UrlOrTemplate,
 };
 use crate::template::{CONTEXT_VARS, Declared, Place, Template};
 
@@ -184,6 +185,70 @@ impl Ctx<'_> {
     }
 }
 
+/// (FIX-135, D-242) `about.family`: a lower-case slug id, non-empty names, the same `name` on
+/// every member of a family, a unique `variant_label`, and at most one member without
+/// `instances` (the SaaS deployment; the others are instance-bound).
+fn family_rules(m: &Manifest, out: &mut Vec<Violation>) {
+    let mut by_family: std::collections::BTreeMap<&str, Vec<(usize, &crate::manifest::App)>> =
+        std::collections::BTreeMap::new();
+    for (i, a) in m.apps.iter().enumerate() {
+        let Some(f) = &a.about.family else { continue };
+        let at = format!("/apps/{i}/about/family");
+        let slug = !f.id.is_empty()
+            && f.id.len() <= 64
+            && f.id
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-');
+        if !slug {
+            out.push(Violation::new(
+                "family_id_invalid",
+                format!("{at}/id"),
+                "a family id is a lower-case slug (a-z, 0-9, -)",
+            ));
+        }
+        if f.name.trim().is_empty() || f.variant_label.trim().is_empty() {
+            out.push(Violation::new(
+                "family_label_empty",
+                at,
+                "a family needs a name and a variant_label",
+            ));
+        }
+        by_family.entry(f.id.as_str()).or_default().push((i, a));
+    }
+    for members in by_family.values() {
+        let first = members[0].1.about.family.as_ref();
+        let mut labels = BTreeSet::new();
+        let mut saas = 0;
+        for (i, a) in members {
+            let Some(f) = &a.about.family else { continue };
+            if first.is_some_and(|x| x.name != f.name) {
+                out.push(Violation::new(
+                    "family_name_mismatch",
+                    format!("/apps/{i}/about/family/name"),
+                    "every member of a family has the same name",
+                ));
+            }
+            if !labels.insert(f.variant_label.as_str()) {
+                out.push(Violation::new(
+                    "family_variant_duplicate",
+                    format!("/apps/{i}/about/family/variant_label"),
+                    "a variant_label is unique within its family",
+                ));
+            }
+            if a.instances.is_none() {
+                saas += 1;
+                if saas > 1 {
+                    out.push(Violation::new(
+                        "family_two_hosted",
+                        format!("/apps/{i}/about/family"),
+                        "at most one member of a family is not instance-bound",
+                    ));
+                }
+            }
+        }
+    }
+}
+
 pub fn manifest(m: &Manifest) -> Vec<Violation> {
     let mut out = Vec::new();
     let mut ids = BTreeSet::new();
@@ -196,6 +261,7 @@ pub fn manifest(m: &Manifest) -> Vec<Violation> {
             ));
         }
     }
+    family_rules(m, &mut out);
     for c in &m.permissions.context {
         if !CONTEXT_VARS.contains(&c.as_str()) {
             out.push(Violation::new(
@@ -226,6 +292,11 @@ pub fn manifest(m: &Manifest) -> Vec<Violation> {
                     _ => None,
                 })
                 .chain(a.token.iter().filter_map(|t| t.client.as_deref()))
+                .chain(
+                    a.connect
+                        .iter()
+                        .filter_map(|c| c.token().and_then(|t| t.client.as_deref())),
+                )
         })
         .collect();
     for (i, c) in m.oauth_clients.iter().enumerate() {
@@ -386,6 +457,40 @@ fn app_rules(cx: &mut Ctx<'_>, clients: &BTreeSet<&str>, used: &mut BTreeSet<Hoo
                 "default_host must be a plain lower-case DNS name",
             );
         }
+        // (FIX-134, D-243) Preset instances are static claims like `default_host`: plain DNS
+        // names inside a registrable domain, distinct from it and from each other.
+        let mut seen: BTreeSet<&str> = BTreeSet::new();
+        seen.extend(ins.default_host.as_deref());
+        for (i, p) in ins.presets.iter().enumerate() {
+            let at = format!("/instances/presets/{i}");
+            if !plain_dns_name(&p.host) {
+                cx.v(
+                    "instance_preset_invalid",
+                    &format!("{at}/host"),
+                    "a preset host must be a plain lower-case DNS name",
+                );
+            } else if psl::domain(p.host.as_bytes()).is_none() {
+                cx.v(
+                    "instance_preset_not_registrable",
+                    &format!("{at}/host"),
+                    "a preset host must lie inside a registrable domain, not be a public suffix",
+                );
+            }
+            if !seen.insert(p.host.as_str()) {
+                cx.v(
+                    "instance_preset_duplicate",
+                    &format!("{at}/host"),
+                    "a preset host repeats default_host or another preset",
+                );
+            }
+            if p.label.trim().is_empty() {
+                cx.v(
+                    "instance_preset_label_empty",
+                    &format!("{at}/label"),
+                    "a preset needs a label",
+                );
+            }
+        }
         if let Some(p) = &ins.probe
             && (!p.path.starts_with('/')
                 || p.path.contains(['{', '}', '#'])
@@ -471,14 +576,24 @@ fn app_rules(cx: &mut Ctx<'_>, clients: &BTreeSet<&str>, used: &mut BTreeSet<Hoo
             }
         }
     }
-    // token
-    if let Some(t) = &app.token {
+    // token: the app's, then each connect method's own (FIX-123, D-214)
+    let method_tokens = app
+        .connect
+        .iter()
+        .enumerate()
+        .filter_map(|(i, c)| c.token().map(|t| (format!("/connect/{i}/token"), t)));
+    for (tp, t) in app
+        .token
+        .iter()
+        .map(|t| ("/token".to_owned(), t))
+        .chain(method_tokens)
+    {
         if let Some(c) = &t.client
             && !clients.contains(c.as_str())
         {
             cx.v(
                 "unknown_oauth_client",
-                "/token/client",
+                &format!("{tp}/client"),
                 format!("no oauth client `{c}`"),
             );
         }
@@ -489,11 +604,12 @@ fn app_rules(cx: &mut Ctx<'_>, clients: &BTreeSet<&str>, used: &mut BTreeSet<Hoo
             cx.tmpl(
                 v,
                 Place::TokenParams,
-                &format!("/token/extra_params/{k}"),
+                &format!("{tp}/extra_params/{k}"),
                 &[],
             );
         }
     }
+    method_rules(cx);
     // tools
     if let Some(t) = &app.tools {
         let mut ids = BTreeSet::new();
@@ -675,7 +791,334 @@ fn app_rules(cx: &mut Ctx<'_>, clients: &BTreeSet<&str>, used: &mut BTreeSet<Hoo
             "only postgres is supported",
         );
     }
+    if let Some(l) = &app.ldap {
+        ldap_rules(app, l, cx);
+    }
 }
+/// (D-251) The shape of an LDAP app (`docs/09 §3 ldap`): a plain public server name, LDAPS, a
+/// subtree, a bounded attribute allow-list, one synthetic host entry and nothing that carries a
+/// credential — the lane binds anonymously and can only search.
+fn ldap_rules(app: &App, l: &Ldap, cx: &mut Ctx<'_>) {
+    let server = l.server.as_str();
+    let plain_name = !server.is_empty()
+        && server.len() <= 253
+        && server.contains('.')
+        && server
+            .split('.')
+            .all(|p| !p.is_empty() && p.len() <= 63 && p.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-'))
+        // An IPv4 literal ends in a number; a registrable name's last label never does.
+        && !server.rsplit('.').next().is_some_and(|l| l.bytes().all(|b| b.is_ascii_digit()));
+    if !plain_name
+        || server.ends_with(".internal")
+        || server.ends_with(".local")
+        || server.ends_with(".localhost")
+    {
+        cx.v(
+            "ldap_server_invalid",
+            "/ldap/server",
+            "the server is an exact public DNS name (no IP literal, wildcard, port or internal name)",
+        );
+    }
+    if l.port == 0 {
+        cx.v("ldap_port_invalid", "/ldap/port", "the port is 1..65535");
+    }
+    if l.base_dn.trim().is_empty()
+        || l.base_dn.len() > 256
+        || l.base_dn.chars().any(char::is_control)
+    {
+        cx.v(
+            "ldap_base_dn_invalid",
+            "/ldap/base_dn",
+            "the base DN is 1..256 characters without control characters",
+        );
+    }
+    if l.attributes.is_empty() || l.attributes.len() > LDAP_MAX_ATTRIBUTES {
+        cx.v(
+            "ldap_attributes_invalid",
+            "/ldap/attributes",
+            format!("list 1..{LDAP_MAX_ATTRIBUTES} attributes"),
+        );
+    }
+    for (i, a) in l.attributes.iter().enumerate() {
+        let ok = a.len() <= 64
+            && a.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
+            && a.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-');
+        if !ok {
+            cx.v(
+                "ldap_attributes_invalid",
+                &format!("/ldap/attributes/{i}"),
+                "an attribute is a plain name (letters, digits, `-`); `*`, `+` and options are not allowed",
+            );
+        }
+    }
+    if l.max_entries == 0 || l.max_entries > LDAP_MAX_ENTRIES {
+        cx.v(
+            "ldap_max_entries_invalid",
+            "/ldap/max_entries",
+            format!("max_entries is 1..{LDAP_MAX_ENTRIES}"),
+        );
+    }
+    let host = Ldap::host_of(&app.about.id);
+    if app.database.is_some() {
+        cx.v(
+            "ldap_database_exclusive",
+            "/ldap",
+            "an app is either a database or an LDAP app",
+        );
+    }
+    // Anonymous bind: no credential is declared, so none can be requested or injected.
+    if !app.credentials.is_empty() {
+        cx.v(
+            "ldap_credentials_declared",
+            "/credentials",
+            "an LDAP app binds anonymously and declares no credentials",
+        );
+    }
+    let own = |h: &HostRule| h.matcher.host.eq_ignore_ascii_case(&host);
+    if app.hosts.iter().filter(|h| own(h)).count() != 1 {
+        cx.v(
+            "ldap_host_missing",
+            "/hosts",
+            format!("declare exactly one hosts[] entry for `{host}`"),
+        );
+    }
+    for (i, h) in app.hosts.iter().enumerate() {
+        if !own(h) {
+            cx.v(
+                "ldap_host_foreign",
+                &format!("/hosts/{i}/match/host"),
+                format!("an LDAP app claims only `{host}`"),
+            );
+        } else if !h.inject.is_empty() {
+            cx.v(
+                "ldap_host_inject",
+                &format!("/hosts/{i}/inject"),
+                "the LDAP host injects nothing",
+            );
+        }
+    }
+}
+
+/// Every template of a host rule that can read a credential.
+fn host_templates(h: &HostRule) -> Vec<&Template> {
+    let mut out: Vec<&Template> = Vec::new();
+    for i in &h.inject {
+        match i {
+            Inject::Bearer(t)
+            | Inject::Header { value: t, .. }
+            | Inject::Query { value: t, .. }
+            | Inject::PathTemplate { value: t, .. }
+            | Inject::PathRegex { replacement: t, .. } => out.push(t),
+            Inject::Basic { user, password } => out.extend([user, password]),
+            Inject::RemoveHeader(_) => {}
+        }
+    }
+    if let Some(r) = &h.rewrite_host {
+        out.push(&r.template);
+    }
+    if let Some(Finalize::AwsSigv4(a)) = &h.finalize {
+        out.extend([&a.region, &a.access_key, &a.secret_key]);
+        out.extend(a.session_token.iter());
+    }
+    if let Some(Transform::GitCommitTrailer(t)) = &h.transform {
+        out.push(&t.trailer);
+    }
+    out
+}
+
+/// Connect-method rules (FIX-123, D-195, D-214, 09 §3.4 `connect[]`): unique ids, presentation
+/// text, at most one `recommended`, `tools[].connect_methods` naming real methods, and (for an
+/// app with several methods) every credential its host templates read, unless optional, is one
+/// that each method produces.
+fn method_rules(cx: &mut Ctx<'_>) {
+    let app = cx.app;
+    let mut ids = BTreeSet::new();
+    let mut recommended = 0;
+    for (i, c) in app.connect.iter().enumerate() {
+        let p = format!("/connect/{i}");
+        if !ids.insert(c.id()) {
+            cx.v(
+                "duplicate_connect_method",
+                &format!("{p}/id"),
+                format!("connect method id `{}` appears twice", c.id()),
+            );
+        }
+        // (FIX-133, D-240) `aurora_*` form keys are Aurora's own channel to the hooks
+        // (`aurora_access`): a package may not declare one, so a user can never supply it.
+        for (j, f) in c.form_fields().iter().enumerate() {
+            if f.name.starts_with("aurora_") {
+                cx.v(
+                    "field_name_reserved",
+                    &format!("{p}/fields/{j}/name"),
+                    format!(
+                        "`{}` is reserved: field names may not start with `aurora_`",
+                        f.name
+                    ),
+                );
+            }
+        }
+        for (key, v, max) in [
+            ("label", c.label(), METHOD_LABEL_MAX),
+            ("description", c.description(), METHOD_DESCRIPTION_MAX),
+        ] {
+            if let Some(v) = v
+                && (v.trim().is_empty()
+                    || v.chars().count() > max
+                    || v.chars().any(char::is_control))
+            {
+                cx.v(
+                    "method_text_invalid",
+                    &format!("{p}/{key}"),
+                    format!("`{key}` must be 1 to {max} characters without control characters"),
+                );
+            }
+        }
+        if c.recommended() {
+            recommended += 1;
+        }
+    }
+    if recommended > 1 {
+        cx.v(
+            "recommended_multiple",
+            "/connect",
+            "at most one connect method may be `recommended`",
+        );
+    }
+    if let Some(t) = &app.tools {
+        for (gname, g) in [("read", &t.read), ("write", &t.write)] {
+            let Some(g) = g else { continue };
+            for (j, it) in g.items.iter().enumerate() {
+                for m in &it.connect_methods {
+                    if !ids.contains(m.as_str()) {
+                        cx.v(
+                            "tool_method_unknown",
+                            &format!("/tools/{gname}/items/{j}/connect_methods"),
+                            format!("tool `{}` names unknown connect method `{m}`", it.id),
+                        );
+                    }
+                }
+                // (FIX-136, D-241) A tool's `scopes` are ids some connect method declares.
+                for s in &it.scopes {
+                    if !app
+                        .connect
+                        .iter()
+                        .any(|c| c.declared_scopes().iter().any(|d| &d.scope == s))
+                    {
+                        cx.v(
+                            "tool_scope_unknown",
+                            &format!("/tools/{gname}/items/{j}/scopes"),
+                            format!(
+                                "tool `{}` needs scope `{s}`, which no connect method declares",
+                                it.id
+                            ),
+                        );
+                    }
+                }
+            }
+        }
+    }
+    // (FIX-136) `fields` method scope declarations and their read probes.
+    for (i, c) in app.connect.iter().enumerate() {
+        let Connect::Fields(f) = c else { continue };
+        let mut seen = BTreeSet::new();
+        for (j, s) in f.scopes.iter().enumerate() {
+            if !seen.insert(s.scope.as_str()) {
+                cx.v(
+                    "duplicate_scope",
+                    &format!("/connect/{i}/scopes/{j}"),
+                    format!("scope `{}` is declared twice", s.scope),
+                );
+            }
+        }
+        let names: Vec<&str> = f.fields.iter().map(|x| x.name.as_str()).collect();
+        for (k, pr) in &f.probe_scopes {
+            let pp = format!("/connect/{i}/probe_scopes/{k}");
+            match f.scopes.iter().find(|s| &s.scope == k) {
+                None => cx.v(
+                    "probe_scope_unknown",
+                    &pp,
+                    format!("`probe_scopes` names scope `{k}`, which the method does not declare"),
+                ),
+                // Write scopes are never probed: a probe must not change anything, and a
+                // successful read says nothing about a write scope.
+                Some(s) if s.access != Access::Read => cx.v(
+                    "probe_scope_write",
+                    &pp,
+                    format!("scope `{k}` is a write scope: write scopes are never probed"),
+                ),
+                Some(_) => {}
+            }
+            if pr.method != ProbeMethod::Get {
+                cx.v("probe_scope_method", &pp, "a scope probe must be a GET");
+            }
+            probe(cx, pr, &pp, &names, true);
+        }
+    }
+    // Only an app that uses the per-method `token` is held to the union rule: a package written
+    // before it (several methods, one shared token) stays valid (the key is additive).
+    if app.connect.len() < 2 || !app.connect.iter().any(|c| c.token().is_some()) {
+        return;
+    }
+    let optional: BTreeSet<&str> = app
+        .credentials
+        .iter()
+        .filter(|c| c.optional)
+        .map(|c| c.name.as_str())
+        .collect();
+    let mut read: BTreeSet<&str> = BTreeSet::new();
+    for t in app.hosts.iter().flat_map(host_templates) {
+        read.extend(
+            t.references()
+                .filter(|r| r.ns == crate::template::Ns::Credentials)
+                .map(|r| r.name.as_str()),
+        );
+    }
+    for (i, c) in app.connect.iter().enumerate() {
+        // A hook method's credentials come from the hook, which the manifest cannot see.
+        let produced: BTreeSet<&str> = match c {
+            Connect::Hook(_) => continue,
+            Connect::Fields(f) => f
+                .fields
+                .iter()
+                .filter(|x| x.store == Store::Credentials)
+                .map(|x| x.name.as_str())
+                .collect(),
+            Connect::Oauth2(o) => o
+                .token_response
+                .keys()
+                .map(String::as_str)
+                .filter(|k| !["expires_in", "scope"].contains(k))
+                .collect(),
+        };
+        // What this method's own token templates read counts too.
+        let mut needs = read.clone();
+        if let Some(t) = c.token() {
+            for tpl in t.extra_params.values() {
+                needs.extend(
+                    tpl.references()
+                        .filter(|r| r.ns == crate::template::Ns::Credentials)
+                        .map(|r| r.name.as_str()),
+                );
+            }
+        }
+        for r in needs
+            .iter()
+            .filter(|r| !optional.contains(*r) && !produced.contains(*r))
+        {
+            cx.v(
+                "method_credential_unproduced",
+                &format!("/connect/{i}"),
+                format!(
+                    "connect method `{}` does not produce credential `{r}`, which host templates read (declare it `optional` or produce it)",
+                    c.id()
+                ),
+            );
+        }
+    }
+}
+
+const METHOD_LABEL_MAX: usize = 60;
+const METHOD_DESCRIPTION_MAX: usize = 400;
 
 fn probe(cx: &mut Ctx<'_>, pr: &Probe, p: &str, fields: &[&str], fields_connect: bool) {
     cx.tmpl(

@@ -27,24 +27,58 @@ const webUrl = `http://localhost:${port}`;
 // which the workers share, so 4 is the measured sweet spot. Override: AURORA_E2E_WORKERS.
 const defaultWorkers = 4;
 
+// FIX-067: the real-stack specs share ONE kind stack (instance, placement, users) and must never run
+// next to each other. They live in their own project with a single worker and no file parallelism;
+// every other (mocked) spec stays in the parallel "mocked" project. The real-stack project is
+// selected by `--project real-stack` (the scripts/e2e/*.sh wrappers pass spec paths, which match it).
+// The project's own `workers: 1` (a per-project cap under the global limit) keeps its files from
+// running on different workers at the same time.
+const REAL_STACK = [/first-run\.spec\.ts$/, /m1\.spec\.ts$/, /no-default-model\.spec\.ts$/, /onboarding-journeys\.spec\.ts$/];
+
+// FIX-098: a project that runs against the PRODUCTION build (`next build` + `next start`), the only
+// place the real Content-Security-Policy applies (dev adds 'unsafe-inline'/'unsafe-eval' and hid the
+// terminal's stripped style attributes). Playwright starts every webServer for every run, so the
+// production mode is a switch, not a second project of the default run: `pnpm e2e:prod` (or
+// AURORA_E2E_PROD=1) runs ONLY the `production` project — specs named `*.prod.spec.ts` — against a
+// production build of this checkout in its own dist dir. Port: AURORA_E2E_WEB_PROD_PORT (default
+// 4110, never 4000).
+const PROD_SPEC = /\.prod\.spec\.ts$/;
+const prodMode = process.env.AURORA_E2E_PROD === "1";
+const prodPort = Number(process.env.AURORA_E2E_WEB_PROD_PORT ?? "4110");
+if (!Number.isInteger(prodPort) || prodPort < 1 || prodPort > 65535) {
+  throw new Error(`AURORA_E2E_WEB_PROD_PORT must be a TCP port, got "${process.env.AURORA_E2E_WEB_PROD_PORT}"`);
+}
+const prodUrl = `http://localhost:${prodPort}`;
+const prodDist = ".next-e2e-prod";
+
 export default defineConfig({
   testDir: "./e2e",
   timeout: 90_000,
-  // See the parallelism notes above the config.
+  // Per-project parallelism below.
   fullyParallel: true,
+  // Locally no retries (a retry hides a flake); CI keeps its own explicit value via AURORA_E2E_RETRIES.
+  retries: process.env.AURORA_E2E_RETRIES ? Number(process.env.AURORA_E2E_RETRIES) : 0,
   workers: process.env.AURORA_E2E_WORKERS ? Number(process.env.AURORA_E2E_WORKERS) : defaultWorkers,
-  // VTL-001 measurement: each worker's first test pays the per-worker Next.js dev-server compile
-  // of every route it opens (~30 s, cached in the dev server after that). With 4 workers that
-  // first wave dominates short files, so a single slow first test is expected; retries stay at
-  // Playwright's flake-masking default for the mock suites. Strict single-run mode (what the
-  // "no retries" policy means here): AURORA_E2E_RETRIES=0.
-  retries: process.env.AURORA_E2E_RETRIES ? Number(process.env.AURORA_E2E_RETRIES) : undefined,
+  projects: prodMode
+    ? [{ name: "production", testMatch: PROD_SPEC, fullyParallel: true, use: { baseURL: prodUrl } }]
+    : [
+        { name: "mocked", testIgnore: [...REAL_STACK, PROD_SPEC], fullyParallel: true },
+        // One worker, files and tests strictly in order: they share one stack.
+        { name: "real-stack", testMatch: REAL_STACK, fullyParallel: false, workers: 1 },
+      ],
   use: { baseURL: external ?? webUrl },
-  webServer: external
-    ? undefined
-    : {
-        command: `pnpm exec next dev -p ${port}`,
-        url: webUrl,
-        reuseExistingServer: process.env.AURORA_E2E_REUSE === "1",
-      },
+  webServer: prodMode
+    ? {
+        command: `AURORA_NEXT_DIST_DIR=${prodDist} pnpm exec next build && AURORA_NEXT_DIST_DIR=${prodDist} pnpm exec next start -p ${prodPort}`,
+        url: prodUrl,
+        timeout: 600_000,
+        reuseExistingServer: false,
+      }
+    : external
+      ? undefined
+      : {
+          command: `pnpm exec next dev -p ${port}`,
+          url: webUrl,
+          reuseExistingServer: process.env.AURORA_E2E_REUSE === "1",
+        },
 });

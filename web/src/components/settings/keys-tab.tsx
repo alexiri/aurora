@@ -72,7 +72,7 @@ export function KeysTab({ wsId }: { wsId: string }) {
               onChange={(e) => setExpires(e.target.value)}
             />
           </Field>
-          <Button type="submit" disabled={create.isPending} className="sm:mt-[1.625rem]">
+          <Button type="submit" disabled={create.isPending} className="sm:mt-label-offset">
             Create key
           </Button>
           {create.error && Object.keys(fe).length === 0 ? (

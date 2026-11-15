@@ -5,6 +5,7 @@ import { useState } from "react";
 
 import { ErrorState, Loading } from "@/components/states";
 import { Button, buttonVariants } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Notice } from "@/components/ui/notice";
 import { Section } from "@/components/ui/section";
 import { cn } from "@/lib/utils";
@@ -94,18 +95,6 @@ export function ConnectTab({ agent, wsId, canOwn = false }: { agent: Agent; wsId
         )}
         {regenBlocked ? (
           <Notice role="status">{regenBlocked}</Notice>
-        ) : confirming ? (
-          <Notice tone="pending" role="alertdialog" aria-label="Confirm token regeneration" className="space-y-2 text-ink">
-            <p>Regenerate the token for @{agent.handle}? The previous token stops working immediately.</p>
-            <div className="flex flex-wrap gap-2">
-              <Button onClick={() => void regenerate()} disabled={regen.isPending}>
-                {regen.isPending ? "Regenerating…" : "Yes, regenerate"}
-              </Button>
-              <Button variant="outline" onClick={() => setConfirming(false)}>
-                Cancel
-              </Button>
-            </div>
-          </Notice>
         ) : (
           <div>
             <Button variant="outline" onClick={() => setConfirming(true)}>
@@ -113,7 +102,26 @@ export function ConnectTab({ agent, wsId, canOwn = false }: { agent: Agent; wsId
             </Button>
           </div>
         )}
-        {regen.error ? (
+        <ConfirmDialog
+          open={confirming}
+          onOpenChange={(o) => {
+            setConfirming(o);
+            if (!o) regen.reset();
+          }}
+          title="Regenerate the agent token?"
+          description={`Regenerate the token for @${agent.handle}? The previous token stops working immediately.`}
+          confirmLabel="Yes, regenerate"
+          danger
+          busy={regen.isPending}
+          onConfirm={() => void regenerate()}
+        >
+          {regen.error ? (
+            <Notice tone="danger" role="alert">
+              {errorMessage(regen.error)}
+            </Notice>
+          ) : null}
+        </ConfirmDialog>
+        {regen.error && !confirming ? (
           <Notice tone="danger" role="alert">
             {errorMessage(regen.error)}
           </Notice>

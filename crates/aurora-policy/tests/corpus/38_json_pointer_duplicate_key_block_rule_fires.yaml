@@ -1,0 +1,4 @@
+description: FIX-085 a repeated key at the json_pointer is unknown, so a block rule on /action = delete fires although the last duplicate says read
+workspace: {ordered_rules: [{logical_id: 00000000-0000-0000-0000-0000000000a1, name: no-delete, action: block, conditions: [{on: body, op: equals, value: delete, json_pointer: /action}]}]}
+facts: {host: api.example.com, port: 443, path: /q, method: POST, body: '{"action":"delete","action":"read"}', identity: {agent_id: 00000000-0000-0000-0000-000000000001}}
+expect: {verdict: block, reason: rule}

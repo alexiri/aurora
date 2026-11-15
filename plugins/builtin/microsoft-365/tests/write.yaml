@@ -5,11 +5,13 @@
     method: POST
     url: "https://graph.microsoft.com/v1.0/me/sendMail"
     headers: { content-type: application/json }
-    body: '{"message":{"subject":"Quarterly report","body":{"contentType":"Text","content":"Attached."},"toRecipients":[{"emailAddress":{"address":"bob@example.com"}}]},"saveToSentItems":true}'
+    # Two To recipients, a Cc, an external Bcc and one attachment (FIX-118, PKG-1): the approver
+    # sees every recipient, not just the first.
+    body: '{"message":{"subject":"Quarterly report","body":{"contentType":"Text","content":"Attached."},"toRecipients":[{"emailAddress":{"address":"bob@example.com"}},{"emailAddress":{"address":"dana@example.com"}}],"ccRecipients":[{"emailAddress":{"address":"erin@example.com"}}],"bccRecipients":[{"emailAddress":{"address":"spy@evil.example"}}],"attachments":[{"@odata.type":"#microsoft.graph.fileAttachment","name":"q.pdf","contentBytes":"UERG"}]},"saveToSentItems":true}'
   expect:
     app: microsoft-365
     tool: send_mail
-    summary: { title: "Send mail", fields: { To: "bob@example.com", Subject: "Quarterly report" } }
+    summary: { title: "Send mail", fields: { To: "bob@example.com, dana@example.com", Cc: "erin@example.com", Bcc: "spy@evil.example", Subject: "Quarterly report", Message: "Attached.", Attachments: "1" } }
 - name: "negative send_mail: GET selects no tool"
   connection: { credentials: { access_token: "tok-fixture-1" } }
   request: { method: GET, url: "https://graph.microsoft.com/v1.0/me/sendMail" }
@@ -20,10 +22,10 @@
     method: POST
     url: "https://graph.microsoft.com/v1.0/me/events"
     headers: { content-type: application/json }
-    body: '{"subject":"Design review","start":{"dateTime":"2026-03-02T10:00:00","timeZone":"UTC"},"end":{"dateTime":"2026-03-02T11:00:00","timeZone":"UTC"}}'
+    body: '{"subject":"Design review","start":{"dateTime":"2026-03-02T10:00:00","timeZone":"UTC"},"end":{"dateTime":"2026-03-02T11:00:00","timeZone":"UTC"},"attendees":[{"emailAddress":{"address":"bob@example.com"},"type":"required"},{"emailAddress":{"address":"eve@example.org"},"type":"optional"}]}'
   expect:
     tool: create_event
-    summary: { title: "Create calendar event", fields: { Subject: "Design review", Starts: "2026-03-02T10:00:00" } }
+    summary: { title: "Create calendar event", fields: { Subject: "Design review", Starts: "2026-03-02T10:00:00", Attendees: "bob@example.com, eve@example.org" } }
 - name: "negative create_event: PATCH selects no tool"
   connection: { credentials: { access_token: "tok-fixture-1" } }
   request: { method: PATCH, url: "https://graph.microsoft.com/v1.0/me/events" }
@@ -34,10 +36,10 @@
     method: POST
     url: "https://graph.microsoft.com/v1.0/me/calendars/AAMkAGcal=/events"
     headers: { content-type: application/json }
-    body: '{"subject":"Planning","start":{"dateTime":"2026-03-03T09:00:00","timeZone":"UTC"},"end":{"dateTime":"2026-03-03T09:30:00","timeZone":"UTC"}}'
+    body: '{"subject":"Planning","start":{"dateTime":"2026-03-03T09:00:00","timeZone":"UTC"},"end":{"dateTime":"2026-03-03T09:30:00","timeZone":"UTC"},"attendees":[{"emailAddress":{"address":"frank@example.net"}}]}'
   expect:
     tool: create_calendar_event
-    summary: { title: "Create calendar event", fields: { Calendar: "AAMkAGcal=", Subject: "Planning", Starts: "2026-03-03T09:00:00" } }
+    summary: { title: "Create calendar event", fields: { Calendar: "AAMkAGcal=", Subject: "Planning", Starts: "2026-03-03T09:00:00", Attendees: "frank@example.net" } }
 - name: "negative create_calendar_event: PATCH selects no tool"
   connection: { credentials: { access_token: "tok-fixture-1" } }
   request: { method: PATCH, url: "https://graph.microsoft.com/v1.0/me/calendars/AAMkAGcal=/events" }

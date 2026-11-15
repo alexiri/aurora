@@ -35,7 +35,7 @@ hosted scenarios and the sandbox isolation probes against the `kubernetes` runne
 
 ## Images: publish, pull, or build and load
 
-The chart needs seven images: `aurora-api`, `aurora-gateway`, `aurora-hookhost`, `aurora-runner`, `aurora-connector-host` (unless `connectorHost.enabled: false`) and `aurora-web`, plus the sandbox image (named by `config.runner.image`, not by `image.registry`),
+The chart needs seven images: `aurora-api`, `aurora-gateway`, `aurora-hookhost`, `aurora-runner`, `aurora-connector-host` (unless `connectorHost.enabled: false`) and `aurora-web`, plus `aurora-relay` only when `relay.enabled` (port previews, [previews.md](previews.md)), plus the sandbox image (named by `config.runner.image`, not by `image.registry`),
 and `aurora-dev-idp` or `aurora-connector-*` only if you enable those. Pick **one** of three ways to get them.
 
 **1. Pull the project's published images (the chart default).** The default is `image.registry: ghcr.io/alexiri` with the chart's appVersion as the tag. Those images exist **only after a CI publish** (CI publishes `master`, `sha-<short>`
@@ -55,7 +55,7 @@ If the packages are private, either make them public or create a pull secret and
 
 ```bash
 REG=registry.example.org/aurora   # or localhost/aurora for kind; TAG=0.1.0
-for t in api gateway hookhost runner connector-host; do
+for t in api gateway hookhost runner connector-host relay; do   # drop relay unless relay.enabled
   podman build -f images/services/Containerfile --target "$t" -t "$REG/aurora-$t:$TAG" .
 done
 podman build -f images/services/web.Containerfile -t "$REG/aurora-web:$TAG" .
@@ -102,7 +102,7 @@ runner:
 
 ```bash
 export KIND_EXPERIMENTAL_PROVIDER=podman        # kind with the rootless podman provider
-for i in aurora-api aurora-gateway aurora-hookhost aurora-runner aurora-connector-host aurora-web aurora-sandbox aurora-dev-idp; do   # drop aurora-dev-idp if devIdp.enabled is false; add aurora-connector-mattermost / aurora-connector-fake if you built them
+for i in aurora-api aurora-gateway aurora-hookhost aurora-runner aurora-connector-host aurora-web aurora-sandbox aurora-relay aurora-dev-idp; do   # drop aurora-relay unless relay.enabled; drop aurora-dev-idp if devIdp.enabled is false; add aurora-connector-mattermost / aurora-connector-fake if you built them
   podman save -o "/tmp/$i.tar" "$REG/$i:$TAG" && kind load image-archive "/tmp/$i.tar" --name <cluster> && rm -f "/tmp/$i.tar"
 done
 ```
@@ -172,15 +172,19 @@ External PostgreSQL is expected in production.
 - `database.maxConnections.api` (default 20) and `database.maxConnections.gateway` (default 10)
   become `database.max_connections` for each service.
 - `database.cidrs` and `database.port` (default 5432) set the egress rule to the database in the NetworkPolicies.
-- No code reads `AURORA_GATEWAY_DATABASE_URL`. The gateway reads `AURORA_DATABASE_URL`: from the main
-  Secret by default, or from `database.gatewayExistingSecret` when you set the least-privilege pair below.
+- No code reads `AURORA_GATEWAY_DATABASE_URL`. The gateway reads `AURORA_DATABASE_URL`: from
+  `database.gatewayExistingSecret` (the least-privilege pair below, **required with an external
+  database**), or, with the bundled evaluation Postgres, from the chart-generated Secret's
+  `AURORA_GATEWAY_DATABASE_URL` key, which the chart maps into the pod's `AURORA_DATABASE_URL`.
 
-### Least-privilege gateway role (recommended)
+### Least-privilege gateway role (required with an external database)
 
-The gateway is the most exposed service, so it should not log in as the API's full-privilege user.
+The gateway is the most exposed service, so it must not log in as the API's full-privilege user.
 `database.gatewayRole` and `database.gatewayExistingSecret` go together: set both or neither
-(`helm install` fails with a message if only one is set). **Without the pair, the gateway uses the
-main database user (not least privilege).** `aurora-api migrate` only *grants* the role; it never
+(`helm install` fails with a message if only one is set). **With an external database `helm` refuses to
+render without the pair**, naming the two ways out: the pair, or `database.allowSharedLogin: true`, the
+explicit and not recommended choice that the gateway shares the main database login. The two are mutually
+exclusive. `aurora-api migrate` only *grants* the role; it never
 creates it (creating a login role needs `CREATEROLE` and a password, which the API user should not
 hold). The DBA does this, in order, before `helm install`:
 
@@ -206,11 +210,15 @@ hold). The DBA does this, in order, before `helm install`:
    is missing it stops with `gateway role "aurora_gateway" does not exist: create it (CREATE ROLE
    aurora_gateway LOGIN PASSWORD '…') or unset database.gateway_role`.
 
-The evaluation Postgres (`postgres.enabled`) and the dev profile set neither value, so the gateway
-uses the main user there: it is the simplest correct option for a throwaway database, where nobody
-creates roles. To exercise the pair on the evaluation database anyway, mount an init script with
-`postgres.initScriptsConfigMap` (a ConfigMap with a `.sql` file containing the `CREATE ROLE`, run once on
-an empty data directory); `scripts/e2e/kind.sh` does this.
+The bundled evaluation Postgres (`postgres.enabled`) and the dev profile create the role **for you**: with
+neither the pair nor `allowSharedLogin` set, a `<release>-gateway-role` hook Job (before `migrate`, on
+install and on every upgrade) creates the login role `aurora_gateway` (no other attributes) with a
+password the chart generates into its own Secret (`POSTGRES_GATEWAY_PASSWORD`; the gateway's URL is
+`AURORA_GATEWAY_DATABASE_URL`), `migrate` grants it, and the gateway connects as it. If you supply your own
+`secrets.existingSecret`, add those two keys to it. To use your own role on the evaluation database instead,
+set the pair (an init script via `postgres.initScriptsConfigMap` can create the role on an empty data
+directory; `scripts/e2e/kind.sh` does this); to opt out of the least-privilege login there, set
+`database.allowSharedLogin: true`.
 
 `postgres.enabled: true` renders a single-instance Postgres for evaluation. Its StatefulSet,
 Service and PVC are pre-install hook resources, so `helm uninstall` leaves them and the data
@@ -232,6 +240,26 @@ everything by hand:
 kubectl -n aurora delete statefulset,service aurora-postgres
 kubectl -n aurora delete pvc data-aurora-postgres-0
 ```
+
+The namespace also keeps three more objects, because the chart creates them in hooks (or, for the
+CA, once and never overwrites it) and Helm does not delete hook resources
+(FIX-148, AUDIT-004 F-5). With `postgres.enabled` the first two include the evaluation database's
+login, so they matter as much as the PVC:
+
+| Object | What it holds | Keep for a reinstall in the same namespace | Delete for a clean removal |
+| --- | --- | --- | --- |
+| Secret `<fullname>-secrets` | The generated database passwords (`AURORA_DATABASE_URL`, the gateway's least-privilege URL), the relay token and the other generated secrets | **Keep it with the old PVC**: the database still has those passwords, so a fresh set would not match the data | Delete it together with the PVC |
+| Secret `<fullname>-gateway-ca` | The gateway CA certificate **and its private key** (the key signs the certificates the sandboxes trust) | Keep it so existing sandboxes keep trusting the gateway | **Delete it** when you are done: whoever reads it can impersonate the gateway to a sandbox |
+| ConfigMap `<fullname>-config` | The configuration rendered for the hooks (hook resources; it holds no secret) | Not needed, a reinstall recreates it | Delete it |
+
+```bash
+# Clean removal (this is irreversible: the database passwords and the CA key are gone)
+kubectl -n aurora delete secret aurora-secrets aurora-gateway-ca
+kubectl -n aurora delete configmap aurora-config
+```
+
+A Secret you supplied (`secrets.existingSecret`, `gateway.ca.existingSecret`) is yours and is
+never touched by the chart.
 
 Use an external PostgreSQL for anything that keeps its data.
 
@@ -330,6 +358,9 @@ Packages still need approval in the admin API before they take effect.
 | web | `web.replicas` | 2 | Port 4100. |
 | runner | `runner.enabled`, `runner.replicas` (default 1), `runner.k8s.*` | enabled | Port 4105 is reachable only from the sandboxes namespace. See [runners.md](runners.md#kubernetes-backend). |
 | connector host | `connectorHost.enabled`, `connectorHost.replicas`, `connectorHost.resources`, `connectorHost.testTypes`, `connectorHost.nodeSelector`, `connectorHost.tolerations`, `connectorHost.extraEnv` | enabled, 1 | Ports 4110 (platform callbacks, Service `<fullname>-connector-host`, routed by the edge) and 4192 (health and metrics, no Service). See [Connector host](#connector-host). |
+| relay | `relay.enabled`, `relay.domain`, `relay.replicas`, `relay.resources`, `relay.request_body_max_bytes`, `relay.max_streams`, `relay.max_streams_per_user` | disabled | Rendered only with `relay.enabled` (port previews). Ports 4112 (edge-routed wildcard host `*.<relay.domain>`) and 4193 (health and metrics, headless Service). Needs wildcard DNS and TLS and the `aurora-relay` image: [previews.md](previews.md). |
+| web terminal | `terminal.enabled` | disabled | No workload: the API proxies to the runner's stream listener **:4108**, which `terminal.enabled` (or `relay.enabled`) opens. [terminal.md](terminal.md). |
+| SCIM | `scim.enabled`, `scim.ratePerMinute` | disabled | No workload: serves `/scim/v2` on the API and routes it at the edge. [scim-provisioning.md](scim-provisioning.md). |
 
 ### Connector host
 
@@ -349,6 +380,11 @@ connectors, [below](#connectors-optional), do not need it).
   API Service, `test_types` comes from `connectorHost.testTypes`. `connector_host.listen`
   (`0.0.0.0:4110`) and `connector_host.ops_port` (`4192`) keep their defaults.
   Every replica runs every enabled managed connector.
+- **Private CA.** A chat server behind a certificate from a private CA needs no value of its own:
+  set `extraCaBundle` (a ConfigMap or Secret holding a PEM bundle, mounted in every workload) and the
+  chart also sets `AURORA_TLS_EXTRA_CA_BUNDLE` to that file on the connector host and on every
+  `connectors[]` workload, so the Mattermost REST client and WebSocket trust it besides the system
+  roots. Without `extraCaBundle` the variable is not set.
 - **`connectorHost.testTypes`** (default `false`) also announces the `fake` test type and mounts a
   test control API on the ops port. The host warns at start. Development and end-to-end tests only;
   `deploy/kind/values-e2e.yaml` sets it.
@@ -376,7 +412,9 @@ connectors, [below](#connectors-optional), do not need it).
 
 Every workload runs as non-root (UID/GID 65532), with a read-only root filesystem and all
 capabilities dropped (`aurora.podSecurity`, `aurora.containerSecurity`). A
-PodDisruptionBudget is rendered for each (`podDisruptionBudget.enabled`, `minAvailable: 1`).
+PodDisruptionBudget is rendered for each workload **with two or more replicas** (`podDisruptionBudget.enabled`,
+`minAvailable: 1`; a budget on a single replica would block every node drain, FIX-102). Readiness is `httpGet /readyz`
+and liveness `httpGet /healthz` on each workload's ops port (docs/15 §Observability).
 
 The hook image (`hookImage`, used by the secrets and gateway-ca hook Jobs and the API `seed-plugins`
 init container) is `docker.io/alpine/k8s:1.31.2` **pinned by the multi-arch index digest**
@@ -498,10 +536,15 @@ external proxy at layer 4 (an nginx `stream` block with no TLS termination). See
 With `networkPolicy.enabled: true` (default) the chart renders:
 
 - release namespace: `<fullname>-default-deny`, `-allow-dns`, and per-component policies
-  `-api`, `-web`, `-gateway`, `-hookhost`, `-runner`, `-connector-host`, `-postgres` (when the
+  `-api`, `-web`, `-gateway`, `-hookhost`, `-runner`, `-connector-host`, `-relay` (only with
+  `relay.enabled`: edge → relay:4112, relay → api:4101 and runner:4108), `-postgres` (when the
   bundled database is on), `-connector-<id>` (self-hosted connectors);
-- the `migrate` hook pod (`-migrate`): egress to the database only, so `helm upgrade` can
-  run migrations while the other policies are in place;
+- the runner's stream listener **:4108** (only with `relay.enabled` or `terminal.enabled`): ingress from the relay pods
+  and the api pods only, never from the sandboxes namespace;
+- the `migrate` hook pod (`-migrate`, and `-postgres-migrate` admitting it to the bundled Postgres): egress to
+  the database only, so `helm upgrade` can run migrations while the other policies are in place. Both are
+  **hook resources** (FIX-102): an upgrade from a chart that predates them runs its hooks before any regular
+  resource, under default-deny;
 - the `secrets` hook pod (`-hooks`): egress to the Kubernetes API on `kubeApiPorts` only
   (it is rendered as a hook too, at weight −15, before the job: on `helm upgrade` the
   release's default-deny policy already exists — a regular chart resource would be applied
@@ -514,7 +557,15 @@ Set the selectors for your cluster:
 - `networkPolicy.edgeNamespaceSelector` (default `kubernetes.io/metadata.name: ingress-nginx`),
   the namespace allowed to reach the API, web and connector callbacks;
 - `networkPolicy.dnsNamespaceSelector` (default `kube-system`);
-- `networkPolicy.kubeApiCidrs`, for runner egress to the Kubernetes API (empty allows any), and
+- `networkPolicy.kubeApiCidrs`, for runner and `secrets` hook egress to the Kubernetes API. Empty: the chart reads
+  the addresses of the `kubernetes` EndpointSlice in `default` (`discovery.k8s.io/v1`) at `helm install/upgrade`
+  time, so **the installing identity needs `get` on `endpointslices.discovery.k8s.io` in `default`**; when that
+  is not readable (and under `helm template`) no API rule is rendered, the runner cannot start sandboxes and
+  NOTES.txt warns: set `kubeApiCidrs`, or `networkPolicy.kubeApiOpen: true` to allow any:443/6443 on purpose
+  (FIX-102; the chart no longer opens `0.0.0.0/0` silently). `networkPolicy.monitoringFrom` admits your
+  Prometheus to the ops ports. The hooks use one ServiceAccount per Job; their Roles name the Secrets they read and patch.
+  An **upgrade** whose generated Secret has vanished (a restore without it) is refused rather than minting new
+  encryption keys: restore the Secret ([backups](backups.md)), or `secrets.allowRegenerate=true` to start over;
   `networkPolicy.kubeApiPorts` (default `[443, 6443]`), the API server's endpoint port. Check it with
   `kubectl get endpointslice -n default -l kubernetes.io/service-name=kubernetes`;
 - `networkPolicy.externalEgress` (`cidr` and `except`), for OIDC, SMTP, LLM endpoints and secret stores.
@@ -575,7 +626,8 @@ helm install aurora deploy/helm/aurora -n aurora --create-namespace -f my-values
 
 `helm lint` and `helm template` are the checks to run before any values change.
 
-Hooks run in this order: `secrets` (-10), `gateway-ca` (-9), then `migrate` (0),
+Hooks run in this order: `secrets` (-10), `gateway-ca` (-9), `gateway-role` (-1, only with the bundled
+evaluation Postgres and the automatic role), then `migrate` (0),
 which runs `aurora-api migrate` before any new API replica serves.
 
 Minimal `my-values.yaml`:
@@ -590,7 +642,7 @@ ingress:
   tls: {secretName: aurora-tls}
 database:
   existingSecret: aurora-database       # must contain AURORA_DATABASE_URL
-  # The least-privilege gateway login: both or neither (see Database). The DBA creates the role and
+  # The least-privilege gateway login: both, required with an external database (see Database). The DBA creates the role and
   # the Secret (key AURORA_DATABASE_URL, logging in as that role) first.
   gatewayRole: aurora_gateway
   gatewayExistingSecret: aurora-gateway-database
@@ -667,7 +719,12 @@ external PostgreSQL 16. Record the date, the Kubernetes version, the CNI and the
    what you set (`ClusterIP`, or `LoadBalancer` with `loadBalancerSourceRanges`).
 6. **Bootstrap and first use.** `kubectl -n aurora exec deploy/aurora-api -- /usr/local/bin/aurora-api bootstrap-admin --email <you>`
    (see [Post-install checks](#post-install-checks)), sign in, register a runner ([runners.md](runners.md)),
-   start a sandbox, send one chat turn, park it and wake it.
+   start a sandbox, send one chat turn, park it and wake it. A new instance's first administrator is sent
+   to **Admin → Setup** (`/admin/setup`, the setup wizard, `docs/14 §Onboarding`, C-533..C-536) until the placement is
+   saved. The page is read-only: it lists what is configured and what is still to do in five steps (roles, placement,
+   LLM, runners, optional), each check with one plain sentence and, where one exists, the Helm value that changes it.
+   Nothing on it shows a secret. People who join later see their own Welcome page and tour instead (per-user,
+   `/o/{org}/w/{ws}/welcome`); the account menu replays them.
 7. **Isolation.** From inside a sandbox Pod, confirm the SEC-02 and SEC-09 probes from the kind e2e
    (`tests/e2e-hosted/tests/k8s.rs`): no DNS, no route to the API, the database, hookhost or the cloud
    metadata address; only the two allowed ports answer. If `runtimeClass` is set (gVisor, Kata),
@@ -677,6 +734,9 @@ external PostgreSQL 16. Record the date, the Kubernetes version, the CNI and the
    (see [Known limits](#known-limits-in-the-chart)). Verify the pods roll and the chat from step 6 still works.
 9. **Uninstall.** `helm uninstall aurora -n aurora`; check what remains (the namespaces, the Secrets you
    created, the PVCs, and with `postgres.enabled` the evaluation database, see [Database](#database)).
+   The chart's own Secrets `aurora-secrets` (generated passwords) and `aurora-gateway-ca` (the gateway CA
+   **private key**) and the ConfigMap `aurora-config` also stay: keep them to reinstall into the same
+   namespace with the old PVC, delete them for a clean removal (commands in [Database](#database)).
 10. **Backup and restore.** One restore drill from [backups.md](backups.md).
 
 Open limitation (P2-OPS-1): none of the lines above has been run on a real cluster yet.
@@ -708,7 +768,8 @@ Then register a runner ([runners.md](runners.md#add-a-runner)).
 - Changing a `plugins.configMapName` ConfigMap does not restart the API. Run
   `kubectl -n aurora rollout restart deploy/aurora-api`.
 - The bundled `postgres.enabled` database is evaluation-only and leaves its resources behind
-  on uninstall (see [Database](#database)).
+  on uninstall (see [Database](#database)), as do the generated Secret, the gateway CA Secret
+  (with its private key) and the hook ConfigMap.
 - `helm upgrade` from the previous chart to this one was run on a kind cluster (P2-OPS-1): it completes,
   the pods and the evaluation database stay up. The first upgrade from a release that predates the
   `-migrate` NetworkPolicy runs its migrate hook before that policy exists, so it can hang

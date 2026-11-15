@@ -8,8 +8,8 @@ const TINTS = [
 
 // Fixed sizes use classes (the production CSP blocks inline style attributes).
 const SIZES: Record<number, string> = {
-  20: "size-5 text-[10px]",
-  24: "size-6 text-[11px]",
+  20: "size-5 text-micro",
+  24: "size-6 text-label",
   28: "size-7 text-xs",
   32: "size-8 text-sm",
   36: "size-9 text-base",
@@ -18,7 +18,7 @@ const SIZES: Record<number, string> = {
   48: "size-12 text-xl",
   56: "size-14 text-2xl",
   64: "size-16 text-3xl",
-  72: "size-[72px] text-3xl",
+  72: "size-18 text-3xl",
 };
 
 /** Stable hash so one agent keeps one tint. (Also used by the sidebar selects' initial chip.) */

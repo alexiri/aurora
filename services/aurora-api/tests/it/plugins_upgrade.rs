@@ -223,7 +223,9 @@ async fn kept_fields_and_optional_additions_flip_nothing_but_unknown_legacy_fail
     install_v1(&a).await;
     let s = seed_matrix(&h).await;
 
-    // 1.1: an added optional field (minor): auto-activates, nothing changes.
+    // 1.1: an added optional field (minor). Every version is checked (FIX-107, SEC-57), so
+    // the legacy row whose keys cannot be derived (no stored manifest for its version) fails
+    // closed even here: the version is held for approval; kept and derivable rows are untouched.
     let v11 = a
         .upload(&yaml(
             "1.1.0",
@@ -231,29 +233,15 @@ async fn kept_fields_and_optional_additions_flip_nothing_but_unknown_legacy_fail
             HOST,
         ))
         .await;
-    assert_eq!(v11["status"], "active", "{v11}");
-    for id in [s.kept, s.legacy_known, s.legacy_unknown] {
-        assert_eq!(row(&h, id).await.0, "active");
-    }
-
-    // 2.0: required `api_token` kept, optional added: a major upgrade, but only the legacy
-    // row whose keys cannot be derived (no stored manifest for its version) fails (closed).
-    let v2 = a
-        .upload(&yaml(
-            "2.0.0",
-            &[("api_token", false), ("extra", true), ("more", true)],
-            HOST,
-        ))
-        .await;
     assert_eq!(
-        (v2["status"].as_str(), v2["status_reason"].as_str()),
+        (v11["status"].as_str(), v11["status_reason"].as_str()),
         (Some("pending_approval"), Some("breaks_connections")),
-        "{v2}"
+        "{v11}"
     );
-    let imp = a.status(&v2["id"]).await["impact"].clone();
-    assert_eq!(imp["major_upgrade"], true);
+    let imp = a.status(&v11["id"]).await["impact"].clone();
+    assert_eq!(imp["major_upgrade"], false);
     assert_eq!(imp["connections_needing_reauth"], 1, "{imp}");
-    let (_, ap) = a.act(&v2["id"], "approve").await;
+    let (_, ap) = a.act(&v11["id"], "approve").await;
     assert_eq!(ap["connections_reauth"], 1);
     assert_eq!(row(&h, s.legacy_unknown).await.0, "reauth_required");
     assert!(
@@ -268,19 +256,30 @@ async fn kept_fields_and_optional_additions_flip_nothing_but_unknown_legacy_fail
 }
 
 #[tokio::test]
-async fn added_required_field_flips_and_minor_renames_never_do() {
+async fn added_required_field_flips_and_so_does_a_minor_rename() {
     let h = Harness::new().await;
     let a = setup(&h).await;
     install_v1(&a).await;
     let org = h.org().await;
     let c = seed(&h, org, "active", Some(&["api_token"]), "1.0.0").await;
 
-    // A minor version may rename a required field: only majors are checked (09 §10).
+    // (FIX-107, SEC-57) A minor version that renames a required field breaks its connections
+    // too: it is held for approval and flips them in the activation transaction.
     let v11 = a.upload(&yaml("1.1.0", &[("renamed", false)], HOST)).await;
-    assert_eq!(v11["status"], "active", "{v11}");
+    assert_eq!(v11["status"], "pending_approval", "{v11}");
+    assert_eq!(v11["status_reason"], "breaks_connections");
     assert_eq!(row(&h, c).await.0, "active");
+    let (_, ap) = a.act(&v11["id"], "approve").await;
+    assert_eq!(ap["connections_reauth"], 1, "{ap}");
+    let (st, why, _) = row(&h, c).await;
+    assert_eq!(st, "reauth_required");
+    assert_eq!(
+        why.unwrap(),
+        "plugin_major_upgrade: up 1.0.0 -> 1.1.0; missing: renamed"
+    );
 
     // A major version adding a required field breaks every connection not holding it.
+    let c2 = seed(&h, org, "active", Some(&["renamed"]), "1.1.0").await;
     let v2 = a
         .upload(&yaml(
             "2.0.0",
@@ -291,10 +290,10 @@ async fn added_required_field_flips_and_minor_renames_never_do() {
     assert_eq!(v2["status_reason"], "breaks_connections");
     let (_, ap) = a.act(&v2["id"], "approve").await;
     assert_eq!(ap["connections_reauth"], 1);
-    let (_, why, _) = row(&h, c).await;
+    let (_, why, _) = row(&h, c2).await;
     assert_eq!(
         why.unwrap(),
-        "plugin_major_upgrade: up 1.1.0 -> 2.0.0; missing: must_have, renamed"
+        "plugin_major_upgrade: up 1.1.0 -> 2.0.0; missing: must_have"
     );
 }
 
@@ -421,4 +420,34 @@ async fn approval_needs_an_instance_admin() {
         )
         .await;
     assert_eq!(s, 403);
+}
+
+/// The real manifests of a built-in package (FIX-133/FIX-136 version bumps): `indico` 1.1.1 is
+/// active, the shipped 1.2.0 arrives and — no permission widened, no connection broken — becomes
+/// the active version by itself, the old one superseded. (The project signing key is not
+/// available to tests, so both versions go through the directory source under publisher `acme`;
+/// the activation rules for a package that already has an approved version are the same.)
+/// `github` 2.0.0 -> 2.1.0 has hooks and is covered at the manifest level in
+/// `aurora-registry` (`builtin_versions`).
+#[tokio::test]
+async fn the_shipped_indico_version_replaces_the_previous_one_automatically() {
+    let root = env!("CARGO_MANIFEST_DIR");
+    let load = |p: &str| {
+        std::fs::read_to_string(format!("{root}/{p}"))
+            .unwrap()
+            .replace("publisher: aurora", "publisher: acme")
+    };
+    let previous = load("../../crates/aurora-registry/tests/fixtures/previous/indico-1.1.1.yaml");
+    let shipped = load("../../plugins/builtin/indico/plugin.yaml");
+    let h = Harness::new().await;
+    let a = setup(&h).await;
+    let v1 = a.upload(&previous).await;
+    assert_eq!(v1["status"], "pending_approval", "{v1}");
+    let (s, b) = a.act(&v1["id"], "approve").await;
+    assert_eq!(s, 200, "{b}");
+    let v2 = a.upload(&shipped).await;
+    assert_eq!(v2["package_id"], "indico", "{v2}");
+    assert_eq!(v2["version"], "1.2.0", "{v2}");
+    assert_eq!(v2["status"], "active", "activated without approval: {v2}");
+    assert_eq!(a.status(&v1["id"]).await["status"], "superseded");
 }

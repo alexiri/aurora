@@ -76,7 +76,7 @@ export function ConflictGroup({ c }: { c: HostClaimConflict }) {
 export function HostClaimsView() {
   const q = useHostClaims();
   return (
-    <div className="max-w-[1160px] space-y-4">
+    <div className="max-w-page space-y-4">
       <PageHeader title="Host claims" description="Apps that claim the same host. Pick which one wins." className="mb-2" />
       {q.isPending ? <Loading /> : null}
       {q.isError ? <ErrorState error={q.error} onRetry={() => q.refetch()} /> : null}

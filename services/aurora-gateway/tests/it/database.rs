@@ -252,6 +252,9 @@ async fn start_with(
         metadata: json!({}),
         tenant_host: None,
         instance_id: None,
+        connect_method: None,
+        access: "write".into(),
+        scopes: Vec::new(),
     };
     // A database app is default-deny: only the classes a rule allows run.
     let mut ws = ScopePolicyRows {
@@ -295,14 +298,17 @@ async fn start_with(
             Some(rx),
         ))
     });
-    let handler = Arc::new(PolicyHandler::new(PolicyHandlerParts {
-        resolver,
-        plaintext,
-        log: log.clone(),
-        external_url: "https://aurora.test/".into(),
-        holds,
-        touch_pool: None,
-    }));
+    let handler = Arc::new(
+        PolicyHandler::new(PolicyHandlerParts {
+            resolver,
+            plaintext,
+            log: log.clone(),
+            external_url: "https://aurora.test/".into(),
+            holds,
+            touch_pool: None,
+        })
+        .with_insecure_loopback_injection(true),
+    );
     let gw = ca::generate("gw").unwrap();
     let pl = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let proxy = pl.local_addr().unwrap();
@@ -668,6 +674,41 @@ async fn login_refusals() {
     let e = Pg::login(&env, &id, TOKEN_FROZEN).await.err().unwrap();
     assert_eq!(e.0, "28000");
     assert!(e.1.contains("paused"), "{e:?}");
+}
+
+/// (FIX-106, DB-3) When the database rejects the stored credentials the agent gets a fixed
+/// message: neither the server's own error text (which names the role) nor any connection detail.
+#[tokio::test]
+async fn a_database_login_failure_returns_a_fixed_message_without_the_servers_text() {
+    let env = start_with(|_, _| {}, true, true, true).await;
+    // The stored password no longer matches the role.
+    sqlx::query(&format!(
+        "ALTER ROLE {} PASSWORD 'rotated-behind-the-back'",
+        env.role
+    ))
+    .execute(env.db.pool())
+    .await
+    .unwrap();
+    let (code, msg) = Pg::login(&env, &env.conn_id.to_string(), TOKEN_A)
+        .await
+        .err()
+        .expect("the server must refuse the stored password");
+    assert_eq!(code, "28P01");
+    assert_eq!(
+        msg,
+        "the database rejected the stored credentials; ask a workspace admin to check this connection"
+    );
+    for leaked in [env.role.as_str(), "authentication failed", "127.0.0.1"] {
+        assert!(!msg.contains(leaked), "{leaked:?} reached the agent: {msg}");
+    }
+    sqlx::query(&format!("DROP OWNED BY {}", env.role))
+        .execute(env.db.pool())
+        .await
+        .unwrap();
+    sqlx::query(&format!("DROP ROLE {}", env.role))
+        .execute(env.db.pool())
+        .await
+        .unwrap();
 }
 
 #[tokio::test]

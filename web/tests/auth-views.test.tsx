@@ -12,6 +12,7 @@ vi.mock("next/navigation", () => ({
 }));
 
 import { DeleteView } from "@/components/account/delete-view";
+import { CliView } from "@/components/auth/cli-view";
 import { JoinView } from "@/components/auth/join-view";
 import { LoginView } from "@/components/auth/login-view";
 import { safeNext } from "@/lib/auth/use-unauthorized-redirect";
@@ -202,5 +203,55 @@ describe("DeleteView", () => {
       "href",
       "/v1/auth/oidc/g/start?return_to=%2Faccount%2Fdelete&reauth=1",
     );
+  });
+});
+
+describe("CliView (FIX-108)", () => {
+  it("shows what the pending login asks for before the approval", async () => {
+    search = "code=ABCD-EFGH";
+    mockFetch({
+      "GET /v1/me": () =>
+        json(200, {
+          user: { email: "me@x.io", display_name: "Me" },
+          memberships: [
+            {
+              status: "active",
+              org: { id: "o1", name: "Acme" },
+              workspaces: [{ id: "w1", name: "Eng" }],
+            },
+          ],
+        }),
+      "GET /v1/auth/cli/pending": () =>
+        json(200, {
+          hostname: "build-box",
+          requested_at: "2026-11-13T10:00:00Z",
+          expires_at: "2026-11-13T10:10:00Z",
+          address: "203.0.113.0/24",
+          key_expires_in_days: 90,
+        }),
+    });
+    wrap(<CliView />);
+    const box = await screen.findByTestId("cli-pending");
+    expect(box).toHaveTextContent("build-box");
+    expect(box).toHaveTextContent("203.0.113.0/24");
+    expect(box).toHaveTextContent(/acts as you/);
+    expect(box).toHaveTextContent(/expires in 90 days/);
+  });
+
+  it("says so when the code is unknown", async () => {
+    search = "code=ZZZZ-ZZZZ";
+    mockFetch({
+      "GET /v1/me": () =>
+        json(200, {
+          user: { email: "me@x.io", display_name: "Me" },
+          memberships: [
+            { status: "active", org: { id: "o1", name: "Acme" }, workspaces: [{ id: "w1", name: "Eng" }] },
+          ],
+        }),
+      "GET /v1/auth/cli/pending": () =>
+        json(404, { error: { code: "not_found", message: "nf" } }),
+    });
+    wrap(<CliView />);
+    expect(await screen.findByText(/not found or has expired/)).toBeInTheDocument();
   });
 });

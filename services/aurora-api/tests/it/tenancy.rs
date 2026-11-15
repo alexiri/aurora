@@ -618,3 +618,428 @@ async fn sec32_role_changes_and_removal_are_audited() {
     assert_eq!(s, 204);
     assert_eq!(audit_n(&h, "member.remove").await, 1);
 }
+
+// ---------------------------------------------------------------- FIX-097: deletion completeness
+
+/// A harness whose vault keeps managed values in an inspectable memory store.
+async fn memory_harness() -> (Harness, std::sync::Arc<aurora_secrets::MemoryStore>) {
+    use base64::Engine;
+    let mut h = Harness::new().await;
+    let mem = std::sync::Arc::new(aurora_secrets::MemoryStore::new("memory"));
+    let k = base64::engine::general_purpose::STANDARD.encode([b'a'; 32]);
+    let keyring =
+        std::sync::Arc::new(aurora_crypto::Keyring::parse(&format!("k1:{k}"), "k1").unwrap());
+    let mut sr =
+        aurora_secrets::StoreRegistry::from_config(&h.state.config.secrets, keyring).unwrap();
+    sr.register(mem.clone());
+    sr.set_default("memory").unwrap();
+    h.state = h
+        .state
+        .clone()
+        .with_vault(std::sync::Arc::new(aurora_secrets::SecretVault::new(sr)));
+    h.app = test_router(h.state.clone());
+    (h, mem)
+}
+
+/// Seal a managed value for `owner` and return its stored reference text.
+async fn seal(
+    h: &Harness,
+    purpose: aurora_secrets::Purpose,
+    owner: Uuid,
+    org: Uuid,
+    ws: Option<Uuid>,
+) -> String {
+    let ctx = aurora_secrets::SealContext {
+        purpose,
+        owner_id: owner,
+        org_id: org,
+        workspace_id: ws,
+    };
+    h.state
+        .vault
+        .seal(&ctx, aurora_core::Secret::new(b"s3cret".to_vec()))
+        .await
+        .unwrap()
+        .to_string()
+}
+
+/// (FIX-097 1, 5) An organization with a directory group (bound to a workspace), a SCIM token
+/// and a SCIM link can be deleted (the RESTRICT children used to roll the whole delete back),
+/// and the managed secret values of the org's secrets, connections and OAuth clients are
+/// discarded after the commit while the gateways are told to drop their caches.
+#[tokio::test]
+async fn org_delete_with_groups_and_scim_rows_discards_managed_values_and_invalidates() {
+    use aurora_secrets::Purpose;
+    let (h, mem) = memory_harness().await;
+    let (owner, ot) = Who::new(&h, "o@x.io", true).await;
+    let v = setup_org(&h, &ot, "Org").await;
+    let org = id(&v["org"]["id"]);
+    let ws = id(&v["workspace"]["id"]);
+    let slug: String = sqlx::query_scalar("SELECT slug FROM organizations WHERE id = $1")
+        .bind(org)
+        .fetch_one(h.pool())
+        .await
+        .unwrap();
+    // Directory rows.
+    let group = Uuid::now_v7();
+    sqlx::query("INSERT INTO groups (id, org_id, name, source) VALUES ($1,$2,'g','manual')")
+        .bind(group)
+        .bind(org)
+        .execute(h.pool())
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO group_workspace_access (group_id, workspace_id, org_id, role) VALUES ($1,$2,$3,'member')")
+        .bind(group)
+        .bind(ws)
+        .bind(org)
+        .execute(h.pool())
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO scim_tokens (id, org_id, name, token_hash, display_prefix, expires_at) VALUES ($1,$2,'t',$3,'aud_x', now() + interval '1 day')")
+        .bind(Uuid::now_v7())
+        .bind(org)
+        .bind(vec![3u8; 32])
+        .execute(h.pool())
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO scim_users (id, org_id, user_id, user_name) VALUES ($1,$2,$3,'o@x.io')",
+    )
+    .bind(Uuid::now_v7())
+    .bind(org)
+    .bind(owner)
+    .execute(h.pool())
+    .await
+    .unwrap();
+    // Managed values: an org secret, a workspace secret, a workspace connection, an org OAuth client.
+    let before = mem.managed_count();
+    for (ws_scope, purpose) in [
+        (None, Purpose::SecretValue),
+        (Some(ws), Purpose::SecretValue),
+    ] {
+        let sid = Uuid::now_v7();
+        let r = seal(&h, purpose, sid, org, ws_scope).await;
+        sqlx::query("INSERT INTO secrets (id, org_id, workspace_id, name, kind, host_pattern, injection, value_source, value_ref) VALUES ($1,$2,$3,$4,'generic','h.example','{}','managed',$5)")
+            .bind(sid)
+            .bind(org)
+            .bind(ws_scope)
+            .bind(sid.to_string())
+            .bind(&r)
+            .execute(h.pool())
+            .await
+            .unwrap();
+    }
+    let cid = Uuid::now_v7();
+    let r = seal(&h, Purpose::ConnectionCredentials, cid, org, Some(ws)).await;
+    sqlx::query("INSERT INTO app_connections (id, org_id, workspace_id, app_id, package_id, app_version, label, status, credentials_ref) VALUES ($1,$2,$3,'acme_app','acme','1.0.0','c','active',$4)")
+        .bind(cid)
+        .bind(org)
+        .bind(ws)
+        .bind(&r)
+        .execute(h.pool())
+        .await
+        .unwrap();
+    let oid = Uuid::now_v7();
+    let r = seal(&h, Purpose::OauthClientSecret, oid, org, None).await;
+    sqlx::query("INSERT INTO app_oauth_clients (id, org_id, package_id, client_key, fields, secret_ref) VALUES ($1,$2,'p','c','{}',$3)")
+        .bind(oid)
+        .bind(org)
+        .bind(&r)
+        .execute(h.pool())
+        .await
+        .unwrap();
+    assert_eq!(mem.managed_count(), before + 4);
+
+    let mut l = sqlx::postgres::PgListener::connect_with(h.pool())
+        .await
+        .unwrap();
+    l.listen("aurora_gateway_invalidate").await.unwrap();
+    let (s, e) = call(
+        &h,
+        &ot,
+        Method::DELETE,
+        &format!("/v1/orgs/{org}"),
+        Some(json!({"confirm": slug})),
+    )
+    .await;
+    assert_eq!(s, 204, "{e}");
+    assert_eq!(
+        count(&h, "SELECT count(*) FROM organizations WHERE id=$1", org).await,
+        0
+    );
+    for t in [
+        "groups",
+        "scim_tokens",
+        "scim_users",
+        "secrets",
+        "app_connections",
+        "app_oauth_clients",
+    ] {
+        let n: i64 = sqlx::query_scalar(&format!("SELECT count(*) FROM {t} WHERE org_id = $1"))
+            .bind(org)
+            .fetch_one(h.pool())
+            .await
+            .unwrap();
+        assert_eq!(n, 0, "{t}");
+    }
+    assert_eq!(
+        mem.managed_count(),
+        before,
+        "every managed value was discarded"
+    );
+    // The org's invalidation reached the bus (read what is queued, bounded).
+    let mut seen = false;
+    while let Ok(Ok(n)) = tokio::time::timeout(std::time::Duration::from_secs(2), l.recv()).await {
+        let p: Value = serde_json::from_str(n.payload()).unwrap();
+        seen |= p["scope"] == "org" && p["id"] == json!(org);
+        if seen {
+            break;
+        }
+    }
+    assert!(seen, "the gateways were told to drop the org's caches");
+}
+
+/// (FIX-097 5) Workspace deletion discards the managed values of its own secrets and
+/// connections only, and tells the gateways.
+#[tokio::test]
+async fn workspace_delete_discards_its_managed_values_and_invalidates() {
+    use aurora_secrets::Purpose;
+    let (h, mem) = memory_harness().await;
+    let (_, ot) = Who::new(&h, "o@x.io", true).await;
+    let v = setup_org(&h, &ot, "Org").await;
+    let org = id(&v["org"]["id"]);
+    let ws = id(&v["workspace"]["id"]);
+    let before = mem.managed_count();
+    let sid = Uuid::now_v7();
+    let r = seal(&h, Purpose::SecretValue, sid, org, Some(ws)).await;
+    sqlx::query("INSERT INTO secrets (id, org_id, workspace_id, name, kind, host_pattern, injection, value_source, value_ref) VALUES ($1,$2,$3,'w','generic','h.example','{}','managed',$4)")
+        .bind(sid).bind(org).bind(ws).bind(&r).execute(h.pool()).await.unwrap();
+    // An org-level value must survive a workspace delete.
+    let osid = Uuid::now_v7();
+    let r = seal(&h, Purpose::SecretValue, osid, org, None).await;
+    sqlx::query("INSERT INTO secrets (id, org_id, name, kind, host_pattern, injection, value_source, value_ref) VALUES ($1,$2,'o','generic','h.example','{}','managed',$3)")
+        .bind(osid).bind(org).bind(&r).execute(h.pool()).await.unwrap();
+    assert_eq!(mem.managed_count(), before + 2);
+    let mut l = sqlx::postgres::PgListener::connect_with(h.pool())
+        .await
+        .unwrap();
+    l.listen("aurora_gateway_invalidate").await.unwrap();
+    let (s, e) = call(
+        &h,
+        &ot,
+        Method::DELETE,
+        &format!("/v1/workspaces/{ws}"),
+        Some(json!({"confirm": "default"})),
+    )
+    .await;
+    assert_eq!(s, 204, "{e}");
+    assert_eq!(
+        mem.managed_count(),
+        before + 1,
+        "only the workspace's value went"
+    );
+    let mut seen = false;
+    while let Ok(Ok(n)) = tokio::time::timeout(std::time::Duration::from_secs(2), l.recv()).await {
+        let p: Value = serde_json::from_str(n.payload()).unwrap();
+        seen |= p["scope"] == "workspace" && p["id"] == json!(ws);
+        if seen {
+            break;
+        }
+    }
+    assert!(
+        seen,
+        "the gateways were told to drop the workspace's caches"
+    );
+}
+
+/// (FIX-097 5) Deleting an agent leaves no grant-sourced derived rule behind: the grants
+/// cascade in SQL, their compiled rules do not.
+#[tokio::test]
+async fn agent_delete_removes_its_grant_derived_rules() {
+    let h = Harness::new().await;
+    let (_, ot) = Who::new(&h, "o@x.io", true).await;
+    let v = setup_org(&h, &ot, "Org").await;
+    let org = id(&v["org"]["id"]);
+    let ws = id(&v["workspace"]["id"]);
+    let agent = Uuid::now_v7();
+    sqlx::query("INSERT INTO agents (id, org_id, workspace_id, handle, name, kind, effort, brief) VALUES ($1,$2,$3,'bot','Bot','byo','medium','')")
+        .bind(agent).bind(org).bind(ws).execute(h.pool()).await.unwrap();
+    let conn = Uuid::now_v7();
+    sqlx::query("INSERT INTO app_connections (id, org_id, workspace_id, app_id, package_id, app_version, label, status, credentials_ref) VALUES ($1,$2,$3,'acme_app','acme','1.0.0','c','active','x')")
+        .bind(conn).bind(org).bind(ws).execute(h.pool()).await.unwrap();
+    let grant = Uuid::now_v7();
+    sqlx::query("INSERT INTO grants (id, workspace_id, agent_id, connection_id, mode) VALUES ($1,$2,$3,$4,'full')")
+        .bind(grant).bind(ws).bind(agent).bind(conn).execute(h.pool()).await.unwrap();
+    sqlx::query("INSERT INTO derived_rules (id, org_id, workspace_id, source_kind, source_id, ordinal, logical_id, rule) VALUES ($1,$2,$3,'grant',$4,0,$5,'{}')")
+        .bind(Uuid::now_v7()).bind(org).bind(ws).bind(grant).bind(Uuid::now_v7())
+        .execute(h.pool()).await.unwrap();
+    // Another agent's grant rule is untouched.
+    let other = Uuid::now_v7();
+    sqlx::query("INSERT INTO derived_rules (id, org_id, workspace_id, source_kind, source_id, ordinal, logical_id, rule) VALUES ($1,$2,$3,'grant',$4,0,$5,'{}')")
+        .bind(Uuid::now_v7()).bind(org).bind(ws).bind(other).bind(Uuid::now_v7())
+        .execute(h.pool()).await.unwrap();
+    let (s, e) = call(
+        &h,
+        &ot,
+        Method::DELETE,
+        &format!("/v1/agents/{agent}"),
+        None,
+    )
+    .await;
+    assert_eq!(s, 204, "{e}");
+    assert_eq!(
+        count(&h, "SELECT count(*) FROM grants WHERE id = $1", grant).await,
+        0
+    );
+    assert_eq!(
+        count(
+            &h,
+            "SELECT count(*) FROM derived_rules WHERE source_id = $1",
+            grant
+        )
+        .await,
+        0,
+        "the deleted agent's compiled rule is gone"
+    );
+    assert_eq!(
+        count(
+            &h,
+            "SELECT count(*) FROM derived_rules WHERE source_id = $1",
+            other
+        )
+        .await,
+        1
+    );
+}
+
+/// Inserts a webhook with a sealed verification secret on `agent`; returns the stored ref.
+async fn webhook_with_secret(h: &Harness, org: Uuid, ws: Uuid, agent: Uuid) -> (Uuid, String) {
+    let hook = Uuid::now_v7();
+    let r = seal(
+        h,
+        aurora_secrets::Purpose::WebhookVerification,
+        hook,
+        org,
+        Some(ws),
+    )
+    .await;
+    sqlx::query("INSERT INTO webhooks (id, agent_id, name, instructions, token_hash, display_prefix, verification) VALUES ($1,$2,'h','do it',$3,'aur_x',$4)")
+        .bind(hook)
+        .bind(agent)
+        .bind(Uuid::now_v7().as_bytes().repeat(2))
+        .bind(json!({"kind": "bearer", "header": "Authorization", "secret_ref": r}))
+        .execute(h.pool())
+        .await
+        .unwrap();
+    (hook, r)
+}
+
+async fn plain_agent(h: &Harness, org: Uuid, ws: Uuid, handle: &str) -> Uuid {
+    let agent = Uuid::now_v7();
+    sqlx::query("INSERT INTO agents (id, org_id, workspace_id, handle, name, kind, effort, brief) VALUES ($1,$2,$3,$4,'Bot','byo','medium','')")
+        .bind(agent).bind(org).bind(ws).bind(handle).execute(h.pool()).await.unwrap();
+    agent
+}
+
+async fn integration_with_credentials(h: &Harness, org: Uuid, tenant: &str) -> (Uuid, String) {
+    sqlx::query("INSERT INTO connectors (id, token_hash, display_name, manifest, status) VALUES ('chat', $1, 'chat', '{}', 'active') ON CONFLICT DO NOTHING")
+        .bind(vec![0u8; 32]).execute(h.pool()).await.unwrap();
+    let integ = Uuid::now_v7();
+    let r = seal(
+        h,
+        aurora_secrets::Purpose::IntegrationCredentials,
+        integ,
+        org,
+        None,
+    )
+    .await;
+    sqlx::query("INSERT INTO channel_integrations (id, org_id, connector_id, tenant_ref, tenant_label, config, credentials_ref, status) VALUES ($1,$2,'chat',$3,$3,'{}',$4,'active')")
+        .bind(integ).bind(org).bind(tenant).bind(&r).execute(h.pool()).await.unwrap();
+    (integ, r)
+}
+
+async fn presence_with_credentials(h: &Harness, org: Uuid, agent: Uuid, integ: Uuid) -> String {
+    let presence = Uuid::now_v7();
+    let r = seal(
+        h,
+        aurora_secrets::Purpose::PresenceCredentials,
+        presence,
+        org,
+        None,
+    )
+    .await;
+    sqlx::query("INSERT INTO channel_presences (id, agent_id, integration_id, mode, credentials_ref, status) VALUES ($1,$2,$3,'dedicated',$4,'active')")
+        .bind(presence).bind(agent).bind(integ).bind(&r).execute(h.pool()).await.unwrap();
+    r
+}
+
+/// (FIX-122) Deleting an agent discards its webhook signing secret and its dedicated
+/// presence's credentials from the secret store; another agent's values stay.
+#[tokio::test]
+async fn agent_delete_discards_its_webhook_and_presence_secrets() {
+    let (h, mem) = memory_harness().await;
+    let (_, ot) = Who::new(&h, "o@x.io", true).await;
+    let v = setup_org(&h, &ot, "Org").await;
+    let org = id(&v["org"]["id"]);
+    let ws = id(&v["workspace"]["id"]);
+    let before = mem.managed_count();
+    let gone = plain_agent(&h, org, ws, "gone").await;
+    let kept = plain_agent(&h, org, ws, "kept").await;
+    let (integ, _) = integration_with_credentials(&h, org, "T1").await;
+    webhook_with_secret(&h, org, ws, gone).await;
+    webhook_with_secret(&h, org, ws, kept).await;
+    presence_with_credentials(&h, org, gone, integ).await;
+    // integration + 2 webhooks + 1 presence
+    assert_eq!(mem.managed_count(), before + 4);
+    let (s, e) = call(&h, &ot, Method::DELETE, &format!("/v1/agents/{gone}"), None).await;
+    assert_eq!(s, 204, "{e}");
+    assert_eq!(
+        mem.managed_count(),
+        before + 2,
+        "the agent's webhook secret and presence credentials went; the others stayed"
+    );
+}
+
+/// (FIX-122) Deleting a workspace or an organization discards the same, plus the
+/// organization's integration credentials.
+#[tokio::test]
+async fn workspace_and_org_delete_discard_webhook_and_integration_secrets() {
+    let (h, mem) = memory_harness().await;
+    let (_, ot) = Who::new(&h, "o@x.io", true).await;
+    let v = setup_org(&h, &ot, "Org").await;
+    let org = id(&v["org"]["id"]);
+    let ws = id(&v["workspace"]["id"]);
+    let before = mem.managed_count();
+    let agent = plain_agent(&h, org, ws, "bot").await;
+    let (integ, _) = integration_with_credentials(&h, org, "T2").await;
+    webhook_with_secret(&h, org, ws, agent).await;
+    presence_with_credentials(&h, org, agent, integ).await;
+    assert_eq!(mem.managed_count(), before + 3);
+    // The workspace delete takes the agent's webhook secret and presence credentials, not the
+    // org's integration credentials.
+    let (s, e) = call(
+        &h,
+        &ot,
+        Method::DELETE,
+        &format!("/v1/workspaces/{ws}"),
+        Some(json!({"confirm": "default"})),
+    )
+    .await;
+    assert_eq!(s, 204, "{e}");
+    assert_eq!(mem.managed_count(), before + 1);
+    let slug: String = sqlx::query_scalar("SELECT slug FROM organizations WHERE id = $1")
+        .bind(org)
+        .fetch_one(h.pool())
+        .await
+        .unwrap();
+    let (s, e) = call(
+        &h,
+        &ot,
+        Method::DELETE,
+        &format!("/v1/orgs/{org}"),
+        Some(json!({"confirm": slug})),
+    )
+    .await;
+    assert_eq!(s, 204, "{e}");
+    assert_eq!(mem.managed_count(), before);
+}

@@ -3,7 +3,7 @@
 Phase: **5** (P5-GUIDE-1..5; owner 2026-11-13). Crates: `aurora-registry` (format, linter,
 renderer), `aurora-protocol`; services: API (ingest, home sync), `aurora-supervisor`
 (projection, instruction file), `aurora-cli`; dashboard (plugin review). **No gateway, policy,
-hook-host or runner change.** Decisions D-170..D-172, invariants SEC-90 and SEC-91, contracts
+hook-host or runner change.** Decisions D-170..D-172, invariants SEC-117 and SEC-91, contracts
 C-640..C-659.
 
 This document owns the feature. `09`, `10`, `12` and `16` carry short normative pointers where
@@ -389,7 +389,7 @@ thousand-operation API with one line each and per-area detail files. It is a bud
 
 ## 11. Security
 
-- **SEC-90.** Agent guide content is untrusted third-party data from ingest to the model:
+- **SEC-117.** Agent guide content is untrusted third-party data from ingest to the model:
   validated as bounded UTF-8 text with fixed name grammars, stored content-addressed, never
   parsed or executed by the core, shown to people as plain text only, projected only at paths
   the core builds under `.aurora/apps/<app_id>/`, and labelled third-party wherever an agent

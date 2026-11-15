@@ -37,19 +37,47 @@ pub struct ConnCand {
     /// The registered app instance this connection is bound to (D-74): it is injected only on
     /// that instance's exact host.
     pub instance_id: Option<Uuid>,
+    /// (FIX-123, D-214) The `connect[]` method the connection was made with (`None` = unknown):
+    /// its own `token` drives refresh/mint, and tools restricted by `connect_methods` apply by it.
+    pub connect_method: Option<String>,
     /// What `{instance}` stands for: the host of `instance_id` (set by the resolver from the org's
     /// active instances), or, for a default-host connection of an instance-bound app, the app's
     /// `default_host` (D-86).
     pub instance_host: Option<String>,
+    /// (D-231) The base path of the registration `instance_id` names; `{instance}` in a URL is
+    /// `<instance_host><instance_base_path>`. `None` for a default-host connection.
+    pub instance_base_path: Option<String>,
     /// `status = reauth_required`: refused with reconnect guidance after the decision.
     pub reauth_required: bool,
     /// (P4-GRANTS, D-123) The app's `grants` flags from the active snapshot (set by the resolver;
     /// both `false` until then, which only matters for lanes that never evaluate policy).
     pub custom_only: bool,
     pub block_untooled: bool,
+    /// (FIX-133, D-240) `access = read`: only the app's read tools pass through this connection.
+    pub read_only: bool,
+    /// (FIX-136, D-241) The scopes the connection has; empty = unknown (a tool's scope
+    /// requirement is then never a reason to refuse).
+    pub scopes: Vec<String>,
 }
 
 impl ConnCand {
+    /// (D-231) Where `{instance}` points for this connection: the registration's host and base
+    /// path, or the app's `default_host` (no base path). The one resolver input for token URLs.
+    pub fn instance_base(&self) -> Option<aurora_registry::instance::InstanceBase<'_>> {
+        self.instance_host.as_deref().map(|h| {
+            aurora_registry::instance::InstanceBase::new(h, self.instance_base_path.as_deref())
+        })
+    }
+
+    /// (FIX-136, D-241) The tool needs scopes (any of) and the connection's known scopes hold
+    /// none of them. Unknown scopes (empty) never refuse: they are trusted only to refuse, never to
+    /// widen, and an undeclared token may well have them.
+    pub fn lacks_scopes_for(&self, t: &ToolItem) -> bool {
+        !t.scopes.is_empty()
+            && !self.scopes.is_empty()
+            && !t.scopes.iter().any(|s| self.scopes.contains(s))
+    }
+
     pub fn from_row(r: AppConnectionRow, org_id: Uuid) -> Result<Self, String> {
         Ok(Self {
             id: r.id,
@@ -71,20 +99,27 @@ impl ConnCand {
             metadata: r.metadata,
             tenant_host: r.tenant_host,
             instance_id: r.instance_id,
+            connect_method: r.connect_method,
             instance_host: None,
+            instance_base_path: None,
             reauth_required: r.status == "reauth_required",
             custom_only: false,
             block_untooled: false,
+            // Fail closed: anything but the known `write` reads as read-only.
+            read_only: r.access != "write",
+            scopes: r.scopes,
         })
     }
 
-    /// Copies the app's `grants` flags from the snapshot (SEC-67). An app missing from the
-    /// snapshot keeps both `false`: such a connection has no serving app to restrict.
+    /// Copies the app's `grants` flags from the snapshot (SEC-67). (FIX-084) An app missing from
+    /// the snapshot is `custom_only` with `block_untooled`: no manifest says otherwise, and
+    /// "no restrictions" is never the reading of a missing app.
     pub fn with_app_restrictions(mut self, app: Option<&AppEntry>) -> Self {
-        if let Some(a) = app {
-            self.custom_only = a.grants.custom_only;
-            self.block_untooled = a.grants.block_untooled;
-        }
+        let (custom_only, block_untooled) = app.map_or((true, true), |a| {
+            (a.grants.custom_only, a.grants.block_untooled)
+        });
+        self.custom_only = custom_only;
+        self.block_untooled = block_untooled;
         self
     }
 
@@ -95,6 +130,7 @@ impl ConnCand {
             scope: self.scope,
             custom_only: self.custom_only,
             block_untooled: self.block_untooled,
+            read_only: self.read_only,
         }
     }
 }
@@ -107,6 +143,13 @@ pub enum Cand {
 }
 
 impl Cand {
+    /// (FIX-123) The connect method of an app connection (`None` for a secret or an unknown one).
+    pub fn connect_method(&self) -> Option<&str> {
+        match self {
+            Self::Secret(_) => None,
+            Self::App(c) => c.connect_method.as_deref(),
+        }
+    }
     pub fn id(&self) -> Uuid {
         match self {
             Self::Secret(s) => s.id,
@@ -302,6 +345,7 @@ pub fn identify_tool<'a>(
     body_prefix: &[u8],
     truncated: bool,
     headers: &[(&str, &str)],
+    connect_method: Option<&str>,
 ) -> Option<&'a ToolItem> {
     identify_tool_in(
         m.app,
@@ -314,6 +358,7 @@ pub fn identify_tool<'a>(
         body_prefix,
         truncated,
         headers,
+        connect_method,
     )
 }
 
@@ -332,6 +377,7 @@ pub fn identify_tool_in<'a>(
     body_prefix: &[u8],
     truncated: bool,
     headers: &[(&str, &str)],
+    connect_method: Option<&str>,
 ) -> Option<&'a ToolItem> {
     let gql = graphql::classify(body_prefix, truncated);
     let git = aurora_policy::git::classify(path, query);
@@ -342,7 +388,9 @@ pub fn identify_tool_in<'a>(
         truncated,
     };
     tools(app).find(|t| {
-        serves(app, instance, t, host, port, path, method)
+        // (FIX-123, D-214) A tool restricted to other connect methods is not this connection's.
+        t.applies_to(connect_method)
+            && serves(app, instance, t, host, port, path, method)
             // (P4-GRANTS, Q8, D-124, SEC-68) fail closed: any doubt means "not this tool" and
             // classification continues down the catalogue.
             && t.params
@@ -365,10 +413,18 @@ pub fn identify_tool_in<'a>(
     })
 }
 
-pub fn tool_tags(t: &ToolItem) -> ToolTags {
+pub fn tool_tags(app: &AppEntry, t: &ToolItem, conn: Option<&ConnCand>) -> ToolTags {
     ToolTags {
+        // (FIX-136, D-241) The connection's known scopes hold none the tool needs.
+        scope_missing: conn.is_some_and(|c| c.lacks_scopes_for(t)),
         graphql: t.graphql.is_some(),
         git: t.git.is_some(),
+        // (FIX-133) The group the catalogue lists the tool in.
+        write: app
+            .tools
+            .as_ref()
+            .and_then(|g| g.write.as_ref())
+            .is_some_and(|g| g.items.iter().any(|i| i.id == t.id)),
     }
 }
 
@@ -423,5 +479,10 @@ impl<'a> Exec<'a> {
 
     pub fn credential(&self, name: &str) -> Option<&str> {
         self.creds.get(name).and_then(|v| v.as_str())
+    }
+
+    /// Every string credential value (FIX-104: which of them ended up in the URL).
+    pub fn string_values(&self) -> impl Iterator<Item = &str> {
+        self.creds.values().filter_map(|v| v.as_str())
     }
 }

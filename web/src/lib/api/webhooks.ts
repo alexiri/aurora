@@ -1,6 +1,6 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "./client";
 import type { components } from "./schema";
@@ -26,9 +26,16 @@ export function useWebhooks(agent: string) {
 }
 
 export function useWebhookDeliveries(agent: string, id: string, enabled: boolean) {
-  return useQuery({
+  return useInfiniteQuery({
     queryKey: webhookKeys.deliveries(agent, id),
-    queryFn: () => unwrap(api.GET("/v1/webhooks/{id}/deliveries", { params: { path: { id } } })),
+    initialPageParam: undefined as string | undefined,
+    queryFn: ({ pageParam }) =>
+      unwrap(
+        api.GET("/v1/webhooks/{id}/deliveries", {
+          params: { path: { id }, query: { cursor: pageParam } },
+        }),
+      ),
+    getNextPageParam: (last) => last.next_cursor ?? undefined,
     enabled,
     retry: false,
   });

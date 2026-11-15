@@ -24,7 +24,9 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(download_attachment))
         .routes(routes!(delete_attachment))
         .routes(routes!(org_storage))
+        .routes(routes!(refresh_org_storage))
         .routes(routes!(admin_storage))
+        .routes(routes!(refresh_admin_storage))
 }
 
 /// Upload a file to a conversation (multipart part `file`); it stays `pending` until a message
@@ -90,7 +92,23 @@ async fn org_storage(
     State(s): State<AppState>,
     Path(org): Path<Uuid>,
 ) -> Result<Json<OrgStorage>, ApiError> {
-    Ok(Json(storage::org_storage(&s, &c, org).await?))
+    Ok(Json(storage::org_storage(&s, &c, org, false).await?))
+}
+
+/// Recompute the organization's storage snapshot now (FIX-126; org `owner`/`admin`; the strict
+/// `export` rate class).
+#[utoipa::path(post, path = "/orgs/{org}/storage/refresh", operation_id = "refreshOrgStorage",
+    tag = "orgs",
+    params(("org" = Uuid, Path, description = "Organization id")),
+    responses((status = 200, body = OrgStorage), (status = 403, body = ErrorEnvelope),
+        (status = 404, body = ErrorEnvelope), (status = 429, body = ErrorEnvelope)),
+    security(("session" = []), ("api_key" = [])))]
+async fn refresh_org_storage(
+    c: Caller,
+    State(s): State<AppState>,
+    Path(org): Path<Uuid>,
+) -> Result<Json<OrgStorage>, ApiError> {
+    Ok(Json(storage::org_storage(&s, &c, org, true).await?))
 }
 
 /// Instance storage breakdown (phase 2, RFE-015; instance administrators).
@@ -101,5 +119,19 @@ async fn admin_storage(
     _c: InstanceAdmin,
     State(s): State<AppState>,
 ) -> Result<Json<AdminStorage>, ApiError> {
-    Ok(Json(storage::admin_storage(&s).await?))
+    Ok(Json(storage::admin_storage(&s, false).await?))
+}
+
+/// Recompute the instance storage snapshot now (FIX-126; instance administrators; the strict
+/// `export` rate class).
+#[utoipa::path(post, path = "/admin/storage/refresh", operation_id = "refreshAdminStorage",
+    tag = "admin",
+    responses((status = 200, body = AdminStorage), (status = 403, body = ErrorEnvelope),
+        (status = 429, body = ErrorEnvelope)),
+    security(("session" = [])))]
+async fn refresh_admin_storage(
+    _c: InstanceAdmin,
+    State(s): State<AppState>,
+) -> Result<Json<AdminStorage>, ApiError> {
+    Ok(Json(storage::admin_storage(&s, true).await?))
 }

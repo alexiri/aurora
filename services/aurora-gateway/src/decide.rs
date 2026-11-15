@@ -61,6 +61,9 @@ pub struct PolicyHandler {
     /// (RFE-014) Outage state: churn writes are skipped and refresh failures map to
     /// `gateway_degraded` while the database is unreachable.
     health: Option<Arc<crate::health::Health>>,
+    /// (FIX-104, D-180) `gateway.insecure_loopback_injection`, tests only: package host claims
+    /// are injected over any scheme and port when the destination is a loopback address.
+    insecure_loopback_injection: bool,
 }
 
 pub struct PolicyHandlerParts {
@@ -151,9 +154,15 @@ struct Hook {
     connect_url: String,
     /// Step 14 origin backstop for an injected LLM key.
     backstop: Option<(Arc<Governance>, BackstopInfo)>,
+    /// Injected values placed in the URL (FIX-104).
+    echo: Vec<Vec<u8>>,
 }
 
 impl PostHook for Hook {
+    fn echo_needles(&self) -> Vec<Vec<u8>> {
+        self.echo.clone()
+    }
+
     fn on_response(
         self: Box<Self>,
         status: StatusCode,
@@ -327,7 +336,15 @@ impl PolicyHandler {
             summarizer: None,
             condition_body_limit: CONDITION_BODY_BUFFER,
             health: None,
+            insecure_loopback_injection: false,
         }
+    }
+
+    /// (FIX-104, D-180) `gateway.insecure_loopback_injection`: tests and development only.
+    #[must_use]
+    pub fn with_insecure_loopback_injection(mut self, on: bool) -> Self {
+        self.insecure_loopback_injection = on;
+        self
     }
 
     /// (P4-CNT, D-119) Count rule quotas in the shared store of the `gateway` class.
@@ -420,13 +437,51 @@ impl PolicyHandler {
         method: &str,
         path: &str,
         host: &str,
+        tool: Option<(&str, &[String])>,
     ) -> Option<(ApiError, &'static str)> {
         let policy_url = self.url(rv, "policy");
         match d.verdict {
             Verdict::Allow => None,
+            // (FIX-136, D-241) The token cannot serve the tool: refused before injection, so the
+            // agent gets a clear answer instead of an upstream 403 and the token is not sent.
+            Verdict::Block {
+                reason: BlockReason::ToolScopeMissing,
+            } => {
+                let (tool_id, needs) = tool.unwrap_or(("", &[]));
+                Some((
+                    ApiError::new(
+                        StatusCode::FORBIDDEN,
+                        "tool_scope_missing",
+                        format!(
+                            "This connection's token does not have the scope this tool needs ({}). Reconnect with it, or edit the connection's scopes if the token has it.",
+                            needs.join(" or ")
+                        ),
+                    )
+                    .with_details(json!({
+                        "tool_id": tool_id, "needs": needs, "method": method, "path": path,
+                        "manage_url": policy_url
+                    })),
+                    "tool_scope_missing",
+                ))
+            }
             Verdict::Block {
                 reason: BlockReason::Rule,
             } => {
+                // (D-178, Q-R5-14) Workspace rules are named, with the workspace policy URL; an
+                // organization-level rule is answered generically: no rule name, no policy URL.
+                if d.trace.decided_by == Some(aurora_policy::eval::ScopeKind::Organization) {
+                    return Some((
+                        ApiError::new(
+                            StatusCode::FORBIDDEN,
+                            "blocked_by_policy",
+                            "An organization policy blocks this request. Ask an organization admin if you need it allowed.".to_owned(),
+                        )
+                        .with_details(json!({
+                            "scope": "organization", "method": method, "path": path
+                        })),
+                        "blocked",
+                    ));
+                }
                 let name = d.deciding_rule().map(|r| r.name.clone()).unwrap_or_default();
                 Some((
                     ApiError::new(
@@ -455,6 +510,21 @@ impl PolicyHandler {
                     "manage_url": policy_url
                 })),
                 "app_untooled_blocked",
+            )),
+            // (FIX-133, D-240) Decided before any rule: the connection is read-only.
+            Verdict::Block {
+                reason: BlockReason::ReadOnlyConnection,
+            } => Some((
+                ApiError::new(
+                    StatusCode::FORBIDDEN,
+                    "blocked_by_policy",
+                    "This connection is read-only: it allows only the app's read tools, and this request is not one of them. No rule can allow it.".to_owned(),
+                )
+                .with_details(json!({
+                    "reason": "read_only_connection", "method": method, "path": path,
+                    "manage_url": policy_url
+                })),
+                "read_only_connection",
             )),
             Verdict::Block {
                 reason: BlockReason::DefaultDenied,
@@ -525,12 +595,44 @@ impl PolicyHandler {
     }
 }
 
-#[async_trait::async_trait]
-impl RequestHandler for PolicyHandler {
-    async fn handle(&self, req: PipelineRequest) -> Outcome {
+/// (FIX-084) The state a released hold hands to the second pass of [`PolicyHandler::handle_with`].
+#[derive(Clone, Copy)]
+struct Released {
+    /// The request's arrival, so the log row's latency includes the hold.
+    started: Instant,
+    /// Whether the client's body was empty (the replay stream no longer says).
+    bodyless: bool,
+    /// The held request had a credential to inject. One that no longer has any is refused
+    /// (`credential_unavailable`), not forwarded without it.
+    had_credential: bool,
+}
+
+/// The counter of a released request: its rule quotas were consumed once when the hold was
+/// created, so the second evaluation must neither be refused by that very count nor charge again.
+struct NoCount;
+
+impl RateCounter for NoCount {
+    fn is_exhausted(
+        &self,
+        _rule_key: Uuid,
+        _agent: Uuid,
+        _window: &aurora_policy::rule::RateLimit,
+    ) -> bool {
+        false
+    }
+    fn record(&self, _rule_key: Uuid, _agent: Uuid, _window: &aurora_policy::rule::RateLimit) {}
+}
+
+impl PolicyHandler {
+    /// The MITM-lane decision. `released` is `Some` on the second pass that follows an approved
+    /// hold: an approval authorizes the held request only under the policy in force when it is
+    /// released (docs/07 §Lifecycle), so the credential is resolved and the policy evaluated
+    /// again; a request that would now be blocked is refused as on arrival, one that would still
+    /// need approval is released (the approval stands, no second hold, no second charge).
+    async fn handle_with(&self, req: PipelineRequest, released: Option<Released>) -> Outcome {
         let PipelineRequest {
             identity,
-            lane: _,
+            lane,
             scheme,
             host,
             port,
@@ -542,14 +644,15 @@ impl RequestHandler for PolicyHandler {
             upgrade,
             body,
         } = req;
-        let bodyless = hyper::body::Body::is_end_stream(&body);
+        let bodyless =
+            released.map_or_else(|| hyper::body::Body::is_end_stream(&body), |r| r.bodyless);
         let mut ctx = Ctx {
             identity: identity.clone(),
             lane: "mitm",
             method: method.to_string(),
             host: host.clone(),
             path: path.clone(),
-            started: Instant::now(),
+            started: released.map_or_else(Instant::now, |r| r.started),
             secret_id: None,
             decision: "allow",
             rule: None,
@@ -572,12 +675,47 @@ impl RequestHandler for PolicyHandler {
         let registry = rv.registry.clone();
         // (D-74) A host that is exactly a registered app instance serves that app's `{instance}`
         // host entries; otherwise the static host index decides.
+        // (D-231, SEC-59) Registrations may share the host under disjoint base paths: the one whose
+        // base path covers the (already normalized) path serves the request, and every manifest
+        // decision (host entry `path_prefix`, tool `path`/`params`, `{path.N}`) uses the **app
+        // path**, the path below the base path. A path outside every base path matches no
+        // instance: nothing is injected.
+        let inst =
+            aurora_registry::instance::select(&rv.instances, &path, |i| i.base_path.as_deref());
+        let inst_id = inst.map(|i| i.id);
+        let inst_app_path = inst
+            .map(|i| aurora_registry::instance::app_path(i.base_path.as_deref(), &path).to_owned());
         let app_match = registry.as_ref().and_then(|l| {
-            rv.instance
-                .as_ref()
-                .and_then(|i| apps::identify_instance_app(l, &i.app_id, &path))
+            inst.zip(inst_app_path.as_deref())
+                .and_then(|(i, ap)| apps::identify_instance_app(l, &i.app_id, ap))
                 .or_else(|| apps::identify_app(l, &host, port, &path))
         });
+        let app_path: String = match (&app_match, inst_app_path) {
+            (Some(m), Some(ap)) if m.instance => ap,
+            _ => path.clone(),
+        };
+        // A named connection of a registration on this host, used outside every registered base
+        // path: refused like a connection on the wrong host (421 with `expected_base_url`), when
+        // the agent may use it at all.
+        if inst.is_none()
+            && !rv.instances.is_empty()
+            && let Some(c) = aurora_headers
+                .connection_id
+                .as_deref()
+                .and_then(|n| Uuid::parse_str(n).ok())
+                .and_then(|n| rv.conns.iter().find(|c| c.id == n))
+                .filter(|c| {
+                    c.instance_id.is_some()
+                        && c.instance_host
+                            .as_deref()
+                            .is_some_and(|h| h.eq_ignore_ascii_case(&host))
+                })
+            && !selected_candidates(rv.all_rules(), &fi, &[Cand::App(c.clone()).credential()])
+                .is_empty()
+        {
+            let err = guidance::host_mismatch(&host, c.instance_base_path.as_deref());
+            return Outcome::Respond(self.refuse(ctx, &err, "guard_refused"));
+        }
         // Candidates serving this path; selection by allow rules (07 §Injection selection).
         let mut cands: Vec<Cand> = rv
             .secrets
@@ -598,7 +736,7 @@ impl RequestHandler for PolicyHandler {
                 .collect();
             // Tenant-bound entries only offer connections stored for this host; when none
             // does, the mismatching ones stay so that the guard answers 421.
-            let on_instance = rv.instance.as_ref().filter(|_| m.instance).map(|i| i.id);
+            let on_instance = inst_id.filter(|_| m.instance);
             let bound: Vec<_> = if let Some(iid) = on_instance {
                 // Instance host: only connections bound to this very instance; connections of
                 // other instances stay so the guard answers 421, default-host ones never ride here.
@@ -639,6 +777,29 @@ impl RequestHandler for PolicyHandler {
             };
             cands.extend(bound.into_iter().map(Cand::App));
         }
+        // (FIX-104, D-180, SEC-04) Transport rule: a package's or secret's host claim is injected
+        // only over TLS to the claimed port; an operator-configured LLM endpoint only to the exact
+        // scheme, host and port the operator configured. Otherwise the request is an
+        // uncredentialed one to that destination, decided by policy as such.
+        let https = scheme == crate::pipeline::Scheme::Https;
+        if !(self.insecure_loopback_injection && mechanisms::route::is_loopback_host(&host)) {
+            let app_claim_port = app_match
+                .as_ref()
+                .and_then(|m| mechanisms::route::claim_port(&m.entry.host));
+            cands.retain(|c| match c {
+                Cand::App(_) => mechanisms::route::claim_transport_ok(app_claim_port, https, port),
+                Cand::Secret(s) if s.kind == aurora_policy::facts::SecretKind::Llm => {
+                    self.resolver.llm().accepts_injection(
+                        s.llm_endpoint.as_deref(),
+                        s.provider.as_deref(),
+                        https,
+                        &host,
+                        port,
+                    )
+                }
+                Cand::Secret(s) => mechanisms::route::claim_transport_ok(s.claim_port, https, port),
+            });
+        }
         let creds: Vec<Credential> = cands.iter().map(Cand::credential).collect();
         let selected: HashSet<_> = selected_candidates(rv.all_rules(), &fi, &creds);
         let (granted, ungranted): (Vec<_>, Vec<_>) = cands
@@ -672,6 +833,16 @@ impl RequestHandler for PolicyHandler {
             ctx.connection_id = Some(c.id);
         }
         ctx.app_id = app_match.as_ref().map(|m| m.entry.app_id.clone());
+        // (FIX-084) The grant or connection the hold stood on is gone: refuse, never send the
+        // approved request on without the credential it was approved for.
+        if winner.is_none() && released.is_some_and(|r| r.had_credential) {
+            let kind = if app_match.is_some() {
+                "connection"
+            } else {
+                "secret"
+            };
+            return Outcome::Respond(self.refuse(ctx, &credential_unavailable(kind), "error"));
+        }
         if winner.is_none() && app_unavailable {
             let err = ApiError::new(
                 StatusCode::FORBIDDEN,
@@ -694,7 +865,7 @@ impl RequestHandler for PolicyHandler {
             .is_some_and(|g| Governance::needs_body(g, &host_port, wsec))
             || app_match
                 .as_ref()
-                .is_some_and(|m| apps::needs_body(m, &host, port, &path, method.as_str()));
+                .is_some_and(|m| apps::needs_body(m, &host, port, &app_path, method.as_str()));
         let (body_prefix, truncated, mut body) = if rv.needs_body() || may_hold || llm_body {
             let limit = if rv.needs_body() || llm_body {
                 self.condition_body_limit
@@ -721,12 +892,13 @@ impl RequestHandler for PolicyHandler {
                 m,
                 &host,
                 port,
-                &path,
+                &app_path,
                 query.as_deref(),
                 method.as_str(),
                 &body_prefix,
                 truncated,
                 &param_headers,
+                winner.as_ref().and_then(Cand::connect_method),
             )
         });
         ctx.tool_id = tool.map(|t| t.id.clone());
@@ -760,7 +932,19 @@ impl RequestHandler for PolicyHandler {
             truncated,
             app_id: ctx.app_id.clone(),
             tool_id: ctx.tool_id.clone(),
-            tool_tags: tool.map(apps::tool_tags).unwrap_or_default(),
+            tool_tags: tool
+                .zip(app_match.as_ref())
+                .map(|(t, m)| {
+                    apps::tool_tags(
+                        m.app,
+                        t,
+                        match &winner {
+                            Some(Cand::App(c)) => Some(c.as_ref()),
+                            _ => None,
+                        },
+                    )
+                })
+                .unwrap_or_default(),
             winning_credential: winner.as_ref().map(Cand::credential),
             is_llm_host: rv.is_llm_host,
             identity: fi,
@@ -769,28 +953,40 @@ impl RequestHandler for PolicyHandler {
         };
         // (P4-CNT) With a shared backend the counts are read first (peek) and passed in; the
         // evaluator stays pure.
-        let pk = self.rate.peek(&rv, identity.agent_id).await;
+        let pk = if released.is_some() {
+            Peeked::Local { fallback: false }
+        } else {
+            self.rate.peek(&rv, identity.agent_id).await
+        };
         let d = evaluate(
             &rv.org_policy,
             &rv.ws_policy,
             &facts,
-            pk.counter(&self.counters),
+            if released.is_some() {
+                &NoCount
+            } else {
+                pk.counter(&self.counters)
+            },
         );
         ctx.secret_id = wsec.map(|c| c.id);
         ctx.rule = d.deciding_rule().map(|r| (r.logical_id, r.name.clone()));
         // The consume is the authority (all-or-nothing, after an allow / needs-approval verdict;
         // a held request consumes now, once, and is not charged again on approval).
-        match self.rate.settle(&pk, &d, &self.counters).await {
-            Settled::Refuse(err, decision) => {
-                return Outcome::Respond(self.refuse(ctx, &err, decision));
+        if released.is_none() {
+            match self.rate.settle(&pk, &d, &self.counters).await {
+                Settled::Refuse(err, decision) => {
+                    return Outcome::Respond(self.refuse(ctx, &err, decision));
+                }
+                Settled::Proceed { fallback } => ctx.counter_fallback = fallback,
             }
-            Settled::Proceed { fallback } => ctx.counter_fallback = fallback,
         }
         if d.verdict == Verdict::NeedsApproval
+            && released.is_none()
             && let Some(holds) = &self.holds
         {
             // 8. approval hold (nothing decrypted yet).
             let red_path = crate::reqlog::redact_path(&path);
+            let red_app_path = crate::reqlog::redact_path(&app_path);
             let hdr = |n: &str| {
                 headers
                     .get(n)
@@ -809,7 +1005,9 @@ impl RequestHandler for PolicyHandler {
                 &crate::hold::SummaryRequest {
                     method: &ctx.method,
                     host: &host,
-                    path: &red_path,
+                    // `{path.N}` in the summary counts from the app path (D-231); the approval
+                    // display below keeps the full path.
+                    path: &red_app_path,
                     query: query.as_deref(),
                     content_type: content_type.as_deref(),
                     header: &hdr,
@@ -826,13 +1024,38 @@ impl RequestHandler for PolicyHandler {
                     host: &host,
                     path: &red_path,
                     rule: ctx.rule.as_ref().map(|(i, n)| (*i, n.as_str())),
+                    connection_id: ctx.connection_id,
                     batch: &aurora_headers,
                     summary: &summary,
                     rule_timeout_secs: d.approval_timeout_secs,
                 })
                 .await;
             match outcome {
-                HoldOutcome::Approved => ctx.decision = "approved",
+                // (FIX-084) Not forwarded on the strength of the pre-hold decision: the second
+                // pass resolves the credential and evaluates policy again, against the policy in
+                // force now, with the request exactly as it was held (the body is the buffered one).
+                HoldOutcome::Approved => {
+                    let again = PipelineRequest {
+                        identity,
+                        lane,
+                        scheme,
+                        host,
+                        port,
+                        method,
+                        path,
+                        query,
+                        headers,
+                        aurora_headers,
+                        upgrade,
+                        body,
+                    };
+                    let released = Released {
+                        started: ctx.started,
+                        bodyless,
+                        had_credential: winner.is_some(),
+                    };
+                    return Box::pin(self.handle_with(again, Some(released))).await;
+                }
                 HoldOutcome::Denied(id) => {
                     let err = ApiError::new(
                         StatusCode::FORBIDDEN,
@@ -869,8 +1092,18 @@ impl RequestHandler for PolicyHandler {
                     return Outcome::Respond(self.refuse(ctx, &err, "error"));
                 }
             }
-        } else if let Some((err, decision)) = self.verdict_error(&rv, &d, &ctx.method, &path, &host)
+        } else if released.is_some() && matches!(d.verdict, Verdict::Allow | Verdict::NeedsApproval)
         {
+            // The approval stands: released, whatever the rules now say about asking.
+            ctx.decision = "approved";
+        } else if let Some((err, decision)) = self.verdict_error(
+            &rv,
+            &d,
+            &ctx.method,
+            &path,
+            &host,
+            tool.map(|t| (t.id.as_str(), t.scopes.as_slice())),
+        ) {
             return Outcome::Respond(self.refuse(ctx, &err, decision));
         }
         self.apply_hits(&d, &pk);
@@ -891,19 +1124,15 @@ impl RequestHandler for PolicyHandler {
             match mechanisms::route::instance_guard(
                 conn.instance_id,
                 conn.instance_host.as_deref(),
-                rv.instance.as_ref().filter(|_| m.instance).map(|i| i.id),
+                conn.instance_base_path.as_deref(),
+                inst_id.filter(|_| m.instance),
                 &host,
+                &path,
             ) {
                 Ok(()) => {}
                 Err(mechanisms::route::GuardError::Mismatch { expected }) => {
-                    let err = ApiError::new(
-                        StatusCode::MISDIRECTED_REQUEST,
-                        "host_mismatch",
-                        format!(
-                            "This connection is bound to {expected}; send the request to that host."
-                        ),
-                    )
-                    .with_details(json!({ "expected_host": expected }));
+                    let err =
+                        guidance::host_mismatch(&expected, conn.instance_base_path.as_deref());
                     return Outcome::Respond(self.refuse(ctx, &err, "guard_refused"));
                 }
                 Err(mechanisms::route::GuardError::Unavailable) => {
@@ -951,7 +1180,9 @@ impl RequestHandler for PolicyHandler {
             // 10. token freshness (after the decision): refresh / mint under the lock.
             let refreshed;
             let conn: &Arc<apps::ConnCand> = match (&self.tokens, &registry) {
-                (Some(t), Some(l)) if TokenManager::applies(m.app) => {
+                (Some(t), Some(l))
+                    if TokenManager::applies(m.app, conn.connect_method.as_deref()) =>
+                {
                     match t.ensure_fresh(l, conn, &cmap, false).await {
                         Ok(c) => {
                             refreshed = Arc::new(c);
@@ -990,7 +1221,7 @@ impl RequestHandler for PolicyHandler {
             };
             // 9. token interception: answered locally, never forwarded.
             if let Some(i) = &m.entry.intercept
-                && mechanisms::intercept::matches(i, &method, &path)
+                && mechanisms::intercept::matches(i, &method, &app_path)
             {
                 let Some(tok) = exec.credential("access_token") else {
                     return unavailable(self, ctx);
@@ -1005,8 +1236,13 @@ impl RequestHandler for PolicyHandler {
             }
             // 11-12. inject, route, transform, finalize.
             let vars = exec.vars();
-            let pre = (self.stale_retry_eligible(m, bodyless, upgrade.is_some()))
-                .then(|| (headers.clone(), query.clone()));
+            let pre = (self.stale_retry_eligible(
+                m,
+                conn.connect_method.as_deref(),
+                bodyless,
+                upgrade.is_some(),
+            ))
+            .then(|| (headers.clone(), query.clone()));
             let mut new_path = path.clone();
             let mut up_host = host.clone();
             let mut ok =
@@ -1054,7 +1290,12 @@ impl RequestHandler for PolicyHandler {
             self.touch(conn.id);
             let fb = self.fallback(&rv, app_match.as_ref(), &ungranted, &host);
             let passthrough = pass_challenge(app_match.as_ref());
-            let hook = self.hook(&rv, ctx, fb, passthrough, None);
+            let echo = inject::url_needles(
+                exec.string_values().map(str::as_bytes),
+                &new_path,
+                query.as_deref(),
+            );
+            let hook = self.hook(&rv, ctx, fb, passthrough, None, echo);
             let retry = match (pre, &self.tokens, &registry) {
                 (Some((h0, q0)), Some(t), Some(l)) => Some(Box::new(StaleRetry {
                     tokens: t.clone(),
@@ -1064,8 +1305,7 @@ impl RequestHandler for PolicyHandler {
                     entry: m.entry.clone(),
                     codes: m
                         .app
-                        .token
-                        .as_ref()
+                        .token_for(conn.connect_method.as_deref())
                         .map(|t| t.stale_codes.clone())
                         .unwrap_or_default(),
                     pkg_ctx: pkg_ctx.to_vec(),
@@ -1093,6 +1333,11 @@ impl RequestHandler for PolicyHandler {
                 hook: Some(hook),
                 response_headers,
                 retry,
+                // (D-251) Only a request that won a granted connection of an LDAP app carries
+                // the block: the lane is a capability the grant confers, not open egress.
+                ldap: crate::ldap::is_ldap_host(&host)
+                    .then(|| m.app.ldap.clone())
+                    .flatten(),
             });
         }
         if let Some(Cand::Secret(c)) = &winner {
@@ -1146,7 +1391,9 @@ impl RequestHandler for PolicyHandler {
             ctx.injected = 1;
             self.touch(c.id);
             let fb = self.fallback(&rv, app_match.as_ref(), &ungranted, &host);
-            let hook = self.hook(&rv, ctx, fb, false, backstop);
+            let echo =
+                inject::url_needles([value.expose().as_slice()], &new_path, query.as_deref());
+            let hook = self.hook(&rv, ctx, fb, false, backstop, echo);
             return Outcome::Forward(PreparedRequest {
                 scheme,
                 host,
@@ -1160,11 +1407,12 @@ impl RequestHandler for PolicyHandler {
                 hook: Some(hook),
                 response_headers,
                 retry: None,
+                ldap: None,
             });
         }
         let fb = self.fallback(&rv, app_match.as_ref(), &ungranted, &host);
         let passthrough = pass_challenge(app_match.as_ref());
-        let hook = self.hook(&rv, ctx, fb, passthrough, None);
+        let hook = self.hook(&rv, ctx, fb, passthrough, None, Vec::new());
         Outcome::Forward(PreparedRequest {
             scheme,
             host,
@@ -1178,7 +1426,33 @@ impl RequestHandler for PolicyHandler {
             hook: Some(hook),
             response_headers,
             retry: None,
+            ldap: None,
         })
+    }
+}
+
+#[async_trait::async_trait]
+impl RequestHandler for PolicyHandler {
+    async fn handle(&self, req: PipelineRequest) -> Outcome {
+        let outcome = self.handle_with(req, None).await;
+        match outcome {
+            // (D-251) A request on an LDAP app's synthetic host is answered by the LDAP lane
+            // only when it won a granted connection of that app (then it carries the approved
+            // `ldap` block). Anything else on that host — no connection, no grant, a host of no
+            // LDAP app — is never forwarded and never reaches a directory.
+            Outcome::Forward(mut p) if crate::ldap::is_ldap_host(&p.host) && p.ldap.is_none() => {
+                let err = ApiError::new(
+                    StatusCode::FORBIDDEN,
+                    "ldap_no_connection",
+                    "This agent has no granted connection for this directory.",
+                );
+                if let Some(h) = p.hook.take() {
+                    h.on_error(&err);
+                }
+                Outcome::Respond(guidance::response(&err))
+            }
+            o => o,
+        }
     }
 
     async fn db_open(
@@ -1284,7 +1558,7 @@ impl RequestHandler for PolicyHandler {
                 )));
             }
         };
-        let endpoint = DbEndpoint::from_credentials(raw.expose()).map_err(|e| {
+        let endpoint = DbEndpoint::from_credentials(raw.expose(), &dbc.conn.metadata).map_err(|e| {
             tracing::warn!(connection = %connection_id, error = %e, "unusable database credentials");
             DbOpenError::Unavailable(credential_unavailable("connection"))
         })?;
@@ -1441,7 +1715,7 @@ impl RequestHandler for PolicyHandler {
         );
         let mut ctx = ctx;
         ctx.rule = d.deciding_rule().map(|r| (r.logical_id, r.name.clone()));
-        match self.verdict_error(&rv, &d, "CONNECT", "/", host) {
+        match self.verdict_error(&rv, &d, "CONNECT", "/", host, None) {
             None => {
                 // A CONNECT counts as one request (consumed once, when it is allowed).
                 if let Settled::Refuse(err, decision) =
@@ -1521,16 +1795,21 @@ impl RequestHandler for PolicyHandler {
 
 impl PolicyHandler {
     /// Body-less, non-upgrade app requests of a refreshing app may be resent once.
-    fn stale_retry_eligible(&self, m: &apps::AppMatch<'_>, bodyless: bool, upgrade: bool) -> bool {
+    fn stale_retry_eligible(
+        &self,
+        m: &apps::AppMatch<'_>,
+        connect_method: Option<&str>,
+        bodyless: bool,
+        upgrade: bool,
+    ) -> bool {
         self.tokens.is_some()
             && bodyless
             && !upgrade
             && m.entry.transform.is_none()
             && m.entry.intercept.is_none()
-            && TokenManager::applies(m.app)
+            && TokenManager::applies(m.app, connect_method)
             && m.app
-                .token
-                .as_ref()
+                .token_for(connect_method)
                 .is_some_and(|t| !t.stale_codes.is_empty())
     }
 
@@ -1625,6 +1904,7 @@ impl PolicyHandler {
         fallback: Fallback,
         passthrough_challenge: bool,
         backstop: Option<(Arc<Governance>, BackstopInfo)>,
+        echo: Vec<Vec<u8>>,
     ) -> Box<dyn PostHook> {
         let connect_url = match &ctx.app_id {
             Some(a) => self.url(rv, &format!("apps/{a}")),
@@ -1639,6 +1919,7 @@ impl PolicyHandler {
             manage_url: self.url(rv, "policy"),
             connect_url,
             backstop,
+            echo,
         })
     }
 }
@@ -1656,6 +1937,20 @@ struct DbSession {
 #[async_trait::async_trait]
 impl DbAuthorizer for DbSession {
     async fn authorize(&self, class: aurora_sqlclass::Class, statement: &str) -> DbVerdict {
+        self.authorize_with(class, statement, None).await
+    }
+}
+
+impl DbSession {
+    /// `released` is the arrival time on the second pass after an approved hold (FIX-084): the
+    /// grant and the policy are read again, a statement that would now be refused is refused, and
+    /// one that would still need approval is released without a second hold or charge.
+    async fn authorize_with(
+        &self,
+        class: aurora_sqlclass::Class,
+        statement: &str,
+        released: Option<Instant>,
+    ) -> DbVerdict {
         let h = &self.handler;
         let path = format!("/{}", class.as_str());
         let mut ctx = Ctx {
@@ -1664,7 +1959,7 @@ impl DbAuthorizer for DbSession {
             method: "POST".to_owned(),
             host: self.host.clone(),
             path: path.clone(),
-            started: Instant::now(),
+            started: released.unwrap_or_else(Instant::now),
             secret_id: None,
             decision: "allow",
             rule: None,
@@ -1717,6 +2012,7 @@ impl DbAuthorizer for DbSession {
                 &body_prefix,
                 truncated,
                 &[],
+                self.conn.connect_method.as_deref(),
             )
         });
         ctx.tool_id = tool.map(|t| t.id.clone());
@@ -1730,33 +2026,47 @@ impl DbAuthorizer for DbSession {
             truncated,
             app_id: ctx.app_id.clone(),
             tool_id: ctx.tool_id.clone(),
-            tool_tags: tool.map(apps::tool_tags).unwrap_or_default(),
+            tool_tags: tool
+                .zip(app)
+                .map(|(t, a)| apps::tool_tags(a, t, None))
+                .unwrap_or_default(),
             winning_credential: Some(cred),
             is_llm_host: false,
             identity: fi,
             connect_time: false,
             host_apps: Vec::new(),
         };
-        let pk = h.rate.peek(&rv, self.identity.agent_id).await;
+        let pk = if released.is_some() {
+            Peeked::Local { fallback: false }
+        } else {
+            h.rate.peek(&rv, self.identity.agent_id).await
+        };
         let d = evaluate(
             &rv.org_policy,
             &rv.ws_policy,
             &facts,
-            pk.counter(&h.counters),
+            if released.is_some() {
+                &NoCount
+            } else {
+                pk.counter(&h.counters)
+            },
         );
         ctx.rule = d.deciding_rule().map(|r| (r.logical_id, r.name.clone()));
-        match h.rate.settle(&pk, &d, &h.counters).await {
-            Settled::Refuse(err, decision) => {
-                h.refuse(ctx, &err, decision);
-                return if err.status() == StatusCode::SERVICE_UNAVAILABLE {
-                    DbVerdict::Unavailable(err)
-                } else {
-                    DbVerdict::Deny(err)
-                };
+        if released.is_none() {
+            match h.rate.settle(&pk, &d, &h.counters).await {
+                Settled::Refuse(err, decision) => {
+                    h.refuse(ctx, &err, decision);
+                    return if err.status() == StatusCode::SERVICE_UNAVAILABLE {
+                        DbVerdict::Unavailable(err)
+                    } else {
+                        DbVerdict::Deny(err)
+                    };
+                }
+                Settled::Proceed { fallback } => ctx.counter_fallback = fallback,
             }
-            Settled::Proceed { fallback } => ctx.counter_fallback = fallback,
         }
         if d.verdict == Verdict::NeedsApproval
+            && released.is_none()
             && let Some(holds) = &h.holds
         {
             let summary = aurora_summary::ApprovalSummary {
@@ -1785,6 +2095,7 @@ impl DbAuthorizer for DbSession {
                     host: &self.host,
                     path: &path,
                     rule: ctx.rule.as_ref().map(|(i, n)| (*i, n.as_str())),
+                    connection_id: Some(self.conn.id),
                     batch: &crate::hygiene::AuroraHeaders::default(),
                     summary: &summary,
                     // RFE-011a (D-56): the rule's approval timeout applies to statements too.
@@ -1792,7 +2103,11 @@ impl DbAuthorizer for DbSession {
                 })
                 .await;
             match outcome {
-                HoldOutcome::Approved => ctx.decision = "approved",
+                // (FIX-084) Re-read the grant and the policy before the statement is released.
+                HoldOutcome::Approved => {
+                    return Box::pin(self.authorize_with(class, statement, Some(ctx.started)))
+                        .await;
+                }
                 HoldOutcome::Denied(id) => {
                     let err = ApiError::new(
                         StatusCode::FORBIDDEN,
@@ -1830,7 +2145,12 @@ impl DbAuthorizer for DbSession {
                     return DbVerdict::Unavailable(err);
                 }
             }
-        } else if let Some((err, decision)) = h.verdict_error(&rv, &d, "POST", &path, &self.host) {
+        } else if released.is_some() && matches!(d.verdict, Verdict::Allow | Verdict::NeedsApproval)
+        {
+            ctx.decision = "approved";
+        } else if let Some((err, decision)) =
+            h.verdict_error(&rv, &d, "POST", &path, &self.host, None)
+        {
             h.refuse(ctx, &err, decision);
             return if err.status() == StatusCode::SERVICE_UNAVAILABLE {
                 DbVerdict::Unavailable(err)
@@ -2011,6 +2331,7 @@ impl Retry for StaleRetry {
             hook: None,
             response_headers: HeaderMap::new(),
             retry: None,
+            ldap: None,
         })
     }
 }

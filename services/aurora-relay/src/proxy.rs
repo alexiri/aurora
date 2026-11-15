@@ -12,7 +12,7 @@ use std::sync::Arc;
 use crate::api::StreamsAnswer;
 use crate::edge::RelayBody;
 use crate::state::State;
-use crate::stream::{LegWs, LiveStream, StreamKey, Streams, dial, run_leg};
+use crate::stream::{LegWs, LiveStream, Slot, StreamKey, Streams, dial, run_leg};
 use bytes::Bytes;
 use http_body_util::BodyExt;
 use hyper::HeaderMap;
@@ -45,6 +45,15 @@ async fn send_chunk(tx: &crate::stream::LiveTx, d: &[u8]) -> bool {
 /// "one WebSocket per upstream connection"). `head` is the rebuilt request head,
 /// `body` the request body, `upgrade` the browser's pending upgrade (present for
 /// WebSocket requests only): on a 101 answer the two upgraded pipes are bridged.
+/// What the edge knows about the exchange beyond the bytes.
+#[derive(Debug, Clone, Copy)]
+pub struct Exchange {
+    /// The request was `HEAD`: the answer has a head only, whatever its framing headers say.
+    pub head_request: bool,
+    /// `relay.request_body_max_bytes`: a chunked upload counts against it as it streams.
+    pub body_max: usize,
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn forward(
     state: Arc<State>,
@@ -55,9 +64,13 @@ pub async fn forward(
     body_len: BodyLen,
     mut body: hyper::body::Incoming,
     upgrade: Option<hyper::upgrade::OnUpgrade>,
+    slot: Slot,
+    ex: Exchange,
 ) -> Result<hyper::Response<RelayBody>, HttpError> {
+    let head_limit = streams.timeouts().header;
+    // A failed dial drops `slot` (the concurrent-stream reservation) on this return.
     let ws = dial(&state, &sa).await?;
-    let mut live = run_leg(streams, key, ws);
+    let mut live = run_leg(streams, key, ws, slot);
     let tx = live.tx().clone();
     // The head goes first, then the body (the pump frames everything at leg size).
     if !tx.to_app(&head).await {
@@ -65,14 +78,22 @@ pub async fn forward(
     }
     // The body follows: with a known `content-length` the raw frames pass through; a
     // chunked request is re-framed (the outbound head dropped `transfer-encoding`, so the
-    // app expects exactly `content-length` bytes); no body is a no-op.
+    // app expects exactly `content-length` bytes); no body is a no-op. A chunked upload is
+    // counted against the body cap: past it the exchange is over (413, leg closed).
+    let (too_big_tx, too_big_rx) = tokio::sync::oneshot::channel::<()>();
     let body_task = tokio::spawn(async move {
         match body_len {
             BodyLen::None => true,
             BodyLen::Chunked => {
+                let mut total = 0usize;
                 while let Some(res) = body.frame().await {
                     let Ok(f) = res else { return false };
                     let Ok(d) = f.into_data() else { return false };
+                    total = total.saturating_add(d.len());
+                    if total > ex.body_max {
+                        let _ = too_big_tx.send(());
+                        return false;
+                    }
                     if !send_chunk(&tx, &d).await {
                         return false;
                     }
@@ -97,13 +118,30 @@ pub async fn forward(
             }
         }
     });
-    // The answer's head: raw bytes from the stream until `\r\n\r\n`.
-    let raw = match read_head(&mut live).await {
-        Ok(b) => b,
-        Err(_) => {
-            body_task.abort();
-            tracing::debug!("relay: the leg ended before the answer head");
-            return Err(502);
+    // The answer's head: raw bytes from the stream until `\r\n\r\n`, within the response-head
+    // limit (`PREVIEW_HEADER_TIMEOUT`, 504). A chunked upload that outgrows the body cap ends
+    // the exchange first (413).
+    let raw = tokio::select! {
+        r = tokio::time::timeout(head_limit, read_head(&mut live)) => match r {
+            Ok(Ok(b)) => b,
+            Ok(Err(())) => {
+                body_task.abort();
+                tracing::debug!("relay: the leg ended before the answer head");
+                return Err(502);
+            }
+            Err(_) => {
+                body_task.abort();
+                tracing::debug!(limit = ?head_limit, "relay: no answer head in time");
+                metrics::counter!("aurora_relay_refused_total", "reason" => "head_timeout")
+                    .increment(1);
+                return Err(504);
+            }
+        },
+        Ok(()) = too_big_rx => {
+            tracing::debug!(max = ex.body_max, "relay: chunked upload over the body cap");
+            metrics::counter!("aurora_relay_refused_total", "reason" => "body_too_large")
+                .increment(1);
+            return Err(413);
         }
     };
     let Some(rh) = parse_response_head(&raw) else {
@@ -121,6 +159,8 @@ pub async fn forward(
         // this exchange takes over the whole `LiveStream`: `bridge_upgrade` gets the send
         // half, the receive half and `rest` (the app's first frames, if any).
         let (tx, from_app) = live.into_parts();
+        // An upgraded stream idles out on the longer `PREVIEW_WS_IDLE_TIMEOUT`.
+        tx.mark_upgraded();
         if let Some(up) = upgrade {
             bridge_upgrade(up, tx, from_app, rest);
         } else {
@@ -137,30 +177,166 @@ pub async fn forward(
     }
     // The response is handed to hyper with a body task that forwards until the stream ends.
     let (body_tx, body_rx) = tokio::sync::mpsc::channel::<Result<Frame<Bytes>, std::io::Error>>(16);
+    let aborted = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let framing = answer_framing(rh.status, &rh.headers, ex.head_request);
+    let mut mode = match framing {
+        Framing::Chunked => Mode::Chunked(ChunkedDecoder::default()),
+        Framing::Length(n) => Mode::Length(n),
+        Framing::UntilClose => Mode::UntilClose,
+        Framing::Empty => Mode::Length(0),
+    };
+    let abort_flag = aborted.clone();
     let _body_task = tokio::spawn(async move {
-        if !rest.is_empty()
-            && body_tx
-                .send(Ok(Frame::data(Bytes::from(rest))))
-                .await
-                .is_err()
-        {
-            return;
+        let mut revoked = live.tx().watch();
+        // The body's end: complete, the browser went away (`Gone`: nothing more to say to
+        // it), or the answer is cut short (`Aborted`: the browser must see an error, not a
+        // document that merely stops).
+        let end = pump_answer(&mut live, &mut revoked, &body_tx, &mut mode, rest).await; // A viewer cut off by revocation gets an error too, not a short document.
+        if end == AnswerEnd::Aborted || (end == AnswerEnd::Gone && *revoked.borrow()) {
+            abort_flag.store(true, std::sync::atomic::Ordering::SeqCst);
         }
-        // Bridge the rest: the body (chunked framing included) — the same copy.
-        while let Some(b) = live.from_app().await {
-            if body_tx.send(Ok(Frame::data(b))).await.is_err() {
-                return;
-            }
-        }
-        // The stream ended; the body ends with it.
+        // Dropping `body_tx` ends (or, with the flag, fails) the body; dropping `live`
+        // detaches the leg and frees the stream slot.
     });
     let mut res = hyper::Response::builder()
         .status(rh.status)
-        .body(RelayBody::new(body_rx))
+        .body(RelayBody::new(body_rx, aborted))
         .map_err(|_| 502u16)?;
     // Apply the response header rewrite (SEC-85) on the parsed head.
     rewrite(&mut res, &rh.headers, rh.status);
     Ok(res)
+}
+
+/// How the app's answer body is delimited (RFC 9112 §6.3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Framing {
+    /// No body (`HEAD`, 1xx, 204, 304).
+    Empty,
+    Chunked,
+    Length(u64),
+    /// No length: the end of the stream ends the body (the relay asks the app to close).
+    UntilClose,
+}
+
+/// The framing of an answer with this status and head, to a request that was `HEAD` or not.
+pub fn answer_framing(status: u16, headers: &[(String, String)], head_request: bool) -> Framing {
+    if head_request || status < 200 || status == 204 || status == 304 {
+        return Framing::Empty;
+    }
+    if is_chunked(headers) {
+        return Framing::Chunked;
+    }
+    let len = headers
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("content-length"))
+        .and_then(|(_, v)| v.trim().parse::<u64>().ok());
+    len.map_or(Framing::UntilClose, Framing::Length)
+}
+
+/// The body de-framer in use, with what is still owed.
+enum Mode {
+    Chunked(ChunkedDecoder),
+    /// This many body bytes are still to arrive.
+    Length(u64),
+    UntilClose,
+}
+
+/// How the answer's body ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AnswerEnd {
+    Complete,
+    /// The browser dropped the body, or access was revoked while it was not reading.
+    Gone,
+    /// Malformed framing, or the leg ended before the body was whole.
+    Aborted,
+}
+
+/// Queues one frame for the browser without waiting on it past revocation: a viewer that
+/// stopped reading fills the queue, and the wait must still end when the share is revoked.
+async fn queue(
+    tx: &tokio::sync::mpsc::Sender<Result<Frame<Bytes>, std::io::Error>>,
+    revoked: &mut tokio::sync::watch::Receiver<bool>,
+    data: Bytes,
+) -> bool {
+    tokio::select! {
+        r = tx.send(Ok(Frame::data(data))) => r.is_ok(),
+        // (`Ok` only: the flag's sender going away with the pump is not a revocation.)
+        Ok(_) = revoked.wait_for(|v| *v) => false,
+    }
+}
+
+/// Feeds the answer's body to the browser: through the de-framer when `chunked` (hyper
+/// re-frames it toward the browser, `transfer-encoding` being hop-by-hop), each app chunk — a
+/// server-sent event, say — going out as it arrives. Ends when the body is whole (last chunk,
+/// declared length reached), when hyper dropped the body (the browser went away), when the
+/// share is revoked, or when the framing breaks or the leg ends early.
+async fn pump_answer(
+    live: &mut LiveStream,
+    revoked: &mut tokio::sync::watch::Receiver<bool>,
+    tx: &tokio::sync::mpsc::Sender<Result<Frame<Bytes>, std::io::Error>>,
+    mode: &mut Mode,
+    first: Vec<u8>,
+) -> AnswerEnd {
+    /// One piece of the body through the mode; `Some(end)` when the body is over.
+    async fn step(
+        mode: &mut Mode,
+        tx: &tokio::sync::mpsc::Sender<Result<Frame<Bytes>, std::io::Error>>,
+        revoked: &mut tokio::sync::watch::Receiver<bool>,
+        data: Bytes,
+    ) -> Option<AnswerEnd> {
+        match mode {
+            Mode::UntilClose => (!queue(tx, revoked, data).await).then_some(AnswerEnd::Gone),
+            Mode::Length(left) => {
+                let n = (*left).min(data.len() as u64);
+                *left -= n;
+                // Bytes beyond the declared length are not part of the answer.
+                let data = data.slice(..usize::try_from(n).unwrap_or(usize::MAX));
+                if !data.is_empty() && !queue(tx, revoked, data).await {
+                    return Some(AnswerEnd::Gone);
+                }
+                (*left == 0).then_some(AnswerEnd::Complete)
+            }
+            Mode::Chunked(d) => {
+                let mut out = Vec::new();
+                let fed = d.feed(&data, &mut out);
+                for b in out {
+                    if !queue(tx, revoked, b).await {
+                        return Some(AnswerEnd::Gone);
+                    }
+                }
+                match fed {
+                    Ok(false) => None,
+                    Ok(true) => Some(AnswerEnd::Complete),
+                    Err(ChunkError) => Some(AnswerEnd::Aborted),
+                }
+            }
+        }
+    }
+    if matches!(mode, Mode::Length(0)) {
+        return AnswerEnd::Complete;
+    }
+    if !first.is_empty()
+        && let Some(end) = step(mode, tx, revoked, Bytes::from(first)).await
+    {
+        return end;
+    }
+    loop {
+        let b = tokio::select! {
+            b = live.from_app() => b,
+            () = tx.closed() => return AnswerEnd::Gone,
+        };
+        let Some(b) = b else {
+            // The leg ended: only a body with no length ends cleanly here.
+            return if matches!(mode, Mode::UntilClose) && !*revoked.borrow() {
+                AnswerEnd::Complete
+            } else {
+                AnswerEnd::Aborted
+            };
+        };
+        if let Some(end) = step(mode, tx, revoked, b).await {
+            return end;
+        }
+    }
 }
 
 /// Bridges hyper's upgraded browser pipe to the leg-1 stream in both directions: browser →
@@ -332,6 +508,98 @@ pub fn is_chunked(headers: &[(String, String)]) -> bool {
     })
 }
 
+/// Incremental de-framer of an HTTP/1.1 `chunked` body (RFC 9112 §7.1): feed the bytes as
+/// they arrive; decoded payload comes out chunk by chunk and `feed` answers `true` once the
+/// last chunk and the trailer section have been read. Chunk extensions are ignored, trailers
+/// discarded; any framing violation is an error (the relay then ends the body).
+#[derive(Default)]
+pub struct ChunkedDecoder {
+    state: ChunkState,
+    line: Vec<u8>,
+}
+
+#[derive(Default)]
+enum ChunkState {
+    /// Reading a chunk-size line.
+    #[default]
+    Size,
+    /// This many payload bytes of the current chunk are still to come.
+    Data(u64),
+    /// The CRLF after a chunk's payload; the count is how many of its two bytes were seen.
+    DataEnd(u8),
+    /// After the zero chunk: trailer lines up to the empty line.
+    Trailer,
+}
+
+/// A `chunked` framing violation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ChunkError;
+
+/// Longest chunk-size or trailer line accepted.
+const CHUNK_LINE_MAX: usize = 8 * 1024;
+
+impl ChunkedDecoder {
+    pub fn feed(&mut self, mut input: &[u8], out: &mut Vec<Bytes>) -> Result<bool, ChunkError> {
+        while !input.is_empty() {
+            match self.state {
+                ChunkState::Data(left) => {
+                    let n = usize::try_from(left).unwrap_or(usize::MAX).min(input.len());
+                    out.push(Bytes::copy_from_slice(&input[..n]));
+                    input = &input[n..];
+                    self.state = if left - n as u64 == 0 {
+                        ChunkState::DataEnd(0)
+                    } else {
+                        ChunkState::Data(left - n as u64)
+                    };
+                }
+                ChunkState::DataEnd(seen) => {
+                    let want = if seen == 0 { b'\r' } else { b'\n' };
+                    if input[0] != want {
+                        return Err(ChunkError);
+                    }
+                    input = &input[1..];
+                    self.state = if seen == 0 {
+                        ChunkState::DataEnd(1)
+                    } else {
+                        ChunkState::Size
+                    };
+                }
+                ChunkState::Size | ChunkState::Trailer => {
+                    let Some(nl) = input.iter().position(|b| *b == b'\n') else {
+                        self.line.extend_from_slice(input);
+                        if self.line.len() > CHUNK_LINE_MAX {
+                            return Err(ChunkError);
+                        }
+                        return Ok(false);
+                    };
+                    self.line.extend_from_slice(&input[..nl]);
+                    input = &input[nl + 1..];
+                    if self.line.len() > CHUNK_LINE_MAX {
+                        return Err(ChunkError);
+                    }
+                    let line = std::mem::take(&mut self.line);
+                    let line = line.strip_suffix(b"\r").unwrap_or(&line);
+                    if matches!(self.state, ChunkState::Trailer) {
+                        if line.is_empty() {
+                            return Ok(true);
+                        }
+                        continue; // a trailer field: ignored
+                    }
+                    let size = line.split(|b| *b == b';').next().unwrap_or_default();
+                    let size = std::str::from_utf8(size).map_err(|_| ChunkError)?.trim();
+                    let n = u64::from_str_radix(size, 16).map_err(|_| ChunkError)?;
+                    self.state = if n == 0 {
+                        ChunkState::Trailer
+                    } else {
+                        ChunkState::Data(n)
+                    };
+                }
+            }
+        }
+        Ok(false)
+    }
+}
+
 /// The bytes of one chunk header (`{len:x}\r\n`).
 pub fn chunk_header(len: usize) -> Bytes {
     Bytes::from(format!("{len:x}\r\n"))
@@ -417,6 +685,37 @@ mod tests {
                 .any(|(k, v)| k == "content-type" && v == "text/html")
         );
         assert!(parse_response_head(b"HTTP/1.1 200").is_none());
+    }
+
+    #[test]
+    fn chunked_decoder_survives_every_split_point() {
+        let wire = b"5;ext=1\r\nhello\r\n6\r\n world\r\n0\r\nx-trailer: 1\r\n\r\n";
+        for split in 0..=wire.len() {
+            let mut d = ChunkedDecoder::default();
+            let mut out = Vec::new();
+            let a = d.feed(&wire[..split], &mut out).unwrap();
+            assert!(!a || split == wire.len(), "split {split}");
+            let done = a || d.feed(&wire[split..], &mut out).unwrap();
+            assert!(done, "split {split}");
+            let body: Vec<u8> = out.iter().flat_map(|b| b.iter().copied()).collect();
+            assert_eq!(body, b"hello world", "split {split}");
+        }
+        // Byte at a time.
+        let mut d = ChunkedDecoder::default();
+        let mut out = Vec::new();
+        let mut done = false;
+        for b in wire {
+            done = d.feed(std::slice::from_ref(b), &mut out).unwrap();
+        }
+        assert!(done);
+        // Framing violations are errors, never a silent pass.
+        for bad in [&b"zz\r\n"[..], b"3\r\nabcXX", b"3\r\nabc\rX"] {
+            assert!(
+                ChunkedDecoder::default()
+                    .feed(bad, &mut Vec::new())
+                    .is_err()
+            );
+        }
     }
 
     #[test]

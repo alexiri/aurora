@@ -9,7 +9,7 @@ use crate::domains::automations::{
 use crate::http::auth::{Caller, require_own};
 use crate::http::error::ErrorEnvelope;
 use crate::http::json::{Json, Path, Query};
-use crate::http::pagination::Page;
+use crate::http::pagination::{Page, Pagination};
 use aurora_core::ApiError;
 use aurora_db::DbError;
 use aurora_db::repo::{agents, webhooks::WebhookRow};
@@ -239,7 +239,9 @@ async fn rotate_webhook(
 #[derive(Deserialize, IntoParams)]
 struct DeliveriesQuery {
     /// Page size (default 50, max 200).
-    limit: Option<i64>,
+    limit: Option<u32>,
+    /// Opaque cursor from a previous response's `next_cursor`.
+    cursor: Option<String>,
 }
 
 /// Recent deliveries, newest first.
@@ -254,11 +256,18 @@ async fn list_deliveries(
     Query(q): Query<DeliveriesQuery>,
 ) -> Result<Json<Page<WebhookDelivery>>, ApiError> {
     authorized(&c, &s, id).await?;
-    let limit = q.limit.unwrap_or(50).clamp(1, 200);
-    let rows = aurora_db::repo::webhooks::list_deliveries(&s.pool, id, limit).await?;
+    let p = Pagination::new(q.limit, q.cursor.as_deref())?;
+    let rows = aurora_db::repo::webhooks::list_deliveries(
+        &s.pool,
+        id,
+        p.after.map(|c| (c.t, c.id)),
+        p.fetch(),
+    )
+    .await?;
+    let page = Page::from_rows(rows, p.limit, |r| (r.created_at, r.id));
     Ok(Json(Page {
-        items: rows.into_iter().map(WebhookDelivery::from).collect(),
-        next_cursor: None,
+        items: page.items.into_iter().map(WebhookDelivery::from).collect(),
+        next_cursor: page.next_cursor,
     }))
 }
 

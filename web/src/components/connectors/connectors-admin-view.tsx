@@ -12,6 +12,7 @@ import { useAdminConnectors } from "@/lib/api/connectors";
 import { AddConnectorFlow } from "./add-connector";
 import { ConnectorCard } from "./connector-card";
 import { ConnectorDetail } from "./connector-detail";
+import { HostTokens } from "./host-tokens";
 import { SelfHostedProvision } from "./self-hosted-provision";
 
 export { ManifestDiff, ManifestSummary, diffManifest, type Change } from "./manifest-views";
@@ -59,9 +60,10 @@ export function ConnectorsAdminView() {
       </Section>
     );
   }
+  const tokens = view.kind === "list" ? <HostTokens /> : null;
 
   return (
-    <div className="max-w-[1160px] space-y-8">
+    <div className="max-w-page space-y-8">
       {view.kind === "detail" && detail ? null : (
         <PageHeader
           title="Connectors"
@@ -75,6 +77,7 @@ export function ConnectorsAdminView() {
         />
       )}
       {body}
+      {tokens}
       <OneTimeKeyDialog
         secret={secret?.token ?? null}
         title="Copy the connector token"

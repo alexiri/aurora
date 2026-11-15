@@ -5,6 +5,19 @@ use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
 
+/// Which registrations the instance admin's list shows.
+#[derive(Debug, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
+pub struct AdminListQuery {
+    pub app_id: Option<String>,
+    pub limit: Option<u32>,
+    pub cursor: Option<String>,
+    /// `instance` (default): instance-wide only; `all`: every registration, organizations' too.
+    pub scope: Option<String>,
+    /// Only this organization's registrations (implies `all`).
+    pub org: Option<Uuid>,
+}
+
 /// A self-hosted app instance: a host an admin registered for one app (C-240, D-74).
 #[derive(Debug, Serialize, ToSchema)]
 pub struct AppInstance {
@@ -14,6 +27,10 @@ pub struct AppInstance {
     pub package_id: String,
     pub app_id: String,
     pub host: String,
+    /// (C-731, D-231) The path the app is served under on `host` (`/wiki`); `null` = the host root.
+    pub base_path: Option<String>,
+    /// `https://<host><base_path>`: how the registration is named everywhere.
+    pub base_url: String,
     pub label: String,
     /// `active` | `disabled`.
     pub status: String,
@@ -22,6 +39,12 @@ pub struct AppInstance {
     pub updated_at: DateTime<Utc>,
     /// Connections bound to this instance.
     pub connections: i64,
+    /// Name and slug of `org_id` (`null` for an instance-wide registration).
+    pub org_name: Option<String>,
+    pub org_slug: Option<String>,
+    /// (C-742, D-243) A preset instance the app's package ships (a vendor's region host): built
+    /// in, read-only, and offered to everyone.
+    pub builtin: bool,
 }
 
 impl From<InstanceRow> for AppInstance {
@@ -31,7 +54,10 @@ impl From<InstanceRow> for AppInstance {
             org_id: r.org_id,
             package_id: r.package_id,
             app_id: r.app_id,
+            base_url: aurora_registry::instance::InstanceBase::new(&r.host, r.base_path.as_deref())
+                .base_url(),
             host: r.host,
+            base_path: r.base_path,
             label: r.label,
             status: r.status,
             created_by: r.created_by.map(|id| ConnectedBy {
@@ -41,6 +67,9 @@ impl From<InstanceRow> for AppInstance {
             created_at: r.created_at,
             updated_at: r.updated_at,
             connections: r.connections,
+            org_name: r.org_name,
+            org_slug: r.org_slug,
+            builtin: r.builtin,
         }
     }
 }
@@ -59,6 +88,11 @@ pub struct CreateAppInstanceRequest {
     pub app_id: String,
     /// A lower-case DNS name: no port, path, userinfo or IP literal.
     pub host: String,
+    /// (C-731, D-231) Only if the app is served under a path: `/wiki` for
+    /// `https://its.cern.ch/wiki`. Normalized (`/wiki/` = `/wiki`, `""` and `/` = none); cannot be
+    /// changed later.
+    #[serde(default)]
+    pub base_path: Option<String>,
     pub label: String,
 }
 

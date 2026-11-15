@@ -243,6 +243,50 @@ async fn non_person_speaker_cannot_start_a_task() {
     }
 }
 
+/// (FIX-110) At most `PEER_TASK_QUEUE_MAX` (10) tasks queue behind the open one per ordered pair:
+/// the 11th queued message is refused and writes no task, conversation or notice.
+#[tokio::test]
+async fn the_eleventh_queued_peer_task_is_refused_and_writes_nothing() {
+    let d = duo().await;
+    assert_eq!(d.send("open").await["status"], "sent");
+    for i in 0..10 {
+        assert_eq!(d.send(&format!("queued {i}")).await["status"], "queued");
+    }
+    let before: (i64, i64) = (
+        sqlx::query_scalar("SELECT count(*) FROM peer_tasks")
+            .fetch_one(d.rig.h.pool())
+            .await
+            .unwrap(),
+        sqlx::query_scalar("SELECT count(*) FROM conversations WHERE kind = 'peer'")
+            .fetch_one(d.rig.h.pool())
+            .await
+            .unwrap(),
+    );
+    let r = d
+        .rig
+        .tool(
+            d.a,
+            d.conv,
+            Some(d.turn),
+            "message_agent",
+            json!({"agent": "@bravo", "text": "one too many"}),
+        )
+        .await;
+    assert!(Rig::err(&r).contains("queued"), "{}", Rig::err(&r));
+    let after: (i64, i64) = (
+        sqlx::query_scalar("SELECT count(*) FROM peer_tasks")
+            .fetch_one(d.rig.h.pool())
+            .await
+            .unwrap(),
+        sqlx::query_scalar("SELECT count(*) FROM conversations WHERE kind = 'peer'")
+            .fetch_one(d.rig.h.pool())
+            .await
+            .unwrap(),
+    );
+    assert_eq!(before, after);
+    assert_eq!(before.0, 11);
+}
+
 #[tokio::test]
 async fn one_open_task_per_pair_and_queue_promotion() {
     let d = duo().await;

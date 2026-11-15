@@ -330,6 +330,57 @@ async fn approval_created_posts_one_card_and_click_approves_and_settles() {
     assert_eq!(cs, "settled");
 }
 
+/// All the text a card op carries, flattened (blocks, fields, context, fallback text).
+fn card_text(op: &Value) -> String {
+    op["content"].to_string()
+}
+
+/// D-178 (Q-R5-9): a card in a shared channel carries the title, agent, rule and expiry only; the
+/// request's details are not shown to everyone in the channel. A 1:1 conversation keeps them.
+#[tokio::test]
+async fn shared_channel_approval_card_hides_request_details() {
+    let w = W::new(&FULL).await;
+    let id = w.approval(None).await;
+    sqlx::query("UPDATE approvals SET rule_name='Mail needs a human' WHERE id=$1")
+        .bind(id)
+        .execute(w.pool())
+        .await
+        .unwrap();
+    w.fanout().await;
+    let op = w.ops("message.post").await.pop().unwrap().1;
+    let text = card_text(&op);
+    assert!(text.contains("mail"), "{text}");
+    assert!(text.contains("Agent: bot"), "{text}");
+    assert!(text.contains("Mail needs a human"), "{text}");
+    assert!(text.contains("Expires"), "{text}");
+    for secret in ["a@b.c", "api.example.com", "\"fields\""] {
+        assert!(!text.contains(secret), "shared card leaks {secret}: {text}");
+    }
+    let blocks = op["content"]["card"]["blocks"].as_array().unwrap();
+    assert!(blocks.iter().all(|b| b["type"] != "fields"), "{blocks:?}");
+    // Still decidable from the card, and the dashboard link is there.
+    assert!(!W::tokens(&op).is_empty());
+}
+
+#[tokio::test]
+async fn direct_conversation_approval_card_keeps_the_request_fields() {
+    let w = W::new(&FULL).await;
+    sqlx::query("UPDATE conversations SET kind='direct', direct_user_id=$1")
+        .bind(w.member)
+        .execute(w.pool())
+        .await
+        .unwrap();
+    sqlx::query("UPDATE thread_links SET kind='direct'")
+        .execute(w.pool())
+        .await
+        .unwrap();
+    w.approval(None).await;
+    w.fanout().await;
+    let op = w.ops("message.post").await.pop().unwrap().1;
+    let text = card_text(&op);
+    assert!(text.contains("a@b.c"), "{text}");
+}
+
 #[tokio::test]
 async fn dashboard_decision_and_expiry_settle_the_card() {
     let w = W::new(&FULL).await;
@@ -722,6 +773,46 @@ async fn dm_default_choose_sets_the_default_for_the_addressee_only() {
     .await
     .unwrap();
     assert_eq!(a, w.agent2);
+}
+
+/// FIX-112 (CHAN-8): once a click has taught us the DM channel of a menu card, it is still the
+/// addressee's menu: another linked user holding the token is refused.
+#[tokio::test]
+async fn learned_dm_menu_still_belongs_to_its_addressee() {
+    let w = W::new(&FULL).await;
+    let mut tx = w.pool().begin().await.unwrap();
+    card_requests(&w.h.state)
+        .dm_default_choose(
+            &mut tx,
+            DmDefaultChoose {
+                integration_id: w.integ,
+                user_id: w.member,
+                user_ref: "U_MEMBER".into(),
+                space_ref: "D_MEMBER".into(),
+                thread_ref: String::new(),
+                allowed_agent_ids: vec![w.agent2],
+            },
+        )
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    let op = w.ops("message.post").await.pop().unwrap().1;
+    // What a click does to a card DMed to a person: its space becomes the real DM channel.
+    sqlx::query("UPDATE channel_cards SET space_ref='D_MEMBER', message_ref='m1', state='posted' WHERE subject_kind='binding'")
+        .execute(w.pool())
+        .await
+        .unwrap();
+    let tok = W::token(&op, "select");
+    let v = w.agent2.to_string();
+    let out = w.click(w.integ, &tok, "U_OWNER", Some(&v)).await;
+    assert_eq!(out["reason"], "forbidden", "{out}");
+    let set: i64 = sqlx::query_scalar("SELECT count(*) FROM dm_defaults")
+        .fetch_one(w.pool())
+        .await
+        .unwrap();
+    assert_eq!(set, 0);
+    let out = w.click(w.integ, &tok, "U_MEMBER", Some(&v)).await;
+    assert_eq!(out["result"], "done", "{out}");
 }
 
 #[tokio::test]

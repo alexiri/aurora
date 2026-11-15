@@ -1,0 +1,6 @@
+# Dangerous endpoints no tool offers (FIX-118): the request is classified but selects no tool, so
+# custom grants and `block_untooled` refuse it. All credentials are fake.
+- name: "refused repository deletion: DELETE /repos/{owner}/{repo} selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: DELETE, url: "https://api.github.com/repos/example/demo" }
+  expect: { app: github }

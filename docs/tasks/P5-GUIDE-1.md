@@ -2,7 +2,7 @@
 
 First task of "app guides on demand" and the **first addon-related task of phase 5** (before
 P5-ASRC and P5-CERN-ADDONS). Normative spec: `docs/24-app-guides.md` (§3, §4, §5, §8, §10);
-contracts C-640, C-641, C-642, C-646, C-647, C-649; decisions D-170, D-171; SEC-90, SEC-91.
+contracts C-640, C-641, C-642, C-646, C-647, C-649; decisions D-170, D-171; SEC-117, SEC-91.
 Read `24` fully and `09 §2`, `§3.4 agent`, `§6`, `§9`; nothing else is needed.
 
 ## What it delivers

@@ -176,6 +176,8 @@ pub struct ApiConfig {
     pub bootstrap_connector_tokens: Vec<(String, Redacted<String>)>,
     /// (P4-MCON) `auh_…`: the connector host anchor token, upserted at start.
     pub bootstrap_connector_host_token: Option<Redacted<String>>,
+    /// (FIX-120) `(name, auh_… token, bound connector types)`.
+    pub bootstrap_connector_host_tokens: Vec<(String, Redacted<String>, Vec<String>)>,
     /// (P4-PRV-2, D-146) `aul_…`: the relay's anchor token, upserted at start.
     pub bootstrap_relay_token: Option<Redacted<String>>,
     pub auth: AuthSection,
@@ -371,6 +373,8 @@ pub struct RelayConfig {
     pub max_streams: u32,
     pub max_streams_per_user: u32,
     pub request_body_max_bytes: usize,
+    /// `relay.trusted_proxies`: validated CIDRs (`/0` refused), see `RelaySection`.
+    pub trusted_proxies: Vec<String>,
     pub tls: TlsSection,
     pub telemetry: TelemetrySection,
 }
@@ -456,9 +460,11 @@ impl RawConfig {
         }
         let bootstrap_connector_tokens =
             bootstrap_connectors(&mut c, &s.bootstrap_connector_tokens);
+        let bootstrap_connector_host_tokens =
+            bootstrap_host_tokens(&mut c, &s.bootstrap_connector_host_tokens);
         let (signup_mode, org_creation) =
             check_auth(&mut c, &self.auth, s, external_url.as_deref());
-        check_email(&mut c, &self.email);
+        check_email(&mut c, &self.email, s.smtp_password.is_some());
         check_secret_stores(&mut c, &self.secrets);
         check_llm(&mut c, &self.llm, &self.governance);
         let governance = check_governance(&mut c, self);
@@ -510,9 +516,15 @@ impl RawConfig {
                 "must be between 30 and 6000 requests per minute",
             );
         }
-        if !(1..=1825).contains(&self.scim.token_max_days) {
-            c.err("scim.token_max_days", "must be between 1 and 1825 days");
+        // One ceiling for SCIM tokens: `SCIM_TOKEN_MAX_DAYS` (docs/02, docs/03).
+        let scim_max = i64::from(aurora_core::limits::SCIM_TOKEN_MAX_DAYS);
+        if !(1..=scim_max).contains(&i64::from(self.scim.token_max_days)) {
+            c.err(
+                "scim.token_max_days",
+                format!("must be between 1 and {scim_max} days"),
+            );
         }
+        check_dev_switches(&mut c, self);
 
         let previews = check_previews(&mut c, &self.previews, self, &external_url);
         // (P4-TERM, C-623) the terminal's operator-tunable clocks; the limits live in
@@ -536,6 +548,16 @@ impl RawConfig {
         }
         if self.plugins.builtin_dir.is_empty() {
             c.err("plugins.builtin_dir", "must not be empty");
+        }
+        // (P5-ASRC, D-250) the addon poll interval must be one of the owner's enum values.
+        if !matches!(
+            self.plugins.addon_sources.update_interval.as_str(),
+            "6h" | "12h" | "1d" | "1w" | "2w" | "1mo" | "never"
+        ) {
+            c.err(
+                "plugins.addon_sources.update_interval",
+                "must be one of 6h, 12h, 1d, 1w, 2w, 1mo, never",
+            );
         }
         check_pos(
             &mut c,
@@ -616,12 +638,16 @@ impl RawConfig {
             bootstrap_runner_token: s.bootstrap_runner_token.clone(),
             bootstrap_connector_tokens,
             bootstrap_connector_host_token: s.bootstrap_connector_host_token.clone(),
+            bootstrap_connector_host_tokens,
             bootstrap_relay_token: s.bootstrap_relay_token.clone(),
             auth,
             signup_mode: signup_mode.unwrap_or(SignupMode::InviteOnly),
             org_creation: org_creation.unwrap_or(OrgCreation::InstanceAdmins),
             oidc_client_secrets,
-            email: self.email.clone(),
+            email: EmailSection {
+                smtp_password: s.smtp_password.clone(),
+                ..self.email.clone()
+            },
             secrets: self.secrets.clone(),
             llm: self.llm.clone(),
             governance: governance.unwrap_or_else(|| resolve_governance_lossy(self)),
@@ -689,7 +715,10 @@ impl RawConfig {
             g.internal_bind.as_deref(),
             &self.server.bind,
         );
-        if !(4096..=8 * 1024 * 1024).contains(&g.condition_body_bytes) {
+        if !(aurora_core::limits::CONDITION_BODY_BUFFER_MIN as u64
+            ..=aurora_core::limits::CONDITION_BODY_BUFFER_MAX as u64)
+            .contains(&g.condition_body_bytes)
+        {
             c.err(
                 "gateway.condition_body_bytes",
                 "must be between 4096 (4 KiB) and 8388608 (8 MiB)",
@@ -715,6 +744,12 @@ impl RawConfig {
         check_url(&mut c, "gateway.hookhost_url", Some(&g.hookhost_url));
         if let Some(p) = &g.egress_proxy {
             check_url(&mut c, "gateway.egress_proxy", Some(p));
+            check_no_userinfo(
+                &mut c,
+                "gateway.egress_proxy",
+                p,
+                "an authenticated egress proxy is not supported through the configuration file",
+            );
         }
         if g.ca_dir.is_empty() {
             c.err("gateway.ca_dir", "must not be empty");
@@ -867,13 +902,45 @@ impl RawConfig {
         if let Some(bin) = r.dev_supervisor_binary.as_deref() {
             check_dev_supervisor_binary(&mut c, bin, backend, &self.server, &r.api_url);
         }
+        check_dev_switches(&mut c, self);
+        // (FIX-116) zero would make every orphan sweep or capacity wait immediate.
+        check_pos(
+            &mut c,
+            "runner.orphan_grace_secs",
+            Some(r.orphan_grace_secs),
+        );
+        check_pos(
+            &mut c,
+            "runner.capacity_wait_secs",
+            Some(r.capacity_wait_secs),
+        );
         check_common(&mut c, &self.tls, &self.telemetry);
+        // (FIX-094, SEC-09) On podman the ops listener (health, metrics) defaults to loopback:
+        // the host's bridge address is sandbox-reachable, so falling back to the
+        // sandbox-facing `server.bind` (documented `0.0.0.0`) exposed it. Other backends keep
+        // the fallback — in a cluster the ops port is isolated by NetworkPolicy and probes need
+        // the pod address (the chart sets `runner.ops_bind` itself).
+        let ops_default = if backend == Some(RunnerBackend::Podman) {
+            "127.0.0.1"
+        } else {
+            self.server.bind.as_str()
+        };
         let ops_bind = resolve_bind(
             &mut c,
             "runner.ops_bind",
             r.ops_bind.as_deref(),
-            &self.server.bind,
+            ops_default,
         );
+        // A podman ops listener that shares an address with (or covers) the sandbox-facing one
+        // is a configuration error, not a warning. A loopback ops address is never reachable
+        // from a sandbox's own network namespace, even when `server.bind` is loopback too
+        // (the dev layout).
+        if backend == Some(RunnerBackend::Podman)
+            && !is_loopback_host(&ops_bind)
+            && let Some(why) = bind_overlap_warning(&self.server.bind, &ops_bind)
+        {
+            c.err("runner.ops_bind", why);
+        }
         c.finish()?;
         Ok(RunnerConfig {
             ops_bind,
@@ -926,6 +993,7 @@ impl RawConfig {
                 None
             }
         };
+        check_dev_switches(&mut c, self);
         let h = &self.connector_host;
         if !(h.api_url.starts_with("http://") || h.api_url.starts_with("https://")) {
             c.err("connector_host.api_url", "must be an http(s) URL");
@@ -995,6 +1063,29 @@ impl RawConfig {
                 String::new()
             }
         };
+        // Same rules as `server.trusted_proxies`'s sibling lists: strict CIDRs, `/0` refused
+        // (trusting every peer would let any visitor forge their address).
+        check_cidr_list(&mut c, "relay.trusted_proxies", &r.trusted_proxies, false);
+        // (FIX-116) an operator may only lower the ceilings (PREVIEW_REQUEST_BODY_MAX, docs/02).
+        let body_max = aurora_core::limits::PREVIEW_REQUEST_BODY_MAX;
+        if r.request_body_max_bytes == 0 || r.request_body_max_bytes > body_max {
+            c.err(
+                "relay.request_body_max_bytes",
+                format!("must be between 1 and {body_max} (an operator may only lower it)"),
+            );
+        }
+        check_pos(&mut c, "relay.max_streams", Some(r.max_streams));
+        check_pos(
+            &mut c,
+            "relay.max_streams_per_user",
+            Some(r.max_streams_per_user),
+        );
+        if r.max_streams_per_user > r.max_streams {
+            c.err(
+                "relay.max_streams_per_user",
+                "must not exceed relay.max_streams",
+            );
+        }
         check_common(&mut c, &self.tls, &self.telemetry);
         c.finish()?;
         Ok(RelayConfig {
@@ -1006,6 +1097,7 @@ impl RawConfig {
             max_streams: r.max_streams,
             max_streams_per_user: r.max_streams_per_user,
             request_body_max_bytes: r.request_body_max_bytes,
+            trusted_proxies: r.trusted_proxies.clone(),
             tls: self.tls.clone(),
             telemetry: self.telemetry.clone(),
         })
@@ -1186,6 +1278,59 @@ fn bootstrap_connectors(
                 NAME,
                 "entries must be `id:aun_…` (id: [a-z][a-z0-9-]{1,31})",
             ),
+        }
+    }
+    out
+}
+
+/// `AURORA_BOOTSTRAP_CONNECTOR_HOST_TOKENS` (FIX-120): a JSON array of
+/// `{"name": 1-80 chars, "token": "auh_…", "types": [connector type ids]}`; names and tokens
+/// are unique and every type list is non-empty.
+fn bootstrap_host_tokens(
+    c: &mut Ctx,
+    v: &Option<Redacted<String>>,
+) -> Vec<(String, Redacted<String>, Vec<String>)> {
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Item {
+        name: String,
+        token: String,
+        types: Vec<String>,
+    }
+    const NAME: &str = "AURORA_BOOTSTRAP_CONNECTOR_HOST_TOKENS";
+    let mut out: Vec<(String, Redacted<String>, Vec<String>)> = Vec::new();
+    let Some(v) = v else {
+        return out;
+    };
+    let Ok(items) = serde_json::from_str::<Vec<Item>>(v.expose()) else {
+        c.err(NAME, "must be a JSON array of {name, token, types}");
+        return out;
+    };
+    for it in items {
+        let name = it.name.trim().to_owned();
+        let mut types: Vec<String> = it.types.iter().map(|t| t.trim().to_owned()).collect();
+        types.sort();
+        types.dedup();
+        let ok = !name.is_empty()
+            && name.chars().count() <= 80
+            && !name.chars().any(char::is_control)
+            && it.token.starts_with("auh_")
+            && it.token.len() > 4
+            && !types.is_empty()
+            && types.len() <= 64
+            && types.iter().all(|t| valid_id(t));
+        if !ok {
+            c.err(
+                NAME,
+                "each entry needs a name (1-80 chars), an `auh_…` token and a non-empty list of connector type ids",
+            );
+        } else if out
+            .iter()
+            .any(|(n, t, _)| *n == name || t.expose() == &it.token)
+        {
+            c.err(NAME, "names and tokens must be unique");
+        } else {
+            out.push((name, Redacted::new(it.token), types));
         }
     }
     out
@@ -1637,6 +1782,56 @@ fn check_dev_supervisor_binary(
     }
 }
 
+/// (FIX-116, SEC-02) Development-only switches are refused unless `server.external_url` is a
+/// loopback origin: each one removes a production protection (sandbox network isolation,
+/// package signatures, the fake harness, the connector-host test types, the whole `/v1` limiter).
+fn check_dev_switches(c: &mut Ctx, raw: &RawConfig) {
+    let loopback = raw
+        .server
+        .external_url
+        .as_deref()
+        .and_then(host_of)
+        .is_some_and(|h| is_dev_idp_host(&h));
+    if loopback {
+        return;
+    }
+    for (key, on) in [
+        (
+            "runner.dev_allow_external_network",
+            raw.runner.dev_allow_external_network,
+        ),
+        ("plugins.allow_unsigned", raw.plugins.allow_unsigned),
+        ("hosted.allow_fake_harness", raw.hosted.allow_fake_harness),
+        ("connector_host.test_types", raw.connector_host.test_types),
+        ("ratelimit.api.enabled", !raw.ratelimit.api.enabled),
+    ] {
+        if on {
+            let shown = if key == "ratelimit.api.enabled" {
+                "false"
+            } else {
+                "true"
+            };
+            c.err(
+                key,
+                format!(
+                    "refused outside dev mode: {key} = {shown} needs server.external_url on localhost, *.localhost, 127.0.0.1 or [::1]"
+                ),
+            );
+        }
+    }
+}
+
+/// (FIX-116) A URL that carries credentials is refused: the configuration file is rendered into
+/// a ConfigMap and read by every replica, secrets come from the environment.
+fn check_no_userinfo(c: &mut Ctx, key: &str, v: &str, hint: &str) {
+    if parse_url(v, &["http", "https", "smtp", "smtps"]).is_ok_and(|p| p.has_userinfo) {
+        c.err(
+            key,
+            format!("must not embed credentials (userinfo); {hint}"),
+        );
+    }
+}
+
 fn check_server(c: &mut Ctx, s: &ServerSection, need_external: bool) -> Option<String> {
     if !is_bind_addr(&s.bind) {
         c.err("server.bind", format!("`{}` is not an IP address", s.bind));
@@ -1743,6 +1938,12 @@ fn check_auth(
         "auth.session_absolute_secs",
         Some(a.session_absolute_secs),
     );
+    if a.cli_key_ttl_days > 3650 {
+        c.err(
+            "auth.cli_key_ttl_days",
+            "must be at most 3650 (0 = never expires)",
+        );
+    }
     if a.session_idle_secs > a.session_absolute_secs {
         c.err(
             "auth.session_idle_secs",
@@ -1963,10 +2164,22 @@ fn check_dev_idp(c: &mut Ctx, d: &DevIdp, providers: &[OidcProvider], external_u
     }
 }
 
-fn check_email(c: &mut Ctx, e: &EmailSection) {
+fn check_email(c: &mut Ctx, e: &EmailSection, has_password: bool) {
     if let Some(u) = &e.smtp_url {
         if let Err(m) = parse_url(u.expose(), &["smtp", "smtps"]) {
             c.err("email.smtp_url", m);
+        }
+        check_no_userinfo(
+            c,
+            "email.smtp_url",
+            u.expose(),
+            "set email.smtp_username and AURORA_SMTP_PASSWORD (or AURORA_SMTP_PASSWORD_FILE)",
+        );
+        if e.smtp_username.is_some() != has_password {
+            c.err(
+                "email.smtp_username",
+                "email.smtp_username and AURORA_SMTP_PASSWORD go together: set both or neither",
+            );
         }
         if e.from.as_deref().is_none_or(|f| !f.contains('@')) {
             c.err(
@@ -2068,6 +2281,44 @@ pub fn llm_endpoint_warnings(l: &LlmSection) -> Vec<String> {
         .collect()
 }
 
+/// Most `allowed_paths` entries of one endpoint (D-177).
+const ALLOWED_PATHS_MAX: usize = 32;
+
+/// (D-177, FIX-105) `allowed_paths` of a `litellm` / `openai_compatible` endpoint: absolute paths,
+/// no query, no `..` or empty segment, no wildcard except one trailing `/*`, a bounded count.
+fn check_allowed_paths(c: &mut Ctx, key: &str, provider: &str, paths: &[String]) {
+    if paths.is_empty() {
+        return;
+    }
+    if !matches!(provider, "litellm" | "openai_compatible") {
+        c.err(
+            key,
+            "only `litellm` and `openai_compatible` endpoints have an inference-path set",
+        );
+        return;
+    }
+    if paths.len() > ALLOWED_PATHS_MAX {
+        c.err(key, format!("at most {ALLOWED_PATHS_MAX} entries"));
+    }
+    for (i, p) in paths.iter().enumerate() {
+        let body = p.strip_suffix("/*").unwrap_or(p);
+        let bad = !p.starts_with('/')
+            || p.len() > 200
+            || body.contains(['*', '?', '#', ' ', '\\'])
+            || body
+                .trim_end_matches('/')
+                .split('/')
+                .skip(1)
+                .any(|s| s.is_empty() || s == "..");
+        if bad {
+            c.err(
+                format!("{key}[{i}]"),
+                "an absolute path without query, `..` or empty segments; the only wildcard is a trailing `/*`",
+            );
+        }
+    }
+}
+
 fn check_llm(c: &mut Ctx, l: &LlmSection, g: &GovernanceSection) {
     let mut ids = BTreeSet::new();
     for (i, e) in l.endpoints.iter().enumerate() {
@@ -2081,6 +2332,7 @@ fn check_llm(c: &mut Ctx, l: &LlmSection, g: &GovernanceSection) {
             c.err(k("provider"), "required");
         }
         check_url(c, &k("base_url"), e.base_url.as_deref());
+        check_allowed_paths(c, &k("allowed_paths"), &e.provider, &e.allowed_paths);
         match &e.key_origin {
             Some(o) => {
                 if !matches!(
@@ -2301,6 +2553,10 @@ fn check_approvals(c: &mut Ctx, a: &ApprovalsSection, h: &HostedSection) {
         APPROVAL_TIMEOUT_MAX_CONFIGURABLE, APPROVAL_TIMEOUT_MAX_FLOOR, TURN_CEILING_WARNING,
     };
     check_pos(c, "approvals.timeout_secs", Some(a.timeout_secs));
+    // (FIX-116) rules have a 60 s floor; the instance default follows it.
+    if a.timeout_secs < 60 {
+        c.err("approvals.timeout_secs", "must be at least 60 seconds");
+    }
     let (lo, hi) = (
         APPROVAL_TIMEOUT_MAX_FLOOR.as_secs(),
         APPROVAL_TIMEOUT_MAX_CONFIGURABLE.as_secs(),
@@ -2355,6 +2611,13 @@ fn check_hosted(c: &mut Ctx, h: &HostedSection) {
         ("hosted.turn_stall_secs", h.turn_stall_secs),
     ] {
         check_pos(c, k, Some(v));
+    }
+    // (FIX-116) a background keep-awake longer than a week is a leak, not a setting.
+    if h.background_cap_secs > 7 * 24 * 3600 {
+        c.err(
+            "hosted.background_cap_secs",
+            "must be at most 604800 (7 days)",
+        );
     }
     // (FIX-025, D-158)
     if !(60..=1800).contains(&h.sandbox_ready_timeout_secs) {
@@ -2424,6 +2687,37 @@ fn check_previews(
             "previews.awake_cap_secs",
             "must be greater than 0 and at most hosted.background_cap_secs",
         );
+    }
+    // (FIX-116) session clocks and the daily byte quota: an operator may only lower the limits
+    // of docs/02 (`PREVIEW_SESSION_TTL`, `PREVIEW_SESSION_IDLE`).
+    let (ttl_max, idle_max) = (
+        aurora_core::limits::PREVIEW_SESSION_TTL.as_secs(),
+        aurora_core::limits::PREVIEW_SESSION_IDLE.as_secs(),
+    );
+    if p.session_ttl_secs == 0 || p.session_ttl_secs > ttl_max {
+        c.err(
+            "previews.session_ttl_secs",
+            format!(
+                "must be between 1 and {ttl_max} (an operator may only lower PREVIEW_SESSION_TTL)"
+            ),
+        );
+    }
+    if p.session_idle_secs == 0 || p.session_idle_secs > idle_max {
+        c.err(
+            "previews.session_idle_secs",
+            format!(
+                "must be between 1 and {idle_max} (an operator may only lower PREVIEW_SESSION_IDLE)"
+            ),
+        );
+    }
+    if p.session_idle_secs > p.session_ttl_secs {
+        c.err(
+            "previews.session_idle_secs",
+            "must not exceed previews.session_ttl_secs",
+        );
+    }
+    if p.bytes_per_share_day == 0 {
+        c.err("previews.bytes_per_share_day", "must be greater than 0");
     }
     let Some(domain) = p.domain.as_deref().map(str::trim) else {
         if p.enabled {
@@ -2503,15 +2797,22 @@ fn valid_preview_domain(d: &str) -> bool {
     if d.parse::<std::net::IpAddr>().is_ok() || d.starts_with('[') {
         return false;
     }
+    // RFC 1123 labels: 1..=63 of `[a-z0-9-]`, starting and ending with a letter or digit (AUDIT-004
+    // F-2: `previews.audit4` and `p.example.org` are valid names and used to be refused, which
+    // crash-looped the chart's migrate hook). The last label must hold a letter, so no all-digit
+    // name looks like an address.
+    let alnum = |c: &u8| c.is_ascii_lowercase() || c.is_ascii_digit();
     let labels: Vec<&str> = d.split('.').collect();
     labels.len() >= 2
         && labels.iter().all(|l| {
             let b = l.as_bytes();
-            (2..=63).contains(&b.len())
-                && b[0].is_ascii_lowercase()
-                && b[b.len() - 1].is_ascii_lowercase()
-                && b.iter()
-                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == b'-')
+            (1..=63).contains(&b.len())
+                && alnum(&b[0])
+                && alnum(&b[b.len() - 1])
+                && b.iter().all(|c| alnum(c) || *c == b'-')
         })
+        && labels
+            .last()
+            .is_some_and(|t| t.bytes().any(|c| c.is_ascii_lowercase()))
         && !PUBLIC_SUFFIXES.contains(&d)
 }

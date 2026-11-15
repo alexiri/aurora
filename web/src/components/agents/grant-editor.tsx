@@ -2,45 +2,29 @@
 
 import { useState, type FormEvent } from "react";
 
+import { GrantForm } from "@/components/grants/grant-form";
 import { ErrorState, Loading } from "@/components/states";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogClose, DialogContent } from "@/components/ui/dialog";
-import { Field, inputClass } from "@/components/ui/field";
 import { Notice } from "@/components/ui/notice";
-import { Segmented } from "@/components/ui/segmented";
 import { useApp, appRestrictions, type Connection, type HasAppRestrictions } from "@/lib/api/apps";
+import { appDisplayName } from "@/lib/api/app-name";
 import { usePutAgentConnectionGrant, type ConnectionGrant } from "@/lib/api/credential-grants";
 import {
-  ASK_TIMEOUT_MAX,
-  ASK_TIMEOUT_MIN,
-  GROUPS,
-  counts,
-  customBody,
-  groupOf,
-  groupState,
-  groupTools,
+  grantValueBody,
+  grantValueProblem,
   initialDecisions,
+  initialGrantValue,
   inertToolIds,
   mapGrantError,
-  parseTimeout,
-  setGroup,
-  timeoutProblem,
-  type Decision,
+  splitByScopes,
+  toolsForMethod,
   type GrantErrors,
-  type Group,
+  type GrantValue,
   type Tool,
 } from "@/lib/grant-editor";
 
-const DECISIONS = [
-  { value: "allow", label: "Allow" },
-  { value: "ask", label: "Ask" },
-  { value: "block", label: "Block" },
-] as const;
-
-type Mode = "full" | "custom";
-
-/** The grant editor: Full access or Custom (Allow / Ask / Block per tool, grouped Read and Write). */
+/** The grant editor dialog of one agent's connection: `GrantForm` plus its save (`PUT`). */
 export function GrantEditor({
   agentId,
   wsId,
@@ -65,7 +49,7 @@ export function GrantEditor({
       <DialogContent
         title={`Access to ${connection.label}`}
         description="What this agent may do through the connection."
-        className="w-[min(40rem,calc(100vw-2rem))]"
+        size="lg"
       >
         {open ? (
           <EditorLoader agentId={agentId} wsId={wsId} connection={connection} grant={grant} restrictions={restrictions} onClose={() => onOpenChange(false)} />
@@ -98,8 +82,9 @@ function EditorLoader({
       agentId={agentId}
       connection={connection}
       grant={grant}
-      tools={app.data.tools}
-      appName={app.data.name}
+      tools={splitByScopes(toolsForMethod(app.data.tools, connection.connect_method), connection.scopes).usable}
+      unavailable={splitByScopes(toolsForMethod(app.data.tools, connection.connect_method), connection.scopes).unavailable}
+      appName={appDisplayName(app.data)}
       restrictions={appRestrictions(restrictions, app.data)}
       onClose={onClose}
     />
@@ -111,6 +96,7 @@ function EditorForm({
   connection,
   grant,
   tools,
+  unavailable,
   appName,
   restrictions,
   onClose,
@@ -119,6 +105,8 @@ function EditorForm({
   connection: Connection;
   grant: ConnectionGrant | null;
   tools: Tool[];
+  /** (FIX-136) Tools the connection's token cannot serve. */
+  unavailable: Tool[];
   appName: string;
   restrictions: { custom_only: boolean; block_untooled: boolean };
   onClose: () => void;
@@ -127,35 +115,34 @@ function EditorForm({
   // `custom_only` from `app_restrictions`, or learned from a 422 `full_grant_forbidden` on save.
   const [learnedCustomOnly, setLearnedCustomOnly] = useState(false);
   const customOnly = restrictions.custom_only || learnedCustomOnly;
-  const [mode, setMode] = useState<Mode>(grant?.mode === "custom" || restrictions.custom_only ? "custom" : "full");
-  const [decisions, setDecisions] = useState<Record<string, Decision>>(() => initialDecisions(tools, grant));
-  const [timeout, setTimeoutText] = useState(grant?.ask_timeout_secs != null ? String(grant.ask_timeout_secs) : "");
+  const [value, setValue] = useState<GrantValue>(() => initialGrantValue(tools, grant, restrictions.custom_only));
   const [errors, setErrors] = useState<GrantErrors>({ tools: {} });
 
   const inert = inertToolIds(tools, grant);
-  const anyAsk = counts(decisions).ask > 0;
-  const timeoutHint = anyAsk ? timeoutProblem(timeout) : undefined;
-  const effectiveMode: Mode = customOnly ? "custom" : mode;
+  const problem = grantValueProblem(value, customOnly);
 
-  const choose = (id: string, d: Decision) => {
-    setDecisions((cur) => ({ ...cur, [id]: d }));
-    setErrors((e) => ({ ...e, tools: { ...e.tools, [id]: "" } }));
+  // An edit clears the error of what it touched (a row, the timeout field).
+  const change = (next: GrantValue) => {
+    setErrors((e) => {
+      const rows = { ...e.tools };
+      for (const id of Object.keys(next.decisions)) if (next.decisions[id] !== value.decisions[id]) rows[id] = "";
+      return { ...e, tools: rows, timeout: next.timeout !== value.timeout ? undefined : e.timeout };
+    });
+    setValue(next);
   };
 
   function submit(e: FormEvent) {
     e.preventDefault();
     setErrors({ tools: {} });
-    const body = effectiveMode === "full" ? { mode: "full" as const } : customBody(decisions, timeout);
     put.mutate(
-      { connectionId: connection.id, body },
+      { connectionId: connection.id, body: grantValueBody(value, customOnly) },
       {
         onSuccess: onClose,
         onError: (err) => {
-          const mapped = mapGrantError(err, tools, decisions);
+          const mapped = mapGrantError(err, tools, value.decisions);
           if (mapped.customOnly) {
             setLearnedCustomOnly(true);
-            setMode("custom");
-            setDecisions(initialDecisions(tools, null));
+            setValue({ mode: "custom", decisions: initialDecisions(tools, null), timeout: "" });
           }
           setErrors(mapped);
         },
@@ -165,108 +152,24 @@ function EditorForm({
 
   return (
     <form onSubmit={submit} className="space-y-4" aria-label={`Access to ${connection.label}`}>
-      {customOnly ? (
+      {connection.access === "read" ? (
         <Notice tone="pending" role="status">
-          This app only supports custom access: choose the tools the agent may use.
+          Read-only connection: Aurora blocks every write tool through it, whatever you choose below. Change it on the
+          connection.
         </Notice>
-      ) : (
-        <div className="space-y-1.5">
-          <p className="text-sm font-medium text-ink">
-            Access to {appName}
-          </p>
-          <Segmented<Mode>
-            label="Access mode"
-            value={mode}
-            onChange={(m) => {
-              setMode(m);
-              if (m === "custom" && grant?.mode !== "custom") setDecisions(initialDecisions(tools, null));
-            }}
-            options={[
-              { value: "full", label: "Full access" },
-              { value: "custom", label: "Custom" },
-            ]}
-          />
-          {mode === "full" ? (
-            <p className="text-xs text-muted">Every tool of the app, including tools added by later updates.</p>
-          ) : null}
-        </div>
-      )}
-      {restrictions.block_untooled ? (
-        <Notice role="status">Requests that are not in the tool list are always blocked.</Notice>
       ) : null}
-
-      {effectiveMode === "custom" ? (
-        <div className="space-y-4">
-          <p className="text-xs text-muted">
-            Allow runs the tool, Ask holds it for an approval, Block refuses it. A tool you do not list stays blocked.
-          </p>
-          {GROUPS.map((g) => (
-            <ToolGroup
-              key={g.value}
-              group={g.value}
-              label={g.label}
-              tools={tools}
-              decisions={decisions}
-              errors={errors.tools}
-              disabled={put.isPending}
-              onChoose={choose}
-              onSetAll={(d) => setDecisions((cur) => setGroup(cur, tools, g.value, d))}
-            />
-          ))}
-          {inert.length > 0 ? (
-            <section aria-label="Inert tools" className="space-y-1.5">
-              <h3 className="text-sm font-semibold text-ink">Inert tools</h3>
-              <p className="text-xs text-muted">
-                An app update removed these tools. They grant nothing; set them to Block to drop them from this grant.
-              </p>
-              <ul className="divide-y divide-line rounded-control border border-line">
-                {inert.map((id) => (
-                  <li key={id} className="space-y-1.5 px-3 py-2">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <code className="min-w-0 break-all text-sm text-ink">{id}</code>
-                      <Badge tone="pending">Inert</Badge>
-                    </div>
-                    {errors.tools[id] ? (
-                      <p role="alert" className="text-xs text-danger-ink">
-                        {errors.tools[id]}
-                      </p>
-                    ) : null}
-                    <Segmented<Decision>
-                      label={`Access for ${id}`}
-                      value={decisions[id] ?? "block"}
-                      options={[...DECISIONS]}
-                      onChange={(d) => choose(id, d)}
-                      disabled={put.isPending}
-                    />
-                  </li>
-                ))}
-              </ul>
-            </section>
-          ) : null}
-          {anyAsk ? (
-            <Field
-              id="ge-timeout"
-              label="Approval timeout (seconds)"
-              hint={`Empty = the instance default (5 min). From ${ASK_TIMEOUT_MIN} to ${ASK_TIMEOUT_MAX} s, at most the instance maximum (1 h unless raised).`}
-              error={errors.timeout ?? timeoutHint}
-            >
-              <input
-                id="ge-timeout"
-                inputMode="numeric"
-                placeholder="default"
-                className={inputClass + " w-32"}
-                value={timeout}
-                onChange={(e) => {
-                  setTimeoutText(e.target.value);
-                  setErrors((x) => ({ ...x, timeout: undefined }));
-                }}
-                disabled={put.isPending}
-              />
-            </Field>
-          ) : null}
-        </div>
-      ) : null}
-
+      <GrantForm
+        appName={appName}
+        tools={tools}
+        inert={inert}
+        unavailable={unavailable}
+        customOnly={customOnly}
+        blockUntooled={restrictions.block_untooled}
+        value={value}
+        onChange={change}
+        errors={errors}
+        disabled={put.isPending}
+      />
       {errors.general ? (
         <Notice tone="danger" role="alert">
           {errors.general}
@@ -282,78 +185,10 @@ function EditorForm({
             Cancel
           </Button>
         </DialogClose>
-        <Button type="submit" disabled={put.isPending || (effectiveMode === "custom" && anyAsk && (timeoutHint !== undefined || parseTimeout(timeout) === "invalid"))}>
+        <Button type="submit" disabled={put.isPending || problem !== null}>
           {put.isPending ? "Saving…" : "Save access"}
         </Button>
       </div>
     </form>
-  );
-}
-
-function ToolGroup({
-  group,
-  label,
-  tools,
-  decisions,
-  errors,
-  disabled,
-  onChoose,
-  onSetAll,
-}: {
-  group: Group;
-  label: string;
-  tools: Tool[];
-  decisions: Record<string, Decision>;
-  errors: Record<string, string>;
-  disabled: boolean;
-  onChoose: (id: string, d: Decision) => void;
-  onSetAll: (d: Decision) => void;
-}) {
-  const rows = groupTools(tools, group);
-  if (rows.length === 0) return null;
-  const state = groupState(decisions, tools, group);
-  return (
-    <section aria-label={`${label} tools`} className="space-y-1.5">
-      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5">
-        <h3 className="text-sm font-semibold text-ink">{label}</h3>
-        <Segmented<Decision>
-          label={`Set all ${label.toLowerCase()} tools`}
-          value={state === "mixed" || state === null ? null : state}
-          options={[...DECISIONS]}
-          onChange={onSetAll}
-          disabled={disabled}
-        />
-      </div>
-      <ul className="divide-y divide-line rounded-control border border-line">
-        {rows.map((t) => {
-          const err = errors[t.id];
-          return (
-            <li key={t.id} className="space-y-1.5 px-3 py-2">
-              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                <span className="min-w-0 break-words text-sm font-medium text-ink">{t.name}</span>
-                {t.wildcard ? <Badge>Umbrella</Badge> : null}
-              </div>
-              <p className="break-all text-xs text-muted">
-                {t.wildcard
-                  ? `Covers the whole ${groupOf(t)} group of ${t.host === "*" ? "the app" : t.host}.`
-                  : `${t.methods.join(", ")} ${t.host}${t.path}`}
-              </p>
-              {err ? (
-                <p role="alert" className="text-xs text-danger-ink">
-                  {err}
-                </p>
-              ) : null}
-              <Segmented<Decision>
-                label={`Access for ${t.name}`}
-                value={decisions[t.id] ?? "block"}
-                options={[...DECISIONS]}
-                onChange={(d) => onChoose(t.id, d)}
-                disabled={disabled}
-              />
-            </li>
-          );
-        })}
-      </ul>
-    </section>
   );
 }

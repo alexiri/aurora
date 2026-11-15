@@ -3,6 +3,7 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api, ApiError } from "./client";
+import { fetchAllPages, MAX_PAGES, PAGE_LIMIT } from "./paging";
 import type { components } from "./schema";
 import { unwrap } from "./unwrap";
 
@@ -46,7 +47,8 @@ export const deleteAccount = () => unwrap(api.DELETE("/v1/me"));
 export function useMyApiKeys() {
   return useQuery({
     queryKey: accountKeys.myKeys,
-    queryFn: () => unwrap(api.GET("/v1/me/api-keys", { params: { query: { limit: 200 } } })),
+    queryFn: () =>
+      fetchAllPages((cursor) => unwrap(api.GET("/v1/me/api-keys", { params: { query: { limit: PAGE_LIMIT, cursor } } }))),
     retry,
   });
 }
@@ -81,14 +83,32 @@ export const deleteWorkspace = (wsId: string, confirm: string) =>
 export function useAccess(wsId: string, enabled = true) {
   return useQuery({
     queryKey: accountKeys.access(wsId),
-    queryFn: () =>
-      unwrap(
-        // (P4-GRP-1) `expand=groups` adds the bound groups and the people whose access comes
-        // through a group or an org role.
-        api.GET("/v1/workspaces/{ws}/access", {
-          params: { path: { ws: wsId }, query: { expand: "groups" } },
-        }),
-      ),
+    queryFn: async () => {
+      // (P4-GRP-1) `expand=groups` adds the bound groups and the people whose access comes
+      // through a group or an org role. The direct bindings page on `cursor`, the derived members on
+      // `derived_cursor` (FIX-117: both are followed, the first page carries `group_bindings`).
+      const get = (query: { cursor?: string; derived_cursor?: string }) =>
+        unwrap(
+          api.GET("/v1/workspaces/{ws}/access", {
+            params: { path: { ws: wsId }, query: { expand: "groups", limit: PAGE_LIMIT, ...query } },
+          }),
+        );
+      const all = await fetchAllPages((cursor) => get({ cursor }));
+      let truncated = all.truncated;
+      const derived = all.derived_members;
+      if (derived) {
+        const rows = [...derived.items];
+        let next = derived.next_cursor ?? undefined;
+        for (let pages = 1; next && pages < MAX_PAGES; pages += 1) {
+          const p = await get({ derived_cursor: next });
+          rows.push(...(p.derived_members?.items ?? []));
+          next = p.derived_members?.next_cursor ?? undefined;
+        }
+        if (next) truncated = true;
+        return { ...all, truncated, derived_members: { ...derived, items: rows, next_cursor: null } };
+      }
+      return { ...all, truncated };
+    },
     enabled,
     retry,
   });
@@ -99,10 +119,12 @@ export function useOrgMembers(orgId: string | undefined) {
   return useQuery({
     queryKey: accountKeys.members(orgId ?? ""),
     queryFn: () =>
-      unwrap(
-        api.GET("/v1/orgs/{org}/members", {
-          params: { path: { org: orgId! }, query: { limit: 200, status: "active" } },
-        }),
+      fetchAllPages((cursor) =>
+        unwrap(
+          api.GET("/v1/orgs/{org}/members", {
+            params: { path: { org: orgId! }, query: { limit: PAGE_LIMIT, status: "active", cursor } },
+          }),
+        ),
       ),
     enabled: !!orgId,
     retry: false,
@@ -143,10 +165,12 @@ export function useWorkspaceKeys(wsId: string) {
   return useQuery({
     queryKey: accountKeys.wsKeys(wsId),
     queryFn: () =>
-      unwrap(
-        api.GET("/v1/workspaces/{ws}/api-keys", {
-          params: { path: { ws: wsId }, query: { limit: 200 } },
-        }),
+      fetchAllPages((cursor) =>
+        unwrap(
+          api.GET("/v1/workspaces/{ws}/api-keys", {
+            params: { path: { ws: wsId }, query: { limit: PAGE_LIMIT, cursor } },
+          }),
+        ),
       ),
     retry,
   });
