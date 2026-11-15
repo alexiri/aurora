@@ -820,6 +820,14 @@ if any of:
 
 - signature missing/invalid/untrusted (unless dev override), publisher mismatch;
 - archive rules violated; sizes exceeded; icon not PNG; guide contains raw HTML;
+  (phase 5, P5-UX-13, D-334, C-940/C-941) guide contains a `{{aurora.…}}` placeholder outside the
+  set `callback_url`, `external_id`, `app_setup`, `page:oauth_clients`, `page:self_hosted`,
+  `page:plugins`, `page:org_settings` (`guide_unknown_placeholder`); the guide route fills them
+  for the viewer. (Builtin packages only, `check-builtin.sh`: no literal `<your Aurora URL>`,
+  `<external_url>`, `Admin, Apps,` or "Instances" as a page name. Every builtin tool has a
+  `description` (C-939); third-party packages get the warning `tool_description_missing`.)
+  (P5-UX-13, C-942) a `connect[].show_context` entry other than `org_external_id`, or one the
+  package does not list in `permissions.context`;
 - unknown keys, unknown contract, `min_core` above the running version;
 - duplicate ids (apps across *all* active packages; tools within an app);
 - host pattern with more than one `*`; a tool host not covered by the app's

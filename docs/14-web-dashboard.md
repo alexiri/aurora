@@ -1914,6 +1914,162 @@ All screens of this section follow §Visual design (tokens, shared primitives, b
 no horizontal scroll) and are axe-clean. The journey is `ws-connect-journey` in the axe and narrow-route
 suites.
 
+## App setup (phase 5, P5-UX-8..15, FIX-159, D-329..D-336)
+
+**Why.** A second walkthrough (2026-11-15) followed a team lead (an org member who owns a team workspace)
+and the org owner above her. They were setting up Linear, AWS, PostgreSQL and GitLab for their agents.
+Everything they needed existed, but spread over the instance, the org, the workspace, the connection, the
+grant and the policy, with no page saying how they fit together:
+- seven setup guides send people to an "Admin, Apps, <app>" page that does not exist;
+- the AWS external id is shown nowhere;
+- OAuth clients live on three pages;
+- the dashboard cannot create an org-wide connection;
+- "what can Daneel do in AWS?" had four answers that disagreed, and Simulate gave a false allow
+  (FIX-159).
+
+This section gives each app **one setup page**, gives each agent **one answer per app**, and fixes the
+pieces those pages rely on.
+
+### 7. One setup page per app (P5-UX-8/9, D-330, C-931..C-933)
+
+- **Routes.**
+  - `/o/<org>/w/<ws>/apps/<app>`: workspace view, for `can_own`. The Apps tab's **Details** and every
+    app name in a connection or grant link here.
+  - `/o/<org>/apps/<app>`: org view, for org owners and admins.
+
+  Both pages render the setup status of C-931.
+- **Status at the top**, one sentence per method in plain words, each with a state chip (Ready / Needs
+  setup / Admin only):
+  - "People can connect GitHub with a personal access token."
+  - "Sign in with GitHub needs an OAuth client: none is set up for this workspace, the organization or
+    the instance."
+  - "GitHub App installation needs an App ID and private key from whoever runs your GitHub
+    organization."
+- **What is set up, and where.**
+  - **Sign-in clients** by level: this workspace, the organization, the instance. The instance level is
+    shown as "set up" or "not set up", with no ids.
+  - **Self-hosted servers.**
+  - **Availability** in this organization.
+  - **Connections:** this workspace's, and the organization's ones that agents here can be given.
+  - **Values to copy:** the callback URL and, for apps that use it, the organization's external id.
+- **Inline actions at the viewer's level.**
+  - A workspace owner can register a workspace OAuth client right there (the existing form, the app
+    preselected, the callback URL shown with Copy), and connect (the P5-UX-3 journey).
+  - An org admin can register an org client, register a self-hosted server, change availability and
+    connect for the whole organization (§9).
+  - Anything above the viewer's level names who can do it (C-909 `Unlock`).
+- **Setup guide.** The package guide, rendered with real values (§11), is the last section of the page,
+  not hidden in the connect dialog.
+- **Indexes link here.**
+  - The three OAuth client lists (workspace, org, Admin) and Admin › Self-hosted apps link each app name
+    to its setup page.
+  - Org › Apps gains the posture switch at its top (Open / Restricted), the same control as Governance ›
+    Apps, which keeps it and links here. The posture and the list are on one page.
+
+### 8. What can <Agent> do in <App> (P5-UX-10, D-331, C-934, C-935)
+
+- On the agent's **Access** tab, each connection row expands to one table: every tool of the app with
+  its effective decision (**Allowed**, **Asks you**, **Blocked**) and the **reason**, the layer that
+  decided it, linked:
+  - "Blocked: this connection is Read only (Connections)";
+  - "Asks you: set on this page";
+  - "Blocked: organization rule *No production writes*";
+  - "Blocked: not in the app's tool list".
+
+  The table comes from C-934, computed by the same evaluator as the gateway and Simulate (FIX-159). A
+  grant that cannot take effect is called out next to the save, for example "3 tools set to Ask can never
+  run: this connection is Read only".
+- The workspace and org **Policy** pages list the rules grants created in a read-only group **From
+  agents' access** ("Daneel · AWS: 5 allowed, 3 ask"). Each links to the agent's Access tab and is not
+  editable here.
+- **Simulate** (Test a request, C-926) shows the identified app and tool and the winning connection,
+  and agrees with the gateway (C-930).
+
+### 9. Connect for the whole organization (P5-UX-11, D-332, C-936, C-937)
+
+- Org › Apps › **Connect…** and the org setup page offer **For the whole organization** first: an
+  org-scope connection, org owners and admins only. The journey (P5-UX-3) runs without the agent step.
+  Its Done step offers:
+  - **Give it to every new person's agent** (a starter grant, C-521, default org only);
+  - **Give agents access now**: the picker over the org's workspaces, own and shared first;
+  - **Done**: workspace owners give it to their agents themselves.
+- Workspace owners see org connections in the journey's App and Account steps ("Shared by <org>") and
+  on the Access tab. They can grant them (07, existing rule) but never edit, reconnect or delete them.
+- The org Credentials › **Connections** tab lists org connections with **Reconnect**, **Make read-only**
+  / **Allow writes**, **Disable** and **Delete** for org admins. Its empty state offers **Connect an app
+  for the organization**.
+- The workspace chooser of Org › Apps › Connect… lists:
+  1. **For the whole organization**;
+  2. the viewer's own and shared workspaces;
+  3. other people's personal workspaces, under a collapsed **Other people's personal workspaces**
+     (C-947).
+
+### 10. Access editor: safe defaults, plain words (P5-UX-12, D-333, C-938, C-939)
+
+- **Custom starts from the connection.**
+  - On a **Read only** connection, read tools start at **Allow**. Write tools collapse into one line,
+    "Writes are blocked: this connection is Read only", with **Allow writes on the connection** for
+    people who may change it.
+  - On a **Read and write** connection, read tools start at **Allow** and write tools at **Ask**.
+  - Saved grants keep their values.
+- The read-only note shows wherever the grant form appears: Access tab, give-access panels, the journey.
+  The form knows the connection's `access`.
+- **Tools read as sentences.** A tool row shows its name and `description`. The method and host pattern
+  move to a **Technical details** disclosure per group.
+- Builtin packages give every tool a `description`. The linter warns third-party packages that lack
+  one. A write tool's name never cites an operation a read tool matches; AWS `ec2_call` becomes "Any
+  other EC2 action (changes, and reads not covered above)".
+
+### 11. Setup guides and connect forms with real values (P5-UX-13, D-334, C-940..C-942)
+
+- **Guides use placeholders** that `GET /v1/apps/{app}/guide` fills in for the viewer (C-940):
+  - `{{aurora.callback_url}}`;
+  - `{{aurora.external_id}}` (only for org members);
+  - `{{aurora.page:oauth_clients}}`, `{{aurora.page:self_hosted}}`, `{{aurora.page:plugins}}`,
+    `{{aurora.page:app_setup}}`.
+
+  Page placeholders become links to the page the viewer can open (a workspace owner's workspace OAuth
+  clients tab; an org admin's org tab; an instance admin's Admin page). A viewer who cannot open the
+  page sees the role that can.
+- **Guide checks** (C-941): an unknown `{{aurora.*}}` placeholder is a package error. The builtin check
+  refuses the literal patterns `<your Aurora URL>`, `<external_url>`, "Admin, Apps," and "Instances" as
+  a page name.
+- Every builtin guide is rewritten with placeholders: GitHub, GitLab, Atlassian, Microsoft 365, Linear,
+  Notion, Google Workspace, Indico and AWS.
+- **Connect forms show what the person must copy** (C-942). A method declares
+  `show_context: [org_external_id]`. The form then shows "Your organization's external id" with
+  **Copy** above the fields, as do the AWS **Assume a role** method and the Bedrock assume-role key form
+  (C-811, which specified it and was not built).
+
+### 12. Test connection and connection health (P5-UX-14, D-335, C-943..C-945, SEC-129)
+
+- Each connection gets **Test connection**. It runs the connect method's probe; for a `database` app, a
+  gateway login up to `ReadyForQuery`; for an assume-role or hook method, a credential mint. The result
+  is one of:
+  - "Works";
+  - "<App> refused these credentials";
+  - "<App> could not be reached (<host>)";
+  - "This connection cannot be tested".
+- The result is stored as the connection's health and shown on its row next to "Last used": "Checked
+  2 hours ago · Works".
+- Methods without a probe run the same test right after connecting. A failure is shown as a warning on
+  the Done step, with the connection kept.
+- A test never returns upstream content and is audited (SEC-129).
+
+### 13. Names and labels (P5-UX-15, D-336, C-946..C-949)
+
+- **Agents of several workspaces.** Wherever agents of more than one workspace are listed (give-access
+  pickers, the org starter-grant picker), each row leads with the workspace: "Platform team · Daneel".
+  **New workspace** has an optional **Agent name** field (default `agents.default_name`), so a team can
+  call its agent something other than Daneel.
+- **OAuth client picker.** The OAuth client form's app picker labels each client by the sign-in methods
+  that use it ("GitHub · github.com — for **OAuth**", "GitHub · github.com — for **GitHub App
+  sign-in**"), never by its `client_key` (C-946).
+- **GitLab methods** get labels and descriptions like GitHub's (package change).
+
+All screens of this section follow §Visual design and are axe-clean. The setup page is `ws-app-setup` and
+`org-app-setup` in the axe and narrow-route suites.
+
 ## Key flows
 
 - **App families** (phase 5, FIX-135, D-242, C-744): apps that declare `about.family` are **one tile** in the Apps tab (named by the family, connection counts summed, Details opens the hosted member); the connect dialog of a family opens with **"Where does your <family> run?"** (ChoiceCards: the hosted variant, then each active registered server of the family's instance-bound apps as "<variant> · <label>" with its address; a notice with a **Register a server…** link to Admin › Self-hosted apps for instance admins, or "ask an administrator" for others), then the chosen app's own methods and form with the server already selected (no second instance picker). Everywhere else an app is named — connections, grant dialogs, availability, OAuth clients, instances — "<family> · <variant>" through `appDisplayName` / `AppName` (`web/src/lib/api/app-name.ts`); a test fails if one of those surfaces stops importing it.

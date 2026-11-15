@@ -1614,6 +1614,12 @@ The placement document (C-520, wherever placement is stored today) gains
 
 (Landed, FIX-146 Part B: `turns.trace_context` and `gateway_credentials.trace_context` are in §6 and §3 with migration `20261201000150_turn_trace_context.sql`. The gateway role gets no grant on `turns`: the value is copied onto the context credential at mint.)
 
+#### `app_connections` (connection health; phase 5, P5-UX-14, D-335)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| last_check_at | timestamptz null | set by `POST /v1/connections/{id}/test` and the post-connect test (C-943, C-945); never by the gateway | 5 (P5-UX-14) |
+| last_check_result | text null | CHECK in (`ok`, `rejected`, `unreachable`, `unexpected`); `not_testable` is answered but never stored | 5 (P5-UX-14) |
+
 #### `approvals` (park and resume; phase 5, D-138)
 | Planned column | Type | Notes | Phase |
 |---|---|---|---|

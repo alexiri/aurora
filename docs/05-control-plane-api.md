@@ -151,6 +151,7 @@ matrix:
     | `export` | `GET /v1/conversations/{id}/export`, `POST /v1/admin/storage/refresh`, `POST /v1/orgs/{org}/storage/refresh` (FIX-126: the Storage *pages* are cached snapshots read in the ordinary buckets; only the deliberate Refresh buttons are strict); (phase 5, SET-1, SET-4) `GET /v1/admin/settings/export`, `POST /v1/admin/settings/email/test` | 6 / hour, burst 2 |
     | `files` | (phase 5, P5-FILES-1, D-316) every `/v1/agents/{agent}/files*` route, reads included (instead of `write`/`upload`) | 300 / min, burst 60 |
     | `telemetry` | (phase 5, FIX-146, D-232) `POST /v1/telemetry/traces` (instead of `write`, so browser telemetry never spends the budget of real writes) | 60 / min, burst 20 |
+    | `check` | (phase 5, P5-UX-14, C-943, SEC-129) `POST /v1/connections/{id}/test` | 10 / min, burst 3 |
     | `invite` | (phase 5, P5-UX-5, C-919, SEC-128) `POST /v1/workspaces/{ws}/access/by-email` (per principal; the route also keeps a per-workspace cap of 30 / hour) | 10 / min, burst 5 |
     | `org` | every authenticated request touching an org's resources (all principals together) | 3 000 / min, burst 600 |
 
@@ -541,7 +542,7 @@ OpenAPI document and the phase tags (FIX-119).
 ### Workspaces
 | Method & path | Auth | Purpose |
 |---|---|---|
-| GET/POST `/v1/orgs/{org}/workspaces` | S/K | |
+| GET/POST `/v1/orgs/{org}/workspaces` | S/K | (phase 5, P5-UX-15, C-947, C-948) items carry `personal_of?: { id, name }`; POST accepts optional `agent_name` for the default agent |
 | GET/PATCH/DELETE `/v1/workspaces/{ws}` | S/K | name, timezone, memory_language; (phase 2, RFE-025) PATCH also `byo_posture` (`enabled`\|`owners_only`\|`disabled`\|null = inherit; `can_own`; tighten-only, 422 `governance_below_instance_minimum`; audited `workspace.byo_posture.update`; invalidation scope `workspace`); GET shows `byo_posture` and `effective_byo_posture` with its `level` |
 | GET `/v1/workspaces/{ws}/access`; PUT/DELETE `/v1/workspaces/{ws}/access/{user}` | S/K | bindings (phase 2, RFE-021: DELETE accepts `reassign_to`); (phase 2, RFE-012) `PUT { role: "owner"\|"approver"\|"member" }`; `can_own` |
 | POST `/v1/workspaces/{ws}/access/by-email` | S/K | (phase 5, P5-UX-5, D-325, C-919, SEC-128) `can_own`; `{ email, role }`: an active org member is bound at once, anyone else gets a pending row; one exact address, rate class `invite`; `{ result: "added"\|"pending", org_entry }` |
@@ -614,12 +615,14 @@ state, external_id? }` in `GET /v1/orgs/{org}/members`.
 |---|---|---|
 | GET `/v1/apps?workspace_id=` | S/K | catalogue with availability and connection counts; (phase 5, FIX-154, C-895) `credential_free` |
 | GET `/v1/apps/{app}` | S/K | about, connect methods (form schemas), scopes, tools, agent docs; (phase 5, FIX-154, C-895) `credential_free` |
-| GET `/v1/apps/{app}/icon?variant=light|dark`, `/v1/apps/{app}/guide` | S/K | sanitized PNG; setup guide markdown |
+| GET `/v1/apps/{app}/icon?variant=light|dark`, `/v1/apps/{app}/guide` | S/K | sanitized PNG; setup guide markdown; (phase 5, P5-UX-13, D-334, C-940) the guide takes `?workspace_id=\|org_id=` and fills `{{aurora.*}}` placeholders for the caller (callback URL, external id for org members, links to pages at the caller's level) |
+| GET `/v1/apps/{app}/setup?workspace_id=\|org_id=` | S/K | (phase 5, P5-UX-8, D-330, C-931) `can_own` (workspace view) or org owner/admin (org view): per connect method whether it works here and what is missing, sign-in clients by level (instance: set up or not), self-hosted servers, availability, connections, values to copy (callback URL, external id), what the caller can do; the connect plan (C-909) is a projection of the same function |
 | GET `/v1/apps/{app}/connect-plan?workspace_id=` | S/K | (phase 5, P5-UX-2, D-321, C-909) `can_own`: which connect methods are ready for this workspace, the blocked ones with `unlock` (action, role, up to 3 org owner/admin names), the suggested method, scope presets, limit fields and existing connections |
 | POST `/v1/apps/{app}/connect` | S | `{ scope, workspace_id?, method_id, fields?, oauth_client_id?, access_level?, reconnect_connection_id? }` → `{ "kind": "redirect", "url" }` \| `{ "kind": "connected", "connection" }`. (Phase 5: the body also carries `access`, `scopes` and `instance_id`, and the answer carries `missing_scopes`, per C-740/C-741/C-243.) (Phase 5, P5-UX-2, D-322, C-911, SEC-127) optional `grant: { agent_ids, preset: "read"\|"ask_writes"\|"full" }`, which makes the connection and the grants in one transaction (`connected`: the answer adds `grants`) or carries the grant sealed through the OAuth sign-in and applies it at the callback (`grant_failed` when it cannot) |
 | GET `/v1/oauth/callback` | P | state-bound; renders a tiny HTML page that posts to the opener and closes (phase 5, FIX-149: reports over a `BroadcastChannel` instead; P5-UX-2, C-911: the result adds `granted_agent_ids`, `grant_failed?`) |
 | GET `/v1/workspaces/{ws}/connections`, `/v1/orgs/{org}/connections` | S/K | (phase 5, P5-UX-4, C-917) items carry `grant_count` |
-| GET/PATCH/DELETE `/v1/connections/{id}` | S/K | label, status (`disabled`↔`active`) |
+| GET/PATCH/DELETE `/v1/connections/{id}` | S/K | label, status (`disabled`↔`active`); (phase 5, P5-UX-14, C-944) `last_check_at`, `last_check_result` |
+| POST `/v1/connections/{id}/test` | S/K | (phase 5, P5-UX-14, D-335, C-943, SEC-129) `can_own` (org owner/admin for an org connection), rate class `check`: run the method's probe, a gateway database login, or a hook mint; `{ result: ok\|rejected\|unreachable\|unexpected\|not_testable, cause_detail?, checked_at }`, never upstream content; audited |
 | GET/POST `/v1/workspaces/{ws}/oauth-clients`, `/v1/orgs/{org}/oauth-clients`; PATCH/DELETE `/v1/oauth-clients/{id}` | S/K | BYOC; (phase 2, D-74) optional `instance_id` binds the client to a self-hosted instance |
 
 ### App instances (self-hosted apps; phase 2, D-74)
@@ -663,7 +666,8 @@ by `id`, never by `host` alone.
 | PUT `/v1/agents/{agent}/grants/apps/{app}` | S/K | (phase 5, FIX-154, D-306, C-896) give an agent access to a **credential-free** app (C-895) in one step: body as `PUT …/grants/connections/{conn}`; in one transaction serialized per (workspace, app) it reuses the workspace's oldest active connection of the app or creates one (audited `connection.created`, `via: "agent_grant"`), then upserts the grant; → `{ connection, grant, created }`; 404 `app_not_found`, 403 `app_unavailable`, 422 `app_not_credential_free`, 422 `full_grant_forbidden`. Removing access uses `DELETE …/grants/connections/{conn}` |
 | GET/POST `/v1/secrets/{id}/grants` | S/K | (phase 4, FIX-020, D-137) agents granted (only agents the caller can see) / bulk grant `{ agent_ids }` with exactly the checks of `PUT /v1/agents/{agent}/grants/secrets/{secret}`; all-or-nothing, idempotent (C-503) |
 | GET `/v1/agents/{agent}/model-readiness` | S/K | (phase 4, FIX-019, D-136) `can_own`: per granted LLM key `usable` or the failing reason, and the default model selection (`08 §Model readiness`, C-500). (phase 5, P5-MODELS-1, C-878) `default` also carries the role resolution and warnings |
-| GET `/v1/agents/{agent}/effective` | S/K | effective credentials and per-tool decisions with `org_ceiling`; (phase 2, RFE-005) optional `?speaker=<user_id>\|none`; (phase 5, P5-UX-4, C-918) credential items add `selected_by_details: [{ id, kind: "grant"\|"rule"\|"org_rule", label }]` |
+| GET `/v1/agents/{agent}/effective` | S/K | effective credentials and per-tool decisions with `org_ceiling`; (phase 2, RFE-005) optional `?speaker=<user_id>\|none`; (phase 5, P5-UX-4, C-918) credential items add `selected_by_details: [{ id, kind: "grant"\|"rule"\|"org_rule", label }]`; (phase 5, P5-UX-10, C-934) computed on the shared evaluator of FIX-159 |
+| GET `/v1/agents/{agent}/apps/{app}/access` | S/K | (phase 5, P5-UX-10, D-331, C-934) `can_use`, rate class `simulate`: per connection of the app in scope, each tool's decision (allow/ask/block) with the deciding layer first and links, plus tools a grant sets that can never run |
 
 ### Policy
 | Method & path | Auth | Purpose |

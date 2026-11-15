@@ -1640,6 +1640,87 @@ Rule: `14 §First run and connecting`, `09 §3.4` (C-910 keys) and `§11`, `05` 
   - The tour's Agents stop mentions Access › Add an app.
   - Until P5-UX-3 merges, P5-UX-1 points "Connect an app" at `…/credentials?tab=apps`.
 
+### Phase 5 — P5-UX app setup (setup page, per-app access answer, org connections, editor defaults, guides, test connection, labels; FIX-159; D-329..D-336, SEC-129)
+
+Rule: `14 §App setup`, `07 §Authoring` (simulate), `09 §3.4` (C-939, C-942 keys) and `§6` (guide checks), `05`, `03 §Planned changes` (connection health), `17` (SEC-129). Reserved numbers C-930..C-954 (C-950..C-954 spare). Errors use the standard body. FIX-159 implements C-930; P5-UX-8 C-931; P5-UX-9 C-932, C-933; P5-UX-10 C-934, C-935; P5-UX-11 C-936, C-937; P5-UX-12 C-938, C-939; P5-UX-13 C-940..C-942; P5-UX-14 C-943..C-945; P5-UX-15 C-946..C-949.
+
+- C-930 **Simulate evaluates app connections like the gateway** (amends C-83 and `07 §Authoring`; FIX-159, D-329).
+  - For `lane: request`, the simulator:
+    1. identifies the app (host, port and path against **Active** host claims, instance-aware, as the gateway's `decide.rs` does);
+    2. adds that app's connections in scope as candidates;
+    3. selects candidates by the rules;
+    4. picks the winner with the gateway's rule (connections before secrets);
+    5. identifies the tool (`params` and `connect_methods` included);
+    6. sets `tool_tags`, and builds `Credential::Connection` with `read_only`.
+
+    It then evaluates with the same facts the gateway builds.
+  - App and tool identification moves into one shared function in `crates/aurora-registry`, used by the gateway, the simulator and the effective view (C-934). No copy.
+  - The response's `candidates` may be `kind: connection`. A new `app: { app_id, tool_id|null }` is added. The trace includes the checks that run before any rule (`read_only_connection`, `app_untooled_blocked`, `missing_scope`).
+  - Invariant test: a table of requests run through the gateway decision function and through simulate yields the same verdict, winner and reason.
+- C-931 **Setup status** `GET /v1/apps/{app}/setup?org_id=&workspace_id=` (**S/K**). `workspace_id` needs `can_own` and gives the workspace view; `org_id` alone needs org owner/admin and gives the org view.
+  - It is computed by the same function as C-909 (one function; the plan is a projection of it). Answer: `{ app_id, name, family?, available, posture, methods: SetupMethod[], clients: { workspace: ClientRef[]|null, organization: ClientRef[]|null, instance: { set_up: bool } }, instances: { id, label, base_url, scope }[], connections: { workspace: ConnRef[], organization: ConnRef[] }, values: { callback_url, external_id?: string (only when the app's `permissions.context` includes `org_external_id`) }, can: { register_workspace_client, register_org_client, register_instance, set_availability, connect_workspace, connect_org } }`.
+  - `SetupMethod = { id, label, description, kind, audience, ready, needs: ("oauth_client"|"instance"|"admin_material")[], client_key?, unlock?: Unlock }` (C-909 `Unlock`).
+  - `ClientRef = { id, client_key, enabled, label }`. Client secrets and ids are never included. The org view's `clients.workspace` is `null`. The workspace view's `clients.organization` is shown only as refs.
+- C-932 **App setup page** (`14 §App setup` §7): routes `/o/<org>/w/<ws>/apps/<app>` (workspace view) and `/o/<org>/apps/<app>` (org view).
+  - Sections: status sentences per method, what is set up and where, values to copy, inline actions per `can`, the guide (C-940), the connections.
+  - The workspace Apps tab's **Details** opens this page (the details dialog's content moves into a section of it).
+  - The old `/o/<org>/w/<ws>/apps/<app>/connect` route keeps redirecting to the journey.
+  - Test ids `ws-app-setup` and `org-app-setup`.
+- C-933 **Indexes link to the setup page.** Every app name in the workspace, org and Admin OAuth client lists, Admin › Self-hosted apps, Admin › Plugins (app rows) and Connections links to its setup page at the viewer's level. Org › Apps renders the posture control (C-20, the Governance › Apps `PUT`) at its top. Governance › Apps keeps the control and links to Org › Apps.
+- C-934 **Agent app access** `GET /v1/agents/{agent}/apps/{app}/access` (**S/K**, `can_use` of the agent's workspace; rate class `simulate`).
+  - Answer: `{ connections: [{ connection_id, label, scope, access, tools: [{ tool_id, name, access: "read"|"write", decision: "allow"|"ask"|"block", reasons: [{ layer: "connection"|"grant"|"workspace_rule"|"org_rule"|"governance"|"package", label, rule_id?, link }] }], unreachable: { tool_ids, because } }] }`.
+  - `reasons[0]` is the deciding layer.
+  - `unreachable` lists the tools a grant sets to allow or ask that can never run (for example, write tools on a read-only connection).
+  - It is computed with the C-930 shared evaluator over one synthetic request per tool. The effective view (`GET /v1/agents/{agent}/effective`) is re-implemented on the same path, and a test asserts the two agree.
+- C-935 **Access tab and Policy** (`14 §App setup` §8):
+  - Access tab connection rows expand to the C-934 table; `unreachable` is shown next to the grant's save.
+  - The Policy pages (workspace and org) list grant-derived rules read-only under **From agents' access**, one line per (agent, connection), linking to the Access tab. The data comes from the existing rules route with `derived` filtering. If the route does not mark derived rules, add `derived_from: { kind: "grant", agent_id, credential_id }` to rule items.
+- C-936 **Org-wide connect (dashboard)**.
+  - The journey (C-914) gains an org mode: connect with `scope: "organization"`, `org_id`, no agent step, org owner/admin only.
+  - Its Done step offers:
+    - a starter grant (`PUT /v1/admin/placement` adding the connection, only for the default org and an instance admin; otherwise not shown);
+    - give agents access now (C-504 bulk grant over agents of any workspace the caller owns, implicit included);
+    - done.
+  - Org › Apps › Connect… and the org setup page start it. Workspace owners see org connections in the journey (C-909 `existing`, already including the org's) labelled "Shared by <org>".
+- C-937 **Org connections tab**. Org Credentials › Connections lists org connections with Reconnect (C-842 reconnect), access toggle (C-740 `PATCH access`), Disable, Delete; empty state with **Connect an app for the organization**. Workspace owners (I-27 read access) see the list without actions.
+- C-938 **Grant editor defaults** (`14 §App setup` §10).
+  - `GrantSubject` and `GrantForm` take the connection's `access`.
+  - Custom on `access = read`: read tools `allow`, write tools collapsed and not sent (they stay blocked). Custom on `access = write`: read tools `allow`, write tools `ask`.
+  - Existing grants are loaded as saved.
+  - Rows show `name` and `description`, with method and pattern under **Technical details**.
+  - The read-only note renders in every `GrantForm` with `access = read`.
+  - No API change, except `description` on tools in `GET /v1/apps/{app}` if it is not already returned (it is, per `apps/dto.rs`).
+- C-939 **Tool descriptions and naming** (package contract 1, lint).
+  - Every builtin tool has a `description` (≤ 200 characters, one sentence); a builtin check fails without one. Third-party packages get a linter warning (`tool_description_missing`).
+  - In `aws-keys`, `ec2_call` gets the name "Any other EC2 action (changes, and reads not covered above)". `ec2_describe`'s description names the Describe* actions.
+  - Each changed package bumps its patch version.
+- C-940 **Guide placeholders**. `GET /v1/apps/{app}/guide?workspace_id=|org_id=` renders `{{aurora.callback_url}}`, `{{aurora.external_id}}`, `{{aurora.page:<name>}}` and `{{aurora.app_setup}}` for the caller before returning Markdown.
+  - Names: `oauth_clients`, `self_hosted`, `plugins`, `app_setup`, `org_settings`.
+  - A page placeholder becomes a Markdown link to that page at the highest level the caller can open, or the text "(an organization admin can do this)" / "(an Aurora administrator can do this)" when the caller can open none.
+  - `external_id` is filled only for an org member, else "(shown to members of your organization)".
+  - Unknown placeholders never reach a viewer (C-941). The raw guide stays available to package tooling (`aurora plugin docs`).
+- C-941 **Guide checks** (`09 §6`):
+  - `guide_unknown_placeholder` (error): a `{{aurora.…}}` token outside the C-940 set.
+  - `scripts/guards` or `check-builtin.sh` refuses, in builtin guides only, the literal strings `<your Aurora URL>`, `<external_url>`, `Admin, Apps,` and the page name "Instances" (renamed "Self-hosted apps", FIX-132).
+- C-942 **`connect[].show_context`** (manifest, optional): a list of context variables (`org_external_id` only for now). The connect form, the journey's sign-in step and the setup page show it as a labelled value with Copy above the method's fields, read from `GET /v1/orgs/{org}` (`external_id`, already readable by any org member).
+  - `aws-keys` `assume_role` declares it.
+  - The Bedrock assume-role LLM key form shows the same block (C-811, not built until now).
+- C-943 **Test connection** `POST /v1/connections/{id}/test` (**S/K**; `can_own` of the connection's workspace, or org owner/admin for an org connection; rate class `check`; SEC-129).
+  - It runs, in order of what the method has: the method's `probe` (the connect-time probe code, `connect/probe.rs`); for `database` apps a gateway login up to `ReadyForQuery` with no statement, through an internal gateway route on the existing internal channel the API already uses for the gateway, or a new one with the same authentication if none exists (the lane reports which); for a `hook` token method one mint through the hook host.
+  - Answer `{ result: "ok"|"rejected"|"unreachable"|"unexpected"|"not_testable", cause_detail?: { host?, status?, code? }, checked_at }`.
+  - It never returns an upstream body. It is audited `connection.test`.
+- C-944 **Connection health fields**. `app_connections.last_check_at timestamptz null` and `last_check_result text null` (CHECK in the C-943 results, `not_testable` excluded from storage). Both are set by C-943 and by the post-connect test (C-945), exposed on `Connection` and never written by the gateway.
+- C-945 **Test UI**:
+  - **Test connection** on each connection row (workspace and org) with the result sentence of `14 §App setup` §12.
+  - The health line "Checked <time> · <result>" next to "Last used".
+  - The journey's and connect dialog's Done step run C-943 once for methods without a probe and show a failure as a warning.
+- C-946 **OAuth client labels**. `AppDetail.oauth_clients[]` gains `used_by_methods: { id, label }[]` from the connect methods whose `client` is that key. The OAuth client form's app picker shows "<app> — for <method label>[, <method label>]" and never shows `client_key` (it stays in a tooltip for operators).
+- C-947 **Workspace chooser data**. `Workspace` items of `GET /v1/orgs/{org}/workspaces` gain `personal_of?: { id, name }` (the user a personal workspace belongs to; absent for shared workspaces). Org › Apps › Connect… orders: For the whole organization (C-936), the caller's own and shared workspaces, then others' personal workspaces under a collapsed group.
+- C-948 **Agent naming**:
+  - `POST /v1/orgs/{org}/workspaces` accepts optional `agent_name` (validated by the same function as an agent's `name` on create/PATCH; the handle is slugified as today), defaulting to `agents.default_name`. The New workspace dialog shows it.
+  - Every multi-workspace agent picker row reads "<workspace> · <agent>".
+- C-949 **GitLab method labels** (package): `token` "Personal access token" with a description (scopes, expiry, project or group tokens), `oauth` "Sign in with GitLab" with a description (needs an OAuth client; self-managed via a registered server). Patch version bump.
+
 ## Shared schemas
 
 _Defined alongside the milestone sections above._

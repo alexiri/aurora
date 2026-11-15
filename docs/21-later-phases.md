@@ -318,6 +318,23 @@ complicated". The owner singled out "one Connect journey per app" as the core of
 Briefs P5-UX-1..7. Owning sections: `14 §First run and connecting`; `09 §3.4`; `04 §Workspace
 access by e-mail`, `§New-user placement`; `05`; `03 §Planned changes`; `02 §Limits`; `17` (SEC-127,
 SEC-128); `API_CONTRACTS` C-909..C-927.
+
+**App setup** (the owner's second walkthrough, 2026-11-15: "figuring out how to configure apps is
+really confusing"; D-329..D-336). It followed a team lead (an org member who owns a team workspace) and
+the org owner above her.
+- **Simulate fix (FIX-159, high priority).** Simulate decides app requests like the gateway. It had
+  skipped every connection grant and could show a false allow.
+- **Setup page.** Every app gets one setup page, at the workspace and the org level, with fixes inline.
+- **One access answer.** Each agent gets one answer per app, saying which layer decided each tool.
+- **Org-wide connections** in the dashboard.
+- **Access editor** defaults from the connection, in plain words.
+- **Setup guides and forms** filled with real values: callback URL, external id, links to pages that
+  exist.
+- **Test connection** and connection health (SEC-129).
+- **Names and labels** that tell agents and OAuth clients apart.
+
+Briefs FIX-159 and P5-UX-8..15. Owning sections: `14 §App setup`, `07 §Authoring`, `09 §3.4` and
+`§6`, `05`, `03 §Planned changes`, `17` (SEC-129), `API_CONTRACTS` C-930..C-949.
 ## Phase 6 — Proposals (owner, 2026-11-14; not specified, not started)
 
 Also in phase 6, already specified: the **S3-compatible blob store** (P4-S3, D-120; moved from phase 5
