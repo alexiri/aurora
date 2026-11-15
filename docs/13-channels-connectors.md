@@ -738,8 +738,16 @@ Available to an agent only while it has an `active` presence.
   with `can_use` on the workspace or approved reach; spaces with an active
   binding for this agent or approved space reach); results pinned as **mention
   anchors** in the conversation.
-- `send_message {to, text, files?, platform?}`: `to` is an anchor alias or a
-  recipient id from `find_recipient`. Reach is re-checked at send. Messages to
+- `send_message {to, text, files?, platform?}`: `to` is `here`, an anchor alias or a
+  recipient id from `find_recipient`, or (phase 5, FIX-150, D-287) a person's exact
+  handle or a space's exact name: a `to` that is none of the first three runs the
+  `find_recipient` lookup (reach-filtered, results pinned) and is used only when
+  **exactly one** reachable candidate matches it exactly (handle, alias or space
+  name; never a display name); otherwise nothing is sent and the refusal lists the
+  pinned candidates' aliases to retry with (no candidates: one text, the same
+  whether the person exists unreachable or not at all). `read_conversation`'s
+  `target` resolves the same way. The result carries `recipient {alias?, kind,
+  label}`. Reach is re-checked at send. Messages to
   the current conversation's own thread are always allowed. Otherwise the
   agent's `proactive_messaging`: `off` → refused; `ask` → **action approval**
   (`07`) with a platform-composed summary; `allow` → sent. `text` is an
