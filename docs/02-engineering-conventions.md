@@ -322,6 +322,9 @@ overridden by the named configuration key (`15`).
 | `AGENT_CLI_PAGES_DEFAULT` / `AGENT_CLI_PAGES_MAX` | (phase 5, P5-GUIDE-6) 20 / 200 pages for `aurora-agent call --all` | — | 24 |
 | `AGENT_CLI_SAVE_MAX` | (phase 5, P5-GUIDE-6) 64 MiB written by one `aurora-agent call`, all pages together | — | 24 |
 | `PLATFORM_TOOLS_CORE_MAX` | (phase 5, P5-GUIDE-7, D-297) 8 platform tools listed by the MCP bridge in `on_demand` mode | — | 24, 12 |
+| `MODEL_ID_MAX` | (phase 5, P5-MODELS-1, D-303) 200 chars per model id (default, role, `model_info` key); characters `[A-Za-z0-9._:/@-]` (`08 §Model roles`) | — | 08 |
+| `MODEL_INFO_MAX` | (phase 5, P5-MODELS-1) 64 `model_info` entries per LLM endpoint | — | 08, 15 |
+| `USAGE_BY_MODEL_MAX` | (phase 5, P5-MODELS-2, D-304) 16 `by_model` entries per turn; entries beyond the limit are folded into the default model's entry and `unverified_models` is set | — | 10 |
 | `AVATAR_MAX` | 512 KiB (PNG/JPEG/WebP) | — | 10 |
 | `SSE_KEEPALIVE` | 15 s | — | 05 |
 | `API_RATE_*` | (phase 2, RFE-017) buckets of `05 §Conventions`: general 600/min (burst 120), write 120/min (30), message 30/min (10), upload 20/min (5), simulate 20/min (5), search 30/min (10), export 6/h (2), org 3 000/min (600); (phase 5, FIX-146, D-232) telemetry 60/min (20), the per-user limit of `POST /v1/telemetry/traces` | `ratelimit.api.*` | 05 |

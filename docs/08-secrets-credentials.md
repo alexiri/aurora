@@ -511,7 +511,7 @@ a module of `aurora-llm` plus one registry line.
   `allowed_models` narrows what may be called.
 - **`model_from_request`** per provider: `openai`, `azure_openai`, `openai_compatible`: JSON body `/model` as today (`Unknown` when the body prefix is truncated or unparsable → refused when an allow-list applies). `bedrock`: the percent-decoded `{modelId}` path segment (an inference-profile ARN or id, compared exactly with the allow-list; no body needed). `vertex`: the `<model>` before `:` in the path (`claude-sonnet-4-5@20250929`, no publisher); for the OpenAI-compatible route, body `/model`. Allow-list entries are therefore the ids the client really sends (for Azure, the deployment name; for Bedrock, the profile id such as `eu.anthropic.claude-…`).
 - **Streaming.** Responses are streamed through unbuffered: SSE (OpenAI, Azure, Vertex, compatible) and the AWS binary `application/vnd.amazon.eventstream` (Bedrock). The gateway never parses or rewrites a response body, sets no response timeout beyond `UPSTREAM_HEADER_TIMEOUT` (time to response headers), and only Bedrock's `aws_sigv4` needs the *request* body buffered (to sign it).
-- **Error classification and usage.** One table in `aurora-llm` (`classify(provider, status, error_type)`), used by the gateway (request-log `error_code` `llm_auth`, `llm_rate_limited`, `llm_quota`, `llm_overloaded`, `llm_refusal`; metric `aurora_gateway_llm_upstream_total{provider,endpoint,class}`) and by the harness adapters for the turn error codes of `12`: 401/403 with the provider's credential errors (OpenAI `invalid_api_key`; Azure 401; Bedrock `UnrecognizedClientException`, `InvalidSignatureException`, `ExpiredTokenException`, `AccessDeniedException`; Vertex 401/403 `UNAUTHENTICATED`/`PERMISSION_DENIED`) → `auth`; 429 and `ThrottlingException` / `RESOURCE_EXHAUSTED` → `rate_limited`; OpenAI `insufficient_quota`, Bedrock `ServiceQuotaExceededException` → `quota`; 5xx, 529, `ServiceUnavailableException`, `ModelNotReadyException` → `overloaded`; Azure `content_filter`, Bedrock guardrail intervention, Vertex `SAFETY` → `refusal`. The gateway **never alters** an upstream status or body (clients keep their own retry logic); a spike of `llm_auth` marks nothing automatically. (phase 5, D-260(d)) The gateway **never reads a response body** to classify: it calls `classify` with the status and, for Bedrock only, the `x-amzn-ErrorType` response header as `error_type` (`error_type = None` otherwise), so a 429 is `llm_rate_limited` in the request log even when OpenAI's body says `insufficient_quota`; the harness adapters, which parse the body, call the same table with the body's error type and refine the turn code (`provider_quota`). Errors inside a stream (an event-stream `:message-type: exception` frame, an SSE `error` event after a 200) are seen by the adapters only; the request log records the 200. The gateway **never retries** an LLM request (bodies are streamed and inference is not idempotent); the one gateway-side retry that exists is the mint after its failure hold. **Usage** stays harness-reported (`turns.usage`, `10 §Usage and metering`); the API stamps `provider`, `endpoint_id` and `model` from the turn's `ModelChoice`, never from what the harness claims, so usage aggregates are correct for every provider. The gateway does not count tokens.
+- **Error classification and usage.** One table in `aurora-llm` (`classify(provider, status, error_type)`), used by the gateway (request-log `error_code` `llm_auth`, `llm_rate_limited`, `llm_quota`, `llm_overloaded`, `llm_refusal`; metric `aurora_gateway_llm_upstream_total{provider,endpoint,class}`) and by the harness adapters for the turn error codes of `12`: 401/403 with the provider's credential errors (OpenAI `invalid_api_key`; Azure 401; Bedrock `UnrecognizedClientException`, `InvalidSignatureException`, `ExpiredTokenException`, `AccessDeniedException`; Vertex 401/403 `UNAUTHENTICATED`/`PERMISSION_DENIED`) → `auth`; 429 and `ThrottlingException` / `RESOURCE_EXHAUSTED` → `rate_limited`; OpenAI `insufficient_quota`, Bedrock `ServiceQuotaExceededException` → `quota`; 5xx, 529, `ServiceUnavailableException`, `ModelNotReadyException` → `overloaded`; Azure `content_filter`, Bedrock guardrail intervention, Vertex `SAFETY` → `refusal`. The gateway **never alters** an upstream status or body (clients keep their own retry logic); a spike of `llm_auth` marks nothing automatically. (phase 5, D-260(d)) The gateway **never reads a response body** to classify: it calls `classify` with the status and, for Bedrock only, the `x-amzn-ErrorType` response header as `error_type` (`error_type = None` otherwise), so a 429 is `llm_rate_limited` in the request log even when OpenAI's body says `insufficient_quota`; the harness adapters, which parse the body, call the same table with the body's error type and refine the turn code (`provider_quota`). Errors inside a stream (an event-stream `:message-type: exception` frame, an SSE `error` event after a 200) are seen by the adapters only; the request log records the 200. The gateway **never retries** an LLM request (bodies are streamed and inference is not idempotent); the one gateway-side retry that exists is the mint after its failure hold. **Usage** stays harness-reported (`turns.usage`, `10 §Usage and metering`); the API stamps `provider`, `endpoint_id` and `model` from the turn's `ModelChoice`, never from what the harness claims, so usage aggregates are correct for every provider. The gateway does not count tokens. (phase 5, P5-MODELS-2, D-304) A turn may use several models on its endpoint (§Model selection). Harnesses therefore report a `by_model` breakdown. The API accepts a claimed `model` only when it is in the turn's **allowed set**: the default model, a resolved role, or the effective allow-list. When no allow-list applies, any id matching `MODEL_ID_PATTERN` is accepted. Any other entry is folded into the default model's entry, and the turn is marked `unverified_models` (`10 §Usage and metering`). `provider` and `endpoint_id` are still stamped from `ModelChoice`.
 - **Governance** (§11) applies to every new endpoint unchanged: instance endpoint list, org `endpoints.<id>`, key scopes, `sanctioned_only`, origin rules (the id meanings are in the table: for `bedrock` `allowed_organization_ids` are AWS account ids, for `vertex` `allowed_workspace_ids` are GCP project ids, for `openai` organization and project ids, (phase 5, D-261) for `azure_openai` with `azure_entra` `allowed_organization_ids` are Entra tenant ids; an `azure_openai` endpoint with a `provider_account` rule accepts only `azure_entra` keys, an `api_key` there is 422 `llm_key_unverifiable`), model allow-lists, the origin preflight and the response backstop (`origin_from_response` exists for `openai` only; the others have none). The LLM hosts of a configured endpoint are **reserved** (§LLM hosts) and leave the known-hosts list automatically; the hosts of a new provider that has **no** configured endpoint stay *known* LLM hosts (refused under `sanctioned_only`), as today. The credentialed Default Rule skips these hosts exactly as it skips the phase-0 ones (`07 §Why the Default Rule skips LLM hosts`); the carve-out is by **exact configured host** (never `*.amazonaws.com` or `*.googleapis.com`), so enabling Bedrock does not exempt any other AWS or Google API from the Default Rule, and an explicit block rule naming an endpoint host still wins.
 - **Configuration** (`15`): endpoint keys per provider are in the table of `15`; unknown keys, a non-https `base_url` (except loopback), a `base_url` with userinfo or query, an empty `models`/`default_model` for `azure_openai` and `vertex`, an invalid region/location/project id, or a duplicate endpoint id refuse startup naming the key. API-side calls (validation, listing, origin) and the gateway's token mint honour `tls.extra_ca_bundle`. (phase 5, D-260(f), D-262) `openai_compatible` follows `litellm` for the scheme (*Endpoint destinations* below); `allowed_paths` on `bedrock`/`vertex` refuses startup. Since SET-3 the same validation runs on every write of `llm.endpoints` from the dashboard, import or CLI (422 `settings_invalid` with the key path, C-800).
 
@@ -641,6 +641,15 @@ one. Like all credentials, LLM secrets are used only when granted.
 
 `agents.model_provider`, `agents.model_endpoint_id`, `agents.model_id`:
 
+- (phase 5, P5-MODELS, D-302(a)) **The selected model is the default, not a limit.** The turn's model is
+  the one the harness starts each session with, and its main loop uses it unless the harness switches.
+  The harness, its subagents, its own background requests and any harness setting the agent wrote in its
+  home may use **any model the turn's endpoint serves that governance allows**. The effective allow-list
+  (§11.5) is the only model control, and nothing ties a request to the default model. The **endpoint** and
+  the **key** still come only from the selection below: the adapter renders the base URL, and the gateway
+  injects per host, so nothing in the sandbox can move a turn to another endpoint or key. Model roles
+  (§Model roles) name the other models on the same endpoint. The dashboard calls this field "Default
+  model". The API field names do not change.
 - Only **usable** keys count: granted, `active`, admitted by governance, and
   (where the endpoint has a key-origin rule) with a verified origin that still
   matches the effective rule (§11).
@@ -696,7 +705,55 @@ well; `azure_openai` and `vertex` require `default_model` (static lists), so
 Admin › LLM endpoints.
 - The supervisor receives `{ provider, endpoint base URL, dialect, model,
   effort, client_env }`. `client_env` carries **placeholders only**; the
-  gateway injects the real key.
+  gateway injects the real key. (phase 5, P5-MODELS) It also receives `roles`, `subagent_role` and
+  `model_meta` (§Model roles, C-877).
+- (phase 5, P5-MODELS, D-303, C-878) Readiness also reports the role resolution of the default
+  selection. For each role it gives the model, its source, and a **warning**: `role_unset` (the role is
+  unset on an endpoint whose provider is not `anthropic`) or `role_not_allowed` (the endpoint's role is
+  not allowed for this org). It also gives `roles_dropped`, and `subagent_warning = subagent_role_unset`
+  when the subagent default names a role that resolves to nothing on a non-`anthropic` endpoint.
+  Warnings never fail a turn.
+
+#### Model roles (phase 5, P5-MODELS-1, D-302, D-303)
+
+A **role** names a model on the **same endpoint** as the turn's default model. The roles are `large`,
+`medium` and `small`, and the names are harness-neutral (D-302(b)). Each adapter maps the roles to its
+harness's own aliases (`12 §Harness interface`). Roles never name another endpoint, because a harness
+process has one base URL.
+
+- **Sources.** For each role, the most specific usable source wins:
+  1. **The agent.** `agents.model_roles` = `{ endpoint_id, large?, medium?, small? }`. It is stamped with
+     the endpoint it was chosen for, and applies only while the turn's endpoint is that endpoint.
+  2. **The endpoint.** `llm.endpoints[].model_roles` = `{ large?, medium?, small? }`, set by the
+     operator (`15`), or in Admin › LLM endpoints.
+  3. **Nothing.** The harness's built-in alias resolution applies. On `anthropic` that is correct. On
+     every other provider it is a readiness warning (`role_unset`), because the built-in ids may not be
+     served or allowed there.
+- **Validation.** Every model id (default, role, `model_info` key) matches `MODEL_ID_PATTERN`
+  (`[A-Za-z0-9._:/@-]`, 1..`MODEL_ID_MAX`). Bedrock profile ids and ARNs, and Vertex `model@version`
+  ids, fit this pattern. A role model must also be on the effective allow-list when one applies, and on
+  the endpoint's static `models` when the endpoint has a static list. These checks run at save time
+  (agent PATCH, endpoint entry) and again at every selection.
+- **Drop rule.** An agent role is stamped like an override, and is **dropped** under the same rule: when
+  its endpoint is no longer the turn's endpoint, or the model is no longer allowed. It is never
+  re-pointed. The other roles stay. The next turn carries one notice naming what was dropped. An endpoint
+  role that is not allowed for an org is ignored for that org's agents, with the `role_not_allowed`
+  warning. Nothing is deleted, since the role is the operator's configuration.
+- **Subagent default.** `agents.subagent_model` is one of `inherit` (the default), `large`, `medium` or
+  `small`. It becomes `ModelChoice.subagent_role` when it names a role that resolved, or any role on an
+  `anthropic` endpoint. Otherwise it is omitted, with `subagent_warning`. The harness uses it for
+  subagents whose definition names no model (`12 §Adapter claude-code`).
+- **Model metadata.** `llm.endpoints[].model_info` = `{ "<model id>": { context_window?, capabilities? }
+  }`, at most `MODEL_INFO_MAX` entries. It describes models the harness cannot recognise by id, such as a
+  GLM model behind LiteLLM. `capabilities` ⊆ `effort`, `thinking`, `adaptive_thinking`,
+  `interleaved_thinking`. The selection copies into `ModelChoice.model_meta` the entries for the default
+  model and for the resolved roles.
+- **What is not provided.** Agents have no model allow-list of their own (D-302(e)). The platform ships
+  no subagent definitions: `.claude/agents/` and its equivalents are agent-owned files (D-302(d)). There
+  is no fallback across providers inside Aurora. An operator can configure a LiteLLM model group with
+  router fallbacks and use it as the default model or as a role. The recipe is in
+  `docs/operator/llm-model-roles.md`, which says that the upstream keys then live in LiteLLM and that
+  usage then shows the group name (D-302(c)).
 
 ### Platform-internal LLM calls
 
@@ -1062,6 +1119,14 @@ on which Aurora injects a key of that endpoint is checked with
 SHOULD additionally restrict models on the provider side (LiteLLM per-key or
 per-team model lists; Anthropic workspace settings), which is stronger than
 any proxy check.
+
+(phase 5, P5-MODELS, D-302(a)(e)) The allow-list is the **only** model control. A harness may use any
+allowed model on its turn's endpoint (§Model selection), and agents have no allow-list of their own. To
+keep a team off an expensive model, configure it here or in LiteLLM. (P5-MODELS-2, D-304, C-880) From
+this batch the gateway runs `model_from_request` on **every** request that has a key injected on a
+governed LLM endpoint, including when no allow-list applies. It uses the same body-prefix bound as the
+allow-list check and records the result in `request_log.llm_model` (`Some(id)`; null for `None` and
+`Unknown`). Without an allow-list, `Unknown` is recorded and never refused.
 
 ### 11.6 Egress posture (uncredentialed default-deny)
 
