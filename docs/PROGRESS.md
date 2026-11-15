@@ -1,6 +1,6 @@
 # Implementation progress
 
-Last updated: 2026-11-15, master after `26e91910` (P5-CERN-ADDONS merged)..7 ready, not yet placed) and the P5-MODELS spec merge (the harness chooses models, owner D-302: P5-MODELS-1..3 ready, not yet placed), plus briefs FIX-153/FIX-154 (findable app connect, credential-free apps in one step, D-306; ready, not placed). **Phase 5 is running**: wave 1 is merged; wave 2 started 2026-11-15 in the same three lanes (`p5-apps`: SET-1 → FIX-124 → SET-2..5 → P4-LLM-6; `p5-agent`: P5-CHAT-4 B merged, now P4-LLM-1..5; `p5-platform`: P5-CERN-ADDONS external repo (owner's GitHub side done, D-278) → FIX-146 → P4-SSH-1/2; §Execution order). Phase 6 stays closed until the owner's all-clear (D-278). Phases 0–4 are closed; their record is in `docs/history/`. **Phase 6 is proposed only** (P6-ORGTREE, P6-LIMITS; owner answers so far: D-276; P6-MODELS moved to phase 5 as P5-MODELS, D-302) and starts on the owner's word.
+Last updated: 2026-11-15, master after `88faf124` (P4-LLM-1 merged)..7 ready, not yet placed) and the P5-MODELS spec merge (the harness chooses models, owner D-302: P5-MODELS-1..3 ready, not yet placed), plus briefs FIX-153/FIX-154 (findable app connect, credential-free apps in one step, D-306; ready, not placed). **Phase 5 is running**: wave 1 is merged; wave 2 started 2026-11-15 in the same three lanes (`p5-apps`: SET-1 → FIX-124 → SET-2..5 → P4-LLM-6; `p5-agent`: P5-CHAT-4 B merged, now P4-LLM-1..5; `p5-platform`: P5-CERN-ADDONS external repo (owner's GitHub side done, D-278) → FIX-146 → P4-SSH-1/2; §Execution order). Phase 6 stays closed until the owner's all-clear (D-278). Phases 0–4 are closed; their record is in `docs/history/`. **Phase 6 is proposed only** (P6-ORGTREE, P6-LIMITS; owner answers so far: D-276; P6-MODELS moved to phase 5 as P5-MODELS, D-302) and starts on the owner's word.
 
 ## How this file is kept
 
@@ -21,9 +21,9 @@ One row per task id, counted from the task tables (closed phases: from their his
 | 2 | 52 | 51 | 1 (FIX-017: the owner's real-cluster install) | 0 | 0 | 0 | `docs/history/phase-1-2.md` (closed 2026-11-09, AUDIT-002) |
 | 3 | 15 | 15 | 0 | 0 | 0 | 0 | `docs/history/phase-3.md` (closed 2026-11-10, AUDIT-003) |
 | 4 | 124 | 123 | 0 | 0 | 0 | 1 (FIX-131 closed without a build, D-195) | `docs/history/phase-4.md` (closed 2026-11-14, AUDIT-004) |
-| 5 | 87 | 40 | 4 (SET-1, FIX-124, P4-LLM-1, FIX-153) | 40 | 0 (every phase-5 item has a brief) | 3 (OPS-022 deferred; FIX-049 moved to phase 4; P5-SLACK moved to phase 6, D-285) | §Phase 5 tasks (TEST-021 and FIX-057, done, are counted here but their rows are in `docs/history/phase-0.md`'s task graph) |
+| 5 | 87 | 41 | 4 (P4-LLM-2, SET-1, FIX-124, FIX-153) | 39 | 0 (every phase-5 item has a brief) | 3 (OPS-022 deferred; FIX-049 moved to phase 4; P5-SLACK moved to phase 6, D-285) | §Phase 5 tasks (TEST-021 and FIX-057, done, are counted here but their rows are in `docs/history/phase-0.md`'s task graph) |
 | 6 (proposed) | 3 | 0 | 0 | 0 | 3 (P6-ORGTREE, P6-LIMITS: proposals awaiting the owner; P6-SLACK, moved from phase 5, D-285) | 0 | §Phase 6 tasks (proposed) |
-| **All** | **408** | **350** | **6** | **40** | **3** | **9** | |
+| **All** | **408** | **352** | **5** | **39** | **3** | **9** | |
 
 ## Environment
 
@@ -77,8 +77,8 @@ Lane order, waves and number blocks: `docs/tasks/PHASE5-PLAN.md`. Lanes `p5-apps
 | P4-EVAL-2 | Eval run engine: one `eval` conversation per question, numeric/text scoring, side-effect refusal (`eval_read_only`), cancel, schedules, regression notice, retention | D-290.., SEC-114..SEC-116, migrations 000237/000238/000240 | L | Rust | P4-EVAL-1 | `P4-EVAL-2.md` | ready (Opus reviews the refusal code; wave 3: queued in lane p5-agent) |
 | P4-EVAL-3 | `PlatformLlm` with the `eval_judge` purpose; judged scoring, fail-closed judge | D-289.., `08` | M | Rust | P4-EVAL-2 | `P4-EVAL-3.md` | ready (Opus reviews `platform.rs`; wave 3: queued in lane p5-agent) |
 | P4-EVAL-4 | Dashboard: agent Behaviour › Evals page | C-860.., `14` | M | Next.js | P4-EVAL-1 | `P4-EVAL-4.md` | ready (wave 3: queued in lane p5-agent) |
-| P4-LLM-1 | LLM provider framework; `openai`, `openai_compatible`; `anthropic` inference path set | D-260, D-268(d), C-800.. | L | Rust | — | `P4-LLM-1.md` | in-progress (lane p5-agent; committed c1a36c0b..a16fc0c6 on alexiri/p5-agent, not merged; e2e legs + docs next; D-248; order 1 → 2 → 3 → 4 → 5; 6 in p5-apps after SET-3) |
-| P4-LLM-2 | Gateway LLM mint service + Google Vertex AI | D-261, SEC-97 | L | Rust | P4-LLM-1 | `P4-LLM-2.md` | ready (queued in lane p5-agent) |
+| P4-LLM-1 | LLM provider framework; `openai`, `openai_compatible`; `anthropic` inference path set | D-260, D-268(d), C-800.. | L | Rust | — | `P4-LLM-1.md` | done (merged 88faf124; D-248) |
+| P4-LLM-2 | Gateway LLM mint service + Google Vertex AI | D-261, SEC-97 | L | Rust | P4-LLM-1 | `P4-LLM-2.md` | in-progress (lane p5-agent; started) |
 | P4-LLM-3 | `azure_openai` (keys and Entra) | D-261, D-268(c) | M | Rust | P4-LLM-2 | `P4-LLM-3.md` | ready (queued in lane p5-agent) |
 | P4-LLM-4 | `bedrock` (assume-role, IAM keys, API keys; SigV4 in the gateway) | D-261, D-268(c) | L | Rust | P4-LLM-2 | `P4-LLM-4.md` | ready (queued in lane p5-agent) |
 | P4-LLM-5 | Harnesses on the new providers + hosted e2e (no key reaches the sandbox) | D-260, SEC-64, SEC-66 | M | Rust | P4-LLM-1 (e2e after 2–4) | `P4-LLM-5.md` | ready (queued in lane p5-agent) |
@@ -94,12 +94,12 @@ Lane order, waves and number blocks: `docs/tasks/PHASE5-PLAN.md`. Lanes `p5-apps
 | P4-SSH-1 | User SSH keys, SSH CA, certificate mint, `aurora ssh` | D-239, SEC-93 | M | both | — | `P4-SSH-1.md` | ready (queued in lane p5-platform after FIX-146) |
 | P4-SSH-2 | `aurora-terminator` (certificate-only SSH into the sandbox; no port forwarding) | D-239, D-268(a)(b), SEC-92/94..96 | L | Rust/ops | P4-SSH-1 | `P4-SSH-2.md` | ready (queued in lane p5-platform) |
 | SPEC-SETTINGS | Instance settings move from Helm into the app (Helm-set values locked) — spec batch | D-195, D-236..D-238, SEC-89/90 | L | docs | — | `SPEC-SETTINGS.md` | done (merged 76bb566a) |
-| SET-1 | Settings framework: registry, Helm locks, storage, live reload, audit, export/import, CLI, Admin › Settings | D-236 | L | both | — | `SET-1.md` | in-progress (lane p5-apps; committed fa493bfb on alexiri/p5-apps, not merged; batch gate 1 after FIX-124) |
+| SET-1 | Settings framework: registry, Helm locks, storage, live reload, audit, export/import, CLI, Admin › Settings | D-236 | L | both | — | `SET-1.md` | in-progress (lane p5-apps; committed on alexiri/p5-apps with batch gate 1 green; coordinator security review: 2 blockers (dashboard Vault stores reading env/files, `keep` re-targeting) + should-fixes being fixed before merge) |
 | SET-2 | Governance and BYO floors as live settings | D-237 | M | both | SET-1, FIX-124 | `SET-2.md` | ready (queued in lane p5-apps) |
 | SET-3 | LLM endpoints as live settings | D-237 | M | both | SET-2 | `SET-3.md` | ready (queued in lane p5-apps) |
 | SET-4 | Sign-in, OIDC providers and Email editable | D-235(b), D-237 | M–L | both | SET-1 | `SET-4.md` | ready (queued in lane p5-apps) |
 | SET-5 | Agents, approvals, retention, skills, SCIM, previews, terminal and limits as settings | D-235(a), D-237 | L | both | SET-1 | `SET-5.md` | ready (queued in lane p5-apps) |
-| FIX-124 | Admin › Secret stores editable (unless set in Helm), value migration job | D-195 | M–L | both | SET-1 | `FIX-124.md` | in-progress (lane p5-apps; started) |
+| FIX-124 | Admin › Secret stores editable (unless set in Helm), value migration job | D-195 | M–L | both | SET-1 | `FIX-124.md` | in-progress (lane p5-apps; committed with SET-1, D-244; review fixes before merge) |
 | FIX-133 | Read-only connections; GitHub App tokens narrowed; fine-grained GitHub auth | D-240, C-740 | M–L | both | FIX-123, FIX-107 | `FIX-133.md` | done (merged 787d5c02) |
 | FIX-134 | One Sentry app with preset region instances | D-93, D-195(a) | M | both | FIX-123, FIX-132 | `FIX-134.md` | done (merged ada98f25) |
 | FIX-135 | App families: one catalogue tile per product (GitHub/GHES, Atlassian Cloud/DC) | D-91..D-93 | M | both | FIX-134 (same lane) | `FIX-135.md` | done (merged ada98f25) |
