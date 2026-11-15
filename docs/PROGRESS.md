@@ -153,7 +153,7 @@ Proposed order (Q-P6-LIM-8): the limits framework (P6-LIM-1) together with the s
 
 ## Number allocation
 
-**Next free: FIX-151, D-295, C-875, SEC-117, migration `20261201000241`.** Edit this line in place when you take a number (check `git log -3`, `ls docs/tasks`, and this line right before committing; several sessions write briefs). Task briefs are `docs/tasks/<ID>.md`, named after the task id (`P<phase>-<NAME>` for phase features, `FIX-nnn` for fixes).
+**Next free: FIX-151, D-300, C-875, SEC-121, migration `20261201000241`.** Edit this line in place when you take a number (check `git log -3`, `ls docs/tasks`, and this line right before committing; several sessions write briefs). Task briefs are `docs/tasks/<ID>.md`, named after the task id (`P<phase>-<NAME>` for phase features, `FIX-nnn` for fixes).
 
 Live reservations (numbers inside a block that a lane has already used are recorded in its commits; unused blocks are released when the lane or task closes):
 
@@ -170,7 +170,7 @@ Live reservations (numbers inside a block that a lane has already used are recor
 | P4-NARR / P4-UTOK (spec merged) | D-279..D-284 (used) | C-846..C-859 (used) | `20261201000231..233` (`234`, `235` released) | SEC-111..SEC-113 (used) |
 | P5-CALINV | D-274 (used) | C-844 (used) | `20261201000230` | SEC-108 (used) |
 | agent-page follow-ups (coordinator) | D-202..D-209 | C-701..C-709 | | |
-| branch `alexiri/p5-guide` (unmerged) | D-170..D-172 | C-640..C-659 | | SEC-91 (its SEC-90 collides with SPEC-SETTINGS: renumber at merge) |
+| branch `alexiri/p5-guide` (unmerged; amended 2026-11-15: always-index, recipes, `aurora-app`, platform tools on demand) | D-170..D-172, D-295..D-299 | C-640..C-659 | | SEC-91, SEC-117..SEC-120 (SEC-117 replaces the branch's colliding SEC-90) |
 
 ## Open questions for the owner
 
