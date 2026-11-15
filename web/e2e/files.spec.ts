@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { createHash } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -273,6 +274,110 @@ test.describe("Files viewer", () => {
       expect(await cspViolations(page)).toEqual([]);
     });
   }
+});
+
+// P5-FILES-4 (C-907): the whole journey in one flow, in both themes — upload a folder, edit and save, conflict, download with
+// a matching sha256, rename, recursive delete, `.aurora` read-only, a link out of /workspace refused, a parked sandbox
+// waking, and (separately) a frozen agent. The kind journey (scripts/e2e/files.sh) proves the same against real SFTP.
+// (A file picked with `setInputFiles` has a body Playwright cannot read back, so its bytes are written in the editor.)
+test.describe("Files journey (C-907)", () => {
+  test.use({ viewport: { width: 1280, height: 900 } });
+
+  for (const scheme of ["light", "dark"] as const) {
+    test(`${scheme} theme: upload, edit, conflict, download, rename, delete, read-only, outside link, waking`, async ({ page }, info) => {
+      const fs = new Fs();
+      fs.nodes.set("/workspace/evil", { kind: "dir", content: "", mtime: "2026-11-15T10:00:00Z", link: { path: "/etc", kind: "dir", outside: true } });
+      await mockFiles(page, fs);
+      await openFiles(page, scheme);
+
+      // Upload a folder of three files and list it.
+      const dir = info.outputPath("proj");
+      mkdirSync(dir, { recursive: true });
+      for (const n of ["a.txt", "b.txt", "c.txt"]) writeFileSync(join(dir, n), n);
+      await page.getByTestId("folder-input").setInputFiles(dir);
+      await expect(page.getByRole("region", { name: "Uploads" }).getByText("Done")).toHaveCount(3);
+      await page.getByRole("link", { name: "proj", exact: true }).click();
+      await expect(page.getByRole("region", { name: "Files in this folder" }).locator("tbody tr")).toHaveCount(3);
+
+      // Edit and save; download it and compare the digests.
+      await page.getByRole("button", { name: "a.txt", exact: true }).click();
+      await page.locator(".cm-content").click();
+      await page.keyboard.type("alpha");
+      await page.keyboard.press("Control+s");
+      await expect(page.getByText("Unsaved changes")).toHaveCount(0);
+      await page.getByRole("button", { name: "Back to folder" }).first().click();
+      await rowMenu(page, "a.txt").click();
+      // (A browser download bypasses `page.route`, so the bytes the link serves are fetched in the page, through the mock.)
+      const href = await page.getByRole("menuitem", { name: "Download" }).getAttribute("href");
+      const digest = await page.evaluate(async (url) => {
+        const bytes = await (await fetch(url!)).arrayBuffer();
+        return [...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))].map((b) => b.toString(16).padStart(2, "0")).join("");
+      }, href);
+      expect(digest).toBe(createHash("sha256").update("alpha").digest("hex"));
+      const [download] = await Promise.all([page.waitForEvent("download"), page.getByRole("menuitem", { name: "Download" }).click()]);
+      expect(download.suggestedFilename()).toBe("a.txt");
+
+      // A change behind the editor: conflict, Overwrite.
+      await page.getByRole("button", { name: "a.txt", exact: true }).click();
+      await page.locator(".cm-content").click();
+      await page.keyboard.press("Control+End");
+      await page.keyboard.type("!");
+      fs.nodes.set("/workspace/proj/a.txt", { kind: "file", content: "from the terminal", mtime: new Date().toISOString() });
+      await page.getByRole("button", { name: "Save", exact: true }).click();
+      const dialog = page.getByRole("dialog", { name: "This file changed in the sandbox after you opened it." });
+      await dialog.getByRole("button", { name: "Overwrite" }).click();
+      await expect.poll(() => fs.nodes.get("/workspace/proj/a.txt")!.content).toBe("alpha!");
+      await page.getByRole("button", { name: "Back to folder" }).first().click();
+
+      // Rename, then delete the folder recursively.
+      await rowMenu(page, "b.txt").click();
+      await page.getByRole("menuitem", { name: "Rename" }).click();
+      await page.getByLabel("New name").fill("b2.txt");
+      await page.getByRole("button", { name: "Rename" }).click();
+      await expect(page.getByRole("button", { name: "b2.txt", exact: true })).toBeVisible();
+      await page.getByRole("navigation", { name: "Folder path" }).getByRole("link", { name: "workspace" }).click();
+      await rowMenu(page, "proj").click();
+      await page.getByRole("menuitem", { name: "Delete" }).click();
+      await page.getByRole("dialog").getByRole("button", { name: "Delete" }).click();
+      await expect(page.getByRole("link", { name: "proj", exact: true })).toHaveCount(0);
+      expect([...fs.nodes.keys()].some((p) => p.startsWith("/workspace/proj"))).toBe(false);
+
+      // `.aurora` is read-only: a badge, and no Rename or Delete.
+      await page.getByRole("checkbox", { name: "Show hidden" }).check();
+      await expect(page.getByRole("link", { name: ".aurora", exact: true })).toBeVisible();
+      await expect(page.getByText("Read-only").first()).toBeVisible();
+      await rowMenu(page, ".aurora").click();
+      await expect(page.getByRole("menuitem", { name: "Open" })).toBeVisible();
+      await expect(page.getByRole("menuitem", { name: "Rename" })).toHaveCount(0);
+      await expect(page.getByRole("menuitem", { name: "Delete" })).toHaveCount(0);
+      await page.keyboard.press("Escape");
+
+      // A link that leaves /workspace is shown but cannot be opened.
+      await expect(page.getByText("Points outside the workspace")).toBeVisible();
+      await rowMenu(page, "evil").click();
+      await expect(page.getByRole("menuitem", { name: "Open" })).toHaveCount(0);
+      await page.keyboard.press("Escape");
+
+      // A parked sandbox: the page says it is waking, retries, then shows the listing.
+      fs.waking = 2;
+      await page.reload();
+      await expect(page.getByText("Waking the computer…")).toBeVisible();
+      await expect(page.getByRole("button", { name: "notes.md", exact: true })).toBeVisible({ timeout: 20_000 });
+      expect(await serious(page)).toEqual([]);
+    });
+  }
+
+  test("a frozen agent shows the freeze notice and sends no files request", async ({ page }) => {
+    const fs = new Fs();
+    const requests: string[] = [];
+    page.on("request", (r) => {
+      if (/\/v1\/agents\/[^/]+\/files/.test(r.url())) requests.push(r.url());
+    });
+    await mockFiles(page, fs, { frozen: true });
+    await page.goto("/o/acme/w/main/agents/daneel?tab=files");
+    await expect(page.getByText(/Files are unavailable while it is frozen/)).toBeVisible();
+    expect(requests).toEqual([]);
+  });
 });
 
 test.describe("Files viewer at 390 px", () => {

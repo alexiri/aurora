@@ -2,14 +2,22 @@ import AxeBuilder from "@axe-core/playwright";
 import { expect, type Page, type Route } from "@playwright/test";
 import { createHash } from "node:crypto";
 
-import { mockApi } from "./mock-api";
+import { agent, mockApi } from "./mock-api";
 import type { Scheme } from "./open";
 
 // The Files page's mocked API (P5-FILES-2/3, C-898): an in-memory `/workspace` behind the list, content, text and ops
 // routes, shared by `files.spec.ts` (dev server) and `files.prod.spec.ts` (the production build, the only place the real
 // CSP applies). The real response headers (C-903) are the API suite's and the kind journey's (P5-FILES-4).
 
-export type Node = { kind: "file" | "dir"; content: string; mtime: string; /** Raw bytes for a binary file (no text view). */ bytes?: Buffer };
+export type Node = {
+  kind: "file" | "dir";
+  content: string;
+  mtime: string;
+  /** Raw bytes for a binary file (no text view). */
+  bytes?: Buffer;
+  /** A symbolic link to this target (the entry is then `kind: "symlink"`). */
+  link?: { path: string; kind: "file" | "dir" | "other" | "missing"; outside: boolean };
+};
 
 const sha = (b: Buffer) => `sha256:${createHash("sha256").update(b).digest("hex")}`;
 
@@ -24,6 +32,8 @@ export class Fs {
   ]);
   puts: { path: string; headers: Record<string, string>; bytes: number }[] = [];
   ops: unknown[] = [];
+  /** The next this many listings answer 503 `sandbox_waking` (a parked sandbox being woken). */
+  waking = 0;
 
   bytesOf(path: string): Buffer {
     const n = this.nodes.get(path)!;
@@ -40,11 +50,12 @@ export class Fs {
     return {
       name: path.split("/").pop()!,
       path,
-      kind: n.kind,
+      kind: n.link ? "symlink" : n.kind,
       size: n.kind === "dir" ? 4096 : this.bytesOf(path).length,
       mode: n.kind === "dir" ? "0755" : "0644",
       modified_at: n.mtime,
       writable: !readOnly,
+      ...(n.link ? { target: { path: n.link.path, kind: n.link.kind, outside_workspace: n.link.outside } } : {}),
     };
   }
 
@@ -63,14 +74,30 @@ export const err = (route: Route, status: number, code: string, details?: unknow
   route.fulfill({ status, contentType: "application/json", body: JSON.stringify({ error: { code, message: code, details } }) });
 export const ok = (route: Route, status: number, body: unknown) => route.fulfill({ status, contentType: "application/json", body: JSON.stringify(body) });
 
-export async function mockFiles(page: Page, fs: Fs) {
+export async function mockFiles(page: Page, fs: Fs, over: { frozen?: boolean } = {}) {
   await mockApi(page);
+  if (over.frozen) {
+    // The agent list says the agent is frozen (the page then shows the freeze notice and sends no files request).
+    await page.route("**/v1/**", async (route) => {
+      if (new URL(route.request().url()).pathname.endsWith("/agents")) {
+        return ok(route, 200, {
+          items: [{ ...agent, frozen: { at: "2026-01-02T00:00:00Z", authority: "workspace_owner", by_label: "ada@example.test", level: "agent", reason: "Runaway loop" }, effective_frozen: true }],
+          next_cursor: null,
+        });
+      }
+      return route.fallback();
+    });
+  }
   await page.route(/\/v1\/agents\/[^/]+\/files(\/content|\/ops|\/text)?(\?.*)?$/, async (route) => {
     const req = route.request();
     const url = new URL(req.url());
     const path = url.searchParams.get("path") ?? "/workspace";
     const kind = url.pathname.endsWith("/content") ? "content" : url.pathname.endsWith("/ops") ? "ops" : url.pathname.endsWith("/text") ? "text" : "list";
     if (kind === "list") {
+      if (fs.waking > 0) {
+        fs.waking -= 1;
+        return route.fulfill({ status: 503, headers: { "retry-after": "2" }, contentType: "application/json", body: JSON.stringify({ error: { code: "sandbox_waking", message: "waking" } }) });
+      }
       const node = fs.nodes.get(path);
       if (!node) return err(route, 404, "path_not_found");
       if (node.kind !== "dir") return err(route, 422, "not_a_directory");
