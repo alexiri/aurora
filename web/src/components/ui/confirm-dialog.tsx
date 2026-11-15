@@ -3,7 +3,7 @@
 import type { FormEvent, ReactNode } from "react";
 
 import { Button } from "./button";
-import { Dialog, DialogClose, DialogContent } from "./dialog";
+import { Dialog, DialogClose, DialogContent, type DialogSize } from "./dialog";
 
 /**
  * Confirmation dialog. `danger` styles the confirm button as destructive. For a dialog with
@@ -57,6 +57,7 @@ export function FormDialog({
   danger = false,
   busy = false,
   submitDisabled = false,
+  size,
   onSubmit,
   children,
 }: {
@@ -68,12 +69,14 @@ export function FormDialog({
   danger?: boolean;
   busy?: boolean;
   submitDisabled?: boolean;
+  /** Dialog width; a form with many fields uses `xl`. */
+  size?: DialogSize;
   onSubmit: (e: FormEvent<HTMLFormElement>) => void;
   children: ReactNode;
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent title={title} description={description}>
+      <DialogContent title={title} description={description} size={size}>
         <form onSubmit={onSubmit} className="space-y-4">
           {children}
           <div className="flex flex-wrap justify-end gap-2">

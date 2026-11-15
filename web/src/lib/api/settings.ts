@@ -89,6 +89,16 @@ export function usePutSettings(section: string) {
   });
 }
 
+export type LlmEndpointTestResult = components["schemas"]["EndpointTestResult"];
+
+/** One unauthenticated request to an endpoint's models path from the API (C-779): nothing is saved. */
+export function useTestLlmEndpoint() {
+  return useMutation({
+    mutationFn: (endpoint: Record<string, unknown>) =>
+      unwrap(api.POST("/v1/admin/settings/llm/endpoint-test", { body: { endpoint } as never })),
+  });
+}
+
 /** Import a settings document: a dry run shows the diff, applying writes every section (C-776). */
 export function useImportSettings() {
   const qc = useQueryClient();
