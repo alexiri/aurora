@@ -4319,6 +4319,28 @@ export interface paths {
         patch: operations["patchSpaceBinding"];
         trace?: never;
     };
+    "/v1/telemetry/traces": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Browser span ingestion (the dashboard's traces). OTLP/HTTP JSON, at most 256 KiB, 512 spans,
+         *     32 attributes and 8 events per span. The server rebuilds every span (resource, name, allow-listed
+         *     attributes, clamped times); a span failing the sampling rule is dropped. 204 even when every span
+         *     was dropped. 404 when the deployment exports no traces.
+         */
+        post: operations["ingestBrowserTraces"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/turns/{id}/abort": {
         parameters: {
             query?: never;
@@ -8025,6 +8047,42 @@ export interface components {
             allowed_team_ids: string[];
             allowed_workspace_ids: string[];
             method: string;
+        };
+        /** @description An attribute value: only `stringValue` and `intValue` are read. */
+        OtlpAnyValue: {
+            /** @description A decimal string (OTLP JSON) or a number. */
+            intValue?: string | null;
+            stringValue?: string | null;
+        };
+        /** @description OTLP/HTTP JSON `ExportTraceServiceRequest` (the dashboard's spans). */
+        OtlpExportRequest: {
+            resourceSpans?: components["schemas"]["OtlpResourceSpans"][];
+        };
+        OtlpKeyValue: {
+            key: string;
+            value?: components["schemas"]["OtlpAnyValue"];
+        };
+        OtlpResourceSpans: {
+            scopeSpans?: components["schemas"]["OtlpScopeSpans"][];
+        };
+        OtlpScopeSpans: {
+            spans?: components["schemas"]["OtlpSpan"][];
+        };
+        /** @description One span as the browser sends it. The server rebuilds it (name, attributes, times) before export. */
+        OtlpSpan: {
+            attributes?: components["schemas"]["OtlpKeyValue"][];
+            endTimeUnixNano: string;
+            /** @description Only counted (at most `TELEMETRY_SPAN_EVENTS_MAX`); events are never exported. */
+            events?: Record<string, never>[];
+            name?: string;
+            /** @description 16 hex characters; absent or empty for a root span. */
+            parentSpanId?: string | null;
+            /** @description 16 hex characters. */
+            spanId: string;
+            /** @description Unix nanoseconds, as a decimal string (OTLP JSON) or a number. */
+            startTimeUnixNano: string;
+            /** @description 32 hex characters. */
+            traceId: string;
         };
         /** @description An agent that overrides a workspace skill with an enabled agent-tier skill of the same name. */
         OverriddenAgent: {
@@ -30785,6 +30843,68 @@ export interface operations {
                 };
             };
             /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    ingestBrowserTraces: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OtlpExportRequest"];
+            };
+        };
+        responses: {
+            /** @description Accepted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             429: {
                 headers: {
                     [name: string]: unknown;

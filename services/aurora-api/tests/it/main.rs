@@ -99,6 +99,7 @@ mod settings;
 mod skill_library;
 mod skills;
 mod sse_revocation;
+mod telemetry_ingest;
 mod tenancy;
 mod terminal;
 mod tools;

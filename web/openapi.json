@@ -27663,6 +27663,85 @@
         ]
       }
     },
+    "/v1/telemetry/traces": {
+      "post": {
+        "tags": [
+          "telemetry"
+        ],
+        "summary": "Browser span ingestion (the dashboard's traces). OTLP/HTTP JSON, at most 256 KiB, 512 spans,\n32 attributes and 8 events per span. The server rebuilds every span (resource, name, allow-listed\nattributes, clamped times); a span failing the sampling rule is dropped. 204 even when every span\nwas dropped. 404 when the deployment exports no traces.",
+        "operationId": "ingestBrowserTraces",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OtlpExportRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Accepted"
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
     "/v1/turns/{id}/abort": {
       "post": {
         "tags": [
@@ -42347,6 +42426,123 @@
           },
           "method": {
             "type": "string"
+          }
+        }
+      },
+      "OtlpAnyValue": {
+        "type": "object",
+        "description": "An attribute value: only `stringValue` and `intValue` are read.",
+        "properties": {
+          "intValue": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A decimal string (OTLP JSON) or a number."
+          },
+          "stringValue": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "OtlpExportRequest": {
+        "type": "object",
+        "description": "OTLP/HTTP JSON `ExportTraceServiceRequest` (the dashboard's spans).",
+        "properties": {
+          "resourceSpans": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OtlpResourceSpans"
+            }
+          }
+        }
+      },
+      "OtlpKeyValue": {
+        "type": "object",
+        "required": [
+          "key"
+        ],
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "value": {
+            "$ref": "#/components/schemas/OtlpAnyValue"
+          }
+        }
+      },
+      "OtlpResourceSpans": {
+        "type": "object",
+        "properties": {
+          "scopeSpans": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OtlpScopeSpans"
+            }
+          }
+        }
+      },
+      "OtlpScopeSpans": {
+        "type": "object",
+        "properties": {
+          "spans": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OtlpSpan"
+            }
+          }
+        }
+      },
+      "OtlpSpan": {
+        "type": "object",
+        "description": "One span as the browser sends it. The server rebuilds it (name, attributes, times) before export.",
+        "required": [
+          "traceId",
+          "spanId",
+          "startTimeUnixNano",
+          "endTimeUnixNano"
+        ],
+        "properties": {
+          "attributes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OtlpKeyValue"
+            }
+          },
+          "endTimeUnixNano": {
+            "type": "string"
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            },
+            "description": "Only counted (at most `TELEMETRY_SPAN_EVENTS_MAX`); events are never exported."
+          },
+          "name": {
+            "type": "string"
+          },
+          "parentSpanId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "16 hex characters; absent or empty for a root span."
+          },
+          "spanId": {
+            "type": "string",
+            "description": "16 hex characters."
+          },
+          "startTimeUnixNano": {
+            "type": "string",
+            "description": "Unix nanoseconds, as a decimal string (OTLP JSON) or a number."
+          },
+          "traceId": {
+            "type": "string",
+            "description": "32 hex characters."
           }
         }
       },

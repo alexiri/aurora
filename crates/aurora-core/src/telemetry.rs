@@ -179,6 +179,44 @@ pub fn shutdown() {
     }
 }
 
+/// Where the API hands the spans it rebuilt from a browser's batch (FIX-146 Part D, D-232 (j)):
+/// the resource of the batch and the finished spans. It never blocks the caller.
+pub type SpanSink = std::sync::Arc<
+    dyn Fn(opentelemetry_sdk::Resource, Vec<opentelemetry_sdk::trace::SpanData>) + Send + Sync,
+>;
+
+/// Pending batches the OTLP sink worker holds; more are dropped (telemetry is best effort).
+const SINK_QUEUE: usize = 64;
+
+/// A [`SpanSink`] exporting to `endpoint` with its own OTLP exporter on a worker thread. The blocking
+/// HTTP client of the exporter must not run on an async runtime thread, so the batches cross a bounded
+/// channel; when the collector is slow and the queue is full, the new batch is dropped.
+pub fn otlp_span_sink(endpoint: &str) -> Result<SpanSink, String> {
+    use opentelemetry_sdk::trace::SpanExporter as _;
+    let mut exporter = build_exporter(endpoint)?;
+    let (tx, rx) = std::sync::mpsc::sync_channel::<(
+        opentelemetry_sdk::Resource,
+        Vec<opentelemetry_sdk::trace::SpanData>,
+    )>(SINK_QUEUE);
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| e.to_string())?;
+    std::thread::Builder::new()
+        .name("browser-spans".into())
+        .spawn(move || {
+            while let Ok((resource, batch)) = rx.recv() {
+                // The resource of a batch carries its user, so it is set per export.
+                exporter.set_resource(&resource);
+                let _ = rt.block_on(exporter.export(batch));
+            }
+        })
+        .map_err(|e| e.to_string())?;
+    Ok(std::sync::Arc::new(move |resource, batch| {
+        let _ = tx.try_send((resource, batch));
+    }))
+}
+
 struct HeaderCarrier<'a>(&'a mut HeaderMap);
 
 impl Injector for HeaderCarrier<'_> {

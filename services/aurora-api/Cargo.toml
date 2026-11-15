@@ -63,6 +63,9 @@ openidconnect = { workspace = true }
 percent-encoding = { workspace = true }
 image = { workspace = true }
 metrics = { workspace = true }
+# FIX-146 Part D: browser spans are rebuilt as SDK SpanData and handed to the exporter
+opentelemetry = { workspace = true }
+opentelemetry_sdk = { workspace = true }
 
 [dev-dependencies]
 aurora-config = { workspace = true, features = ["test-registry"] }

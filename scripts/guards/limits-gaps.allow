@@ -4,15 +4,6 @@
 # Entries can only be removed: closing a gap without removing its line fails the guard.
 # Exception (coordinator): a spec step may add `doc-only` entries for limits it specifies before
 # the code exists, marked with the task that must close them; that task's lane removes them.
-# FIX-146 (spec step 0, 2026-11-14) — Part A2 adds DB_SPAN_STATEMENT_MAX, Part D the TELEMETRY_*:
-TELEMETRY_CLOCK_FUTURE doc-only
-TELEMETRY_CLOCK_PAST doc-only
-TELEMETRY_INGEST_BODY_MAX doc-only
-TELEMETRY_INGEST_SPANS_MAX doc-only
-TELEMETRY_SPAN_ATTRIBUTES_MAX doc-only
-TELEMETRY_SPAN_DURATION_MAX doc-only
-TELEMETRY_SPAN_EVENTS_MAX doc-only
-TELEMETRY_STACKTRACE_MAX doc-only
 # P4-SSH (spec, 2026-11-14) — P4-SSH-1 adds SSH_KEYS_PER_USER, SSH_CERT_TTL, SSH_MINTS_PER_USER_AGENT_HOUR;
 # P4-SSH-2 adds the rest:
 SSH_API_RATE doc-only
