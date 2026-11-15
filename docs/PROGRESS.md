@@ -21,9 +21,9 @@ One row per task id, counted from the task tables (closed phases: from their his
 | 2 | 52 | 51 | 1 (FIX-017: the owner's real-cluster install) | 0 | 0 | 0 | `docs/history/phase-1-2.md` (closed 2026-11-09, AUDIT-002) |
 | 3 | 15 | 15 | 0 | 0 | 0 | 0 | `docs/history/phase-3.md` (closed 2026-11-10, AUDIT-003) |
 | 4 | 124 | 123 | 0 | 0 | 0 | 1 (FIX-131 closed without a build, D-195) | `docs/history/phase-4.md` (closed 2026-11-14, AUDIT-004) |
-| 5 | 93 | 47 | 5 (SET-2, FIX-146, P4-LLM-4, SET-3, FIX-157 (lane `fix-noreauth`)) | 37 | 0 (every phase-5 item has a brief) | 4 (OPS-022 cancelled, D-318; FIX-049 moved to phase 4; P5-SLACK moved to phase 6, D-285; P4-S3 moved to phase 6, D-318) | §Phase 5 tasks (TEST-021 and FIX-057, done, are counted here but their rows are in `docs/history/phase-0.md`'s task graph) |
+| 5 | 95 | 49 | 5 (P4-LLM-4, P4-LLM-5, SET-4, FIX-146, FIX-157 (lane `fix-noreauth`)) | 37 | 0 (every phase-5 item has a brief) | 4 (OPS-022 cancelled, D-318; FIX-049 moved to phase 4; P5-SLACK moved to phase 6, D-285; P4-S3 moved to phase 6, D-318) | §Phase 5 tasks (TEST-021 and FIX-057, done, are counted here but their rows are in `docs/history/phase-0.md`'s task graph) |
 | 6 (proposed) | 4 | 0 | 0 | 1 (P4-S3: specified and briefed, moved from phase 5, D-318) | 3 (P6-ORGTREE, P6-LIMITS: proposals awaiting the owner; P6-SLACK, moved from phase 5, D-285) | 0 | §Phase 6 tasks (proposed) |
-| **All** | **415** | **358** | **6** | **38** | **3** | **10** | (column sums; P5-SLACK/P6-SLACK and P4-S3 are counted in both phases) |
+| **All** | **417** | **360** | **6** | **38** | **3** | **10** | (column sums; P5-SLACK/P6-SLACK and P4-S3 are counted in both phases) |
 
 ## Environment
 
@@ -80,8 +80,8 @@ Lane order, waves and number blocks: `docs/tasks/PHASE5-PLAN.md`. Lanes `p5-apps
 | P4-LLM-1 | LLM provider framework; `openai`, `openai_compatible`; `anthropic` inference path set | D-260, D-268(d), C-800.. | L | Rust | — | `P4-LLM-1.md` | done (merged 88faf124; D-248) |
 | P4-LLM-2 | Gateway LLM mint service + Google Vertex AI | D-261, SEC-97 | L | Rust | P4-LLM-1 | `P4-LLM-2.md` | done (merged 7909fb9c; D-249) |
 | P4-LLM-3 | `azure_openai` (keys and Entra) | D-261, D-268(c) | M | Rust | P4-LLM-2 | `P4-LLM-3.md` | done (merged 35606a00; D-311) |
-| P4-LLM-4 | `bedrock` (assume-role, IAM keys, API keys; SigV4 in the gateway) | D-261, D-268(c) | L | Rust | P4-LLM-2 | `P4-LLM-4.md` | in-progress (lane p5-agent; code checkpoint 0bb45042 on alexiri/p5-agent, not merged; tests, e2e, docs next) |
-| P4-LLM-5 | Harnesses on the new providers + hosted e2e (no key reaches the sandbox) | D-260, SEC-64, SEC-66 | M | Rust | P4-LLM-1 (e2e after 2–4) | `P4-LLM-5.md` | ready (queued in lane p5-agent) |
+| P4-LLM-4 | `bedrock` (assume-role, IAM keys, API keys; SigV4 in the gateway) | D-261, D-268(c) | L | Rust | P4-LLM-2 | `P4-LLM-4.md` | in-progress (lane p5-agent; done at 1889df2b, merge with master being resolved in the lane (Cargo.lock, secrets service, SigV4 on hmac 0.13); D-312, D-313) |
+| P4-LLM-5 | Harnesses on the new providers + hosted e2e (no key reaches the sandbox) | D-260, SEC-64, SEC-66 | M | Rust | P4-LLM-1 (e2e after 2–4) | `P4-LLM-5.md` | in-progress (lane p5-agent; code 0bb7fc77 committed, hosted e2e + batch gate next) |
 | P4-LLM-6 | Endpoint destinations + dashboard fields for providers and auth modes | D-262, SEC-98 | M–L | both | SET-3, P4-LLM-1 | `P4-LLM-6.md` | ready (queued in lane p5-apps) |
 | P5-MODELS-1 | The harness chooses models (owner D-302): the agent's model is the default; model roles (endpoint and agent), subagent default, model metadata, `ModelChoice.roles`, `claude-code` alias variables (turns and `harness.env`), readiness warnings, instructions line, eval fingerprint; live suite on LiteLLM | D-302, D-303, SEC-122, SEC-123, C-875..C-878, C-881..C-884 | M | Rust | P4-LLM-5 (same adapter code); C-779 (SET-3) for settings writes | `P5-MODELS-1.md` | ready (queued in lane p5-agent after P4-LLM-5) |
 | P5-MODELS-2 | Usage per model including subagents (fixes `claude-code` counting the main loop only), trust rule against the allow-list, `turns.usage.by_model`, `request_log.llm_model` | D-304, SEC-123, C-879, C-880 | M | Rust | P5-MODELS-1 | `P5-MODELS-2.md` | ready (queued in lane p5-agent after P5-MODELS-1) |
@@ -99,9 +99,9 @@ Lane order, waves and number blocks: `docs/tasks/PHASE5-PLAN.md`. Lanes `p5-apps
 | P4-SSH-2 | `aurora-terminator` (certificate-only SSH into the sandbox; no port forwarding) | D-239, D-268(a)(b), SEC-92/94..96 | L | Rust/ops | P4-SSH-1, P5-FILES-1 | `P4-SSH-2.md` | ready (queued in lane p5-platform) |
 | SPEC-SETTINGS | Instance settings move from Helm into the app (Helm-set values locked) — spec batch | D-195, D-236..D-238, SEC-89/90 | L | docs | — | `SPEC-SETTINGS.md` | done (merged 76bb566a) |
 | SET-1 | Settings framework: registry, Helm locks, storage, live reload, audit, export/import, CLI, Admin › Settings | D-236 | L | both | — | `SET-1.md` | done (merged 602b90db; security review fixed: D-307) |
-| SET-2 | Governance and BYO floors as live settings | D-237 | M | both | SET-1, FIX-124 | `SET-2.md` | in-progress (lane p5-apps; committed 70479a0b, 3a6a53d0, b33b4864 on alexiri/p5-apps, not merged; batch gate 2 running) |
-| SET-3 | LLM endpoints as live settings | D-237 | M | both | SET-2 | `SET-3.md` | in-progress (lane p5-apps; committed 84864524, 4ee61238, not merged; D-308, C-749; batch gate 2 running) |
-| SET-4 | Sign-in, OIDC providers and Email editable | D-235(b), D-237 | M–L | both | SET-1 | `SET-4.md` | ready (queued in lane p5-apps) |
+| SET-2 | Governance and BYO floors as live settings | D-237 | M | both | SET-1, FIX-124 | `SET-2.md` | done (merged 2c55c538) |
+| SET-3 | LLM endpoints as live settings | D-237 | M | both | SET-2 | `SET-3.md` | done (merged 2c55c538; D-308, C-749) |
+| SET-4 | Sign-in, OIDC providers and Email editable | D-235(b), D-237 | M–L | both | SET-1 | `SET-4.md` | in-progress (lane p5-apps; started; no re-authentication per D-317) |
 | SET-5 | Agents, approvals, retention, skills, SCIM, previews, terminal and limits as settings | D-235(a), D-237 | L | both | SET-1 | `SET-5.md` | ready (queued in lane p5-apps) |
 | FIX-124 | Admin › Secret stores editable (unless set in Helm), value migration job | D-195 | M–L | both | SET-1 | `FIX-124.md` | done (merged 602b90db; D-244, D-307) |
 | FIX-133 | Read-only connections; GitHub App tokens narrowed; fine-grained GitHub auth | D-240, C-740 | M–L | both | FIX-123, FIX-107 | `FIX-133.md` | done (merged 787d5c02) |
