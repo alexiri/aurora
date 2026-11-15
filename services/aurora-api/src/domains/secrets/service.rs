@@ -398,11 +398,12 @@ pub async fn create(
         }
         let mode = spec.auth_mode.as_deref().unwrap_or("api_key");
         let lc = llm_ctx(state, scope.org, scope.ws, &spec.endpoint_id, true).await?;
-        // (C-801, C-802) A mode the endpoint does not admit is refused before the value is read. Only `api_key`
-        // has a value handler in this lane; the minted and signed modes arrive with their providers (P4-LLM-2..4)
-        // and are listed by `endpoint_auth_modes` only then.
+        // (C-801) A mode the provider does not have is refused before the value is read. A mode that cannot report the
+        // account under a `provider_account` rule (`api_key` on Azure, C-804) is admitted here and ends as
+        // `llm_key_unverifiable`: the rule in force may be the organization's, which `endpoint_auth_modes` (C-802, the
+        // dashboard's hint from the instance entry) does not see.
         let admitted = aurora_llm::AuthMode::parse(mode)
-            .is_some_and(|m| aurora_llm::endpoint_auth_modes(lc.provider, lc.ep).contains(&m));
+            .is_some_and(|m| lc.provider.auth_modes().contains(&m));
         if !admitted {
             return Err(ApiError::unprocessable(
                 "llm_key_invalid",
@@ -412,8 +413,9 @@ pub async fn create(
                 serde_json::json!({ "reason": "auth_mode_unsupported", "auth_mode": mode }),
             ));
         }
-        // Only `api_key` and the minted `gcp_service_account` have value handlers so far (P4-LLM-3/4 add the others).
-        if !matches!(mode, "api_key" | "gcp_service_account") {
+        // Only `api_key` and the minted `gcp_service_account`, `azure_entra` have value handlers so far (P4-LLM-4 adds
+        // the AWS ones).
+        if !matches!(mode, "api_key" | "gcp_service_account" | "azure_entra") {
             return Err(bad("/llm/auth_mode", "unsupported auth mode"));
         }
         host = lc
@@ -429,9 +431,17 @@ pub async fn create(
             .map(|p| Plain::new(p.expose().trim().to_owned()))
             .ok_or_else(|| ApiError::internal("Internal error."))?;
         check_value_shape(mode, &key)?;
-        let o = llm::check_key(&state.llm_http, lc.provider, lc.ep, &lc.eff, &key, 1)
-            .await
-            .map_err(llm::KeyFail::into_error)?;
+        let o = llm::check_key(
+            &state.llm_http,
+            lc.provider,
+            lc.ep,
+            aurora_llm::AuthMode::parse(mode).unwrap_or(aurora_llm::AuthMode::ApiKey),
+            &lc.eff,
+            &key,
+            1,
+        )
+        .await
+        .map_err(llm::KeyFail::into_error)?;
         llm::require_compliant(&o)?;
         origin_json =
             Some(serde_json::to_value(&o).map_err(|_| ApiError::internal("Internal error."))?);
@@ -601,18 +611,39 @@ pub async fn delete(state: &AppState, caller: &Caller, row: &SecretRow) -> Resul
 /// (C-801) The shape of a minted mode's value, checked before any outbound call: 422 `llm_key_invalid` with the C-801
 /// `reason` (and the offending `field`), never a part of the value.
 fn check_value_shape(mode: &str, key: &Plain<String>) -> Result<(), ApiError> {
-    if mode != "gcp_service_account" {
-        return Ok(());
+    let refused = |what: &'static str, reason: &'static str, field: Option<&'static str>| {
+        ApiError::unprocessable("llm_key_invalid", what)
+            .with_details(serde_json::json!({ "reason": reason, "field": field }))
+    };
+    match mode {
+        "gcp_service_account" => aurora_llm::mint::gcp::parse_value(key.expose().as_bytes())
+            .map(|_| ())
+            .map_err(|e| {
+                refused(
+                    "The key file is not a usable service-account key.",
+                    e.reason,
+                    e.field,
+                )
+            }),
+        "azure_entra" => aurora_llm::mint::entra::parse_value(key.expose().as_bytes())
+            .map(|_| ())
+            .map_err(|e| {
+                refused(
+                    "The value is not a usable Microsoft Entra application.",
+                    e.reason,
+                    e.field,
+                )
+            }),
+        _ => Ok(()),
     }
-    aurora_llm::mint::gcp::parse_value(key.expose().as_bytes())
-        .map(|_| ())
-        .map_err(|e| {
-            ApiError::unprocessable(
-                "llm_key_invalid",
-                "The key file is not a usable service-account key.",
-            )
-            .with_details(serde_json::json!({ "reason": e.reason, "field": e.field }))
-        })
+}
+
+/// The auth mode of a stored LLM secret (`api_key` when the column is empty).
+fn auth_mode_of(row: &SecretRow) -> aurora_llm::AuthMode {
+    row.llm_auth_mode
+        .as_deref()
+        .and_then(aurora_llm::AuthMode::parse)
+        .unwrap_or(aurora_llm::AuthMode::ApiKey)
 }
 
 pub async fn set_value(
@@ -644,6 +675,7 @@ pub async fn set_value(
             &state.llm_http,
             lc.provider,
             lc.ep,
+            auth_mode_of(row),
             &lc.eff,
             &key,
             new_version,
@@ -730,6 +762,7 @@ pub async fn verify(state: &AppState, row: &SecretRow) -> Result<StoredOrigin, A
         &state.llm_http,
         lc.provider,
         lc.ep,
+        auth_mode_of(row),
         &lc.eff,
         &key,
         i64::from(row.value_version),

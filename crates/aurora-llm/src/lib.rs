@@ -5,6 +5,7 @@
 #![forbid(unsafe_code)]
 
 mod anthropic;
+mod azure_openai;
 mod classify;
 mod endpoint;
 mod error;
@@ -22,6 +23,7 @@ mod types;
 mod vertex;
 
 pub use anthropic::{ANTHROPIC_BASE_URL, AnthropicProvider};
+pub use azure_openai::AzureOpenaiProvider;
 pub use classify::{LlmErrorClass, classify};
 pub use endpoint::Endpoint;
 pub use error::{LlmError, Result};

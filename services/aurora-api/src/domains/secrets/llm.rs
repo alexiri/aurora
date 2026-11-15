@@ -1,18 +1,25 @@
 //! LLM key validation and origin verification at save (08 §6, §11.3).
 use aurora_core::{ApiError, Secret};
 use aurora_llm::governance::{EffectiveEndpoint, OriginStatus, StoredOrigin};
-use aurora_llm::{Endpoint, KeyOrigin, LlmError, LlmProvider, OriginMethod, origin};
+use aurora_llm::{AuthMode, Endpoint, KeyOrigin, LlmError, LlmProvider, OriginMethod, origin};
 use chrono::Utc;
 use http::StatusCode;
 
 pub enum KeyFail {
     InvalidKey,
+    /// (C-801) The token endpoint of a minted mode refused the credential.
+    MintRejected,
     Unreachable,
 }
 
 impl KeyFail {
     pub fn into_error(self) -> ApiError {
         match self {
+            Self::MintRejected => ApiError::unprocessable(
+                "llm_key_invalid",
+                "The token endpoint rejected this credential.",
+            )
+            .with_details(serde_json::json!({ "reason": "mint_rejected" })),
             Self::InvalidKey => {
                 ApiError::unprocessable("llm_key_invalid", "The provider rejected this API key.")
             }
@@ -49,6 +56,7 @@ pub async fn check_key(
     http: &reqwest::Client,
     provider: &dyn LlmProvider,
     ep: &Endpoint,
+    mode: AuthMode,
     eff: &EffectiveEndpoint,
     key: &Secret<String>,
     version: i64,
@@ -59,7 +67,7 @@ pub async fn check_key(
     let prefetched = if provider.validates_by_origin() {
         Some(
             provider
-                .verify_key_origin(ep, OriginMethod::ProviderAccount, key, http)
+                .verify_key_origin_as(ep, mode, OriginMethod::ProviderAccount, key, http)
                 .await,
         )
     } else {
@@ -69,12 +77,14 @@ pub async fn check_key(
     let listed = match &prefetched {
         Some(Ok(_)) => Ok(Vec::new()),
         Some(Err(LlmError::InvalidKey)) => Err(LlmError::InvalidKey),
+        Some(Err(LlmError::MintRejected)) => Err(LlmError::MintRejected),
         Some(Err(_)) => Err(LlmError::Unreachable("origin proof unavailable".into())),
-        None => provider.list_models_strict(ep, key, http).await,
+        None => provider.list_models_strict_as(ep, mode, key, http).await,
     };
     match listed {
         Ok(_) => {}
         Err(LlmError::InvalidKey) => return Err(KeyFail::InvalidKey),
+        Err(LlmError::MintRejected) => return Err(KeyFail::MintRejected),
         Err(_) if rule.is_none() => {
             return Ok(origin_of(
                 OriginStatus::Pending,
@@ -90,7 +100,11 @@ pub async fn check_key(
     };
     let proof = match prefetched {
         Some(r) if rule.method == OriginMethod::ProviderAccount => r,
-        _ => provider.verify_key_origin(ep, rule.method, key, http).await,
+        _ => {
+            provider
+                .verify_key_origin_as(ep, mode, rule.method, key, http)
+                .await
+        }
     };
     match proof {
         Ok(ko) if origin::requires_team(&ko, rule) => {
@@ -112,6 +126,7 @@ pub async fn check_key(
             Ok(origin_of(status, rule.method.as_str(), Some(&ko), version))
         }
         Err(LlmError::InvalidKey) => Err(KeyFail::InvalidKey),
+        Err(LlmError::MintRejected) => Err(KeyFail::MintRejected),
         Err(LlmError::Unreachable(_)) => Err(KeyFail::Unreachable),
         Err(e) => {
             let mut o = origin_of(
