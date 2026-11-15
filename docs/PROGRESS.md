@@ -121,7 +121,7 @@ Lane order, waves and number blocks: `docs/tasks/PHASE5-PLAN.md`. Lanes `p5-apps
 | FIX-142 | Agent messages keep their Markdown on chat platforms; every Mattermost ping accounted for | D-226, D-227, D-270, D-271 | M | Rust | — | `FIX-142.md` | done (merged 3c983224) |
 | FIX-144 | Self-hosted host check says why it failed; agents told each server's address | C-730 | S–M | both | — | `FIX-144.md` | done (merged d1933319) |
 | FIX-145 | Self-hosted apps served under a path (`base_path`) | D-231, C-731, migration 000140 | M–L | both | FIX-144 | `FIX-145.md` | done (merged d1933319) |
-| FIX-146 | Request tracing end to end, browser to database | D-232, C-732, SEC-88, migration 000150 | L | both | spec done (c8aa4cb5) | `FIX-146.md` | in-progress (lane p5-platform; Parts A1, A2, B committed d9f167a3, a259ad67, 18065af6 on alexiri/p5-platform, not merged; C → E next) |
+| FIX-146 | Request tracing end to end, browser to database | D-232, C-732, SEC-88, migration 000150 | L | both | spec done (c8aa4cb5) | `FIX-146.md` | in-progress (lane p5-platform; Parts A1–D committed (d9f167a3, a259ad67, 18065af6, dc60e64c, b5be4361) on alexiri/p5-platform, not merged; Part E + owed e2e tests + batch gate next) |
 | FIX-147 | One permissions editor (`GrantForm`, `PermissionGroups`) | D-233 | M | Next.js | — | `FIX-147.md` | done (merged 787d5c02) |
 | FIX-149 | Connect/Reconnect as real dialogs; OAuth result over `BroadcastChannel` | D-272, C-842 | M | both | — | `FIX-149.md` | done (merged b9c3046f) |
 | P5-ADMDEL | Instance admins delete any organization or workspace | D-234, C-733 | M | both | — | `P5-ADMDEL.md` | done (merged 3c983224) |
