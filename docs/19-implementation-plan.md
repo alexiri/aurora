@@ -228,6 +228,8 @@ Owner, 2026-11-14: ideas prepared ahead of time, not to be started yet. **Nested
 (an org tree: department → group → section, tighten-only inheritance of governance, policy,
 retention, availability and limits; `docs/tasks/P6-ORGTREE.md`) and **usage limits and load
 knobs** (quotas per user/agent/workspace/org, limit profiles, sandbox awake-time budgets, automation
-caps, expensive-endpoint classes, an instance pressure level; `docs/tasks/P6-LIMITS.md`), and the **Slack connector** (P6-SLACK, moved from phase 5 by the owner 2026-11-15, D-285: not a priority). Both
-are proposals with open questions (`Q-P6-ORG-*`, `Q-P6-LIM-*`); the spec batches run when the owner
-starts phase 6. See `21 §Phase 6`.
+caps, expensive-endpoint classes, an instance pressure level; `docs/tasks/P6-LIMITS.md`), and the **Slack connector** (P6-SLACK, moved from phase 5 by the owner 2026-11-15, D-285: not a priority), and **the harness chooses
+models** (owner 2026-11-15: the agent's model becomes a default; model roles map the harness's
+aliases to models on the same endpoint; usage per model; `docs/tasks/P6-MODELS.md`). The org tree,
+limits and models items are proposals with open questions (`Q-P6-ORG-*`, `Q-P6-LIM-*`, `Q-P6-MOD-*`);
+the spec batches run when the owner starts phase 6. See `21 §Phase 6`.

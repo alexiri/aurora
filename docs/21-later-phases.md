@@ -290,6 +290,17 @@ home sync, guides for BYO agents.
   background starts before touching interactive chat, switchable live from Admin › Limits and from the
   CLI. Admin/Org/My usage views and abuse signals (report-only). **Abuse control only, not billing, plans or
   budgets (owner, D-276(b))**. Open questions Q-P6-LIM-1, 3..8, 10.
+- **The harness chooses models — proposed (`docs/tasks/P6-MODELS.md`, owner 2026-11-15).** The agent's
+  model becomes the **default** the harness starts with. The harness (its subagents, its background
+  requests) may use any model governance allows **on the same endpoint**, and the allow-list (`08 §11.5`)
+  stays the only model control. Three harness-neutral **model roles** (`large`/`medium`/`small`, from the
+  agent or the endpoint configuration) map Claude Code's `opus`/`sonnet`/`haiku` aliases to concrete
+  models. A **subagent default** lets cheap subagents gather and the default model write the answer.
+  Optional model metadata covers ids the CLI does not know. `ModelChoice.roles` is added, and usage is
+  recorded **per model** with a trust rule against the allow-list; this also fixes `claude-code` leaving
+  out subagent tokens today. `request_log.llm_model` is added. Falling back across providers stays with
+  the LiteLLM router (a recipe); an Aurora-native model chain is later and only on demand. Open questions
+  Q-P6-MOD-1..7.
 
 ## Other later items
 
