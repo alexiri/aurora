@@ -30801,7 +30801,7 @@
           },
           "variant_label": {
             "type": "string",
-            "description": "This app's deployment (`github.com`, `Enterprise Server`), unique within the family."
+            "description": "This app's deployment (its host, \"Self-hosted\", \"Data Center\"), unique within the family."
           }
         }
       },

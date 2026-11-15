@@ -303,8 +303,8 @@ pub struct About {
     pub connect_note: Option<ConnectNote>,
     pub label_hint: Option<String>,
     /// (FIX-135, D-242) The product this app is a deployment of, shared with the other apps of
-    /// the package that are the same product elsewhere (GitHub on github.com and on a GitHub
-    /// Enterprise Server): the catalogue and every picker show one product. Presentation only;
+    /// the package that are the same product elsewhere (a vendor's hosted service and its
+    /// self-hosted server): the catalogue and every picker show one product. Presentation only;
     /// the apps keep their own hosts, tools and token kinds.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub family: Option<Family>,
@@ -314,11 +314,11 @@ pub struct About {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Family {
-    /// Lower-case slug, the same on every member (`github`).
+    /// Lower-case slug, the same on every member.
     pub id: String,
-    /// The product name shown first (`GitHub`), identical on every member.
+    /// The product name shown first, identical on every member.
     pub name: String,
-    /// This member's deployment, unique within the family (`github.com`, `Enterprise Server`).
+    /// This member's deployment, unique within the family (its host, "Self-hosted", "Data Center").
     pub variant_label: String,
 }
 

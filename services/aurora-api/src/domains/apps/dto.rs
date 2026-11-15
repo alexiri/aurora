@@ -44,7 +44,7 @@ pub struct AppFamily {
     pub id: String,
     /// The product name, the same on every member.
     pub name: String,
-    /// This app's deployment (`github.com`, `Enterprise Server`), unique within the family.
+    /// This app's deployment (its host, "Self-hosted", "Data Center"), unique within the family.
     pub variant_label: String,
     /// The app is served by registered self-hosted servers (it declares `instances`).
     pub instance_bound: bool,

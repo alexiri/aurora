@@ -4911,7 +4911,7 @@ export interface components {
             instance_bound: boolean;
             /** @description The product name, the same on every member. */
             name: string;
-            /** @description This app's deployment (`github.com`, `Enterprise Server`), unique within the family. */
+            /** @description This app's deployment (its host, "Self-hosted", "Data Center"), unique within the family. */
             variant_label: string;
         };
         /** @description A self-hosted app instance: a host an admin registered for one app (C-240, D-74). */
