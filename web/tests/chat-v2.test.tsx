@@ -417,7 +417,7 @@ describe("conversation list and the URL (RFE-009)", () => {
     expect(within(nav).getByText("Working")).toBeTruthy();
     expect(within(nav).getByText("Direct chat", { selector: "span.block" }).closest("button")!.getAttribute("aria-current")).toBe("true");
 
-    fireEvent.change(within(nav).getByLabelText("Filter conversations"), { target: { value: "team" } });
+    fireEvent.change(within(nav).getByLabelText("Search conversations and messages"), { target: { value: "team" } });
     expect(within(nav).queryByText("Release notes")).toBeNull();
 
     fireEvent.click(within(nav).getByText("Team room"));

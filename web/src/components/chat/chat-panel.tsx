@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type KeyboardEventHandler, type ReactNode } from "react";
 
 import { cn } from "@/lib/utils";
 
@@ -23,7 +23,13 @@ export function ChatPanel({
   className,
   rail,
   railExpanded = false,
+  listWide = false,
+  onKeyDown,
 }: {
+  /** (P5-CHAT-4) Message search results show: the list pane is 320 px wide instead of 232 px (from 768 px). */
+  listWide?: boolean;
+  /** Keys pressed with focus anywhere in the panel (the search shortcuts). */
+  onKeyDown?: KeyboardEventHandler<HTMLDivElement>;
   list: ReactNode;
   thread: ReactNode;
   threadOpen: boolean;
@@ -49,11 +55,12 @@ export function ChatPanel({
   return (
     <div
       ref={ref}
+      onKeyDown={onKeyDown}
       className={cn(
         "relative flex h-[calc(100dvh-21rem)] min-h-[560px] overflow-hidden rounded-card border border-line bg-surface shadow-card md:h-[calc(100dvh-7.5rem)]",
         className,
       )}>
-      <div {...inert} className={cn("min-h-0 w-full shrink-0 flex-col border-line md:flex md:w-58 md:border-r", threadOpen ? "hidden" : "flex")}>
+      <div {...inert} className={cn("min-h-0 w-full shrink-0 flex-col border-line md:flex md:border-r", listWide ? "md:w-80" : "md:w-58", threadOpen ? "hidden" : "flex")}>
         {list}
       </div>
       <div {...inert} className={cn("min-h-0 min-w-0 flex-1 flex-col md:flex", threadOpen ? "flex" : "hidden")}>

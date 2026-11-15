@@ -76,6 +76,8 @@ export interface Fixture {
   active: ReturnType<typeof conv>[];
   archived: ReturnType<typeof conv>[];
   events: Record<string, Ev[]>;
+  /** (P5-CHAT-4) The answer to `GET /v1/workspaces/{ws}/messages/search` for these query parameters. */
+  search?: (url: URL) => unknown;
 }
 
 export const DEFAULT: Fixture = {
@@ -154,6 +156,10 @@ export async function mockChat(page: Page, fx: Fixture = DEFAULT) {
       const items = (fx.events[events[1]] ?? []).filter((e) => e.seq > Number(url.searchParams.get("after_seq") ?? 0));
       const all = fx.events[events[1]] ?? [];
       return json({ items, last_seq: all.length ? all[all.length - 1].seq : 0, purged_attachments: [] });
+    }
+    // (P5-CHAT-4, C-727) Message search: the spec's own answer, or an empty complete page.
+    if (method === "GET" && /^\/v1\/workspaces\/[^/]+\/messages\/search$/.test(p)) {
+      return json(fx.search ? fx.search(url) : { items: [], next_cursor: null, index_complete: true });
     }
     if (p === `/v1/orgs/${org.id}/retention`) return json({ conversations_days: 90, conversations_days_max: null });
     if (p.startsWith("/v1/attachments/") && p.endsWith("/content")) return route.fulfill({ status: 200, contentType: "image/png", body: ICON });

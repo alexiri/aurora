@@ -301,7 +301,7 @@ test.describe("layout, 1280 px", () => {
     await expect(page).toHaveURL(new RegExp(`c=${NIGHTLY.id}`));
     await page.goBack();
     await expect(page.getByRole("heading", { name: "Sentry alerts", level: 2 })).toBeVisible();
-    await page.getByRole("searchbox", { name: "Filter conversations" }).fill("handbook");
+    await page.getByRole("combobox", { name: "Search conversations and messages" }).fill("handbook");
     await expect(page.getByRole("button", { name: /Sentry alerts/ })).toHaveCount(0);
   });
 });
