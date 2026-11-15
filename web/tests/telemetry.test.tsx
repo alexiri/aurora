@@ -158,4 +158,47 @@ describe("browser tracing", () => {
     expect(apiCalls[0].headers.get("traceparent")).not.toBeNull();
     expect(pending().some((s) => s.name === "GET /v1/me")).toBe(true);
   });
+
+  it("raw uploads are traced under their schema path (a multipart attachment and a raw avatar PUT)", async () => {
+    configureTelemetry(1);
+    const { uploadAttachment } = await import("@/lib/api/attachments");
+    await uploadAttachment(id, new File(["abc"], "canary-file-name-5c.txt"));
+    const span = pending().find((s) => s.name === "POST /v1/conversations/{id}/attachments");
+    expect(span, "upload span").toBeDefined();
+    expect(JSON.stringify(otlpBody([...pending()]))).not.toContain("canary-file-name-5c");
+    expect(apiCalls.at(-1)?.headers.get("traceparent")).toBe(`00-${span?.traceId}-${span?.spanId}-01`);
+  });
+});
+
+describe("error boundary capture", () => {
+  afterEach(() => {
+    cleanup();
+    resetTelemetryForTests();
+  });
+
+  it("a render error becomes a browser.error span with frames only, never the message", async () => {
+    const { default: RootError } = await import("@/app/error");
+    configureTelemetry(1);
+    const err = new Error("canary-render-message-0e9b for user ada@example.org");
+    const reset = vi.fn();
+    render(<RootError error={err} reset={reset} />);
+    // The page shows a generic message with a retry, not the error text.
+    expect(screen.queryByText(/canary-render-message/)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(reset).toHaveBeenCalledOnce();
+    await vi.waitFor(() => expect(pending().some((s) => s.name === "browser.error")).toBe(true));
+    const body = JSON.stringify(otlpBody([...pending()]));
+    expect(body).toContain("browser.error");
+    expect(body).not.toContain("canary-render-message");
+    expect(body).not.toContain("ada@example.org");
+  });
+
+  it("is inert when tracing is off", async () => {
+    const { default: RootError } = await import("@/app/error");
+    configureTelemetry(null);
+    const before = pending().length; // the buffer is module state: earlier tests may have left spans
+    render(<RootError error={new Error("x")} reset={() => undefined} />);
+    await Promise.resolve();
+    expect(pending()).toHaveLength(before);
+  });
 });

@@ -2,7 +2,7 @@
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
-import { api, ApiError } from "./client";
+import { api, ApiError, tracedFetch } from "./client";
 import { queryKeys } from "./queries";
 import type { components } from "./schema";
 
@@ -30,7 +30,7 @@ export function avatarErrorMessage(err: unknown): string {
 
 /** Raw-body PUT (contract C-41): the bytes are the request body; the server sniffs the type. */
 async function putAvatar(agentId: string, file: File): Promise<AgentDto> {
-  const res = await fetch(`/v1/agents/${encodeURIComponent(agentId)}/avatar`, {
+  const res = await tracedFetch("/v1/agents/{agent}/avatar", `/v1/agents/${encodeURIComponent(agentId)}/avatar`, {
     method: "PUT",
     credentials: "same-origin",
     headers: { "content-type": "application/octet-stream" },
