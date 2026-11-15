@@ -909,23 +909,24 @@ async fn reauth_refusals() {
 
     // A different user authenticating at the provider is refused; nothing is stamped.
     let (loc, _) = reauth(&h, &a.cookie, Some("bob@example.com")).await;
-    assert_eq!(loc, "/auth/login?error=reauth_user_mismatch");
+    // (FIX-152) A failed re-authentication returns to the page that started it.
+    assert_eq!(loc, "/account?reauth_error=reauth_user_mismatch");
     // A stale `auth_time` (older than 60 s) is refused.
     h.idp.set(|c| c.auth_time_ago = Some(120));
     let (loc, _) = reauth(&h, &a.cookie, Some("ann@example.com")).await;
-    assert_eq!(loc, "/auth/login?error=reauth_stale");
+    assert_eq!(loc, "/account?reauth_error=reauth_stale");
     h.idp.set(|c| c.auth_time_ago = None);
     // (FIX-108) An IdP that ignores `max_age` and omits `auth_time` does not re-authenticate.
     h.idp.set(|c| c.omit_auth_time = true);
     let (loc, _) = reauth(&h, &a.cookie, Some("ann@example.com")).await;
-    assert_eq!(loc, "/auth/login?error=reauth_stale");
+    assert_eq!(loc, "/account?reauth_error=reauth_stale");
     // An `auth_time` in the future beyond the clock skew is refused too.
     h.idp.set(|c| {
         c.omit_auth_time = false;
         c.auth_time_ago = Some(-3600);
     });
     let (loc, _) = reauth(&h, &a.cookie, Some("ann@example.com")).await;
-    assert_eq!(loc, "/auth/login?error=reauth_stale");
+    assert_eq!(loc, "/account?reauth_error=reauth_stale");
     h.idp.set(|c| {
         c.omit_auth_time = false;
         c.auth_time_ago = None;
@@ -938,7 +939,7 @@ async fn reauth_refusals() {
         .await;
     let ck = format!("{flow}; {}", a.cookie);
     let (_, hd, _) = h.send(Method::GET, &path, &[("cookie", &ck)], None).await;
-    assert_eq!(location(&hd), "/auth/login?error=email_unverified");
+    assert_eq!(location(&hd), "/?reauth_error=email_unverified");
     let stamped: i64 = count(
         &h,
         "SELECT count(*) FROM sessions WHERE reauth_at IS NOT NULL",
@@ -957,4 +958,92 @@ async fn reauth_refusals() {
         (st, v["error"]["code"].as_str()),
         (StatusCode::PRECONDITION_FAILED, Some("reauth_required"))
     );
+}
+
+/// Fetch the `user.login` denied audit metadata with `reason`; the audit write is asynchronous.
+async fn denied_meta(h: &Harness, reason: &str) -> serde_json::Value {
+    for _ in 0..50 {
+        let row: Option<serde_json::Value> = sqlx::query_scalar(
+            "SELECT metadata FROM audit_log WHERE action = 'user.login' AND outcome = 'denied' \
+             AND metadata->>'reason' = $1 ORDER BY created_at DESC LIMIT 1",
+        )
+        .bind(reason)
+        .fetch_optional(h.pool())
+        .await
+        .unwrap();
+        if let Some(m) = row {
+            return m;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    panic!("no denied audit row with reason {reason}");
+}
+
+/// (FIX-152) A stale `auth_time` returns to the page with `reauth_error`, and the audit row
+/// carries the age so an administrator can see how far off the provider is.
+#[tokio::test]
+async fn reauth_stale_returns_to_page_and_records_age() {
+    let h = Harness::with_config(|c| c.signup_mode = SignupMode::Open).await;
+    let a = h.sign_in("ann@example.com").await;
+    h.idp.set(|c| c.auth_time_ago = Some(600));
+    let (loc, _) = reauth(&h, &a.cookie, Some("ann@example.com")).await;
+    assert_eq!(loc, "/account?reauth_error=reauth_stale");
+    let m = denied_meta(&h, "reauth_stale").await;
+    let age = m["auth_time_age_s"].as_i64().expect("auth_time_age_s");
+    assert!((600..=605).contains(&age), "age {age}");
+    assert!(m.get("auth_time_missing").is_none());
+}
+
+#[tokio::test]
+async fn reauth_missing_auth_time_is_recorded() {
+    let h = Harness::with_config(|c| c.signup_mode = SignupMode::Open).await;
+    let a = h.sign_in("ann@example.com").await;
+    h.idp.set(|c| c.omit_auth_time = true);
+    let (loc, _) = reauth(&h, &a.cookie, Some("ann@example.com")).await;
+    assert_eq!(loc, "/account?reauth_error=reauth_stale");
+    let m = denied_meta(&h, "reauth_stale").await;
+    assert_eq!(m["auth_time_missing"], true);
+    assert!(m.get("auth_time_age_s").is_none());
+}
+
+/// (FIX-152) A provider `error` in a re-authentication flow returns to the page; a bad state, or a
+/// failure of a normal sign-in, still goes to the login page.
+#[tokio::test]
+async fn reauth_provider_error_and_unchanged_login_failures() {
+    let h = Harness::with_config(|c| c.signup_mode = SignupMode::Open).await;
+    let a = h.sign_in("ann@example.com").await;
+
+    let (path, flow) = h
+        .oidc_authorize_with(
+            "dev",
+            "&reauth=1&return_to=%2Fadmin%2Forgs%3Fa%3D1",
+            Some("ann@example.com"),
+            &[("cookie", &a.cookie)],
+        )
+        .await;
+    let state = path
+        .split("state=")
+        .nth(1)
+        .unwrap()
+        .split('&')
+        .next()
+        .unwrap();
+    let denied = format!("/v1/auth/oidc/dev/callback?error=access_denied&state={state}");
+    let ck = format!("{flow}; {}", a.cookie);
+    let (_, hd) = callback(&h, &denied, &ck).await;
+    assert_eq!(location(&hd), "/admin/orgs?a=1&reauth_error=oidc_failed");
+
+    // Invalid state with a valid cookie, and no cookie at all: the login page.
+    let bad = "/v1/auth/oidc/dev/callback?code=x&state=garbage";
+    let (_, hd) = callback(&h, bad, &ck).await;
+    assert_eq!(location(&hd), "/auth/login?error=oidc_state_invalid");
+    let (_, hd) = callback(&h, &path, &a.cookie).await;
+    assert_eq!(location(&hd), "/auth/login?error=oidc_state_invalid");
+
+    // A normal sign-in with an unverified e-mail.
+    h.idp
+        .identity("dev-new@example.com", "new@example.com", false);
+    let (path, flow) = h.oidc_authorize_with("dev", "", None, &[]).await;
+    let (_, hd) = callback(&h, &path, &flow).await;
+    assert_eq!(location(&hd), "/auth/login?error=email_unverified");
 }

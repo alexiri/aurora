@@ -105,11 +105,28 @@ async fn start(
     Ok(r)
 }
 
+/// Append `reauth_error=<code>` to a same-origin path, before any `#fragment`; `&` when the path
+/// already has a query, else `?`. Codes are fixed snake_case ASCII.
+fn append_reauth_error(return_to: &str, code: &str) -> String {
+    let (path, frag) = match return_to.split_once('#') {
+        Some((p, f)) => (p, Some(f)),
+        None => (return_to, None),
+    };
+    let sep = if path.contains('?') { '&' } else { '?' };
+    let mut out = format!("{path}{sep}reauth_error={code}");
+    if let Some(f) = frag {
+        out.push('#');
+        out.push_str(f);
+    }
+    out
+}
+
 /// Complete OIDC sign-in: sets the session cookie and redirects to `return_to`, or to
-/// `/auth/login?error=<code>`.
+/// `/auth/login?error=<code>`. A failed re-authentication (the flow state opened and the flow was
+/// a re-authentication) redirects back to the flow's `return_to` with `reauth_error=<code>`.
 #[utoipa::path(get, path = "/auth/oidc/{provider}/callback", operation_id = "oidcCallback", tag = "auth",
     params(("provider" = String, Path, description = "Provider id"), CallbackQuery),
-    responses((status = 302, description = "Redirect to `return_to` or `/auth/login?error=<code>`"),
+    responses((status = 302, description = "Redirect to `return_to` (on a failed re-authentication, with `reauth_error=<code>` appended) or `/auth/login?error=<code>`"),
         (status = 404, body = ErrorEnvelope), (status = 429, body = ErrorEnvelope)))]
 async fn callback(
     State(s): State<AppState>,
@@ -136,10 +153,38 @@ async fn callback(
             }
             r
         }
-        Err(f) => redirect(StatusCode::FOUND, &format!("/auth/login?error={}", f.0)),
+        Err(f) => match f.return_to {
+            Some(back) => redirect(StatusCode::FOUND, &append_reauth_error(&back, f.code)),
+            None => redirect(StatusCode::FOUND, &format!("/auth/login?error={}", f.code)),
+        },
     };
     append_cookie(&mut r, &flow_cookie("", 0));
     r.headers_mut()
         .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     Ok(r)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::append_reauth_error;
+
+    #[test]
+    fn appends_reauth_error() {
+        assert_eq!(
+            append_reauth_error("/admin/orgs", "reauth_stale"),
+            "/admin/orgs?reauth_error=reauth_stale"
+        );
+        assert_eq!(
+            append_reauth_error("/x?a=1", "oidc_failed"),
+            "/x?a=1&reauth_error=oidc_failed"
+        );
+        assert_eq!(
+            append_reauth_error("/x?a=1#frag", "oidc_failed"),
+            "/x?a=1&reauth_error=oidc_failed#frag"
+        );
+        assert_eq!(
+            append_reauth_error("/x#frag", "oidc_failed"),
+            "/x?reauth_error=oidc_failed#frag"
+        );
+    }
 }

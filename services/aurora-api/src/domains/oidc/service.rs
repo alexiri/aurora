@@ -446,15 +446,41 @@ fn display_name(v: &Verified) -> String {
     }
 }
 
+/// A failed callback: the error code, and (FIX-152, C-890) the re-authentication's `return_to`
+/// when the flow state opened and the flow was a re-authentication.
+pub struct CallbackFail {
+    pub code: &'static str,
+    pub return_to: Option<String>,
+}
+
 pub async fn callback(
     state: &AppState,
     client: &Client,
     provider_id: &str,
     params: Params,
     cookie: Option<&str>,
+) -> Result<SignedIn, CallbackFail> {
+    let plain = |Fail(code)| CallbackFail {
+        code,
+        return_to: None,
+    };
+    let p = provider(state, provider_id).map_err(|_| plain(Fail("oidc_failed")))?;
+    let flow = open_state(state, provider_id, params.state.as_deref(), cookie).map_err(plain)?;
+    finish_callback(state, client, p, params, &flow)
+        .await
+        .map_err(|Fail(code)| CallbackFail {
+            code,
+            return_to: flow.ra.map(|_| flow.r.clone()),
+        })
+}
+
+async fn finish_callback(
+    state: &AppState,
+    client: &Client,
+    p: &OidcProvider,
+    params: Params,
+    flow: &FlowState,
 ) -> Result<SignedIn, Fail> {
-    let p = provider(state, provider_id).map_err(|_| Fail("oidc_failed"))?;
-    let flow = open_state(state, provider_id, params.state.as_deref(), cookie)?;
     if let Some(e) = &params.error {
         tracing::info!("oidc: provider returned error `{e}`");
         return Err(Fail("oidc_failed"));
@@ -463,26 +489,27 @@ pub async fn callback(
         .code
         .filter(|c| !c.is_empty())
         .ok_or(Fail("oidc_failed"))?;
-    let v = exchange(state, p, &flow, code).await?;
+    let v = exchange(state, p, flow, code).await?;
     // Phase 1 (RFE-004): there is no local credential, so the provider's verification of the
     // e-mail is the only proof of it. Always required (`require_email_verified` is gone).
     if !v.email_verified {
-        deny(state, client, &v.email, p, "email_unverified");
+        deny(state, client, &v.email, p, "email_unverified", None);
         return Err(Fail("email_unverified"));
     }
     if !domain_allowed(p, &v.email) {
-        deny(state, client, &v.email, p, "email_domain_not_allowed");
+        deny(state, client, &v.email, p, "email_domain_not_allowed", None);
         return Err(Fail("email_domain_not_allowed"));
     }
     if let Some((session, user)) = flow.ra {
-        return match reauthenticate(state, client, p, &v, session, user).await {
+        let mut evidence = None;
+        return match reauthenticate(state, client, p, &v, session, user, &mut evidence).await {
             Ok(()) => Ok(SignedIn {
                 session_token: None,
-                return_to: flow.r,
+                return_to: flow.r.clone(),
                 reauth: true,
             }),
             Err(Fail(code)) => {
-                deny(state, client, &v.email, p, code);
+                deny(state, client, &v.email, p, code, evidence);
                 Err(Fail(code))
             }
         };
@@ -498,12 +525,12 @@ pub async fn callback(
             );
             Ok(SignedIn {
                 session_token: Some(session_token),
-                return_to: flow.r,
+                return_to: flow.r.clone(),
                 reauth: false,
             })
         }
         Err(Fail(code)) => {
-            deny(state, client, &v.email, p, code);
+            deny(state, client, &v.email, p, code, None);
             Err(Fail(code))
         }
     }
@@ -518,6 +545,7 @@ async fn reauthenticate(
     v: &Verified,
     session: Uuid,
     user_id: Uuid,
+    evidence: &mut Option<serde_json::Value>,
 ) -> Result<(), Fail> {
     let user = identities::find_user(&state.pool, &p.id, &v.sub)
         .await?
@@ -530,11 +558,15 @@ async fn reauthenticate(
     }
     // (FIX-108, OIDC Core §3.1.2.1) `max_age` was sent, so the claim is required: a missing one
     // is as stale as an old one, and a value in the future beyond the skew is not believed.
-    let age = v
-        .auth_time
-        .map(|t| Utc::now().timestamp() - t)
-        .ok_or(Fail("reauth_stale"))?;
+    // (FIX-152) The denial records the evidence: the age (negative = future) or its absence.
+    let Some(age) = v.auth_time.map(|t| Utc::now().timestamp() - t) else {
+        tracing::warn!(provider = %p.id, auth_time_missing = true, "oidc: re-authentication refused");
+        *evidence = Some(json!({"auth_time_missing": true}));
+        return Err(Fail("reauth_stale"));
+    };
     if !(-REAUTH_AUTH_TIME_MAX_AGE_SECS..=REAUTH_AUTH_TIME_MAX_AGE_SECS).contains(&age) {
+        tracing::warn!(provider = %p.id, auth_time_age_s = age, "oidc: re-authentication refused");
+        *evidence = Some(json!({"auth_time_age_s": age}));
         return Err(Fail("reauth_stale"));
     }
     if !sessions::stamp_reauth(&state.pool, session, user_id).await? {
@@ -549,12 +581,22 @@ async fn reauthenticate(
     Ok(())
 }
 
-fn deny(state: &AppState, client: &Client, email: &str, p: &OidcProvider, reason: &str) {
+fn deny(
+    state: &AppState,
+    client: &Client,
+    email: &str,
+    p: &OidcProvider,
+    reason: &str,
+    extra: Option<serde_json::Value>,
+) {
     let actor = aurora_actor(client, email);
+    let mut meta = json!({"method": "oidc", "provider": p.id, "reason": reason});
+    if let (Some(serde_json::Value::Object(extra)), Some(m)) = (extra, meta.as_object_mut()) {
+        m.extend(extra);
+    }
     audit::record(
         state,
-        AuditEvent::new(actor, "user.login", Outcome::Denied)
-            .metadata(json!({"method": "oidc", "provider": p.id, "reason": reason})),
+        AuditEvent::new(actor, "user.login", Outcome::Denied).metadata(meta),
     );
 }
 

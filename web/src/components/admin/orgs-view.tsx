@@ -6,6 +6,7 @@ import { useState, type FormEvent } from "react";
 import { AdminDeleteDialog } from "@/components/admin/admin-delete-dialog";
 import { fmtDate } from "@/components/account/key-table";
 import { ErrorState, Loading } from "@/components/states";
+import { ReauthErrorNotice } from "@/components/auth/reauth-error-notice";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { FormDialog } from "@/components/ui/confirm-dialog";
@@ -131,6 +132,7 @@ export function AdminOrgsView() {
         title="Organizations"
         description="Freeze or delete an organization as the operator, for an incident such as a compromised account. You see counts and names, never the organization's data."
       />
+      <ReauthErrorNotice />
       {done ? (
         <Notice tone="accent" role="status" data-testid="admin-orgs-done">
           {done}
