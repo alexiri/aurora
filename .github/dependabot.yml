@@ -22,6 +22,11 @@ updates:
         patterns: [utoipa, utoipa-axum]
       kube:
         patterns: [kube, kube-*, k8s-openapi]
+      # The RustCrypto traits line (digest 0.10 -> 0.11) moves as one: sha2 0.11 does not build with
+      # hmac 0.12 (PR #23: hmac::digest::KeyInit / CoreProxy not satisfied). Workspace direct deps:
+      # sha2, hmac, md-5 (+ sha1/digest/hkdf if they appear).
+      rustcrypto:
+        patterns: [sha2, sha1, hmac, digest, hkdf, md-5]
       cargo-minor-patch:
         update-types: [minor, patch]
     ignore:
