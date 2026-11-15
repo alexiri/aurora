@@ -36,8 +36,69 @@ fn check(id: &str, previous: &str, shipped: &str) {
 }
 
 #[test]
-fn github_2_1_0_replaces_2_0_0_without_widening() {
-    check("github", "2.0.0", "2.1.0");
+fn github_2_0_0_still_upgrades_to_the_shipped_version_without_widening() {
+    // 2.1.0 (FIX-133/136) is superseded by 2.2.0 (FIX-135); an install still on 2.0.0 takes the
+    // shipped version the same way.
+    check("github", "2.0.0", "2.2.0");
+}
+
+/// FIX-135 (D-242): the packages that declare app families (presentation only) are a minor bump
+/// that widens nothing, so they replace their previous version by themselves; every member of a
+/// family is in the package, and a family has the same name on all members.
+#[test]
+fn github_2_2_0_and_atlassian_1_1_0_declare_families_without_widening() {
+    check("github", "2.1.0", "2.2.0");
+    check("atlassian", "1.0.3", "1.1.0");
+    for (id, fams) in [
+        ("github", vec![("github", vec!["github", "github-ghes"])]),
+        (
+            "atlassian",
+            vec![
+                ("jira", vec!["jira", "jira-dc"]),
+                ("confluence", vec!["confluence", "confluence-dc"]),
+            ],
+        ),
+    ] {
+        let m = read(&format!("../../plugins/builtin/{id}/plugin.yaml"));
+        for (fam, apps) in fams {
+            let members: Vec<&str> = m
+                .apps
+                .iter()
+                .filter(|a| a.about.family.as_ref().is_some_and(|f| f.id == fam))
+                .map(|a| a.about.id.as_str())
+                .collect();
+            assert_eq!(members, apps, "{id}: family {fam}");
+        }
+        assert!(aurora_registry::validate::manifest(&m).is_empty());
+    }
+}
+
+/// FIX-134 (D-243): `sentry` 1.0.2 had four apps (sentry.io, US, DE, self-hosted); 2.0.0 is one
+/// app with two preset instances. Dropping apps is a major version, but it widens nothing (the
+/// hosts were all claimed by 1.0.2 already), and the shipped version takes over every old app.
+#[test]
+fn sentry_2_0_0_replaces_1_0_2_without_widening_and_takes_over_the_old_apps() {
+    let old = read("tests/fixtures/previous/sentry-1.0.2.yaml");
+    let new = read("../../plugins/builtin/sentry/plugin.yaml");
+    assert_eq!(old.package.version, "1.0.2");
+    assert_eq!(new.package.version, "2.0.0");
+    assert!(is_major_upgrade(&old.package.version, &new.package.version));
+    let w = widens(&old, &new);
+    assert!(w.is_empty(), "sentry 1.0.2 -> 2.0.0 widens: {w:?}");
+    let old_ids: Vec<&str> = old.apps.iter().map(|a| a.about.id.as_str()).collect();
+    assert_eq!(
+        old_ids,
+        ["sentry", "sentry-us", "sentry-de", "sentry-self-hosted"]
+    );
+    assert_eq!(new.apps.len(), 1);
+    // Every old app but `sentry` itself is taken over by an entry the shipped version satisfies.
+    let took: Vec<&str> = aurora_registry::upgrade::supersedes(&new)
+        .iter()
+        .map(|s| s.old_app)
+        .collect();
+    assert_eq!(took, ["sentry-us", "sentry-de", "sentry-self-hosted"]);
+    // The old manifest satisfies none of them (no presets, no instances on `sentry`).
+    assert!(aurora_registry::upgrade::supersedes(&old).is_empty());
 }
 
 #[test]

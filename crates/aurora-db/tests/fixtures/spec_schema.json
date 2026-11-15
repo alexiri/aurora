@@ -121,6 +121,7 @@
     "app_instances": [
       "app_id",
       "base_path",
+      "builtin",
       "created_by",
       "host",
       "id",
@@ -1352,6 +1353,7 @@
     "app_instances": {
       "app_id": "text not null",
       "base_path": "text null",
+      "builtin": "boolean not null",
       "created_by": "uuid null",
       "host": "text not null",
       "id": "uuid not null",

@@ -5181,6 +5181,7 @@ export interface components {
             connection_count: number;
             credentials: components["schemas"]["CredentialInfo"][];
             description: string;
+            family?: null | components["schemas"]["AppFamily"];
             has_dark_icon: boolean;
             hosts: components["schemas"]["HostInfo"][];
             instances?: null | components["schemas"]["AppInstances"];
@@ -5194,6 +5195,19 @@ export interface components {
             serves_library: boolean;
             tools: components["schemas"]["Tool"][];
         };
+        /**
+         * @description `about.family` of an app (C-744): the catalogue and every picker show one product, named
+         *     "<name> · <variant_label>" wherever an app is named.
+         */
+        AppFamily: {
+            id: string;
+            /** @description The app is served by registered self-hosted servers (it declares `instances`). */
+            instance_bound: boolean;
+            /** @description The product name, the same on every member. */
+            name: string;
+            /** @description This app's deployment (its host, "Self-hosted", "Data Center"), unique within the family. */
+            variant_label: string;
+        };
         /** @description A self-hosted app instance: a host an admin registered for one app (C-240, D-74). */
         AppInstance: {
             app_id: string;
@@ -5201,6 +5215,11 @@ export interface components {
             base_path?: string | null;
             /** @description `https://<host><base_path>`: how the registration is named everywhere. */
             base_url: string;
+            /**
+             * @description (C-742, D-243) A preset instance the app's package ships (a vendor's region host): built
+             *     in, read-only, and offered to everyone.
+             */
+            builtin: boolean;
             /**
              * Format: int64
              * @description Connections bound to this instance.
@@ -5265,6 +5284,7 @@ export interface components {
             /** Format: int64 */
             connection_count: number;
             description: string;
+            family?: null | components["schemas"]["AppFamily"];
             has_dark_icon: boolean;
             name: string;
             package_id: string;
@@ -7855,6 +7875,11 @@ export interface components {
                 base_path?: string | null;
                 /** @description `https://<host><base_path>`: how the registration is named everywhere. */
                 base_url: string;
+                /**
+                 * @description (C-742, D-243) A preset instance the app's package ships (a vendor's region host): built
+                 *     in, read-only, and offered to everyone.
+                 */
+                builtin: boolean;
                 /**
                  * Format: int64
                  * @description Connections bound to this instance.

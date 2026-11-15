@@ -15,7 +15,12 @@ pub struct Superseded {
     pub old_app: &'static str,
     pub new_package: &'static str,
     pub new_app: &'static str,
-    pub method: &'static str,
+    /// The connect method of `new_app` the old app became (FIX-123); `None` when the old app
+    /// became an instance of the new one instead (FIX-134), whose connect methods are unchanged.
+    pub method: Option<&'static str>,
+    /// (FIX-134, D-243) The preset instance host of `new_app` the old app's connections move to:
+    /// a region app that became a preset instance. `None` for the others.
+    pub preset_host: Option<&'static str>,
 }
 
 /// The table of superseded apps. Append-only: an entry stays after the retired package is gone
@@ -26,21 +31,51 @@ pub const SUPERSEDED: &[Superseded] = &[
         old_app: "github-app",
         new_package: "github",
         new_app: "github",
-        method: "github_app",
+        method: Some("github_app"),
+        preset_host: None,
     },
     Superseded {
         old_package: "github-app",
         old_app: "github-app-ghes",
         new_package: "github",
         new_app: "github-ghes",
-        method: "github_app",
+        method: Some("github_app"),
+        preset_host: None,
     },
     Superseded {
         old_package: "aws-role",
         old_app: "aws-role",
         new_package: "aws-keys",
         new_app: "aws-keys",
-        method: "assume_role",
+        method: Some("assume_role"),
+        preset_host: None,
+    },
+    // (FIX-134, D-243) One Sentry app: the region apps became preset instances and the
+    // self-hosted app became the registered instances of the same app. The old apps live in the
+    // same package, so no package is retired (`retired_by` skips the package itself).
+    Superseded {
+        old_package: "sentry",
+        old_app: "sentry-us",
+        new_package: "sentry",
+        new_app: "sentry",
+        method: None,
+        preset_host: Some("us.sentry.io"),
+    },
+    Superseded {
+        old_package: "sentry",
+        old_app: "sentry-de",
+        new_package: "sentry",
+        new_app: "sentry",
+        method: None,
+        preset_host: Some("de.sentry.io"),
+    },
+    Superseded {
+        old_package: "sentry",
+        old_app: "sentry-self-hosted",
+        new_package: "sentry",
+        new_app: "sentry",
+        method: None,
+        preset_host: None,
     },
 ];
 
@@ -55,16 +90,25 @@ pub fn supersedes(manifest: &Manifest) -> Vec<&'static Superseded> {
                 .apps
                 .iter()
                 .find(|a| a.about.id == s.new_app)
-                .is_some_and(|a| a.connect.iter().any(|c| c.id() == s.method))
+                .is_some_and(|a| match (s.method, s.preset_host) {
+                    (Some(m), _) => a.connect.iter().any(|c| c.id() == m),
+                    (None, Some(h)) => a
+                        .instances
+                        .as_ref()
+                        .is_some_and(|i| i.presets.iter().any(|p| p.host == h)),
+                    // An old app that became the registered instances of the new one.
+                    (None, None) => a.instances.is_some(),
+                })
         })
         .collect()
 }
 
-/// Package ids retired by (a version of) `new_package`, whatever its manifest.
+/// Package ids retired by (a version of) `new_package`, whatever its manifest. A package never
+/// retires itself: an entry whose old app lives in the same package only removes the app.
 pub fn retired_by(new_package: &str) -> Vec<&'static str> {
     let mut v: Vec<&'static str> = SUPERSEDED
         .iter()
-        .filter(|s| s.new_package == new_package)
+        .filter(|s| s.new_package == new_package && s.old_package != new_package)
         .map(|s| s.old_package)
         .collect();
     v.sort_unstable();

@@ -9,7 +9,7 @@
 //! package is disabled. Idempotent; only counts and ids are logged, never a credential.
 
 use aurora_core::ApiError;
-use aurora_db::repo::{credentials, plugins};
+use aurora_db::repo::{app_instances, credentials, plugins};
 use aurora_registry::Manifest;
 use aurora_registry::claims;
 use aurora_registry::upgrade::{self as rules, Superseded};
@@ -27,6 +27,8 @@ pub struct Report {
     pub flipped: i64,
     /// Instance registrations moved or merged.
     pub instances: u64,
+    /// Preset instances the version declares (seeded or refreshed; not a change by itself).
+    pub presets: u64,
     pub libraries: u64,
     pub availability: u64,
     pub decisions_deleted: u64,
@@ -49,11 +51,38 @@ impl Report {
         json!({
             "connections_moved": self.connections.values().sum::<i64>(),
             "by_app": self.connections, "connections_reauth": self.flipped,
-            "instances": self.instances, "skill_libraries": self.libraries,
+            "instances": self.instances, "presets": self.presets, "skill_libraries": self.libraries,
             "availability": self.availability, "claim_decisions_deleted": self.decisions_deleted,
             "retired_packages": self.disabled,
         })
     }
+}
+
+/// (FIX-134, D-243, C-742) Seed the preset instances the version declares (`instances.presets`,
+/// instance-wide and `builtin`) and retire those of its apps it no longer declares. Idempotent.
+/// Returns the number of presets declared.
+async fn seed_presets(conn: &mut PgConnection, manifest: &Manifest) -> Result<u64, ApiError> {
+    let mut n = 0;
+    for a in &manifest.apps {
+        let Some(ins) = a.instances.as_ref() else {
+            continue;
+        };
+        let mut keep: Vec<String> = Vec::new();
+        for p in &ins.presets {
+            app_instances::seed_preset(
+                &mut *conn,
+                &manifest.package.id,
+                &a.about.id,
+                &p.host,
+                &p.label,
+            )
+            .await?;
+            keep.push(p.host.clone());
+            n += 1;
+        }
+        app_instances::retire_presets(&mut *conn, &a.about.id, &keep).await?;
+    }
+    Ok(n)
 }
 
 /// Run every superseded-app entry `manifest` (version `version` of its package) takes over.
@@ -62,7 +91,11 @@ pub async fn apply(
     manifest: &Manifest,
     version: &str,
 ) -> Result<Report, ApiError> {
-    let mut report = Report::default();
+    // (FIX-134, D-243) The preset instances this version declares, before anything moves to them.
+    let mut report = Report {
+        presets: seed_presets(conn, manifest).await?,
+        ..Report::default()
+    };
     let entries: Vec<&'static Superseded> = rules::supersedes(manifest);
     if entries.is_empty() {
         return Ok(report);
@@ -80,7 +113,7 @@ pub async fn apply(
     }
     let mut moved: Vec<(&'static Superseded, plugins::MovedConnection)> = Vec::new();
     for s in &entries {
-        for c in plugins::move_connections(
+        let rows = plugins::move_connections(
             &mut *conn,
             s.old_app,
             s.new_app,
@@ -88,8 +121,16 @@ pub async fn apply(
             version,
             s.method,
         )
-        .await?
-        {
+        .await?;
+        // A region app became a preset instance: its connections are that instance's now.
+        if let (Some(host), false) = (s.preset_host, rows.is_empty()) {
+            let instance = app_instances::preset_id(&mut *conn, s.new_app, host)
+                .await?
+                .ok_or_else(|| ApiError::internal("preset instance missing after seeding"))?;
+            let ids: Vec<uuid::Uuid> = rows.iter().map(|c| c.id).collect();
+            plugins::bind_instance(&mut *conn, &ids, instance).await?;
+        }
+        for c in rows {
             *report.connections.entry(s.old_app.to_owned()).or_default() += 1;
             moved.push((s, c));
         }
@@ -119,7 +160,12 @@ pub async fn apply(
         credentials::notify_gateway_invalidate(&mut *conn, "connection", c.id).await?;
     }
     // The retired packages: their host-claim decisions go, then the packages are disabled.
-    let mut retired: Vec<&'static str> = entries.iter().map(|s| s.old_package).collect();
+    // (An old app of the same package leaves with the version itself: nothing to retire.)
+    let mut retired: Vec<&'static str> = entries
+        .iter()
+        .map(|s| s.old_package)
+        .filter(|p| *p != manifest.package.id)
+        .collect();
     retired.sort_unstable();
     retired.dedup();
     for old in retired {

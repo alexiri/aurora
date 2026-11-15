@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Field, inputClass } from "@/components/ui/field";
 import { Form, FormActions } from "@/components/ui/form";
 import { Notice } from "@/components/ui/notice";
+import { appDisplayName } from "@/lib/api/app-name";
 import { errorMessage } from "@/lib/api/errors";
 import {
   buildClientPatchFields,
@@ -51,7 +52,7 @@ function useDefinitions(scope: CredScope) {
     for (const d of q.data?.oauth_clients ?? [])
       defs.set(`${q.data!.package_id}|${d.client_key}`, {
         package_id: q.data!.package_id,
-        app_name: q.data!.name,
+        app_name: appDisplayName(q.data!),
         def: d,
         instance_bound: q.data!.instances != null,
         default_host: q.data!.instances?.default_host ?? null,

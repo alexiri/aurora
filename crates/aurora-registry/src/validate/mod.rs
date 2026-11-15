@@ -184,6 +184,70 @@ impl Ctx<'_> {
     }
 }
 
+/// (FIX-135, D-242) `about.family`: a lower-case slug id, non-empty names, the same `name` on
+/// every member of a family, a unique `variant_label`, and at most one member without
+/// `instances` (the SaaS deployment; the others are instance-bound).
+fn family_rules(m: &Manifest, out: &mut Vec<Violation>) {
+    let mut by_family: std::collections::BTreeMap<&str, Vec<(usize, &crate::manifest::App)>> =
+        std::collections::BTreeMap::new();
+    for (i, a) in m.apps.iter().enumerate() {
+        let Some(f) = &a.about.family else { continue };
+        let at = format!("/apps/{i}/about/family");
+        let slug = !f.id.is_empty()
+            && f.id.len() <= 64
+            && f.id
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-');
+        if !slug {
+            out.push(Violation::new(
+                "family_id_invalid",
+                format!("{at}/id"),
+                "a family id is a lower-case slug (a-z, 0-9, -)",
+            ));
+        }
+        if f.name.trim().is_empty() || f.variant_label.trim().is_empty() {
+            out.push(Violation::new(
+                "family_label_empty",
+                at,
+                "a family needs a name and a variant_label",
+            ));
+        }
+        by_family.entry(f.id.as_str()).or_default().push((i, a));
+    }
+    for members in by_family.values() {
+        let first = members[0].1.about.family.as_ref();
+        let mut labels = BTreeSet::new();
+        let mut saas = 0;
+        for (i, a) in members {
+            let Some(f) = &a.about.family else { continue };
+            if first.is_some_and(|x| x.name != f.name) {
+                out.push(Violation::new(
+                    "family_name_mismatch",
+                    format!("/apps/{i}/about/family/name"),
+                    "every member of a family has the same name",
+                ));
+            }
+            if !labels.insert(f.variant_label.as_str()) {
+                out.push(Violation::new(
+                    "family_variant_duplicate",
+                    format!("/apps/{i}/about/family/variant_label"),
+                    "a variant_label is unique within its family",
+                ));
+            }
+            if a.instances.is_none() {
+                saas += 1;
+                if saas > 1 {
+                    out.push(Violation::new(
+                        "family_two_hosted",
+                        format!("/apps/{i}/about/family"),
+                        "at most one member of a family is not instance-bound",
+                    ));
+                }
+            }
+        }
+    }
+}
+
 pub fn manifest(m: &Manifest) -> Vec<Violation> {
     let mut out = Vec::new();
     let mut ids = BTreeSet::new();
@@ -196,6 +260,7 @@ pub fn manifest(m: &Manifest) -> Vec<Violation> {
             ));
         }
     }
+    family_rules(m, &mut out);
     for c in &m.permissions.context {
         if !CONTEXT_VARS.contains(&c.as_str()) {
             out.push(Violation::new(
@@ -390,6 +455,40 @@ fn app_rules(cx: &mut Ctx<'_>, clients: &BTreeSet<&str>, used: &mut BTreeSet<Hoo
                 "/instances/default_host",
                 "default_host must be a plain lower-case DNS name",
             );
+        }
+        // (FIX-134, D-243) Preset instances are static claims like `default_host`: plain DNS
+        // names inside a registrable domain, distinct from it and from each other.
+        let mut seen: BTreeSet<&str> = BTreeSet::new();
+        seen.extend(ins.default_host.as_deref());
+        for (i, p) in ins.presets.iter().enumerate() {
+            let at = format!("/instances/presets/{i}");
+            if !plain_dns_name(&p.host) {
+                cx.v(
+                    "instance_preset_invalid",
+                    &format!("{at}/host"),
+                    "a preset host must be a plain lower-case DNS name",
+                );
+            } else if psl::domain(p.host.as_bytes()).is_none() {
+                cx.v(
+                    "instance_preset_not_registrable",
+                    &format!("{at}/host"),
+                    "a preset host must lie inside a registrable domain, not be a public suffix",
+                );
+            }
+            if !seen.insert(p.host.as_str()) {
+                cx.v(
+                    "instance_preset_duplicate",
+                    &format!("{at}/host"),
+                    "a preset host repeats default_host or another preset",
+                );
+            }
+            if p.label.trim().is_empty() {
+                cx.v(
+                    "instance_preset_label_empty",
+                    &format!("{at}/label"),
+                    "a preset needs a label",
+                );
+            }
         }
         if let Some(p) = &ins.probe
             && (!p.path.starts_with('/')

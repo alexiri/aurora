@@ -103,6 +103,12 @@ pub async fn summary(state: &AppState, a: &AppEntry, p: &PackageEntry, av: &Avai
         has_dark_icon: assets::has_dark_icon(state, &p.digest).await,
         app_restrictions: a.grants.into(),
         serves_library: a.library.is_some(),
+        family: a.about.family.as_ref().map(|f| AppFamily {
+            id: f.id.clone(),
+            name: f.name.clone(),
+            variant_label: f.variant_label.clone(),
+            instance_bound: a.instances.is_some(),
+        }),
     }
 }
 
@@ -307,6 +313,7 @@ pub async fn detail(
         has_dark_icon: sm.has_dark_icon,
         app_restrictions: sm.app_restrictions,
         serves_library: sm.serves_library,
+        family: sm.family,
         api_docs: a.about.api_docs.clone(),
         connect_note: a.about.connect_note.as_ref().map(|n| ConnectNote {
             text: n.text.clone(),

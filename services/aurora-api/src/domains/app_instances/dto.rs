@@ -42,6 +42,9 @@ pub struct AppInstance {
     /// Name and slug of `org_id` (`null` for an instance-wide registration).
     pub org_name: Option<String>,
     pub org_slug: Option<String>,
+    /// (C-742, D-243) A preset instance the app's package ships (a vendor's region host): built
+    /// in, read-only, and offered to everyone.
+    pub builtin: bool,
 }
 
 impl From<InstanceRow> for AppInstance {
@@ -66,6 +69,7 @@ impl From<InstanceRow> for AppInstance {
             connections: r.connections,
             org_name: r.org_name,
             org_slug: r.org_slug,
+            builtin: r.builtin,
         }
     }
 }

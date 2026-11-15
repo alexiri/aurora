@@ -133,7 +133,22 @@ about:
   web_hosts: [mail.google.com]          # hosts allowed in approval links
   connect_note: { text: "An admin must enable API access first.", url: https://… }   # optional
   label_hint: "Account email"
+  family: { id: github, name: GitHub, variant_label: github.com }   # optional, phase 5 (D-242)
 ```
+
+**`family`** (phase 5, FIX-135, D-242, C-744, manifest contract 1, additive). Apps of **one
+package** that are the same product in different deployments (GitHub on github.com and on a
+GitHub Enterprise Server; Jira Cloud and Data Center) declare the same `family`. It is
+presentation only: the apps stay separate (own hosts, tools, token kinds, SEC-04/SEC-59 and the
+gateway unchanged). The catalogue shows **one tile per family**, the connect window asks where the
+product runs (the hosted variant, then each registered server of the family's instance-bound apps),
+and every list, picker, grant dialog and approval names the app "<family name> · <variant_label>"
+(a registered server adds its address). Linter: `id` is a lower-case slug
+(`family_id_invalid`); `name` and `variant_label` are non-empty (`family_label_empty`); every
+member of a family has the same `name` (`family_name_mismatch`), `variant_label` is unique in the
+family (`family_variant_duplicate`), at most one member is not instance-bound
+(`family_two_hosted`), and a family id is not used by another active package
+(`family_foreign_package`).
 
 #### `credentials` and `metadata`
 ```yaml
@@ -332,6 +347,22 @@ oauth_clients:
   `{instance}` entry also applies to that host as an ordinary static claim.
   Manifests and the linter are unchanged by base paths (below): `{instance}`
   stays a whole host in every manifest.
+- (phase 5, D-243, FIX-134) **Preset instances.** `instances.presets: [{ host, label }]`
+  lists hosts the package ships as ready-made instances next to `default_host`
+  (Sentry: `us.sentry.io` "US region", `de.sentry.io` "EU region (DE)" beside
+  `sentry.io`). Each is a plain lower-case DNS name inside a registrable domain
+  (not a public suffix), distinct from `default_host` and from the other
+  presets, with a non-empty label; lint codes `instance_preset_invalid`,
+  `instance_preset_not_registrable`, `instance_preset_duplicate`,
+  `instance_preset_label_empty`. A preset host is a static claim of the app's
+  `{instance}` rules exactly like `default_host` (the §7 conflict rules are
+  unchanged). When a version that declares presets activates, the API seeds one
+  **built-in** instance-wide `app_instances` row per preset (`builtin = true`,
+  `03`) in the activation transaction; it is offered in every connect window
+  and listed (read-only, "Built in") on Admin › Self-hosted apps, and a
+  connection to it is an ordinary instance connection: injected only on that
+  exact host (SEC-59). Nobody can rename, disable, promote or delete it
+  (`instance_builtin`), and a registration cannot reuse its host.
 - An **app instance** (`03 app_instances`) is a host registered for one app by
   an admin, optionally with a **base path** (phase 5, D-231, FIX-145):
   instance-wide by an instance admin, or for one organization by its
@@ -1058,6 +1089,15 @@ States: `pending_approval` → `active` (→ `superseded` by a newer active vers
   `pending_approval` (reason `converts_grants`) like `breaks_connections`, never auto-activated.
   Activation that introduces `block_untooled` converts nothing (the evaluator applies it at
   once). A later version that drops either flag converts nothing back: custom grants stay custom.
+- (FIX-134, D-243) **Superseded apps of the same package.** The table also lists apps that became
+  **preset instances** or the **registered instances** of another app of their own package
+  (`sentry-us` → `sentry` on `us.sentry.io`, `sentry-de` → `sentry` on `de.sentry.io`,
+  `sentry-self-hosted` → `sentry`). The same activation step seeds the presets first, moves the old
+  app's connections (the region ones are bound to the preset's instance row; `connect_method`,
+  credentials, scopes and grants stay) and registrations, and retires nothing at package level.
+  **Upgrade path for an install with `sentry` 1.0.x:** 2.0.0 does not widen permissions (every host
+  was claimed already) and breaks no connection, so it activates by itself; the step runs in
+  that transaction. A conflict or a held version waits for approval as usual. Rerunning is a no-op.
 - (FIX-123, D-195(a), D-215) **Superseded apps.** A built-in app that became a **connect method of
   another app** is listed in the API's table of superseded apps (`github-app` → `github`/`github_app`,
   `github-app-ghes` → `github-ghes`/`github_app`, `aws-role` → `aws-keys`/`assume_role`). In the

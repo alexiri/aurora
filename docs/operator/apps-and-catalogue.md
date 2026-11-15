@@ -26,7 +26,11 @@ What ships (the package directories in `plugins/builtin/`):
 | `microsoft-365` | Microsoft 365 | no |
 | `notion` | Notion | no |
 | `postgresql` | PostgreSQL (database lane, see [gateway-posture.md](gateway-posture.md#database-lane)) | no |
-| `sentry` | Sentry | yes |
+| `sentry` | Sentry (sentry.io, its US and EU regions, and self-hosted servers: one app) | yes |
+
+**Built-in instances (FIX-134).** A package may ship ready-made instances next to its SaaS host: Sentry's `us.sentry.io` ("US region") and `de.sentry.io` ("EU region (DE)"). They are seeded when the package version activates, offered in every connect window, and listed on Admin › Self-hosted apps as **Built in**: nobody has to register them, and nobody can edit, disable or delete them (409 `instance_builtin`). **Upgrading from `sentry` 1.0.x:** `sentry` 2.0.0 activates by itself (it widens no permission) and, in the same step, moves the connections of the old `sentry-us`, `sentry-de` and `sentry-self-hosted` apps to the one `sentry` app (US/EU connections bound to the matching built-in instance; self-hosted ones keep their registered server); connection ids, agent grants and history are unchanged and the audit log shows one `plugin.supersede` row with the counts.
+
+**One tile per product (FIX-135, app families).** GitHub and GitHub Enterprise Server, Jira Cloud and Jira Data Center, Confluence Cloud and Confluence Data Center are separate apps underneath (different hosts, tools and sign-in) but one product to the people using them: the catalogue shows one tile (GitHub, Jira, Confluence) whose connect window asks where it runs (github.com, or a registered server); connections, grants, policy pickers and approvals name the app "GitHub · Enterprise Server". Nothing to configure and no permission changes: `github` 2.2.0 and `atlassian` 1.1.0 only declare the family, so they replace the previous version by themselves. Registered servers are still registered under Self-hosted apps.
 
 Each package carries a setup guide (`plugins/builtin/<id>/docs/setup.md`) written for the person connecting the app. Versions are in each `plugin.yaml`.
 Organizations choose which apps their members may use (`GET` and `PUT /v1/orgs/{org}/app-availability`, posture plus allow-list).

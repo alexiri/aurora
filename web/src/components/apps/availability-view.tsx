@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { CheckboxField, FormActions } from "@/components/ui/form";
 import { Notice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
+import { appDisplayName } from "@/lib/api/app-name";
 import { errorMessage } from "@/lib/api/errors";
 import {
   toggleAllow,
@@ -77,7 +78,7 @@ export function AvailabilityEditor({
           <CheckboxField
             key={a.app_id}
             id={`allow-${a.app_id}`}
-            label={a.name}
+            label={appDisplayName(a)}
             checked={orgWide(a.app_id)}
             onChange={() => setAllow((cur) => toggleAllow(cur, a.app_id, null))}
           />

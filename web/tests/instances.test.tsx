@@ -69,6 +69,7 @@ const inst = (over: Record<string, unknown>) => {
     created_at: "",
     updated_at: "",
     connections: 2,
+    builtin: false,
     ...over,
   };
   // (C-731) Registrations are named by `https://<host><base_path>`.
@@ -122,6 +123,19 @@ describe("instances admin section", () => {
     expect(screen.getByRole("button", { name: "Delete https://desk.acme.example" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Delete https://desk.wide.example" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Disable https://desk.wide.example" })).toBeNull();
+  });
+
+  it("a package's built-in instance is badged and read-only, even for an admin (FIX-134)", async () => {
+    stub({
+      ...catalogue,
+      "GET /v1/orgs/o1/app-instances": () =>
+        json(200, { items: [inst({ id: "r-us", org_id: null, host: "us.desk.example", label: "US region", builtin: true, connections: 1 })], next_cursor: null }),
+    });
+    wrap(<InstancesView scope={{ kind: "organization", id: "o1" }} canManage />);
+    const table = await screen.findByRole("table", { name: "Registered self-hosted apps" });
+    expect(within(table).getByText("https://us.desk.example")).toBeInTheDocument();
+    expect(within(table).getByText("Built in")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Delete|Disable|Enable|instance-wide/ })).toBeNull();
   });
 
   it("registers an instance (label defaults to the host) and shows the server's refusal", async () => {
@@ -284,6 +298,39 @@ describe("connect dialog instance picker", () => {
     fireEvent.click(screen.getByRole("button", { name: "Connect" }));
     await waitFor(() => expect(calls.some((c) => c.path === "/v1/apps/desk/connect")).toBe(true));
     expect(calls.find((c) => c.path === "/v1/apps/desk/connect")?.body).toMatchObject({ instance_id: "i1", method_id: "token" });
+  });
+
+  // FIX-134 (D-243): the package's preset instances (Sentry's regions) come before the registered servers.
+  it("offers the package's built-in instances (regions) before registered servers and sends the chosen one", async () => {
+    const calls = stub(
+      routes({
+        "GET /v1/orgs/o1/app-instances": () =>
+          json(200, {
+            items: [
+              inst({ id: "i1" }),
+              inst({ id: "r-us", org_id: null, host: "us.desk.example", label: "US region", builtin: true, connections: 0 }),
+              inst({ id: "r-eu", org_id: null, host: "eu.desk.example", label: "EU region (DE)", builtin: true, connections: 0 }),
+            ],
+            next_cursor: null,
+          }),
+        "POST /v1/apps/desk/connect": () => json(200, { kind: "connected", connection: { id: "k1" }, missing_scopes: [] }),
+      }),
+    );
+    wrap(<ConnectView />);
+    const picker = await screen.findByLabelText("Desk instance");
+    await within(picker).findByRole("option", { name: "US region (us.desk.example)" });
+    expect(within(picker).getAllByRole("option").map((o) => o.textContent)).toEqual([
+      "saas.desk.example (default)",
+      "US region (us.desk.example)",
+      "EU region (DE) (eu.desk.example)",
+      "Acme desk (https://desk.acme.example)",
+    ]);
+    expect(within(picker).getByRole("group", { name: "Registered servers" })).toBeInTheDocument();
+    fireEvent.change(picker, { target: { value: "r-us" } });
+    fireEvent.change(screen.getByLabelText("Token"), { target: { value: "t" } });
+    fireEvent.click(screen.getByRole("button", { name: "Connect" }));
+    await waitFor(() => expect(calls.some((c) => c.path === "/v1/apps/desk/connect")).toBe(true));
+    expect(calls.find((c) => c.path === "/v1/apps/desk/connect")?.body).toMatchObject({ instance_id: "r-us" });
   });
 
   it("omits instance_id for the default host", async () => {

@@ -1,6 +1,6 @@
 package:
   id: atlassian
-  version: 1.0.3
+  version: 1.1.0
   contract: 1
   min_core: 0.1.0
   publisher: aurora
@@ -25,6 +25,7 @@ apps:
   - about:
       id: jira
       name: Jira Cloud
+      family: { id: jira, name: Jira, variant_label: Cloud }
       description: Read Jira Cloud issues, projects and comments and search with JQL, and create or change issues, comment and move issues through transitions when you allow it
       category: productivity
       api_docs: https://developer.atlassian.com/cloud/jira/platform/rest/v3/intro/
@@ -134,6 +135,7 @@ apps:
   - about:
       id: confluence
       name: Confluence Cloud
+      family: { id: confluence, name: Confluence, variant_label: Cloud }
       description: Read Confluence Cloud spaces, pages and comments and search with CQL, and create or update pages and add comments when you allow it
       category: productivity
       api_docs: https://developer.atlassian.com/cloud/confluence/rest/v2/intro/
@@ -249,6 +251,7 @@ apps:
   - about:
       id: jira-dc
       name: Jira Data Center
+      family: { id: jira, name: Jira, variant_label: Data Center }
       description: Read issues, projects and comments and search with JQL on a registered self-hosted Jira (Data Center or Server), and create or change issues, comment and transition when you allow it
       category: productivity
       api_docs: https://developer.atlassian.com/server/jira/platform/rest/
@@ -340,6 +343,7 @@ apps:
   - about:
       id: confluence-dc
       name: Confluence Data Center
+      family: { id: confluence, name: Confluence, variant_label: Data Center }
       description: Read spaces, pages and comments and search with CQL on a registered self-hosted Confluence (Data Center or Server), and create or update content when you allow it
       category: productivity
       api_docs: https://developer.atlassian.com/server/confluence/rest/

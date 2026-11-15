@@ -133,3 +133,11 @@
   request: { method: GET, url: "https://sentry.io/settings/account/api/auth-tokens/" }
   expect:
     upstream: { headers_absent: [authorization] }
+- name: "negative (FIX-134): a sentry.io connection is not injected on the US region host"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://us.sentry.io/api/0/organizations/example-org/" }
+  expect: { refused: host_mismatch, expected_host: sentry.io }
+- name: "negative (FIX-134): a sentry.io connection is not injected on the EU region host"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://de.sentry.io/api/0/organizations/example-org/" }
+  expect: { refused: host_mismatch, expected_host: sentry.io }

@@ -465,6 +465,7 @@ fn pkg_codes(yaml: &str, tests: Option<&str>) -> Vec<(&'static str, String)> {
         running_version: "0.1.0".into(),
         reserved_hosts: vec![HostPattern::parse("*.aurora.internal").unwrap()],
         active_app_ids: HashMap::new(),
+        active_families: HashMap::new(),
     };
     let trust = TrustStore {
         project_key: Some(key.verifying_key()),

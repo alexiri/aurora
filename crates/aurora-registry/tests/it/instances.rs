@@ -250,6 +250,96 @@ fn snapshot_keeps_instance_entries_apart_and_compiles_default_host_as_a_static_c
     assert!(s.app("desk").unwrap().instances.is_some());
 }
 
+const PRESETS: &str = "    instances: { label: Desk region, default_host: saas.desk.example, presets: [ { host: us.desk.example, label: US region }, { host: eu.desk.example, label: EU region } ] }";
+
+fn with_presets(instances: &str) -> String {
+    yaml(
+        instances,
+        "{instance}",
+        "{instance}",
+        "https://{instance}/api/me",
+        "https://{instance}/oauth",
+    )
+}
+
+/// FIX-134, D-243: `instances.presets` — valid, bad host, a duplicate of `default_host` or of
+/// another preset, a public suffix, an empty label.
+#[test]
+fn preset_instances_are_linted() {
+    let v = run(&with_presets(PRESETS));
+    assert!(v.is_empty(), "{v:#?}");
+    for (name, inst, code) in [
+        (
+            "bad host (capitals and a port)",
+            "    instances: { label: X, presets: [ { host: \"US.desk.example:8443\", label: US } ] }",
+            "instance_preset_invalid",
+        ),
+        (
+            "an IP literal",
+            "    instances: { label: X, presets: [ { host: \"10.0.0.1\", label: US } ] }",
+            "instance_preset_invalid",
+        ),
+        (
+            "duplicate of default_host",
+            "    instances: { label: X, default_host: saas.desk.example, presets: [ { host: saas.desk.example, label: US } ] }",
+            "instance_preset_duplicate",
+        ),
+        (
+            "duplicate of another preset",
+            "    instances: { label: X, presets: [ { host: us.desk.example, label: US }, { host: us.desk.example, label: Again } ] }",
+            "instance_preset_duplicate",
+        ),
+        (
+            "a public suffix, no registrable domain",
+            "    instances: { label: X, presets: [ { host: co.uk, label: UK } ] }",
+            "instance_preset_not_registrable",
+        ),
+        (
+            "empty label",
+            "    instances: { label: X, presets: [ { host: us.desk.example, label: \" \" } ] }",
+            "instance_preset_label_empty",
+        ),
+    ] {
+        let v = run(&with_presets(inst));
+        assert!(codes(&v).contains(code), "{name}: {v:#?}");
+    }
+}
+
+/// FIX-134, D-243: a preset host is an ordinary static claim of the `{instance}` rule (so a
+/// package that claims it conflicts), and its `{instance}` tools are found on it.
+#[test]
+fn preset_hosts_compile_as_static_claims_and_serve_the_instance_tools() {
+    let c = compile(&[active(&with_presets(PRESETS), "selfhost")], &[], &[], 1).unwrap();
+    let s = Snapshot::from_slice(&c.json).unwrap();
+    let mut hosts: Vec<&str> = s.hosts.iter().map(|h| h.host.as_str()).collect();
+    hosts.sort_unstable();
+    assert_eq!(
+        hosts,
+        ["eu.desk.example", "saas.desk.example", "us.desk.example"]
+    );
+    let ix = HostIndex::new(&s);
+    for h in ["saas.desk.example", "us.desk.example", "eu.desk.example"] {
+        let t = ix.tool(h, "/api/things", "GET");
+        assert_eq!(t.map(|(_, t)| t.id.as_str()), Some("list_things"), "{h}");
+    }
+    assert!(ix.tool("ap.desk.example", "/api/things", "GET").is_none());
+    let a = active(&with_presets(PRESETS), "selfhost");
+    let other = good()
+        .replace("id: desk", "id: other")
+        .replace("{instance}", "us.desk.example")
+        .replace(INST, "");
+    let b = active(&other, "other");
+    let all: Vec<_> = [&a, &b]
+        .iter()
+        .flat_map(|p| {
+            claims(&p.manifest)
+                .into_iter()
+                .map(|c| (p.manifest.package.id.clone(), c))
+        })
+        .collect();
+    assert_eq!(conflict_groups(&all).len(), 1);
+}
+
 #[test]
 fn an_app_without_a_default_host_claims_no_static_host() {
     let y = good().replace(", default_host: saas.desk.example", "");

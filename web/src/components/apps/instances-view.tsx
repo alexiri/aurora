@@ -23,6 +23,7 @@ import {
   type AppInstance,
   type InstanceScope,
 } from "@/lib/api/apps";
+import { appDisplayName } from "@/lib/api/app-name";
 import { api } from "@/lib/api/client";
 import {
   errorMessage,
@@ -203,7 +204,7 @@ function RegisterDialog({
           <option value="">Select…</option>
           {bound.map((a) => (
             <option key={a.app_id} value={a.app_id}>
-              {a.name}
+              {appDisplayName(a)}
             </option>
           ))}
         </select>
@@ -296,7 +297,10 @@ function InstanceRow({
       </Td>
       {showOrg ? <Td className="text-ink-2">{inst.org_id ? (inst.org_name ?? inst.org_slug ?? inst.org_id) : "—"}</Td> : null}
       <Td>
-        <Badge tone={inst.org_id ? "neutral" : "accent"}>{inst.org_id ? "Organization" : "Instance-wide"}</Badge>
+        {/* (FIX-134, D-243) A package's preset instance (a vendor's region host): the package's own, read-only. */}
+        <Badge tone={inst.builtin || !inst.org_id ? "accent" : "neutral"}>
+          {inst.builtin ? "Built in" : inst.org_id ? "Organization" : "Instance-wide"}
+        </Badge>
       </Td>
       <Td>
         <Badge tone={active ? "accent" : "pending"}>{active ? "Active" : "Disabled"}</Badge>
@@ -330,7 +334,7 @@ function InstanceRow({
             </ConfirmDialog>
           </>
         ) : null}
-        {canManage ? (
+        {canManage && !inst.builtin ? (
           <div className="flex flex-wrap justify-end gap-2">
             <Button
               size="sm"
@@ -407,7 +411,7 @@ export function InstancesView({ scope, canManage }: { scope: InstanceScope; canM
   const [open, setOpen] = useState(false);
   if (list.isPending || pending) return <Loading />;
   if (list.isError) return <ErrorState error={list.error} onRetry={() => list.refetch()} />;
-  const names = new Map(bound.map((a) => [a.app_id, a.name]));
+  const names = new Map(bound.map((a) => [a.app_id, appDisplayName(a)]));
   const items = list.data.items;
   return (
     <div className="space-y-6">

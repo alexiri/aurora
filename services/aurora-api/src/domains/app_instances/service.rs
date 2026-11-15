@@ -309,6 +309,17 @@ fn probe_message(
     }
 }
 
+/// (FIX-134, D-243, C-742) A package's preset instance is the package's: nobody changes it.
+fn refuse_builtin(row: &InstanceRow) -> Result<(), ApiError> {
+    if row.builtin {
+        return Err(ApiError::conflict(
+            "instance_builtin",
+            "This instance is built into the app and cannot be changed or removed.",
+        ));
+    }
+    Ok(())
+}
+
 fn invalidate_scope(org: Option<Uuid>) -> (&'static str, Uuid) {
     match org {
         Some(o) => ("org", o),
@@ -423,6 +434,7 @@ pub async fn promote(
     let row = repo::get(&mut *tx, id)
         .await?
         .ok_or_else(|| ApiError::not_found("App instance not found."))?;
+    refuse_builtin(&row)?;
     let Some(from_org) = row.org_id else {
         return Err(ApiError::conflict(
             "instance_already_wide",
@@ -589,6 +601,7 @@ pub async fn patch(
     row: &InstanceRow,
     req: PatchAppInstanceRequest,
 ) -> Result<InstanceRow, ApiError> {
+    refuse_builtin(row)?;
     let label = req.label.as_deref().map(clean_label).transpose()?;
     if let Some(s) = req.status.as_deref()
         && !["active", "disabled"].contains(&s)
@@ -625,6 +638,7 @@ pub async fn delete(
     actor: &AuditActor,
     row: &InstanceRow,
 ) -> Result<(), ApiError> {
+    refuse_builtin(row)?;
     let mut tx = state.pool.begin().await.map_err(DbError::from)?;
     repo::lock_host(&mut tx, &row.host).await?;
     let clients = repo::client_secret_refs(&mut tx, row.id).await?;

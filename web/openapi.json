@@ -32436,6 +32436,17 @@
           "description": {
             "type": "string"
           },
+          "family": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/AppFamily",
+                "description": "(phase 5, FIX-135, C-744) as on `AppSummary`."
+              }
+            ]
+          },
           "has_dark_icon": {
             "type": "boolean"
           },
@@ -32495,6 +32506,33 @@
           }
         }
       },
+      "AppFamily": {
+        "type": "object",
+        "description": "`about.family` of an app (C-744): the catalogue and every picker show one product, named\n\"<name> · <variant_label>\" wherever an app is named.",
+        "required": [
+          "id",
+          "name",
+          "variant_label",
+          "instance_bound"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "instance_bound": {
+            "type": "boolean",
+            "description": "The app is served by registered self-hosted servers (it declares `instances`)."
+          },
+          "name": {
+            "type": "string",
+            "description": "The product name, the same on every member."
+          },
+          "variant_label": {
+            "type": "string",
+            "description": "This app's deployment (its host, \"Self-hosted\", \"Data Center\"), unique within the family."
+          }
+        }
+      },
       "AppInstance": {
         "type": "object",
         "description": "A self-hosted app instance: a host an admin registered for one app (C-240, D-74).",
@@ -32508,7 +32546,8 @@
           "status",
           "created_at",
           "updated_at",
-          "connections"
+          "connections",
+          "builtin"
         ],
         "properties": {
           "app_id": {
@@ -32524,6 +32563,10 @@
           "base_url": {
             "type": "string",
             "description": "`https://<host><base_path>`: how the registration is named everywhere."
+          },
+          "builtin": {
+            "type": "boolean",
+            "description": "(C-742, D-243) A preset instance the app's package ships (a vendor's region host): built\nin, read-only, and offered to everyone."
           },
           "connections": {
             "type": "integer",
@@ -32704,6 +32747,17 @@
           },
           "description": {
             "type": "string"
+          },
+          "family": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/AppFamily",
+                "description": "(phase 5, FIX-135, D-242, C-744) The product this app is a deployment of; `null` for an\napp that is its own product."
+              }
+            ]
           },
           "has_dark_icon": {
             "type": "boolean"
@@ -41069,7 +41123,8 @@
                 "status",
                 "created_at",
                 "updated_at",
-                "connections"
+                "connections",
+                "builtin"
               ],
               "properties": {
                 "app_id": {
@@ -41085,6 +41140,10 @@
                 "base_url": {
                   "type": "string",
                   "description": "`https://<host><base_path>`: how the registration is named everywhere."
+                },
+                "builtin": {
+                  "type": "boolean",
+                  "description": "(C-742, D-243) A preset instance the app's package ships (a vendor's region host): built\nin, read-only, and offered to everyone."
                 },
                 "connections": {
                   "type": "integer",

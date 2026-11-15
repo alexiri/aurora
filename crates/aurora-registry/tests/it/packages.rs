@@ -44,6 +44,7 @@ fn ctx() -> ValidationContext {
         .map(|h| HostPattern::parse(h).unwrap())
         .collect(),
         active_app_ids: HashMap::new(),
+        active_families: HashMap::new(),
     }
 }
 
