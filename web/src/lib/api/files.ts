@@ -17,6 +17,7 @@ export type FileList = S["FileList"];
 export type FileOp = S["FileOp"];
 export type FileOpResult = S["FileOpResult"];
 export type FileWriteResult = S["FileWriteResult"];
+export type FileText = S["FileText"];
 
 /** The scope of the page (C-899): nothing outside it is shown or requested. */
 export const WORKSPACE_ROOT = "/workspace";
@@ -139,7 +140,10 @@ export function relativeTime(iso: string | null | undefined, now: number = Date.
   return rtf.format(secs, "second");
 }
 
-export const isHidden = (e: Pick<FileEntry, "name">) => e.name.startsWith(".");
+/** `/workspace/.aurora` and everything under it is platform-managed and read-only (C-899). */
+export const isManaged = (path: string) => path === `${WORKSPACE_ROOT}/.aurora` || path.startsWith(`${WORKSPACE_ROOT}/.aurora/`);
+
+export const isHidden =(e: Pick<FileEntry, "name">) => e.name.startsWith(".");
 
 /** The kind a symlink opens as (its target's), a regular entry's own. */
 export function effectiveKind(e: FileEntry): "file" | "dir" | "other" | "missing" {
@@ -265,6 +269,42 @@ export function useFileList(agent: string, path: string, opts: { enabled?: boole
     staleTime: 0,
     refetchOnWindowFocus: false,
   });
+}
+
+/**
+ * The editor's read (C-898 `GET …/files/text`, P5-FILES-3): the text, its `etag` and line ending; 422 `file_not_editable`
+ * (`details.reason`: too_large, binary, not_utf8) rejects with an `ApiError`.
+ */
+export function getFileText(agent: string, path: string): Promise<FileText> {
+  return unwrap(api.GET("/v1/agents/{agent}/files/text", { params: { path: { agent }, query: { path } } }));
+}
+
+/** The 10 MiB cap of the image preview (C-905). */
+export const IMAGE_PREVIEW_MAX = 10 * 1024 * 1024;
+
+/**
+ * The raw bytes of a file for the image preview (`GET …/files/content`): refuses before reading the body when the
+ * advertised length is over `max` (`null`), rejects with an `ApiError` for an error body. The bytes are only ever
+ * sniffed and shown through a `data:` URL, never as HTML (SEC-126).
+ */
+export async function fetchContent(agent: string, path: string, max: number = IMAGE_PREVIEW_MAX): Promise<Uint8Array | null> {
+  const res = await fetch(downloadUrl(agent, path), { credentials: "same-origin" });
+  if (!res.ok) {
+    let parsed: unknown = null;
+    try {
+      parsed = await res.json();
+    } catch {
+      parsed = null;
+    }
+    throw ApiError.fromBody(parsed, res.status);
+  }
+  const advertised = Number(res.headers.get("content-length") ?? "0");
+  if (advertised > max) {
+    await res.body?.cancel();
+    return null;
+  }
+  const bytes = new Uint8Array(await res.arrayBuffer());
+  return bytes.length > max ? null : bytes;
 }
 
 export function fileOp(agent: string, body: FileOp): Promise<FileOpResult> {

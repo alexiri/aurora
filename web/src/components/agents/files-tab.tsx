@@ -10,6 +10,7 @@ import { useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { EmptyState, Loading } from "@/components/states";
 import { Breadcrumb } from "@/components/ui/breadcrumb";
 import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { DropZone } from "@/components/ui/drop-zone";
 import { CheckboxField } from "@/components/ui/form";
 import { FolderIcon, PlusIcon, UploadIcon } from "@/components/ui/icons";
@@ -23,6 +24,7 @@ import {
   filesErrorMessage,
   filesKeys,
   isHidden,
+  isManaged,
   isTransient,
   joinPath,
   mkdirOp,
@@ -39,7 +41,7 @@ import { ApiError } from "@/lib/api/client";
 import { fromDataTransfer, fromFileList } from "./files/collect";
 import { ClashDialog, DeleteDialog, GoToDialog, NameDialog, type NameDialogKind } from "./files/dialogs";
 import { FileList } from "./files/file-list";
-import { FilePlaceholder } from "./files/file-placeholder";
+import { FileViewer } from "./files/viewer/file-viewer";
 import { UploadQueue, type UploadJob } from "./files/upload-queue";
 import { filesHref, useFilesPath } from "./files/use-files-path";
 
@@ -76,7 +78,10 @@ function FilesBrowser({ agentId }: { agentId: string }) {
   const [goTo, setGoTo] = useState(false);
   const [nameDialog, setNameDialog] = useState<{ kind: NameDialogKind; entry?: FileEntry } | null>(null);
   const [deleting, setDeleting] = useState<FileEntry | null>(null);
-  const [viewing, setViewing] = useState<{ path: string; size?: number } | null>(null);
+  const [viewing, setViewing] = useState<{ path: string; size?: number; readOnly?: boolean; isNew?: boolean } | null>(null);
+  // The viewer's unsaved changes: leaving the file by any in-page navigation asks first (P5-FILES-3).
+  const [dirty, setDirty] = useState(false);
+  const [pendingNav, setPendingNav] = useState<(() => void) | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const filesInput = useRef<HTMLInputElement>(null);
   const folderInput = useRef<HTMLInputElement>(null);
@@ -101,17 +106,18 @@ function FilesBrowser({ agentId }: { agentId: string }) {
   );
   const uploads = useSyncExternalStore(queue.subscribe, queue.getSnapshot, queue.getSnapshot);
 
-  const go = (to: string) => {
+  const goNow = (to: string) => {
     setViewing(null);
     setActionError(null);
     setPath(to);
   };
+  const go = (to: string) => (dirty ? setPendingNav(() => () => goNow(to)) : goNow(to));
   const open = (entry: FileEntry) => {
     const target = entry.kind === "symlink" && entry.target ? entry.target : null;
     const kind = effectiveKind(entry);
     const at = target ? target.path : entry.path;
     if (kind === "dir") go(at);
-    else if (kind === "file") setViewing({ path: at, size: entry.size });
+    else if (kind === "file") setViewing({ path: at, size: entry.size, readOnly: !entry.writable || isManaged(at) });
   };
 
   const entries = useMemo<FileEntry[]>(() => list.data?.entries ?? [], [list.data]);
@@ -150,7 +156,16 @@ function FilesBrowser({ agentId }: { agentId: string }) {
       </div>
 
       {shownFile ? (
-        <FilePlaceholder agent={agentId} path={shownFile.path} size={shownFile.size} onBack={() => go(parentPath(shownFile.path))} />
+        <FileViewer
+          key={`${shownFile.path}:${shownFile.isNew ? "new" : "open"}`}
+          agent={agentId}
+          path={shownFile.path}
+          size={shownFile.size}
+          readOnly={"readOnly" in shownFile ? shownFile.readOnly : isManaged(shownFile.path)}
+          isNew={"isNew" in shownFile ? shownFile.isNew : false}
+          onBack={() => go(parentPath(shownFile.path))}
+          onDirtyChange={setDirty}
+        />
       ) : (
         <>
           <div role="group" aria-label="File actions" className="flex flex-wrap items-center gap-2">
@@ -302,9 +317,25 @@ function FilesBrowser({ agentId }: { agentId: string }) {
         onSubmit={async (name) => {
           const kind = nameDialog?.kind;
           if (kind === "folder") await mkdirOp(agentId, joinPath(path, name));
-          else if (kind === "file") await putFile(agentId, joinPath(path, name), "");
-          else if (kind === "rename" && nameDialog?.entry) await renameOp(agentId, nameDialog.entry.path, joinPath(parentPath(nameDialog.entry.path), name));
+          else if (kind === "file") {
+            // An empty editor: nothing is created until its first Save (`If-None-Match: *`).
+            setViewing({ path: joinPath(path, name), isNew: true });
+            return;
+          } else if (kind === "rename" && nameDialog?.entry) await renameOp(agentId, nameDialog.entry.path, joinPath(parentPath(nameDialog.entry.path), name));
           refresh();
+        }}
+      />
+      <ConfirmDialog
+        open={pendingNav !== null}
+        onOpenChange={(o) => !o && setPendingNav(null)}
+        title="Discard your changes?"
+        description="You have unsaved changes in this file. Leaving now loses them."
+        confirmLabel="Discard changes"
+        danger
+        onConfirm={() => {
+          const next = pendingNav;
+          setPendingNav(null);
+          next?.();
         }}
       />
       <DeleteDialog

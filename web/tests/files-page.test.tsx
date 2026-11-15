@@ -239,8 +239,12 @@ describe("states", () => {
     expect(screen.queryByRole("button", { name: "Upload" })).toBeNull();
   });
 
-  it("opening a file shows the placeholder card with Download and Back to folder", async () => {
-    mockApi((r) => (r.path === "/v1/agents/a1/files" ? listing("/workspace", [entry("notes.md", "file")]) : undefined));
+  it("opening a file shows the viewer (here: No preview, as the API says it is binary) with Download and Back to folder", async () => {
+    mockApi((r) => {
+      if (r.path === "/v1/agents/a1/files/text") return err(422, "file_not_editable", { reason: "binary" });
+      if (r.path === "/v1/agents/a1/files/content") return new Response(new Uint8Array([0, 1, 2]), { status: 200, headers: { "content-length": "3" } });
+      return r.path === "/v1/agents/a1/files" ? listing("/workspace", [entry("notes.md", "file")]) : undefined;
+    });
     renderTab();
     fireEvent.click(await screen.findByRole("button", { name: "notes.md" }));
     const dl = await screen.findByRole("link", { name: /Download/ });

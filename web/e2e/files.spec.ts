@@ -1,147 +1,13 @@
-import AxeBuilder from "@axe-core/playwright";
-import { expect, test, type Page, type Route } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { mockApi } from "./support/mock-api";
+import { Fs, HTML_WITH_SCRIPT, PNG_1X1, SVG_WITH_SCRIPT, mockFiles, openFiles, rowMenu, serious } from "./support/files";
 import { overflow, type Scheme } from "./support/open";
 
-// P5-FILES-2 (docs/14 §Files, C-904): the agent Files page against the shared mock plus an in-memory `/workspace`
-// behind the C-898 routes. The response headers of the real download route (`content-disposition: attachment`,
-// C-903) are the API suite's and the kind journey's (P5-FILES-4); here the page must use the attachment link and
-// never open or render the bytes.
-
-type Node = { kind: "file" | "dir"; content: string; mtime: string };
-
-class Fs {
-  nodes = new Map<string, Node>([
-    ["/workspace", { kind: "dir", content: "", mtime: "2026-11-15T10:00:00Z" }],
-    ["/workspace/src", { kind: "dir", content: "", mtime: "2026-11-15T10:00:00Z" }],
-    ["/workspace/src/main.rs", { kind: "file", content: "fn main() {}\n", mtime: "2026-11-15T10:00:00Z" }],
-    ["/workspace/notes.md", { kind: "file", content: "# notes\n", mtime: "2026-11-15T10:00:00Z" }],
-    ["/workspace/.aurora", { kind: "dir", content: "", mtime: "2026-11-15T10:00:00Z" }],
-    ["/workspace/.env", { kind: "file", content: "A=1\n", mtime: "2026-11-15T10:00:00Z" }],
-  ]);
-  puts: { path: string; headers: Record<string, string>; bytes: number }[] = [];
-  ops: unknown[] = [];
-
-  entry(path: string) {
-    const n = this.nodes.get(path)!;
-    const readOnly = path === "/workspace/.aurora" || path.startsWith("/workspace/.aurora/");
-    return {
-      name: path.split("/").pop()!,
-      path,
-      kind: n.kind,
-      size: n.kind === "dir" ? 4096 : Buffer.byteLength(n.content),
-      mode: n.kind === "dir" ? "0755" : "0644",
-      modified_at: n.mtime,
-      writable: !readOnly,
-    };
-  }
-
-  children(dir: string) {
-    return [...this.nodes.keys()]
-      .filter((p) => p !== dir && p.startsWith(`${dir}/`) && !p.slice(dir.length + 1).includes("/"))
-      .sort((a, b) => {
-        const ka = this.nodes.get(a)!.kind === "dir" ? 0 : 1;
-        const kb = this.nodes.get(b)!.kind === "dir" ? 0 : 1;
-        return ka - kb || a.localeCompare(b);
-      });
-  }
-}
-
-const err = (route: Route, status: number, code: string) =>
-  route.fulfill({ status, contentType: "application/json", body: JSON.stringify({ error: { code, message: code } }) });
-const ok = (route: Route, status: number, body: unknown) => route.fulfill({ status, contentType: "application/json", body: JSON.stringify(body) });
-
-async function mockFiles(page: Page, fs: Fs) {
-  await mockApi(page);
-  await page.route(/\/v1\/agents\/[^/]+\/files(\/content|\/ops|\/text)?(\?.*)?$/, async (route) => {
-    const req = route.request();
-    const url = new URL(req.url());
-    const path = url.searchParams.get("path") ?? "/workspace";
-    const kind = url.pathname.endsWith("/content") ? "content" : url.pathname.endsWith("/ops") ? "ops" : "list";
-    if (kind === "list") {
-      const node = fs.nodes.get(path);
-      if (!node) return err(route, 404, "path_not_found");
-      if (node.kind !== "dir") return err(route, 422, "not_a_directory");
-      return ok(route, 200, { path, entries: fs.children(path).map((p) => fs.entry(p)), truncated: false });
-    }
-    if (kind === "content" && req.method() === "GET") {
-      const node = fs.nodes.get(path);
-      if (!node || node.kind !== "file") return err(route, 404, "path_not_found");
-      return route.fulfill({
-        status: 200,
-        headers: {
-          "content-type": "application/octet-stream",
-          "content-disposition": `attachment; filename="${path.split("/").pop()}"`,
-          "x-content-type-options": "nosniff",
-        },
-        body: node.content,
-      });
-    }
-    if (kind === "content" && req.method() === "PUT") {
-      const headers = req.headers();
-      const body = req.postDataBuffer() ?? Buffer.alloc(0);
-      fs.puts.push({ path, headers, bytes: body.length });
-      const parent = path.slice(0, path.lastIndexOf("/"));
-      if (!fs.nodes.has(parent)) return err(route, 404, "path_not_found");
-      const exists = fs.nodes.has(path);
-      if (headers["if-none-match"] === "*" && exists) return err(route, 409, "file_exists");
-      fs.nodes.set(path, { kind: "file", content: body.toString("utf8"), mtime: new Date().toISOString() });
-      return ok(route, exists ? 200 : 201, { entry: fs.entry(path), etag: null });
-    }
-    if (kind === "ops") {
-      const body = req.postDataJSON() as { op: string; path: string; to?: string; parents?: boolean; recursive?: boolean };
-      fs.ops.push(body);
-      if (body.op === "mkdir") {
-        if (fs.nodes.has(body.path) && !body.parents) return err(route, 409, "file_exists");
-        const parts = body.path.split("/").filter(Boolean);
-        for (let i = 2; i <= parts.length; i += 1) {
-          const p = `/${parts.slice(0, i).join("/")}`;
-          if (!fs.nodes.has(p)) fs.nodes.set(p, { kind: "dir", content: "", mtime: new Date().toISOString() });
-        }
-        return ok(route, 201, { entry: fs.entry(body.path) });
-      }
-      if (body.op === "rename") {
-        if (fs.nodes.has(body.to!)) return err(route, 409, "file_exists");
-        for (const p of [...fs.nodes.keys()]) {
-          if (p === body.path || p.startsWith(`${body.path}/`)) {
-            const n = fs.nodes.get(p)!;
-            fs.nodes.delete(p);
-            fs.nodes.set(body.to! + p.slice(body.path.length), n);
-          }
-        }
-        return ok(route, 200, { entry: fs.entry(body.to!) });
-      }
-      let deleted = 0;
-      for (const p of [...fs.nodes.keys()]) {
-        if (p === body.path || p.startsWith(`${body.path}/`)) {
-          fs.nodes.delete(p);
-          deleted += 1;
-        }
-      }
-      return ok(route, 200, { deleted });
-    }
-    return route.fallback();
-  });
-}
-
-async function openFiles(page: Page, scheme: Scheme = "light", query = "") {
-  await page.emulateMedia({ colorScheme: scheme });
-  await page.goto(`/o/acme/w/main/agents/daneel?tab=files${query}`);
-  await expect.poll(() => page.locator("html").getAttribute("data-theme"), { timeout: 20_000 }).toBe(scheme);
-  await expect(page.getByRole("navigation", { name: "Folder path" })).toBeVisible();
-}
-
-const serious = async (page: Page) => {
-  const { violations } = await new AxeBuilder({ page }).analyze();
-  return violations
-    .filter((v) => v.impact === "serious" || v.impact === "critical")
-    .map((v) => `${v.id} (${v.impact}): ${v.nodes.map((n) => n.target.join(" ")).slice(0, 5).join(" | ")}`);
-};
-
-const rowMenu = (page: Page, name: string) => page.getByRole("button", { name: `Actions for ${name}` });
+// P5-FILES-2/3 (docs/14 §Files, C-904, C-905): the agent Files page against the shared mock plus an in-memory
+// `/workspace` behind the C-898 routes (support/files.ts). The page must use the attachment link and never open or
+// render the bytes (SEC-126).
 
 test.describe("agent Files page", () => {
   test.use({ viewport: { width: 1280, height: 900 } });
@@ -280,6 +146,147 @@ test.describe("agent Files page", () => {
       writeFileSync(file, "x");
       await page.getByTestId("files-input").setInputFiles(file);
       await expect(page.getByRole("region", { name: "Uploads" })).toBeVisible();
+      expect(await serious(page)).toEqual([]);
+    });
+  }
+});
+
+// P5-FILES-3 (C-905): the viewer. CSP violations are collected from the page (`securitypolicyviolation`); the dev server's
+// policy is looser than production's, so the strict check against the real policy is `files.prod.spec.ts`.
+const watchCsp = (page: Page) =>
+  page.addInitScript(() => {
+    (window as unknown as { __csp: string[] }).__csp = [];
+    document.addEventListener("securitypolicyviolation", (e) => (window as unknown as { __csp: string[] }).__csp.push(`${e.violatedDirective} ${e.blockedURI}`));
+  });
+const cspViolations = (page: Page) => page.evaluate(() => (window as unknown as { __csp: string[] }).__csp);
+const editorText = (page: Page) => page.locator(".cm-content").innerText();
+
+test.describe("Files viewer", () => {
+  test.use({ viewport: { width: 1280, height: 900 } });
+
+  test("edits a .rs file, saves with Ctrl+S (If-Match) and a reload shows the change", async ({ page }) => {
+    const fs = new Fs();
+    await mockFiles(page, fs);
+    await openFiles(page);
+    await page.getByRole("link", { name: "src", exact: true }).click();
+    await page.getByRole("button", { name: "main.rs", exact: true }).click();
+    const before = fs.etag("/workspace/src/main.rs");
+    await expect(page.locator(".cm-content")).toContainText("fn main()");
+    await page.locator(".cm-content").click();
+    await page.keyboard.press("Control+End");
+    await page.keyboard.type("// edited");
+    await expect(page.getByText("Unsaved changes")).toBeVisible();
+    await page.keyboard.press("Control+s");
+    await expect(page.getByText("Unsaved changes")).toHaveCount(0);
+    expect(fs.puts.at(-1)).toMatchObject({ path: "/workspace/src/main.rs" });
+    expect(fs.puts.at(-1)!.headers["if-match"]).toBe(`"${before}"`);
+    expect(fs.nodes.get("/workspace/src/main.rs")!.content).toBe("fn main() {}\n// edited");
+    await page.reload();
+    await page.getByRole("button", { name: "main.rs", exact: true }).click();
+    await expect(page.locator(".cm-content")).toContainText("// edited");
+  });
+
+  test("a change made behind the editor opens the conflict dialog; Overwrite replaces it", async ({ page }) => {
+    const fs = new Fs();
+    await mockFiles(page, fs);
+    await openFiles(page);
+    await page.getByRole("button", { name: "notes.md", exact: true }).click();
+    await expect(page.locator(".cm-content")).toContainText("# notes");
+    await page.locator(".cm-content").click();
+    await page.keyboard.press("Control+End");
+    await page.keyboard.type("mine");
+    // Another session (the terminal, a turn) changes the file in between.
+    fs.nodes.set("/workspace/notes.md", { kind: "file", content: "# changed elsewhere\n", mtime: new Date().toISOString() });
+    await page.getByRole("button", { name: "Save", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: "This file changed in the sandbox after you opened it." });
+    await expect(dialog).toBeVisible();
+    await dialog.getByRole("button", { name: "Overwrite" }).click();
+    await expect(dialog).toHaveCount(0);
+    await expect.poll(() => fs.nodes.get("/workspace/notes.md")!.content).toBe("# notes\nmine");
+    expect(fs.puts.at(-1)!.headers["if-match"]).toBeUndefined();
+  });
+
+  test("leaving a file with unsaved changes asks first", async ({ page }) => {
+    const fs = new Fs();
+    await mockFiles(page, fs);
+    await openFiles(page);
+    await page.getByRole("button", { name: "notes.md", exact: true }).click();
+    await page.locator(".cm-content").click();
+    await page.keyboard.type("x");
+    await page.getByRole("navigation", { name: "Folder path" }).getByRole("link", { name: "workspace" }).click();
+    await expect(page.getByRole("dialog", { name: "Discard your changes?" })).toBeVisible();
+    await page.getByRole("button", { name: "Discard changes" }).click();
+    await expect(page.getByRole("button", { name: "notes.md", exact: true })).toBeVisible();
+    expect(fs.puts).toHaveLength(0);
+  });
+
+  test("Esc then Tab leaves the editor and says so", async ({ page }) => {
+    const fs = new Fs();
+    await mockFiles(page, fs);
+    await openFiles(page);
+    await page.getByRole("button", { name: "notes.md", exact: true }).click();
+    await page.locator(".cm-content").click();
+    await page.keyboard.press("Tab");
+    await expect(page.locator(".cm-content")).toContainText("\t# notes");
+    await page.keyboard.press("Escape");
+    await page.keyboard.press("Tab");
+    await expect(page.getByText("Left the editor.")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Back to folder" }).first()).toBeFocused();
+  });
+
+  test("a PNG is previewed from its bytes; a text file named .png is not an image", async ({ page }) => {
+    const fs = new Fs();
+    fs.nodes.set("/workspace/pic.dat", { kind: "file", content: "", bytes: PNG_1X1, mtime: "2026-11-15T10:00:00Z" });
+    fs.nodes.set("/workspace/fake.png", { kind: "file", content: "just text, not an image\n", mtime: "2026-11-15T10:00:00Z" });
+    await mockFiles(page, fs);
+    await openFiles(page);
+    await page.getByRole("button", { name: "pic.dat", exact: true }).click();
+    await expect(page.getByRole("img", { name: "pic.dat" })).toHaveAttribute("src", /^data:image\/png;base64,/);
+    await page.getByRole("button", { name: "Back to folder" }).click();
+    await page.getByRole("button", { name: "fake.png", exact: true }).click();
+    await expect(page.locator(".cm-content")).toContainText("just text");
+    await expect(page.locator("img")).toHaveCount(0);
+  });
+
+  for (const scheme of ["light", "dark"] as const) {
+    test(`${scheme} theme: an SVG and an HTML file are never rendered, with no CSP violation, and axe is clean`, async ({ page }) => {
+      const fs = new Fs();
+      fs.nodes.set("/workspace/logo.svg", { kind: "file", content: SVG_WITH_SCRIPT, bytes: Buffer.concat([Buffer.from(SVG_WITH_SCRIPT), Buffer.from([0])]), mtime: "2026-11-15T10:00:00Z" });
+      fs.nodes.set("/workspace/page.html", { kind: "file", content: HTML_WITH_SCRIPT, mtime: "2026-11-15T10:00:00Z" });
+      await watchCsp(page);
+      await mockFiles(page, fs);
+      await openFiles(page, scheme);
+      await page.getByRole("button", { name: "logo.svg", exact: true }).click();
+      await expect(page.getByText("No preview for this file")).toBeVisible();
+      await expect(page.locator("img, svg image, object, iframe, embed")).toHaveCount(0);
+      expect(await serious(page)).toEqual([]);
+      await page.getByRole("button", { name: "Back to folder" }).click();
+
+      await page.getByRole("button", { name: "page.html", exact: true }).click();
+      await expect(page.locator(".cm-content")).toContainText("<script>window.__html_ran = true</script>");
+      expect(await editorText(page)).toContain("<h1>hi</h1>");
+      expect(await serious(page)).toEqual([]);
+
+      expect(await page.evaluate(() => [(window as unknown as Record<string, unknown>).__svg_ran, (window as unknown as Record<string, unknown>).__html_ran])).toEqual([undefined, undefined]);
+      // (Axe's own helper pages are closed by now: nothing the viewer did opened a tab.)
+      expect(page.context().pages()).toHaveLength(1);
+      expect(await cspViolations(page)).toEqual([]);
+    });
+  }
+});
+
+test.describe("Files viewer at 390 px", () => {
+  test.use({ viewport: { width: 390, height: 800 } });
+
+  for (const scheme of ["light", "dark"] as const) {
+    test(`${scheme} theme: a long line scrolls inside the editor, not the page`, async ({ page }) => {
+      const fs = new Fs();
+      fs.nodes.set("/workspace/wide.txt", { kind: "file", content: `${"w".repeat(400)}\nshort\n`, mtime: "2026-11-15T10:00:00Z" });
+      await mockFiles(page, fs);
+      await openFiles(page, scheme as Scheme);
+      await page.getByRole("button", { name: "wide.txt", exact: true }).click();
+      await expect(page.locator(".cm-content")).toContainText("short");
+      expect(await overflow(page)).toBeLessThanOrEqual(0);
       expect(await serious(page)).toEqual([]);
     });
   }
