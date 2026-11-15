@@ -234,4 +234,4 @@ and limits items are proposals with open questions (`Q-P6-ORG-*`, `Q-P6-LIM-*`);
 when the owner starts phase 6. See `21 §Phase 6`. (The third proposal, "the harness chooses models",
 was moved to phase 5 by the owner on 2026-11-15, D-302(f), and is specified as P5-MODELS-1..3,
 `21 §The harness chooses models`.) Phase 5 also gains the first-run and connecting batch P5-UX-1..7
-(owner walkthrough 2026-11-15, D-320..D-327; `21 §First run and connecting`).
+(owner walkthrough 2026-11-15, D-321..D-327, D-337; `21 §First run and connecting`).

@@ -201,12 +201,11 @@ describe("Admin › Secret stores", () => {
     expect(body!.store.reference_scopes).toEqual([{ org_id: "0197-aaaa", paths: ["teams/acme/*"] }]);
   });
 
-  it("explains a stale write and re-authentication", async () => {
+  it("explains a stale write (no re-authentication step, FIX-157)", async () => {
     mockFetch({
       "GET /v1/admin/secret-stores": () => json(200, status()),
       "PUT /v1/admin/secret-store-default": () =>
         json(409, { error: { code: "stale_revision", message: "changed" } }),
-      "GET /v1/instance": () => json(200, { oidc_providers: [] }),
     });
     wrap(<SecretStoresView />);
     fireEvent.change(await screen.findByLabelText("Store for new values"), { target: { value: "helmvault" } });

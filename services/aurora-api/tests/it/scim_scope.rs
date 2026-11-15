@@ -185,7 +185,6 @@ async fn email_domain_allow_lists() {
     })
     .await;
     let owner = h.sign_in("o@corp.example").await;
-    stamp_reauth(&h, owner.user_id).await;
     let (s, _, v) = h
         .send(
             Method::POST,
@@ -249,7 +248,6 @@ async fn seat_limit_holds() {
     })
     .await;
     let owner = h.sign_in("owner@x.io").await;
-    stamp_reauth(&h, owner.user_id).await;
     let (s, _, v) = h
         .send(
             Method::POST,
@@ -317,7 +315,6 @@ async fn per_token_rate_limit_429_with_retry_after() {
     })
     .await;
     let owner = h.sign_in("owner@x.io").await;
-    stamp_reauth(&h, owner.user_id).await;
     let (s, _, v) = h
         .send(
             Method::POST,

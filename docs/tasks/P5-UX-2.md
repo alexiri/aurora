@@ -19,10 +19,10 @@ This task gives the server what the connect journey (P5-UX-3) needs:
 
 ## Linked requirements
 
-- D-320, D-321, D-322; SEC-127.
-- Contracts **C-909, C-910, C-911, C-912, C-913**.
+- D-337, D-321, D-322; SEC-130.
+- Contracts **C-955, C-956, C-957, C-958, C-959**.
 - Normative: `14 §First run and connecting` §1 (what the dashboard needs); `09 §3.4` (journey keys) and
-  `§11` (OAuth client resolution); `05` apps rows; `17` SEC-127.
+  `§11` (OAuth client resolution); `05` apps rows; `17` SEC-130.
 - Builds on D-306 / FIX-153 (link builder `access_url`, agent page by id) and FIX-154 (connection
   inside the grant, `grant_connection_in_tx`). Unchanged: C-410, C-504, C-740, C-741, C-842, I-29.
 
@@ -47,7 +47,7 @@ This task gives the server what the connect journey (P5-UX-3) needs:
 
 ## Scope
 
-1. **Manifest keys (C-910).** Add to the manifest model, the snapshot and the linter:
+1. **Manifest keys (C-956).** Add to the manifest model, the snapshot and the linter:
    - `connect[].audience` (`person`|`admin`, default `person`);
    - `connect[].fields[].limit` (bool; refused on a required field);
    - `connect[].scope_presets` (`read`/`write` lists; each a method scope, and `read` only `access: read`).
@@ -58,9 +58,9 @@ This task gives the server what the connect journey (P5-UX-3) needs:
 
    Bump each package's patch version the way the repo does for package changes, and run
    `check-builtin.sh`.
-2. **Connect plan (C-909).** Add `GET /v1/apps/{app}/connect-plan?workspace_id=` in `domains/apps` (or
+2. **Connect plan (C-955).** Add `GET /v1/apps/{app}/connect-plan?workspace_id=` in `domains/apps` (or
    `domains/connect`, wherever `GET /v1/apps/{app}` lives). It needs `can_own` of the workspace.
-   Compute, per C-909:
+   Compute, per C-955:
    - `available` with `unlock`, using the posture check the connect service already uses;
    - each method's `ready` / `blocked { reason, unlock }`;
    - `suggested_method`, `presets`, `limits` and `existing`.
@@ -74,7 +74,7 @@ This task gives the server what the connect journey (P5-UX-3) needs:
    - `/admin/oauth-clients?…` for instance-bound apps (`who = instance_admin`).
 
    Add it to the OpenAPI document and regenerate `web/openapi.json` and `schema.d.ts`.
-3. **Connect with a grant (C-911, SEC-127).** Extend `ConnectRequest` with `grant`.
+3. **Connect with a grant (C-957, SEC-130).** Extend `ConnectRequest` with `grant`.
    - **Before any write or redirect:** validate the agents like C-504 and refuse `full` on `custom_only`.
      Expand the preset server-side from the snapshot's tools (`read`, `ask_writes`, `full`). Put the
      expansion in `domains/grants` so P5-UX-4 and the tool path can reuse it.
@@ -87,14 +87,14 @@ This task gives the server what the connect journey (P5-UX-3) needs:
      - On failure, commit the connection without grants, and put `grant_failed { code }` in the callback
        page's `BroadcastChannel` message (C-842) next to the new `granted_agent_ids`.
    - **Reconnect** ignores `grant` (422 `grant_not_allowed_on_reconnect` if sent).
-4. **Refusals (C-912).**
+4. **Refusals (C-958).**
    - `connect_probe_failed` gets `details.cause` and `details.host`. Classify in the probe runner:
      401/403 → `rejected`; DNS, connect, TLS or timeout → `unreachable`; anything else → `unexpected`.
    - `oauth_client_required` and `instance_oauth_client_required` get `details.unlock` from the same plan
      function.
    - Dashboard-reachable `forbidden` refusals get `details.required_role`. Do this in the shared helpers
      (`require_admin`, `require_owner`, the `can_own` / `can_approve` checks), not route by route.
-5. **Links (C-913).**
+5. **Links (C-959).**
    - Add `connect_journey_url(agent, app)` to the gateway builder.
    - Use it for `connect_url` wherever the refusal knows the agent; keep the workspace URL in `details`
      as `connect_url_workspace`.
@@ -149,7 +149,7 @@ This task gives the server what the connect journey (P5-UX-3) needs:
    notice links to the journey for an app that needs sign-in, and to `access_url` for a credential-free
    app.
 6. `permission_matrix` rows for the new route; OpenAPI drift check green; `docs/tests/security-coverage.md`
-   row for SEC-127.
+   row for SEC-130.
 7. `cargo fmt --check`, clippy, the targeted suites green; report the test counts.
 
 ## Dependencies
@@ -160,4 +160,4 @@ This task gives the server what the connect journey (P5-UX-3) needs:
 ## Suggested agent/model and reason
 
 Sonnet (`rust-developer`). It touches several crates but each part is bounded. The OAuth re-authorization
-needs care, and the reviewer should read SEC-127 against the callback code.
+needs care, and the reviewer should read SEC-130 against the callback code.

@@ -11,9 +11,9 @@ for them. The current controls stay under **Advanced**.
 
 ## Linked requirements
 
-- D-320 (the journey), D-321 (plan, suggested method), D-322 (grant in the connect request), D-324(a)
+- D-337 (the journey), D-321 (plan, suggested method), D-322 (grant in the connect request), D-324(a)
   (preselection in the agent step).
-- Contracts **C-914**, **C-927** (journey parts); reads C-909, C-911, C-912, C-913, C-917.
+- Contracts **C-914**, **C-927** (journey parts); reads C-955, C-957, C-958, C-959, C-917.
 - Normative: `14 §First run and connecting` §1 (all steps, entry points, failure sentences), `14 §Visual
   design`, `14 §Key flows` (the C-842 dialog, now under Advanced; Reconnect unchanged).
 
@@ -44,7 +44,7 @@ for them. The current controls stay under **Advanced**.
      - Credential-free apps go straight to FIX-154's grant path.
    - **Account step:** from `plan.existing`. "Use <label>" saves only a grant through the existing
      `PUT …/grants/connections/{conn}` with the chosen preset, expanded the same way: call the server
-     expansion if P5-UX-2 exposes it on the grant route, else the C-911 path.
+     expansion if P5-UX-2 exposes it on the grant route, else the C-957 path.
    - **Access step:** `ChoiceCards`. **More choices** reveals `full`, never shown for `custom_only`. Limit
      fields come from `plan.limits`. The step is skipped for read-only apps.
    - **Sign-in step:** only `plan.suggested_method`'s form:
@@ -62,7 +62,7 @@ for them. The current controls stay under **Advanced**.
    - **Done step:** sentences per §1. A `grant_failed` result (from the response or the
      `BroadcastChannel` message) shows the connection as made but not given, and **Give access** retries
      the grant only.
-   - **Failures:** C-912 sentences via `ERROR_MESSAGES` (keys added by P5-UX-1 or here, whichever lands
+   - **Failures:** C-958 sentences via `ERROR_MESSAGES` (keys added by P5-UX-1 or here, whichever lands
      first; coordinate through the shared file `web/src/lib/api/errors.ts`, append only). Typed non-secret
      values survive a failure.
 2. **Entry points.**
@@ -120,7 +120,7 @@ for them. The current controls stay under **Advanced**.
 
 ## Dependencies
 
-- **P5-UX-2** merged (plan, `grant`, C-912 details, regenerated types).
+- **P5-UX-2** merged (plan, `grant`, C-958 details, regenerated types).
 - P5-UX-4 for the agent step's preselection. If P5-UX-4 has not merged, implement the preselection rule
   locally in the journey's agent step and leave `give-access.tsx` to P5-UX-4.
 

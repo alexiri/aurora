@@ -15,7 +15,7 @@ empty states ask only people who cannot act, and fixes the small first-run defec
 
 ## Linked requirements
 
-- D-323; contracts **C-915, C-916**, the interim link of **C-927**; renders C-912's `required_role`.
+- D-323; contracts **C-915, C-916**, the interim link of **C-927**; renders C-958's `required_role`.
 - Normative: `14 §First run and connecting` §2, `14 §Organization` (nav note), `14 §Onboarding` (empty
   states teach; role-aware), `14 §Visual design`.
 
@@ -63,7 +63,7 @@ empty states ask only people who cannot act, and fixes the small first-run defec
    - `ErrorState` accepts `askNames` and appends "Ask <names>." when given.
    - The network sentence stays only for transport failures (`TypeError` from fetch, `AbortError`, a
      non-JSON 5xx).
-   - Add `ERROR_MESSAGES` keys for C-912's codes: `connect_probe_failed` per cause and
+   - Add `ERROR_MESSAGES` keys for C-958's codes: `connect_probe_failed` per cause and
      `oauth_client_required`. Coordinate with P5-UX-3 on `errors.ts` (append only).
 4. **Empty states (C-916).**
    - `EmptyState`'s `ask` becomes `ask?: { text: string; canAct: boolean }`, or an equivalent the type

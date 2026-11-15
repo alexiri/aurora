@@ -164,8 +164,9 @@ interface"); stored in the database, audited):
   the token, at the next sign-in.
 - Instance admin is **not** an org role: it grants no access to org data.
   (phase 5, P5-ADMDEL, D-234) The one exception is **removal**: an instance admin may
-  delete any organization or any workspace (session only, a recent OIDC
-  re-authentication, the slug typed to confirm), and to choose what to delete sees
+  delete any organization or any workspace (session only, the slug typed to confirm;
+  (phase 5, FIX-157, D-317) the recent OIDC re-authentication it once required is removed),
+  and to choose what to delete sees
   per-organization metadata — name, slug, frozen and ownerless state, member,
   workspace and agent counts — and each workspace's name, slug, personal marker and
   agent count (C-733). Never members' names, conversations, agents' configuration,
@@ -173,8 +174,9 @@ interface"); stored in the database, audited):
 - (phase 5, SPEC-SETTINGS, D-195(b), D-236) **Instance settings**: instance admins edit
   the instance-wide settings on Admin › Settings (`15 §Instance settings`): governance and
   BYO floors, LLM endpoints, sign-in and OIDC providers, e-mail, secret stores, agent and
-  operational defaults and limits. Every write needs a **session** (never an API key) with a
-  re-authentication within 600 s (as account deletion; 412 `reauth_required`), is
+  operational defaults and limits. Every write needs a **session** (never an API key); (phase 5,
+  FIX-157, D-317) the re-authentication within 600 s it once needed is removed, so no write answers
+  412 `reauth_required`. It is
   security-critical audited with a before/after diff (§Audit) and is e-mailed to every
   instance admin; a key the deployment configuration sets is locked (409 `setting_locked`,
   SEC-89). **Break-glass** (D-238(b)): this e-mail list (`auth.instance_admins`) stays in the
@@ -300,9 +302,14 @@ ignores `prompt=login` cannot let a stolen session stamp it). (Phase 5, FIX-152,
 `user.login` denial audited for `reauth_stale` records `auth_time_age_s` or `auth_time_missing`, so
 an operator can tell a stale claim, a missing one and clock skew apart. Once the state has opened,
 every failure of a re-authentication returns to `return_to` with `reauth_error=<code>`, where the page
-shows it. The person is still signed in, so it does not go to the sign-in page. Then it stamps `sessions.reauth_at = now()`. Operations that formerly
-required the password (account deletion) require `reauth_at` within 10 minutes
-(412 `reauth_required` otherwise; the dashboard starts the flow).
+shows it. The person is still signed in, so it does not go to the sign-in page. Then it stamps `sessions.reauth_at = now()`.
+(Phase 5, FIX-157, D-317) **No operation requires a re-authentication any more.** Operations that
+once required `reauth_at` within 10 minutes (account deletion, admin organization and workspace
+delete, SCIM enable and token creation, instance settings writes and import, secret stores) no
+longer check it and never answer 412 `reauth_required`; the dashboard shows no "Sign in again" step.
+The cause: CERN SSO (Keycloak) sends no `auth_time` claim, even when `max_age=0` is asked
+for, so the check could never pass. The flow above, `sessions.reauth_at` and C-890 stay, unused by
+any operation, so a later step-up can reuse them.
 
 **Session and IdP lifetime.** Aurora sessions are independent of the IdP session
 (no back-channel logout in phase 1). Offboarding is therefore: disable/suspend in
@@ -325,8 +332,8 @@ shows it, read-only — (phase 5, SET-4, D-235(b), D-237(g)) superseded: the map
 of a provider and editable with it on Admin › Sign-in for providers not defined in Helm. Because
 a mapping can create instance admins and owners, a change that adds or widens a mapping to
 `instance_admin` or an org `owner`, or widens a JIT block, is flagged as a loosening in the
-preview and confirmed before saving, and SEC-90's re-authentication, critical audit and admin
-e-mail apply; the values a mapping grants are validated as today):
+preview and confirmed before saving, and SEC-90's critical audit and admin
+e-mail apply ((phase 5, FIX-157, D-317) its re-authentication is removed); the values a mapping grants are validated as today):
 
 ```yaml
 auth:
@@ -473,7 +480,8 @@ With OIDC-only there must be a way to sign in without a corporate IdP:
 - Session-only routes (refuse API keys with 403 `session_required`): delete
   account, change password *(phase 0 only)*, sign out other sessions, accept
   invitation, create API keys, approve a CLI login. (phase 1, RFE-004) Delete
-  account additionally needs a recent re-authentication (above).
+  account additionally needed a recent re-authentication; (phase 5, FIX-157, D-317) that
+  requirement is removed (above).
 
 ### CLI login (device flow)
 
@@ -613,12 +621,12 @@ the frozen payload.
 | Freeze / unfreeze an **agent** (phase 2, RFE-006) | `can_own`; lifting a freeze imposed by a higher authority needs that authority (below) |
 | Freeze / unfreeze a **workspace** (phase 2, RFE-006) | `can_own` (org owners/admins included); same lifting rule |
 | Freeze / unfreeze an **organization** (phase 2, RFE-006) | org `owner`, or instance admin |
-| Delete any **organization** or **workspace**; list organizations with their counts and an organization's workspaces (phase 5, P5-ADMDEL, D-234, C-733) | instance admin (session, recent re-authentication for the deletes) |
+| Delete any **organization** or **workspace**; list organizations with their counts and an organization's workspaces (phase 5, P5-ADMDEL, D-234, C-733) | instance admin (session only; the typed slug confirms the deletes; (phase 5, FIX-157, D-317) no re-authentication) |
 | Create, rename, delete a group; add/remove members of a `manual` group; set or clear a group's org-role mapping (phase 4, P4-GRP-1) | org `owner`/`admin` (a mapping to `admin` is as powerful as granting `admin` by role change, which admins may already do; `owner` can never be mapped) |
 | List groups with names, source and member counts; read a group's members (phase 4, P4-GRP-1) | members and the impact view: org `owner`/`admin`; names and counts only (for the binding picker): `can_own` of any workspace of the org; a member sees only the groups they belong to (`/v1/me`) |
 | Bind / unbind / change the role of a **group** on a workspace, read the workspace's group bindings and the group-derived members (phase 4, P4-GRP-1) | `can_own` of the workspace (the same authority as user bindings, including granting `owner`); the group must belong to the workspace's org |
 | Register a Web Push subscription for the caller's browser, list, pause, remove one's own, send oneself a test (phase 5 (D-138, moved from phase 4), RFE-011b) | any signed-in user, own subscriptions only; session only (an API key cannot register a browser); a push is delivered only to the live session that registered it; (P4-011B spec batch, D-266(c)) revoking a session deletes its subscriptions, and a silent re-bind to a new session works only for an endpoint already registered to the same person |
-| Enable SCIM and set its e-mail domains / `exclusive`; create, list, revoke SCIM tokens; read Directory sync status (phase 4, P4-GRP-2) | org `owner` only; session only; enabling and token creation need a recent re-authentication (412 `reauth_required`) |
+| Enable SCIM and set its e-mail domains / `exclusive`; create, list, revoke SCIM tokens; read Directory sync status (phase 4, P4-GRP-2) | org `owner` only; session only; (phase 5, FIX-157, D-317) no re-authentication (enabling and token creation once needed one) |
 | Switch **Port previews** on or off for the org (`settings.previews_enabled`, default off) (phase 4, P4-PRV-1) | org `owner`/`admin` (`org.previews.update`, security-critical) |
 | Create, pause/resume, change the start command of, delete a preview share; list the agent's shares; start the app now (phase 4, P4-PRV-1) | `can_use` of the agent's workspace, session or API key; **never an agent tool**; BYO agents have none; frozen agent: 423 |
 | Open a preview in the browser (phase 4, P4-PRV-2) | a **live dashboard session** of a user for whom `can_use(workspace)` holds, re-checked at least every `PREVIEW_AUTH_CACHE` (15 s); never an API key, never an agent credential, no other visibility (`04 §Preview access`) |
@@ -867,8 +875,8 @@ org and creates a token.
   the instance allow-list when that is set). Every provisioned e-mail must be in one of
   them (*Users*). Only an org owner creates or revokes tokens and changes these
   settings: the token can provision accounts and fill groups, so it is as sensitive as
-  an owner role. Session only; creating a token and enabling SCIM need a recent
-  re-authentication (412 `reauth_required`, as account deletion, `§OIDC`).
+  an owner role. Session only; (phase 5, FIX-157, D-317) creating a token and enabling SCIM
+  no longer need a recent re-authentication (it is removed, `§OIDC`; no 412 `reauth_required`).
 - **Token** `aud_` + 43 base64url characters (`00`), shown once, stored hashed
   (`scim_tokens.token_hash`) with a display prefix, per organization (at most 5 active),
   with an expiry (default 365 days, maximum `scim.token_max_days` = 730; no "never"), a
@@ -1268,8 +1276,8 @@ personal-workspace owners add people this way.
 
 - **Conversation deletion** (phase 2, RFE-010) is a separate, explicit operation
   (`10`); deleting a workspace or agent still cascades as below.
-- **Account deletion** (session-only, requires password or recent OIDC sign-in
-  within 10 min; phase 1: recent OIDC re-authentication only, RFE-004): refused while the user is the last owner of any org
+- **Account deletion** (session-only; phase 1, RFE-004: needed a recent OIDC
+  re-authentication, (phase 5, FIX-157, D-317) removed, no re-authentication is required): refused while the user is the last owner of any org
   (409 `last_owner`). Removes memberships, bindings, (phase 4) group memberships, sessions, keys, identities;
   conversations of kind `direct` with that user are deleted; authored content
   keeps a denormalized label. (FIX-097) The `direct` conversations go through the

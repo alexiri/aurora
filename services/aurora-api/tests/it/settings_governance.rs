@@ -45,8 +45,7 @@ async fn world_with(helm: Option<&str>) -> W {
     let org = h.org().await;
     let ws = h.workspace(org).await;
     let a = h.user("root@x.io", true).await;
-    let (session, atok) = h.good_session(a).await;
-    h.reauth(session).await;
+    let (_, atok) = h.good_session(a).await;
     let o = h.user("o@x.io", false).await;
     h.member(org, o, "owner", "active").await;
     let (_, owner) = h.good_session(o).await;
@@ -397,23 +396,15 @@ async fn preview_and_the_orgs_view_report_stricter_and_clamped_organizations() {
     assert_eq!(s, 403);
 }
 
-/// SET-2 criterion 7: SET-1's write guards reach this section — 412 without a recent
-/// re-authentication, 403 for a non-admin, and one `instance_settings.update` audit row per write.
+/// SET-2 criterion 7: SET-1's write guards reach this section — 403 for a non-admin and one
+/// `instance_settings.update` audit row per write. (FIX-157, D-317) No re-authentication is
+/// required: an admin session that never re-authenticated writes.
 #[tokio::test]
-async fn writes_here_need_reauth_and_an_instance_admin_and_are_audited() {
+async fn writes_here_need_an_instance_admin_and_are_audited() {
     let w = world_with(None).await;
     let g = w.section().await["generation"].as_i64().unwrap();
     let body = json!({ "generation": g, "values": {"byo.enabled": false} });
     let uri = "/v1/admin/settings/governance";
-    // An instance admin whose session never re-authenticated: 412.
-    let stale = w.h.user("stale@x.io", true).await;
-    let (_, stok) = w.h.good_session(stale).await;
-    let (s, e) = w.call(Method::PUT, uri, &stok, Some(body.clone())).await;
-    assert_eq!(
-        (s, e["error"]["code"].as_str()),
-        (412, Some("reauth_required")),
-        "{e}"
-    );
     // An org owner: 403.
     let (s, e) = w.call(Method::PUT, uri, &w.owner, Some(body.clone())).await;
     assert_eq!(
@@ -430,7 +421,7 @@ async fn writes_here_need_reauth_and_an_instance_admin_and_are_audited() {
         .unwrap()
     };
     assert_eq!(audits().await, 0, "refused writes leave no audit row");
-    // The re-authenticated admin: 200, one audit row for this section.
+    // The instance admin (never re-authenticated): 200, one audit row for this section.
     let (s, v) = w.call(Method::PUT, uri, &w.admin, Some(body)).await;
     assert_eq!(s, 200, "{v}");
     assert_eq!(audits().await, 1);

@@ -986,8 +986,7 @@ item, Credentials and Apps included, is owners/admins and is not listed for a me
   "effective role" with the source ("Admin via <group>"); at 390 px every table
   collapses to the stacked-row pattern.
 - **Directory sync** (`/o/<org>/settings/directory`, phase 4, P4-GRP-2, D-132; **org owners only,
-  hidden unless the instance has `scim.enabled`**): an enable switch (turning it on opens the
-  re-authentication step), the required **e-mail domains** editor, the `exclusive` switch ("Only people
+  hidden unless the instance has `scim.enabled`**): an enable switch ((phase 5, FIX-157, D-317) turning it on needs no re-authentication step), the required **e-mail domains** editor, the `exclusive` switch ("Only people
   your directory provisions can join this organization", default off), the **SCIM base URL** with a copy
   button, **tokens** (create → the `aud_` token is shown once in a copy dialog with the warning
   "Store it in your identity provider now; it cannot be shown again", list with expiry and last use, a
@@ -1457,11 +1456,10 @@ counts and a table of its workspaces (name, slug, "Personal" badge, agents, crea
 with **Delete workspace…**. Both deletes use a danger `FormDialog`: it names what goes
 ("Deletes the organization Acme with its 4 workspaces, 12 agents and 30 members'
 access. Conversations, credentials and settings are deleted; the audit log and usage
-records are kept. This cannot be undone."), asks for the slug typed exactly, and on 412
-`reauth_required` runs the same re-authentication step as account deletion, then
-retries once. (FIX-152, C-890) A failed re-authentication comes back to the page with
-`reauth_error`, and the page shows it as a danger `Notice`. Account deletion and Directory
-settings do the same. On success the list refreshes and a status notice names what was
+records are kept. This cannot be undone."), asks for the slug typed exactly, and the first confirm deletes.
+(Phase 5, FIX-157, D-317) There is no re-authentication step any more, and no page shows a
+"Sign in again" link or a `reauth_error` notice (FIX-152's notice is removed); the API's
+`reauth=1` flow stays but nothing starts it. On success the list refreshes and a status notice names what was
 deleted. The ownerless-organization banner (FIX-050) links to the organization's row.
 No content of an organization is shown anywhere on these pages (`04 §Instance admins`).
 
@@ -1483,7 +1481,7 @@ Approvals, Retention & storage, Skills, Directory sync, Previews, Terminal, Limi
   store** `Section` (locked when Helm sets it; a notice when the configured default could not start)
   and a **Move values** `Section`: target, **Preview what would move** (a `DataTable` per kind of
   value), **Migrate to <store>…** (`ConfirmDialog`), then live progress and the final report. 409
-  `stale_revision` offers a reload, 412 the re-authentication step, 422 lists the fields.
+  `stale_revision` offers a reload, 422 lists the fields (no re-authentication step, FIX-157, D-317).
 - **Index** (`/admin/settings`): a `Section` per settings section with its description, the number
   of keys configured in Helm and set in the dashboard, the last change (who, when) and a link; a
   `Notice` (`neutral`) when keys are locked: "N settings are configured in Helm and cannot be
@@ -1492,7 +1490,7 @@ Approvals, Retention & storage, Skills, Directory sync, Previews, Terminal, Limi
   local storage). Actions: **Export** (YAML, or JSON from a menu) and **Import…** (`FormDialog`
   `xl`: paste or choose a file, then a per-section diff table from the dry run, keys that would be
   ignored because Helm sets them to the same value, and errors; **Apply** is enabled only without
-  errors and runs the re-authentication step on 412).
+  errors; (phase 5, FIX-157, D-317) no re-authentication step).
 - **Section page**: `PageHeader` (title, one-line description, last change), then the section's
   settings in `FormSection`s, each through the **`SettingField`** primitive (below). One
   `FormActions` row: **Save** (primary) and **Discard changes**. Save first calls the preview
@@ -1500,8 +1498,8 @@ Approvals, Retention & storage, Skills, Directory sync, Previews, Terminal, Limi
   ("This allows more than before: … — affects 3 organizations: Acme, Physics, Beams") before the
   PUT; otherwise it saves directly. 409 `stale_revision` shows a `Notice` ("Someone changed these
   settings meanwhile") with **Reload** (the typed values are kept until reload); 409
-  `setting_locked` reloads the page (Helm changed under it); 412 runs the same
-  re-authentication step as account deletion and retries once; 422 errors land on their fields,
+  `setting_locked` reloads the page (Helm changed under it); (phase 5, FIX-157, D-317) there is
+  no re-authentication step; 422 errors land on their fields,
   and an error on a key of another section names it with a link. A success shows a status notice
   "Saved. Applied to every replica within seconds."
 - **Keyed lists** (OIDC providers, secret stores, LLM endpoints, rate-limit class overrides) are an
@@ -1708,7 +1706,7 @@ At first sign-in the user lands on a **Welcome** page in the workspace placement
 - (Phase 5, P5-UX-3, C-927) The **Agents** stop also says that the agent gets apps on its
   Access tab ("Open an agent, then **Access** › **Add an app** to let it use GitHub, Linear and more").
 
-## First run and connecting (phase 5, P5-UX, D-320..D-327)
+## First run and connecting (phase 5, P5-UX, D-321..D-327, D-337)
 
 **Why.** A walkthrough of the first sign-in on a fresh install (2026-11-15) found that getting the agent
 to answer is quick, but connecting it to anything is not. The Welcome page's "Connect an app" was a 404.
@@ -1720,11 +1718,11 @@ themselves, across three pages, and admin prerequisites stayed invisible until t
 makes the common path one journey and makes every blocked path say who unblocks it. It **adds to** the
 Connect dialog (§Key flows) and the onboarding pieces above; where it changes them, it says so.
 
-### 1. Give an agent an app: the connect journey (P5-UX-2/3, D-320..D-322, C-909..C-914)
+### 1. Give an agent an app: the connect journey (P5-UX-2/3, D-321, D-322, D-337, C-914, C-955..C-959)
 
 One `Dialog` (`size="lg"`, the C-842 dialog's frame) titled **"Give <Agent> an app"** or, with the app
 known, **"Give <Agent> <App>"**. It always ends with a connection **and** a grant, made in one request
-(C-911), so the agent can use the app the moment the dialog says "Done".
+(C-957), so the agent can use the app the moment the dialog says "Done".
 
 **Entry points.**
 - Agent page › **Access** › **Add an app** (primary; the agent is fixed). The Connections empty state
@@ -1735,14 +1733,14 @@ known, **"Give <Agent> <App>"**. It always ends with a connection **and** a gran
   same journey with an **agent step** added after the app (§3 preselection rules). Choosing no agent is
   allowed and gives today's "connection only" result.
 - Every gateway refusal and the `request_app_connection` notice for an app the agent lacks link to
-  `…/agents/<agent id>?tab=access&connect=<app>` (C-913).
+  `…/agents/<agent id>?tab=access&connect=<app>` (C-959).
 - Reconnect (Connections tab) keeps the existing C-842 dialog unchanged.
 
 **Steps.** Each step is one screen. Back works throughout. Steps that have nothing to ask are skipped.
 1. **App** (only when no app was given): the apps of the workspace (`GET /v1/apps`) as tiles grouped
    **Ready to connect**, **Already connected** and **Needs setup by an admin**. Apps the organization's
    posture makes unavailable (C-20) are not shown. A blocked tile is not clickable. It names what is
-   missing and who can fix it, from the plan's `unlock` (C-909): "Linear sign-in isn't set up. Ask Ada
+   missing and who can fix it, from the plan's `unlock` (C-955): "Linear sign-in isn't set up. Ask Ada
    Lovelace or Alan Turing (organization admins) to register a Linear OAuth client." It also has a
    **Copy request** button that copies that sentence plus the admin page path, and no other action.
    Families (FIX-135) stay one tile.
@@ -1755,14 +1753,14 @@ known, **"Give <Agent> <App>"**. It always ends with a connection **and** a gran
      Approvals."
 
    A third card, **Read and change without asking**, sits under the step's **More choices** disclosure.
-   The cards map to the grant preset and connection access of C-911: `read` (access `read`, preset
+   The cards map to the grant preset and connection access of C-957: `read` (access `read`, preset
    `read`), `ask_writes` (access `write`, preset `ask_writes`) and `full` (access `write`, preset `full`).
    For a `custom_only` app (C-410) `full` is not offered. When the app has only read tools, the step is
    skipped and `read` is used.
-   Optional **limits** follow on the same screen: the suggested method's fields marked `limit` (C-910),
+   Optional **limits** follow on the same screen: the suggested method's fields marked `limit` (C-956),
    for example "Only these repositories".
-4. **Sign in**: only the **suggested method** of the plan (C-909), with one primary action.
-   - `oauth2`: **Sign in to <App>** (FIX-149 sign-in window). The scopes come from the preset (C-910), and
+4. **Sign in**: only the **suggested method** of the plan (C-955), with one primary action.
+   - `oauth2`: **Sign in to <App>** (FIX-149 sign-in window). The scopes come from the preset (C-956), and
      the dialog says "Waiting for you to sign in to <App>…".
    - `fields`: only that method's fields, with each help link rendered as a button such as **Create a
      token on GitHub**, never as a raw URL. The FIX-136 scope question keeps its default.
@@ -1780,10 +1778,10 @@ known, **"Give <Agent> <App>"**. It always ends with a connection **and** a gran
    there (the workspace OAuth clients tab).
 5. **Done**: "<Agent> can now read <App>." (or "…read and change <App>, asking you first."), the
    connection's label, **Open chat** and **Give another app**. If the grant part failed after the
-   connection was made (C-911 `grant_failed`), the step says so. It shows the connection as made but not
+   connection was made (C-957 `grant_failed`), the step says so. It shows the connection as made but not
    given, with **Give access** retrying the grant only.
 
-**Failures say what happened.** `connect_probe_failed` reads per `details.cause` (C-912):
+**Failures say what happened.** `connect_probe_failed` reads per `details.cause` (C-958):
 - `rejected`: "<App> did not accept this token. Check that it is complete and has not expired."
 - `unreachable`: "Aurora could not reach <App> (<host>). Try again; if it keeps failing, tell an
   administrator."
@@ -1957,7 +1955,7 @@ pieces those pages rely on.
     preselected, the callback URL shown with Copy), and connect (the P5-UX-3 journey).
   - An org admin can register an org client, register a self-hosted server, change availability and
     connect for the whole organization (§9).
-  - Anything above the viewer's level names who can do it (C-909 `Unlock`).
+  - Anything above the viewer's level names who can do it (C-955 `Unlock`).
 - **Setup guide.** The package guide, rendered with real values (§11), is the last section of the page,
   not hidden in the connect dialog.
 - **Indexes link here.**
@@ -2073,7 +2071,7 @@ All screens of this section follow §Visual design and are axe-clean. The setup 
 ## Key flows
 
 - **App families** (phase 5, FIX-135, D-242, C-744): apps that declare `about.family` are **one tile** in the Apps tab (named by the family, connection counts summed, Details opens the hosted member); the connect dialog of a family opens with **"Where does your <family> run?"** (ChoiceCards: the hosted variant, then each active registered server of the family's instance-bound apps as "<variant> · <label>" with its address; a notice with a **Register a server…** link to Admin › Self-hosted apps for instance admins, or "ask an administrator" for others), then the chosen app's own methods and form with the server already selected (no second instance picker). Everywhere else an app is named — connections, grant dialogs, availability, OAuth clients, instances — "<family> · <variant>" through `appDisplayName` / `AppName` (`web/src/lib/api/app-name.ts`); a test fails if one of those surfaces stops importing it.
-- (Phase 5, P5-UX-3, D-320, C-914) **Connect from the Apps tab opens the connect journey** of
+- (Phase 5, P5-UX-3, D-337, C-914) **Connect from the Apps tab opens the connect journey** of
   §First run and connecting (agent step, preset access, the suggested method; everything below
   stays reachable under its **Advanced**). Reconnect keeps the dialog described here.
 - **Connect window**: opened as a popup from the Apps tab; renders the app's

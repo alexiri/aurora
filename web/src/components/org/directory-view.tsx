@@ -6,7 +6,6 @@
 
 import { useEffect, useState, type FormEvent } from "react";
 
-import { ReauthErrorNotice } from "@/components/auth/reauth-error-notice";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
@@ -17,10 +16,7 @@ import { CheckboxField, Form, FormActions } from "@/components/ui/form";
 import { Notice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
 import { Section } from "@/components/ui/section";
-import { ApiError } from "@/lib/api/client";
 import { errorMessage } from "@/lib/api/errors";
-import { oidcStartUrl } from "@/lib/api/auth";
-import { useInstance } from "@/lib/api/queries";
 import {
   lastActivityText,
   useCreateScimToken,
@@ -33,26 +29,6 @@ import {
   type ScimTokenEntry,
 } from "@/lib/api/scim";
 import { fmtDate } from "@/components/account/key-table";
-
-const reauthErr = (err: unknown) => err instanceof ApiError && err.code === "reauth_required";
-
-/** The re-authentication notice: the provider sign-in link comes back to this page (docs/14 §Directory sync). */
-function ReauthNotice({ err, reauthUrl }: { err: unknown; reauthUrl: string | null }) {
-  if (!reauthErr(err)) return null;
-  return (
-    <Notice tone="pending" role="alert">
-      Confirm it is you:{" "}
-      {reauthUrl ? (
-        <a className="font-medium underline" href={reauthUrl} data-testid="scim-reauth-link">
-          sign in again with your provider
-        </a>
-      ) : (
-        "sign in again with your provider"
-      )}
-      , then apply the change once more.
-    </Notice>
-  );
-}
 
 const parseDomains = (text: string) =>
   text
@@ -78,21 +54,13 @@ function CopyUrlButton({ url }: { url: string }) {
 }
 
 /** The enable switch + domains + exclusive mode. Only the fields that changed are sent. */
-function SettingsForm({
-  orgId,
-  initial,
-  reauthUrl,
-}: {
-  orgId: string;
-  initial: ScimSettings;
-  reauthUrl: string | null;
-}) {
+function SettingsForm({ orgId, initial }: { orgId: string; initial: ScimSettings }) {
   const put = usePutScimSettings(orgId);
   const [enabled, setEnabled] = useState(initial.enabled);
   const [exclusive, setExclusive] = useState(initial.exclusive);
   const [domains, setDomains] = useState(initial.email_domains.join(", "));
   const [saved, setSaved] = useState(false);
-  const fe = put.error && !reauthErr(put.error) ? errorMessage(put.error) : undefined;
+  const fe = put.error ? errorMessage(put.error) : undefined;
 
   function submit(e: FormEvent) {
     e.preventDefault();
@@ -143,7 +111,6 @@ function SettingsForm({
         checked={exclusive}
         onChange={setExclusive}
       />
-      <ReauthNotice err={put.error} reauthUrl={reauthUrl} />
       {saved ? (
         <Notice tone="accent" role="status">
           Directory sync settings saved.
@@ -159,15 +126,7 @@ function SettingsForm({
 }
 
 /** The `aud_` tokens: create (shown once), list, revoke. */
-function TokenSection({
-  orgId,
-  enabled,
-  reauthUrl,
-}: {
-  orgId: string;
-  enabled: boolean;
-  reauthUrl: string | null;
-}) {
+function TokenSection({ orgId, enabled }: { orgId: string; enabled: boolean }) {
   const tokens = useScimTokens(orgId, enabled);
   const create = useCreateScimToken(orgId);
   const revoke = useRevokeScimToken(orgId);
@@ -175,7 +134,7 @@ function TokenSection({
   const [copied, setCopied] = useState(false);
   const [toRevoke, setToRevoke] = useState<ScimTokenEntry | null>(null);
   const err = create.error ?? revoke.error;
-  const fe = err && !reauthErr(err) ? errorMessage(err) : undefined;
+  const fe = err ? errorMessage(err) : undefined;
   // The secret lives only in the mutation result; leaving the page drops it (docs/17: shown once).
   const { reset: resetCreate } = create;
   useEffect(() => () => resetCreate(), [resetCreate]);
@@ -213,7 +172,6 @@ function TokenSection({
             </Button>
           </div>
         </Field>
-        <ReauthNotice err={err} reauthUrl={reauthUrl} />
       </Form>
       ) : null}
       <Dialog open={!!created} onOpenChange={(o) => !o && create.reset()}>
@@ -363,7 +321,6 @@ function StatusCard({ orgId, enabled }: { orgId: string; enabled: boolean }) {
 
 export function OrgDirectoryView({ org, isOwner }: { org: { id: string; slug: string }; isOwner: boolean }) {
   const settings = useScimSettings(org.id);
-  const instance = useInstance();
   if (settings.isPending) return null;
   if (settings.error) {
     return (
@@ -383,10 +340,6 @@ export function OrgDirectoryView({ org, isOwner }: { org: { id: string; slug: st
       </Notice>
     );
   }
-  const providers = instance.data?.oidc_providers ?? [];
-  const reauthUrl = providers.length > 0
-    ? oidcStartUrl(providers[0]!.id, { reauth: true, returnTo: `/o/${org.slug}/settings/directory` })
-    : null;
   return (
     <div className="max-w-page-narrow space-y-8">
       <PageHeader
@@ -394,7 +347,6 @@ export function OrgDirectoryView({ org, isOwner }: { org: { id: string; slug: st
         description="Provision members from your identity provider over SCIM 2.0."
         className="mb-6"
       />
-      <ReauthErrorNotice />
       {!isOwner ? (
         <Notice role="status">Only organization owners can manage directory sync.</Notice>
       ) : (
@@ -423,7 +375,7 @@ export function OrgDirectoryView({ org, isOwner }: { org: { id: string; slug: st
                 </div>
               </Field>
             </div>
-            <SettingsForm orgId={org.id} initial={s} reauthUrl={reauthUrl} />
+            <SettingsForm orgId={org.id} initial={s} />
           </Section>
           <Section
             id="scim-tokens"
@@ -431,7 +383,7 @@ export function OrgDirectoryView({ org, isOwner }: { org: { id: string; slug: st
             description="A token authenticates your identity provider against /scim/v2. It is shown once; create a new one and revoke the old one to rotate."
             card
           >
-            <TokenSection orgId={org.id} enabled={s.enabled} reauthUrl={reauthUrl} />
+            <TokenSection orgId={org.id} enabled={s.enabled} />
           </Section>
           <Section
             id="scim-status"

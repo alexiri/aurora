@@ -27,12 +27,10 @@ struct Admin {
     session: Uuid,
 }
 
-async fn admin(h: &Harness, email: &str, reauth: bool) -> Admin {
+/// An instance admin's session. FIX-157 (D-317): it never re-authenticated.
+async fn admin(h: &Harness, email: &str) -> Admin {
     let user = h.user(email, true).await;
     let (session, tok) = h.good_session(user).await;
-    if reauth {
-        h.reauth(session).await;
-    }
     Admin {
         cookie: cookie(&tok),
         session,
@@ -94,7 +92,7 @@ fn ctx(owner: Uuid) -> SealContext {
 #[tokio::test]
 async fn status_lists_the_inline_store_and_refuses_non_admins() {
     let h = harness().await;
-    let a = admin(&h, "root@example.com", true).await;
+    let a = admin(&h, "root@example.com").await;
     let v = status(&h, &a).await;
     assert_eq!(v["default_store"]["value"], "inline");
     assert_eq!(v["default_store"]["source"], "default");
@@ -123,7 +121,7 @@ async fn status_lists_the_inline_store_and_refuses_non_admins() {
 #[tokio::test]
 async fn adding_a_store_and_making_it_default_takes_effect_without_a_restart() {
     let h = harness().await;
-    let a = admin(&h, "root@example.com", true).await;
+    let a = admin(&h, "root@example.com").await;
     let g0 = status(&h, &a).await["generation"].as_i64().unwrap();
 
     // Test connection first: nothing is saved by it.
@@ -224,7 +222,7 @@ async fn adding_a_store_and_making_it_default_takes_effect_without_a_restart() {
 #[tokio::test]
 async fn a_failed_store_stays_listed_with_its_error_and_is_never_the_default() {
     let h = harness().await;
-    let a = admin(&h, "root@example.com", true).await;
+    let a = admin(&h, "root@example.com").await;
     let g = status(&h, &a).await["generation"].as_i64().unwrap();
     // A valid Vault definition (approle auth builds without contacting Vault) whose CA is
     // not a certificate the client can load.
@@ -271,7 +269,7 @@ async fn helm_set_keys_are_locked_and_every_write_is_audited_with_re_authenticat
         .with_helm(
             "[secrets]\ndefault_store = \"inline\"\n[[secrets.stores]]\nid = \"helmvault\"\nkind = \"memory\"\n",
         );
-    let a = admin(&h, "root@example.com", true).await;
+    let a = admin(&h, "root@example.com").await;
     let v = status(&h, &a).await;
     let hv = store(&v, "helmvault");
     assert_eq!(hv["source"], "helm");
@@ -342,13 +340,37 @@ async fn helm_set_keys_are_locked_and_every_write_is_audited_with_re_authenticat
         rows[0].0
     );
 
-    // No re-authentication within the window → 412 and nothing changes.
-    sqlx::query("UPDATE sessions SET reauth_at = now() - interval '2 hours' WHERE id = $1")
+    // FIX-157 (D-317): the admin session never re-authenticated, and the writes above worked.
+    let reauth_stamped: bool =
+        sqlx::query_scalar("SELECT reauth_at IS NOT NULL FROM sessions WHERE id = $1")
+            .bind(a.session)
+            .fetch_one(h.pool())
+            .await
+            .unwrap();
+    assert!(!reauth_stamped);
+    // A secret-store write stays session-only: an API key is refused and nothing changes.
+    let g2 = v["generation"].as_i64().unwrap();
+    let org = h.org().await;
+    let user: Uuid = sqlx::query_scalar("SELECT user_id FROM sessions WHERE id = $1")
         .bind(a.session)
-        .execute(h.pool())
+        .fetch_one(h.pool())
         .await
         .unwrap();
-    let g2 = v["generation"].as_i64().unwrap();
+    let (_, key) = h.api_key(user, org, None, false).await;
+    let (s, _, _) = h
+        .send(
+            Method::DELETE,
+            &format!("/v1/admin/secret-stores/mem?generation={g2}"),
+            &[
+                ("authorization", &format!("Bearer {key}")),
+                ("origin", ORIGIN),
+            ],
+            None,
+        )
+        .await;
+    assert!(s == 401 || s == 403, "api key got {s}");
+    assert_eq!(status(&h, &a).await["generation"], g2);
+    // The session deletes it with no re-authentication.
     let (s, e) = call(
         &h,
         &a,
@@ -357,17 +379,20 @@ async fn helm_set_keys_are_locked_and_every_write_is_audited_with_re_authenticat
         None,
     )
     .await;
-    assert_eq!(
-        (s, e["error"]["code"].as_str()),
-        (412, Some("reauth_required"))
+    assert_eq!(s, 200, "{e}");
+    assert!(
+        status(&h, &a).await["stores"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|s| s["id"] != "mem")
     );
-    assert_eq!(status(&h, &a).await["generation"], g2);
 }
 
 #[tokio::test]
 async fn no_secret_material_reaches_any_response_or_audit_row() {
     let h = harness().await;
-    let a = admin(&h, "root@example.com", true).await;
+    let a = admin(&h, "root@example.com").await;
     let g = status(&h, &a).await["generation"].as_i64().unwrap();
     let entry = json!({ "generation": g, "store": {
         "kind": "hashicorp-vault", "address": "https://vault.invalid:8200",
@@ -471,7 +496,7 @@ async fn health_is_probed_at_most_once_per_interval() {
     let mut h = h;
     h.state = state;
     h.app = test_router(h.state.clone());
-    let a = admin(&h, "root@example.com", true).await;
+    let a = admin(&h, "root@example.com").await;
     for _ in 0..5 {
         let v = status(&h, &a).await;
         assert_eq!(store(&v, "mem")["health"]["ok"], true);
@@ -482,7 +507,7 @@ async fn health_is_probed_at_most_once_per_interval() {
 #[tokio::test]
 async fn deleting_a_store_that_still_holds_values_is_refused_with_the_count() {
     let h = harness().await;
-    let a = admin(&h, "root@example.com", true).await;
+    let a = admin(&h, "root@example.com").await;
     let g = status(&h, &a).await["generation"].as_i64().unwrap();
     let (s, v) = put_memory_store(&h, &a, "mem", g).await;
     assert_eq!(s, 200, "{v}");
@@ -572,7 +597,7 @@ async fn wait_state(h: &Harness, a: &Admin, want: &str) -> Value {
 #[tokio::test]
 async fn migration_dry_run_moves_every_managed_value_and_discards_the_old_ones() {
     let h = harness().await;
-    let a = admin(&h, "root@example.com", true).await;
+    let a = admin(&h, "root@example.com").await;
     let g = status(&h, &a).await["generation"].as_i64().unwrap();
     let (s, _) = put_memory_store(&h, &a, "mem", g).await;
     assert_eq!(s, 200);
@@ -606,19 +631,27 @@ async fn migration_dry_run_moves_every_managed_value_and_discards_the_old_ones()
         );
     }
 
-    // Starting needs a recent re-authentication.
-    let (s, e) = call(
-        &h,
-        &admin(&h, "other@example.com", false).await,
-        Method::POST,
-        "/v1/admin/secret-stores/migrations",
-        Some(json!({ "target": "mem" })),
-    )
-    .await;
-    assert_eq!(
-        (s, e["error"]["code"].as_str()),
-        (412, Some("reauth_required"))
-    );
+    // Starting is session-only (an API key is refused, nothing starts); it needs no
+    // re-authentication (FIX-157, D-317): `a` never re-authenticated and starts it below.
+    let org = h.org().await;
+    let user: Uuid = sqlx::query_scalar("SELECT user_id FROM sessions WHERE id = $1")
+        .bind(a.session)
+        .fetch_one(h.pool())
+        .await
+        .unwrap();
+    let (_, key) = h.api_key(user, org, None, false).await;
+    let (s, _, _) = h
+        .send(
+            Method::POST,
+            "/v1/admin/secret-stores/migrations",
+            &[
+                ("authorization", &format!("Bearer {key}")),
+                ("origin", ORIGIN),
+            ],
+            Some(json!({ "target": "mem" })),
+        )
+        .await;
+    assert!(s == 401 || s == 403, "api key got {s}");
 
     let (s, job) = call(
         &h,
@@ -671,7 +704,7 @@ async fn migration_dry_run_moves_every_managed_value_and_discards_the_old_ones()
 #[tokio::test]
 async fn a_running_migration_excludes_a_second_one_and_the_cli_run() {
     let h = harness().await;
-    let a = admin(&h, "root@example.com", true).await;
+    let a = admin(&h, "root@example.com").await;
     let g = status(&h, &a).await["generation"].as_i64().unwrap();
     let (s, _) = put_memory_store(&h, &a, "mem", g).await;
     assert_eq!(s, 200);
@@ -729,7 +762,7 @@ async fn a_running_migration_excludes_a_second_one_and_the_cli_run() {
 #[tokio::test]
 async fn instance_setting_secrets_stay_inline_when_values_move_to_another_store() {
     let h = harness().await;
-    let a = admin(&h, "root@example.com", true).await;
+    let a = admin(&h, "root@example.com").await;
     let g = status(&h, &a).await["generation"].as_i64().unwrap();
     let (s, _) = put_memory_store(&h, &a, "mem", g).await;
     assert_eq!(s, 200);
@@ -761,7 +794,7 @@ async fn instance_setting_secrets_stay_inline_when_values_move_to_another_store(
 #[tokio::test]
 async fn reference_scopes_are_edited_per_organization_and_validated() {
     let h = harness().await;
-    let a = admin(&h, "root@example.com", true).await;
+    let a = admin(&h, "root@example.com").await;
     let org = h.org().await;
     let g = status(&h, &a).await["generation"].as_i64().unwrap();
     let (s, v) = call(
@@ -859,7 +892,7 @@ fn field_paths(e: &Value) -> Vec<String> {
 #[tokio::test]
 async fn a_dashboard_store_cannot_name_an_environment_variable_or_a_file() {
     let h = harness().await;
-    let a = admin(&h, "root@example.com", true).await;
+    let a = admin(&h, "root@example.com").await;
     let g = status(&h, &a).await["generation"].as_i64().unwrap();
     let t = tripwire().await;
     let addr = format!("http://127.0.0.1:{}", t.port);
@@ -939,7 +972,7 @@ async fn a_dashboard_store_cannot_name_an_environment_variable_or_a_file() {
 #[tokio::test]
 async fn keeping_a_secret_while_the_destination_changes_needs_the_secret_again() {
     let h = harness().await;
-    let a = admin(&h, "root@example.com", true).await;
+    let a = admin(&h, "root@example.com").await;
     let g = status(&h, &a).await["generation"].as_i64().unwrap();
     let store_body = |address: &str, role_id: &str, secret: Value| {
         json!({ "kind": "hashicorp-vault", "address": address,
@@ -1016,7 +1049,7 @@ async fn keeping_a_secret_while_the_destination_changes_needs_the_secret_again()
 #[tokio::test]
 async fn a_dashboard_vault_address_may_not_be_loopback_private_or_metadata() {
     let h = harness().await;
-    let a = admin(&h, "root@example.com", true).await;
+    let a = admin(&h, "root@example.com").await;
     let g = status(&h, &a).await["generation"].as_i64().unwrap();
     let t = tripwire().await;
     for address in [
@@ -1061,7 +1094,7 @@ async fn a_dashboard_vault_address_may_not_be_loopback_private_or_metadata() {
 async fn a_dashboard_store_cannot_use_the_kubernetes_login() {
     // D-307: the login would send the pod's service-account token to the admin-chosen address.
     let h = harness().await;
-    let a = admin(&h, "root@example.com", true).await;
+    let a = admin(&h, "root@example.com").await;
     let g = status(&h, &a).await["generation"].as_i64().unwrap();
     let t = tripwire().await;
     let body = |addr: &str| {

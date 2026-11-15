@@ -13,7 +13,7 @@ In the walkthrough:
 
 ## Linked requirements
 
-- D-330; contracts **C-932, C-933**; reads C-931 (P5-UX-8), C-909 `Unlock`, C-940 (guide with values,
+- D-330; contracts **C-932, C-933**; reads C-931 (P5-UX-8), C-955 `Unlock`, C-940 (guide with values,
   P5-UX-13).
 - Normative: `14 §App setup` §7, `14 §Visual design`.
 

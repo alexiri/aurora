@@ -1301,16 +1301,6 @@ async fn account_deletion_purges_direct_conversations_through_the_lifecycle_path
         .unwrap();
     // A group conversation is not deleted with the account.
     let group = f.conv("group", None).await;
-    let sid: Uuid = sqlx::query_scalar("SELECT id FROM sessions WHERE user_id = $1")
-        .bind(f.bob.0)
-        .fetch_one(f.h.pool())
-        .await
-        .unwrap();
-    sqlx::query("UPDATE sessions SET reauth_at = now() WHERE id = $1")
-        .bind(sid)
-        .execute(f.h.pool())
-        .await
-        .unwrap();
     let (s, v) = f.call(Method::DELETE, "/v1/me", &f.bob.1, None).await;
     assert_eq!(s, 204, "{v}");
     assert_eq!(

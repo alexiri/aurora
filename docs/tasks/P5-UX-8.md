@@ -10,12 +10,12 @@ about an app:
 
 The answers were spread over three OAuth client lists, Self-hosted apps, Governance › Apps and Org ›
 Settings, and parts of them were shown nowhere (the AWS external id). This task adds one read-only route
-with that answer. It feeds the setup page (P5-UX-9), and the connect plan (C-909, P5-UX-2) becomes a
+with that answer. It feeds the setup page (P5-UX-9), and the connect plan (C-955, P5-UX-2) becomes a
 projection of it.
 
 ## Linked requirements
 
-- D-330; contract **C-931**; reuses C-909 `Unlock` and readiness rules; `09 §11` (OAuth client resolution),
+- D-330; contract **C-931**; reuses C-955 `Unlock` and readiness rules; `09 §11` (OAuth client resolution),
   D-74 (instances), C-20 (availability), I-27 (org connection read access).
 - Normative: `14 §App setup` §7, `05` (setup row).
 
@@ -42,7 +42,7 @@ projection of it.
    view)`, where `view` is `Workspace(ws)` or `Org(org)`. It computes C-931 from the snapshot, posture,
    clients by level (refs only, never secrets or client ids), instances, connections by scope, values
    (`callback_url` always; `external_id` when the app uses `org_external_id`) and `can` (the caller's
-   abilities at each level). `Unlock` follows C-909, never naming instance admins.
+   abilities at each level). `Unlock` follows C-955, never naming instance admins.
 2. **Route** `GET /v1/apps/{app}/setup?workspace_id=|org_id=`:
    - `workspace_id` → `can_own`, the workspace view;
    - `org_id` alone → org owner/admin, the org view;
@@ -61,7 +61,7 @@ projection of it.
    - `aws-keys` returns `values.external_id` equal to the org's; `linear` does not.
    - GitLab without an instance shows the instance-bound methods needing `instance`.
    - Restricted posture without the app gives `available: false` with `enable_app`.
-   - Permission matrix: a member who is not `can_own` → 403 with `required_role` (if P5-UX-2's C-912
+   - Permission matrix: a member who is not `can_own` → 403 with `required_role` (if P5-UX-2's C-958
      helper has merged); a workspace owner asking for the org view → 403.
    - No client secret, client id or e-mail appears in any answer (asserted by a scan of the JSON).
 
@@ -77,7 +77,7 @@ projection of it.
 1. The C-931 answer for the walkthrough's apps (GitHub, Linear, AWS, PostgreSQL, GitLab, Notion) matches
    the test table.
 2. The connect plan and the setup status agree for every method (one function; a test compares them).
-3. Nothing secret or personal beyond C-909's names is returned.
+3. Nothing secret or personal beyond C-955's names is returned.
 4. Gates green; counts reported.
 
 ## Dependencies

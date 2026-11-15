@@ -144,7 +144,7 @@ secret ids) are sealed in the **inline** store (purpose `instance_setting`, `08 
 (the old one discarded after commit). A secret the configuration supplies through an environment
 variable (`client_secret_env`, `AURORA_SMTP_PASSWORD`) locks that field.
 
-**Writes** need an instance-admin session with a re-authentication within 600 s, are
+**Writes** need an instance-admin session ((phase 5, FIX-157, D-317) no re-authentication), are
 security-critical audited with a before/after diff and e-mailed to every instance admin
 (`04 §Audit`, `05 §Instance administration`, SEC-90).
 
@@ -1021,7 +1021,7 @@ gateway and the API read the same `approvals.park.*` values (`resume_window_secs
 `threshold_secs`/`max_body_bytes`/`max_pending_per_agent`/`deny_cooldown_secs` the gateway's); a
 rolling upgrade is safe because an older gateway simply holds (no `parked` row is ever created by it)
 and ignores grants. (P4-011B spec batch, D-265(c)) The keys are **instance settings**: Admin ›
-Approvals edits them live (instance admins, re-authentication, audited, `§Instance settings`);
+Approvals edits them live (instance admins, session only, audited, `§Instance settings`);
 setting `config.approvals.park.*` in Helm locks them. There is no chart value. Turning parking off
 later stops new parked approvals only; approved grants and pending parked approvals already created
 keep working until they end (D-264(b)). Turn it on only after every gateway runs a release with

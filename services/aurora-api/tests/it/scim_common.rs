@@ -82,7 +82,7 @@ impl ScimFx {
     ) -> Self {
         let h = Harness::with_config(mutate).await;
         let owner = h.sign_in("owner@x.io").await;
-        stamp_reauth(&h, owner.user_id).await;
+        // (FIX-157, D-317: the owner's session never re-authenticated; SCIM setup needs none.)
         // The org is created through the real route so the owner role and slug match.
         let (s, _, v) = h
             .send(
@@ -198,8 +198,7 @@ impl ScimFx {
     }
 }
 
-/// Mint a token through the management route (owner session; 412 without re-auth is handled
-/// by seeding a fresh session — the harness sessions are born inside the re-auth window).
+/// Mint a token through the management route (owner session; no re-authentication, D-317).
 pub async fn mint_token(h: &Harness, cookie: &str, org: Uuid) -> String {
     let (s, _, v) = h
         .send(
@@ -213,23 +212,9 @@ pub async fn mint_token(h: &Harness, cookie: &str, org: Uuid) -> String {
     v["token"].as_str().unwrap().to_owned()
 }
 
-/// Stamp `sessions.reauth_at = now()` for the user's newest session (the management routes
-/// require a re-auth within the last 10 minutes; the mock sign-in flow doesn't do one).
-pub async fn stamp_reauth(h: &Harness, user: Uuid) {
-    sqlx::query(
-        "UPDATE sessions SET reauth_at = now() \
-         WHERE id = (SELECT id FROM sessions WHERE user_id = $1 ORDER BY id DESC LIMIT 1)",
-    )
-    .bind(user)
-    .execute(h.pool())
-    .await
-    .unwrap();
-}
-
 /// A second org with SCIM enabled and its own token (org B of the cross-org cases).
 pub async fn other_org(h: &Harness) -> OtherOrg {
     let owner = h.sign_in("b-owner@x.io").await;
-    stamp_reauth(h, owner.user_id).await;
     let (s, _, v) = h
         .send(
             Method::POST,

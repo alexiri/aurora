@@ -293,14 +293,14 @@ instructions`, `§Usage and metering`, `§Evals`; `12 §Harness interface`, `§A
 `§Adapter codex`; `16`; `03`; `05`; `15`; `14`; `02 §Limits`; `17` (SEC-122, SEC-123); `18`;
 `API_CONTRACTS` C-875..C-884.
 
-### First run and connecting (phase 5, P5-UX, owner walkthrough 2026-11-15, D-320..D-327) — specified
+### First run and connecting (phase 5, P5-UX, owner walkthrough 2026-11-15, D-321..D-327, D-337) — specified
 
 Owner, after a first-run walkthrough on the kind cluster: "the experience of figuring out how to
 connect their agent to things and how they have to configure their workspace is entirely too
 complicated". The owner singled out "one Connect journey per app" as the core of the fix.
 
 - **Connect journey.** "Give <Agent> <App>" starts from the agent and ends with a connection and a
-  grant made in one request (also across an OAuth sign-in, sealed and re-authorized, SEC-127). The
+  grant made in one request (also across an OAuth sign-in, sealed and re-authorized, SEC-130). The
   person chooses the app, what the agent may do, an optional limit, and signs in with the one method
   that works for them; the full controls stay under Advanced.
 - **Who unblocks it.** A connect plan says which methods are ready for this person and who can fix the
@@ -316,8 +316,8 @@ complicated". The owner singled out "one Connect journey per app" as the core of
 - **Simple layers.** A plain Overview on Credentials and a plain-language summary on Policy.
 
 Briefs P5-UX-1..7. Owning sections: `14 §First run and connecting`; `09 §3.4`; `04 §Workspace
-access by e-mail`, `§New-user placement`; `05`; `03 §Planned changes`; `02 §Limits`; `17` (SEC-127,
-SEC-128); `API_CONTRACTS` C-909..C-927.
+access by e-mail`, `§New-user placement`; `05`; `03 §Planned changes`; `02 §Limits`; `17` (SEC-130,
+SEC-128); `API_CONTRACTS` C-914..C-927, C-955..C-959.
 
 **App setup** (the owner's second walkthrough, 2026-11-15: "figuring out how to configure apps is
 really confusing"; D-329..D-336). It followed a team lead (an org member who owns a team workspace) and

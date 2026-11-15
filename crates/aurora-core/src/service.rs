@@ -468,13 +468,24 @@ mod tests {
         harness_at("info")
     }
 
+    /// For tests whose request starts a new trace (no adopted trace id): the SDK then picks a random
+    /// trace id and a 0.5 rule would drop the root span about half the time, so the provider
+    /// samples everything. The process-wide threshold stays 0.5 (the explicit-id tests need it).
+    fn harness_all_sampled() -> Harness {
+        harness_with("info", 1.0)
+    }
+
     fn harness_at(level: &str) -> Harness {
+        harness_with(level, 0.5)
+    }
+
+    fn harness_with(level: &str, provider_ratio: f64) -> Harness {
         telemetry::set_sample_ratio(0.5);
         opentelemetry::global::set_text_map_propagator(
             opentelemetry_sdk::propagation::TraceContextPropagator::new(),
         );
         let spans = InMemorySpanExporter::default();
-        let provider = telemetry::provider_builder("test", 0.5)
+        let provider = telemetry::provider_builder("test", provider_ratio)
             .with_simple_exporter(spans.clone())
             .build();
         let logs = Buf::default();
@@ -558,7 +569,7 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn request_id_header_log_line_and_route_template() {
-        let h = harness();
+        let h = harness_all_sampled();
         let res = call(&app(TABLE), "/v1/things/42-secret-id?q=canary", None).await;
         let id = rid(&res);
         assert_eq!(id.len(), 32);
@@ -626,7 +637,7 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn ignored_and_linked_routes_start_a_new_trace() {
-        let h = harness();
+        let h = harness_all_sampled();
         let app = app(TABLE);
         let res = call(&app, "/scim/v2/Users", Some(tp(PASS_ID, "01"))).await;
         assert_ne!(rid(&res), PASS_ID);
@@ -637,14 +648,15 @@ mod tests {
             assert_eq!(s.parent_span_id, opentelemetry::trace::SpanId::INVALID);
         }
         let spans = h.spans();
-        let linked = spans.iter().find(|s| s.name == "GET /v1/connector/events");
-        if let Some(s) = linked {
-            let ids: Vec<_> = s.links.iter().map(|l| l.span_context.trace_id()).collect();
-            assert!(
-                ids.iter().any(|t| format!("{t:032x}") == PASS_ID),
-                "{ids:?}"
-            );
-        }
+        let s = spans
+            .iter()
+            .find(|s| s.name == "GET /v1/connector/events")
+            .unwrap();
+        let ids: Vec<_> = s.links.iter().map(|l| l.span_context.trace_id()).collect();
+        assert!(
+            ids.iter().any(|t| format!("{t:032x}") == PASS_ID),
+            "{ids:?}"
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]
