@@ -128,31 +128,96 @@ integration config.
   (`13 §4.6`). Mentions:
   `<@user:ID>` → `@username` (lookup), `<#space:ID>` → `~channel-name`,
   `<@here>` → `@here` (only from the core: platform voice, or a standalone
-  `@here` in an agent's message body, `13 §4.3`). **Defuse** `@channel`, `@all`,
-  `@here` occurring in text by wrapping them in inline code — inside formatted
-  text too; code spans and fenced blocks are never altered.
+  `@here` in an agent's message body, `13 §4.3`). **Defuse** (phase 5, D-271)
+  every ping that notifies more than one person — `@channel`, `@all`, `@here`
+  (the core's `<@here>` aside) and **group mentions** — in every spelling the
+  server reads as one (mentions table below), inside formatted text too, by
+  wrapping the word in inline code; code spans, fenced blocks, indented code and
+  HTML code are never altered and never notify. One user's `@username` passes.
+  Implemented by `render::defuse` (a parser-based pass) and `mentions::resolve`
+  (which `@name`s are users and which are groups: `POST /users/usernames`, then
+  `GET /groups?q=` — cached a minute; a server without the groups feature answers
+  `501` = no groups, cached ten minutes; any other failure, or more than 25 names
+  in a message, sets `Lookups::closed` and **every `@name` that is not a known
+  user is defused like a group** — fail closed). Where a backtick cannot be
+  inserted — a link destination (`@` → `%40`), after a backslash, next to or
+  among stray backticks — a zero-width space is written after the `@`.
 - (phase 5, FIX-142, D-227(c)) **Conversion table.** Native constructs pass
   through byte for byte; the rest is converted as below; nothing is dropped.
-  "native — verify in step 4": FIX-142 step 4 confirms the row against the
-  Mattermost docs and the dev server — `mattermost-preview` 11.7.15 pinned by
-  digest in `scripts/mattermost/setup.sh` (used by `scripts/e2e/mattermost.sh`),
-  the supported version above — and rewrites the row to what it found.
+  Implemented by `connectors/mattermost/src/convert.rs` (a pulldown-cmark offset
+  pass that edits only the ranges below, in `render_text` before the mention and
+  broadcast pass). **Verified (FIX-142 step 4, 2026-11-14)** against Mattermost 11.7.15
+  (the pinned `mattermost-preview` image of `scripts/mattermost/setup.sh`): one post per
+  construct was created through `render_text`, read back through the REST API (the stored
+  message equals the converted text byte for byte), and its **rendered DOM** read in a headless
+  browser logged in as the admin. Every row below is confirmed as stated. Notes from that run:
+  the task list renders as real disabled checkboxes (`<input type="checkbox">`), so the
+  `☐` / `☑` fallback is **not needed and not implemented**; display math as a ```` ```latex ````
+  block renders with KaTeX on this server (`EnableLatex` and `EnableInlineLatex` are `true`
+  by default in 11.7.15); `mermaid` shows as a plain code block; an alert shows as a quote
+  with the emoji and a bold label; Mattermost joins an ordered list that follows a bullet
+  list after a blank line into the bullet list (its own behaviour, not converted).
 
   | Construct | Mattermost | Conversion |
   |---|---|---|
-  | Headings, emphasis, strong, strikethrough, inline code, block quotes, rules, nested/ordered lists, hard breaks, autolinks, emoji shortcodes | native — verify in step 4 (each) | — |
-  | Tables (alignment, inline formatting in cells) | native — verify in step 4 | — (a table longer than one post: the core splits it by rows, header row repeated in each post, `13 §5.2`) |
-  | Fenced code with a language | native, highlighted — verify in step 4 | — |
-  | Task lists | verify in step 4 | if not native: `☐` / `☑` list items |
+  | Headings, emphasis, strong, strikethrough, inline code, block quotes, rules, nested/ordered lists, hard breaks, autolinks, emoji shortcodes | native | — |
+  | Tables (alignment, inline formatting in cells) | native | — (a table longer than one post: the core splits it by rows, header row repeated in each post, `13 §5.2`) |
+  | Fenced code with a language | native, highlighted | — |
+  | Task lists | native (`- [ ]` / `- [x]`, passed through; renders checkboxes — verified) | — |
   | Footnotes | conversion | `[1]` at the reference, a "Notes" list at the end of the message |
   | Alerts (`> [!NOTE]` …) | conversion | block quote starting with `ℹ️ **Note**` / `💡 **Tip**` / `❗ **Important**` / `⚠️ **Warning**` / `🛑 **Caution**` |
   | Math `$$…$$`, ```` ```math ````, inline `$…$` | conversion (```` ```latex ```` blocks render when the server enables LaTeX) | ```` ```latex ```` block (renders when enabled, readable code otherwise); inline `$…$` left as is (renders when inline LaTeX is enabled) |
   | Mermaid | conversion | ```` ```mermaid ```` code block |
   | Allowlisted HTML (Mattermost renders no HTML) | conversion | `b`/`strong` → `**`, `i`/`em` → `_`, `s`/`del` → `~~`, `code`/`kbd` → `` ` ``, `br` → hard break, `hr` → `---`, `details`/`summary` → bold summary line + content, `sub`/`sup`/`ins`/`mark`/`small`/`span`/`div`/`p` → their content, HTML lists/tables → Markdown lists/tables |
-  | Link previews | the server may fetch the first URL of a post (`EnableLinkPreviews`) | **open question** (step 4): can a post suppress its preview? If yes, agent posts do; if no, one line in `docs/operator/plugins-and-connectors.md` (Mattermost) says an admin can turn previews off |
+  | Link previews | the **server** fetches the first bare URL of a post (`EnableLinkPreviews`), unprompted | no per-post switch exists (post `props` `preview_removed`, `link_previews`, `disable_link_preview`, `previews_removed` change nothing; the REST API has none). Measured: only a **bare** URL or `<url>` is fetched (a listener received `GET /?d=… ` from `Mattermost-Bot/1.1` during post creation); `[label](url)` (also `[url](url)`) and code spans are never fetched. **Closed by D-270**: the core writes every bare URL and autolink of an agent's message as `[url](url)` (`13 §4.3` exception 5), the connector re-checks that none is left (the plain-text fallback writes `https:\//…`), so agent posts show no preview cards; the operator note about `EnableLinkPreviews` stays as defence in depth |
 
-  The dev server's `MM_*` overrides set no LaTeX option, so step 4 records the
-  server defaults for LaTeX and inline LaTeX next to the math rows.
+  **Which URLs the server previews** (measured on 11.7.15 through the post's `metadata.embeds`,
+  `connectors/mattermost/tests/mentions_e2e.rs::agent_urls_are_never_previewed_by_the_server`):
+  `http://…` and `https://…` (any letter case), **`www.…`** (lower case; the server makes the
+  embed with `http://` in front) and **`ftp://…`**. Not previewed: `ftps://`, `sftp://`, `file://`,
+  `ws://`, `ssh://`, `mailto:`, `tel:`, `data:`, `javascript:`, a bare `example.org/path`, `//host/p`,
+  `http:host/p`, `Www.…`/`WWW.…`, an e-mail address, a `[label](url)` link, a code span. (The local
+  server could not be made to reach a `www.` host — its SSRF guard allows only the listed
+  loopback names — so the fetch itself was observed for the `http://127.0.0.1` form, and the embed
+  is the evidence for the others.) So the core rewrites a `www.` URL to `[www.x/…](https://www.x/…)`
+  and writes `ftp://` as `ftp:\//` (it is no link scheme, rule 2); the plain-text fallback breaks all
+  three (`https:\//`, `ftp:\//`, `www\.`). **Look-alike spellings of a ping word** do not notify (measured:
+  `@ｃhannel` full-width c, `@ᴄhannel` small-cap c, Cyrillic `@сhannel`, `@channeI` capital i,
+  `@c‍hannel` with a zero-width joiner, `@c­hannel` with a soft hyphen, `＠channel` full-width at,
+  `@ａll`, `@ｈere`, `@ℂhannel`), so nothing is normalised for them.
+
+  **Mentions table** (phase 5, D-271) — measured on 11.7.15 with two channel members, Alice
+  online and Bob offline, through each member's `mention_count`
+  (`connectors/mattermost/tests/mentions_e2e.rs`, run by `scripts/conformance.sh --mattermost`):
+
+  | What the agent wrote | Notifies on the server? | What Aurora posts |
+  |---|---|---|
+  | `@channel`, `@all` — any letter case (`@Channel`, `@ALL`, `@cHaNnEl`) | everyone in the channel | the word in inline code |
+  | the same followed by `. , : ! ? ; ) - _ ’ … — –` or `..`, `.-` | yes | in code, the punctuation after it |
+  | the same after `( [ " ' * _ ~ # > - . / & = + $ % ^ \| { < :` or `\` | yes | in code (after a backslash: `@` + zero-width space) |
+  | the same inside `**…**`, `_…_`, `~~…~~`, headings, quotes, list items, table cells, link labels, raw text of a destination | yes | in code (destination: `%40`) |
+  | `@channelx`, `@channel.foo`, `@channel-foo`, `@channel_foo`, `@channel1`, `x@channel`, `1@all`, `@@channel`, `foo@all.example.com` | no — a longer name, or after an ASCII letter/digit | unchanged |
+  | `＠channel`, `@ channel`, `@​channel`, `%40channel`, `&#64;channel` | no | unchanged |
+  | `@here` (any case, any punctuation as above) | online members only | the core's `<@here>` only for the exact lowercase standalone spelling outside code and link labels (`@here`); every other spelling in code |
+  | `@name` of a group (custom / LDAP) | every member | in code (resolved through the API; unresolved → treated as a group when the lookup failed) |
+  | `@alice`, `@Alice.`, `**@alice**`, `[@alice](url)` | Alice | unchanged (D-226(b)) |
+  | anything inside `` `…` ``, ```` ``` ````, indented code, `<code>`/`<pre>`/`<kbd>` | no (the server strips code) | unchanged (HTML code becomes a code span) |
+  | `<code>@channel</code>` as raw text | yes — the server does not know HTML | converted to a code span first |
+
+  Custom groups need a Mattermost licence: the unlicensed dev image answers `501`, so no real
+  group can be created there; the group path is proven by unit tests with a mocked groups API
+  (`mentions::tests`, `render::tests::group_mentions_…`) and, on a licensed server, by the same
+  e2e (it creates a group and posts its mention).
+
+  LaTeX is enabled in 11.7.15 by default (`EnableLatex`, `EnableInlineLatex`); an admin can
+  turn it off, and ```` ```latex ```` blocks and `$…$` then show as readable code/text. Math is
+  never an image carrier: the core writes a space into `![` and `](` inside math (`$! [x] (u)$`),
+  which LaTeX ignores.
+  **Mattermost-only image forms** (verified): `![x](url =10x10)`, `![x](https://h/a b)` and a
+  reference definition directly after a paragraph line followed by `![x][r]` are images to
+  Mattermost although CommonMark reads them as text; the core therefore breaks every `![`
+  outside code (`!\[`), and `render_text` re-checks its converted output and posts escaped plain
+  text if an image, a link outside http/https/mailto or an image opener is found.
 - Posts carry `props.aurora_op = <op_marker>`; when `maybe_sent` is true, the
   connector searches the last 50 posts of the target thread/channel for that
   prop before posting.

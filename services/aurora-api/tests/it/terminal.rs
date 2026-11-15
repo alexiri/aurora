@@ -662,6 +662,13 @@ async fn redemption_answer_carries_the_chosen_shell() {
         let (s, v) = r.redeem(grant.expose(), replica).await;
         assert_eq!(s, 200, "{v}");
         assert_eq!(v["shell"], json!(shell), "{v}");
+        // (C-750 (4)) The agent has no LLM key: the enabled terminal harness is reported
+        // unavailable (`no_key`) and the other, not enabled, is absent.
+        assert_eq!(
+            v["models"],
+            json!({ "claude_code": { "unavailable": "no_key" } }),
+            "{v}"
+        );
     }
 }
 

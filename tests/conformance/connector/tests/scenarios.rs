@@ -1397,3 +1397,28 @@ async fn s17_members_never_see_the_action_context() -> R {
     c.0.finish().await?;
     Ok(())
 }
+
+// ------------------------------------- 18. formatted agent answers (FIX-142, D-227(c))
+
+/// An agent's formatted answer reaches the platform with every construct the platform renders
+/// natively **unchanged** (docs/13 §4.6): the connector converts only what the platform lacks.
+/// The sample is what the core posts after `markdown_safe` (neutral text, no broadcast words; a URL
+/// is a labelled link `[url](url)`, D-270: the platform's preview never fetches a bare URL).
+#[tokio::test]
+async fn s18_native_markdown_constructs_reach_the_platform_unchanged() -> R {
+    let c = ctx(StartOptions::default()).await?;
+    let md = "# Heading\n\n**Your meetings today:** `insufficient_scope` is _not_ ~~fixed~~ [docs](https://x.example/a)\n\n\
+> quote\n>\n> - nested\n>   - deeper\n\n1. one\n2. two\n\n---\n\n\
+| name | n |\n|:--|--:|\n| **a** | `1` |\n\n\
+```rust\nfn main() {}\n```\n\n\
+line one  \nline two [https://y.example](https://y.example) :tada:";
+    let (_, r) = c.post(space_target("C1", None), &text(md)).await?;
+    let res: MessagePostResult = serde_json::from_value(ok_data(&r))?;
+    let post = c.find_post(&res.message_ref).await?;
+    assert_eq!(
+        post.text, md,
+        "a native construct was altered on its way to the platform"
+    );
+    c.0.finish().await?;
+    Ok(())
+}

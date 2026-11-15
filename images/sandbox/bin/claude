@@ -25,7 +25,13 @@ case " ${HARNESSES_ENABLED:-} " in
 *" claude-code "*) ;;
 *) refuse ;;
 esac
-unset HARNESSES_ENABLED AURORA_CODEX_MODEL AURORA_CODEX_BASE_URL
+# No usable model for this agent (C-750 (4)): say why instead of calling a host with no credential.
+if [ -n "${AURORA_CLAUDE_UNAVAILABLE:-}" ]; then
+    echo "claude: $AURORA_CLAUDE_UNAVAILABLE" >&2
+    exit 1
+fi
+unset HARNESSES_ENABLED AURORA_CLAUDE_UNAVAILABLE AURORA_CODEX_UNAVAILABLE \
+    AURORA_CODEX_MODEL AURORA_CODEX_BASE_URL
 CLAUDE_CONFIG_DIR=/workspace/.aurora/terminal/claude
 export CLAUDE_CONFIG_DIR
 mkdir -p "$CLAUDE_CONFIG_DIR" 2>/dev/null

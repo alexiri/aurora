@@ -121,6 +121,757 @@
         ]
       }
     },
+    "/v1/admin/addon-sources": {
+      "get": {
+        "tags": [
+          "plugins"
+        ],
+        "summary": "List addon sources (instance administrators).",
+        "operationId": "adminListAddonSources",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AddonSourceList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "plugins"
+        ],
+        "summary": "Register a source (TOFU: the manifest's signing key becomes a trusted key, C-593) and ingest\nwhat it lists; every package waits for the ordinary approval.",
+        "operationId": "adminCreateAddonSource",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateAddonSourceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AddonSource"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/v1/admin/addon-sources/check-all": {
+      "post": {
+        "tags": [
+          "plugins"
+        ],
+        "summary": "Check every source (C-596: per-source outcomes, a failure never blocks the others).",
+        "operationId": "adminCheckAllAddonSources",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AddonSourceCheckAll"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/v1/admin/addon-sources/preview": {
+      "post": {
+        "tags": [
+          "plugins"
+        ],
+        "summary": "Preview a manifest before registering (C-592): fetch and parse only, nothing is stored.",
+        "operationId": "adminPreviewAddonSource",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PreviewAddonSourceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AddonSourcePreview"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/v1/admin/addon-sources/{id}": {
+      "get": {
+        "tags": [
+          "plugins"
+        ],
+        "summary": "One addon source (from its last accepted manifest, not a live fetch).",
+        "operationId": "adminGetAddonSource",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Addon source id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AddonSource"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "plugins"
+        ],
+        "summary": "Remove a source (refused while its packages are active; packages stay, C-597).",
+        "operationId": "adminDeleteAddonSource",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Addon source id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "plugins"
+        ],
+        "summary": "Edit the check schedule (C-594).",
+        "operationId": "adminUpdateAddonSource",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Addon source id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateAddonSourceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AddonSource"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/v1/admin/addon-sources/{id}/check": {
+      "post": {
+        "tags": [
+          "plugins"
+        ],
+        "summary": "Check one source now (the shared poll path with `trigger = manual`, C-596).",
+        "operationId": "adminCheckAddonSource",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Addon source id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AddonSourceCheckResult"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/v1/admin/addon-sources/{id}/confirm-key": {
+      "post": {
+        "tags": [
+          "plugins"
+        ],
+        "summary": "Re-confirm a changed signing key (C-595): updates the source and its trusted key.",
+        "operationId": "adminConfirmAddonSourceKey",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Addon source id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConfirmKeyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AddonSource"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
     "/v1/admin/agents/{agent}/start-failures": {
       "get": {
         "tags": [
@@ -1866,6 +2617,193 @@
         ]
       }
     },
+    "/v1/admin/orgs/{org}": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "One organization's operator row (instance administrators; counts, no content).",
+        "operationId": "adminGetOrg",
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "description": "Organization id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminOrg"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Delete any organization with everything in it (instance administrators; recent re-auth,\ntyped slug). Runs the owner delete's services; allowed while frozen; shows no content.",
+        "operationId": "adminDeleteOrg",
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "description": "Organization id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConfirmRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
     "/v1/admin/orgs/{org}/freeze": {
       "post": {
         "tags": [
@@ -1990,6 +2928,103 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/FreezeResult"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/v1/admin/orgs/{org}/workspaces": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "One organization's workspaces (instance administrators; metadata only).",
+        "operationId": "adminListOrgWorkspaces",
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "description": "Organization id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size, 1..=200 (default 50).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_AdminWorkspace"
                 }
               }
             }
@@ -4233,6 +5268,117 @@
           },
           "429": {
             "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/v1/admin/workspaces/{ws}": {
+      "delete": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Delete any workspace (instance administrators; recent re-auth, typed slug). Runs the\nowner delete's services; shows no content.",
+        "operationId": "adminDeleteWorkspace",
+        "parameters": [
+          {
+            "name": "ws",
+            "in": "path",
+            "description": "Workspace id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConfirmRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -30086,6 +31232,332 @@
           }
         }
       },
+      "AddonEntry": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "description",
+          "versions"
+        ],
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "versions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AddonVersion"
+            },
+            "description": "Newest first."
+          }
+        }
+      },
+      "AddonRepoInfo": {
+        "type": "object",
+        "required": [
+          "name",
+          "description"
+        ],
+        "properties": {
+          "contact": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "description": {
+            "type": "string"
+          },
+          "homepage": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "AddonSource": {
+        "type": "object",
+        "description": "`GET /v1/admin/addon-sources[/{id}]`, C-590.",
+        "required": [
+          "id",
+          "name",
+          "url",
+          "publisher",
+          "key_fingerprint",
+          "update_interval",
+          "status",
+          "manifest_digest",
+          "addons",
+          "addon_count",
+          "removed_upstream",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "addon_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "addons": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AddonEntry"
+            }
+          },
+          "check_failed_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "check_failed_reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Sanitized, at most 200 characters."
+          },
+          "contact": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "homepage": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "key_description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "key_fingerprint": {
+            "type": "string",
+            "description": "`sha256:<12 hex>` of the manifest-published signing key."
+          },
+          "last_checked_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "manifest_digest": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "new_key_fingerprint": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Only while `status = signing_key_changed`."
+          },
+          "publisher": {
+            "type": "string"
+          },
+          "removed_upstream": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RemovedUpstream"
+            }
+          },
+          "status": {
+            "type": "string",
+            "description": "`ok` | `check_failed` | `signing_key_changed`."
+          },
+          "update_interval": {
+            "type": "string",
+            "description": "`6h` | `12h` | `1d` | `1w` | `2w` | `1mo` | `never`."
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "url": {
+            "type": "string",
+            "description": "The resolved manifest URL."
+          }
+        }
+      },
+      "AddonSourceCheckAll": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AddonSourceCheckResult"
+            }
+          }
+        }
+      },
+      "AddonSourceCheckResult": {
+        "type": "object",
+        "description": "One source's check, C-596.",
+        "required": [
+          "source_id",
+          "status",
+          "ingested",
+          "failed_versions"
+        ],
+        "properties": {
+          "check_failed_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "failed_versions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FailedVersion"
+            }
+          },
+          "ingested": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PluginPackage"
+            }
+          },
+          "source_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "status": {
+            "type": "string",
+            "description": "`updated` | `up_to_date` | `failed`."
+          }
+        }
+      },
+      "AddonSourceList": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AddonSource"
+            }
+          }
+        }
+      },
+      "AddonSourcePreview": {
+        "type": "object",
+        "description": "`POST /v1/admin/addon-sources/preview`, C-592: what registering would trust and ingest.",
+        "required": [
+          "url",
+          "repo",
+          "publisher",
+          "key_fingerprint",
+          "addons",
+          "packages_new"
+        ],
+        "properties": {
+          "addons": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AddonEntry"
+            }
+          },
+          "key_description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "key_fingerprint": {
+            "type": "string"
+          },
+          "packages_new": {
+            "type": "integer",
+            "description": "Packages registering would ingest now (not yet on this instance).",
+            "minimum": 0
+          },
+          "publisher": {
+            "type": "string"
+          },
+          "repo": {
+            "$ref": "#/components/schemas/AddonRepoInfo"
+          },
+          "url": {
+            "type": "string",
+            "description": "The normalized manifest URL that would be stored."
+          }
+        }
+      },
+      "AddonVersion": {
+        "type": "object",
+        "description": "One version of one addon as the manifest lists it, with this instance's install state.",
+        "required": [
+          "version",
+          "ingestable",
+          "update_available"
+        ],
+        "properties": {
+          "ingestable": {
+            "type": "boolean",
+            "description": "False while `min_core` is above the running core (listed, not ingestable)."
+          },
+          "installed_version": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The active version of this package on the instance, else the newest ingested one."
+          },
+          "min_core": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "not_ingestable_reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`core_too_new` when not ingestable."
+          },
+          "update_available": {
+            "type": "boolean",
+            "description": "This version is semver-newer than the newest ingested one."
+          },
+          "version": {
+            "type": "string"
+          }
+        }
+      },
       "AdminIdentity": {
         "type": "object",
         "description": "`GET /v1/admin/identity` (C-511): the Helm-configured role mapping, read-only, no secrets.",
@@ -30108,9 +31580,17 @@
           "id",
           "slug",
           "name",
-          "created_at"
+          "created_at",
+          "ownerless",
+          "member_count",
+          "workspace_count",
+          "agent_count"
         ],
         "properties": {
+          "agent_count": {
+            "type": "integer",
+            "format": "int64"
+          },
           "created_at": {
             "type": "string",
             "format": "date-time"
@@ -30129,11 +31609,24 @@
             "type": "string",
             "format": "uuid"
           },
+          "member_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Active members."
+          },
           "name": {
             "type": "string"
           },
+          "ownerless": {
+            "type": "boolean",
+            "description": "(C-733) No active owner."
+          },
           "slug": {
             "type": "string"
+          },
+          "workspace_count": {
+            "type": "integer",
+            "format": "int64"
           }
         }
       },
@@ -30315,6 +31808,41 @@
             }
           }
         ]
+      },
+      "AdminWorkspace": {
+        "type": "object",
+        "description": "One workspace of an organization in the instance-admin view: metadata only (C-733).",
+        "required": [
+          "id",
+          "slug",
+          "name",
+          "personal",
+          "agent_count",
+          "created_at"
+        ],
+        "properties": {
+          "agent_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "personal": {
+            "type": "boolean"
+          },
+          "slug": {
+            "type": "string"
+          }
+        }
       },
       "Agent": {
         "type": "object",
@@ -32269,6 +33797,19 @@
           "equals"
         ]
       },
+      "ConfirmKeyRequest": {
+        "type": "object",
+        "required": [
+          "new_key_fingerprint"
+        ],
+        "properties": {
+          "new_key_fingerprint": {
+            "type": "string",
+            "description": "The new fingerprint the admin saw (echoed back)."
+          }
+        },
+        "additionalProperties": false
+      },
       "ConfirmLinkRequest": {
         "type": "object",
         "required": [
@@ -33551,6 +35092,26 @@
             "description": "`local` (the `memory` backend, or the API limiter kept per replica), `shared`, or\n`fallback` (a class is counting per replica because the backend is unreachable)."
           }
         }
+      },
+      "CreateAddonSourceRequest": {
+        "type": "object",
+        "required": [
+          "url"
+        ],
+        "properties": {
+          "update_interval": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`6h|12h|1d|1w|2w|1mo|never`; default: `plugins.addon_sources.update_interval`."
+          },
+          "url": {
+            "type": "string",
+            "description": "The repo URL or the direct manifest URL (https); the normalized manifest URL is stored."
+          }
+        },
+        "additionalProperties": false
       },
       "CreateAgentRequest": {
         "type": "object",
@@ -35019,6 +36580,25 @@
               "$ref": "#/components/schemas/PurgedAttachment"
             },
             "description": "(P2-FU-1, C-196) The attachments referenced by `items` (`attachment` events and the\n`attachments` of `turn.queued`) whose bytes are gone, so the transcript renders \"expired\"\ninstead of a download link. Empty when none."
+          }
+        }
+      },
+      "FailedVersion": {
+        "type": "object",
+        "required": [
+          "package_id",
+          "version",
+          "reason"
+        ],
+        "properties": {
+          "package_id": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
           }
         }
       },
@@ -39005,9 +40585,17 @@
                 "id",
                 "slug",
                 "name",
-                "created_at"
+                "created_at",
+                "ownerless",
+                "member_count",
+                "workspace_count",
+                "agent_count"
               ],
               "properties": {
+                "agent_count": {
+                  "type": "integer",
+                  "format": "int64"
+                },
                 "created_at": {
                   "type": "string",
                   "format": "date-time"
@@ -39026,11 +40614,24 @@
                   "type": "string",
                   "format": "uuid"
                 },
+                "member_count": {
+                  "type": "integer",
+                  "format": "int64",
+                  "description": "Active members."
+                },
                 "name": {
                   "type": "string"
                 },
+                "ownerless": {
+                  "type": "boolean",
+                  "description": "(C-733) No active owner."
+                },
                 "slug": {
                   "type": "string"
+                },
+                "workspace_count": {
+                  "type": "integer",
+                  "format": "int64"
                 }
               }
             }
@@ -39094,6 +40695,58 @@
                   }
                 }
               ]
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "Page_AdminWorkspace": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "One workspace of an organization in the instance-admin view: metadata only (C-733).",
+              "required": [
+                "id",
+                "slug",
+                "name",
+                "personal",
+                "agent_count",
+                "created_at"
+              ],
+              "properties": {
+                "agent_count": {
+                  "type": "integer",
+                  "format": "int64"
+                },
+                "created_at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "personal": {
+                  "type": "boolean"
+                },
+                "slug": {
+                  "type": "string"
+                }
+              }
             }
           },
           "next_cursor": {
@@ -41066,7 +42719,22 @@
                 },
                 "source": {
                   "type": "string",
-                  "description": "`builtin` | `directory` | `upload`."
+                  "description": "`builtin` | `directory` | `upload` | `addon` (P5-ASRC)."
+                },
+                "source_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "uuid",
+                  "description": "(P5-ASRC, C-600) the addon source row for `source = \"addon\"`."
+                },
+                "source_name": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "(P5-ASRC, C-600) the addon source's name at read time (never stored)."
                 },
                 "status": {
                   "type": "string",
@@ -41077,6 +42745,10 @@
                     "string",
                     "null"
                   ]
+                },
+                "update_available": {
+                  "type": "boolean",
+                  "description": "(P5-ASRC, C-600) a manifest version of the same package is newer than this row."
                 },
                 "version": {
                   "type": "string"
@@ -43693,7 +45365,22 @@
           },
           "source": {
             "type": "string",
-            "description": "`builtin` | `directory` | `upload`."
+            "description": "`builtin` | `directory` | `upload` | `addon` (P5-ASRC)."
+          },
+          "source_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "(P5-ASRC, C-600) the addon source row for `source = \"addon\"`."
+          },
+          "source_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "(P5-ASRC, C-600) the addon source's name at read time (never stored)."
           },
           "status": {
             "type": "string",
@@ -43704,6 +45391,10 @@
               "string",
               "null"
             ]
+          },
+          "update_available": {
+            "type": "boolean",
+            "description": "(P5-ASRC, C-600) a manifest version of the same package is newer than this row."
           },
           "version": {
             "type": "string"
@@ -44264,6 +45955,18 @@
           "disabled",
           "needs_attention"
         ]
+      },
+      "PreviewAddonSourceRequest": {
+        "type": "object",
+        "required": [
+          "url"
+        ],
+        "properties": {
+          "url": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
       },
       "PreviewCreatedBy": {
         "type": "object",
@@ -45048,6 +46751,22 @@
           "streams_open": {
             "type": "integer",
             "format": "int32"
+          },
+          "version": {
+            "type": "string"
+          }
+        }
+      },
+      "RemovedUpstream": {
+        "type": "object",
+        "description": "A version this instance ingested from the source that the manifest no longer lists.",
+        "required": [
+          "package_id",
+          "version"
+        ],
+        "properties": {
+          "package_id": {
+            "type": "string"
           },
           "version": {
             "type": "string"
@@ -48610,6 +50329,19 @@
           "none",
           "block"
         ]
+      },
+      "UpdateAddonSourceRequest": {
+        "type": "object",
+        "required": [
+          "update_interval"
+        ],
+        "properties": {
+          "update_interval": {
+            "type": "string",
+            "description": "`6h|12h|1d|1w|2w|1mo|never`."
+          }
+        },
+        "additionalProperties": false
       },
       "UpdateScheduleRequest": {
         "type": "object",

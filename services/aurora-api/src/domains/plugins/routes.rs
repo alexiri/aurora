@@ -60,6 +60,8 @@ async fn list_plugins(
     for r in page.items {
         items.push(service::to_dto(&s, r).await?);
     }
+    // (P5-ASRC, C-600) provenance (the addon source's name) and "update available" badges.
+    crate::domains::addon_sources::decorate(&s, &mut items).await?;
     Ok(Json(Page {
         items,
         next_cursor: page.next_cursor,

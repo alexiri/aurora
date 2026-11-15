@@ -1,0 +1,2958 @@
+[
+{
+"id": "commonmark:spec_test_1",
+"src": "\tfoo\tbaz\t\tbim\n"
+},
+{
+"id": "commonmark:spec_test_2",
+"src": "  \tfoo\tbaz\t\tbim\n"
+},
+{
+"id": "commonmark:spec_test_3",
+"src": "    a\ta\n    ὐ\ta\n"
+},
+{
+"id": "commonmark:spec_test_4",
+"src": "  - foo\n\n\tbar\n"
+},
+{
+"id": "commonmark:spec_test_5",
+"src": "- foo\n\n\t\tbar\n"
+},
+{
+"id": "commonmark:spec_test_6",
+"src": ">\t\tfoo\n"
+},
+{
+"id": "commonmark:spec_test_7",
+"src": "-\t\tfoo\n"
+},
+{
+"id": "commonmark:spec_test_8",
+"src": "    foo\n\tbar\n"
+},
+{
+"id": "commonmark:spec_test_9",
+"src": " - foo\n   - bar\n\t - baz\n"
+},
+{
+"id": "commonmark:spec_test_10",
+"src": "#\tFoo\n"
+},
+{
+"id": "commonmark:spec_test_11",
+"src": "*\t*\t*\t\n"
+},
+{
+"id": "commonmark:spec_test_12",
+"src": "\\!\\\"\\#\\$\\%\\&\\'\\(\\)\\*\\+\\,\\-\\.\\/\\:\\;\\<\\=\\>\\?\\@\\[\\\\\\]\\^\\_\\`\\{\\|\\}\\~\n"
+},
+{
+"id": "commonmark:spec_test_13",
+"src": "\\\t\\A\\a\\ \\3\\φ\\«\n"
+},
+{
+"id": "commonmark:spec_test_14",
+"src": "\\*not emphasized*\n\\<br/> not a tag\n\\[not a link](/foo)\n\\`not code`\n1\\. not a list\n\\* not a list\n\\# not a heading\n\\[foo]: /url \"not a reference\"\n\\&ouml; not a character entity\n"
+},
+{
+"id": "commonmark:spec_test_15",
+"src": "\\\\*emphasis*\n"
+},
+{
+"id": "commonmark:spec_test_16",
+"src": "foo\\\nbar\n"
+},
+{
+"id": "commonmark:spec_test_17",
+"src": "`` \\[\\` ``\n"
+},
+{
+"id": "commonmark:spec_test_18",
+"src": "    \\[\\]\n"
+},
+{
+"id": "commonmark:spec_test_19",
+"src": "~~~\n\\[\\]\n~~~\n"
+},
+{
+"id": "commonmark:spec_test_20",
+"src": "<https://example.com?find=\\*>\n"
+},
+{
+"id": "commonmark:spec_test_21",
+"src": "<a href=\"/bar\\/)\">\n"
+},
+{
+"id": "commonmark:spec_test_22",
+"src": "[foo](/bar\\* \"ti\\*tle\")\n"
+},
+{
+"id": "commonmark:spec_test_23",
+"src": "[foo]\n\n[foo]: /bar\\* \"ti\\*tle\"\n"
+},
+{
+"id": "commonmark:spec_test_24",
+"src": "``` foo\\+bar\nfoo\n```\n"
+},
+{
+"id": "commonmark:spec_test_25",
+"src": "&nbsp; &amp; &copy; &AElig; &Dcaron;\n&frac34; &HilbertSpace; &DifferentialD;\n&ClockwiseContourIntegral; &ngE;\n"
+},
+{
+"id": "commonmark:spec_test_26",
+"src": "&#35; &#1234; &#992; &#0;\n"
+},
+{
+"id": "commonmark:spec_test_27",
+"src": "&#X22; &#XD06; &#xcab;\n"
+},
+{
+"id": "commonmark:spec_test_28",
+"src": "&nbsp &x; &#; &#x;\n&#87654321;\n&#abcdef0;\n&ThisIsNotDefined; &hi?;\n"
+},
+{
+"id": "commonmark:spec_test_29",
+"src": "&copy\n"
+},
+{
+"id": "commonmark:spec_test_30",
+"src": "&MadeUpEntity;\n"
+},
+{
+"id": "commonmark:spec_test_31",
+"src": "<a href=\"&ouml;&ouml;.html\">\n"
+},
+{
+"id": "commonmark:spec_test_32",
+"src": "[foo](/f&ouml;&ouml; \"f&ouml;&ouml;\")\n"
+},
+{
+"id": "commonmark:spec_test_33",
+"src": "[foo]\n\n[foo]: /f&ouml;&ouml; \"f&ouml;&ouml;\"\n"
+},
+{
+"id": "commonmark:spec_test_34",
+"src": "``` f&ouml;&ouml;\nfoo\n```\n"
+},
+{
+"id": "commonmark:spec_test_35",
+"src": "`f&ouml;&ouml;`\n"
+},
+{
+"id": "commonmark:spec_test_36",
+"src": "    f&ouml;f&ouml;\n"
+},
+{
+"id": "commonmark:spec_test_37",
+"src": "&#42;foo&#42;\n*foo*\n"
+},
+{
+"id": "commonmark:spec_test_38",
+"src": "&#42; foo\n\n* foo\n"
+},
+{
+"id": "commonmark:spec_test_39",
+"src": "foo&#10;&#10;bar\n"
+},
+{
+"id": "commonmark:spec_test_40",
+"src": "&#9;foo\n"
+},
+{
+"id": "commonmark:spec_test_41",
+"src": "[a](url &quot;tit&quot;)\n"
+},
+{
+"id": "commonmark:spec_test_42",
+"src": "- `one\n- two`\n"
+},
+{
+"id": "commonmark:spec_test_43",
+"src": "***\n---\n___\n"
+},
+{
+"id": "commonmark:spec_test_44",
+"src": "+++\n"
+},
+{
+"id": "commonmark:spec_test_45",
+"src": "===\n"
+},
+{
+"id": "commonmark:spec_test_46",
+"src": "--\n**\n__\n"
+},
+{
+"id": "commonmark:spec_test_47",
+"src": " ***\n  ***\n   ***\n"
+},
+{
+"id": "commonmark:spec_test_48",
+"src": "    ***\n"
+},
+{
+"id": "commonmark:spec_test_49",
+"src": "Foo\n    ***\n"
+},
+{
+"id": "commonmark:spec_test_50",
+"src": "_____________________________________\n"
+},
+{
+"id": "commonmark:spec_test_51",
+"src": " - - -\n"
+},
+{
+"id": "commonmark:spec_test_52",
+"src": " **  * ** * ** * **\n"
+},
+{
+"id": "commonmark:spec_test_53",
+"src": "-     -      -      -\n"
+},
+{
+"id": "commonmark:spec_test_54",
+"src": "- - - -    \n"
+},
+{
+"id": "commonmark:spec_test_55",
+"src": "_ _ _ _ a\n\na------\n\n---a---\n"
+},
+{
+"id": "commonmark:spec_test_56",
+"src": " *-*\n"
+},
+{
+"id": "commonmark:spec_test_57",
+"src": "- foo\n***\n- bar\n"
+},
+{
+"id": "commonmark:spec_test_58",
+"src": "Foo\n***\nbar\n"
+},
+{
+"id": "commonmark:spec_test_59",
+"src": "Foo\n---\nbar\n"
+},
+{
+"id": "commonmark:spec_test_60",
+"src": "* Foo\n* * *\n* Bar\n"
+},
+{
+"id": "commonmark:spec_test_61",
+"src": "- Foo\n- * * *\n"
+},
+{
+"id": "commonmark:spec_test_62",
+"src": "# foo\n## foo\n### foo\n#### foo\n##### foo\n###### foo\n"
+},
+{
+"id": "commonmark:spec_test_63",
+"src": "####### foo\n"
+},
+{
+"id": "commonmark:spec_test_64",
+"src": "#5 bolt\n\n#hashtag\n"
+},
+{
+"id": "commonmark:spec_test_65",
+"src": "\\## foo\n"
+},
+{
+"id": "commonmark:spec_test_66",
+"src": "# foo *bar* \\*baz\\*\n"
+},
+{
+"id": "commonmark:spec_test_67",
+"src": "#                  foo                     \n"
+},
+{
+"id": "commonmark:spec_test_68",
+"src": " ### foo\n  ## foo\n   # foo\n"
+},
+{
+"id": "commonmark:spec_test_69",
+"src": "    # foo\n"
+},
+{
+"id": "commonmark:spec_test_70",
+"src": "foo\n    # bar\n"
+},
+{
+"id": "commonmark:spec_test_71",
+"src": "## foo ##\n  ###   bar    ###\n"
+},
+{
+"id": "commonmark:spec_test_72",
+"src": "# foo ##################################\n##### foo ##\n"
+},
+{
+"id": "commonmark:spec_test_73",
+"src": "### foo ###     \n"
+},
+{
+"id": "commonmark:spec_test_74",
+"src": "### foo ### b\n"
+},
+{
+"id": "commonmark:spec_test_75",
+"src": "# foo#\n"
+},
+{
+"id": "commonmark:spec_test_76",
+"src": "### foo \\###\n## foo #\\##\n# foo \\#\n"
+},
+{
+"id": "commonmark:spec_test_77",
+"src": "****\n## foo\n****\n"
+},
+{
+"id": "commonmark:spec_test_78",
+"src": "Foo bar\n# baz\nBar foo\n"
+},
+{
+"id": "commonmark:spec_test_79",
+"src": "## \n#\n### ###\n"
+},
+{
+"id": "commonmark:spec_test_80",
+"src": "Foo *bar*\n=========\n\nFoo *bar*\n---------\n"
+},
+{
+"id": "commonmark:spec_test_81",
+"src": "Foo *bar\nbaz*\n====\n"
+},
+{
+"id": "commonmark:spec_test_82",
+"src": "  Foo *bar\nbaz*\t\n====\n"
+},
+{
+"id": "commonmark:spec_test_83",
+"src": "Foo\n-------------------------\n\nFoo\n=\n"
+},
+{
+"id": "commonmark:spec_test_84",
+"src": "   Foo\n---\n\n  Foo\n-----\n\n  Foo\n  ===\n"
+},
+{
+"id": "commonmark:spec_test_85",
+"src": "    Foo\n    ---\n\n    Foo\n---\n"
+},
+{
+"id": "commonmark:spec_test_86",
+"src": "Foo\n   ----      \n"
+},
+{
+"id": "commonmark:spec_test_87",
+"src": "Foo\n    ---\n"
+},
+{
+"id": "commonmark:spec_test_88",
+"src": "Foo\n= =\n\nFoo\n--- -\n"
+},
+{
+"id": "commonmark:spec_test_89",
+"src": "Foo  \n-----\n"
+},
+{
+"id": "commonmark:spec_test_90",
+"src": "Foo\\\n----\n"
+},
+{
+"id": "commonmark:spec_test_91",
+"src": "`Foo\n----\n`\n\n<a title=\"a lot\n---\nof dashes\"/>\n"
+},
+{
+"id": "commonmark:spec_test_92",
+"src": "> Foo\n---\n"
+},
+{
+"id": "commonmark:spec_test_93",
+"src": "> foo\nbar\n===\n"
+},
+{
+"id": "commonmark:spec_test_94",
+"src": "- Foo\n---\n"
+},
+{
+"id": "commonmark:spec_test_95",
+"src": "Foo\nBar\n---\n"
+},
+{
+"id": "commonmark:spec_test_96",
+"src": "---\nFoo\n---\nBar\n---\nBaz\n"
+},
+{
+"id": "commonmark:spec_test_97",
+"src": "\n====\n"
+},
+{
+"id": "commonmark:spec_test_98",
+"src": "---\n---\n"
+},
+{
+"id": "commonmark:spec_test_99",
+"src": "- foo\n-----\n"
+},
+{
+"id": "commonmark:spec_test_100",
+"src": "    foo\n---\n"
+},
+{
+"id": "commonmark:spec_test_101",
+"src": "> foo\n-----\n"
+},
+{
+"id": "commonmark:spec_test_102",
+"src": "\\> foo\n------\n"
+},
+{
+"id": "commonmark:spec_test_103",
+"src": "Foo\n\nbar\n---\nbaz\n"
+},
+{
+"id": "commonmark:spec_test_104",
+"src": "Foo\nbar\n\n---\n\nbaz\n"
+},
+{
+"id": "commonmark:spec_test_105",
+"src": "Foo\nbar\n* * *\nbaz\n"
+},
+{
+"id": "commonmark:spec_test_106",
+"src": "Foo\nbar\n\\---\nbaz\n"
+},
+{
+"id": "commonmark:spec_test_107",
+"src": "    a simple\n      indented code block\n"
+},
+{
+"id": "commonmark:spec_test_108",
+"src": "  - foo\n\n    bar\n"
+},
+{
+"id": "commonmark:spec_test_109",
+"src": "1.  foo\n\n    - bar\n"
+},
+{
+"id": "commonmark:spec_test_110",
+"src": "    <a/>\n    *hi*\n\n    - one\n"
+},
+{
+"id": "commonmark:spec_test_111",
+"src": "    chunk1\n\n    chunk2\n  \n \n \n    chunk3\n"
+},
+{
+"id": "commonmark:spec_test_112",
+"src": "    chunk1\n      \n      chunk2\n"
+},
+{
+"id": "commonmark:spec_test_113",
+"src": "Foo\n    bar\n\n"
+},
+{
+"id": "commonmark:spec_test_114",
+"src": "    foo\nbar\n"
+},
+{
+"id": "commonmark:spec_test_115",
+"src": "# Heading\n    foo\nHeading\n------\n    foo\n----\n"
+},
+{
+"id": "commonmark:spec_test_116",
+"src": "        foo\n    bar\n"
+},
+{
+"id": "commonmark:spec_test_117",
+"src": "\n    \n    foo\n    \n\n"
+},
+{
+"id": "commonmark:spec_test_118",
+"src": "    foo  \n"
+},
+{
+"id": "commonmark:spec_test_119",
+"src": "```\n<\n >\n```\n"
+},
+{
+"id": "commonmark:spec_test_120",
+"src": "~~~\n<\n >\n~~~\n"
+},
+{
+"id": "commonmark:spec_test_121",
+"src": "``\nfoo\n``\n"
+},
+{
+"id": "commonmark:spec_test_122",
+"src": "```\naaa\n~~~\n```\n"
+},
+{
+"id": "commonmark:spec_test_123",
+"src": "~~~\naaa\n```\n~~~\n"
+},
+{
+"id": "commonmark:spec_test_124",
+"src": "````\naaa\n```\n``````\n"
+},
+{
+"id": "commonmark:spec_test_125",
+"src": "~~~~\naaa\n~~~\n~~~~\n"
+},
+{
+"id": "commonmark:spec_test_126",
+"src": "```\n"
+},
+{
+"id": "commonmark:spec_test_127",
+"src": "`````\n\n```\naaa\n"
+},
+{
+"id": "commonmark:spec_test_128",
+"src": "> ```\n> aaa\n\nbbb\n"
+},
+{
+"id": "commonmark:spec_test_129",
+"src": "```\n\n  \n```\n"
+},
+{
+"id": "commonmark:spec_test_130",
+"src": "```\n```\n"
+},
+{
+"id": "commonmark:spec_test_131",
+"src": " ```\n aaa\naaa\n```\n"
+},
+{
+"id": "commonmark:spec_test_132",
+"src": "  ```\naaa\n  aaa\naaa\n  ```\n"
+},
+{
+"id": "commonmark:spec_test_133",
+"src": "   ```\n   aaa\n    aaa\n  aaa\n   ```\n"
+},
+{
+"id": "commonmark:spec_test_134",
+"src": "    ```\n    aaa\n    ```\n"
+},
+{
+"id": "commonmark:spec_test_135",
+"src": "```\naaa\n  ```\n"
+},
+{
+"id": "commonmark:spec_test_136",
+"src": "   ```\naaa\n  ```\n"
+},
+{
+"id": "commonmark:spec_test_137",
+"src": "```\naaa\n    ```\n"
+},
+{
+"id": "commonmark:spec_test_138",
+"src": "``` ```\naaa\n"
+},
+{
+"id": "commonmark:spec_test_139",
+"src": "~~~~~~\naaa\n~~~ ~~\n"
+},
+{
+"id": "commonmark:spec_test_140",
+"src": "foo\n```\nbar\n```\nbaz\n"
+},
+{
+"id": "commonmark:spec_test_141",
+"src": "foo\n---\n~~~\nbar\n~~~\n# baz\n"
+},
+{
+"id": "commonmark:spec_test_142",
+"src": "```ruby\ndef foo(x)\n  return 3\nend\n```\n"
+},
+{
+"id": "commonmark:spec_test_143",
+"src": "~~~~    ruby startline=3 $%@#$\ndef foo(x)\n  return 3\nend\n~~~~~~~\n"
+},
+{
+"id": "commonmark:spec_test_144",
+"src": "````;\n````\n"
+},
+{
+"id": "commonmark:spec_test_145",
+"src": "``` aa ```\nfoo\n"
+},
+{
+"id": "commonmark:spec_test_146",
+"src": "~~~ aa ``` ~~~\nfoo\n~~~\n"
+},
+{
+"id": "commonmark:spec_test_147",
+"src": "```\n``` aaa\n```\n"
+},
+{
+"id": "commonmark:spec_test_148",
+"src": "<table><tr><td>\n<pre>\n**Hello**,\n\n_world_.\n</pre>\n</td></tr></table>\n"
+},
+{
+"id": "commonmark:spec_test_149",
+"src": "<table>\n  <tr>\n    <td>\n           hi\n    </td>\n  </tr>\n</table>\n\nokay.\n"
+},
+{
+"id": "commonmark:spec_test_150",
+"src": " <div>\n  *hello*\n         <foo><a>\n"
+},
+{
+"id": "commonmark:spec_test_151",
+"src": "</div>\n*foo*\n"
+},
+{
+"id": "commonmark:spec_test_152",
+"src": "<DIV CLASS=\"foo\">\n\n*Markdown*\n\n</DIV>\n"
+},
+{
+"id": "commonmark:spec_test_153",
+"src": "<div id=\"foo\"\n  class=\"bar\">\n</div>\n"
+},
+{
+"id": "commonmark:spec_test_154",
+"src": "<div id=\"foo\" class=\"bar\n  baz\">\n</div>\n"
+},
+{
+"id": "commonmark:spec_test_155",
+"src": "<div>\n*foo*\n\n*bar*\n"
+},
+{
+"id": "commonmark:spec_test_156",
+"src": "<div id=\"foo\"\n*hi*\n"
+},
+{
+"id": "commonmark:spec_test_157",
+"src": "<div class\nfoo\n"
+},
+{
+"id": "commonmark:spec_test_158",
+"src": "<div *???-&&&-<---\n*foo*\n"
+},
+{
+"id": "commonmark:spec_test_159",
+"src": "<div><a href=\"bar\">*foo*</a></div>\n"
+},
+{
+"id": "commonmark:spec_test_160",
+"src": "<table><tr><td>\nfoo\n</td></tr></table>\n"
+},
+{
+"id": "commonmark:spec_test_161",
+"src": "<div></div>\n``` c\nint x = 33;\n```\n"
+},
+{
+"id": "commonmark:spec_test_162",
+"src": "<a href=\"foo\">\n*bar*\n</a>\n"
+},
+{
+"id": "commonmark:spec_test_163",
+"src": "<Warning>\n*bar*\n</Warning>\n"
+},
+{
+"id": "commonmark:spec_test_164",
+"src": "<i class=\"foo\">\n*bar*\n</i>\n"
+},
+{
+"id": "commonmark:spec_test_165",
+"src": "</ins>\n*bar*\n"
+},
+{
+"id": "commonmark:spec_test_166",
+"src": "<del>\n*foo*\n</del>\n"
+},
+{
+"id": "commonmark:spec_test_167",
+"src": "<del>\n\n*foo*\n\n</del>\n"
+},
+{
+"id": "commonmark:spec_test_168",
+"src": "<del>*foo*</del>\n"
+},
+{
+"id": "commonmark:spec_test_169",
+"src": "<pre language=\"haskell\"><code>\nimport Text.HTML.TagSoup\n\nmain :: IO ()\nmain = print $ parseTags tags\n</code></pre>\nokay\n"
+},
+{
+"id": "commonmark:spec_test_170",
+"src": "<script type=\"text/javascript\">\n// JavaScript example\n\ndocument.getElementById(\"demo\").innerHTML = \"Hello JavaScript!\";\n</script>\nokay\n"
+},
+{
+"id": "commonmark:spec_test_171",
+"src": "<textarea>\n\n*foo*\n\n_bar_\n\n</textarea>\n"
+},
+{
+"id": "commonmark:spec_test_172",
+"src": "<style\n  type=\"text/css\">\nh1 {color:red;}\n\np {color:blue;}\n</style>\nokay\n"
+},
+{
+"id": "commonmark:spec_test_173",
+"src": "<style\n  type=\"text/css\">\n\nfoo\n"
+},
+{
+"id": "commonmark:spec_test_174",
+"src": "> <div>\n> foo\n\nbar\n"
+},
+{
+"id": "commonmark:spec_test_175",
+"src": "- <div>\n- foo\n"
+},
+{
+"id": "commonmark:spec_test_176",
+"src": "<style>p{color:red;}</style>\n*foo*\n"
+},
+{
+"id": "commonmark:spec_test_177",
+"src": "<!-- foo -->*bar*\n*baz*\n"
+},
+{
+"id": "commonmark:spec_test_178",
+"src": "<script>\nfoo\n</script>1. *bar*\n"
+},
+{
+"id": "commonmark:spec_test_179",
+"src": "<!-- Foo\n\nbar\n   baz -->\nokay\n"
+},
+{
+"id": "commonmark:spec_test_180",
+"src": "<?php\n\n  echo '>';\n\n?>\nokay\n"
+},
+{
+"id": "commonmark:spec_test_181",
+"src": "<!DOCTYPE html>\n"
+},
+{
+"id": "commonmark:spec_test_182",
+"src": "<![CDATA[\nfunction matchwo(a,b)\n{\n  if (a < b && a < 0) then {\n    return 1;\n\n  } else {\n\n    return 0;\n  }\n}\n]]>\nokay\n"
+},
+{
+"id": "commonmark:spec_test_183",
+"src": "  <!-- foo -->\n\n    <!-- foo -->\n"
+},
+{
+"id": "commonmark:spec_test_184",
+"src": "  <div>\n\n    <div>\n"
+},
+{
+"id": "commonmark:spec_test_185",
+"src": "Foo\n<div>\nbar\n</div>\n"
+},
+{
+"id": "commonmark:spec_test_186",
+"src": "<div>\nbar\n</div>\n*foo*\n"
+},
+{
+"id": "commonmark:spec_test_187",
+"src": "Foo\n<a href=\"bar\">\nbaz\n"
+},
+{
+"id": "commonmark:spec_test_188",
+"src": "<div>\n\n*Emphasized* text.\n\n</div>\n"
+},
+{
+"id": "commonmark:spec_test_189",
+"src": "<div>\n*Emphasized* text.\n</div>\n"
+},
+{
+"id": "commonmark:spec_test_190",
+"src": "<table>\n\n<tr>\n\n<td>\nHi\n</td>\n\n</tr>\n\n</table>\n"
+},
+{
+"id": "commonmark:spec_test_191",
+"src": "<table>\n\n  <tr>\n\n    <td>\n      Hi\n    </td>\n\n  </tr>\n\n</table>\n"
+},
+{
+"id": "commonmark:spec_test_192",
+"src": "[foo]: /url \"title\"\n\n[foo]\n"
+},
+{
+"id": "commonmark:spec_test_193",
+"src": "   [foo]: \n      /url  \n           'the title'  \n\n[foo]\n"
+},
+{
+"id": "commonmark:spec_test_194",
+"src": "[Foo*bar\\]]:my_(url) 'title (with parens)'\n\n[Foo*bar\\]]\n"
+},
+{
+"id": "commonmark:spec_test_195",
+"src": "[Foo bar]:\n<my url>\n'title'\n\n[Foo bar]\n"
+},
+{
+"id": "commonmark:spec_test_196",
+"src": "[foo]: /url '\ntitle\nline1\nline2\n'\n\n[foo]\n"
+},
+{
+"id": "commonmark:spec_test_197",
+"src": "[foo]: /url 'title\n\nwith blank line'\n\n[foo]\n"
+},
+{
+"id": "commonmark:spec_test_198",
+"src": "[foo]:\n/url\n\n[foo]\n"
+},
+{
+"id": "commonmark:spec_test_199",
+"src": "[foo]:\n\n[foo]\n"
+},
+{
+"id": "commonmark:spec_test_200",
+"src": "[foo]: <>\n\n[foo]\n"
+},
+{
+"id": "commonmark:spec_test_201",
+"src": "[foo]: <bar>(baz)\n\n[foo]\n"
+},
+{
+"id": "commonmark:spec_test_202",
+"src": "[foo]: /url\\bar\\*baz \"foo\\\"bar\\baz\"\n\n[foo]\n"
+},
+{
+"id": "commonmark:spec_test_203",
+"src": "[foo]\n\n[foo]: url\n"
+},
+{
+"id": "commonmark:spec_test_204",
+"src": "[foo]\n\n[foo]: first\n[foo]: second\n"
+},
+{
+"id": "commonmark:spec_test_205",
+"src": "[FOO]: /url\n\n[Foo]\n"
+},
+{
+"id": "commonmark:spec_test_206",
+"src": "[ΑΓΩ]: /φου\n\n[αγω]\n"
+},
+{
+"id": "commonmark:spec_test_207",
+"src": "[foo]: /url\n"
+},
+{
+"id": "commonmark:spec_test_208",
+"src": "[\nfoo\n]: /url\nbar\n"
+},
+{
+"id": "commonmark:spec_test_209",
+"src": "[foo]: /url \"title\" ok\n"
+},
+{
+"id": "commonmark:spec_test_210",
+"src": "[foo]: /url\n\"title\" ok\n"
+},
+{
+"id": "commonmark:spec_test_211",
+"src": "    [foo]: /url \"title\"\n\n[foo]\n"
+},
+{
+"id": "commonmark:spec_test_212",
+"src": "```\n[foo]: /url\n```\n\n[foo]\n"
+},
+{
+"id": "commonmark:spec_test_213",
+"src": "Foo\n[bar]: /baz\n\n[bar]\n"
+},
+{
+"id": "commonmark:spec_test_214",
+"src": "# [Foo]\n[foo]: /url\n> bar\n"
+},
+{
+"id": "commonmark:spec_test_215",
+"src": "[foo]: /url\nbar\n===\n[foo]\n"
+},
+{
+"id": "commonmark:spec_test_216",
+"src": "[foo]: /url\n===\n[foo]\n"
+},
+{
+"id": "commonmark:spec_test_217",
+"src": "[foo]: /foo-url \"foo\"\n[bar]: /bar-url\n  \"bar\"\n[baz]: /baz-url\n\n[foo],\n[bar],\n[baz]\n"
+},
+{
+"id": "commonmark:spec_test_218",
+"src": "[foo]\n\n> [foo]: /url\n"
+},
+{
+"id": "commonmark:spec_test_219",
+"src": "aaa\n\nbbb\n"
+},
+{
+"id": "commonmark:spec_test_220",
+"src": "aaa\nbbb\n\nccc\nddd\n"
+},
+{
+"id": "commonmark:spec_test_221",
+"src": "aaa\n\n\nbbb\n"
+},
+{
+"id": "commonmark:spec_test_222",
+"src": "  aaa\n bbb\n"
+},
+{
+"id": "commonmark:spec_test_223",
+"src": "aaa\n             bbb\n                                       ccc\n"
+},
+{
+"id": "commonmark:spec_test_224",
+"src": "   aaa\nbbb\n"
+},
+{
+"id": "commonmark:spec_test_225",
+"src": "    aaa\nbbb\n"
+},
+{
+"id": "commonmark:spec_test_226",
+"src": "aaa     \nbbb     \n"
+},
+{
+"id": "commonmark:spec_test_227",
+"src": "  \n\naaa\n  \n\n# aaa\n\n  \n"
+},
+{
+"id": "commonmark:spec_test_228",
+"src": "> # Foo\n> bar\n> baz\n"
+},
+{
+"id": "commonmark:spec_test_229",
+"src": "># Foo\n>bar\n> baz\n"
+},
+{
+"id": "commonmark:spec_test_230",
+"src": "   > # Foo\n   > bar\n > baz\n"
+},
+{
+"id": "commonmark:spec_test_231",
+"src": "    > # Foo\n    > bar\n    > baz\n"
+},
+{
+"id": "commonmark:spec_test_232",
+"src": "> # Foo\n> bar\nbaz\n"
+},
+{
+"id": "commonmark:spec_test_233",
+"src": "> bar\nbaz\n> foo\n"
+},
+{
+"id": "commonmark:spec_test_234",
+"src": "> foo\n---\n"
+},
+{
+"id": "commonmark:spec_test_235",
+"src": "> - foo\n- bar\n"
+},
+{
+"id": "commonmark:spec_test_236",
+"src": ">     foo\n    bar\n"
+},
+{
+"id": "commonmark:spec_test_237",
+"src": "> ```\nfoo\n```\n"
+},
+{
+"id": "commonmark:spec_test_238",
+"src": "> foo\n    - bar\n"
+},
+{
+"id": "commonmark:spec_test_239",
+"src": ">\n"
+},
+{
+"id": "commonmark:spec_test_240",
+"src": ">\n>  \n> \n"
+},
+{
+"id": "commonmark:spec_test_241",
+"src": ">\n> foo\n>  \n"
+},
+{
+"id": "commonmark:spec_test_242",
+"src": "> foo\n\n> bar\n"
+},
+{
+"id": "commonmark:spec_test_243",
+"src": "> foo\n> bar\n"
+},
+{
+"id": "commonmark:spec_test_244",
+"src": "> foo\n>\n> bar\n"
+},
+{
+"id": "commonmark:spec_test_245",
+"src": "foo\n> bar\n"
+},
+{
+"id": "commonmark:spec_test_246",
+"src": "> aaa\n***\n> bbb\n"
+},
+{
+"id": "commonmark:spec_test_247",
+"src": "> bar\nbaz\n"
+},
+{
+"id": "commonmark:spec_test_248",
+"src": "> bar\n\nbaz\n"
+},
+{
+"id": "commonmark:spec_test_249",
+"src": "> bar\n>\nbaz\n"
+},
+{
+"id": "commonmark:spec_test_250",
+"src": "> > > foo\nbar\n"
+},
+{
+"id": "commonmark:spec_test_251",
+"src": ">>> foo\n> bar\n>>baz\n"
+},
+{
+"id": "commonmark:spec_test_252",
+"src": ">     code\n\n>    not code\n"
+},
+{
+"id": "commonmark:spec_test_253",
+"src": "A paragraph\nwith two lines.\n\n    indented code\n\n> A block quote.\n"
+},
+{
+"id": "commonmark:spec_test_254",
+"src": "1.  A paragraph\n    with two lines.\n\n        indented code\n\n    > A block quote.\n"
+},
+{
+"id": "commonmark:spec_test_255",
+"src": "- one\n\n two\n"
+},
+{
+"id": "commonmark:spec_test_256",
+"src": "- one\n\n  two\n"
+},
+{
+"id": "commonmark:spec_test_257",
+"src": " -    one\n\n     two\n"
+},
+{
+"id": "commonmark:spec_test_258",
+"src": " -    one\n\n      two\n"
+},
+{
+"id": "commonmark:spec_test_259",
+"src": "   > > 1.  one\n>>\n>>     two\n"
+},
+{
+"id": "commonmark:spec_test_260",
+"src": ">>- one\n>>\n  >  > two\n"
+},
+{
+"id": "commonmark:spec_test_261",
+"src": "-one\n\n2.two\n"
+},
+{
+"id": "commonmark:spec_test_262",
+"src": "- foo\n\n\n  bar\n"
+},
+{
+"id": "commonmark:spec_test_263",
+"src": "1.  foo\n\n    ```\n    bar\n    ```\n\n    baz\n\n    > bam\n"
+},
+{
+"id": "commonmark:spec_test_264",
+"src": "- Foo\n\n      bar\n\n\n      baz\n"
+},
+{
+"id": "commonmark:spec_test_265",
+"src": "123456789. ok\n"
+},
+{
+"id": "commonmark:spec_test_266",
+"src": "1234567890. not ok\n"
+},
+{
+"id": "commonmark:spec_test_267",
+"src": "0. ok\n"
+},
+{
+"id": "commonmark:spec_test_268",
+"src": "003. ok\n"
+},
+{
+"id": "commonmark:spec_test_269",
+"src": "-1. not ok\n"
+},
+{
+"id": "commonmark:spec_test_270",
+"src": "- foo\n\n      bar\n"
+},
+{
+"id": "commonmark:spec_test_271",
+"src": "  10.  foo\n\n           bar\n"
+},
+{
+"id": "commonmark:spec_test_272",
+"src": "    indented code\n\nparagraph\n\n    more code\n"
+},
+{
+"id": "commonmark:spec_test_273",
+"src": "1.     indented code\n\n   paragraph\n\n       more code\n"
+},
+{
+"id": "commonmark:spec_test_274",
+"src": "1.      indented code\n\n   paragraph\n\n       more code\n"
+},
+{
+"id": "commonmark:spec_test_275",
+"src": "   foo\n\nbar\n"
+},
+{
+"id": "commonmark:spec_test_276",
+"src": "-    foo\n\n  bar\n"
+},
+{
+"id": "commonmark:spec_test_277",
+"src": "-  foo\n\n   bar\n"
+},
+{
+"id": "commonmark:spec_test_278",
+"src": "-\n  foo\n-\n  ```\n  bar\n  ```\n-\n      baz\n"
+},
+{
+"id": "commonmark:spec_test_279",
+"src": "-   \n  foo\n"
+},
+{
+"id": "commonmark:spec_test_280",
+"src": "-\n\n  foo\n"
+},
+{
+"id": "commonmark:spec_test_281",
+"src": "- foo\n-\n- bar\n"
+},
+{
+"id": "commonmark:spec_test_282",
+"src": "- foo\n-   \n- bar\n"
+},
+{
+"id": "commonmark:spec_test_283",
+"src": "1. foo\n2.\n3. bar\n"
+},
+{
+"id": "commonmark:spec_test_284",
+"src": "*\n"
+},
+{
+"id": "commonmark:spec_test_285",
+"src": "foo\n*\n\nfoo\n1.\n"
+},
+{
+"id": "commonmark:spec_test_286",
+"src": " 1.  A paragraph\n     with two lines.\n\n         indented code\n\n     > A block quote.\n"
+},
+{
+"id": "commonmark:spec_test_287",
+"src": "  1.  A paragraph\n      with two lines.\n\n          indented code\n\n      > A block quote.\n"
+},
+{
+"id": "commonmark:spec_test_288",
+"src": "   1.  A paragraph\n       with two lines.\n\n           indented code\n\n       > A block quote.\n"
+},
+{
+"id": "commonmark:spec_test_289",
+"src": "    1.  A paragraph\n        with two lines.\n\n            indented code\n\n        > A block quote.\n"
+},
+{
+"id": "commonmark:spec_test_290",
+"src": "  1.  A paragraph\nwith two lines.\n\n          indented code\n\n      > A block quote.\n"
+},
+{
+"id": "commonmark:spec_test_291",
+"src": "  1.  A paragraph\n    with two lines.\n"
+},
+{
+"id": "commonmark:spec_test_292",
+"src": "> 1. > Blockquote\ncontinued here.\n"
+},
+{
+"id": "commonmark:spec_test_293",
+"src": "> 1. > Blockquote\n> continued here.\n"
+},
+{
+"id": "commonmark:spec_test_294",
+"src": "- foo\n  - bar\n    - baz\n      - boo\n"
+},
+{
+"id": "commonmark:spec_test_295",
+"src": "- foo\n - bar\n  - baz\n   - boo\n"
+},
+{
+"id": "commonmark:spec_test_296",
+"src": "10) foo\n    - bar\n"
+},
+{
+"id": "commonmark:spec_test_297",
+"src": "10) foo\n   - bar\n"
+},
+{
+"id": "commonmark:spec_test_298",
+"src": "- - foo\n"
+},
+{
+"id": "commonmark:spec_test_299",
+"src": "1. - 2. foo\n"
+},
+{
+"id": "commonmark:spec_test_300",
+"src": "- # Foo\n- Bar\n  ---\n  baz\n"
+},
+{
+"id": "commonmark:spec_test_301",
+"src": "- foo\n- bar\n+ baz\n"
+},
+{
+"id": "commonmark:spec_test_302",
+"src": "1. foo\n2. bar\n3) baz\n"
+},
+{
+"id": "commonmark:spec_test_303",
+"src": "Foo\n- bar\n- baz\n"
+},
+{
+"id": "commonmark:spec_test_304",
+"src": "The number of windows in my house is\n14.  The number of doors is 6.\n"
+},
+{
+"id": "commonmark:spec_test_305",
+"src": "The number of windows in my house is\n1.  The number of doors is 6.\n"
+},
+{
+"id": "commonmark:spec_test_306",
+"src": "- foo\n\n- bar\n\n\n- baz\n"
+},
+{
+"id": "commonmark:spec_test_307",
+"src": "- foo\n  - bar\n    - baz\n\n\n      bim\n"
+},
+{
+"id": "commonmark:spec_test_308",
+"src": "- foo\n- bar\n\n<!-- -->\n\n- baz\n- bim\n"
+},
+{
+"id": "commonmark:spec_test_309",
+"src": "-   foo\n\n    notcode\n\n-   foo\n\n<!-- -->\n\n    code\n"
+},
+{
+"id": "commonmark:spec_test_310",
+"src": "- a\n - b\n  - c\n   - d\n  - e\n - f\n- g\n"
+},
+{
+"id": "commonmark:spec_test_311",
+"src": "1. a\n\n  2. b\n\n   3. c\n"
+},
+{
+"id": "commonmark:spec_test_312",
+"src": "- a\n - b\n  - c\n   - d\n    - e\n"
+},
+{
+"id": "commonmark:spec_test_313",
+"src": "1. a\n\n  2. b\n\n    3. c\n"
+},
+{
+"id": "commonmark:spec_test_314",
+"src": "- a\n- b\n\n- c\n"
+},
+{
+"id": "commonmark:spec_test_315",
+"src": "* a\n*\n\n* c\n"
+},
+{
+"id": "commonmark:spec_test_316",
+"src": "- a\n- b\n\n  c\n- d\n"
+},
+{
+"id": "commonmark:spec_test_317",
+"src": "- a\n- b\n\n  [ref]: /url\n- d\n"
+},
+{
+"id": "commonmark:spec_test_318",
+"src": "- a\n- ```\n  b\n\n\n  ```\n- c\n"
+},
+{
+"id": "commonmark:spec_test_319",
+"src": "- a\n  - b\n\n    c\n- d\n"
+},
+{
+"id": "commonmark:spec_test_320",
+"src": "* a\n  > b\n  >\n* c\n"
+},
+{
+"id": "commonmark:spec_test_321",
+"src": "- a\n  > b\n  ```\n  c\n  ```\n- d\n"
+},
+{
+"id": "commonmark:spec_test_322",
+"src": "- a\n"
+},
+{
+"id": "commonmark:spec_test_323",
+"src": "- a\n  - b\n"
+},
+{
+"id": "commonmark:spec_test_324",
+"src": "1. ```\n   foo\n   ```\n\n   bar\n"
+},
+{
+"id": "commonmark:spec_test_325",
+"src": "* foo\n  * bar\n\n  baz\n"
+},
+{
+"id": "commonmark:spec_test_326",
+"src": "- a\n  - b\n  - c\n\n- d\n  - e\n  - f\n"
+},
+{
+"id": "commonmark:spec_test_327",
+"src": "`hi`lo`\n"
+},
+{
+"id": "commonmark:spec_test_328",
+"src": "`foo`\n"
+},
+{
+"id": "commonmark:spec_test_329",
+"src": "`` foo ` bar ``\n"
+},
+{
+"id": "commonmark:spec_test_330",
+"src": "` `` `\n"
+},
+{
+"id": "commonmark:spec_test_331",
+"src": "`  ``  `\n"
+},
+{
+"id": "commonmark:spec_test_332",
+"src": "` a`\n"
+},
+{
+"id": "commonmark:spec_test_333",
+"src": "` b `\n"
+},
+{
+"id": "commonmark:spec_test_334",
+"src": "` `\n`  `\n"
+},
+{
+"id": "commonmark:spec_test_335",
+"src": "``\nfoo\nbar  \nbaz\n``\n"
+},
+{
+"id": "commonmark:spec_test_336",
+"src": "``\nfoo \n``\n"
+},
+{
+"id": "commonmark:spec_test_337",
+"src": "`foo   bar \nbaz`\n"
+},
+{
+"id": "commonmark:spec_test_338",
+"src": "`foo\\`bar`\n"
+},
+{
+"id": "commonmark:spec_test_339",
+"src": "``foo`bar``\n"
+},
+{
+"id": "commonmark:spec_test_340",
+"src": "` foo `` bar `\n"
+},
+{
+"id": "commonmark:spec_test_341",
+"src": "*foo`*`\n"
+},
+{
+"id": "commonmark:spec_test_342",
+"src": "[not a `link](/foo`)\n"
+},
+{
+"id": "commonmark:spec_test_343",
+"src": "`<a href=\"`\">`\n"
+},
+{
+"id": "commonmark:spec_test_344",
+"src": "<a href=\"`\">`\n"
+},
+{
+"id": "commonmark:spec_test_345",
+"src": "`<https://foo.bar.`baz>`\n"
+},
+{
+"id": "commonmark:spec_test_346",
+"src": "<https://foo.bar.`baz>`\n"
+},
+{
+"id": "commonmark:spec_test_347",
+"src": "```foo``\n"
+},
+{
+"id": "commonmark:spec_test_348",
+"src": "`foo\n"
+},
+{
+"id": "commonmark:spec_test_349",
+"src": "`foo``bar``\n"
+},
+{
+"id": "commonmark:spec_test_350",
+"src": "*foo bar*\n"
+},
+{
+"id": "commonmark:spec_test_351",
+"src": "a * foo bar*\n"
+},
+{
+"id": "commonmark:spec_test_352",
+"src": "a*\"foo\"*\n"
+},
+{
+"id": "commonmark:spec_test_353",
+"src": "* a *\n"
+},
+{
+"id": "commonmark:spec_test_354",
+"src": "*$*alpha.\n\n*£*bravo.\n\n*€*charlie.\n"
+},
+{
+"id": "commonmark:spec_test_355",
+"src": "foo*bar*\n"
+},
+{
+"id": "commonmark:spec_test_356",
+"src": "5*6*78\n"
+},
+{
+"id": "commonmark:spec_test_357",
+"src": "_foo bar_\n"
+},
+{
+"id": "commonmark:spec_test_358",
+"src": "_ foo bar_\n"
+},
+{
+"id": "commonmark:spec_test_359",
+"src": "a_\"foo\"_\n"
+},
+{
+"id": "commonmark:spec_test_360",
+"src": "foo_bar_\n"
+},
+{
+"id": "commonmark:spec_test_361",
+"src": "5_6_78\n"
+},
+{
+"id": "commonmark:spec_test_362",
+"src": "пристаням_стремятся_\n"
+},
+{
+"id": "commonmark:spec_test_363",
+"src": "aa_\"bb\"_cc\n"
+},
+{
+"id": "commonmark:spec_test_364",
+"src": "foo-_(bar)_\n"
+},
+{
+"id": "commonmark:spec_test_365",
+"src": "_foo*\n"
+},
+{
+"id": "commonmark:spec_test_366",
+"src": "*foo bar *\n"
+},
+{
+"id": "commonmark:spec_test_367",
+"src": "*foo bar\n*\n"
+},
+{
+"id": "commonmark:spec_test_368",
+"src": "*(*foo)\n"
+},
+{
+"id": "commonmark:spec_test_369",
+"src": "*(*foo*)*\n"
+},
+{
+"id": "commonmark:spec_test_370",
+"src": "*foo*bar\n"
+},
+{
+"id": "commonmark:spec_test_371",
+"src": "_foo bar _\n"
+},
+{
+"id": "commonmark:spec_test_372",
+"src": "_(_foo)\n"
+},
+{
+"id": "commonmark:spec_test_373",
+"src": "_(_foo_)_\n"
+},
+{
+"id": "commonmark:spec_test_374",
+"src": "_foo_bar\n"
+},
+{
+"id": "commonmark:spec_test_375",
+"src": "_пристаням_стремятся\n"
+},
+{
+"id": "commonmark:spec_test_376",
+"src": "_foo_bar_baz_\n"
+},
+{
+"id": "commonmark:spec_test_377",
+"src": "_(bar)_.\n"
+},
+{
+"id": "commonmark:spec_test_378",
+"src": "**foo bar**\n"
+},
+{
+"id": "commonmark:spec_test_379",
+"src": "** foo bar**\n"
+},
+{
+"id": "commonmark:spec_test_380",
+"src": "a**\"foo\"**\n"
+},
+{
+"id": "commonmark:spec_test_381",
+"src": "foo**bar**\n"
+},
+{
+"id": "commonmark:spec_test_382",
+"src": "__foo bar__\n"
+},
+{
+"id": "commonmark:spec_test_383",
+"src": "__ foo bar__\n"
+},
+{
+"id": "commonmark:spec_test_384",
+"src": "__\nfoo bar__\n"
+},
+{
+"id": "commonmark:spec_test_385",
+"src": "a__\"foo\"__\n"
+},
+{
+"id": "commonmark:spec_test_386",
+"src": "foo__bar__\n"
+},
+{
+"id": "commonmark:spec_test_387",
+"src": "5__6__78\n"
+},
+{
+"id": "commonmark:spec_test_388",
+"src": "пристаням__стремятся__\n"
+},
+{
+"id": "commonmark:spec_test_389",
+"src": "__foo, __bar__, baz__\n"
+},
+{
+"id": "commonmark:spec_test_390",
+"src": "foo-__(bar)__\n"
+},
+{
+"id": "commonmark:spec_test_391",
+"src": "**foo bar **\n"
+},
+{
+"id": "commonmark:spec_test_392",
+"src": "**(**foo)\n"
+},
+{
+"id": "commonmark:spec_test_393",
+"src": "*(**foo**)*\n"
+},
+{
+"id": "commonmark:spec_test_394",
+"src": "**Gomphocarpus (*Gomphocarpus physocarpus*, syn.\n*Asclepias physocarpa*)**\n"
+},
+{
+"id": "commonmark:spec_test_395",
+"src": "**foo \"*bar*\" foo**\n"
+},
+{
+"id": "commonmark:spec_test_396",
+"src": "**foo**bar\n"
+},
+{
+"id": "commonmark:spec_test_397",
+"src": "__foo bar __\n"
+},
+{
+"id": "commonmark:spec_test_398",
+"src": "__(__foo)\n"
+},
+{
+"id": "commonmark:spec_test_399",
+"src": "_(__foo__)_\n"
+},
+{
+"id": "commonmark:spec_test_400",
+"src": "__foo__bar\n"
+},
+{
+"id": "commonmark:spec_test_401",
+"src": "__пристаням__стремятся\n"
+},
+{
+"id": "commonmark:spec_test_402",
+"src": "__foo__bar__baz__\n"
+},
+{
+"id": "commonmark:spec_test_403",
+"src": "__(bar)__.\n"
+},
+{
+"id": "commonmark:spec_test_404",
+"src": "*foo [bar](/url)*\n"
+},
+{
+"id": "commonmark:spec_test_405",
+"src": "*foo\nbar*\n"
+},
+{
+"id": "commonmark:spec_test_406",
+"src": "_foo __bar__ baz_\n"
+},
+{
+"id": "commonmark:spec_test_407",
+"src": "_foo _bar_ baz_\n"
+},
+{
+"id": "commonmark:spec_test_408",
+"src": "__foo_ bar_\n"
+},
+{
+"id": "commonmark:spec_test_409",
+"src": "*foo *bar**\n"
+},
+{
+"id": "commonmark:spec_test_410",
+"src": "*foo **bar** baz*\n"
+},
+{
+"id": "commonmark:spec_test_411",
+"src": "*foo**bar**baz*\n"
+},
+{
+"id": "commonmark:spec_test_412",
+"src": "*foo**bar*\n"
+},
+{
+"id": "commonmark:spec_test_413",
+"src": "***foo** bar*\n"
+},
+{
+"id": "commonmark:spec_test_414",
+"src": "*foo **bar***\n"
+},
+{
+"id": "commonmark:spec_test_415",
+"src": "*foo**bar***\n"
+},
+{
+"id": "commonmark:spec_test_416",
+"src": "foo***bar***baz\n"
+},
+{
+"id": "commonmark:spec_test_417",
+"src": "foo******bar*********baz\n"
+},
+{
+"id": "commonmark:spec_test_418",
+"src": "*foo **bar *baz* bim** bop*\n"
+},
+{
+"id": "commonmark:spec_test_419",
+"src": "*foo [*bar*](/url)*\n"
+},
+{
+"id": "commonmark:spec_test_420",
+"src": "** is not an empty emphasis\n"
+},
+{
+"id": "commonmark:spec_test_421",
+"src": "**** is not an empty strong emphasis\n"
+},
+{
+"id": "commonmark:spec_test_422",
+"src": "**foo [bar](/url)**\n"
+},
+{
+"id": "commonmark:spec_test_423",
+"src": "**foo\nbar**\n"
+},
+{
+"id": "commonmark:spec_test_424",
+"src": "__foo _bar_ baz__\n"
+},
+{
+"id": "commonmark:spec_test_425",
+"src": "__foo __bar__ baz__\n"
+},
+{
+"id": "commonmark:spec_test_426",
+"src": "____foo__ bar__\n"
+},
+{
+"id": "commonmark:spec_test_427",
+"src": "**foo **bar****\n"
+},
+{
+"id": "commonmark:spec_test_428",
+"src": "**foo *bar* baz**\n"
+},
+{
+"id": "commonmark:spec_test_429",
+"src": "**foo*bar*baz**\n"
+},
+{
+"id": "commonmark:spec_test_430",
+"src": "***foo* bar**\n"
+},
+{
+"id": "commonmark:spec_test_431",
+"src": "**foo *bar***\n"
+},
+{
+"id": "commonmark:spec_test_432",
+"src": "**foo *bar **baz**\nbim* bop**\n"
+},
+{
+"id": "commonmark:spec_test_433",
+"src": "**foo [*bar*](/url)**\n"
+},
+{
+"id": "commonmark:spec_test_434",
+"src": "__ is not an empty emphasis\n"
+},
+{
+"id": "commonmark:spec_test_435",
+"src": "____ is not an empty strong emphasis\n"
+},
+{
+"id": "commonmark:spec_test_436",
+"src": "foo ***\n"
+},
+{
+"id": "commonmark:spec_test_437",
+"src": "foo *\\**\n"
+},
+{
+"id": "commonmark:spec_test_438",
+"src": "foo *_*\n"
+},
+{
+"id": "commonmark:spec_test_439",
+"src": "foo *****\n"
+},
+{
+"id": "commonmark:spec_test_440",
+"src": "foo **\\***\n"
+},
+{
+"id": "commonmark:spec_test_441",
+"src": "foo **_**\n"
+},
+{
+"id": "commonmark:spec_test_442",
+"src": "**foo*\n"
+},
+{
+"id": "commonmark:spec_test_443",
+"src": "*foo**\n"
+},
+{
+"id": "commonmark:spec_test_444",
+"src": "***foo**\n"
+},
+{
+"id": "commonmark:spec_test_445",
+"src": "****foo*\n"
+},
+{
+"id": "commonmark:spec_test_446",
+"src": "**foo***\n"
+},
+{
+"id": "commonmark:spec_test_447",
+"src": "*foo****\n"
+},
+{
+"id": "commonmark:spec_test_448",
+"src": "foo ___\n"
+},
+{
+"id": "commonmark:spec_test_449",
+"src": "foo _\\__\n"
+},
+{
+"id": "commonmark:spec_test_450",
+"src": "foo _*_\n"
+},
+{
+"id": "commonmark:spec_test_451",
+"src": "foo _____\n"
+},
+{
+"id": "commonmark:spec_test_452",
+"src": "foo __\\___\n"
+},
+{
+"id": "commonmark:spec_test_453",
+"src": "foo __*__\n"
+},
+{
+"id": "commonmark:spec_test_454",
+"src": "__foo_\n"
+},
+{
+"id": "commonmark:spec_test_455",
+"src": "_foo__\n"
+},
+{
+"id": "commonmark:spec_test_456",
+"src": "___foo__\n"
+},
+{
+"id": "commonmark:spec_test_457",
+"src": "____foo_\n"
+},
+{
+"id": "commonmark:spec_test_458",
+"src": "__foo___\n"
+},
+{
+"id": "commonmark:spec_test_459",
+"src": "_foo____\n"
+},
+{
+"id": "commonmark:spec_test_460",
+"src": "**foo**\n"
+},
+{
+"id": "commonmark:spec_test_461",
+"src": "*_foo_*\n"
+},
+{
+"id": "commonmark:spec_test_462",
+"src": "__foo__\n"
+},
+{
+"id": "commonmark:spec_test_463",
+"src": "_*foo*_\n"
+},
+{
+"id": "commonmark:spec_test_464",
+"src": "****foo****\n"
+},
+{
+"id": "commonmark:spec_test_465",
+"src": "____foo____\n"
+},
+{
+"id": "commonmark:spec_test_466",
+"src": "******foo******\n"
+},
+{
+"id": "commonmark:spec_test_467",
+"src": "***foo***\n"
+},
+{
+"id": "commonmark:spec_test_468",
+"src": "_____foo_____\n"
+},
+{
+"id": "commonmark:spec_test_469",
+"src": "*foo _bar* baz_\n"
+},
+{
+"id": "commonmark:spec_test_470",
+"src": "*foo __bar *baz bim__ bam*\n"
+},
+{
+"id": "commonmark:spec_test_471",
+"src": "**foo **bar baz**\n"
+},
+{
+"id": "commonmark:spec_test_472",
+"src": "*foo *bar baz*\n"
+},
+{
+"id": "commonmark:spec_test_473",
+"src": "*[bar*](/url)\n"
+},
+{
+"id": "commonmark:spec_test_474",
+"src": "_foo [bar_](/url)\n"
+},
+{
+"id": "commonmark:spec_test_475",
+"src": "*<img src=\"foo\" title=\"*\"/>\n"
+},
+{
+"id": "commonmark:spec_test_476",
+"src": "**<a href=\"**\">\n"
+},
+{
+"id": "commonmark:spec_test_477",
+"src": "__<a href=\"__\">\n"
+},
+{
+"id": "commonmark:spec_test_478",
+"src": "*a `*`*\n"
+},
+{
+"id": "commonmark:spec_test_479",
+"src": "_a `_`_\n"
+},
+{
+"id": "commonmark:spec_test_480",
+"src": "**a<https://foo.bar/?q=**>\n"
+},
+{
+"id": "commonmark:spec_test_481",
+"src": "__a<https://foo.bar/?q=__>\n"
+},
+{
+"id": "commonmark:spec_test_482",
+"src": "[link](/uri \"title\")\n"
+},
+{
+"id": "commonmark:spec_test_483",
+"src": "[link](/uri)\n"
+},
+{
+"id": "commonmark:spec_test_484",
+"src": "[](./target.md)\n"
+},
+{
+"id": "commonmark:spec_test_485",
+"src": "[link]()\n"
+},
+{
+"id": "commonmark:spec_test_486",
+"src": "[link](<>)\n"
+},
+{
+"id": "commonmark:spec_test_487",
+"src": "[]()\n"
+},
+{
+"id": "commonmark:spec_test_488",
+"src": "[link](/my uri)\n"
+},
+{
+"id": "commonmark:spec_test_489",
+"src": "[link](</my uri>)\n"
+},
+{
+"id": "commonmark:spec_test_490",
+"src": "[link](foo\nbar)\n"
+},
+{
+"id": "commonmark:spec_test_491",
+"src": "[link](<foo\nbar>)\n"
+},
+{
+"id": "commonmark:spec_test_492",
+"src": "[a](<b)c>)\n"
+},
+{
+"id": "commonmark:spec_test_493",
+"src": "[link](<foo\\>)\n"
+},
+{
+"id": "commonmark:spec_test_494",
+"src": "[a](<b)c\n[a](<b)c>\n[a](<b>c)\n"
+},
+{
+"id": "commonmark:spec_test_495",
+"src": "[link](\\(foo\\))\n"
+},
+{
+"id": "commonmark:spec_test_496",
+"src": "[link](foo(and(bar)))\n"
+},
+{
+"id": "commonmark:spec_test_497",
+"src": "[link](foo(and(bar))\n"
+},
+{
+"id": "commonmark:spec_test_498",
+"src": "[link](foo\\(and\\(bar\\))\n"
+},
+{
+"id": "commonmark:spec_test_499",
+"src": "[link](<foo(and(bar)>)\n"
+},
+{
+"id": "commonmark:spec_test_500",
+"src": "[link](foo\\)\\:)\n"
+},
+{
+"id": "commonmark:spec_test_501",
+"src": "[link](#fragment)\n\n[link](https://example.com#fragment)\n\n[link](https://example.com?foo=3#frag)\n"
+},
+{
+"id": "commonmark:spec_test_502",
+"src": "[link](foo\\bar)\n"
+},
+{
+"id": "commonmark:spec_test_503",
+"src": "[link](foo%20b&auml;)\n"
+},
+{
+"id": "commonmark:spec_test_504",
+"src": "[link](\"title\")\n"
+},
+{
+"id": "commonmark:spec_test_505",
+"src": "[link](/url \"title\")\n[link](/url 'title')\n[link](/url (title))\n"
+},
+{
+"id": "commonmark:spec_test_506",
+"src": "[link](/url \"title \\\"&quot;\")\n"
+},
+{
+"id": "commonmark:spec_test_507",
+"src": "[link](/url \"title\")\n"
+},
+{
+"id": "commonmark:spec_test_508",
+"src": "[link](/url \"title \"and\" title\")\n"
+},
+{
+"id": "commonmark:spec_test_509",
+"src": "[link](/url 'title \"and\" title')\n"
+},
+{
+"id": "commonmark:spec_test_510",
+"src": "[link](   /uri\n  \"title\"  )\n"
+},
+{
+"id": "commonmark:spec_test_511",
+"src": "[link] (/uri)\n"
+},
+{
+"id": "commonmark:spec_test_512",
+"src": "[link [foo [bar]]](/uri)\n"
+},
+{
+"id": "commonmark:spec_test_513",
+"src": "[link] bar](/uri)\n"
+},
+{
+"id": "commonmark:spec_test_514",
+"src": "[link [bar](/uri)\n"
+},
+{
+"id": "commonmark:spec_test_515",
+"src": "[link \\[bar](/uri)\n"
+},
+{
+"id": "commonmark:spec_test_516",
+"src": "[link *foo **bar** `#`*](/uri)\n"
+},
+{
+"id": "commonmark:spec_test_517",
+"src": "[![moon](moon.jpg)](/uri)\n"
+},
+{
+"id": "commonmark:spec_test_518",
+"src": "[foo [bar](/uri)](/uri)\n"
+},
+{
+"id": "commonmark:spec_test_519",
+"src": "[foo *[bar [baz](/uri)](/uri)*](/uri)\n"
+},
+{
+"id": "commonmark:spec_test_520",
+"src": "![[[foo](uri1)](uri2)](uri3)\n"
+},
+{
+"id": "commonmark:spec_test_521",
+"src": "*[foo*](/uri)\n"
+},
+{
+"id": "commonmark:spec_test_522",
+"src": "[foo *bar](baz*)\n"
+},
+{
+"id": "commonmark:spec_test_523",
+"src": "*foo [bar* baz]\n"
+},
+{
+"id": "commonmark:spec_test_524",
+"src": "[foo <bar attr=\"](baz)\">\n"
+},
+{
+"id": "commonmark:spec_test_525",
+"src": "[foo`](/uri)`\n"
+},
+{
+"id": "commonmark:spec_test_526",
+"src": "[foo<https://example.com/?search=](uri)>\n"
+},
+{
+"id": "commonmark:spec_test_527",
+"src": "[foo][bar]\n\n[bar]: /url \"title\"\n"
+},
+{
+"id": "commonmark:spec_test_528",
+"src": "[link [foo [bar]]][ref]\n\n[ref]: /uri\n"
+},
+{
+"id": "commonmark:spec_test_529",
+"src": "[link \\[bar][ref]\n\n[ref]: /uri\n"
+},
+{
+"id": "commonmark:spec_test_530",
+"src": "[link *foo **bar** `#`*][ref]\n\n[ref]: /uri\n"
+},
+{
+"id": "commonmark:spec_test_531",
+"src": "[![moon](moon.jpg)][ref]\n\n[ref]: /uri\n"
+},
+{
+"id": "commonmark:spec_test_532",
+"src": "[foo [bar](/uri)][ref]\n\n[ref]: /uri\n"
+},
+{
+"id": "commonmark:spec_test_533",
+"src": "[foo *bar [baz][ref]*][ref]\n\n[ref]: /uri\n"
+},
+{
+"id": "commonmark:spec_test_534",
+"src": "*[foo*][ref]\n\n[ref]: /uri\n"
+},
+{
+"id": "commonmark:spec_test_535",
+"src": "[foo *bar][ref]*\n\n[ref]: /uri\n"
+},
+{
+"id": "commonmark:spec_test_536",
+"src": "[foo <bar attr=\"][ref]\">\n\n[ref]: /uri\n"
+},
+{
+"id": "commonmark:spec_test_537",
+"src": "[foo`][ref]`\n\n[ref]: /uri\n"
+},
+{
+"id": "commonmark:spec_test_538",
+"src": "[foo<https://example.com/?search=][ref]>\n\n[ref]: /uri\n"
+},
+{
+"id": "commonmark:spec_test_539",
+"src": "[foo][BaR]\n\n[bar]: /url \"title\"\n"
+},
+{
+"id": "commonmark:spec_test_540",
+"src": "[ẞ]\n\n[SS]: /url\n"
+},
+{
+"id": "commonmark:spec_test_541",
+"src": "[Foo\n  bar]: /url\n\n[Baz][Foo bar]\n"
+},
+{
+"id": "commonmark:spec_test_542",
+"src": "[foo] [bar]\n\n[bar]: /url \"title\"\n"
+},
+{
+"id": "commonmark:spec_test_543",
+"src": "[foo]\n[bar]\n\n[bar]: /url \"title\"\n"
+},
+{
+"id": "commonmark:spec_test_544",
+"src": "[foo]: /url1\n\n[foo]: /url2\n\n[bar][foo]\n"
+},
+{
+"id": "commonmark:spec_test_545",
+"src": "[bar][foo\\!]\n\n[foo!]: /url\n"
+},
+{
+"id": "commonmark:spec_test_546",
+"src": "[foo][ref[]\n\n[ref[]: /uri\n"
+},
+{
+"id": "commonmark:spec_test_547",
+"src": "[foo][ref[bar]]\n\n[ref[bar]]: /uri\n"
+},
+{
+"id": "commonmark:spec_test_548",
+"src": "[[[foo]]]\n\n[[[foo]]]: /url\n"
+},
+{
+"id": "commonmark:spec_test_549",
+"src": "[foo][ref\\[]\n\n[ref\\[]: /uri\n"
+},
+{
+"id": "commonmark:spec_test_550",
+"src": "[bar\\\\]: /uri\n\n[bar\\\\]\n"
+},
+{
+"id": "commonmark:spec_test_551",
+"src": "[]\n\n[]: /uri\n"
+},
+{
+"id": "commonmark:spec_test_552",
+"src": "[\n ]\n\n[\n ]: /uri\n"
+},
+{
+"id": "commonmark:spec_test_553",
+"src": "[foo][]\n\n[foo]: /url \"title\"\n"
+},
+{
+"id": "commonmark:spec_test_554",
+"src": "[*foo* bar][]\n\n[*foo* bar]: /url \"title\"\n"
+},
+{
+"id": "commonmark:spec_test_555",
+"src": "[Foo][]\n\n[foo]: /url \"title\"\n"
+},
+{
+"id": "commonmark:spec_test_556",
+"src": "[foo] \n[]\n\n[foo]: /url \"title\"\n"
+},
+{
+"id": "commonmark:spec_test_557",
+"src": "[foo]\n\n[foo]: /url \"title\"\n"
+},
+{
+"id": "commonmark:spec_test_558",
+"src": "[*foo* bar]\n\n[*foo* bar]: /url \"title\"\n"
+},
+{
+"id": "commonmark:spec_test_559",
+"src": "[[*foo* bar]]\n\n[*foo* bar]: /url \"title\"\n"
+},
+{
+"id": "commonmark:spec_test_560",
+"src": "[[bar [foo]\n\n[foo]: /url\n"
+},
+{
+"id": "commonmark:spec_test_561",
+"src": "[Foo]\n\n[foo]: /url \"title\"\n"
+},
+{
+"id": "commonmark:spec_test_562",
+"src": "[foo] bar\n\n[foo]: /url\n"
+},
+{
+"id": "commonmark:spec_test_563",
+"src": "\\[foo]\n\n[foo]: /url \"title\"\n"
+},
+{
+"id": "commonmark:spec_test_564",
+"src": "[foo*]: /url\n\n*[foo*]\n"
+},
+{
+"id": "commonmark:spec_test_565",
+"src": "[foo][bar]\n\n[foo]: /url1\n[bar]: /url2\n"
+},
+{
+"id": "commonmark:spec_test_566",
+"src": "[foo][]\n\n[foo]: /url1\n"
+},
+{
+"id": "commonmark:spec_test_567",
+"src": "[foo]()\n\n[foo]: /url1\n"
+},
+{
+"id": "commonmark:spec_test_568",
+"src": "[foo](not a link)\n\n[foo]: /url1\n"
+},
+{
+"id": "commonmark:spec_test_569",
+"src": "[foo][bar][baz]\n\n[baz]: /url\n"
+},
+{
+"id": "commonmark:spec_test_570",
+"src": "[foo][bar][baz]\n\n[baz]: /url1\n[bar]: /url2\n"
+},
+{
+"id": "commonmark:spec_test_571",
+"src": "[foo][bar][baz]\n\n[baz]: /url1\n[foo]: /url2\n"
+},
+{
+"id": "commonmark:spec_test_572",
+"src": "![foo](/url \"title\")\n"
+},
+{
+"id": "commonmark:spec_test_573",
+"src": "![foo *bar*]\n\n[foo *bar*]: train.jpg \"train & tracks\"\n"
+},
+{
+"id": "commonmark:spec_test_574",
+"src": "![foo ![bar](/url)](/url2)\n"
+},
+{
+"id": "commonmark:spec_test_575",
+"src": "![foo [bar](/url)](/url2)\n"
+},
+{
+"id": "commonmark:spec_test_576",
+"src": "![foo *bar*][]\n\n[foo *bar*]: train.jpg \"train & tracks\"\n"
+},
+{
+"id": "commonmark:spec_test_577",
+"src": "![foo *bar*][foobar]\n\n[FOOBAR]: train.jpg \"train & tracks\"\n"
+},
+{
+"id": "commonmark:spec_test_578",
+"src": "![foo](train.jpg)\n"
+},
+{
+"id": "commonmark:spec_test_579",
+"src": "My ![foo bar](/path/to/train.jpg  \"title\"   )\n"
+},
+{
+"id": "commonmark:spec_test_580",
+"src": "![foo](<url>)\n"
+},
+{
+"id": "commonmark:spec_test_581",
+"src": "![](/url)\n"
+},
+{
+"id": "commonmark:spec_test_582",
+"src": "![foo][bar]\n\n[bar]: /url\n"
+},
+{
+"id": "commonmark:spec_test_583",
+"src": "![foo][bar]\n\n[BAR]: /url\n"
+},
+{
+"id": "commonmark:spec_test_584",
+"src": "![foo][]\n\n[foo]: /url \"title\"\n"
+},
+{
+"id": "commonmark:spec_test_585",
+"src": "![*foo* bar][]\n\n[*foo* bar]: /url \"title\"\n"
+},
+{
+"id": "commonmark:spec_test_586",
+"src": "![Foo][]\n\n[foo]: /url \"title\"\n"
+},
+{
+"id": "commonmark:spec_test_587",
+"src": "![foo] \n[]\n\n[foo]: /url \"title\"\n"
+},
+{
+"id": "commonmark:spec_test_588",
+"src": "![foo]\n\n[foo]: /url \"title\"\n"
+},
+{
+"id": "commonmark:spec_test_589",
+"src": "![*foo* bar]\n\n[*foo* bar]: /url \"title\"\n"
+},
+{
+"id": "commonmark:spec_test_590",
+"src": "![[foo]]\n\n[[foo]]: /url \"title\"\n"
+},
+{
+"id": "commonmark:spec_test_591",
+"src": "![Foo]\n\n[foo]: /url \"title\"\n"
+},
+{
+"id": "commonmark:spec_test_592",
+"src": "!\\[foo]\n\n[foo]: /url \"title\"\n"
+},
+{
+"id": "commonmark:spec_test_593",
+"src": "\\![foo]\n\n[foo]: /url \"title\"\n"
+},
+{
+"id": "commonmark:spec_test_594",
+"src": "<http://foo.bar.baz>\n"
+},
+{
+"id": "commonmark:spec_test_595",
+"src": "<https://foo.bar.baz/test?q=hello&id=22&boolean>\n"
+},
+{
+"id": "commonmark:spec_test_596",
+"src": "<irc://foo.bar:2233/baz>\n"
+},
+{
+"id": "commonmark:spec_test_597",
+"src": "<MAILTO:FOO@BAR.BAZ>\n"
+},
+{
+"id": "commonmark:spec_test_598",
+"src": "<a+b+c:d>\n"
+},
+{
+"id": "commonmark:spec_test_599",
+"src": "<made-up-scheme://foo,bar>\n"
+},
+{
+"id": "commonmark:spec_test_600",
+"src": "<https://../>\n"
+},
+{
+"id": "commonmark:spec_test_601",
+"src": "<localhost:5001/foo>\n"
+},
+{
+"id": "commonmark:spec_test_602",
+"src": "<https://foo.bar/baz bim>\n"
+},
+{
+"id": "commonmark:spec_test_603",
+"src": "<https://example.com/\\[\\>\n"
+},
+{
+"id": "commonmark:spec_test_604",
+"src": "<foo@bar.example.com>\n"
+},
+{
+"id": "commonmark:spec_test_605",
+"src": "<foo+special@Bar.baz-bar0.com>\n"
+},
+{
+"id": "commonmark:spec_test_606",
+"src": "<foo\\+@bar.example.com>\n"
+},
+{
+"id": "commonmark:spec_test_607",
+"src": "<>\n"
+},
+{
+"id": "commonmark:spec_test_608",
+"src": "< https://foo.bar >\n"
+},
+{
+"id": "commonmark:spec_test_609",
+"src": "<m:abc>\n"
+},
+{
+"id": "commonmark:spec_test_610",
+"src": "<foo.bar.baz>\n"
+},
+{
+"id": "commonmark:spec_test_611",
+"src": "https://example.com\n"
+},
+{
+"id": "commonmark:spec_test_612",
+"src": "foo@bar.example.com\n"
+},
+{
+"id": "commonmark:spec_test_613",
+"src": "<a><bab><c2c>\n"
+},
+{
+"id": "commonmark:spec_test_614",
+"src": "<a/><b2/>\n"
+},
+{
+"id": "commonmark:spec_test_615",
+"src": "<a  /><b2\ndata=\"foo\" >\n"
+},
+{
+"id": "commonmark:spec_test_616",
+"src": "<a foo=\"bar\" bam = 'baz <em>\"</em>'\n_boolean zoop:33=zoop:33 />\n"
+},
+{
+"id": "commonmark:spec_test_617",
+"src": "Foo <responsive-image src=\"foo.jpg\" />\n"
+},
+{
+"id": "commonmark:spec_test_618",
+"src": "<33> <__>\n"
+},
+{
+"id": "commonmark:spec_test_619",
+"src": "<a h*#ref=\"hi\">\n"
+},
+{
+"id": "commonmark:spec_test_620",
+"src": "<a href=\"hi'> <a href=hi'>\n"
+},
+{
+"id": "commonmark:spec_test_621",
+"src": "< a><\nfoo><bar/ >\n<foo bar=baz\nbim!bop />\n"
+},
+{
+"id": "commonmark:spec_test_622",
+"src": "<a href='bar'title=title>\n"
+},
+{
+"id": "commonmark:spec_test_623",
+"src": "</a></foo >\n"
+},
+{
+"id": "commonmark:spec_test_624",
+"src": "</a href=\"foo\">\n"
+},
+{
+"id": "commonmark:spec_test_625",
+"src": "foo <!-- this is a --\ncomment - with hyphens -->\n"
+},
+{
+"id": "commonmark:spec_test_626",
+"src": "foo <!--> foo -->\n\nfoo <!---> foo -->\n"
+},
+{
+"id": "commonmark:spec_test_627",
+"src": "foo <?php echo $a; ?>\n"
+},
+{
+"id": "commonmark:spec_test_628",
+"src": "foo <!ELEMENT br EMPTY>\n"
+},
+{
+"id": "commonmark:spec_test_629",
+"src": "foo <![CDATA[>&<]]>\n"
+},
+{
+"id": "commonmark:spec_test_630",
+"src": "foo <a href=\"&ouml;\">\n"
+},
+{
+"id": "commonmark:spec_test_631",
+"src": "foo <a href=\"\\*\">\n"
+},
+{
+"id": "commonmark:spec_test_632",
+"src": "<a href=\"\\\"\">\n"
+},
+{
+"id": "commonmark:spec_test_633",
+"src": "foo  \nbaz\n"
+},
+{
+"id": "commonmark:spec_test_634",
+"src": "foo\\\nbaz\n"
+},
+{
+"id": "commonmark:spec_test_635",
+"src": "foo       \nbaz\n"
+},
+{
+"id": "commonmark:spec_test_636",
+"src": "foo  \n     bar\n"
+},
+{
+"id": "commonmark:spec_test_637",
+"src": "foo\\\n     bar\n"
+},
+{
+"id": "commonmark:spec_test_638",
+"src": "*foo  \nbar*\n"
+},
+{
+"id": "commonmark:spec_test_639",
+"src": "*foo\\\nbar*\n"
+},
+{
+"id": "commonmark:spec_test_640",
+"src": "`code  \nspan`\n"
+},
+{
+"id": "commonmark:spec_test_641",
+"src": "`code\\\nspan`\n"
+},
+{
+"id": "commonmark:spec_test_642",
+"src": "<a href=\"foo  \nbar\">\n"
+},
+{
+"id": "commonmark:spec_test_643",
+"src": "<a href=\"foo\\\nbar\">\n"
+},
+{
+"id": "commonmark:spec_test_644",
+"src": "foo\\\n"
+},
+{
+"id": "commonmark:spec_test_645",
+"src": "foo  \n"
+},
+{
+"id": "commonmark:spec_test_646",
+"src": "### foo\\\n"
+},
+{
+"id": "commonmark:spec_test_647",
+"src": "### foo  \n"
+},
+{
+"id": "commonmark:spec_test_648",
+"src": "foo\nbaz\n"
+},
+{
+"id": "commonmark:spec_test_649",
+"src": "foo \n baz\n"
+},
+{
+"id": "commonmark:spec_test_650",
+"src": "hello $.;'there\n"
+},
+{
+"id": "commonmark:spec_test_651",
+"src": "Foo χρῆν\n"
+},
+{
+"id": "commonmark:spec_test_652",
+"src": "Multiple     spaces\n"
+},
+{
+"id": "gfm_table:gfm_table_test_1",
+"src": "| foo | bar |\n| --- | --- |\n| baz | bim |\n"
+},
+{
+"id": "gfm_table:gfm_table_test_2",
+"src": "| abc | defghi |\n:-: | -----------:\nbar | baz\n"
+},
+{
+"id": "gfm_table:gfm_table_test_3",
+"src": "| f\\|oo  |\n| ------ |\n| b `\\|` az |\n| b **\\|** im |\n"
+},
+{
+"id": "gfm_table:gfm_table_test_4",
+"src": "| abc | def |\n| --- | --- |\n| bar | baz |\n> bar\n"
+},
+{
+"id": "gfm_table:gfm_table_test_5",
+"src": "| abc | def |\n| --- | --- |\n| bar | baz |\nbar\n\nbar\n"
+},
+{
+"id": "gfm_table:gfm_table_test_6",
+"src": "| abc | def |\n| --- |\n| bar |\n"
+},
+{
+"id": "gfm_table:gfm_table_test_7",
+"src": "| abc | def |\n| --- | --- |\n| bar |\n| bar | baz | boo |\n"
+},
+{
+"id": "gfm_table:gfm_table_test_8",
+"src": "| abc | def |\n| --- | --- |\n"
+},
+{
+"id": "gfm_table:gfm_table_test_9",
+"src": "Hello World\n| abc | def |\n| --- | --- |\n| bar | baz |\n"
+},
+{
+"id": "gfm_strike:gfm_strikethrough_test_1",
+"src": "~~Hi~~ Hello, ~there~ world!\n"
+},
+{
+"id": "gfm_strike:gfm_strikethrough_test_2",
+"src": "This ~~has a\n\nnew paragraph~~.\n"
+},
+{
+"id": "gfm_strike:gfm_strikethrough_test_3",
+"src": "This will ~~~not~~~ strike.\n"
+},
+{
+"id": "gfm_task:gfm_tasklist_test_1",
+"src": "- [ ] foo\n- [x] bar\n"
+},
+{
+"id": "gfm_task:gfm_tasklist_test_2",
+"src": "- [x] foo\n  - [ ] bar\n  - [x] baz\n- [ ] bim\n"
+},
+{
+"id": "footnote:footnotes_test_1",
+"src": "Lorem ipsum.[^a] [^missing]\n\n[^a]: Cool.\n"
+},
+{
+"id": "footnote:footnotes_test_2",
+"src": "> This is the song that never ends.\\\n> Yes it goes on and on my friends.[^lambchops]\n>\n> [^lambchops]: <https://www.youtube.com/watch?v=0U2zJOryHKQ>\n"
+},
+{
+"id": "footnote:footnotes_test_3",
+"src": "Songs that simply loop are a popular way to annoy people. [^examples]\n\n[^examples]:\n * [The song that never ends](https://www.youtube.com/watch?v=0U2zJOryHKQ)\n * [I know a song that gets on everybody's nerves](https://www.youtube.com/watch?v=TehWI09qxls)\n * [Ninety-nine bottles of beer on the wall](https://www.youtube.com/watch?v=qVjCag8XoHQ)\n"
+},
+{
+"id": "footnote:footnotes_test_4",
+"src": "Songs that simply loop are a popular way to annoy people. [^examples]\n\n[^examples]:\n    * [The song that never ends](https://www.youtube.com/watch?v=0U2zJOryHKQ)\n    * [I know a song that gets on everybody's nerves](https://www.youtube.com/watch?v=TehWI09qxls)\n    * [Ninety-nine bottles of beer on the wall](https://www.youtube.com/watch?v=qVjCag8XoHQ)\n"
+},
+{
+"id": "footnote:footnotes_test_5",
+"src": "[^not-code] [^code] [^quote] [^not-quote] [^indented-quote]\n\n[^not-code]:         not code\n\n[^code]:\n        code\n\n[^quote]: > quote\n\n[^not-quote]:\n > external quote\n\n[^indented-quote]:\n    > indented quote\n"
+},
+{
+"id": "footnote:footnotes_test_6",
+"src": "[^ab] [^cd]\n\n[^ab]: a\nb\n\n[^cd]: c\\\nd\n"
+},
+{
+"id": "footnote:footnotes_test_7",
+"src": "[^lorem]: If heaven ever wishes to grant me a boon, it will be a total effacing of the results of a mere chance which fixed my eye on a certain stray piece of shelf-paper. It was nothing on which I would naturally have stumbled in the course of my daily round, for it was an old number of an Australian journal, the Sydney Bulletin for April 18, 1925. It had escaped even the cutting bureau which had at the time of its issuance been avidly collecting material for my uncle's research.\n\nI had largely given over my inquiries into what Professor Angell called the \"Cthulhu Cult\", and was visiting a learned friend in Paterson, New Jersey; the curator of a local museum and a mineralogist of note. Examining one day the reserve specimens roughly set on the storage shelves in a rear room of the museum, my eye was caught by an odd picture in one of the old papers spread beneath the stones. It was the Sydney Bulletin I have mentioned, for my friend had wide affiliations in all conceivable foreign parts; and the picture was a half-tone cut of a hideous stone image almost identical with that which Legrasse had found in the swamp.\n\n[^ipsum]: If heaven ever wishes to grant me a boon, it will be a total effacing of the results of a mere chance which fixed my eye on a certain stray piece of shelf-paper. It was nothing on which I would naturally have stumbled in the course of my daily round, for it was an old number of an Australian journal, the Sydney Bulletin for April 18, 1925. It had escaped even the cutting bureau which had at the time of its issuance been avidly collecting material for my uncle's research.\n\n    I had largely given over my inquiries into what Professor Angell called the \"Cthulhu Cult\", and was visiting a learned friend in Paterson, New Jersey; the curator of a local museum and a mineralogist of note. Examining one day the reserve specimens roughly set on the storage shelves in a rear room of the museum, my eye was caught by an odd picture in one of the old papers spread beneath the stones. It was the Sydney Bulletin I have mentioned, for my friend had wide affiliations in all conceivable foreign parts; and the picture was a half-tone cut of a hideous stone image almost identical with that which Legrasse had found in the swamp.\n"
+},
+{
+"id": "footnote:footnotes_test_8",
+"src": "[^ipsum]: How much wood would a woodchuck chuck.\n\nIf a woodchuck could chuck wood.\n\n\n# Forms of entertainment that aren't childish\n"
+},
+{
+"id": "footnote:footnotes_test_9",
+"src": "Footnotes [^one] [^many].\n\n[^one]:\n\n\n\n\n\n    first paragraph inside footnote\n\n[^many]: first paragraph inside footnote\n\n\n\n\n\n    second paragraph still inside footnote\n"
+},
+{
+"id": "footnote:footnotes_test_10",
+"src": "> He's also really stupid. [^why]\n>\n> [^why]: Because your mamma!\n\nAs such, we can guarantee that the non-childish forms of entertainment are probably more entertaining to adults, since, having had a whole childhood doing the childish ones, the non-childish ones are merely the ones that haven't gotten boring yet.\n"
+},
+{
+"id": "footnote:footnotes_test_11",
+"src": "Nested footnotes are considered poor style. [^a] [^xkcd] [^indent1] [^indent2]\n\n[^a]: This does not mean that footnotes cannot reference each other. [^b]\n\n[^b]: This means that a footnote definition cannot be directly inside another footnote definition.\n> This means that a footnote cannot be directly inside another footnote's body. [^e]\n>\n> [^e]: They can, however, be inside anything else.\n\n[^xkcd]: [The other kind of nested footnote is, however, considered poor style.](https://xkcd.com/1208/)\n\n[^indent1]: indent1\n\n    [^indent2]: indent2\n"
+},
+{
+"id": "footnote:footnotes_test_12",
+"src": "[^foo] [^bar]\n\n[^foo]: [^bar]: 1\n"
+},
+{
+"id": "footnote:footnotes_test_13",
+"src": "[^Doh] Ray Me Fa So La Te Do! [^1]\n\n[^Doh]: I know. Wrong Doe. And it won't render right.\n[^1]: Common for people practicing music.\n"
+},
+{
+"id": "footnote:footnotes_test_14",
+"src": "Lorem ipsum.[^a]\n\nAn unordered list before the footnotes:\n* Ipsum\n* Lorem\n\n[^a]: Cool.\n"
+},
+{
+"id": "footnote:footnotes_test_15",
+"src": "Songs that simply loop are a popular way to annoy people. [^examples]\n\n[^examples]: * [The song that never ends](https://www.youtube.com/watch?v=0U2zJOryHKQ)\n* [I know a song that gets on everybody's nerves](https://www.youtube.com/watch?v=TehWI09qxls)\n* [Ninety-nine bottles of beer on the wall](https://www.youtube.com/watch?v=qVjCag8XoHQ)\n\n\nSongs that simply loop are a popular way to annoy people. [^examples2]\n\n[^examples2]: * [The song that never ends](https://www.youtube.com/watch?v=0U2zJOryHKQ) 2\n    * [I know a song that gets on everybody's nerves](https://www.youtube.com/watch?v=TehWI09qxls) 2\n    - [Ninety-nine bottles of beer on the wall](https://www.youtube.com/watch?v=qVjCag8XoHQ) 2\n\n\nSongs that simply loop are a popular way to annoy people. [^examples3]\n\n[^examples3]: * [The song that never ends](https://www.youtube.com/watch?v=0U2zJOryHKQ) 3\n\n    * [I know a song that gets on everybody's nerves](https://www.youtube.com/watch?v=TehWI09qxls) 3\n\n    * [Ninety-nine bottles of beer on the wall](https://www.youtube.com/watch?v=qVjCag8XoHQ) 3\n"
+},
+{
+"id": "footnote:footnotes_test_16",
+"src": "My [cmark-gfm][^c].\n\nMy [cmark-gfm][cmark-gfm][^c].\n\nMy [cmark-gfm][][^c].\n\nMy [cmark-gfm] [^c].\n\nMy [cmark-gfm[^c]].\n\n[cmark-gfm]: https://github.com/github/cmark-gfm/blob/1e230827a584ebc9938c3eadc5059c55ef3c9abf/test/extensions.txt#L702\n\n[^c]: cmark-gfm is under the MIT license, so incorporating parts of its\n    test suite into pulldown-cmark should be fine.\n\n\nMy [otherlink[^c]].\n\n[otherlink[^c]]: https://github.com/github/cmark-gfm/blob/1e230827a584ebc9938c3eadc5059c55ef3c9abf/test/extensions.txt#L702\n"
+},
+{
+"id": "footnote:footnotes_test_17",
+"src": "[^1]: footnote definition text\n\n<!-- -->\n\n    // indented code block\n    fn main() {\n        println!(\"hello world!\");\n    }\n"
+},
+{
+"id": "footnote:footnotes_test_18",
+"src": "[^1]: footnote definition text\n[^1]\\: this is a reference, rather than a definition\n"
+},
+{
+"id": "footnote:footnotes_test_19",
+"src": "[^1]:\n\n    | column1 | column2 |\n    |---------|---------|\n    | row1a   | row1b   |\n    | row2a   | row2b   |\n"
+},
+{
+"id": "footnote:footnotes_test_20",
+"src": "* First\n  [^1]: test\n* Second [^1] test\n\n\n> first\n> [^2]: test\n> Second [^2] test\n\n\n   First   | Second\n-----------|----------\nfirst      | second\n[^3]: test | test [^3]\n\n\n|    First   | Second    |\n|------------|-----------|\n| first      | second    |\n| [^4]: test | test [^4] |\n\n> [^5]: * test [^5]\n"
+},
+{
+"id": "footnote:footnotes_test_21",
+"src": "Test [^] link\n\n[^]: https://rust-lang.org\n"
+},
+{
+"id": "footnote:footnotes_test_22",
+"src": "[^foo\\\nbar]: not a footnote definition\n\n[baz\\\nquux]: https://rust-lang.org\n\n[first\nsecond]: https://rust-lang.org\n\n[^third\nfourth]: not a footnote definition\n\n[baz\\\nquux]\n[^foo\\\nbar]\n[first\nsecond]\n[^third\nfourth]\n"
+},
+{
+"id": "footnote:footnotes_test_23",
+"src": "[^foo\n]: https://rust-lang.org\n\n[^foo\n]\n"
+},
+{
+"id": "footnote:footnotes_test_24",
+"src": "footnote [^baz]\nfootnote [^quux]\n\n    [^quux]: x\n\n   [^baz]: x\n"
+},
+{
+"id": "footnote:footnotes_test_25",
+"src": "Lorem ipsum.[^a][^b]\n\n[^a]: Foo\n[^b]: Bar\n"
+},
+{
+"id": "footnote:footnotes_test_26",
+"src": "Lorem ipsum.[^a] [^b]\n\n[^a]: Foo\n[^b]: Bar\n"
+},
+{
+"id": "math:math_test_1",
+"src": "This sentence uses `$` delimiters to show math inline: $\\sqrt{3x-1}+(1+x)^2$\n$\\sum_{k=1}^n a_k b_k$: Mathematical expression at head of line\n\n`\\` may follow just after the first `$`: $\\{1, 2, 3\\}$\n"
+},
+{
+"id": "math:math_test_2",
+"src": "**The Cauchy-Schwarz Inequality**\n\n$$\\left( \\sum_{k=1}^n a_k b_k \\right)^2 \\leq \\left( \\sum_{k=1}^n a_k^2 \\right) \\left( \\sum_{k=1}^n b_k^2 \\right)$$\n"
+},
+{
+"id": "math:math_test_3",
+"src": "Oops empty $$ expression.\n\n$$$$\n"
+},
+{
+"id": "math:math_test_4",
+"src": "$x$$$$$$$y$$\n\n$x$$$$$$y$$\n\n$$x$$$$$$y$$\n"
+},
+{
+"id": "math:math_test_5",
+"src": "$a<b>c</b>$\n\n$${a*b*c} _c_ d$$\n\n$not `code`$\n\n$![not an](/image)$\n\n$<https://not.a.link/>$\n\n$&alpha;$\n"
+},
+{
+"id": "math:math_test_6",
+"src": "Hello $world.\n\nDollar at end of line$\n"
+},
+{
+"id": "math:math_test_7",
+"src": "$5x + 2 =\n17$\n\n$$\\left( \\sum_{k=1}^n a_k b_k \\right)^2 \\leq \\left( \\sum_{k=1}^n a_k^2 \\right)\n\\left( \\sum_{k=1}^n b_k^2 \\right)$$\n"
+},
+{
+"id": "math:math_test_8",
+"src": "$not a\\\nhard break  \neither$\n"
+},
+{
+"id": "math:math_test_9",
+"src": "$\\$$\n\n$$y = \\$ x$$\n"
+},
+{
+"id": "math:math_test_10",
+"src": "$x $ x$\n\n$$ $ $$\n"
+},
+{
+"id": "math:math_test_11",
+"src": "alpha$$beta$gamma$$delta\n"
+},
+{
+"id": "math:math_test_12",
+"src": "these are not math texts: $ y=x$, $y=x $, $\ny=x$ and $y=x\n$\n\n>The start of a line counts as whitespace $2 +\n>$\n\nWhile displays can start with whitespace, {${\nthey should not allow inlines to do that $$2 +\n$*$\n"
+},
+{
+"id": "math:math_test_13",
+"src": "these are math texts: foo$y=x$bar and $y=x$bar and foo$y=x$ bar\n"
+},
+{
+"id": "math:math_test_14",
+"src": "math texts: $x=y$! and $x=y$? and $x=y$: and $x=y$. and $x=y$\"\n\nalso math texts: !$x=y$! and ?$x=y$? and :$x=y$: and .$x=y$. and \"$x=y$\"\n\nbraces: ($x=y$) [$x=y$] {$x=y$}\n"
+},
+{
+"id": "math:math_test_15",
+"src": "$x=y$\n"
+},
+{
+"id": "math:math_test_16",
+"src": "$a$$b$\n\n$a$$$b$$\n\n$$a$$$b$\n\n$$a$$$$b$$\n"
+},
+{
+"id": "math:math_test_17",
+"src": "$Inline `first$ then` code\n\n`Code $first` then$ inline\n\n$$ Display `first $$ then` code\n\n`Code $$ first` then $$ display\n"
+},
+{
+"id": "math:math_test_18",
+"src": "$x + y - z$\n\n$x + y\n- z$\n\n$$ x + y\n> z $$\n"
+},
+{
+"id": "math:math_test_19",
+"src": "$not\n\nmath$\n\n$$\nnot\n\nmath\n$$\n"
+},
+{
+"id": "math:math_test_20",
+"src": "- $not\n    - *\n  math$\n"
+},
+{
+"id": "math:math_test_21",
+"src": "This is display math:\n$$\n\\text{Hello $x^2$}\n$$\nAnd this is inline math:\n$\\text{Hello $x$ there!}$\n"
+},
+{
+"id": "math:math_test_22",
+"src": "This is not valid math: $}{$\n\nNeither is this: { $}{$ }\n\nThis is: $\\}\\{$\n\nThis is: $\\}$\n\nMath environment contains 2+2: $}$2+2$\n\nMath environment contains y: $x {$ $ } $y$\n"
+},
+{
+"id": "math:math_test_23",
+"src": "This is not display math. It is inline math:\n\n$$\\text{first $$ second}$\n\n$$$\\text{first $$ second}$\n\nThis is display math:\n\n$$\\text{first $$ second}$$\n\n$$$\\text{first $$ second}$$\n\nThis is also display math, but (counterintuitively) it's allowed to be empty\nand expected to be as short as possible:\n\n$$$$\\text{first $$ second}$$\n"
+},
+{
+"id": "math:math_test_24",
+"src": "$\\text{\\$}$\n\n$$x$x$$\n\n${$^$$\n\n$}$$$$\n\n$}$] $$\n"
+},
+{
+"id": "math:math_test_25",
+"src": "$x$ $`y`$\n"
+},
+{
+"id": "math:math_test_26",
+"src": "- $a$\n\n  ```math\n  a\n  ```\n\n  $$\n  a\n  $$\n\n- ```math\n  b\n  ```\n\n  $$\n  b\n  $$\n"
+},
+{
+"id": "math:math_test_27",
+"src": "- ![node logo](https://nodejs.org/static/images/logo.svg)\n- $x$\n"
+},
+{
+"id": "math:math_test_28",
+"src": "<details>\n\n$A = 5$\n\n$$\nA = 5\n$$\n\n</details>\n"
+},
+{
+"id": "math:math_test_29",
+"src": "$a<b$\n\n$$a<b$$\n"
+},
+{
+"id": "math:math_test_30",
+"src": "[^a]\n\n[^a]: Lorem $a$\n"
+},
+{
+"id": "math:math_test_31",
+"src": "[$a$](x)\n"
+},
+{
+"id": "math:math_test_32",
+"src": "a$x$\n\n-$x$\n\n1$x$\n"
+},
+{
+"id": "math:math_test_33",
+"src": "_$a$ equals $b$_\n\n_$a$ equals $b$_\n\n**$a$ equals $b$**\n"
+},
+{
+"id": "math:math_test_34",
+"src": "$$\na\n$$\n\n- $$\n  \\text{$b$}\n  $$\n"
+},
+{
+"id": "math:math_test_35",
+"src": "$\\{a\\,b\\}$\n"
+},
+{
+"id": "math:math_test_36",
+"src": "$a <b > c$\n\n$[(a+b)c](d+e)$\n\n${a}_b c_{d}$\n"
+},
+{
+"id": "math:math_test_37",
+"src": "When $a \\ne 0$, there are two solutions to $(ax^2 + bx + c = 0)$ and they are\n$$ x = {-b \\pm \\sqrt{b^2-4ac} \\over 2a} $$\n"
+},
+{
+"id": "math:math_test_38",
+"src": "$x = \\$$\n"
+},
+{
+"id": "math:math_test_39",
+"src": "_Equation $\\Omega(69)$ in italic text_\n"
+},
+{
+"id": "math:math_test_40",
+"src": "$\\pi$\n'$\\pi$\n\"$\\pi$\n($\\pi$\n[$\\pi$\n{$\\pi$\n/$\\pi$\n"
+},
+{
+"id": "math:math_test_41",
+"src": "| first $|$ second |\n|--------|---------|\n| a ${   | }$ b    |\n"
+},
+{
+"id": "math:math_test_42",
+"src": "| first $\\|$ second |\n|-------------------|\n| a ${   \\| }$ b    |\n"
+},
+{
+"id": "math:math_test_43",
+"src": "| Description | Test case |\n|-------------|-----------|\n| Single      | $\\$       |\n| Double      | $\\\\$      |\n| Basic test  | $\\|$      |\n| Basic test 2| $\\|\\|\\$   |\n| Basic test 3| $x\\|y\\|z\\$|\n| Not pipe    | $\\.$      |\n| Combo       | $\\.\\|$    |\n| Combo 2     | $\\.\\|\\$   |\n| Extra       | $\\\\\\.$    |\n| Wait, what? | $\\\\|$     |\n| Wait, what? | $\\\\\\|$    |\n| Wait, what? | $\\\\\\\\|$   |\n| Wait, what? | $\\\\\\\\\\|$  |\n"
+},
+{
+"id": "math:math_test_44",
+"src": "This is not an inline math environment: $}{$\nBut, because it's nested too deeply, this is parsed as an inline math environment:\n{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{\nimproperly $}{$ nested\n}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}\nBut this still isn't, because the braces are still counted: $}{$\n"
+},
+{
+"id": "math:math_test_45",
+"src": "This is also deeply nested, but, unlike the first example,\nthey don't have an equal number of close braces and open braces,\nso aren't detected as math.\n{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{\nimproperly $}$ nested ${$ example\n}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}\nThis, however, is detected ${}$\n\n${{{{{{{{{{{{{{{{{{{{{{{{{{{{{{\nanother improperly nested example\n}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}$\n"
+},
+{
+"id": "math:math_test_46",
+"src": "${}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}  20 brace pairs\n{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}  40 brace pairs\n{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}  60 brace pairs\n{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}  80 brace pairs\n{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{} 100 brace pairs\n{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{} 120 brace pairs\n{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{} 140 brace pairs\n{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{} 160 brace pairs\n{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{} 180 brace pairs\n{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{} 200 brace pairs\n{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{} 220 brace pairs\n{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{} 240 brace pairs\n{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{$ 255 brace pairs and one unclosed brace\n"
+},
+{
+"id": "math:math_test_47",
+"src": "${{{{{{{{{{{{{{{{{{{{ 20 open braces\n{{{{{{{{{{{{{{{{{{{{  40 open braces\n{{{{{{{{{{{{{{{{{{{{  60 open braces\n{{{{{{{{{{{{{{{{{{{{  80 open braces\n{{{{{{{{{{{{{{{{{{{{ 100 open braces\n{{{{{{{{{{{{{{{{{{{{ 110 open braces\n{{{{{{{{{{{{{{{{{{{{ 120 open braces\n{{{{{{{{{{{{{{{{{{{{ 140 open braces\n{{{{{{{{{{{{{{{{{{{{ 160 open braces\n{{{{{{{{{{{{{{{{{{{{ 180 open braces\n{{{{{{{{{{{{{{{{{{{{ 200 open braces\n{{{{{{{{{{{{{{{{{{{{ 220 open braces\n{{{{{{{{{{{{{{{{{{{{ 240 open braces\n{{{{{{{{{{{{{{{ 255 open braces\n}}}}}}}}}}}}}}}}}}}}  20 close braces\n}}}}}}}}}}}}}}}}}}}}  40 close braces\n}}}}}}}}}}}}}}}}}}}}  60 close braces\n}}}}}}}}}}}}}}}}}}}}  80 close braces\n}}}}}}}}}}}}}}}}}}}} 100 close braces\n}}}}}}}}}}}}}}}}}}}} 120 close braces\n}}}}}}}}}}}}}}}}}}}} 140 close braces\n}}}}}}}}}}}}}}}}}}}} 160 close braces\n}}}}}}}}}}}}}}}}}}}} 180 close braces\n}}}}}}}}}}}}}}}}}}}} 200 close braces\n}}}}}}}}}}}}}}}}}}}} 220 close braces\n}}}}}}}}}}}}}}}}}}}} 240 close braces\n}}}}}}}}}}}}}}}{$ 255 close braces and one open brace\n"
+}
+]

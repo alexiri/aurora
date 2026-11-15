@@ -387,6 +387,8 @@ impl WorkspaceDeletion {
         self.dep.enqueue(tx).await?;
         self.refs
             .extend(orgs::managed_refs(&mut *tx, org, Some(ws)).await?);
+        // (P5-ADMDEL) A deleted workspace leaves the placement's shared list in this transaction.
+        aurora_db::repo::placement::prune_shared_workspaces(&mut *tx, &[ws], None).await?;
         workspaces::delete(&mut *tx, ws).await?;
         // (FIX-097) Gateways hold the workspace's secrets, connections and policy warm.
         aurora_db::repo::credentials::notify_gateway_invalidate(&mut *tx, "workspace", ws).await?;
@@ -419,6 +421,8 @@ pub async fn delete_org(
         // (FIX-097) The managed values of the org's secrets, connections and OAuth clients
         // lose their rows with the cascade: collect them now, discard after the commit.
         refs = orgs::managed_refs(&mut tx, org_id, None).await?;
+        // (P5-ADMDEL) Every workspace of the org leaves the placement's shared list.
+        aurora_db::repo::placement::prune_shared_workspaces(&mut *tx, &[], Some(org_id)).await?;
         orgs::delete_cascade(&mut tx, org_id).await?;
         aurora_db::repo::credentials::notify_gateway_invalidate(&mut *tx, "org", org_id).await?;
         crate::audit::commit_critical(tx, ev).await
@@ -430,6 +434,30 @@ pub async fn delete_org(
     }
     dep.committed(state).await;
     discard_managed(state, refs).await;
+    Ok(())
+}
+
+/// Delete one workspace with its deprovisioning, secret discard and gateway invalidation,
+/// writing `ev` (critical) in the same transaction. The owner route and the instance admin's
+/// (P5-ADMDEL, C-733) both call this: one implementation.
+pub async fn delete_workspace(
+    state: &AppState,
+    org_id: Uuid,
+    ws: Uuid,
+    ev: &crate::audit::AuditEvent,
+) -> Result<(), ApiError> {
+    let mut del = WorkspaceDeletion::prepare(state, ws).await?;
+    let done = async {
+        let mut tx = state.pool.begin().await.map_err(aurora_db::DbError::from)?;
+        del.run(&mut tx, org_id, ws).await?;
+        crate::audit::commit_critical(tx, ev).await
+    }
+    .await;
+    if let Err(e) = done {
+        del.rollback(state).await;
+        return Err(e);
+    }
+    del.committed(state).await;
     Ok(())
 }
 

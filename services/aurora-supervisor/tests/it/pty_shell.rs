@@ -41,6 +41,7 @@ async fn open_with(r: &mut Rig, shell: PtyShell) {
         cols: 80,
         rows: 24,
         shell,
+        models: None,
     }))
     .await;
     let opened = r.next_frame().await;

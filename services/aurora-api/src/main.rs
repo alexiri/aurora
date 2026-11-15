@@ -334,6 +334,8 @@ async fn serve(cfg: ApiConfig) -> Result<(), Box<dyn std::error::Error>> {
     aurora_api::domains::channels::deprovision::spawn(state.clone());
     // (P4-GSL) git skill library refresh (lease per library; proposals only) and its retention.
     aurora_api::domains::skill_libraries::refresh::spawn(state.clone());
+    // (P5-ASRC, D-250) addon source poll (lease per source; shared with the manual checks).
+    aurora_api::domains::addon_sources::poll::spawn(state.clone());
     aurora_api::domains::plugins::scan::spawn(state.clone());
     // (P5-CHAT-4) index pre-existing messages for search (resumable; ends when complete).
     aurora_api::domains::conversations::search::spawn_backfill(state.clone());

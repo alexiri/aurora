@@ -3,6 +3,7 @@
 
 pub mod action_approvals;
 pub mod activity;
+pub mod addon_sources;
 pub mod admin;
 pub mod agent_links;
 pub mod agents;

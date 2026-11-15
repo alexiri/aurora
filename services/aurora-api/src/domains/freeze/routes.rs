@@ -1,16 +1,21 @@
 use super::dto::*;
 use super::service::{self, Freezer, Target, workspace_authority};
 use crate::app::AppState;
-use crate::audit::AuditActor;
-use crate::http::auth::{Caller, InstanceAdmin, require_own};
+use crate::audit::{AuditActor, AuditEvent, Outcome};
+use crate::domains::me::service::REAUTH_WINDOW_SECS;
+use crate::domains::tenancy::dto::ConfirmRequest;
+use crate::domains::tenancy::service as tenancy;
+use crate::http::auth::{Caller, InstanceAdmin, Principal, require_own};
 use crate::http::error::ErrorEnvelope;
 use crate::http::json::{Json, Path, Query};
 use crate::http::pagination::{Page, Pagination};
 use aurora_core::ApiError;
 use aurora_db::DbError;
 use aurora_db::repo::freeze::{self as repo, Effective, Scope};
-use aurora_db::repo::{agents, workspaces};
+use aurora_db::repo::{agents, sessions, workspaces};
 use axum::extract::State;
+use axum::http::StatusCode;
+use serde_json::json;
 use utoipa_axum::{router::OpenApiRouter, routes};
 use uuid::Uuid;
 
@@ -25,6 +30,9 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(admin_freeze_org))
         .routes(routes!(admin_unfreeze_org))
         .routes(routes!(admin_list_orgs))
+        .routes(routes!(admin_get_org, admin_delete_org))
+        .routes(routes!(admin_list_org_workspaces))
+        .routes(routes!(admin_delete_workspace))
 }
 
 /// The agent and the caller's authority on it: `can_own` on its workspace.
@@ -267,22 +275,177 @@ async fn admin_list_orgs(
     .await?;
     let page = Page::from_rows(rows, p.limit, |r| (r.created_at, r.id));
     Ok(Json(Page {
+        items: page.items.into_iter().map(admin_org).collect(),
+        next_cursor: page.next_cursor,
+    }))
+}
+
+fn admin_org(r: repo::AdminOrgRow) -> AdminOrg {
+    AdminOrg {
+        frozen: r.frozen().map(|f| {
+            Frozen::from(&Effective {
+                level: Scope::Org,
+                frozen: f,
+            })
+        }),
+        id: r.id,
+        slug: r.slug,
+        name: r.name,
+        created_at: r.created_at,
+        ownerless: r.ownerless,
+        member_count: r.member_count,
+        workspace_count: r.workspace_count,
+        agent_count: r.agent_count,
+    }
+}
+
+async fn admin_org_row(s: &AppState, org: Uuid) -> Result<repo::AdminOrgRow, ApiError> {
+    let mut conn = s.pool.acquire().await.map_err(DbError::from)?;
+    repo::get_admin_org(&mut conn, org)
+        .await?
+        .ok_or_else(|| ApiError::not_found("Organization not found."))
+}
+
+/// One organization's operator row (instance administrators; counts, no content).
+#[utoipa::path(get, path = "/admin/orgs/{org}", operation_id = "adminGetOrg", tag = "admin",
+    params(("org" = Uuid, Path, description = "Organization id")),
+    responses((status = 200, body = AdminOrg), (status = 403, body = ErrorEnvelope),
+        (status = 404, body = ErrorEnvelope)),
+    security(("session" = [])))]
+async fn admin_get_org(
+    _c: InstanceAdmin,
+    State(s): State<AppState>,
+    Path(org): Path<Uuid>,
+) -> Result<Json<AdminOrg>, ApiError> {
+    Ok(Json(admin_org(admin_org_row(&s, org).await?)))
+}
+
+/// One organization's workspaces (instance administrators; metadata only).
+#[utoipa::path(get, path = "/admin/orgs/{org}/workspaces", operation_id = "adminListOrgWorkspaces", tag = "admin",
+    params(("org" = Uuid, Path, description = "Organization id"), ListAdminWorkspacesQuery),
+    responses((status = 200, body = Page<AdminWorkspace>), (status = 403, body = ErrorEnvelope),
+        (status = 404, body = ErrorEnvelope)),
+    security(("session" = [])))]
+async fn admin_list_org_workspaces(
+    _c: InstanceAdmin,
+    State(s): State<AppState>,
+    Path(org): Path<Uuid>,
+    Query(q): Query<ListAdminWorkspacesQuery>,
+) -> Result<Json<Page<AdminWorkspace>>, ApiError> {
+    let p = Pagination::new(q.limit, q.cursor.as_deref())?;
+    let mut conn = s.pool.acquire().await.map_err(DbError::from)?;
+    if !repo::exists(&mut conn, Scope::Org, org).await? {
+        return Err(ApiError::not_found("Organization not found."));
+    }
+    let rows = repo::list_admin_workspaces(&mut conn, org, p.after.map(|c| (c.t, c.id)), p.fetch())
+        .await?;
+    let page = Page::from_rows(rows, p.limit, |r| (r.created_at, r.id));
+    Ok(Json(Page {
         items: page
             .items
             .into_iter()
-            .map(|r| AdminOrg {
-                frozen: r.frozen().map(|f| {
-                    Frozen::from(&Effective {
-                        level: Scope::Org,
-                        frozen: f,
-                    })
-                }),
+            .map(|r| AdminWorkspace {
                 id: r.id,
                 slug: r.slug,
                 name: r.name,
+                personal: r.personal,
+                agent_count: r.agent_count,
                 created_at: r.created_at,
             })
             .collect(),
         next_cursor: page.next_cursor,
     }))
+}
+
+fn reauth_required() -> ApiError {
+    ApiError::new(
+        StatusCode::PRECONDITION_FAILED,
+        "reauth_required",
+        "Re-authenticate with your sign-in provider to delete.",
+    )
+}
+
+/// The session's last OIDC authentication is within the shared window ([`REAUTH_WINDOW_SECS`]).
+async fn require_recent_reauth(s: &AppState, c: &InstanceAdmin) -> Result<(), ApiError> {
+    let Principal::Session { id } = c.principal else {
+        return Err(ApiError::forbidden("Session required."));
+    };
+    let age = sessions::reauth_age_secs(&s.pool, id).await?;
+    if !age.is_some_and(|a| (0.0..=REAUTH_WINDOW_SECS).contains(&a)) {
+        return Err(reauth_required());
+    }
+    Ok(())
+}
+
+/// Delete any organization with everything in it (instance administrators; recent re-auth,
+/// typed slug). Runs the owner delete's services; allowed while frozen; shows no content.
+#[utoipa::path(delete, path = "/admin/orgs/{org}", operation_id = "adminDeleteOrg", tag = "admin",
+    params(("org" = Uuid, Path, description = "Organization id")),
+    request_body = ConfirmRequest,
+    responses((status = 204, description = "Deleted"), (status = 400, body = ErrorEnvelope),
+        (status = 403, body = ErrorEnvelope), (status = 404, body = ErrorEnvelope),
+        (status = 412, body = ErrorEnvelope), (status = 503, body = ErrorEnvelope)),
+    security(("session" = [])))]
+async fn admin_delete_org(
+    c: InstanceAdmin,
+    State(s): State<AppState>,
+    Path(org): Path<Uuid>,
+    Json(req): Json<ConfirmRequest>,
+) -> Result<StatusCode, ApiError> {
+    let row = admin_org_row(&s, org).await?;
+    require_recent_reauth(&s, &c).await?;
+    if req.confirm != row.slug {
+        return Err(tenancy::confirmation_mismatch());
+    }
+    let ev = AuditEvent::new(
+        AuditActor::instance_admin(&c),
+        "admin.org.delete",
+        Outcome::Success,
+    )
+    .target("organization", org)
+    .metadata(json!({
+        "org_id": org, "slug": row.slug, "name": row.name,
+        "member_count": row.member_count, "workspace_count": row.workspace_count,
+        "agent_count": row.agent_count,
+    }));
+    tenancy::delete_org(&s, org, &ev).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Delete any workspace (instance administrators; recent re-auth, typed slug). Runs the
+/// owner delete's services; shows no content.
+#[utoipa::path(delete, path = "/admin/workspaces/{ws}", operation_id = "adminDeleteWorkspace", tag = "admin",
+    params(("ws" = Uuid, Path, description = "Workspace id")),
+    request_body = ConfirmRequest,
+    responses((status = 204, description = "Deleted"), (status = 400, body = ErrorEnvelope),
+        (status = 403, body = ErrorEnvelope), (status = 404, body = ErrorEnvelope),
+        (status = 412, body = ErrorEnvelope), (status = 503, body = ErrorEnvelope)),
+    security(("session" = [])))]
+async fn admin_delete_workspace(
+    c: InstanceAdmin,
+    State(s): State<AppState>,
+    Path(ws): Path<Uuid>,
+    Json(req): Json<ConfirmRequest>,
+) -> Result<StatusCode, ApiError> {
+    let (org_id, slug, name, agent_count) = {
+        let mut conn = s.pool.acquire().await.map_err(DbError::from)?;
+        repo::get_admin_workspace(&mut conn, ws)
+            .await?
+            .ok_or_else(|| ApiError::not_found("Workspace not found."))?
+    };
+    require_recent_reauth(&s, &c).await?;
+    if req.confirm != slug {
+        return Err(tenancy::confirmation_mismatch());
+    }
+    let ev = AuditEvent::new(
+        AuditActor::instance_admin(&c),
+        "admin.workspace.delete",
+        Outcome::Success,
+    )
+    .target("workspace", ws)
+    .metadata(json!({
+        "org_id": org_id, "slug": slug, "name": name, "agent_count": agent_count,
+    }));
+    tenancy::delete_workspace(&s, org_id, ws, &ev).await?;
+    Ok(StatusCode::NO_CONTENT)
 }

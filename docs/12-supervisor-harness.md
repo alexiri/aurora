@@ -587,8 +587,17 @@ file is logged and does not fail the sync. The sandbox image ships the `psql` cl
   environment or on disk), the CLIs' telemetry/auto-update switches, and — once a turn has chosen
   one — the model, and for a non-Anthropic endpoint its base URL, exactly the values the adapters
   put into a turn's environment (Codex takes its provider from `-c` overrides the wrapper builds,
-  not from a config file). Before the first turn the CLI's own default model applies and the
-  gateway's governance (model allow-lists) decides. Each wrapper refuses with "`<harness>`: not
+  not from a config file). **(Owner 2026-11-14, C-750 (4))** Every terminal open also brings the
+  models: the API resolves, at grant redemption, the model a turn of **each** enabled terminal
+  harness (`claude-code`, `codex`) would use (the same `model::select`), and the runner hands them
+  to the supervisor in `pty.open.models`; the supervisor rewrites the file before it spawns the
+  shell. So `claude`/`codex` reach the agent's endpoint from the first terminal of a fresh boot,
+  not only after a turn (before this, a fresh boot sent `claude` to `api.anthropic.com`, where an
+  agent whose key is for another endpoint has no credential). The file keeps one section per
+  harness; a turn's session start replaces only its own harness's section. A harness with no
+  usable model gets `AURORA_<HARNESS>_UNAVAILABLE` (a fixed reason: no usable LLM key, or no model
+  chosen) and its wrapper prints that and exits 1 instead of calling a host with no credential.
+  An older runner or API (no `models`) keeps the previous behaviour. Each wrapper refuses with "`<harness>`: not
   enabled on this instance" (exit 127) when its binary is not in the image or its harness is not
   in `HARNESSES_ENABLED`; otherwise it sources the file, sets its **own state directory**
   (`CLAUDE_CONFIG_DIR=/workspace/.aurora/terminal/claude`, `CODEX_HOME=/workspace/.aurora/terminal/codex`,

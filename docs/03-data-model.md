@@ -413,6 +413,32 @@ Audit writes are best-effort and never fail the action (logged on failure). (pha
 
 The project's built-in publisher key (`aurora`) is compiled in and never stored.
 
+### `addon_sources` (phase 5, P5-ASRC, D-250; third-party app-package repositories)
+| Column | Type | Notes |
+|---|---|---|
+| id | uuid pk | |
+| name | text not null | manifest `repo.name` |
+| url | text unique not null | the resolved manifest URL (https, normalized at registration; never the pasted repo URL) |
+| homepage | text null | manifest `repo.homepage` |
+| contact | text null | manifest `repo.contact` (https or mailto) |
+| publisher | text not null | the package publisher all addons of the repo use |
+| signing_key | text not null | the manifest-published ed25519 key, base64 — the trust anchor of the source |
+| key_fingerprint | text not null | sha256 of the key, `sha256:<12 hex>`; shown prominently at registration and re-confirm |
+| new_key_fingerprint | text null | the new fingerprint while `status = signing_key_changed` |
+| manifest_digest | text not null | sha256 of the last accepted manifest bytes; polls compare before parsing |
+| manifest | jsonb not null | the last accepted manifest as parsed (repo info, addons, versions): the dashboard reads it, never the live source; "removed upstream" is derived from it |
+| update_interval | text not null default `1d` CHECK in (`6h`,`12h`,`1d`,`1w`,`2w`,`1mo`,`never`) | the instance setting `plugins.addon_sources.update_interval` seeds it; `never` = manual checks only |
+| status | text not null default `ok` CHECK in (`ok`,`check_failed`,`signing_key_changed`) | `check_failed` keeps serving the last known state |
+| check_failed_at, check_failed_reason | timestamptz null, text null (≤ 200) | sanitized reason; never a URL query or body text |
+| last_checked_at | timestamptz null | |
+| next_check_at | timestamptz not null default now() | due work for the poll job (interval + jitter + failure backoff) |
+| check_lease_until, lease_owner | timestamptz null, uuid null | the per-source lease of the poll job (`ADDON_LEASE`); a manual check takes the same lease |
+| created_by | uuid FK→users (set null) | instance admin |
+| index | (next_check_at) where status <> `signing_key_changed` | poll job claim set |
+
+Registration (TOFU) creates the row and a `trusted_keys` row for `signing_key` in one audited
+transaction; key re-confirm updates both (`09 §10`, SEC-86).
+
 ### `plugin_packages`
 | Column | Type | Notes |
 |---|---|---|
@@ -425,7 +451,8 @@ The project's built-in publisher key (`aurora`) is compiled in and never stored.
 | signer_key_id | text not null | `builtin` or `trusted_keys.id` |
 | manifest | jsonb not null | parsed manifest |
 | permissions | jsonb not null | normalized permissions block |
-| source | text CHECK in (`builtin`,`directory`,`upload`) | |
+| source | text CHECK in (`builtin`,`directory`,`upload`,`addon`) | (phase 5, P5-ASRC) gains `addon`: an app package ingested from an addon source (D-250) |
+| source_id | uuid null FK→addon_sources (set null) | (phase 5, P5-ASRC) the addon source row for `source = addon`; null otherwise |
 | status | text CHECK in (`pending_approval`,`active`,`superseded`,`rejected`,`disabled`,`invalid`) | |
 | status_reason | text null | open vocabulary; (phase 3, RFE-022) gains the value `breaks_connections`: a major upgrade held in `pending_approval` because it would set connections to `reauth_required` (`09 §10`); no schema change |
 | violations | jsonb not null default '[]' | validation violations for status invalid; spec fix S-05 |
