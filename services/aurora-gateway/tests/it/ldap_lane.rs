@@ -259,11 +259,39 @@ async fn lane(script: Script, trust_directory: bool) -> (Env, Arc<Mutex<Seen>>) 
 }
 
 async fn post(env: &Env, method: &str, path: &str, body: &str) -> Reply {
+    post_to(env, HOST, method, path, body).await
+}
+
+/// (FIX-153) Plain HTTP through the proxy (no CONNECT, no TLS) to the synthetic host.
+async fn post_plain(env: &Env, path: &str, body: &str) -> Reply {
+    let mut s = crate::common::connect(env.proxy).await;
+    let auth = base64::engine::general_purpose::STANDARD.encode(format!("agent:{TOKEN}"));
+    let req = format!(
+        "POST http://{HOST}{path} HTTP/1.1\r\nHost: {HOST}\r\nProxy-Authorization: Basic {auth}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    );
+    s.write_all(req.as_bytes()).await.unwrap();
+    let mut out = Vec::new();
+    let _ = tokio::time::timeout(Duration::from_secs(10), s.read_to_end(&mut out)).await;
+    let text = String::from_utf8_lossy(&out).into_owned();
+    let (head, body) = text.split_once("\r\n\r\n").unwrap_or((&text, ""));
+    Reply {
+        status: head
+            .split_whitespace()
+            .nth(1)
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0),
+        head: head.to_owned(),
+        body: dechunk(body),
+    }
+}
+
+async fn post_to(env: &Env, host: &str, method: &str, path: &str, body: &str) -> Reply {
     // Like an agent: CONNECT to the synthetic host, TLS with the gateway's leaf inside the tunnel
     // (a credential-free app is still only served over TLS to the claimed port).
     let mut s = crate::common::connect(env.proxy).await;
     let auth = base64::engine::general_purpose::STANDARD.encode(format!("agent:{TOKEN}"));
-    let target = format!("{HOST}:443");
+    let target = format!("{host}:443");
     s.write_all(
         format!("CONNECT {target} HTTP/1.1\r\nHost: {target}\r\nProxy-Authorization: Basic {auth}\r\n\r\n")
             .as_bytes(),
@@ -284,13 +312,13 @@ async fn post(env: &Env, method: &str, path: &str, body: &str) -> Reply {
     let cfg = crate::common::client_config(&crate::common::trust_pem(env.proxy), &[b"http/1.1"]);
     let mut t = tokio_rustls::TlsConnector::from(cfg)
         .connect(
-            rustls::pki_types::ServerName::try_from(HOST.to_owned()).unwrap(),
+            rustls::pki_types::ServerName::try_from(host.to_owned()).unwrap(),
             s,
         )
         .await
         .unwrap();
     let req = format!(
-        "{method} {path} HTTP/1.1\r\nHost: {HOST}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        "{method} {path} HTTP/1.1\r\nHost: {host}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
         body.len()
     );
     t.write_all(req.as_bytes()).await.unwrap();
@@ -494,5 +522,100 @@ async fn an_ungranted_agent_cannot_search() {
         "{}",
         r.body
     );
+    let d = refusal_details(&r);
+    assert_eq!(d["reason"], "not_granted", "{}", r.body);
+    assert_eq!(d["app_id"], "phonebook");
+    assert_eq!(d["app_name"], "Phonebook");
+    assert_access_url(&d);
+    assert!(d.get("connect_url").is_none(), "{}", r.body);
+    assert_eq!(seen.lock().unwrap().connections, 0);
+}
+
+fn refusal_details(r: &Reply) -> Value {
+    serde_json::from_str::<Value>(&r.body).unwrap()["error"]["details"].clone()
+}
+
+/// `<external>/o/<org>/w/<ws>/agents/<agent uuid>?tab=access` (C-891).
+fn assert_access_url(d: &Value) {
+    let u = d["access_url"].as_str().expect("access_url");
+    let (path, q) = u.split_once('?').unwrap();
+    assert_eq!(q, "tab=access", "{u}");
+    let id = path.rsplit_once("/agents/").unwrap().1;
+    assert!(Uuid::parse_str(id).is_ok(), "{u}");
+    assert!(!u.contains("/apps/") && !u.contains("/secrets"), "{u}");
+}
+
+#[tokio::test]
+async fn an_app_with_no_connection_says_not_connected_and_where_to_connect() {
+    let (port, ca_pem, seen) = directory(Script::Entries(vec![person("jdoe")], 0)).await;
+    let (env, ..) =
+        start_with_ca(ldap_snapshot(port), &[], |_| Rows::default(), Some(ca_pem)).await;
+    let r = post(&env, "POST", "/search", r#"{"filter":"(uid=jdoe)"}"#).await;
+    assert_eq!(
+        (r.status, r.code().as_str()),
+        (403, "ldap_no_connection"),
+        "{}",
+        r.body
+    );
+    let d = refusal_details(&r);
+    assert_eq!(d["reason"], "not_connected", "{}", r.body);
+    assert_eq!(d["app_name"], "Phonebook");
+    let c = d["connect_url"].as_str().unwrap();
+    assert!(
+        c.ends_with("/credentials?tab=apps&connect=phonebook"),
+        "{c}"
+    );
+    assert_access_url(&d);
+    assert!(r.body.contains("Phonebook is not connected"), "{}", r.body);
+    assert_eq!(seen.lock().unwrap().connections, 0);
+}
+
+#[tokio::test]
+async fn a_host_of_no_installed_app_says_no_app() {
+    let (port, ca_pem, seen) = directory(Script::Entries(vec![person("jdoe")], 0)).await;
+    let (env, ..) = start_with_ca(
+        ldap_snapshot(port),
+        &[("c1", "{}")],
+        |w| {
+            let mut c = conn(w, "phonebook", "c1", None);
+            c.workspace_id = Some(w.ws);
+            granted(c)(w)
+        },
+        Some(ca_pem),
+    )
+    .await;
+    let r = post_to(
+        &env,
+        "nobody.ldap.aurora.internal",
+        "POST",
+        "/search",
+        r#"{"filter":"(uid=jdoe)"}"#,
+    )
+    .await;
+    assert_eq!(
+        (r.status, r.code().as_str()),
+        (403, "ldap_no_connection"),
+        "{}",
+        r.body
+    );
+    let d = refusal_details(&r);
+    assert_eq!(d["reason"], "no_app", "{}", r.body);
+    assert!(d.get("access_url").is_none() && d.get("connect_url").is_none());
+    assert_eq!(seen.lock().unwrap().connections, 0);
+}
+
+#[tokio::test]
+async fn plain_http_to_an_ldap_host_is_refused_with_the_https_url() {
+    let (env, seen) = lane(Script::Entries(vec![person("jdoe")], 0), true).await;
+    let r = post_plain(&env, "/search", r#"{"filter":"(uid=jdoe)"}"#).await;
+    assert_eq!(
+        (r.status, r.code().as_str()),
+        (400, "ldap_https_required"),
+        "{}",
+        r.body
+    );
+    let d = refusal_details(&r);
+    assert_eq!(d["url"], format!("https://{HOST}/search"));
+    assert!(r.body.contains(&format!("https://{HOST}/search")));
     assert_eq!(seen.lock().unwrap().connections, 0);
 }

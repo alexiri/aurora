@@ -1,0 +1,11 @@
+{
+  "_comment": "FIX-153, C-891: every dashboard URL the gateway emits in an error. Placeholders: {external} {org} {ws} {app} {connection} {agent}. The gateway's links.rs test pins its builder to these templates; web/src/lib/dashboard-links.test.ts checks each is a real route and each tab is accepted.",
+  "templates": {
+    "connect": "{external}/o/{org}/w/{ws}/credentials?tab=apps&connect={app}",
+    "connect_any": "{external}/o/{org}/w/{ws}/credentials?tab=apps",
+    "reconnect": "{external}/o/{org}/w/{ws}/credentials?tab=connections&reconnect={connection}",
+    "secrets": "{external}/o/{org}/w/{ws}/credentials?tab=secrets",
+    "access": "{external}/o/{org}/w/{ws}/agents/{agent}?tab=access",
+    "policy": "{external}/o/{org}/w/{ws}/policy"
+  }
+}
