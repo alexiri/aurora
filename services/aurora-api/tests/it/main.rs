@@ -103,6 +103,7 @@ mod telemetry_ingest;
 mod tenancy;
 mod terminal;
 mod tools;
+mod trace_e2e;
 mod turn_trace_context;
 mod webhooks;
 

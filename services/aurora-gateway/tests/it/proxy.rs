@@ -1067,3 +1067,132 @@ async fn h1_upstream_sees_synthesized_host_with_non_default_port() {
         "exactly one Host header: {r}"
     );
 }
+
+const TURN_TP: &str = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
+
+/// A credential minted for a turn: it carries the turn's trace context (FIX-146 B).
+struct TracedResolver;
+
+#[async_trait::async_trait]
+impl CredentialResolver for TracedResolver {
+    async fn resolve(&self, token: &str) -> Result<Option<RequestIdentity>, ResolveError> {
+        let Some(mut id) = StaticResolver.resolve(token).await? else {
+            return Ok(None);
+        };
+        id.trace_context = Some(TURN_TP.to_owned());
+        id.turn_id = Some(Uuid::now_v7());
+        id.conversation_id = Some(Uuid::now_v7());
+        Ok(Some(id))
+    }
+}
+
+#[derive(Clone, Default)]
+struct LogBuf(Arc<std::sync::Mutex<Vec<u8>>>);
+
+impl std::io::Write for LogBuf {
+    fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(b);
+        Ok(b.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for LogBuf {
+    type Writer = LogBuf;
+    fn make_writer(&'a self) -> LogBuf {
+        self.clone()
+    }
+}
+
+/// FIX-146 B / D-232 (7), SEC-88: the gateway span of a call made with a turn credential is a
+/// child of the turn's stored context (same trace; the runner's and API's spans share it), the
+/// upstream never sees a `traceparent`, and no header, query value, body text or credential is
+/// in any span or log line.
+#[tokio::test]
+async fn gateway_span_is_a_child_of_the_turn_context_and_carries_no_canary() {
+    use opentelemetry::trace::TracerProvider as _;
+    use opentelemetry_sdk::trace::InMemorySpanExporter;
+    use tracing_subscriber::{Layer as _, layer::SubscriberExt as _};
+
+    let env = start_with(
+        Arc::new(TracedResolver),
+        &["127.0.0.0/8"],
+        Duration::from_secs(10),
+    )
+    .await;
+    let exporter = InMemorySpanExporter::default();
+    let provider = aurora_core::telemetry::provider_builder("test", 1.0)
+        .with_simple_exporter(exporter.clone())
+        .build();
+    let tracer = provider.tracer("t");
+    let logs = LogBuf::default();
+    let sub = tracing_subscriber::registry()
+        .with(
+            tracing_opentelemetry::layer()
+                .with_tracer(tracer)
+                .with_filter(tracing_subscriber::filter::filter_fn(|m| m.is_span())),
+        )
+        .with(
+            tracing_subscriber::fmt::layer()
+                .json()
+                .with_writer(logs.clone())
+                .with_filter(tracing_subscriber::filter::LevelFilter::INFO),
+        );
+    let _guard = tracing::subscriber::set_default(sub);
+
+    let mut c = mitm(&env, env.https, false).await;
+    let (st, _, body) = text(
+        c.send(get(
+            env.https,
+            "/chat?q=canary-query-4471",
+            &[
+                ("x-canary", "canary-header-9d2e"),
+                ("authorization", "Bearer canary-bearer-77ab"),
+            ],
+        ))
+        .await,
+    )
+    .await;
+    assert_eq!(st, 200, "{body}");
+    assert!(
+        !body.to_lowercase().contains("traceparent"),
+        "upstream must see no Aurora traceparent: {body}"
+    );
+
+    let spans = exporter.get_finished_spans().unwrap();
+    let gw: Vec<_> = spans
+        .iter()
+        .filter(|s| s.name.starts_with("gateway "))
+        .collect();
+    assert_eq!(
+        gw.len(),
+        1,
+        "{:?}",
+        spans.iter().map(|s| s.name.to_string()).collect::<Vec<_>>()
+    );
+    let g = gw[0];
+    assert_eq!(
+        format!("{:032x}", g.span_context.trace_id()),
+        "4bf92f3577b34da6a3ce929d0e0e4736"
+    );
+    assert_eq!(format!("{:016x}", g.parent_span_id), "00f067aa0ba902b7");
+    assert_eq!(g.name.as_ref(), "gateway 127.0.0.1");
+
+    let dump = spans
+        .iter()
+        .map(|s| format!("{s:?}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let log = String::from_utf8(logs.0.lock().unwrap().clone()).unwrap();
+    for secret in [
+        "canary-query-4471",
+        "canary-header-9d2e",
+        "canary-bearer-77ab",
+        "aug_good",
+    ] {
+        assert!(!dump.contains(secret), "{secret} in a span");
+        assert!(!log.contains(secret), "{secret} in a log line");
+    }
+}

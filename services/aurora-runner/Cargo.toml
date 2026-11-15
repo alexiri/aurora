@@ -53,3 +53,8 @@ uuid = { workspace = true, features = ["v4", "v5"] }
 aurora-testkit = { workspace = true }
 tower = { workspace = true }
 wiremock = { workspace = true }
+# FIX-146: executor tracing test (the work span is a child of the item's trace context)
+opentelemetry = { workspace = true }
+opentelemetry_sdk = { workspace = true, features = ["testing"] }
+tracing-opentelemetry = { workspace = true }
+tracing-subscriber = { workspace = true }
