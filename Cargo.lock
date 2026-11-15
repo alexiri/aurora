@@ -836,7 +836,7 @@ dependencies = [
  "sha2 0.10.9",
  "tar",
  "thiserror 2.0.21",
- "wasmparser 0.239.0",
+ "wasmparser 0.261.0",
 ]
 
 [[package]]
@@ -2712,7 +2712,6 @@ dependencies = [
  "allocator-api2",
  "equivalent",
  "foldhash 0.1.5",
- "serde",
 ]
 
 [[package]]
@@ -6876,7 +6875,6 @@ dependencies = [
  "hashbrown 0.15.5",
  "indexmap 2.14.2",
  "semver",
- "serde",
 ]
 
 [[package]]
