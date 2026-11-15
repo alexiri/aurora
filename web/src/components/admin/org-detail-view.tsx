@@ -7,6 +7,7 @@ import { AdminDeleteDialog } from "@/components/admin/admin-delete-dialog";
 import { OrgDeleteConsequences } from "@/components/admin/orgs-view";
 import { fmtDate } from "@/components/account/key-table";
 import { ErrorState, Loading } from "@/components/states";
+import { ReauthErrorNotice } from "@/components/auth/reauth-error-notice";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DataTable, Td, Th } from "@/components/ui/data-table";
@@ -89,6 +90,7 @@ export function OrgDetailView({ orgId }: { orgId: string }) {
           </Button>
         }
       />
+      <ReauthErrorNotice />
       {done ? (
         <Notice tone="accent" role="status" data-testid="admin-orgs-done">
           {done}

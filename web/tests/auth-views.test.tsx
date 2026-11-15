@@ -189,6 +189,21 @@ describe("JoinView", () => {
 });
 
 describe("DeleteView", () => {
+  it("shows the reauth_error notice only when the param is present (FIX-152)", async () => {
+    mockFetch({ "GET /v1/instance": () => json(200, instance) });
+    search = "reauth_error=reauth_stale";
+    wrap(<DeleteView />);
+    expect((await screen.findByRole("alert")).textContent).toMatch(/did not confirm a fresh sign-in.*reauth_stale/);
+    cleanup();
+    search = "reauth_error=whatever";
+    wrap(<DeleteView />);
+    expect((await screen.findByRole("alert")).textContent).toBe("Re-authentication failed. Please try again.");
+    cleanup();
+    search = "";
+    wrap(<DeleteView />);
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
   it("412 reauth_required offers re-authentication through the provider", async () => {
     mockFetch({
       "GET /v1/instance": () => json(200, instance),

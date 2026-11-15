@@ -1975,7 +1975,8 @@ export interface paths {
         };
         /**
          * Complete OIDC sign-in: sets the session cookie and redirects to `return_to`, or to
-         *     `/auth/login?error=<code>`.
+         *     `/auth/login?error=<code>`. A failed re-authentication (the flow state opened and the flow was
+         *     a re-authentication) redirects back to the flow's `return_to` with `reauth_error=<code>`.
          */
         get: operations["oidcCallback"];
         put?: never;
@@ -19065,7 +19066,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Redirect to `return_to` or `/auth/login?error=<code>` */
+            /** @description Redirect to `return_to` (on a failed re-authentication, with `reauth_error=<code>` appended) or `/auth/login?error=<code>` */
             302: {
                 headers: {
                     [name: string]: unknown;
