@@ -23,6 +23,7 @@ import {
   type AppInstance,
   type InstanceScope,
 } from "@/lib/api/apps";
+import { appDisplayName } from "@/lib/api/app-name";
 import { api } from "@/lib/api/client";
 import {
   errorMessage,
@@ -203,7 +204,7 @@ function RegisterDialog({
           <option value="">Select…</option>
           {bound.map((a) => (
             <option key={a.app_id} value={a.app_id}>
-              {a.name}
+              {appDisplayName(a)}
             </option>
           ))}
         </select>
@@ -410,7 +411,7 @@ export function InstancesView({ scope, canManage }: { scope: InstanceScope; canM
   const [open, setOpen] = useState(false);
   if (list.isPending || pending) return <Loading />;
   if (list.isError) return <ErrorState error={list.error} onRetry={() => list.refetch()} />;
-  const names = new Map(bound.map((a) => [a.app_id, a.name]));
+  const names = new Map(bound.map((a) => [a.app_id, appDisplayName(a)]));
   const items = list.data.items;
   return (
     <div className="space-y-6">

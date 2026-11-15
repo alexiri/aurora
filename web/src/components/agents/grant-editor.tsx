@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogClose, DialogContent } from "@/components/ui/dialog";
 import { Notice } from "@/components/ui/notice";
 import { useApp, appRestrictions, type Connection, type HasAppRestrictions } from "@/lib/api/apps";
+import { appDisplayName } from "@/lib/api/app-name";
 import { usePutAgentConnectionGrant, type ConnectionGrant } from "@/lib/api/credential-grants";
 import {
   grantValueBody,
@@ -83,7 +84,7 @@ function EditorLoader({
       grant={grant}
       tools={splitByScopes(toolsForMethod(app.data.tools, connection.connect_method), connection.scopes).usable}
       unavailable={splitByScopes(toolsForMethod(app.data.tools, connection.connect_method), connection.scopes).unavailable}
-      appName={app.data.name}
+      appName={appDisplayName(app.data)}
       restrictions={appRestrictions(restrictions, app.data)}
       onClose={onClose}
     />

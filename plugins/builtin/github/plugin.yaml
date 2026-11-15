@@ -1,6 +1,6 @@
 package:
   id: github
-  version: 2.1.0
+  version: 2.2.0
   contract: 1
   min_core: 0.1.0
   publisher: aurora
@@ -64,6 +64,7 @@ apps:
   - about:
       id: github
       name: GitHub
+      family: { id: github, name: GitHub, variant_label: github.com }
       description: Work with repositories, issues, pull requests, files, Actions runs and search on github.com
       category: development
       api_docs: https://docs.github.com/en/rest
@@ -325,6 +326,7 @@ apps:
   - about:
       id: github-ghes
       name: GitHub Enterprise Server
+      family: { id: github, name: GitHub, variant_label: Enterprise Server }
       description: Work with repositories, issues, pull requests, files and Actions runs on a registered GitHub Enterprise Server
       category: development
       api_docs: https://docs.github.com/en/enterprise-server@latest/rest

@@ -1574,6 +1574,7 @@ At first sign-in the user lands on a **Welcome** page in the workspace placement
 
 ## Key flows
 
+- **App families** (phase 5, FIX-135, D-242, C-744): apps that declare `about.family` are **one tile** in the Apps tab (named by the family, connection counts summed, Details opens the hosted member); the connect dialog of a family opens with **"Where does your <family> run?"** (ChoiceCards: the hosted variant, then each active registered server of the family's instance-bound apps as "<variant> · <label>" with its address; a notice with a **Register a server…** link to Admin › Self-hosted apps for instance admins, or "ask an administrator" for others), then the chosen app's own methods and form with the server already selected (no second instance picker). Everywhere else an app is named — connections, grant dialogs, availability, OAuth clients, instances — "<family> · <variant>" through `appDisplayName` / `AppName` (`web/src/lib/api/app-name.ts`); a test fails if one of those surfaces stops importing it.
 - **Connect window**: opened as a popup from the Apps tab; renders the app's
   connect methods (fields with help links, selects with warnings, `show_when`
   conditions, file and JSON-file imports), the requested scopes with names and

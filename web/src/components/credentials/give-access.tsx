@@ -11,6 +11,7 @@ import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Notice } from "@/components/ui/notice";
 import { ApiError } from "@/lib/api/client";
 import { appRestrictions, useApp, useConnections } from "@/lib/api/apps";
+import { appDisplayName } from "@/lib/api/app-name";
 import { useGrants } from "@/lib/api/policy";
 import {
   grantValueBody,
@@ -306,7 +307,7 @@ export function GiveAccessPanel({
           <ErrorState error={app.error} onRetry={() => app.refetch()} />
         ) : (
           <GrantForm
-            appName={app.data.name}
+            appName={appDisplayName(app.data)}
             tools={tools}
             unavailable={split.unavailable}
             customOnly={customOnly}

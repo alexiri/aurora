@@ -133,7 +133,22 @@ about:
   web_hosts: [mail.google.com]          # hosts allowed in approval links
   connect_note: { text: "An admin must enable API access first.", url: https://… }   # optional
   label_hint: "Account email"
+  family: { id: github, name: GitHub, variant_label: github.com }   # optional, phase 5 (D-242)
 ```
+
+**`family`** (phase 5, FIX-135, D-242, C-744, manifest contract 1, additive). Apps of **one
+package** that are the same product in different deployments (GitHub on github.com and on a
+GitHub Enterprise Server; Jira Cloud and Data Center) declare the same `family`. It is
+presentation only: the apps stay separate (own hosts, tools, token kinds, SEC-04/SEC-59 and the
+gateway unchanged). The catalogue shows **one tile per family**, the connect window asks where the
+product runs (the hosted variant, then each registered server of the family's instance-bound apps),
+and every list, picker, grant dialog and approval names the app "<family name> · <variant_label>"
+(a registered server adds its address). Linter: `id` is a lower-case slug
+(`family_id_invalid`); `name` and `variant_label` are non-empty (`family_label_empty`); every
+member of a family has the same `name` (`family_name_mismatch`), `variant_label` is unique in the
+family (`family_variant_duplicate`), at most one member is not instance-bound
+(`family_two_hosted`), and a family id is not used by another active package
+(`family_foreign_package`).
 
 #### `credentials` and `metadata`
 ```yaml

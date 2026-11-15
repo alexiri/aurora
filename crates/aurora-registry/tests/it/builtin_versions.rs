@@ -36,8 +36,41 @@ fn check(id: &str, previous: &str, shipped: &str) {
 }
 
 #[test]
-fn github_2_1_0_replaces_2_0_0_without_widening() {
-    check("github", "2.0.0", "2.1.0");
+fn github_2_0_0_still_upgrades_to_the_shipped_version_without_widening() {
+    // 2.1.0 (FIX-133/136) is superseded by 2.2.0 (FIX-135); an install still on 2.0.0 takes the
+    // shipped version the same way.
+    check("github", "2.0.0", "2.2.0");
+}
+
+/// FIX-135 (D-242): the packages that declare app families (presentation only) are a minor bump
+/// that widens nothing, so they replace their previous version by themselves; every member of a
+/// family is in the package, and a family has the same name on all members.
+#[test]
+fn github_2_2_0_and_atlassian_1_1_0_declare_families_without_widening() {
+    check("github", "2.1.0", "2.2.0");
+    check("atlassian", "1.0.3", "1.1.0");
+    for (id, fams) in [
+        ("github", vec![("github", vec!["github", "github-ghes"])]),
+        (
+            "atlassian",
+            vec![
+                ("jira", vec!["jira", "jira-dc"]),
+                ("confluence", vec!["confluence", "confluence-dc"]),
+            ],
+        ),
+    ] {
+        let m = read(&format!("../../plugins/builtin/{id}/plugin.yaml"));
+        for (fam, apps) in fams {
+            let members: Vec<&str> = m
+                .apps
+                .iter()
+                .filter(|a| a.about.family.as_ref().is_some_and(|f| f.id == fam))
+                .map(|a| a.about.id.as_str())
+                .collect();
+            assert_eq!(members, apps, "{id}: family {fam}");
+        }
+        assert!(aurora_registry::validate::manifest(&m).is_empty());
+    }
 }
 
 /// FIX-134 (D-243): `sentry` 1.0.2 had four apps (sentry.io, US, DE, self-hosted); 2.0.0 is one

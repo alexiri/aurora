@@ -110,10 +110,14 @@ async fn context(
     active: &[(String, Value)],
 ) -> Result<ValidationContext, ApiError> {
     let mut active_app_ids = HashMap::new();
+    let mut active_families = HashMap::new();
     for (pkg, m) in active {
         if let Ok(m) = serde_json::from_value::<Manifest>(m.clone()) {
             for a in &m.apps {
                 active_app_ids.insert(a.about.id.clone(), pkg.clone());
+                if let Some(f) = &a.about.family {
+                    active_families.insert(f.id.clone(), pkg.clone());
+                }
             }
         }
     }
@@ -121,6 +125,7 @@ async fn context(
         running_version: env!("CARGO_PKG_VERSION").to_owned(),
         reserved_hosts: reserved_hosts(state),
         active_app_ids,
+        active_families,
     })
 }
 

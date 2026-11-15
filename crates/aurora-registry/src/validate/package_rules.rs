@@ -17,6 +17,8 @@ pub struct ValidationContext {
     pub reserved_hosts: Vec<HostPattern>,
     /// app id -> id of the active package that owns it.
     pub active_app_ids: HashMap<String, String>,
+    /// (FIX-135, D-242) family id -> id of the active package whose apps declare it.
+    pub active_families: HashMap<String, String>,
 }
 
 /// Full validation: signature, manifest rules (REG-001), wildcard superset,
@@ -58,6 +60,17 @@ pub fn package(
                     "app id `{}` is already used by package `{owner}`",
                     a.about.id
                 ),
+            ));
+        }
+        // (FIX-135) All members of a family are in one package.
+        if let Some(f) = &a.about.family
+            && let Some(owner) = ctx.active_families.get(&f.id)
+            && *owner != m.package.id
+        {
+            out.push(Violation::new(
+                "family_foreign_package",
+                format!("/apps/{i}/about/family/id"),
+                format!("family `{}` already belongs to package `{owner}`", f.id),
             ));
         }
     }

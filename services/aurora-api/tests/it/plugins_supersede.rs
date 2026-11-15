@@ -492,6 +492,74 @@ async fn an_auto_activated_aws_keys_takes_over_the_aws_role_connections() {
     );
 }
 
+/// FIX-135 (D-242, C-744): the catalogue DTOs carry `family` (id, name, variant label, whether the
+/// member is instance-bound); an app without a family has `null`. The shipped GitHub and Jira
+/// families are declared by the real manifests (registry `builtin_versions`).
+#[tokio::test]
+async fn the_catalogue_carries_the_app_family() {
+    let h = Harness::new().await;
+    let a: Admin<'_> = setup(&h).await;
+    let y = HOOKLESS.replace("PKG", "fam").replace("VER", "1.0.0")
+        + r#"apps:
+  - about: { id: desk, name: Desk, family: { id: desk, name: Desk, variant_label: desk.example } }
+    credentials: [ { name: access_token, secret: true } ]
+    connect:
+      - id: token
+        kind: fields
+        fields: [ { name: access_token, label: T, type: secret, store: credentials, required: true } ]
+    hosts:
+      - match: { host: api.desk.example }
+        inject: [ { bearer: "{credentials.access_token}" } ]
+  - about: { id: desk-self, name: Desk Server, family: { id: desk, name: Desk, variant_label: Server } }
+    instances: { label: Desk server }
+    credentials: [ { name: access_token, secret: true } ]
+    connect:
+      - id: token
+        kind: fields
+        fields: [ { name: access_token, label: T, type: secret, store: credentials, required: true } ]
+    hosts:
+      - match: { host: "{instance}" }
+        inject: [ { bearer: "{credentials.access_token}" } ]
+  - about: { id: solo, name: Solo }
+    credentials: [ { name: access_token, secret: true } ]
+    connect:
+      - id: token
+        kind: fields
+        fields: [ { name: access_token, label: T, type: secret, store: credentials, required: true } ]
+    hosts:
+      - match: { host: api.solo.example }
+        inject: [ { bearer: "{credentials.access_token}" } ]
+"#;
+    let v = a.upload(&y).await;
+    if v["status"] == "pending_approval" {
+        let (st, b) = a.act(&v["id"], "approve").await;
+        assert_eq!(st, 200, "{b}");
+    }
+    let (st, list) = a.json(Method::GET, "/v1/apps", None).await;
+    assert_eq!(st, 200, "{list}");
+    let fam = |id: &str| {
+        list["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|i| i["app_id"] == id)
+            .unwrap_or_else(|| panic!("{id} in {list}"))["family"]
+            .clone()
+    };
+    assert_eq!(
+        fam("desk"),
+        json!({"id": "desk", "name": "Desk", "variant_label": "desk.example", "instance_bound": false})
+    );
+    assert_eq!(
+        fam("desk-self"),
+        json!({"id": "desk", "name": "Desk", "variant_label": "Server", "instance_bound": true})
+    );
+    assert!(fam("solo").is_null());
+    let (st, d) = a.json(Method::GET, "/v1/apps/desk-self", None).await;
+    assert_eq!(st, 200, "{d}");
+    assert_eq!(d["family"]["variant_label"], "Server");
+}
+
 /// FIX-134 (D-243): one Sentry app. `sentry` 1.0.2 has four apps; 2.0.0 is one app with two preset
 /// instances. Activating it seeds the presets, moves the region apps' connections to the matching
 /// preset instance and the self-hosted app's to the same registration, keeps ids and grants, and

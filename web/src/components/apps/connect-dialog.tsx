@@ -1,6 +1,7 @@
 "use client";
 
 import { useQueryClient } from "@tanstack/react-query";
+import Link from "next/link";
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 
 import { ErrorState, Loading } from "@/components/states";
@@ -10,7 +11,9 @@ import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Field, inputClass } from "@/components/ui/field";
 import { Form, FormActions } from "@/components/ui/form";
 import { Notice } from "@/components/ui/notice";
+import { appDisplayName } from "@/lib/api/app-name";
 import { errorMessage } from "@/lib/api/errors";
+import { useMe } from "@/lib/api/queries";
 import {
   ackConnect,
   buildConnectFields,
@@ -19,6 +22,7 @@ import {
   navigateSignIn,
   openSignInWindow,
   useApp,
+  useApps,
   useAppGuide,
   useAppInstances,
   appIsCustomOnly,
@@ -27,6 +31,7 @@ import {
   useOAuthClients,
   validateFields,
   type AppDetail,
+  type AppSummary,
   type ConnectChannelMessage,
   type ConnectMethod,
   type FieldValues,
@@ -38,6 +43,77 @@ import { Segmented } from "@/components/ui/segmented";
 
 import { DynamicForm } from "./dynamic-form";
 import { Markdown, safeHref } from "@/components/ui/markdown";
+
+/**
+ * (FIX-135, D-242) The first question for an app of a family: where does it run? The hosted
+ * deployment (github.com), then every registered server of the family's instance-bound apps, then
+ * how to register one. Each choice is one app (and instance); the gateway guarantee is unchanged.
+ */
+function DeploymentStep({
+  family,
+  siblings,
+  orgId,
+  onPick,
+}: {
+  family: NonNullable<AppDetail["family"]>;
+  siblings: AppSummary[];
+  orgId: string;
+  onPick: (w: { appId: string; instanceId?: string }) => void;
+}) {
+  const instances = useAppInstances({ kind: "organization", id: orgId });
+  const me = useMe();
+  const hosted = siblings.filter((a) => !a.family?.instance_bound);
+  const bound = siblings.filter((a) => a.family?.instance_bound);
+  const servers = (instances.data?.items ?? []).filter((i) => i.status === "active" && bound.some((a) => a.app_id === i.app_id));
+  const options = [
+    ...hosted.map((a) => ({ value: `app:${a.app_id}`, label: a.family!.variant_label, description: undefined as string | undefined })),
+    ...servers.map((i) => {
+      const a = bound.find((x) => x.app_id === i.app_id)!;
+      return { value: `inst:${i.app_id}:${i.id}`, label: `${a.family!.variant_label} · ${i.label}`, description: i.base_url };
+    }),
+  ];
+  const [value, setValue] = useState(options[0]?.value ?? "");
+  const chosen = options.find((o) => o.value === value) ?? options[0];
+  function go() {
+    if (!chosen) return;
+    const [kind, app, inst] = chosen.value.split(":");
+    onPick(kind === "inst" ? { appId: app!, instanceId: inst } : { appId: chosen.value.slice(4) });
+  }
+  return (
+    <div className="space-y-4">
+      <ChoiceCards
+        legend={`Where does your ${family.name} run?`}
+        value={chosen?.value ?? ""}
+        onChange={setValue}
+        options={options}
+      />
+      {bound.length > 0 && servers.length === 0 ? (
+        <Notice tone="pending" role="status">
+          No self-hosted server is registered yet.{" "}
+          {me.data?.user.is_instance_admin ? (
+            <Link href="/admin/instances" className="font-medium underline">
+              Register a server… (Admin › Self-hosted apps)
+            </Link>
+          ) : (
+            "Ask an administrator to register one (Self-hosted apps)."
+          )}
+        </Notice>
+      ) : bound.length > 0 && me.data?.user.is_instance_admin ? (
+        <p className="text-xs text-muted">
+          Another server?{" "}
+          <Link href="/admin/instances" className="font-medium underline">
+            Register a server… (Admin › Self-hosted apps)
+          </Link>
+        </p>
+      ) : null}
+      <FormActions>
+        <Button type="button" disabled={!chosen} onClick={go}>
+          Continue
+        </Button>
+      </FormActions>
+    </div>
+  );
+}
 
 /** The method the chooser preselects: the one a reconnect keeps, else the recommended one, else the first. */
 function initialMethod(app: AppDetail, keep?: string | null): ConnectMethod | undefined {
@@ -54,11 +130,14 @@ function ConnectForm({
   orgId,
   keepMethod,
   reconnect,
+  initialInstanceId,
   onClose,
 }: {
   app: AppDetail;
   workspaceId: string;
   orgId: string;
+  /** (FIX-135) The server already chosen in a family's "Where?" step: the instance picker is not asked again. */
+  initialInstanceId?: string;
   /** A reconnect keeps the connection's method unless the person picks another (D-214). */
   keepMethod?: string | null;
   /** The id of the connection being reconnected. */
@@ -71,7 +150,7 @@ function ConnectForm({
   // reconnect keeps the connection's instance, so the picker is not shown then.
   const instanceBound = !!app.instances && !reconnect;
   const instances = useAppInstances(instanceBound ? { kind: "organization", id: orgId } : undefined);
-  const [instanceId, setInstanceId] = useState("");
+  const [instanceId, setInstanceId] = useState(initialInstanceId ?? "");
   const choices = (instances.data?.items ?? []).filter((i) => i.app_id === app.app_id && i.status === "active");
   const builtinChoices = choices.filter((i) => i.builtin);
   const registeredChoices = choices.filter((i) => !i.builtin);
@@ -320,7 +399,7 @@ function ConnectForm({
           <div className="mt-2"><Markdown source={guide.data} /></div>
         </details>
       ) : null}
-      {instanceBound ? (
+      {instanceBound && !initialInstanceId ? (
         <Field
           id="cm-instance"
           label={app.instances?.label ?? "Instance"}
@@ -554,17 +633,40 @@ export function ConnectDialog({
   reconnect?: string;
   onClose: () => void;
 }) {
-  const detail = useApp(appId, workspaceId);
+  // (FIX-135, D-242) An app of a family asks where the person's product runs first; the chosen
+  // deployment is then the app (and, for a registered server, the instance) that is connected.
+  const [where, setWhere] = useState<{ appId: string; instanceId?: string } | null>(null);
+  const entry = useApp(appId, workspaceId);
+  const apps = useApps(workspaceId);
+  const family = entry.data?.family ?? null;
+  const siblings = family ? (apps.data?.items ?? []).filter((a) => a.family?.id === family.id && a.available) : [];
+  const asking = !reconnect && !where && siblings.length > 1;
+  const shownId = where?.appId ?? appId;
+  const detail = useApp(shownId, workspaceId);
   const d = detail.data;
-  const title = `${reconnect ? "Reconnect" : "Connect"} ${d?.name ?? name ?? "app"}`;
+  const product = family?.name ?? d?.name ?? name ?? "app";
+  const title = `${reconnect ? "Reconnect" : "Connect"} ${asking || where ? product : (d ? appDisplayName(d) : (name ?? "app"))}`;
   let body;
-  if (detail.isPending) body = <Loading />;
+  if (entry.isPending || (family && apps.isPending)) body = <Loading />;
+  else if (asking) body = <DeploymentStep family={family!} siblings={siblings} orgId={orgId} onPick={setWhere} />;
+  else if (detail.isPending) body = <Loading />;
   else if (detail.isError) body = <ErrorState error={detail.error} onRetry={() => void detail.refetch()} />;
   else if (!d) body = <Loading />;
   else if (!d.available) body = <ErrorState error={{ code: "app_unavailable" }} />;
   else if (reconnect && d.connect.length > 1)
     body = <ReconnectForm app={d} workspaceId={workspaceId} orgId={orgId} reconnect={reconnect} onClose={onClose} />;
-  else body = <ConnectForm app={d} workspaceId={workspaceId} orgId={orgId} reconnect={reconnect} onClose={onClose} />;
+  else
+    body = (
+      <ConnectForm
+        key={`${shownId}:${where?.instanceId ?? ""}`}
+        app={d}
+        workspaceId={workspaceId}
+        orgId={orgId}
+        reconnect={reconnect}
+        initialInstanceId={where?.instanceId}
+        onClose={onClose}
+      />
+    );
   return (
     <Dialog open onOpenChange={(o) => (o ? null : onClose())}>
       <DialogContent size="lg" title={title} description={d ? `${d.package_id} ${d.package_version}` : undefined}>
