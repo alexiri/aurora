@@ -24,6 +24,13 @@ import {
   type SettingValues,
 } from "@/lib/api/settings";
 
+/** A titled group of a section's settings (`keys: null` = all of them). */
+export interface SettingsGroup {
+  title: string;
+  description?: string;
+  keys: string[] | null;
+}
+
 type SecretMode = "keep" | "replace" | "remove";
 interface SecretDraft {
   mode: SecretMode;
@@ -126,10 +133,13 @@ function needsConfirmation(p: SettingsPreview): boolean {
 export function SettingsSectionForm({
   section,
   onReload,
+  groups,
 }: {
   section: SettingsSection;
   /** Refetch the section (stale revision / locked key). */
   onReload: () => void;
+  /** Split the settings into titled `FormSection`s (a section page's own layout); default: one. */
+  groups?: SettingsGroup[];
 }) {
   const initial = useMemo(() => initialDraft(section), [section]);
   const [draft, setDraft] = useState<Draft>(initial);
@@ -242,23 +252,26 @@ export function SettingsSectionForm({
         </Notice>
       ) : null}
 
-      <FormSection title={section.title} description={section.description}>
-        {section.settings.length === 0 ? (
-          <p className="text-sm text-ink-2">No settings in this section yet.</p>
-        ) : null}
-        {section.settings.map((s) => (
-          <SettingRow
-            key={s.key}
-            setting={s}
-            draft={draft}
-            error={errs[s.key]}
-            entryErrors={Object.entries(errs).filter(([k]) => k.startsWith(`${s.key}/`))}
-            setValue={setValue}
-            resetValue={resetValue}
-            setSecret={setSecret}
-          />
-        ))}
-      </FormSection>
+      {(groups ?? [{ title: section.title, description: section.description, keys: null }]).map((g) => {
+        const shown = g.keys ? section.settings.filter((s) => g.keys?.includes(s.key)) : section.settings;
+        return (
+          <FormSection key={g.title} title={g.title} description={g.description}>
+            {shown.length === 0 ? <p className="text-sm text-ink-2">No settings in this section yet.</p> : null}
+            {shown.map((s) => (
+              <SettingRow
+                key={s.key}
+                setting={s}
+                draft={draft}
+                error={errs[s.key]}
+                entryErrors={Object.entries(errs).filter(([k]) => k.startsWith(`${s.key}/`))}
+                setValue={setValue}
+                resetValue={resetValue}
+                setSecret={setSecret}
+              />
+            ))}
+          </FormSection>
+        );
+      })}
 
       <FormActions>
         <Button type="submit" disabled={busy || !dirty}>

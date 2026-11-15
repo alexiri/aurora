@@ -46,6 +46,18 @@ export function useSettingsSection(section: string) {
   });
 }
 
+export type GovernanceOrgRow = components["schemas"]["OrgStandingRow"];
+
+/** Where organizations stand against the instance governance ceiling (C-778), newest first. */
+export function useGovernanceOrgs(cursor?: string) {
+  return useQuery({
+    queryKey: [...INDEX_KEY, "governance", "orgs", cursor ?? ""] as const,
+    queryFn: () =>
+      unwrap(api.GET("/v1/admin/settings/governance/orgs", { params: { query: { limit: 50, cursor } } })),
+    retry: false,
+  });
+}
+
 /** What a save would change, which values loosen and which organizations are affected (C-774). */
 export function usePreviewSettings(section: string) {
   return useMutation({
