@@ -52,7 +52,9 @@ fn write_operator_cert(dir: &Dir, names: &[&str], days: i64) -> String {
         lp.not_before = now + time::Duration::days(days - 2);
         lp.not_after = now + time::Duration::days(days);
     }
-    let leaf = lp.signed_by(&key, &ca, &ca_key).unwrap();
+    let leaf = lp
+        .signed_by(&key, &rcgen::Issuer::from_params(&p, &ca_key))
+        .unwrap();
     std::fs::write(dir.path("cert.pem"), leaf.pem()).unwrap();
     std::fs::write(dir.path("key.pem"), key.serialize_pem()).unwrap();
     ca.pem()

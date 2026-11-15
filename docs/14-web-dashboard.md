@@ -1439,7 +1439,12 @@ Overview (versions, gateways, hook hosts, runners, connectors, active snapshot
 hash; phase 2, RFE-006: frozen orgs with an instance-admin freeze/unfreeze action; RFE-015: a **Storage** page — blob/attachment bytes per org, big-table sizes; phase 4, P4-S3: the active blob backend, bytes and counts per backend, and for `s3` the bucket, prefix, health ("reachable" / "unreachable since …"), encryption and versioning state — never credentials; an unreachable store shows a banner and uploads show "Attachment storage is temporarily unavailable, try again in a moment" instead of the quota text; an expired chip is unchanged), Users, **Plugins** (installed packages, upload, pending approvals with a
 permissions review screen showing publisher, version, signer, hooks, egress per
 hook, context variables, host claims, and the diff against the previously
-approved version; reject/disable/uninstall with orphan warnings), **Host
+approved version; (phase 5, P5-GUIDE-3, C-648, SEC-117) an **Agent guide** section per app, on the
+package page and in the review: the summary, the essentials and the guide files with their sizes,
+each marked added / changed / removed against the active version, under the sentence "Agents that
+use this app can read this text. It is written by the publisher."; a file opens in the shared
+preformatted viewer as plain text, never rendered as Markdown or HTML, long lines scrolling inside
+the viewer only (`24 §9`); reject/disable/uninstall with orphan warnings), **Host
 claims** (conflicts and winners), **Trusted keys**, **Audit** (FIX-125, C-638: `/admin/audit`, the instance audit log — rows without an organization by default, a scope toggle "Instance / All organizations" with an organization filter and column, action-prefix, security-critical, and from/to date filters; the table and filter bar are the shared `AuditPanel` that the org audit page also uses), **Addon sources** (phase 5,
 P5-ASRC, D-250: third-party app-package repositories at `/admin/addon-sources` —
 list with key fingerprint and check status, add with a preview/trust review of the

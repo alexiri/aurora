@@ -615,7 +615,7 @@ async fn https_upstream_for(
     let leaf_key = KeyPair::generate().unwrap();
     let leaf = CertificateParams::new(names.iter().map(|n| (*n).to_owned()).collect::<Vec<_>>())
         .unwrap()
-        .signed_by(&leaf_key, &ca, &ca_key)
+        .signed_by(&leaf_key, &rcgen::Issuer::from_params(&ca_params, &ca_key))
         .unwrap();
     let cfg = rustls::ServerConfig::builder_with_provider(std::sync::Arc::new(
         rustls::crypto::aws_lc_rs::default_provider(),
