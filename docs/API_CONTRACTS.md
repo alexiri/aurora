@@ -101,6 +101,13 @@ Rule: `04 §Fire-time authority`, `05 §Schedules/§Webhooks/§Members`, SEC-51.
 - C-94 **`GET /v1/orgs/{org}/members/{user}/offboarding`** (org `owner`/`admin`; 404 unknown member) and **`GET /v1/workspaces/{ws}/members/{user}/offboarding`** (`can_own`; 404 when the person has no access): `200 { schedules: [Item], webhooks: [Item], peer_tasks: [Item], api_keys: number }`, `Item = { id, name, agent: { id, name }, workspace: { id, name }, enabled: bool, anchor, next_fire_at: timestamp | null, would_disable: bool }`. Lists exactly what removal would disable: enabled creator-anchored schedules and webhooks of the person (`would_disable` is always true), queued/open peer tasks they requested (`name` = "from → to"), and `api_keys` = live personal keys that would stop working (org view: every key in the org; workspace view: keys confined to that workspace, since organization-wide keys survive losing one binding). The workspace view of an org owner/admin is empty (a binding removal cannot take implicit access away).
 - C-95 **Fire-time authority** (no route change): a schedule fire or webhook delivery of an `anchor = workspace` item is authorized when the workspace has at least one active member with `can_own` (workspace `owner` binding or org owner/admin); otherwise the item is disabled `authorization` (schedule run `skipped_unauthorized`; webhook 403 `forbidden` + delivery row), as for a creator-anchored item whose creator lost access.
 
+### FIX-152 (failed re-authentication returns to its page; `auth_time` evidence, D-305)
+
+- C-890 **Re-authentication failure redirect and audit detail** (FIX-152, D-305; amends the `/v1/auth/oidc/{provider}/callback` row of `05`).
+  - **Redirect.** Once the callback has opened the flow state, every failure of a re-authentication flow (`reauth=1`) redirects 302 to the flow's `return_to` with `reauth_error=<code>`. The code goes before any `#fragment`, after `&` if the path has a query and `?` otherwise; codes are fixed snake_case and not encoded. Failures before the state opens, and every failure of a normal sign-in, still go to `/auth/login?error=<code>`.
+  - **Audit.** A `reauth_stale` denial (`user.login`, `denied`) gains exactly one of `auth_time_age_s: i64` (`now − auth_time`; negative means in the future) or `auth_time_missing: true`. A `warn` log carries the provider id and the same value, with no identity data.
+  - **Dashboard.** `/account/delete`, `/admin/orgs`, `/admin/orgs/[org]` and `/o/[org]/settings/directory` show a danger `Notice` for `reauth_error`, with text from the error-code map and a generic fallback for unknown codes.
+
 ## Shared schemas (M1)
 
 ```ts

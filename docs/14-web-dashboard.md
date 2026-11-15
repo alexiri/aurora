@@ -1396,7 +1396,9 @@ with **Delete workspace…**. Both deletes use a danger `FormDialog`: it names w
 access. Conversations, credentials and settings are deleted; the audit log and usage
 records are kept. This cannot be undone."), asks for the slug typed exactly, and on 412
 `reauth_required` runs the same re-authentication step as account deletion, then
-retries once. On success the list refreshes and a status notice names what was
+retries once. (FIX-152, C-890) A failed re-authentication comes back to the page with
+`reauth_error`, and the page shows it as a danger `Notice`. Account deletion and Directory
+settings do the same. On success the list refreshes and a status notice names what was
 deleted. The ownerless-organization banner (FIX-050) links to the organization's row.
 No content of an organization is shown anywhere on these pages (`04 §Instance admins`).
 

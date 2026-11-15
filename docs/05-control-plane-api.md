@@ -511,7 +511,7 @@ OpenAPI document and the phase tags (FIX-119).
 | POST `/v1/auth/password/forgot`, `/v1/auth/password/reset` | none | **phase 0 only; removed in phase 1** |
 | POST `/v1/auth/password/change` | SO | **phase 0 only; removed in phase 1** |
 | POST `/v1/auth/sessions/revoke-others` | SO | |
-| GET `/v1/auth/oidc/{provider}/start`, `/callback` | none | `04 §OIDC`; (phase 1, RFE-004) the only sign-in; `start` accepts `reauth=1` |
+| GET `/v1/auth/oidc/{provider}/start`, `/callback` | none | `04 §OIDC`; (phase 1, RFE-004) the only sign-in; `start` accepts `reauth=1`; (FIX-152, C-890) a failed re-authentication redirects to its `return_to` with `reauth_error=<code>` instead of `/auth/login?error=<code>` |
 | POST `/v1/auth/cli`, `/v1/auth/cli/token` | none | device flow |
 | GET `/v1/auth/cli/pending?code=` | SO | (FIX-108) `{ hostname, requested_at, expires_at, address?, key_expires_in_days? }` for the approval screen; 404 unknown/expired, 400 malformed code |
 | POST `/v1/auth/cli/approve` | SO | `{ user_code, workspace_id }` |

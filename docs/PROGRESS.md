@@ -126,6 +126,7 @@ Lane order, waves and number blocks: `docs/tasks/PHASE5-PLAN.md`. Lanes `p5-apps
 | P5-CALDAV | Read and write any CalDAV server with the person's own app password | D-275, C-845, SEC-109 | L | Rust + package | P5-ICS (same lane) | `P5-CALDAV.md` | ready (wave 3: queued in lane p5-apps) |
 | FIX-150 | `send_message` resolves an exact handle by itself; refusals list aliases to retry with; messaging-tool fields described | D-287, `13 §5.10` | S–M | Rust | — | `FIX-150.md` | ready (brief written 2026-11-15; wave 3: queued in lane p5-agent) |
 | FIX-151 | Platform-tool calls tied to the calling harness process (`SO_PEERCRED` + process ancestry; another conversation's or a non-harness process's call refused `session_not_caller`) | D-301, SEC-121, S-09, `12 §Path` | S–M | Rust | — | `FIX-151.md` | ready (brief written 2026-11-15; wave 3: queued in lane p5-apps before P5-GUIDE-6) |
+| FIX-152 | A failed re-authentication returns to its page with `reauth_error` (no longer `/auth/login`); the `reauth_stale` denial records the `auth_time` age or that the claim was missing (CERN SSO org delete refused `reauth_stale`; root cause follows from that evidence) | D-305, C-890, D-234, FIX-108 | S–M | both | — | `FIX-152.md` | in progress (brief written 2026-11-15; lane `fix-reauth`) |
 | P5-GUIDE-1 | Agent guides: package format (summary, guide files, recipes), linter, blobs, snapshot, renderer, `aurora plugin guide`, `docs/22` paragraph | D-170, D-171, D-295, C-640..C-642, C-646, C-647, C-649, SEC-117, SEC-91, one migration | L | Rust | — | `P5-GUIDE-1.md` | ready (spec merged 2026-11-15; wave 3: queued in lane p5-apps) |
 | P5-GUIDE-2 | Agent guides: home sync `apps` part, `.aurora/apps/` projection, always-index instruction file, admin API, advisory guard | D-171, D-295, C-643..C-645, C-648, SEC-117, SEC-91 | L | Rust | P5-GUIDE-1 | `P5-GUIDE-2.md` | ready (spec merged 2026-11-15; wave 3: queued in lane p5-apps) |
 | P5-GUIDE-3 | Dashboard Agent guide section (plugin page and review; recipes marked; plain-text viewer) | C-648, SEC-117 | S–M | Next.js | P5-GUIDE-2 (C-648) | `P5-GUIDE-3.md` | ready (spec merged 2026-11-15; wave 3: queued in lane p5-apps) |
@@ -164,7 +165,7 @@ Proposed order (Q-P6-LIM-8): the limits framework (P6-LIM-1) together with the s
 
 ## Number allocation
 
-**Next free: FIX-152, D-305, C-890, SEC-124, migration `20261201000241`.** Edit this line in place when you take a number (check `git log -3`, `ls docs/tasks`, and this line right before committing; several sessions write briefs). Task briefs are `docs/tasks/<ID>.md`, named after the task id (`P<phase>-<NAME>` for phase features, `FIX-nnn` for fixes).
+**Next free: FIX-155, D-307, C-898, SEC-124, migration `20261201000241`.** Edit this line in place when you take a number (check `git log -3`, `ls docs/tasks`, and this line right before committing; several sessions write briefs). Task briefs are `docs/tasks/<ID>.md`, named after the task id (`P<phase>-<NAME>` for phase features, `FIX-nnn` for fixes).
 
 Live reservations (numbers inside a block that a lane has already used are recorded in its commits; unused blocks are released when the lane or task closes):
 
