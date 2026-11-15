@@ -1486,7 +1486,13 @@ default_model = "{MODEL}"
         let (status, err) = st
             .wait_turn(&turn_id(&v), &["done", "failed", "aborted"], 180)
             .await;
-        assert_eq!(status, "done", "{mode}: {err:?}\n{}", st.log_tails());
+        if status != "done" {
+            let ev = api.events(&conv).await;
+            panic!(
+                "{mode}: {status} {err:?}\nevents: {ev:?}\n{}",
+                st.log_tails()
+            );
+        }
         let t = transcript_text(&api.events(&conv).await);
         assert!(t.contains("pong"), "{mode}: {t}\n{}", st.log_tails());
 
