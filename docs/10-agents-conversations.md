@@ -359,15 +359,14 @@ existing durable events and changes nothing else:
   `NARR_STEP_CHARS`; at most one update per `NARR_MIN_INTERVAL`; at most `NARR_SPACE_UPDATES_PER_MINUTE`
   narration writes per space; at most `NARR_CARDS_PER_SPACE` cards per space at a time (`02 §Limits`).
   A `rate_limited` answer supersedes the pending update (the next state replaces it), it is not
-  retried. Limits and cadence (pending owner answers Q-NARR-3 and Q-NARR-5; Q-NARR-4 answered, D-286): the defaults above are
+  retried. Limits and cadence (owner answers D-286, D-288): the defaults above are
   the recommendation.
 - **Failure and restart.** The card is derived from durable events keyed by `turn_id` and the event
   sequence, so a restarted projector resumes the same card (`dedupe_key narr:<turn_id>:<seq>`) and
   never posts a second one. A turn that ends without a result still gets the answer rule of
   `§Turns` before `turn.finished`; the card is **collapsed** in every case (owner, D-286): its last update replaces the step list with one line — the outcome, the step count (failed ones named as a count) and the elapsed time — and that update is never superseded or dropped.
 
-(pending owner answer Q-NARR-1) The default is off per agent; the owner may instead ask for it on for
-every agent of a workspace.
+(owner, D-288) The default is off, switched on per agent.
 
 ### Archive, delete, redaction, retention, export (phase 2, RFE-010, D-53)
 
