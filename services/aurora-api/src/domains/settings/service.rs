@@ -834,6 +834,9 @@ async fn plan_section(
             return Err(invalid(fields));
         }
     }
+    if section == "email" {
+        email_password_binding(h, &old, &norm)?;
+    }
     let mut new = build_new(h, section, &old, &norm);
     let mut fields = Vec::new();
     for d in registry().section(section) {
@@ -872,6 +875,41 @@ async fn plan_section(
         new,
         warnings,
     })
+}
+
+/// The keys that decide where the SMTP password goes.
+const SMTP_CONNECTION_KEYS: [&str; 2] = ["email.smtp_url", "email.smtp_username"];
+
+/// SEC-90 / D-310: the SMTP password may not be carried to a destination the dashboard chose.
+/// (1) While Helm supplies the password (`AURORA_SMTP_PASSWORD`), `email.smtp_url` and
+/// `email.smtp_username` cannot be changed from the dashboard (409 `setting_locked`).
+/// (2) `{ "$secret": "keep" }` on the password is refused (422 `secret_reentry_required`) when
+/// the URL or the user name differs from the stored one.
+fn email_password_binding(
+    h: &SettingsHandle,
+    old: &Map<String, Value>,
+    norm: &Map<String, Value>,
+) -> Result<(), ApiError> {
+    let changed = |key: &str| {
+        !h.source.sets(key)
+            && norm.get(key).unwrap_or(&Value::Null) != old.get(key).unwrap_or(&Value::Null)
+    };
+    if h.source.secret_env("email.smtp_password").is_some() {
+        for key in SMTP_CONNECTION_KEYS {
+            if changed(key) {
+                return Err(locked(key, "api.extraEnv: AURORA_SMTP_PASSWORD"));
+            }
+        }
+    }
+    let keeps = norm
+        .get("email.smtp_password")
+        .and_then(|v| v.get("$secret"))
+        .and_then(Value::as_str)
+        == Some("keep");
+    if keeps && SMTP_CONNECTION_KEYS.iter().any(|k| changed(k)) {
+        return Err(reentry_required("/email.smtp_password"));
+    }
+    Ok(())
 }
 
 fn has_marker(v: &Value) -> bool {
@@ -922,6 +960,22 @@ async fn guard_dashboard_addresses(
                     "this address is not reachable from here (private, loopback, link-local or metadata); an operator can open it with gateway.allowed_private",
                 ));
             }
+        }
+    }
+    // The SMTP server a dashboard names gets the same guard (an operator's `email.smtp_url` is
+    // never submitted: a locked key is not judged).
+    for r in reqs.iter().filter(|r| r.section == "email") {
+        if state.settings.source.sets("email.smtp_url") {
+            continue;
+        }
+        if let Some(url) = r.values.get("email.smtp_url").and_then(Value::as_str)
+            && !guard.permits_address(url).await
+        {
+            fields.push(field(
+                "/email.smtp_url".to_string(),
+                "destination_refused",
+                "this address is not reachable from here (private, loopback, link-local or metadata); an operator can open it with gateway.allowed_private",
+            ));
         }
     }
     if fields.is_empty() {

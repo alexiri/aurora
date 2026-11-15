@@ -706,10 +706,32 @@ pub async fn email_test(
                 .and_then(Value::as_str)
                 .map(str::to_owned);
             let e = eff.raw.email.clone();
-            let p = match plaintext.as_deref() {
-                Some("keep") => {
-                    super::live::smtp_password(&state.vault, &snap.effective.raw.email).await
+            let cur = &snap.effective.raw.email;
+            // A stored or Helm-set password only ever goes where it is already configured to go
+            // (SEC-90): the proposal must name the same server and user.
+            let same_url = e.smtp_url.as_ref().map(|u| u.expose().clone())
+                == cur.smtp_url.as_ref().map(|u| u.expose().clone());
+            let same_target = same_url && e.smtp_username == cur.smtp_username;
+            let typed = matches!(plaintext.as_deref(), Some(p) if p != "keep" && !p.is_empty());
+            let held = plaintext.as_deref() == Some("keep") || e.smtp_password.is_some();
+            if !typed && held && !same_target {
+                return Err(super::service::reentry_required("/email.smtp_password"));
+            }
+            if !same_url {
+                // A server named on the page (not Helm's) passes the destination guard.
+                let guard = aurora_secrets::DialGuard::new(&state.config.gateway_allowed_private);
+                if let Some(u) = e.smtp_url.as_ref()
+                    && !state.settings.source.sets("email.smtp_url")
+                    && !guard.permits_address(u.expose()).await
+                {
+                    return Err(ApiError::unprocessable(
+                        "destination_refused",
+                        "This address is not reachable from here (private, loopback, link-local or metadata); an operator can open it with gateway.allowed_private.",
+                    ));
                 }
+            }
+            let p = match plaintext.as_deref() {
+                Some("keep") => super::live::smtp_password(&state.vault, cur).await,
                 Some(plain) if !plain.is_empty() => Ok(Some(plain.to_owned())),
                 // The environment's password wins whatever the page sends (the key is locked).
                 _ => Ok(e.smtp_password.as_ref().map(|p| p.expose().clone())),

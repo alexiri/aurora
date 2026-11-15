@@ -53,7 +53,6 @@ async fn world_with(helm_provider: bool, extra_env: &[(&str, &str)], extra: &str
     .with_source(config_source_custom(&text, &env));
     let admin_id = h.user("root@x.io", true).await;
     let (session, admin) = h.good_session(admin_id).await;
-    h.reauth(session).await;
     W {
         h,
         helm,
@@ -808,6 +807,108 @@ async fn the_smtp_password_is_write_only_and_locked_while_the_environment_suppli
         (409, Some("setting_locked")),
         "{v}"
     );
+}
+
+/// SEC-90 / D-310: a stored password is bound to the server and user it was saved with.
+#[tokio::test]
+async fn a_stored_smtp_password_is_never_carried_to_another_server_or_user() {
+    let w = world().await;
+    let (s, v) = w
+        .put("email", json!({ "email.smtp_url": "smtp://127.0.0.1:1", "email.from": "a@x.io", "email.smtp_username": "u", "email.smtp_password": { "$secret": PW } }))
+        .await;
+    assert_eq!(s, 200, "{v}");
+    // The attacker's server (an opened loopback address): it must see no connection.
+    let attacker = smtp().await;
+    let evil = format!("smtp://127.0.0.1:{}", attacker.port);
+    let keep = json!({ "$secret": "keep" });
+    let code = |v: &Value| v["error"]["code"].as_str().map(str::to_owned);
+    for (url, user) in [(evil.as_str(), "u"), ("smtp://127.0.0.1:1", "other")] {
+        let body = json!({ "email.smtp_url": url, "email.from": "a@x.io", "email.smtp_username": user, "email.smtp_password": keep });
+        // Test route.
+        let (s, v) = w
+            .call(
+                Method::POST,
+                "/v1/admin/settings/email/test",
+                Some(json!({ "values": body })),
+            )
+            .await;
+        assert_eq!(
+            (s, code(&v).as_deref()),
+            (422, Some("secret_reentry_required")),
+            "test {url} {user}: {v}"
+        );
+        // Write path.
+        let (s, v) = w.put("email", body).await;
+        assert_eq!(
+            (s, code(&v).as_deref()),
+            (422, Some("secret_reentry_required")),
+            "put {url} {user}: {v}"
+        );
+    }
+    assert!(attacker.got.lock().unwrap().is_empty());
+    // The same connection keeps it.
+    let (s, v) = w
+        .put("email", json!({ "email.smtp_url": "smtp://127.0.0.1:1", "email.from": "b@x.io", "email.smtp_username": "u", "email.smtp_password": keep }))
+        .await;
+    assert_eq!(s, 200, "{v}");
+}
+
+/// D-310: with Helm's password, the dashboard cannot name the server or the user.
+#[tokio::test]
+async fn while_helm_supplies_the_smtp_password_the_server_and_user_are_not_editable() {
+    let w = world_with(true, &[("AURORA_SMTP_PASSWORD", "from-env")], "").await;
+    for body in [
+        json!({ "email.smtp_url": "smtp://127.0.0.1:9", "email.from": "a@x.io" }),
+        json!({ "email.smtp_username": "someone", "email.from": "a@x.io" }),
+    ] {
+        let (s, v) = w.put("email", body.clone()).await;
+        assert_eq!(
+            (s, v["error"]["code"].as_str()),
+            (409, Some("setting_locked")),
+            "put {v}"
+        );
+        let (s, v) = w
+            .call(
+                Method::POST,
+                "/v1/admin/settings/email/test",
+                Some(json!({ "values": body })),
+            )
+            .await;
+        assert_eq!(
+            (s, v["error"]["code"].as_str()),
+            (409, Some("setting_locked")),
+            "test {v}"
+        );
+    }
+}
+
+/// SEC-89: the SMTP server a dashboard names passes the same destination guard as Vault stores.
+#[tokio::test]
+async fn the_smtp_server_named_on_the_page_passes_the_destination_guard() {
+    let w = world().await;
+    for url in ["smtp://169.254.169.254:25", "smtp://10.0.0.5:25"] {
+        let body = json!({ "email.smtp_url": url, "email.from": "a@x.io" });
+        let (s, v) = w.put("email", body.clone()).await;
+        assert_eq!(s, 422, "put {url}: {v}");
+        assert!(
+            field_codes(&v)
+                .iter()
+                .any(|(p, c)| p == "/email.smtp_url" && c == "destination_refused"),
+            "put {url}: {v}"
+        );
+        let (s, v) = w
+            .call(
+                Method::POST,
+                "/v1/admin/settings/email/test",
+                Some(json!({ "values": body })),
+            )
+            .await;
+        assert_eq!(
+            (s, v["error"]["code"].as_str()),
+            (422, Some("destination_refused")),
+            "test {url}: {v}"
+        );
+    }
 }
 
 // ------------------------------------------------------------------------------ break-glass
