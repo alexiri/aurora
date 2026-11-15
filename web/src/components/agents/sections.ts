@@ -15,6 +15,7 @@ export type AgentPageId =
   | "peers"
   | "computer"
   | "terminal"
+  | "files"
   | "previews"
   | "connect"
   | "access";
@@ -33,6 +34,7 @@ export const AGENT_PAGE_IDS: readonly AgentPageId[] = [
   "peers",
   "computer",
   "terminal",
+  "files",
   "previews",
   "connect",
   "access",
@@ -49,6 +51,7 @@ export const PAGE_LABEL: Record<AgentPageId, string> = {
   peers: "Peers",
   computer: "Computer",
   terminal: "Terminal",
+  files: "Files",
   previews: "Previews",
   connect: "Computer: Connect",
   access: "Access",
@@ -59,7 +62,7 @@ export const SECTIONS: readonly { id: SectionId; label: string; pages: readonly 
   { id: "chat", label: "Chat", pages: ["chat"] },
   { id: "behaviour", label: "Behaviour", pages: ["instructions", "memory", "skills"] },
   { id: "triggers", label: "Triggers", pages: ["schedules", "webhooks", "channels", "peers"] },
-  { id: "computer", label: "Computer", pages: ["computer", "terminal", "previews", "connect"] },
+  { id: "computer", label: "Computer", pages: ["computer", "terminal", "files", "previews", "connect"] },
   { id: "access", label: "Access", pages: ["access"] },
 ];
 
@@ -80,7 +83,8 @@ export interface PageAvailability {
 export function isPageAvailable(page: AgentPageId, av: PageAvailability): boolean {
   if (av.byo) return page === "instructions" || page === "connect" || page === "access";
   if (page === "connect") return false;
-  if (page === "terminal") return av.terminal;
+  // (P5-FILES-2, D-316(b)) Files exists exactly where the Terminal does: no gate of its own.
+  if (page === "terminal" || page === "files") return av.terminal;
   if (page === "previews") return av.previews;
   return true;
 }
