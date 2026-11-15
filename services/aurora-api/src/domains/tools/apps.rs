@@ -246,20 +246,34 @@ impl PlatformTool for RequestAppConnection {
             .bind(ctx.agent.org_id)
             .fetch_one(&ctx.agent.pool)
             .await?;
-        let link = format!(
-            "{}/o/{}/w/{}/credentials?tab=apps&connect={}",
+        let base = format!(
+            "{}/o/{}/w/{}",
             ctx.state.config.external_url.trim_end_matches('/'),
             org_slug,
-            ws.slug,
-            app.app_id
+            ws.slug
         );
         let agent = agent_label(ctx).await?;
         let app_name = sanitize::label(&app.about.name);
-        let text = format!(
-            "{agent} asks you to connect {app_name} ({app_id}). Connect it here: {link} \
-             Reason (the agent's words): {reason}",
-            app_id = app.app_id,
-        );
+        // (FIX-154, C-897) An app with nothing to sign in to needs no connect window: the notice
+        // links to this agent's Access tab (the agent page accepts an id, FIX-153).
+        let free = aurora_registry::credential_free::entry_is_credential_free(app);
+        let (link, text) = if free {
+            let link = format!("{base}/agents/{}?tab=access", ctx.agent.agent_id);
+            let text = format!(
+                "{agent} asks you to give this agent access to {app_name} ({app_id}). Give access \
+                 on its Access tab: {link} Reason (the agent's words): {reason}",
+                app_id = app.app_id,
+            );
+            (link, text)
+        } else {
+            let link = format!("{base}/credentials?tab=apps&connect={}", app.app_id);
+            let text = format!(
+                "{agent} asks you to connect {app_name} ({app_id}). Connect it here: {link} \
+                 Reason (the agent's words): {reason}",
+                app_id = app.app_id,
+            );
+            (link, text)
+        };
         let mut tx = ctx.agent.pool.begin().await?;
         append_notice(
             &mut tx,

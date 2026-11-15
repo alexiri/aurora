@@ -35,6 +35,10 @@ pub struct AppSummary {
     /// (phase 5, FIX-135, D-242, C-744) The product this app is a deployment of; `null` for an
     /// app that is its own product.
     pub family: Option<AppFamily>,
+    /// (FIX-154, D-306(c), C-895) Nothing to sign in to or enter (no credentials, token,
+    /// instances or database; every connect method is a `fields` method with no fields): an agent
+    /// is given access in one step. Derived from the installed manifest, not stored.
+    pub credential_free: bool,
 }
 
 /// `about.family` of an app (C-744): the catalogue and every picker show one product, named
@@ -205,6 +209,8 @@ pub struct AppDetail {
     pub serves_library: bool,
     /// (phase 5, FIX-135, C-744) as on `AppSummary`.
     pub family: Option<AppFamily>,
+    /// (FIX-154, C-895) as on `AppSummary`.
+    pub credential_free: bool,
     pub api_docs: Option<String>,
     pub connect_note: Option<ConnectNote>,
     pub label_hint: Option<String>,

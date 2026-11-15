@@ -57,6 +57,22 @@ pub async fn get<'e, E: PgExecutor<'e>>(
         .await?)
 }
 
+/// (FIX-154, C-896) The oldest active workspace-scope connection of `app_id` in `workspace_id`.
+pub async fn oldest_active_in_workspace<'e, E: PgExecutor<'e>>(
+    exec: E,
+    workspace_id: Uuid,
+    app_id: &str,
+) -> Result<Option<ConnectionRow>, DbError> {
+    Ok(sqlx::query_as(&format!(
+        "{SELECT} WHERE c.workspace_id = $1 AND c.app_id = $2 AND c.status = 'active' \
+         ORDER BY c.created_at, c.id LIMIT 1"
+    ))
+    .bind(workspace_id)
+    .bind(app_id)
+    .fetch_optional(exec)
+    .await?)
+}
+
 /// Connections of one scope (`workspace = None` = organization scope).
 #[allow(clippy::too_many_arguments)]
 pub async fn list_scope<'e, E: PgExecutor<'e>>(

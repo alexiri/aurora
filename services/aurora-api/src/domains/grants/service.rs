@@ -1,7 +1,7 @@
 use super::compile::{compile_connection_grant, compile_secret_grant};
 use super::dto::{
     AppRestrictions, BulkConnectionGrantItem, BulkConnectionGrantRequest, BulkSecretGrantItem,
-    BulkStatus, ConnectionGrant, ConnectionGrantView, GRANT_BULK_MAX, GrantMode,
+    BulkStatus, ConnectionGrant, ConnectionGrantView, GRANT_BULK_MAX, GrantMode, GrantedApp,
     PutConnectionGrant, SecretGrant, SecretGrantView,
 };
 use crate::app::AppState;
@@ -497,6 +497,110 @@ pub async fn grant_connection(
         audit::commit_critical(tx, ev).await?;
     }
     Ok(w.grant)
+}
+
+/// (FIX-154, D-306(c), C-896) `PUT /agents/{agent}/grants/apps/{app}`: give an agent a
+/// credential-free app in one step. Checks before any write (404 `app_not_found`, 403
+/// `app_unavailable`, 422 `app_not_credential_free`), then in ONE transaction, serialized per
+/// (workspace, app): reuse the workspace's oldest active connection of the app or create one, and
+/// upsert the grant exactly as `PUT …/grants/connections/{conn}` does.
+pub async fn grant_app(
+    state: &AppState,
+    caller: &Caller,
+    agent_id: Uuid,
+    app_id: &str,
+    req: PutConnectionGrant,
+) -> Result<GrantedApp, ApiError> {
+    let (agent, auth) = visible_agent(caller, state, agent_id).await?;
+    crate::http::auth::require_own(&auth)?;
+    let snap = crate::domains::plugins::registry::active_typed(state)
+        .await?
+        .ok_or_else(app_not_found)?;
+    let (app, pkg) = apps::find_app(&snap, app_id).map_err(|_| app_not_found())?;
+    if !crate::domains::connect::service::available_in_workspace(
+        state,
+        agent.org_id,
+        agent.workspace_id,
+        app_id,
+    )
+    .await?
+    {
+        return Err(ApiError::new(
+            http::StatusCode::FORBIDDEN,
+            "app_unavailable",
+            "This app is not available here.",
+        ));
+    }
+    if !aurora_registry::credential_free::entry_is_credential_free(app) {
+        return Err(ApiError::unprocessable(
+            "app_not_credential_free",
+            "This app needs a sign-in or settings: connect it, then give the agent access.",
+        )
+        .with_details(json!({"app_id": app_id})));
+    }
+    let mut tx = state.pool.begin().await.map_err(DbError::from)?;
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+        .bind(format!("aurora:grant-app:{}:{app_id}", agent.workspace_id))
+        .execute(&mut *tx)
+        .await
+        .map_err(DbError::from)?;
+    let mut events = Vec::new();
+    let (row, sealed) = crate::domains::connect::service::ensure_credential_free_in_tx(
+        state,
+        &mut tx,
+        caller,
+        &snap,
+        app,
+        pkg,
+        agent.org_id,
+        agent.workspace_id,
+        agent.id,
+        &mut events,
+    )
+    .await?;
+    let created = sealed.is_some();
+    let w = match write_connection_grant(
+        &mut tx,
+        state,
+        &agent,
+        row.id,
+        req,
+        Origin::Agent,
+        AuditActor::from_caller(caller),
+        Some(caller.user_id),
+    )
+    .await
+    {
+        Ok(w) => w,
+        Err(e) => {
+            // Rolled back with the transaction: the sealed (empty) credentials go too.
+            drop(tx);
+            if let Some(s) = sealed {
+                s.discard(state).await;
+            }
+            return Err(e);
+        }
+    };
+    events.extend(w.event);
+    if let Err(e) = audit::commit_critical_many(tx, &events).await {
+        if let Some(s) = sealed {
+            s.discard(state).await;
+        }
+        return Err(e);
+    }
+    Ok(GrantedApp {
+        connection: crate::domains::connections::dto::Connection::new(row, Some(&snap)),
+        grant: w.grant,
+        created,
+    })
+}
+
+fn app_not_found() -> ApiError {
+    ApiError::new(
+        http::StatusCode::NOT_FOUND,
+        "app_not_found",
+        "App not found.",
+    )
 }
 
 /// THE authorization path of a connection grant (SEC-77; see [`grant_secret_in_tx`]): agent

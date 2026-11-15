@@ -17,6 +17,7 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(list_grants))
         .routes(routes!(put_secret_grant, delete_secret_grant))
         .routes(routes!(put_connection_grant, delete_connection_grant))
+        .routes(routes!(put_app_grant))
         .routes(routes!(connection_grants, bulk_connection_grants))
         .routes(routes!(secret_grants, bulk_secret_grants))
         .routes(routes!(agent_effective))
@@ -169,6 +170,29 @@ async fn put_connection_grant(
 ) -> Result<Json<ConnectionGrant>, ApiError> {
     let g = service::grant_connection(&state, &caller, agent, conn, req).await?;
     Ok(Json(g))
+}
+
+/// Give an agent a credential-free app in one step (`can_own`): reuses the workspace's active
+/// connection of the app or creates it, then grants it like `grantConnection`.
+#[utoipa::path(
+    put, path = "/agents/{agent}/grants/apps/{app}", operation_id = "grantApp", tag = "grants",
+    params(("agent" = Uuid, Path, description = "Agent id"), ("app" = String, Path, description = "App id")),
+    request_body = PutConnectionGrant,
+    responses((status = 200, description = "Connection (reused or created) and grant", body = GrantedApp),
+              (status = 403, description = "Forbidden, or app_unavailable", body = ErrorEnvelope),
+              (status = 404, description = "Agent not found, or app_not_found", body = ErrorEnvelope),
+              (status = 422, description = "app_not_credential_free, or grant_invalid", body = ErrorEnvelope)),
+    security(("session" = []), ("api_key" = []))
+)]
+async fn put_app_grant(
+    caller: Caller,
+    State(state): State<AppState>,
+    Path((agent, app)): Path<(Uuid, String)>,
+    Json(req): Json<PutConnectionGrant>,
+) -> Result<Json<GrantedApp>, ApiError> {
+    Ok(Json(
+        service::grant_app(&state, &caller, agent, &app, req).await?,
+    ))
 }
 
 /// Revoke a connection grant (`can_own`).

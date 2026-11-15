@@ -156,11 +156,41 @@ struct Hook {
     /// (FIX-153, C-893) The requesting agent's Access tab.
     access_url: String,
     /// (FIX-153, C-892) The matched app's id and display name, for LDAP refusals.
-    app: Option<(String, String)>,
+    app: Option<AppRef>,
     /// Step 14 origin backstop for an injected LLM key.
     backstop: Option<(Arc<Governance>, BackstopInfo)>,
     /// Injected values placed in the URL (FIX-104).
     echo: Vec<Vec<u8>>,
+}
+
+impl Hook {
+    /// (FIX-154, C-897) The matched app `app_id` is credential-free.
+    fn credential_free(&self, app_id: &str) -> bool {
+        matches!(&self.app, Some((id, _, true)) if id == app_id)
+    }
+
+    /// The `app_not_connected` refusal (C-893, C-897): a credential-free app leads with the
+    /// agent's Access tab, any other with the connect link.
+    fn not_connected(
+        status: StatusCode,
+        app_id: &str,
+        free: bool,
+        connect_url: &str,
+        access_url: &str,
+    ) -> ApiError {
+        let msg = if free {
+            format!(
+                "{app_id} is not connected in this workspace. A workspace owner can give this agent access on its Access tab: {access_url}"
+            )
+        } else {
+            format!(
+                "{app_id} is not connected in this workspace. Connect it at {connect_url}, then give this agent access"
+            )
+        };
+        ApiError::new(status, "app_not_connected", msg).with_details(json!({
+            "app_id": app_id, "connect_url": connect_url, "access_url": access_url
+        }))
+    }
 }
 
 impl PostHook for Hook {
@@ -170,7 +200,7 @@ impl PostHook for Hook {
 
     fn ldap_refusal(&self) -> Option<ApiError> {
         let name = |id: &str| match &self.app {
-            Some((aid, n)) if aid == id => n.clone(),
+            Some((aid, n, _)) if aid == id => n.clone(),
             _ => id.to_owned(),
         };
         let err = match &self.fallback {
@@ -191,18 +221,24 @@ impl PostHook for Hook {
             }
             Fallback::NotConnected(app_id) => {
                 let n = name(app_id);
-                ApiError::new(
-                    StatusCode::FORBIDDEN,
-                    "ldap_no_connection",
+                // (FIX-154, C-897) Nothing to sign in to: the fix is the agent's Access tab.
+                let msg = if self.credential_free(app_id) {
+                    format!(
+                        "{n} is not connected in this workspace. A workspace owner can give this agent access on its Access tab: {}",
+                        self.access_url
+                    )
+                } else {
                     format!(
                         "{n} is not connected in this workspace. A workspace owner can connect it at {} and give this agent access.",
                         self.connect_url
-                    ),
+                    )
+                };
+                ApiError::new(StatusCode::FORBIDDEN, "ldap_no_connection", msg).with_details(
+                    json!({
+                        "app_id": app_id, "app_name": n, "reason": "not_connected",
+                        "connect_url": self.connect_url, "access_url": self.access_url
+                    }),
                 )
-                .with_details(json!({
-                    "app_id": app_id, "app_name": n, "reason": "not_connected",
-                    "connect_url": self.connect_url, "access_url": self.access_url
-                }))
             }
             _ => ApiError::new(
                 StatusCode::FORBIDDEN,
@@ -265,15 +301,13 @@ impl PostHook for Hook {
                     "kind": "connection", "provider": app_id, "reason": "disabled",
                     "manage_url": self.manage_url
                 })),
-                Fallback::NotConnected(app_id) => ApiError::new(
+                Fallback::NotConnected(app_id) => Hook::not_connected(
                     status,
-                    "app_not_connected",
-                    format!(
-                        "{app_id} is not connected in this workspace. Connect it at {}, then give this agent access",
-                        self.connect_url
-                    ),
-                )
-                .with_details(json!({ "app_id": app_id, "connect_url": self.connect_url })),
+                    app_id,
+                    matches!(&self.app, Some((id, _, true)) if id == app_id),
+                    &self.connect_url,
+                    &self.access_url,
+                ),
                 Fallback::PathUnserved => ApiError::new(
                     status,
                     "app_path_unserved",
@@ -321,9 +355,18 @@ enum Fallback {
     NotFound,
 }
 
-/// The matched app's id and display name (for refusals that name the app).
-fn app_label(m: Option<&apps::AppMatch<'_>>) -> Option<(String, String)> {
-    m.map(|m| (m.app.app_id.clone(), m.app.about.name.clone()))
+/// The matched app (for refusals that name it): id, display name and whether it is
+/// credential-free (FIX-154, C-895), so its refusals lead with the Access tab.
+type AppRef = (String, String, bool);
+
+fn app_label(m: Option<&apps::AppMatch<'_>>) -> Option<AppRef> {
+    m.map(|m| {
+        (
+            m.app.app_id.clone(),
+            m.app.about.name.clone(),
+            aurora_registry::credential_free::entry_is_credential_free(m.app),
+        )
+    })
 }
 
 fn facts_identity(i: &Ident) -> RequestIdentity {
@@ -2004,7 +2047,7 @@ impl PolicyHandler {
         rv: &ResolvedHost,
         ctx: Ctx,
         fallback: Fallback,
-        app: Option<(String, String)>,
+        app: Option<AppRef>,
         passthrough_challenge: bool,
         backstop: Option<(Arc<Governance>, BackstopInfo)>,
         echo: Vec<Vec<u8>>,

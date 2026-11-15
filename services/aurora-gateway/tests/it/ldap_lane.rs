@@ -571,6 +571,36 @@ async fn an_app_with_no_connection_says_not_connected_and_where_to_connect() {
 }
 
 #[tokio::test]
+async fn a_credential_free_app_with_no_connection_leads_with_the_access_tab() {
+    let (port, ca_pem, seen) = directory(Script::Entries(vec![person("jdoe")], 0)).await;
+    let mut snap = ldap_snapshot(port);
+    snap["apps"][0]["connect"] = json!([{"id": "anonymous", "kind": "fields", "fields": []}]);
+    let (env, ..) = start_with_ca(snap, &[], |_| Rows::default(), Some(ca_pem)).await;
+    let r = post(&env, "POST", "/search", r#"{"filter":"(uid=jdoe)"}"#).await;
+    assert_eq!(
+        (r.status, r.code().as_str()),
+        (403, "ldap_no_connection"),
+        "{}",
+        r.body
+    );
+    let d = refusal_details(&r);
+    assert_eq!(d["reason"], "not_connected", "{}", r.body);
+    let msg = serde_json::from_str::<Value>(&r.body).unwrap()["error"]["message"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let access = d["access_url"].as_str().unwrap();
+    assert!(
+        msg.contains(&format!(
+            "give this agent access on its Access tab: {access}"
+        )),
+        "{msg}"
+    );
+    assert!(d["connect_url"].is_string(), "connect_url stays in details");
+    assert_eq!(seen.lock().unwrap().connections, 0);
+}
+
+#[tokio::test]
 async fn a_host_of_no_installed_app_says_no_app() {
     let (port, ca_pem, seen) = directory(Script::Entries(vec![person("jdoe")], 0)).await;
     let (env, ..) = start_with_ca(
