@@ -786,6 +786,138 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/admin/secret-store-default": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Choose where new managed values go (C-746). */
+        put: operations["adminPutSecretStoreDefault"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/secret-store-test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Try a store definition before saving it: build it, authenticate, then write, read and delete
+         *     a probe value under its managed prefix. Writes nothing to the settings (C-746).
+         */
+        post: operations["adminTestSecretStore"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/secret-stores": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The store registry, its health and its counts (C-746). */
+        get: operations["adminListSecretStores"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/secret-stores/migrations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Dry run (the counts per purpose) or start the background job that moves every managed value
+         *     to `target` (C-747). One job at a time, on any replica or the CLI.
+         */
+        post: operations["adminStartSecretMigration"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/secret-stores/migrations/current": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The running or last migration (C-747). */
+        get: operations["adminGetSecretMigration"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/secret-stores/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Add or replace a dashboard-defined store (C-746). Same validation as the configuration's
+         *     (`aurora-config`'s `VaultSettings`), run on the merged view by the settings service.
+         */
+        put: operations["adminPutSecretStore"];
+        post?: never;
+        /** Remove a dashboard-defined store; refused while it still holds values or is the default. */
+        delete: operations["adminDeleteSecretStore"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/secret-stores/{id}/reference-scopes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Replace a dashboard store's reference scopes (SEC-61): per organization, path globs relative
+         *     to the KV mount (a prefix glob ends in one `*`).
+         */
+        put: operations["adminPutSecretStoreScopes"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/admin/settings": {
         parameters: {
             query?: never;
@@ -7495,6 +7627,21 @@ export interface components {
             followup?: null | components["schemas"]["Followup"];
             turn?: null | components["schemas"]["Turn"];
         };
+        /** @description A migration job, or the report of a dry run (C-747). */
+        MigrationView: {
+            error?: string | null;
+            /** Format: date-time */
+            finished_at?: string | null;
+            per_purpose: components["schemas"]["PurposeCounts"][];
+            /** @description Another replica (or the CLI) holds the migration lock: progress is not visible here. */
+            running_elsewhere: boolean;
+            /** Format: date-time */
+            started_at?: string | null;
+            started_by?: string | null;
+            /** @description `none`, `running`, `succeeded`, `failed` or `dry_run`. */
+            state: string;
+            target?: string | null;
+        };
         ModelItem: {
             display_name?: string | null;
             id: string;
@@ -9530,6 +9677,25 @@ export interface components {
             /** @description `retention` (expired by the org's window) | `deleted` (removed by a person). */
             reason: string;
         };
+        PurposeCounts: {
+            /** Format: int64 */
+            already: number;
+            /** Format: int64 */
+            failed: number;
+            /**
+             * Format: int64
+             * @description Moved (dry run: would move).
+             */
+            moved: number;
+            purpose: string;
+            /** Format: int64 */
+            skipped: number;
+            /**
+             * Format: int64
+             * @description Values to move, from the dry run taken at the start.
+             */
+            total: number;
+        };
         PutAccessRequest: {
             role: components["schemas"]["WorkspaceRole"];
         };
@@ -9549,6 +9715,11 @@ export interface components {
             ask_timeout_secs?: number | null;
             ask_tools?: string[];
             mode: components["schemas"]["GrantMode"];
+        };
+        PutDefault: {
+            /** Format: int64 */
+            generation: number;
+            store_id: string;
         };
         PutGovernance: {
             document: components["schemas"]["OrgGovernance"];
@@ -9596,6 +9767,11 @@ export interface components {
              */
             conversations_days?: number | null;
         };
+        PutScopes: {
+            /** Format: int64 */
+            generation: number;
+            scopes: components["schemas"]["ScopeInput"][];
+        };
         /** @description `PUT` and `POST …/preview` body (C-773, C-774). */
         PutSection: {
             /**
@@ -9610,6 +9786,19 @@ export interface components {
             email_domains?: string[] | null;
             enabled?: boolean | null;
             exclusive?: boolean | null;
+        };
+        PutStore: {
+            /**
+             * Format: int64
+             * @description The generation the page loaded.
+             */
+            generation: number;
+            /**
+             * @description `kind`, `address`, `kv_mount`, `managed_prefix`, `auth`, `ca_pem`, `reference_scopes`:
+             *     the entry without its `id`. A secret is `{ "$secret": "<value>" }`, or
+             *     `{ "$secret": "keep" }` to keep the stored one.
+             */
+            store: Record<string, never>;
         };
         RateLimit: {
             /** Format: int32 */
@@ -9683,6 +9872,12 @@ export interface components {
             redacted_seqs: number[];
             /** @description A session reset was queued. */
             session_reset: boolean;
+        };
+        ReferenceScopeView: {
+            /** Format: uuid */
+            org_id: string;
+            org_slug?: string | null;
+            paths: string[];
         };
         RelayReplicaList: {
             replicas: components["schemas"]["RelayReplicaView"][];
@@ -10136,6 +10331,11 @@ export interface components {
             access: string;
             name: string;
             scope: string;
+        };
+        ScopeInput: {
+            /** Format: uuid */
+            org_id: string;
+            paths: string[];
         };
         /** @enum {string} */
         ScopeName: "organization" | "workspace";
@@ -10674,6 +10874,12 @@ export interface components {
             /** Format: date-time */
             ts: string;
         };
+        StartMigration: {
+            /** @description Count what would move and write nothing. */
+            dry_run?: boolean;
+            /** @description The store the managed values move to (managed, built, not `inline` unless moving back). */
+            target: string;
+        };
         StartRequest: {
             /** @description Client host name (sanitized; used to name the minted key). */
             hostname?: string | null;
@@ -10708,6 +10914,34 @@ export interface components {
             managed: boolean;
             references: boolean;
         };
+        StoreHealthView: {
+            /** Format: date-time */
+            checked_at: string;
+            /** @description `unavailable` (the store did not answer) or `init_failed` (it could not be built). */
+            error_code?: string | null;
+            ok: boolean;
+        };
+        StoreView: {
+            default: boolean;
+            /** @description Why it could not be built, when it could not. */
+            error?: string | null;
+            health: components["schemas"]["StoreHealthView"];
+            /** @description The Helm values key that locks it, for a Helm store. */
+            helm_key?: string | null;
+            id: string;
+            kind: string;
+            /** Format: int64 */
+            managed_values: number;
+            reference_scopes: components["schemas"]["ReferenceScopeView"][];
+            /** Format: int64 */
+            reference_values: number;
+            /** @description Organizations may reference values in it. */
+            references: boolean;
+            /** @description The store's settings: no credential, a sealed one as `{ "$secret": { "set": true } }`. */
+            settings: Record<string, never>;
+            /** @description `builtin` (inline), `helm` (locked) or `dashboard`. */
+            source: string;
+        };
         StoredOrigin: {
             /** Format: date-time */
             checked_at?: string | null;
@@ -10727,6 +10961,22 @@ export interface components {
             /** Format: int64 */
             value_version: number;
             workspace_id?: string | null;
+        };
+        /** @description `GET /v1/admin/secret-stores` (C-746). */
+        StoresStatus: {
+            default_store: components["schemas"]["ValueWithSource"];
+            /**
+             * @description The store new managed values go to right now (differs from `default_store` only while
+             *     the configured default cannot be built).
+             */
+            effective_default: string;
+            /**
+             * Format: int64
+             * @description Generation of the `secrets` settings section: send it back on every write.
+             */
+            generation: number;
+            migration: components["schemas"]["MigrationView"];
+            stores: components["schemas"]["StoreView"][];
         };
         StubFile: {
             content: string;
@@ -10779,6 +11029,24 @@ export interface components {
             path?: string | null;
             /** @enum {string} */
             type: "network";
+        };
+        /** @description `POST /v1/admin/secret-stores/test` (C-746). */
+        TestResult: {
+            /** Format: date-time */
+            checked_at: string;
+            ok: boolean;
+            steps: components["schemas"]["TestStep"][];
+        };
+        TestStep: {
+            error_code?: string | null;
+            /** @description `configuration`, `authenticate`, `write`, `read`, `delete`. */
+            name: string;
+            ok: boolean;
+        };
+        TestStore: {
+            /** @description The store id (an existing store keeps its stored secrets for `{ "$secret": "keep" }`). */
+            id: string;
+            store: Record<string, never>;
         };
         TierRef: {
             /** Format: uuid */
@@ -10969,6 +11237,12 @@ export interface components {
             email: string;
             /** Format: uuid */
             id: string;
+        };
+        /** @description A value and where it comes from. */
+        ValueWithSource: {
+            /** @description `helm`, `dashboard` or `default`. */
+            source: string;
+            value: string;
         };
         /** @description Write-only verification settings. */
         VerificationInput: {
@@ -14477,6 +14751,581 @@ export interface operations {
             };
             /** @description Too many requests: the per-principal rate limit */
             429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminPutSecretStoreDefault: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PutDefault"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StoresStatus"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminTestSecretStore: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TestStore"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TestResult"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminListSecretStores: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StoresStatus"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminStartSecretMigration: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StartMigration"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MigrationView"];
+                };
+            };
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MigrationView"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminGetSecretMigration: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MigrationView"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminPutSecretStore: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Store id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PutStore"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StoresStatus"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminDeleteSecretStore: {
+        parameters: {
+            query: {
+                generation: number;
+            };
+            header?: never;
+            path: {
+                /** @description Store id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StoresStatus"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminPutSecretStoreScopes: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Store id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PutScopes"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StoresStatus"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };

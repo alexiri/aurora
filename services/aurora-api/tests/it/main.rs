@@ -91,6 +91,7 @@ mod scim_link;
 mod scim_protocol;
 mod scim_scope;
 mod scim_settings_put;
+mod secret_stores;
 mod secrets;
 mod secrets_migrate;
 mod settings;

@@ -24,11 +24,24 @@ pub enum VaultAuthSettings {
     },
     AppRole {
         mount: String,
-        role_id_env: String,
-        secret_id_env: String,
+        role_id: CredSource,
+        secret_id: CredSource,
     },
     /// Development only: the token is read from this environment variable.
     Token { token_env: String },
+}
+
+/// Where an AppRole credential comes from (FIX-124): the name of an environment variable (the
+/// chart mounts a Kubernetes Secret), a literal (the role id is not a secret), or a value sealed
+/// in the inline store by the dashboard (`{ "$secret": { ref, owner } }`, D-236(g)).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CredSource {
+    Env(String),
+    Literal(String),
+    Sealed {
+        sealed_ref: String,
+        owner: uuid::Uuid,
+    },
 }
 
 /// One `reference_scopes[]` entry; `org_id` is the organization's immutable id (D-107).
@@ -43,6 +56,8 @@ pub struct VaultSettings {
     pub id: String,
     pub address: String,
     pub ca_file: Option<String>,
+    /// The store's CA as PEM text (dashboard-defined stores; excludes `ca_file`).
+    pub ca_pem: Option<String>,
     pub auth: VaultAuthSettings,
     pub kv_mount: String,
     pub managed_prefix: String,
@@ -54,6 +69,7 @@ pub struct VaultSettings {
 struct RawStore {
     address: Option<String>,
     ca_file: Option<String>,
+    ca_pem: Option<String>,
     auth: Option<RawAuth>,
     kv_mount: Option<String>,
     managed_prefix: Option<String>,
@@ -71,7 +87,26 @@ struct RawAuth {
     role_id_env: Option<String>,
     secret_id_env: Option<String>,
     token_env: Option<String>,
+    role_id: Option<String>,
+    secret_id: Option<RawSealed>,
 }
+
+/// `{ "$secret": { ref, owner } }`: a value the dashboard sealed in the inline store.
+#[derive(Deserialize)]
+struct RawSealed {
+    #[serde(rename = "$secret")]
+    inner: RawSealedInner,
+}
+
+#[derive(Deserialize)]
+struct RawSealedInner {
+    #[serde(rename = "ref")]
+    sealed_ref: String,
+    owner: String,
+}
+
+/// Longest PEM text a store may carry.
+pub const MAX_CA_PEM_LEN: usize = 16 * 1024;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -218,6 +253,15 @@ impl VaultSettings {
         if raw.ca_file.as_deref() == Some("") {
             err("ca_file", "must not be empty when set");
         }
+        if let Some(p) = raw.ca_pem.as_deref() {
+            if raw.ca_file.is_some() {
+                err("ca_pem", "cannot be combined with ca_file");
+            } else if p.len() > MAX_CA_PEM_LEN {
+                err("ca_pem", "too long");
+            } else if !p.contains("-----BEGIN CERTIFICATE-----") {
+                err("ca_pem", "not a PEM certificate");
+            }
+        }
 
         let kv_mount = raw.kv_mount.unwrap_or_else(|| "secret".into());
         if !valid_mount(&kv_mount) {
@@ -296,6 +340,7 @@ impl VaultSettings {
             id: cfg.id.clone(),
             address,
             ca_file: raw.ca_file,
+            ca_pem: raw.ca_pem,
             auth,
             kv_mount,
             managed_prefix,
@@ -316,7 +361,16 @@ fn parse_auth(a: RawAuth, errs: &mut Vec<(String, String)>) -> Option<VaultAuthS
     let method = a.method.as_deref().unwrap_or("");
     let (allowed, name): (&[&str], _) = match method {
         "kubernetes" => (&["mount", "role", "jwt_path"], "kubernetes"),
-        "approle" => (&["mount", "role_id_env", "secret_id_env"], "approle"),
+        "approle" => (
+            &[
+                "mount",
+                "role_id_env",
+                "secret_id_env",
+                "role_id",
+                "secret_id",
+            ],
+            "approle",
+        ),
         "token" => (&["token_env"], "token"),
         "" => {
             err("auth.method", "required: kubernetes, approle or token");
@@ -334,6 +388,8 @@ fn parse_auth(a: RawAuth, errs: &mut Vec<(String, String)>) -> Option<VaultAuthS
         ("role_id_env", a.role_id_env.is_some()),
         ("secret_id_env", a.secret_id_env.is_some()),
         ("token_env", a.token_env.is_some()),
+        ("role_id", a.role_id.is_some()),
+        ("secret_id", a.secret_id.is_some()),
     ];
     for (k, set) in given {
         if set && !allowed.contains(&k) {
@@ -378,15 +434,117 @@ fn parse_auth(a: RawAuth, errs: &mut Vec<(String, String)>) -> Option<VaultAuthS
                     Some(p) => p.to_owned(),
                 },
             },
-            "approle" => VaultAuthSettings::AppRole {
-                mount: mount_or(&a.mount, "approle", &mut err),
-                role_id_env: need(&a.role_id_env, "role_id_env", &mut err),
-                secret_id_env: need(&a.secret_id_env, "secret_id_env", &mut err),
-            },
+            "approle" => {
+                let mount = mount_or(&a.mount, "approle", &mut err);
+                let role_id = match (&a.role_id, &a.role_id_env) {
+                    (Some(_), Some(_)) => {
+                        err("auth.role_id", "give either role_id or role_id_env");
+                        CredSource::Literal(String::new())
+                    }
+                    (Some(v), None) if !v.is_empty() && v.len() <= 256 => {
+                        CredSource::Literal(v.clone())
+                    }
+                    (Some(_), None) => {
+                        err("auth.role_id", "1..256 characters");
+                        CredSource::Literal(String::new())
+                    }
+                    _ => CredSource::Env(need(&a.role_id_env, "role_id_env", &mut err)),
+                };
+                let secret_id = match (&a.secret_id, &a.secret_id_env) {
+                    (Some(_), Some(_)) => {
+                        err("auth.secret_id", "give either secret_id or secret_id_env");
+                        CredSource::Env(String::new())
+                    }
+                    (Some(s), None) => match uuid::Uuid::parse_str(&s.inner.owner) {
+                        Ok(owner) if !s.inner.sealed_ref.is_empty() => CredSource::Sealed {
+                            sealed_ref: s.inner.sealed_ref.clone(),
+                            owner,
+                        },
+                        _ => {
+                            err("auth.secret_id", "not a sealed secret");
+                            CredSource::Env(String::new())
+                        }
+                    },
+                    _ => CredSource::Env(need(&a.secret_id_env, "secret_id_env", &mut err)),
+                };
+                VaultAuthSettings::AppRole {
+                    mount,
+                    role_id,
+                    secret_id,
+                }
+            }
             _ => VaultAuthSettings::Token {
                 token_env: need(&a.token_env, "token_env", &mut err),
             },
         }
     };
     (errs.len() == before).then_some(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn parse(v: serde_json::Value) -> Result<VaultSettings, Vec<(String, String)>> {
+        let cfg: SecretStoreConfig = serde_json::from_value(v).unwrap();
+        VaultSettings::parse(&cfg)
+    }
+
+    fn base(auth: serde_json::Value) -> serde_json::Value {
+        json!({ "id": "v", "kind": "hashicorp-vault", "address": "https://vault.example.org:8200", "auth": auth })
+    }
+
+    #[test]
+    fn a_dashboard_approle_store_has_a_literal_role_id_and_a_sealed_secret_id() {
+        let owner = uuid::Uuid::now_v7();
+        let s = parse(base(json!({
+            "method": "approle", "role_id": "r1",
+            "secret_id": { "$secret": { "ref": "inline:v1:k1:abc", "owner": owner, "updated_at": "2026-11-15T00:00:00Z" } }
+        })))
+        .unwrap();
+        let VaultAuthSettings::AppRole {
+            role_id, secret_id, ..
+        } = s.auth
+        else {
+            panic!("approle")
+        };
+        assert_eq!(role_id, CredSource::Literal("r1".into()));
+        assert_eq!(
+            secret_id,
+            CredSource::Sealed {
+                sealed_ref: "inline:v1:k1:abc".into(),
+                owner
+            }
+        );
+    }
+
+    #[test]
+    fn an_approle_credential_has_one_source() {
+        let e = parse(base(json!({
+            "method": "approle", "role_id": "r1", "role_id_env": "X", "secret_id_env": "Y"
+        })))
+        .unwrap_err();
+        assert!(e.iter().any(|(k, _)| k == "auth.role_id"), "{e:?}");
+        let e = parse(base(json!({ "method": "approle", "role_id": "r1" }))).unwrap_err();
+        assert!(e.iter().any(|(k, _)| k == "auth.secret_id_env"), "{e:?}");
+    }
+
+    #[test]
+    fn a_ca_is_a_file_or_pem_text_never_both_and_must_look_like_a_certificate() {
+        let mut v = base(json!({ "method": "kubernetes", "role": "r" }));
+        v["ca_pem"] = json!("-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n");
+        assert!(parse(v.clone()).is_ok());
+        v["ca_file"] = json!("/etc/ca.pem");
+        assert!(
+            parse(v.clone())
+                .unwrap_err()
+                .iter()
+                .any(|(k, _)| k == "ca_pem")
+        );
+        v["ca_file"] = serde_json::Value::Null;
+        v.as_object_mut().unwrap().remove("ca_file");
+        v["ca_pem"] = json!("not a certificate");
+        assert!(parse(v).unwrap_err().iter().any(|(k, _)| k == "ca_pem"));
+    }
 }

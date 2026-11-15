@@ -21,6 +21,6 @@ pub use inline::InlineStore;
 pub use memory::MemoryStore;
 pub use recipe::InjectionRecipe;
 pub use reference::SecretRef;
-pub use registry::StoreRegistry;
+pub use registry::{StoreFailure, StoreRegistry};
 pub use store::{Purpose, SealContext, SecretStore, StoreCapabilities, StoreHealth};
 pub use vault::{SecretVault, ValueSource};

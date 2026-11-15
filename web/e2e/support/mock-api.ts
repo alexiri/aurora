@@ -286,6 +286,20 @@ export async function mockApi(
         locked: [{ section: "governance", key: "governance.egress.minimum_posture", entry_id: null, helm_key: "config.governance.egress.minimum_posture" }],
       });
     }
+    // (phase 5, FIX-124) Admin › Secret stores: the built-in store, a Helm store and a dashboard store.
+    if (p === "/v1/admin/secret-stores") {
+      const health = { ok: true, checked_at: now, error_code: null };
+      const base = { references: false, default: false, health, error: null, managed_values: 0, reference_values: 0, reference_scopes: [] as unknown[], helm_key: null as string | null };
+      return json({
+        default_store: { value: "inline", source: "default" }, effective_default: "inline", generation: 3,
+        migration: { state: "none", target: null, started_at: null, finished_at: null, started_by: null, per_purpose: [], error: null, running_elsewhere: false },
+        stores: [
+          { ...base, id: "inline", kind: "inline", source: "builtin", settings: {}, default: true, managed_values: 12 },
+          { ...base, id: "vault", kind: "hashicorp-vault", source: "helm", helm_key: "vault.*", references: true, settings: { address: "https://vault.example.test:8200", kv_mount: "secret", managed_prefix: "aurora", auth: { method: "kubernetes", role: "aurora-api" } } },
+          { ...base, id: "team-vault", kind: "hashicorp-vault", source: "dashboard", references: true, health: { ok: false, checked_at: now, error_code: "unavailable" }, settings: { address: "https://team-vault.example.test:8200", auth: { method: "approle", role_id: "r1", secret_id: { $secret: { set: true } } } }, reference_scopes: [{ org_id: id(1), org_slug: "acme", paths: ["teams/acme/*"] }] },
+        ],
+      });
+    }
     if (p === "/v1/admin/settings/governance") {
       const sch = (kind: string, extra: Record<string, unknown> = {}) => ({ kind, min: null, max: null, max_len: null, options: null, item_kind: null, ...extra });
       return json({
@@ -426,6 +440,7 @@ export const ROUTES: { name: string; path: string; admin?: boolean }[] = [
   { name: "admin-placement", path: "/admin/placement" },
   { name: "admin-settings", path: "/admin/settings" },
   { name: "admin-settings-section", path: "/admin/settings/governance" },
+  { name: "admin-secret-stores", path: "/admin/secret-stores" },
   { name: "admin-plugins", path: "/admin/plugins" },
   { name: "admin-plugin-detail", path: "/admin/plugins/github" },
   { name: "admin-addon-sources", path: "/admin/addon-sources" },

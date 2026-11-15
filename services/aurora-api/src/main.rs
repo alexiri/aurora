@@ -210,10 +210,10 @@ async fn main() -> ExitCode {
                     dry_run,
                     discard_grace_secs,
                 },
-        } => secrets_migrate(cfg, to, purpose, dry_run, discard_grace_secs).await,
+        } => secrets_migrate(cfg, source, to, purpose, dry_run, discard_grace_secs).await,
         Command::Secrets {
             command: SecretsCommand::Rekey { purpose, dry_run },
-        } => secrets_rekey(cfg, purpose, dry_run).await,
+        } => secrets_rekey(cfg, source, purpose, dry_run).await,
         Command::Openapi { .. } | Command::Keys { .. } | Command::Settings { .. } => Ok(()),
     };
     service::telemetry_shutdown();
@@ -238,16 +238,33 @@ async fn migrate(cfg: ApiConfig) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// The state a secrets command works on: the configuration's stores plus the ones the dashboard
+/// defined (FIX-124), so `--to <a dashboard store>` works. A database that cannot be read keeps
+/// the configuration's stores.
+async fn secrets_state(
+    pool: &aurora_db::PgPool,
+    cfg: ApiConfig,
+    source: aurora_config::ConfigSource,
+) -> Result<aurora_api::app::AppState, Box<dyn std::error::Error>> {
+    let state = aurora_api::app::AppState::try_new(pool.clone(), cfg)?.with_config_source(source);
+    if let Err(e) = state.settings.reload(pool, "cli").await {
+        eprintln!("warning: stored settings not loaded ({e}); using the configuration's stores");
+    }
+    Ok(state)
+}
+
 async fn secrets_migrate(
     cfg: ApiConfig,
+    source: aurora_config::ConfigSource,
     to: String,
     purpose: Option<aurora_secrets::Purpose>,
     dry_run: bool,
     discard_grace_secs: u64,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let pool = aurora_db::connect(cfg.database_url.expose(), 4).await?;
-    let state = aurora_api::app::AppState::try_new(pool.clone(), cfg)?;
+    let state = secrets_state(&pool, cfg, source).await?;
     let mut opts = aurora_api::secrets_migrate::Options::new(&to);
+    opts.keep_instance_settings_inline = true;
     opts.purpose = purpose;
     opts.dry_run = dry_run;
     opts.discard_grace = std::time::Duration::from_secs(discard_grace_secs);
@@ -261,12 +278,13 @@ async fn secrets_migrate(
 
 async fn secrets_rekey(
     cfg: ApiConfig,
+    source: aurora_config::ConfigSource,
     purpose: Option<aurora_secrets::Purpose>,
     dry_run: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let pool = aurora_db::connect(cfg.database_url.expose(), 4).await?;
     let active = cfg.keyring.active.clone();
-    let state = aurora_api::app::AppState::try_new(pool.clone(), cfg)?;
+    let state = secrets_state(&pool, cfg, source).await?;
     let mut opts = aurora_api::secrets_migrate::Options::rekey(&active);
     opts.purpose = purpose;
     opts.dry_run = dry_run;

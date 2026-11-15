@@ -58,6 +58,15 @@ pub struct Settings {
     validate: bool,
     snap: ArcSwap<Snapshot>,
     failed: std::sync::atomic::AtomicU64,
+    secrets_target: std::sync::OnceLock<SecretsTarget>,
+}
+
+const KEYS_OF_SECRETS: [&str; 2] = ["secrets.stores", "secrets.default_store"];
+
+struct SecretsTarget {
+    vault: Arc<aurora_secrets::SecretVault>,
+    keyring: Arc<aurora_crypto::Keyring>,
+    extra_ca: Option<String>,
 }
 
 impl Settings {
@@ -77,6 +86,7 @@ impl Settings {
                 effective,
             }),
             failed: std::sync::atomic::AtomicU64::new(0),
+            secrets_target: std::sync::OnceLock::new(),
         })
     }
 
@@ -155,11 +165,36 @@ impl Settings {
                     .cloned(),
             )
             .collect();
+        let secrets_changed = KEYS_OF_SECRETS.iter().any(|k| {
+            before.effective.keys.get(*k).map(|e| &e.value)
+                != effective.keys.get(*k).map(|e| &e.value)
+        });
+        if secrets_changed && let Some(t) = self.secrets_target.get() {
+            t.vault.rebuild_from(
+                &effective.raw.secrets,
+                t.keyring.clone(),
+                t.extra_ca.as_deref(),
+            );
+        }
         self.snap.store(Arc::new(Snapshot {
             generations,
             effective,
         }));
         Ok(changed)
+    }
+
+    /// Rebuild `vault`'s store registry whenever the `secrets` settings change (FIX-124).
+    pub fn rebuild_vault_on_change(
+        &self,
+        vault: Arc<aurora_secrets::SecretVault>,
+        keyring: Arc<aurora_crypto::Keyring>,
+        extra_ca: Option<String>,
+    ) {
+        let _ = self.secrets_target.set(SecretsTarget {
+            vault,
+            keyring,
+            extra_ca,
+        });
     }
 
     /// Reload and flush the caches the changed sections feed.

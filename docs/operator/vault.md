@@ -16,6 +16,26 @@ Two things can live in Vault:
 Both services (api and gateway) build the store from their own configuration, so each can use
 its own Vault role.
 
+## 0. Where to configure it (phase 5)
+
+**Dashboard first.** Sign in as an instance admin and open **Admin › Secret stores**: add a
+Vault store (address, KV mount, managed prefix, Kubernetes or AppRole authentication, an optional
+CA certificate as PEM text), press **Test connection** (it signs in and writes, reads and removes a
+probe value under the managed prefix), save, choose it as the **default store** and, when you want
+the existing values in Vault, **Move values** (preview, then migrate). An AppRole secret id is
+sealed in Aurora's own inline store and never shown again. Kubernetes authentication uses the
+pods' service-account token: bind your Vault role to the `<release>-api` and `<release>-gateway`
+service accounts.
+
+**Helm instead.** `vault.enabled: true` renders the same store from the chart (section 2 below);
+a store or key set in Helm is **locked**: the page shows "Configured in Helm (`vault.*`)" and
+offers no edit control, and the API refuses to change it. Move values still works for a locked
+store (it moves values, not configuration). Remove the keys from your values file and upgrade
+to hand the store to the dashboard; it keeps the value Helm had. What stays in Helm either way
+is Kubernetes wiring: the projected service-account token, the Secret that holds an AppRole
+secret id if you prefer one over a sealed value (`auth.role_id_env`/`secret_id_env`), and the
+NetworkPolicy egress to Vault.
+
 ## 1. Vault side
 
 ### KV mount

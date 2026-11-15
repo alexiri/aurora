@@ -1,5 +1,6 @@
 "use client";
 
+import { SecretStoresView } from "@/components/admin/secret-stores-view";
 import { SettingsSectionForm } from "@/components/admin/settings/settings-section-form";
 import { ErrorState, Loading } from "@/components/states";
 import { PageHeader } from "@/components/ui/page-header";
@@ -11,6 +12,12 @@ function when(iso: string | null | undefined): string {
 
 /** Admin › Settings › <section> (SET-1): the generic page; sections with their own editors replace the form. */
 export function SettingsSectionView({ slug }: { slug: string }) {
+  // FIX-124: the secret stores have their own editor (health, Test connection, migration).
+  if (sectionFromSlug(slug) === "secrets") return <SecretStoresView />;
+  return <GenericSectionView slug={slug} />;
+}
+
+function GenericSectionView({ slug }: { slug: string }) {
   const q = useSettingsSection(sectionFromSlug(slug));
   if (q.isPending) return <Loading />;
   if (q.isError) return <ErrorState error={q.error} onRetry={() => q.refetch()} />;

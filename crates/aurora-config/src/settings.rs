@@ -270,6 +270,7 @@ impl Registry {
     fn build() -> Self {
         #[allow(unused_mut)]
         let mut defs: Vec<SettingDef> = Vec::new();
+        defs.extend(secrets_defs());
         #[cfg(any(test, feature = "test-registry"))]
         defs.extend(test_defs());
         Self { defs }
@@ -399,6 +400,39 @@ pub fn sections() -> &'static [SectionDef] {
         }
         v
     })
+}
+
+/// The `secrets` section (FIX-124, D-237): where secret values are kept. The store definitions are
+/// a keyed list by `id` (a store the chart renders from `vault.*` is one locked entry, dashboard
+/// stores sit beside it); the default store is a scalar.
+fn secrets_defs() -> Vec<SettingDef> {
+    use serde_json::json;
+    vec![
+        SettingDef::new(
+            "secrets",
+            "secrets.default_store",
+            SettingType::Str { max_len: 64 },
+            json!("inline"),
+        )
+        .helm("vault.makeDefault"),
+        SettingDef::new(
+            "secrets",
+            "secrets.stores",
+            SettingType::List {
+                item: Box::new(SettingType::Object),
+                max_items: 16,
+            },
+            json!([]),
+        )
+        .keyed("id")
+        .helm("vault.*"),
+    ]
+}
+
+/// May a dashboard-defined store have this `kind`? Only Vault; the test store only where the
+/// test registry is compiled in (SEC-89: no test switch is reachable from a browser session).
+pub fn dashboard_store_kind_allowed(kind: &str) -> bool {
+    kind == crate::VAULT_KIND || (cfg!(any(test, feature = "test-registry")) && kind == "memory")
 }
 
 #[cfg(any(test, feature = "test-registry"))]

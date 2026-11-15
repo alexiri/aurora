@@ -395,6 +395,8 @@ const ADMIN_LINKS: { href: string; label: string; icon: IconType }[] = [
   { href: "/admin/placement", label: "Sign-up & placement", icon: UsersIcon },
   // (phase 5, SET-1) Instance settings: the index now, a link per section as SET-2..SET-5 land.
   { href: "/admin/settings", label: "Settings", icon: SettingsIcon },
+  // (phase 5, FIX-124) Where secret values are kept: the built-in store or Vault.
+  { href: "/admin/secret-stores", label: "Secret stores", icon: KeyIcon },
   { href: "/admin/plugins", label: "Plugins", icon: PlugIcon },
   { href: "/admin/addon-sources", label: "Addon sources", icon: BookIcon },
   { href: "/admin/connectors", label: "Connectors", icon: LinkIcon },

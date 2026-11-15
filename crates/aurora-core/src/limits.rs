@@ -166,6 +166,13 @@ pub const SETTINGS_RELOAD_POLL: Duration = Duration::from_secs(30);
 pub const SETTINGS_AUDIT_VALUE_MAX: usize = 1024;
 /// Affected organizations a settings preview lists.
 pub const SETTINGS_PREVIEW_ORGS_MAX: usize = 200;
+// Secret stores in the dashboard (FIX-124).
+/// A store's health and the value counts on Admin › Secret stores are probed at most this often.
+pub const SECRET_STORE_HEALTH_INTERVAL: Duration = Duration::from_secs(30);
+/// Longest a store probe (health, Test connection) may take.
+pub const SECRET_STORE_PROBE_TIMEOUT: Duration = Duration::from_secs(8);
+/// Wait after a dashboard migration's commits before the old values are discarded.
+pub const SECRET_MIGRATION_DISCARD_GRACE: Duration = Duration::from_secs(2);
 pub const ATTACH_IN_FILE_MAX: u64 = 10 * MIB as u64;
 /// per message.
 pub const ATTACH_IN_COUNT: u32 = 10;

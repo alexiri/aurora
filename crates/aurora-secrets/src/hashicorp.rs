@@ -19,7 +19,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use aurora_config::{
-    VaultAuthSettings, VaultSettings, glob_matches, under_managed_prefix, valid_kv_path,
+    CredSource, VaultAuthSettings, VaultSettings, glob_matches, under_managed_prefix, valid_kv_path,
 };
 use aurora_core::Secret;
 use base64::Engine;
@@ -111,6 +111,7 @@ fn load_pem(path: &str, key: &str, store: &str) -> Result<Vec<reqwest::Certifica
 fn build_client(
     store: &str,
     ca_file: Option<&str>,
+    ca_pem: Option<&str>,
     extra_ca_bundle: Option<&str>,
 ) -> Result<reqwest::Client> {
     let mut b = reqwest::Client::builder()
@@ -122,6 +123,14 @@ fn build_client(
         // An explicit bundle replaces the default roots for this store.
         b = b.tls_built_in_root_certs(false);
         for c in load_pem(f, "ca_file", store)? {
+            b = b.add_root_certificate(c);
+        }
+    } else if let Some(p) = ca_pem {
+        b = b.tls_built_in_root_certs(false);
+        let certs = crate::tls::parse_pem_text(p).map_err(|e| {
+            SecretError::InvalidConfig(format!("secret store '{store}': ca_pem: {}", e.why()))
+        })?;
+        for c in certs {
             b = b.add_root_certificate(c);
         }
     } else {
@@ -147,9 +156,52 @@ impl VaultStore {
     /// Build from validated settings. Reads the credential environment variables and the CA
     /// files; any problem refuses startup naming the key (never a value).
     pub fn new(settings: VaultSettings, extra_ca_bundle: Option<&str>) -> Result<Self> {
+        Self::new_with(settings, extra_ca_bundle, None)
+    }
+
+    /// Like [`Self::new`]; `inline` opens credentials the dashboard sealed in the inline store
+    /// (an AppRole secret id, FIX-124).
+    pub fn new_with(
+        settings: VaultSettings,
+        extra_ca_bundle: Option<&str>,
+        inline: Option<&crate::InlineStore>,
+    ) -> Result<Self> {
         let store = settings.id.clone();
-        let http = build_client(&store, settings.ca_file.as_deref(), extra_ca_bundle)?;
+        let http = build_client(
+            &store,
+            settings.ca_file.as_deref(),
+            settings.ca_pem.as_deref(),
+            extra_ca_bundle,
+        )?;
         let auth_key = |k: &str| format!("secrets.stores[{store}].auth.{k}");
+        let cred = |c: &CredSource, key: &str| -> Result<Secret<String>> {
+            match c {
+                CredSource::Env(name) => read_env(name, &auth_key(&format!("{key}_env")), &store),
+                CredSource::Literal(v) => Ok(Secret::new(v.clone())),
+                CredSource::Sealed { sealed_ref, owner } => {
+                    let bad = || {
+                        SecretError::InvalidConfig(format!(
+                            "secret store '{store}': {}: cannot open the sealed value",
+                            auth_key(key)
+                        ))
+                    };
+                    let r: crate::SecretRef = sealed_ref.parse().map_err(|_| bad())?;
+                    let ctx = crate::SealContext {
+                        purpose: crate::Purpose::InstanceSetting,
+                        owner_id: *owner,
+                        org_id: uuid::Uuid::nil(),
+                        workspace_id: None,
+                    };
+                    let v = inline
+                        .ok_or_else(bad)?
+                        .open_sync(&ctx, &r)
+                        .map_err(|_| bad())?;
+                    String::from_utf8(v.expose().clone())
+                        .map(Secret::new)
+                        .map_err(|_| bad())
+                }
+            }
+        };
         let (auth, initial) = match settings.auth {
             VaultAuthSettings::Kubernetes {
                 mount,
@@ -165,13 +217,13 @@ impl VaultStore {
             ),
             VaultAuthSettings::AppRole {
                 mount,
-                role_id_env,
-                secret_id_env,
+                role_id,
+                secret_id,
             } => (
                 Auth::AppRole {
                     mount,
-                    role_id: read_env(&role_id_env, &auth_key("role_id_env"), &store)?,
-                    secret_id: read_env(&secret_id_env, &auth_key("secret_id_env"), &store)?,
+                    role_id: cred(&role_id, "role_id")?,
+                    secret_id: cred(&secret_id, "secret_id")?,
                 },
                 None,
             ),

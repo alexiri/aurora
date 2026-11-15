@@ -190,10 +190,12 @@ async fn serve(
     let vault = Arc::new(aurora_secrets::SecretVault::new(
         aurora_secrets::StoreRegistry::from_config_with_tls(
             &cfg.secrets,
-            keyring,
+            keyring.clone(),
             cfg.tls.extra_ca_bundle.as_deref(),
         )?,
     ));
+    // (FIX-124) Kept for the settings reload: the stores the dashboard defines.
+    let settings_vault = (vault.clone(), keyring, cfg.tls.extra_ca_bundle.clone());
     let governance = Arc::new(
         Governance::new(
             instance_from_config(&cfg.governance, &llm),
@@ -304,6 +306,12 @@ async fn serve(
     // SET-5 and FIX-124 read it). A gateway whose role has no grant on the table yet (rollout
     // order) logs and keeps running on its configuration.
     let settings = aurora_gateway::settings::Settings::new(Some(source));
+    settings.rebuild_vault_on_change(settings_vault.0, settings_vault.1, settings_vault.2);
+    // Loaded before serving so a dashboard-defined store is there for the first request; a
+    // database without the grant yet keeps the configuration's stores (logged by `run`).
+    if let Err(e) = settings.reload(&pool).await {
+        tracing::warn!(error = %e, "stored settings not loaded at start; the reload task retries");
+    }
     let settings_task = tokio::spawn(settings.clone().run(pool.clone(), hub.clone(), rx.clone()));
     let instance_task = tokio::spawn(instance::run(
         pool.clone(),

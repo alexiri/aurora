@@ -1,6 +1,9 @@
+use std::sync::Arc;
+
+use arc_swap::ArcSwap;
 use aurora_core::Secret;
 
-use crate::{Result, SealContext, SecretError, SecretRef, StoreRegistry};
+use crate::{Result, SealContext, SecretError, SecretRef, StoreFailure, StoreRegistry};
 
 /// Mirrors `secrets.value_source`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -11,29 +14,62 @@ pub enum ValueSource {
 
 /// The only place SecretRefs are interpreted.
 pub struct SecretVault {
-    registry: StoreRegistry,
+    /// Swapped when the stores change in the dashboard (FIX-124): every call reads the current
+    /// registry once, so an in-flight call finishes against the stores it started with.
+    registry: ArcSwap<StoreRegistry>,
+    failures: ArcSwap<Vec<StoreFailure>>,
 }
 
 impl SecretVault {
     pub fn new(registry: StoreRegistry) -> Self {
-        Self { registry }
+        Self {
+            registry: ArcSwap::from_pointee(registry),
+            failures: ArcSwap::from_pointee(Vec::new()),
+        }
     }
 
-    pub fn registry(&self) -> &StoreRegistry {
-        &self.registry
+    /// The current registry.
+    pub fn registry(&self) -> Arc<StoreRegistry> {
+        self.registry.load_full()
     }
 
-    fn store_for(&self, r: &SecretRef) -> Result<&dyn crate::SecretStore> {
+    /// Replace the registry (live reload on a change of the `secrets` settings).
+    pub fn swap_registry(&self, registry: StoreRegistry) {
+        self.registry.store(Arc::new(registry));
+        self.failures.store(Arc::new(Vec::new()));
+    }
+
+    /// Rebuild the registry from the merged `secrets` settings (FIX-124): a store that fails to
+    /// initialise stays out of the registry and is reported by [`Self::failures`]; the default
+    /// falls back to `inline` when it is one of them.
+    pub fn rebuild_from(
+        &self,
+        cfg: &aurora_config::SecretsSection,
+        keyring: Arc<aurora_crypto::Keyring>,
+        extra_ca_bundle: Option<&str>,
+    ) {
+        let (reg, failed) = StoreRegistry::from_config_tolerant(cfg, keyring, extra_ca_bundle);
+        self.registry.store(Arc::new(reg));
+        self.failures.store(Arc::new(failed));
+    }
+
+    /// Stores the last rebuild could not initialise, with the reason (never a credential).
+    pub fn failures(&self) -> Arc<Vec<StoreFailure>> {
+        self.failures.load_full()
+    }
+
+    fn store_for(&self, r: &SecretRef) -> Result<Arc<dyn crate::SecretStore>> {
         let id = r.store_id().unwrap_or("inline");
         self.registry
+            .load()
             .get(id)
-            .map(AsRef::as_ref)
             .ok_or(SecretError::StoreNotConfigured)
     }
 
     /// Write a new value into the default store.
     pub async fn seal(&self, ctx: &SealContext, plaintext: Secret<Vec<u8>>) -> Result<SecretRef> {
-        self.registry.default_store().put(ctx, &plaintext).await
+        let store = self.registry.load().default_store();
+        store.put(ctx, &plaintext).await
     }
 
     /// Write a new value into the **inline** store whatever the default store is (phase 5,
@@ -44,11 +80,12 @@ impl SecretVault {
         ctx: &SealContext,
         plaintext: Secret<Vec<u8>>,
     ) -> Result<SecretRef> {
-        self.registry
+        let store = self
+            .registry
+            .load()
             .get("inline")
-            .ok_or(SecretError::StoreNotConfigured)?
-            .put(ctx, &plaintext)
-            .await
+            .ok_or(SecretError::StoreNotConfigured)?;
+        store.put(ctx, &plaintext).await
     }
 
     pub async fn open(&self, ctx: &SealContext, r: &SecretRef) -> Result<Secret<Vec<u8>>> {
@@ -79,6 +116,7 @@ impl SecretVault {
     ) -> Result<SecretRef> {
         let store = self
             .registry
+            .load()
             .get(store_id)
             .ok_or(SecretError::StoreNotConfigured)?;
         if !store.capabilities().references {
@@ -99,6 +137,7 @@ impl SecretVault {
     ) -> Result<SecretRef> {
         let target = self
             .registry
+            .load()
             .get(target_store)
             .ok_or(SecretError::StoreNotConfigured)?;
         if !target.capabilities().managed {

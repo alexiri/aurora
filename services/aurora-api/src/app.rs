@@ -91,31 +91,32 @@ pub struct AppState {
     pub stream_recheck: std::time::Duration,
 }
 
+/// The encryption keyring of the configuration.
+pub(crate) fn build_keyring(config: &ApiConfig) -> Result<Arc<aurora_crypto::Keyring>, String> {
+    let keys = config
+        .keyring
+        .keys
+        .iter()
+        .map(|k| {
+            format!(
+                "{}:{}",
+                k.id,
+                base64::Engine::encode(&base64::engine::general_purpose::STANDARD, k.key.expose())
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    aurora_crypto::Keyring::parse(&keys, &config.keyring.active)
+        .map(Arc::new)
+        .map_err(|e| format!("keyring: {e}"))
+}
+
 impl AppState {
     /// Build the state; fails on invalid `[secrets]` / `[llm]` configuration.
     pub fn try_new(pool: PgPool, config: ApiConfig) -> Result<Self, String> {
         let net = Arc::new(NetPolicy::from_config(&config));
         let mailer = crate::domains::auth::mail::from_config(&config);
-        let keys = config
-            .keyring
-            .keys
-            .iter()
-            .map(|k| {
-                format!(
-                    "{}:{}",
-                    k.id,
-                    base64::Engine::encode(
-                        &base64::engine::general_purpose::STANDARD,
-                        k.key.expose()
-                    )
-                )
-            })
-            .collect::<Vec<_>>()
-            .join(",");
-        let keyring = Arc::new(
-            aurora_crypto::Keyring::parse(&keys, &config.keyring.active)
-                .map_err(|e| format!("keyring: {e}"))?,
-        );
+        let keyring = build_keyring(&config)?;
         let vault = Arc::new(aurora_secrets::SecretVault::new(
             aurora_secrets::StoreRegistry::from_config_with_tls(
                 &config.secrets,
@@ -171,7 +172,7 @@ impl AppState {
                 config.tls.extra_ca_bundle.as_deref(),
             )?,
         )));
-        Ok(Self {
+        let state = Self {
             pool,
             config: Arc::new(config),
             rate_limiter: Arc::new(RateLimiter::new()),
@@ -196,7 +197,9 @@ impl AppState {
             settings: Arc::new(domains::settings::handle::SettingsHandle::new(None)),
             sse_keepalive: aurora_core::limits::SSE_KEEPALIVE,
             stream_recheck: crate::http::auth::STREAM_RECHECK,
-        })
+        };
+        state.install_live_secrets();
+        Ok(state)
     }
 
     /// Like [`Self::try_new`]; panics on invalid configuration (tests, fixed configs).
@@ -210,7 +213,43 @@ impl AppState {
     #[must_use]
     pub fn with_config_source(mut self, source: aurora_config::ConfigSource) -> Self {
         self.settings = Arc::new(domains::settings::handle::SettingsHandle::new(Some(source)));
+        self.install_live_secrets();
+        // The merged view (the configuration's stores, nothing stored yet) is the first registry.
+        let snap = self.settings.snapshot();
+        let configured = snap
+            .effective
+            .keys
+            .get("secrets.stores")
+            .and_then(|k| k.entries.as_ref())
+            .is_some_and(|e| !e.is_empty());
+        if configured && let Ok(keyring) = build_keyring(&self.config) {
+            self.vault.rebuild_from(
+                &snap.effective.raw.secrets,
+                keyring,
+                self.config.tls.extra_ca_bundle.as_deref(),
+            );
+        }
         self
+    }
+
+    /// Rebuild the vault's store registry whenever the `secrets` settings change (FIX-124): the
+    /// API and the gateway pick a dashboard-defined store or default up without a restart.
+    fn install_live_secrets(&self) {
+        let vault = self.vault.clone();
+        let ca = self.config.tls.extra_ca_bundle.clone();
+        let Ok(keyring) = build_keyring(&self.config) else {
+            return;
+        };
+        self.settings.on_swap(Arc::new(move |old, new| {
+            const KEYS: [&str; 2] = ["secrets.stores", "secrets.default_store"];
+            let differs = KEYS.iter().any(|k| {
+                old.effective.keys.get(*k).map(|e| &e.value)
+                    != new.effective.keys.get(*k).map(|e| &e.value)
+            });
+            if differs {
+                vault.rebuild_from(&new.effective.raw.secrets, keyring.clone(), ca.as_deref());
+            }
+        }));
     }
 
     /// Replace the shared counters (tests: a shared in-process store, fault injection).
@@ -224,6 +263,7 @@ impl AppState {
     #[must_use]
     pub fn with_vault(mut self, vault: Arc<aurora_secrets::SecretVault>) -> Self {
         self.vault = vault;
+        self.install_live_secrets();
         self
     }
 

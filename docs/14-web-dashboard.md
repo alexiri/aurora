@@ -1392,6 +1392,17 @@ settings`, one page per section, grouped under **Settings** in the admin navigat
 LLM endpoints, Sign-in, Email, Secret stores (FIX-124, `/admin/secret-stores`), Agents & sandboxes,
 Approvals, Retention & storage, Skills, Directory sync, Previews, Terminal, Limits
 (`/admin/settings/<section>`, the section id with `-` for `_`).
+- **Secret stores** (`/admin/secret-stores`, FIX-124; `/admin/settings/secrets` renders the same
+  page): an `ItemList` of the stores — id, kind, a source `Badge` ("Built in", "Configured in
+  Helm", "Dashboard"), health `StatusDot` (Healthy / Not answering / Could not start), value counts,
+  the address, mount, prefix and authentication, the per-organization reference scopes — where a
+  Helm store shows "Configured in Helm (`vault.*`)" and no control; a dashboard store has **Edit**,
+  **Reference scopes** and **Remove** (refused with the count while it holds values). **Add a Vault
+  store** is a `FormDialog` with **Test connection** (the step results are listed). A **Default
+  store** `Section` (locked when Helm sets it; a notice when the configured default could not start)
+  and a **Move values** `Section`: target, **Preview what would move** (a `DataTable` per kind of
+  value), **Migrate to <store>…** (`ConfirmDialog`), then live progress and the final report. 409
+  `stale_revision` offers a reload, 412 the re-authentication step, 422 lists the fields.
 - **Index** (`/admin/settings`): a `Section` per settings section with its description, the number
   of keys configured in Helm and set in the dashboard, the last change (who, when) and a link; a
   `Notice` (`neutral`) when keys are locked: "N settings are configured in Helm and cannot be

@@ -33,6 +33,16 @@ pub fn load_pem_bundle(path: &str) -> Result<Vec<reqwest::Certificate>, PemError
     Ok(certs)
 }
 
+/// The certificates of PEM text (a dashboard-defined store's CA).
+pub fn parse_pem_text(pem: &str) -> Result<Vec<reqwest::Certificate>, PemError> {
+    let certs =
+        reqwest::Certificate::from_pem_bundle(pem.as_bytes()).map_err(|_| PemError::Invalid)?;
+    if certs.is_empty() {
+        return Err(PemError::Empty);
+    }
+    Ok(certs)
+}
+
 /// Add the `tls.extra_ca_bundle` certificates (when set) to `builder` as root certificates.
 pub fn with_extra_roots(
     mut builder: reqwest::ClientBuilder,

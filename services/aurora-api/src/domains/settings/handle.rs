@@ -81,7 +81,13 @@ pub struct SettingsHandle {
     /// after a database outage at start).
     mirrored: std::sync::atomic::AtomicBool,
     snap: ArcSwap<Snapshot>,
+    /// Run after every swap with the old and the new snapshot (live readers: FIX-124's store
+    /// registry, and the section briefs' own).
+    hooks: std::sync::Mutex<Vec<SwapHook>>,
 }
+
+/// A live reader notified when the snapshot is swapped.
+pub type SwapHook = Arc<dyn Fn(&Snapshot, &Snapshot) + Send + Sync>;
 
 impl std::fmt::Debug for SettingsHandle {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -111,6 +117,26 @@ impl SettingsHandle {
                 stored: Stored::default(),
                 effective,
             }),
+            hooks: std::sync::Mutex::new(Vec::new()),
+        }
+    }
+
+    /// Register a live reader; it runs after every swap.
+    pub fn on_swap(&self, hook: SwapHook) {
+        self.hooks
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(hook);
+    }
+
+    fn run_hooks(&self, old: &Snapshot, new: &Snapshot) {
+        let hooks: Vec<SwapHook> = self
+            .hooks
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        for h in hooks {
+            h(old, new);
         }
     }
 
@@ -160,11 +186,13 @@ impl SettingsHandle {
         let (stored, meta) = stored_from_rows(&rows);
         match self.evaluate(&stored) {
             Ok(effective) => {
-                self.snap.store(Arc::new(Snapshot {
+                let new = Arc::new(Snapshot {
                     meta,
                     stored,
                     effective,
-                }));
+                });
+                let old = self.snap.swap(new.clone());
+                self.run_hooks(&old, &new);
                 Ok(())
             }
             Err(problems) => {
