@@ -315,7 +315,7 @@ tokens), group → workspace access bindings, group identities in policy
   org-level parking opt-out, push for anything other than approvals.
 - Live narration cards in chat (steps list updated under the connector's write
   rate hint), user-token features (`user_tokens` capability).
-- **Slack connector**: decision deferred; if built, it is a connector covering
+- **Slack connector** (phase 6, P6-SLACK; owner 2026-11-15, D-285: moved from phase 5, not a priority): decision deferred; if built, it is a connector covering
   events and OAuth endpoints, the shared app, app provisioning via the manifest
   API, configuration-token rotation through `POST /v1/connector/credentials`,
   and Block Kit rendering. Nothing in the core changes.

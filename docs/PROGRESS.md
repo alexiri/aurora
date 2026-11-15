@@ -21,9 +21,9 @@ One row per task id, counted from the task tables (closed phases: from their his
 | 2 | 52 | 51 | 1 (FIX-017: the owner's real-cluster install) | 0 | 0 | 0 | `docs/history/phase-1-2.md` (closed 2026-11-09, AUDIT-002) |
 | 3 | 15 | 15 | 0 | 0 | 0 | 0 | `docs/history/phase-3.md` (closed 2026-11-10, AUDIT-003) |
 | 4 | 124 | 123 | 0 | 0 | 0 | 1 (FIX-131 closed without a build, D-195) | `docs/history/phase-4.md` (closed 2026-11-14, AUDIT-004) |
-| 5 | 69 | 37 | 3 (P5-CERN-ADDONS (external repo), P5-CHAT-4 B, SET-1) | 23 | 4 (no spec yet: P5-SLACK, P4-EVAL, P4-NARR, P4-UTOK) | 2 (OPS-022 deferred; FIX-049 moved to phase 4) | §Phase 5 tasks (TEST-021 and FIX-057, done, are counted here but their rows are in `docs/history/phase-0.md`'s task graph) |
-| 6 (proposed) | 2 | 0 | 0 | 0 | 2 (P6-ORGTREE, P6-LIMITS: proposals awaiting the owner) | 0 | §Phase 6 tasks (proposed) |
-| **All** | **389** | **348** | **4** | **23** | **6** | **8** | |
+| 5 | 69 | 37 | 3 (P5-CERN-ADDONS (external repo), P5-CHAT-4 B, SET-1) | 23 | 3 (no spec yet: P4-EVAL, P4-NARR, P4-UTOK) | 3 (OPS-022 deferred; FIX-049 moved to phase 4; P5-SLACK moved to phase 6, D-285) | §Phase 5 tasks (TEST-021 and FIX-057, done, are counted here but their rows are in `docs/history/phase-0.md`'s task graph) |
+| 6 (proposed) | 3 | 0 | 0 | 0 | 3 (P6-ORGTREE, P6-LIMITS: proposals awaiting the owner; P6-SLACK, moved from phase 5, D-285) | 0 | §Phase 6 tasks (proposed) |
+| **All** | **390** | **348** | **4** | **23** | **6** | **9** | |
 
 ## Environment
 
@@ -51,7 +51,7 @@ Lane order, waves and number blocks: `docs/tasks/PHASE5-PLAN.md`. Lanes `p5-apps
 |---|---|---|---|---|---|---|---|
 | OPS-022 | Multi-arch images (amd64 + arm64) | `15 §Images` | M | ops | OPS-020 | `OPS-022.md` | deferred (owner 2026-11-07) |
 | OPS-021 | Dependabot, grouped, with ignore rules and a review policy | owner | S | ops | OPS-019, OPS-020 | `OPS-021.md` | done (merged 3c983224) |
-| P5-SLACK | Slack connector | `21`, D-78 | L | Rust | connector contract (`13`) | needed | not started (no spec; after P4-LLM/P4-SSH/P4-011B, D-235(c)) |
+| P5-SLACK | Slack connector | `21`, D-78 | L | Rust | connector contract (`13`) | — | moved to phase 6 as P6-SLACK (owner 2026-11-15, D-285: not a priority) |
 | P5-ASRC | Addon sources: third-party package repositories (signed repo manifest, TOFU key, polling, update badges) | D-250, C-590..C-609, SEC-86, migration 000180 | L | both | — | `P5-ASRC.md` | done (merged 3c983224) |
 | P5-CERN-ADDONS | `aurora-addons-cern` repo (release script, CI, signed releases) with `cern-phonebook` (LDAP through the gateway LDAP lane) and `cern-maps` | D-235(d), D-251 | M–L | package + Rust | P5-ASRC | `P5-CERN-ADDONS.md` | in-progress (lane p5-platform; started: external repo content, cern-maps, live xldap check, kind e2e, first `v*` release; in-repo part merged 555f6058; D-277, D-278) |
 | OPS-024 | `helm upgrade` covered by CI (kind upgrade legs) + hook NetworkPolicy guard | owner 2026-11-11 | M | ops | — | `OPS-024.md` | done (merged d0819942) |
@@ -126,7 +126,7 @@ At most three implementation lanes at a time, disjoint ownership; a lane starts 
 - **Wave 1** (2026-11-14..15), all merged: `p5-apps` FIX-147, FIX-133, FIX-136, FIX-141, FIX-144, FIX-145, FIX-149, FIX-134, FIX-135; `p5-agent` P5-AGENT-1, FIX-137, P5-AGENT-2, FIX-138, P5-CHAT-1, P5-CHAT-2, P5-CHAT-3, P5-CHAT-4 A+C; `p5-platform` P5-ADMDEL, OPS-021, FIX-142, P5-ASRC, P5-CERN-ADDONS (in-repo part).
 - **Wave 2** (since 2026-11-15; `docs/tasks/PHASE5-PLAN.md` §Wave 2 lanes): `p5-apps` SET-1 → FIX-124 ‖ SET-2 → SET-3 ‖ SET-4 → SET-5 ‖ P4-LLM-6; `p5-agent` P5-CHAT-4 B ‖ P4-LLM-1 → 2 ‖ 3 → 4 → 5; `p5-platform` P5-CERN-ADDONS (external repo) ‖ FIX-146 ‖ P4-SSH-1 → P4-SSH-2. Then, as a lane frees: P4-011B-1 → {2 ∥ 3} → 4 → 5.
 - **Not yet placed**: P4-011B-1..5 (the next free lane); P4-S3 (brief written 2026-11-15); P5-ICS → P5-CALDAV (same lane: registry, gateway decision, home sync), P5-CALINV (disjoint from the `p5-apps` hot files).
-- **No spec yet**: P5-SLACK, P4-EVAL, P4-NARR, P4-UTOK — after the P4-LLM/P4-SSH/P4-011B batches (D-235(c)); their order is an open owner question. OPS-022 deferred.
+- **No spec yet**: P4-EVAL, P4-NARR, P4-UTOK (P5-SLACK moved to phase 6, D-285) — after the P4-LLM/P4-SSH/P4-011B batches (D-235(c)); their order is an open owner question. OPS-022 deferred.
 
 ### Exit criteria (phase 5)
 
@@ -143,11 +143,13 @@ Owner, 2026-11-14: "It's time to start thinking about phase 6. We won't start wo
 | P6-ORGTREE | Nested organizations (owner: "an org per department, with suborgs per group"): `parent_org_id` + closure table, depth cap 4; upward-closed membership with cascading removal (owner, D-276(a)), ancestor owners/admins implicit admins below, membership not flowing down; governance, org policy (strictest verdict over every org on the path), retention, availability, freeze and limits inherited tighten-only; credentials/libraries/registrations shared down only by a flag; SCIM at roots; create/move (dry-run impact)/delete children; tree switcher, breadcrumbs, "Inherited from" labels. Proposed briefs P6-ORG-1..5 | owner 2026-11-14; `04`, `07 §Evaluation`, `08 §11` | spec batch M–L (Opus), then ~5 briefs (2 L Rust, 1 M–L Rust, 1 L Next.js, 1 M both) | coordinator | owner answers Q-P6-ORG-2..8 (Q-P6-ORG-1 answered, D-276); phase-6 start | `04`, `03`, `05`, `07`, `08 §11`, `10`, `13`, `14`, `15`, `17`, `18`, `API_CONTRACTS` (at spec time) | `docs/tasks/P6-ORGTREE.md` (proposal) | not started (proposal; waiting for the owner) |
 | P6-LIMITS | Usage limits and load knobs (owner: "runtime of sandboxes, number of schedules, rate limiting of expensive endpoints … knobs to turn when load is too high"): one quota framework `(resource, scope, window, value)` with instance defaults (settings section `quotas`), limit profiles `standard`/`trusted`/`restricted` for orgs and users, org admins tighten-only; abuse limits only, no billing (D-276(b)); **core (D-276(c), "long jobs on free compute")**: background vs interactive sandbox time, concurrent background sandboxes, per-profile background cap and background-hour budgets, only a person's engagement restarts the cap (proposed, Q-P6-LIM-10); an awake-hours hard ceiling from `runtime_intervals`, per-profile sandbox deadlines/sizes; schedule/webhook/watch counts per workspace/user/org, a profile cron floor applied at fire time, fires and turns per day; gateway request/egress-byte/LLM-request caps; API classes `sandbox`/`probe`/`invite` + per-replica concurrency caps; instance pressure level `normal`/`elevated`/`critical` (automations and background starts deferred before chat; live + CLI break-glass); Admin/Org/My usage; abuse signals report-only. Proposed briefs P6-LIM-1..7 | owner 2026-11-14; `02 §Limits registry`, `05 §Conventions`, `10`, `11`, `15 §Instance settings` | spec batch L (Opus), then ~7 briefs (2 L Rust, 1 M Rust, 1 M–L Rust, 1 M both, 1 L Next.js, 1 M both) | coordinator | owner answers Q-P6-LIM-1, 3..8, 10 (Q-P6-LIM-2 and 9 answered, D-276); production usage snapshot (Q-P6-LIM-5); phase-6 start | `02`, `03`, `04`, `05`, `06`, `10`, `11`, `14`, `15`, `17`, `18`, `API_CONTRACTS` (at spec time) | `docs/tasks/P6-LIMITS.md` (proposal) | not started (proposal; waiting for the owner) |
 
+| P6-SLACK | Slack connector (was P5-SLACK; owner 2026-11-15, D-285: not a priority): events and OAuth endpoints, the shared app, manifest-API provisioning, configuration-token rotation through `POST /v1/connector/credentials`, Block Kit rendering; nothing in the core changes (`21 §Other later items`) | `21`, D-78, D-285 | spec batch, then L | Rust | connector contract (`13`); phase-6 start | `13`, `20`-style connector doc (at spec time) | — | not started (no spec; waits for the owner's phase-6 all-clear) |
+
 Proposed order (Q-P6-LIM-8): the limits framework (P6-LIM-1) together with the sandbox compute limits (P6-LIM-2, the core per D-276(c)) first — it is the more urgent protection — then the org tree, whose P6-ORG-1 adds ancestor counting to org-scoped limits.
 
 ## Number allocation
 
-**Next free: FIX-150, D-285, C-860, SEC-114, migration `20261201000236`.** Edit this line in place when you take a number (check `git log -3`, `ls docs/tasks`, and this line right before committing; several sessions write briefs). Task briefs are `docs/tasks/<ID>.md`, named after the task id (`P<phase>-<NAME>` for phase features, `FIX-nnn` for fixes).
+**Next free: FIX-150, D-286, C-860, SEC-114, migration `20261201000236`.** Edit this line in place when you take a number (check `git log -3`, `ls docs/tasks`, and this line right before committing; several sessions write briefs). Task briefs are `docs/tasks/<ID>.md`, named after the task id (`P<phase>-<NAME>` for phase features, `FIX-nnn` for fixes).
 
 Live reservations (numbers inside a block that a lane has already used are recorded in its commits; unused blocks are released when the lane or task closes):
 
@@ -167,7 +169,7 @@ Live reservations (numbers inside a block that a lane has already used are recor
 
 ## Open questions for the owner
 
-- **Phase 5:** the order of the specs for P5-SLACK, P4-EVAL, P4-NARR and P4-UTOK (D-235(c) puts them after the three spec batches without ordering them). **Coordinator default while the owner has not answered** (owner 2026-11-15: keep going through every pending phase-5 task): P4-NARR + P4-UTOK as one spec batch (both connector-side, `13`/`20`), then P4-EVAL, then P5-SLACK; each batch's owner questions are asked before its briefs are placed. Also: review of the coordinator defaults recorded in D-268.
+- **Phase 5:** the order of the specs for P4-EVAL, P4-NARR and P4-UTOK (D-235(c) puts them after the three spec batches without ordering them). **Coordinator default while the owner has not answered** (owner 2026-11-15: keep going through every pending phase-5 task): P4-NARR + P4-UTOK as one spec batch (both connector-side, `13`/`20`), then P4-EVAL; each batch's owner questions are asked before its briefs are placed. Also: review of the coordinator defaults recorded in D-268.
 - **Phase 6 (proposals):** Q-P6-ORG-2..8 in `docs/tasks/P6-ORGTREE.md` (membership flowing down? credentials shared down by flag? SCIM at roots? parent told of a child's critical events? subtree delete? placement by claim? depth 4?) and Q-P6-LIM-1, 3..8, 10 in `docs/tasks/P6-LIMITS.md` (limit profiles? interactive after the budget? LLM request counts only? defaults from production usage? manual pressure? report-only abuse signals? limits before the tree? only a person's engagement restarts the background cap?). Each has a recommendation; nothing blocks until phase 6 starts. Answered so far: D-276.
 
 ## Open security findings
