@@ -125,6 +125,9 @@ impl LogWriter for Capture {
     }
 }
 
+/// `(path, headers)` of one upstream request.
+type Seen = (String, Vec<(String, String)>);
+
 #[derive(Default)]
 struct Counters {
     verifies: AtomicUsize,
@@ -132,7 +135,7 @@ struct Counters {
     /// Requests to any other path (FIX-105: management and storage routes).
     other: AtomicUsize,
     /// (P4-LLM-1) `(path, headers)` of every request the upstream received.
-    seen: Mutex<Vec<(String, Vec<(String, String)>)>>,
+    seen: Mutex<Vec<Seen>>,
 }
 
 fn org_of(key: &str) -> &'static str {
@@ -169,7 +172,8 @@ async fn mock(
     ));
     let mut r = Response::new(Full::new(Bytes::from(format!("key={key}"))));
     // (P4-LLM-1) OpenAI-style answers: a status picked by the key, an SSE stream on `/v1/responses`.
-    if req.uri().path() == "/v1/responses" {
+    // (Only for the `openai` endpoint, recognised by the project header the gateway sets.)
+    if req.uri().path() == "/v1/responses" && req.headers().contains_key("openai-project") {
         r.headers_mut()
             .insert("content-type", "text/event-stream".parse().unwrap());
         *r.body_mut() = Full::new(Bytes::from(SSE));
