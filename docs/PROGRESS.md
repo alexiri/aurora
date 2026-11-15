@@ -1,6 +1,6 @@
 # Implementation progress
 
-Last updated: 2026-11-15, master after `35606a00` (P4-LLM-3 merged). **Phase 5 is running**: wave 1 is merged; wave 2 runs in the same three lanes (`p5-apps`: SET-2 + SET-3 at batch gate → SET-4 → SET-5 → P4-LLM-6 → P5-MODELS-3; `p5-agent`: P4-LLM-4 → P4-LLM-5 → P5-MODELS-1 → P5-MODELS-2; `p5-platform`: FIX-146 Parts C–E → P5-FILES-1..4 (owner D-316) → P4-SSH-1/2); the wave-3 queue follows (§Execution order). Phase 6 stays closed until the owner's all-clear (D-278). Phases 0–4 are closed; their record is in `docs/history/`. **Phase 6 is proposed only** (P6-ORGTREE, P6-LIMITS; owner answers so far: D-276; P6-MODELS moved to phase 5 as P5-MODELS, D-302) and starts on the owner's word. **New proposal 2026-11-15:** P5-WEBHOOK (outgoing webhook app), waiting for the owner's answers (Q-P5-WH-1..10).
+Last updated: 2026-11-15, master after `35606a00` (P4-LLM-3 merged). **Phase 5 is running**: wave 1 is merged; wave 2 runs in the same three lanes (`p5-apps`: SET-2 + SET-3 at batch gate → SET-4 → SET-5 → P4-LLM-6 → P5-MODELS-3; `p5-agent`: P4-LLM-4 → P4-LLM-5 → P5-MODELS-1 → P5-MODELS-2; `p5-platform`: FIX-146 Parts C–E → P5-FILES-1..4 (owner D-316) → P4-SSH-1/2); the wave-3 queue follows (§Execution order). Phase 6 stays closed until the owner's all-clear (D-278). Phases 0–4 are closed; their record is in `docs/history/`. **Phase 6 is proposed only** (P6-ORGTREE, P6-LIMITS; owner answers so far: D-276; P6-MODELS moved to phase 5 as P5-MODELS, D-302) and starts on the owner's word. **P5-WEBHOOK (outgoing webhook app)** specified 2026-11-15 after the owner's answers (D-320): briefs P5-WEBHOOK-1..4 ready, waiting for lane placement by the Orchestrator.
 
 ## How this file is kept
 
@@ -21,9 +21,9 @@ One row per task id, counted from the task tables (closed phases: from their his
 | 2 | 52 | 51 | 1 (FIX-017: the owner's real-cluster install) | 0 | 0 | 0 | `docs/history/phase-1-2.md` (closed 2026-11-09, AUDIT-002) |
 | 3 | 15 | 15 | 0 | 0 | 0 | 0 | `docs/history/phase-3.md` (closed 2026-11-10, AUDIT-003) |
 | 4 | 124 | 123 | 0 | 0 | 0 | 1 (FIX-131 closed without a build, D-195) | `docs/history/phase-4.md` (closed 2026-11-14, AUDIT-004) |
-| 5 | 95 | 51 | 4 (P4-LLM-4, P4-LLM-5, SET-4, P5-FILES-1) | 36 | 0 (every phase-5 item has a brief) | 4 (OPS-022 cancelled, D-318; FIX-049 moved to phase 4; P5-SLACK moved to phase 6, D-285; P4-S3 moved to phase 6, D-318) | §Phase 5 tasks (TEST-021 and FIX-057, done, are counted here but their rows are in `docs/history/phase-0.md`'s task graph) |
+| 5 | 99 | 51 | 4 (P4-LLM-4, P4-LLM-5, SET-4, P5-FILES-1) | 40 (incl. P5-WEBHOOK-1..4, D-320) | 0 (every phase-5 item has a brief) | 4 (OPS-022 cancelled, D-318; FIX-049 moved to phase 4; P5-SLACK moved to phase 6, D-285; P4-S3 moved to phase 6, D-318) | §Phase 5 tasks (TEST-021 and FIX-057, done, are counted here but their rows are in `docs/history/phase-0.md`'s task graph) |
 | 6 (proposed) | 4 | 0 | 0 | 1 (P4-S3: specified and briefed, moved from phase 5, D-318) | 3 (P6-ORGTREE, P6-LIMITS: proposals awaiting the owner; P6-SLACK, moved from phase 5, D-285) | 0 | §Phase 6 tasks (proposed) |
-| **All** | **417** | **361** | **6** | **37** | **3** | **10** | (column sums; P5-SLACK/P6-SLACK and P4-S3 are counted in both phases) |
+| **All** | **421** | **361** | **6** | **41** | **3** | **10** | (column sums; P5-SLACK/P6-SLACK and P4-S3 are counted in both phases) |
 
 ## Environment
 
@@ -128,7 +128,10 @@ Lane order, waves and number blocks: `docs/tasks/PHASE5-PLAN.md`. Lanes `p5-apps
 | P5-ICS | Generic "Calendar link (ICS)" app: secret-link credential, gateway fetches the stored URL | D-273, C-843, SEC-107 | M–L | Rust + package | p5-apps hot files | `P5-ICS.md` | ready (wave 3: queued in lane p5-apps) |
 | P5-CALINV | Agents add calendar events by e-mailing the person an invitation | D-274, C-844, SEC-108, migration 000230 | M | Rust | instance mailer | `P5-CALINV.md` | ready (wave 3: queued in lane p5-platform) |
 | P5-CALDAV | Read and write any CalDAV server with the person's own app password | D-275, C-845, SEC-109 | L | Rust + package | P5-ICS (same lane) | `P5-CALDAV.md` | ready (wave 3: queued in lane p5-apps) |
-| P5-WEBHOOK | "Outgoing webhook" app: the secret URL as credential (send mode of the P5-ICS secret-link lane), a payload template with typed slots the agent fills, optional secret headers and signing. Proposed briefs P5-WEBHOOK-1 (Rust) and -2 (Next.js) | owner 2026-11-15; D-273, C-843, SEC-107 | spec batch M (Opus), then M–L Rust + M Next.js | coordinator | owner answers Q-P5-WH-1..10; P5-ICS | `06`, `07`, `09`, `12`, `14`, `15`, `17`, `05`, `API_CONTRACTS` (at spec time) | `P5-WEBHOOK.md` (proposal) | not started (proposal; waiting for the owner) |
+| P5-WEBHOOK-1 | Outgoing webhook: pure crate `aurora-webhook` (config validation, template render, slot checks, signing), registry `secret_link.mode: send` + presets, package `webhook` (9 presets, setup guide) | D-320, C-909, C-912, SEC-127 | M | Rust + package | P5-ICS (extends `secret_link`) | `crates/aurora-webhook`, `aurora-registry`, `limits.rs` (constants), `plugins/builtin/webhook`, `09` | `P5-WEBHOOK-1.md` | ready (spec merged 2026-11-15; not placed — proposed: `p5-apps` after P5-ICS) |
+| P5-WEBHOOK-2 | Outgoing webhook: migration `…243` (`app_connections.config`), connect/edit/preview/presets/send-test routes, `outgoing_webhooks` settings + org settings, gateway send path (approval, rate, render, sign, redirects, echo), `slots` decoder | D-320, C-909, C-910, C-912, SEC-127, migration `20261201000243` | L | Rust | P5-WEBHOOK-1; P5-CALINV (org-settings store) | `aurora-api`, `aurora-gateway` `link` send path, decoder, `03`/`05`/`06`/`07`/`15` | `P5-WEBHOOK-2.md` | ready (spec merged 2026-11-15; not placed — proposed: `p5-apps` after -1) |
+| P5-WEBHOOK-3 | Outgoing webhook: each webhook an account-bound `aurora-agent` operation (`api.json`, `tools.md`, `json` field type, re-render on edit); no `webhooks.json` | D-320(g), C-911, SEC-127 | M | Rust | P5-WEBHOOK-2, P5-GUIDE-6 | `agent_guide.rs`, `agent_cli/`, home-sync render inputs, `24` | `P5-WEBHOOK-3.md` | ready (spec merged 2026-11-15; not placed — proposed: `p5-apps` after P5-GUIDE-6 and -2) |
+| P5-WEBHOOK-4 | Outgoing webhook dashboard: 3-step connect, presets, example picker, raw editor, preview, Send test, card, settings and org switch | D-320(f), C-913, C-909, C-912 | M–L | Next.js | contracts (now); Playwright needs P5-WEBHOOK-2; SET-5 for the Admin section | `web/` only, `14` | `P5-WEBHOOK-4.md` | ready (spec merged 2026-11-15; not placed — any lane with web capacity) |
 | FIX-150 | `send_message` resolves an exact handle by itself; refusals list aliases to retry with; messaging-tool fields described | D-287, `13 §5.10` | S–M | Rust | — | `FIX-150.md` | ready (brief written 2026-11-15; wave 3: queued in lane p5-agent) |
 | FIX-151 | Platform-tool calls tied to the calling harness process (`SO_PEERCRED` + process ancestry; another conversation's or a non-harness process's call refused `session_not_caller`) | D-301, SEC-121, S-09, `12 §Path` | S–M | Rust | — | `FIX-151.md` | ready (brief written 2026-11-15; wave 3: queued in lane p5-apps before P5-GUIDE-6) |
 | FIX-152 | A failed re-authentication returns to its page with `reauth_error` (no longer `/auth/login`); the `reauth_stale` denial records the `auth_time` age or that the claim was missing (CERN SSO org delete refused `reauth_stale`; root cause follows from that evidence) | D-305, C-890, D-234, FIX-108 | S–M | both | — | `FIX-152.md` | done (merged 11f60818; oidc ITs 55/55, web tests 47/47, build, guards; next: owner retries on CERN SSO, the audit row's `auth_time_age_s`/`auth_time_missing` decides the root-cause follow-up) |
@@ -176,7 +179,7 @@ Proposed order (Q-P6-LIM-8): the limits framework (P6-LIM-1) together with the s
 
 ## Number allocation
 
-**Next free: FIX-159, D-320, C-909, SEC-127, migration `20261201000243`.** Edit this line in place when you take a number (check `git log -3`, `ls docs/tasks`, and this line right before committing; several sessions write briefs). Task briefs are `docs/tasks/<ID>.md`, named after the task id (`P<phase>-<NAME>` for phase features, `FIX-nnn` for fixes).
+**Next free: FIX-159, D-321, C-914, SEC-128, migration `20261201000244`.** Edit this line in place when you take a number (check `git log -3`, `ls docs/tasks`, and this line right before committing; several sessions write briefs). Task briefs are `docs/tasks/<ID>.md`, named after the task id (`P<phase>-<NAME>` for phase features, `FIX-nnn` for fixes).
 
 Live reservations (numbers inside a block that a lane has already used are recorded in its commits; unused blocks are released when the lane or task closes):
 
@@ -192,6 +195,7 @@ Live reservations (numbers inside a block that a lane has already used are recor
 | P4-EVAL-1..4 (spec merged) | D-289..D-294 (used) | C-860..C-874 (used) | `20261201000236..240` | SEC-114..SEC-116 (used) |
 | P4-NARR / P4-UTOK (spec merged) | D-279..D-284 (used) | C-846..C-859 (used) | `20261201000231..233` (`234`, `235` released) | SEC-111..SEC-113 (used) |
 | P5-CALINV | D-274 (used) | C-844 (used) | `20261201000230` | SEC-108 (used) |
+| P5-WEBHOOK-1..4 (spec merged 2026-11-15; outgoing webhooks, owner D-320) | D-320 (used) | C-909..C-913 (used) | `20261201000243` | SEC-127 (used) |
 | agent-page follow-ups (coordinator) | D-202..D-209 | C-701..C-709 | | |
 | P5-GUIDE-1..7 (spec merged 2026-11-15; always-index, recipes, `aurora-agent`, platform tools on demand) | D-170..D-172, D-295..D-298 (used; D-299 released) | C-640..C-657 (used), C-658, C-659 | migration for P5-GUIDE-1 takes the next free number when placed | SEC-91, SEC-117..SEC-120 (used; SEC-117 replaces the branch's colliding SEC-90) |
 | P5-FILES-1..4 (spec merged 2026-11-15; Files page over SFTP, owner D-316) | D-316 (used) | C-898..C-907 (used) | `20261201000241`, `…000242` | SEC-125, SEC-126 (used) |
@@ -199,9 +203,7 @@ Live reservations (numbers inside a block that a lane has already used are recor
 
 ## Open questions for the owner
 
-- **Phase 5:** review of the coordinator defaults recorded in D-268.
-- **Phase 5 (proposal P5-WEBHOOK, 2026-11-15):** Q-P5-WH-1..10 in `docs/tasks/P5-WEBHOOK.md` (template with typed slots? phase 5 after P5-ICS or phase 6? Ask by default? secret values and signing in v1? `https` only? redirects after `POST`? example picker in v1? `aurora-agent` operations later? default rate limits?). Each has a recommendation; the spec batch waits for the answers.
-- **Phase 6 (proposals):** Q-P6-ORG-2..8 in `docs/tasks/P6-ORGTREE.md` (membership flowing down? credentials shared down by flag? SCIM at roots? parent told of a child's critical events? subtree delete? placement by claim? depth 4?) and Q-P6-LIM-1, 3..8, 10 in `docs/tasks/P6-LIMITS.md` (limit profiles? interactive after the budget? LLM request counts only? defaults from production usage? manual pressure? report-only abuse signals? limits before the tree? only a person's engagement restarts the background cap?). (The P6-MODELS questions were answered 2026-11-15, D-302.) Each has a recommendation; nothing blocks until phase 6 starts. Answered so far: D-276.
+- **Phase 5:** review of the coordinator defaults recorded in D-268.- **Phase 6 (proposals):** Q-P6-ORG-2..8 in `docs/tasks/P6-ORGTREE.md` (membership flowing down? credentials shared down by flag? SCIM at roots? parent told of a child's critical events? subtree delete? placement by claim? depth 4?) and Q-P6-LIM-1, 3..8, 10 in `docs/tasks/P6-LIMITS.md` (limit profiles? interactive after the budget? LLM request counts only? defaults from production usage? manual pressure? report-only abuse signals? limits before the tree? only a person's engagement restarts the background cap?). (The P6-MODELS questions were answered 2026-11-15, D-302.) Each has a recommendation; nothing blocks until phase 6 starts. Answered so far: D-276.
 
 ## Open security findings
 

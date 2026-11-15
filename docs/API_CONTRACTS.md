@@ -1550,6 +1550,128 @@ Rule: `11 §Files`, `12 §SSH channels` (the `sftp` exec mode), `16 §W21` (on `
 - C-906 **Audit and logging**: best-effort audit rows `agent.files.download` (agent, workspace, path, bytes, `via`), `agent.files.write` (path, bytes, `created`), `agent.files.mkdir` (path), `agent.files.rename` (from, to), `agent.files.delete` (path, `deleted`); paths are truncated to 1,024 bytes in metadata; contents are never logged, stored, audited or request-log-rowed (byte totals in metrics only); listings are not audited. `file_stream_grants` is the session record.
 - C-907 **Tests** (`18 §Files`): per SEC-125/SEC-126 "Proven by"; the kind e2e journey `scripts/e2e/files.sh` and a Playwright journey (upload a folder, edit and save, conflict, download with matching sha256, rename, recursive delete, `.aurora` read-only, symlink out of `/workspace` refused, frozen 423, parked wake).
 
+### Phase 5 — P5-WEBHOOK (outgoing webhooks, D-320, SEC-127)
+
+- C-909 **Send-mode secret link: manifest, package, storage, connect and edit** (P5-WEBHOOK-1/2; extends C-843).
+  - **Manifest.** `secret_link: { credential, mode?: "fetch" | "send" (default "fetch"), expect_prefix?, presets?: [file] }`.
+    - In `send` mode the app has exactly one tool. It is `access: write`, method `POST` or `PUT`, host `*.link.aurora.internal`, path `/`.
+    - `expect_prefix` is refused in `send` mode, and `presets` is refused in `fetch` mode.
+    - The only declared credential is the URL. The core adds `secret_values` and `signing_secret` to the sealed credential JSON, and `credential_keys` lists them by name.
+    - Linter codes: `secret_link_mode`, `secret_link_send_tool`, `secret_link_send_expect_prefix`, `secret_link_presets_mode`, `webhook_preset_invalid` (a preset file that fails `WebhookConfig` validation without secret values).
+  - **Package `webhook`** (built-in): app **Outgoing webhook**. It has one `fields` method (`name`: text, required, ≤ 60, `store: metadata`; `url`: secret, required), one tool `send`, a setup guide and presets:
+    - `slack` (`{"text": {{text}}}`), `mattermost`, `google-chat`;
+    - `discord` (`{"content": {{content}}}`);
+    - `teams-workflow` (an Adaptive Card with `title` and `text` slots);
+    - `ntfy-json` (`topic` as a secret value; `title`, `message`, `priority`, `tags`);
+    - `home-assistant` and `generic-json` (`{{payload}}`, a `json` slot);
+    - `ifttt` (`value1..3`).
+
+    A preset file is `{ id, name, suggest_for_hosts?: [host], secret_value_names: [string], config: WebhookConfig }`. It holds no secret values; the names say which ones the person must enter.
+  - **Storage.** Migration `20261201000243` adds `app_connections.config jsonb null`, `CHECK (config IS NULL OR jsonb_typeof(config) = 'object')`. It is a core-owned configuration, non-null only for a send-mode connection. The gateway role may `SELECT` it. The API enforces ≤ `WEBHOOK_CONFIG_MAX` (32 KiB).
+  - **`WebhookConfig`** = `{ version: 1, method: "POST"|"PUT", content_type: "application/json"|"application/x-www-form-urlencoded"|"text/plain", template: string, slots: [Slot], headers: [{ name, value }], description: string, signing: bool, rate: { per_minute: int|null, per_day: int|null }, preset: string|null }`. Then the parts:
+    - **`Slot`** = `{ name: ^[a-z][a-z0-9_]{0,39}$, type: "string"|"integer"|"number"|"boolean"|"string_list"|"enum"|"json", required: bool, description: string (≤ 300), max_length?: 1..65,536 (`string`, `string_list` items), max_items?: 1..100 (`string_list`), enum?: [string] (1..50, `enum` only), schema?: object (`json` only; the subset `type`, `properties`, `required`, `items`, `enum`, `maxLength`, `minimum`, `maximum`, `additionalProperties`), example?: JSON value }`. There are ≤ `WEBHOOK_SLOTS_MAX` (20) slots and ≤ 4 secret values.
+    - **Template grammar.** `{{name}}` is a slot and `{{secret:name}}` is a secret value. It is parsed once when saved.
+      - **JSON:** the template must be valid JSON when every placeholder outside a string literal is replaced by a JSON value.
+        - A placeholder outside a string is the slot's JSON value.
+        - Inside a string literal, it inserts a scalar slot (or a secret) escaped as string content.
+        - An optional slot that is left out removes its object member or array element when it is the whole value, and is empty inside a string.
+        - A slot at the root must be required.
+      - **Form:** `key=value` pairs separated by `&`. Keys are constant and values may contain placeholders, which are percent-encoded. A `string_list` repeats the key, and a left-out optional pair is dropped.
+      - **Text:** values are inserted as UTF-8, with left-out optionals empty.
+      - `json` slots are refused for form and text.
+    - **Headers.** ≤ 4 headers. A value is a constant or a constant with `{{secret:name}}`; slot placeholders are refused. Names are tokens. The denylist is `Host`, `Content-Length`, `Content-Type`, `Transfer-Encoding`, `Connection`, `Cookie`, `Forwarded`, `X-Forwarded-*`, `X-Aurora-*` and the hop-by-hop headers.
+    - **Every declared slot and secret value must be used.** Validation codes go in `webhook_config_invalid.fields[{ path, code }]`: `template_json`, `template_syntax`, `placeholder_unknown`, `slot_unused`, `secret_unused`, `slot_name`, `slot_duplicate`, `slot_type_content_type`, `slot_limits`, `optional_slot_at_root`, `schema_unsupported`, `header_name_denied`, `header_placeholder`, `rate_above_ceiling`, `too_large`.
+    - **Size limits:** template ≤ `WEBHOOK_TEMPLATE_MAX` (16 KiB), description ≤ 1,000, secret value ≤ 4 KiB.
+  - **Connect.** `POST /v1/apps/webhook/connect` takes `{ …C-843 fields (method_id, fields: { name, url }), webhook: WebhookConfig + { secret_values: { name: value }, signing_secret?: { mode: "generate" | "provided", value? } } }`.
+    - The URL is validated as in C-843 (`https`, DNS host, ≤ 2,048).
+    - The host is resolved and checked by the destination guard and the org egress policy. **Nothing is sent.**
+    - It answers `{ kind: "connected", connection, signing_secret?: string }`. The signing secret is present only when it was generated, and only in this response.
+    - Refusals are 422: `link_not_https`, `link_invalid`, `link_destination_refused`, `webhook_config_invalid`. With the org switch off it is 403 `outgoing_webhooks_disabled`.
+    - A reconnect (`reconnect_connection_id`) replaces the URL and keeps the configuration unless `webhook` is given.
+  - **Edit.** These need the right to manage the connection:
+    - `GET /v1/connections/{id}/webhook` → `WebhookConfig + { host, secret_value_names: [string], signing: bool }`. It never returns a secret.
+    - `PUT /v1/connections/{id}/webhook` replaces the configuration.
+      - `secret_values: { name: value | null }`: a value sets, `null` deletes and an absent name is kept.
+      - `signing_secret: { mode: "keep" | "generate" | "provided" | "off", value? }`.
+      - The response is as for GET, plus `signing_secret` when one was generated.
+      - A change of secrets bumps `credentials_version`, and any change sends the gateway's connection-change signal.
+  - **Preview** (no network). `POST /v1/apps/webhook/webhook-preview` `{ config: WebhookConfig (+ secret_value_names), values }` → `{ method, content_type, headers: [name], body }`, with secrets as `«secret:name»`. Or 422 `webhook_config_invalid` / `invalid_slot`. It needs a session.
+  - **Presets.** `GET /v1/apps/{app}/webhook-presets` → `[preset]` from the installed package version.
+  - **Send test.** `POST /v1/connections/{id}/webhook/test` `{ values, dry_run?: bool }`.
+    - It answers `{ status, content_type, body (≤ 4 KiB, echo-checked), truncated: bool, delivery_id }`, or with `dry_run` the preview of the stored configuration.
+    - The request is sent by the API through the same `aurora-webhook` renderer, destination guard, egress policy, redirect rule and per-connection rate limit as the gateway (C-910). The person, not an agent, is the actor.
+    - Best-effort audit `webhook.test_sent` `{ connection_id, status, delivery_id }`.
+- C-910 **Gateway send path** (P5-WEBHOOK-2; SEC-127).
+  - **Admission:** grant, policy verdict, Read only and the request log as C-843 (an `ask` verdict's approval hold comes only after the checks below and the slot validation), then:
+    - only the configured method (405 otherwise);
+    - the agent's `Content-Type` must be `application/json` with an object body ≤ `WEBHOOK_VALUES_MAX` (64 KiB): 415 `webhook_content_type`, 413 `values_too_large`;
+    - the org switch must be on: 403 `outgoing_webhooks_disabled`.
+
+    Validation failures are 422 `invalid_slot { slot, rule }`, with `rule` ∈ `missing`, `unknown`, `type`, `max_length`, `max_items`, `enum`, `schema`. Validation runs **before** any approval is created, so a person is never asked about an invalid send.
+  - **Dry run:** the header `X-Aurora-Dry-Run: 1` validates, renders and answers 200 `{ dry_run: true, method, content_type, headers: [name], body }`, with secrets masked. A `deny` verdict refuses it. An `ask` verdict does not hold it, because nothing leaves. It is not rate-counted, and its request-log row is `dry_run: true`.
+  - **Rate limit:** one all-or-nothing take of both fixed windows (minute, day), keyed by the connection on the shared counters (D-119). It is taken after admission and approval, just before the upstream request. A refusal is 429 `webhook_rate_limited` with `retry_after_secs`. The effective limit is C-912's.
+  - **Upstream request:**
+    - to the stored URL exactly, with the configured method and the rendered body ≤ `WEBHOOK_BODY_MAX` (256 KiB, 413 `rendered_too_large`);
+    - headers: `Content-Type` (configured), `User-Agent: Aurora-Webhook/1`, `X-Aurora-Delivery: <uuid v4>`, the configured headers, and `X-Aurora-Signature: t=<unix>,v1=<hex HMAC-SHA256(signing_secret, "<t>.<raw body>")>` when signing is on. Nothing from the agent's request headers.
+    - The time-out is `WEBHOOK_TIMEOUT` (15 s). There is no retry and no cache.
+  - **Redirects:** ≤ 3, `https`, destination guard and egress policy per hop. `307`/`308` resend the method and body (and the signature, recomputed with a new `t`). `301`/`302`/`303` continue as a body-less `GET`. `Location` is never returned.
+  - **Response to the agent:**
+    - the receiver's status, except that 404/410 become 404 `link_not_found` and `3xx` is consumed;
+    - `Content-Type` and `Retry-After` only;
+    - the body capped at `WEBHOOK_RESPONSE_MAX` (64 KiB) with `X-Aurora-Truncated: 1`;
+    - `X-Aurora-Delivery`;
+    - the echo check with the needles of SEC-127, giving 502 `upstream_echoed_credential`.
+  - **Gateway refusals** have the `06 §Errors` body and `X-Aurora-Error: <code>`:
+    - 403 `link_destination_refused`;
+    - 502 `link_unreachable { may_have_been_delivered: false }`, when nothing was sent;
+    - 504 `webhook_timeout { may_have_been_delivered: true }`.
+  - **Logs and spans:** connection id, host, method, status, slot **names**, rendered bytes, `delivery_id`, `dry_run`. Never the path, query, slot values, body, headers' values or secrets.
+  - **Approval decoder `slots`** (`07`, `09 §Decoders`): the summary is `{ title: "Send to <name>", fields: [host, method, <slot>: <value>…] }`. Each value is clamped to 500 characters with the full length shown, and `json` values are pretty-printed and clamped the same way. It shows neither fixed template parts, headers nor secrets. The package's `send` tool defaults to **Ask** (D-320(d)).
+- C-911 **`aurora-agent` exposure** (P5-WEBHOOK-3; amends C-652, C-653, `24 §5.4`, `§10a`).
+  - **Render inputs:** `accounts[]` of a send-mode app gain `webhook: { name, description, method, slots }`, never the template, headers, URL or secrets.
+  - **`api.json` of app `webhook`.** `accounts[].base_url` = `https://<connection_id>.link.aurora.internal`. One operation per account:
+    - `id` = `send_` + the slug of the name (`[a-z0-9_]`, ≤ 40), with `_2`, `_3`… for duplicates in account-letter order;
+    - `method`, `path: "/"`, `host: "<connection_id>.link.aurora.internal"`;
+    - `summary` = the name plus the first line of the description (≤ 200), `tags: ["webhook"]`;
+    - `params: [{ name: "X-Aurora-Dry-Run", in: "header", type: "string", enum: ["1"], description: "Check and show the body without sending" }]`;
+    - `body: { content_type: "application/json", fields }`, with one field per slot: `string`/`enum` → `string` (+`enum`), `integer`, `number`, `boolean`, `string_list` → `array`, `json` → **`json`** (new type, rendered operations only; passed with `name:=<json>`). The limits go into the field's `description`.
+    - `tool: "send"`, `access: { <its letter>: … }`;
+    - two new keys: **`account: <letter>`** and **`notes`** (the person's description, ≤ 1,000);
+    - `source: "connection"`.
+
+    Every other operation has `account: null`, `notes: null`.
+  - **`tools.md`:** each webhook is listed with its slots and a `curl` example to its `base_url` (the fallback without `agent_cli`).
+  - **`aurora-agent`:**
+    - `call` on an operation with `account` uses that account. `--account` naming another is refused (exit 2), and several accounts are not an error.
+    - `describe` prints the notes, the slots and both example lines (send, and dry run).
+    - `search` covers webhook names, descriptions and slot names.
+    - A gateway refusal (`X-Aurora-Error`) exits 3, and a receiver's 4xx/5xx exits 1.
+  - **No `webhooks.json`.** The home sync's `links` (C-843) keeps fetch-mode connections only.
+- C-912 **Limits and switches** (P5-WEBHOOK-2).
+  - **Instance settings section `outgoing_webhooks`** (movable keys, `15 §Instance settings`; rendered by SET-5's generic section form):
+    - `outgoing_webhooks.per_minute_max`: default 30, 1–600;
+    - `outgoing_webhooks.per_day_max`: default 500, 1–100,000.
+
+    Helm `config.outgoing_webhooks.*` locks them as for any movable key.
+  - **Org settings**, stored and edited like `calendar_invitations.enabled` (C-844):
+    - `outgoing_webhooks.enabled` (default `true`);
+    - `outgoing_webhooks.per_minute_max` and `.per_day_max` (null = the instance's; above it → 422 `above_instance_ceiling`).
+  - **Connection:** `config.rate.per_minute` / `.per_day` (null = the ceiling; above the current ceiling → `rate_above_ceiling`).
+  - **Effective limit at each send** = the lowest set value of the instance, the org and the connection, so a lowered ceiling applies at once to existing connections. `GET /v1/connections/{id}/webhook` returns `effective_rate: { per_minute, per_day, source: "instance"|"org"|"connection" }`.
+  - **Constants** in `crates/aurora-core/src/limits.rs`: `WEBHOOK_CONFIG_MAX`, `WEBHOOK_TEMPLATE_MAX`, `WEBHOOK_SLOTS_MAX`, `WEBHOOK_VALUES_MAX`, `WEBHOOK_BODY_MAX`, `WEBHOOK_RESPONSE_MAX`, `WEBHOOK_TIMEOUT`.
+- C-913 **Dashboard** (P5-WEBHOOK-4; `14`).
+  - **Connect dialog for app `webhook`, three steps:**
+    1. Name and URL.
+    2. "What the receiver expects":
+       - a preset picker, which proposes a preset whose `suggest_for_hosts` contains the URL's host;
+       - **Start from an example**: paste JSON, then click a scalar, a string array or an object to make it a slot (name from the key, type inferred, editable description, required, limits);
+       - a raw template and slot editor for form, text, or anything the picker cannot express;
+       - **Preview**, through the preview route, with sample values from the slots' `example`.
+    3. Extras (folded): description for the agent, secret values, headers, signing (generate shows the secret once with copy; or paste), method, rate.
+  - **Connection card:** name, host, Read only, Edit (the same steps without the URL), **Send test** (values form → result: status, body, delivery id; or a dry-run preview), and the effective limit with its source.
+  - **Admin › Settings** `outgoing_webhooks` section, and the org settings switch and limits.
+  - Shared primitives and page patterns only, both themes, 390 px. The code editor is the shared one used for JSON elsewhere, added to the shared set if missing. `webhook_config_invalid.fields[].path` maps to the field in the editor.
+
 ## Shared schemas
 
 _Defined alongside the milestone sections above._
