@@ -99,7 +99,7 @@ Lane order, waves and number blocks: `docs/tasks/PHASE5-PLAN.md`. Lanes `p5-apps
 | P5-UX-2 | Connect plan (method readiness, who unblocks), manifest `audience`/`limit`/`scope_presets`, connect with a grant (sealed through OAuth), probe causes, journey links | D-320..D-322, SEC-127, C-909..C-913 | M | Rust | — | `P5-UX-2.md` | ready (spec on branch, not merged; not placed) |
 | P5-UX-3 | "Give <Agent> <App>" connect journey: agent Access › Add an app, Welcome, refusals and Apps tab; C-842 controls under Advanced | D-320, D-321, C-914, C-927 | M–L | Next.js | P5-UX-2; P5-UX-4 (soft) | `P5-UX-3.md` | ready (spec on branch, not merged; not placed) |
 | P5-UX-4 | Give-access preselection, "No agent can use this" (`grant_count`), effective access in words (`selected_by_details`) | D-324, C-917, C-918 | S–M | both | — | `P5-UX-4.md` | ready (spec on branch, not merged; not placed) |
-| P5-UX-5 | Workspace owners add people by e-mail; pending access applied at verified first sign-in; org setting `workspace_owner_invites` | D-325, SEC-128, C-919..C-921, migration (next free when placed) | M | both | P5-UX-1 | `P5-UX-5.md` | ready (spec on branch, not merged; Q-UX-1, Q-UX-2 open) |
+| P5-UX-5 | Workspace owners add people by e-mail; pending access applied at verified first sign-in; never lets a non-member into the org (D-328) | D-325, D-328, SEC-128, C-919, C-920, migration (next free when placed) | M | both | P5-UX-1 | `P5-UX-5.md` | ready (spec on branch, not merged; not placed) |
 | P5-UX-6 | Admin defaults: starter grant on by default + backfill, display-name template, wizard Apps step (apps without an OAuth client), builtins in the kind dev image, stale docs | D-326, C-922..C-924 | M | both | P5-UX-2 (soft) | `P5-UX-6.md` | ready (spec on branch, not merged; not placed) |
 | P5-UX-7 | Credentials › Overview and a plain-language Policy summary with Common changes; operator labels renamed | D-327, C-925, C-926 | M | Next.js | P5-UX-3, P5-UX-4 | `P5-UX-7.md` | ready (spec on branch, not merged; not placed) |
 | P4-SSH-1 | User SSH keys, SSH CA, certificate mint, `aurora ssh` | D-239, SEC-93 | M | both | — | `P4-SSH-1.md` | ready (queued in lane p5-platform after P5-FILES-4) |
@@ -183,7 +183,7 @@ Proposed order (Q-P6-LIM-8): the limits framework (P6-LIM-1) together with the s
 
 ## Number allocation
 
-**Next free: FIX-159, D-328, C-930, SEC-129, migration `20261201000243`.** Edit this line in place when you take a number (check `git log -3`, `ls docs/tasks`, and this line right before committing; several sessions write briefs). Task briefs are `docs/tasks/<ID>.md`, named after the task id (`P<phase>-<NAME>` for phase features, `FIX-nnn` for fixes).
+**Next free: FIX-159, D-329, C-930, SEC-129, migration `20261201000243`.** Edit this line in place when you take a number (check `git log -3`, `ls docs/tasks`, and this line right before committing; several sessions write briefs). Task briefs are `docs/tasks/<ID>.md`, named after the task id (`P<phase>-<NAME>` for phase features, `FIX-nnn` for fixes).
 
 Live reservations (numbers inside a block that a lane has already used are recorded in its commits; unused blocks are released when the lane or task closes):
 
@@ -202,13 +202,13 @@ Live reservations (numbers inside a block that a lane has already used are recor
 | agent-page follow-ups (coordinator) | D-202..D-209 | C-701..C-709 | | |
 | P5-GUIDE-1..7 (spec merged 2026-11-15; always-index, recipes, `aurora-agent`, platform tools on demand) | D-170..D-172, D-295..D-298 (used; D-299 released) | C-640..C-657 (used), C-658, C-659 | migration for P5-GUIDE-1 takes the next free number when placed | SEC-91, SEC-117..SEC-120 (used; SEC-117 replaces the branch's colliding SEC-90) |
 | P5-FILES-1..4 (spec merged 2026-11-15; Files page over SFTP, owner D-316) | D-316 (used) | C-898..C-907 (used) | `20261201000241`, `…000242` | SEC-125, SEC-126 (used) |
-| P5-UX-1..7 (spec on branch `alexiri/p5-ux`, 2026-11-15; first run and connecting, owner walkthrough) | D-320..D-327 (used) | C-909..C-927 (used), C-928, C-929 | P5-UX-5's migration takes the next free number when placed | SEC-127, SEC-128 (used) |
+| P5-UX-1..7 (spec on branch `alexiri/p5-ux`, 2026-11-15; first run and connecting, owner walkthrough) | D-320..D-328 (used) | C-909..C-927 (used; C-921 not built, D-328), C-928, C-929 | P5-UX-5's migration takes the next free number when placed | SEC-127, SEC-128 (used) |
 | P5-MODELS-1..3 (spec merged 2026-11-15; the harness chooses models, owner D-302) | D-302..D-304 (used) | C-875..C-884 (used), C-885..C-889 | migrations for P5-MODELS-1 and -2 take the next free numbers when placed | SEC-122, SEC-123 (used) |
 
 ## Open questions for the owner
 
 - **Phase 5:** review of the coordinator defaults recorded in D-268.
-- **Phase 5, P5-UX (spec on branch `alexiri/p5-ux`):** merge the spec batch? Q-UX-1 (may a workspace owner let a non-member into the org? recommended: no by default, org setting `workspace_owner_invites`) and Q-UX-2 (may "Add people" tell a workspace owner whether one exact address is already a member? recommended: yes, rate-limited and audited), both in `docs/tasks/P5-UX-5.md`. Suggested order once merged: P5-UX-1 ∥ P5-UX-2 → P5-UX-4 → P5-UX-3 → P5-UX-7; P5-UX-5 after P5-UX-1; P5-UX-6 after P5-UX-2. The Orchestrator places the lanes.
+- **Phase 5, P5-UX (spec on branch `alexiri/p5-ux`):** merge the spec batch? (Q-UX-1 and Q-UX-2 answered, D-328.) Suggested order once merged: P5-UX-1 ∥ P5-UX-2 → P5-UX-4 → P5-UX-3 → P5-UX-7; P5-UX-5 after P5-UX-1; P5-UX-6 after P5-UX-2. The Orchestrator places the lanes.
 - **Phase 6 (proposals):** Q-P6-ORG-2..8 in `docs/tasks/P6-ORGTREE.md` (membership flowing down? credentials shared down by flag? SCIM at roots? parent told of a child's critical events? subtree delete? placement by claim? depth 4?) and Q-P6-LIM-1, 3..8, 10 in `docs/tasks/P6-LIMITS.md` (limit profiles? interactive after the budget? LLM request counts only? defaults from production usage? manual pressure? report-only abuse signals? limits before the tree? only a person's engagement restarts the background cap?). (The P6-MODELS questions were answered 2026-11-15, D-302.) Each has a recommendation; nothing blocks until phase 6 starts. Answered so far: D-276.
 
 ## Open security findings

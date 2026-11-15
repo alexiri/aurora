@@ -1859,7 +1859,7 @@ secret fields.
   (D-162). A personal workspace's Welcome title reads **"Welcome, Bob"**, and the workspace selector shows
   "Bob (personal)". The slug and the URL stay as before.
 
-### 5. Adding people to a workspace (P5-UX-5, D-325, C-919..C-921)
+### 5. Adding people to a workspace (P5-UX-5, D-325, D-328, C-919, C-920)
 
 - Settings › **Access** gains **Add people** for `can_own` (C-919): an e-mail field and a role (Member or
   Approver; Owner only for an existing org member). One address at a time, rate-limited and audited, so
@@ -1868,9 +1868,9 @@ secret fields.
   - Any other address gets a **pending access** row (C-920), listed under "Waiting for first sign-in" with
     **Remove**. The row takes effect at that person's first sign-in into this organization with a
     verified matching e-mail, and expires after `PENDING_ACCESS_TTL` (30 days).
-  - When neither sign-up into this organization (open sign-up with this org as the placement default
-    org, or an organization invitation) nor `workspace_owner_invites` (C-921) lets that person in, the
-    dialog adds: "<email> also needs to be let into <org>: ask <org admin names>, or send them the
+  - When sign-up into this organization (open sign-up with this org as the placement default org) does
+    not let that person in, the dialog adds (a workspace owner can never let a non-member into the
+    organization, D-328): "<email> also needs to be let into <org>: ask <org admin names>, or send them the
     Aurora address if sign-up is open."
 - Welcome's **Invite a teammate** opens this dialog.
 

@@ -1610,8 +1610,7 @@ tables above in the same change (and this section shrinks).
 | expires_at | timestamptz not null | `created_at + PENDING_ACCESS_TTL` (30 days); an index on it serves the sweeper | 5 (P5-UX-5) |
 
 Index `(org_id, email_normalized)` serves the sign-in lookup. The gateway role gets nothing on this table.
-`organizations.settings.workspace_owner_invites` (jsonb key, no column): `"off"` (default when absent) or
-`"on"` (C-921). The placement document (C-520, wherever placement is stored today) gains
+The placement document (C-520, wherever placement is stored today) gains
 `personal_workspace.display_name_template` (C-923); no column.
 
 #### `turns` (request tracing; phase 5, FIX-146, D-232)

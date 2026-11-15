@@ -1254,12 +1254,12 @@ A workspace owner (`can_own`) can give a person access by e-mail without being a
   verified and equal, compared case-insensitively. The row is then deleted. Unused rows expire after
   `PENDING_ACCESS_TTL` (30 days); at most `PENDING_ACCESS_MAX` (50) per workspace.
 - **A pending row never makes anyone an org member.** Entering the org stays with placement (open
-  sign-up into the default org), org invitations by owners/admins, or, when the org sets
-  `workspace_owner_invites = on` (C-921, default off), an invitation the workspace owner's add
-  creates (role member, bound to that workspace, seat cap applies).
+  sign-up into the default org) and org invitations by owners/admins. A workspace owner who is not
+  an org owner/admin can never let a non-member into the organization (owner, D-328: Q-UX-1 "no",
+  with no org setting to allow it).
 - One exact address per request, rate-limited (`invite` class) and audited; there is no member
   search for workspace owners. The answer says whether that one address was added or is pending
-  (Q-UX-2).
+  (owner, D-328: Q-UX-2 "yes").
 
 This replaces the sentence of §Personal workspaces that the user "can invite others into it":
 personal-workspace owners add people this way.
