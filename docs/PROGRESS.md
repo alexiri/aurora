@@ -1,6 +1,6 @@
 # Implementation progress
 
-Last updated: 2026-11-15, master after `7909fb9c` (SET-1 + FIX-124, FIX-153 + FIX-154, P4-LLM-2 merged)..7 ready, not yet placed) and the P5-MODELS spec merge (the harness chooses models, owner D-302: P5-MODELS-1..3 ready, not yet placed), plus briefs FIX-153/FIX-154 (findable app connect, credential-free apps in one step, D-306; ready, not placed). **Phase 5 is running**: wave 1 is merged; wave 2 started 2026-11-15 in the same three lanes (`p5-apps`: SET-1 → FIX-124 → SET-2..5 → P4-LLM-6; `p5-agent`: P5-CHAT-4 B merged, now P4-LLM-1..5; `p5-platform`: P5-CERN-ADDONS external repo (owner's GitHub side done, D-278) → FIX-146 → P4-SSH-1/2; §Execution order). Phase 6 stays closed until the owner's all-clear (D-278). Phases 0–4 are closed; their record is in `docs/history/`. **Phase 6 is proposed only** (P6-ORGTREE, P6-LIMITS; owner answers so far: D-276; P6-MODELS moved to phase 5 as P5-MODELS, D-302) and starts on the owner's word.
+Last updated: 2026-11-15, master after `7909fb9c` (SET-1 + FIX-124, FIX-153 + FIX-154, P4-LLM-2 merged)..7 ready, not yet placed) and the P5-MODELS spec merge (the harness chooses models, owner D-302: P5-MODELS-1..3 ready, not yet placed), plus briefs FIX-153/FIX-154 (findable app connect, credential-free apps in one step, D-306; ready, not placed). **Phase 5 is running**: wave 1 is merged; wave 2 started 2026-11-15 in the same three lanes (`p5-apps`: SET-1 → FIX-124 → SET-2..5 → P4-LLM-6; `p5-agent`: P5-CHAT-4 B merged, now P4-LLM-1..5; `p5-platform`: P5-CERN-ADDONS external repo (owner's GitHub side done, D-278) → FIX-146 → P5-FILES-1..4 (Files page over SFTP, spec merged 2026-11-15, owner D-316) → P4-SSH-1/2; §Execution order). Phase 6 stays closed until the owner's all-clear (D-278). Phases 0–4 are closed; their record is in `docs/history/`. **Phase 6 is proposed only** (P6-ORGTREE, P6-LIMITS; owner answers so far: D-276; P6-MODELS moved to phase 5 as P5-MODELS, D-302) and starts on the owner's word.
 
 ## How this file is kept
 
@@ -91,8 +91,12 @@ Lane order, waves and number blocks: `docs/tasks/PHASE5-PLAN.md`. Lanes `p5-apps
 | P4-011B-3 | Web Push backend (VAPID, subscriptions, encrypted pushes) | D-266, D-269(c), SEC-75/76 | L | Rust/ops | P4-011B-1 | `P4-011B-3.md` | ready (wave 3: queued in lane p5-platform) |
 | P4-011B-4 | Dashboard: service worker, push opt-in, parked-approval states | D-266, D-267, SEC-102 | M–L | Next.js | P4-011B-2, -3 | `P4-011B-4.md` | ready (wave 3: queued in lane p5-platform) |
 | P4-011B-5 | Park-and-resume and Web Push end to end, operator pages | D-133, D-134, D-269(d) | M | tests/ops | P4-011B-1..4 | `P4-011B-5.md` | ready (wave 3: queued in lane p5-platform) |
-| P4-SSH-1 | User SSH keys, SSH CA, certificate mint, `aurora ssh` | D-239, SEC-93 | M | both | — | `P4-SSH-1.md` | ready (queued in lane p5-platform after FIX-146) |
-| P4-SSH-2 | `aurora-terminator` (certificate-only SSH into the sandbox; no port forwarding) | D-239, D-268(a)(b), SEC-92/94..96 | L | Rust/ops | P4-SSH-1 | `P4-SSH-2.md` | ready (queued in lane p5-platform) |
+| P5-FILES-1 | Files backend: `exec.*` leg 2 + supervisor `sftp` exec, `auf_` legs, API SFTP pool and `/files*` routes | D-316, C-898..C-903, C-906, SEC-125/126 | L | Rust | — | `P5-FILES-1.md` | ready (queued in lane p5-platform after FIX-146, before P4-SSH-1) |
+| P5-FILES-2 | Files page: browse, upload (files, folders, drag and drop), download, rename, delete | D-316, C-904 | M | Next.js | P5-FILES-1 | `P5-FILES-2.md` | ready (queued in lane p5-platform) |
+| P5-FILES-3 | Files viewer: CodeMirror editor with conflict dialog, raster image preview | D-316, C-905, SEC-126 | M | Next.js | P5-FILES-2 | `P5-FILES-3.md` | ready (queued in lane p5-platform) |
+| P5-FILES-4 | Files end to end: `scripts/e2e/files.sh` + Playwright journey | D-316, C-907 | S–M | tests | P5-FILES-1..3 | `P5-FILES-4.md` | ready (queued in lane p5-platform) |
+| P4-SSH-1 | User SSH keys, SSH CA, certificate mint, `aurora ssh` | D-239, SEC-93 | M | both | — | `P4-SSH-1.md` | ready (queued in lane p5-platform after P5-FILES-4) |
+| P4-SSH-2 | `aurora-terminator` (certificate-only SSH into the sandbox; no port forwarding) | D-239, D-268(a)(b), SEC-92/94..96 | L | Rust/ops | P4-SSH-1, P5-FILES-1 | `P4-SSH-2.md` | ready (queued in lane p5-platform) |
 | SPEC-SETTINGS | Instance settings move from Helm into the app (Helm-set values locked) — spec batch | D-195, D-236..D-238, SEC-89/90 | L | docs | — | `SPEC-SETTINGS.md` | done (merged 76bb566a) |
 | SET-1 | Settings framework: registry, Helm locks, storage, live reload, audit, export/import, CLI, Admin › Settings | D-236 | L | both | — | `SET-1.md` | done (merged 602b90db; security review fixed: D-307) |
 | SET-2 | Governance and BYO floors as live settings | D-237 | M | both | SET-1, FIX-124 | `SET-2.md` | in-progress (lane p5-apps; committed 70479a0b + 3a6a53d0 on alexiri/p5-apps, not merged; batch gate 2 with SET-3) |
@@ -143,7 +147,7 @@ Lane order, waves and number blocks: `docs/tasks/PHASE5-PLAN.md`. Lanes `p5-apps
 At most three implementation lanes at a time, disjoint ownership; a lane starts when a slot frees **and** its dependencies have merged. Coordinator docs work takes no lane. Full plan: `docs/tasks/PHASE5-PLAN.md`.
 
 - **Wave 1** (2026-11-14..15), all merged: `p5-apps` FIX-147, FIX-133, FIX-136, FIX-141, FIX-144, FIX-145, FIX-149, FIX-134, FIX-135; `p5-agent` P5-AGENT-1, FIX-137, P5-AGENT-2, FIX-138, P5-CHAT-1, P5-CHAT-2, P5-CHAT-3, P5-CHAT-4 A+C; `p5-platform` P5-ADMDEL, OPS-021, FIX-142, P5-ASRC, P5-CERN-ADDONS (in-repo part).
-- **Wave 2** (since 2026-11-15; `docs/tasks/PHASE5-PLAN.md` §Wave 2 lanes): `p5-apps` SET-1 → FIX-124 ‖ SET-2 → SET-3 ‖ SET-4 → SET-5 ‖ P4-LLM-6; `p5-agent` P5-CHAT-4 B ‖ P4-LLM-1 → 2 ‖ 3 → 4 → 5; `p5-platform` P5-CERN-ADDONS (external repo) ‖ FIX-153 → FIX-154 (owner 2026-11-15) ‖ FIX-146 ‖ P4-SSH-1 → P4-SSH-2. Then, as a lane frees: P4-011B-1 → {2 ∥ 3} → 4 → 5.
+- **Wave 2** (since 2026-11-15; `docs/tasks/PHASE5-PLAN.md` §Wave 2 lanes): `p5-apps` SET-1 → FIX-124 ‖ SET-2 → SET-3 ‖ SET-4 → SET-5 ‖ P4-LLM-6; `p5-agent` P5-CHAT-4 B ‖ P4-LLM-1 → 2 ‖ 3 → 4 → 5; `p5-platform` P5-CERN-ADDONS (external repo) ‖ FIX-153 → FIX-154 (owner 2026-11-15) ‖ FIX-146 ‖ P5-FILES-1 → 2 → 3 → 4 (owner 2026-11-15, D-316: before P4-SSH; FILES-1 builds the `exec.*` engine P4-SSH-2 extends) ‖ P4-SSH-1 → P4-SSH-2. Then, as a lane frees: P4-011B-1 → {2 ∥ 3} → 4 → 5.
 - **Wave 3 queue** (placed 2026-11-15; `docs/tasks/PHASE5-PLAN.md` §Wave 3 queue): `p5-apps` P5-GUIDE-1 → {2 ∥ 4 ∥ 5} → 3 → FIX-151 → 6 → 7 (7 only after FIX-150, P4-UTOK and P4-EVAL-2 are merged: `domains/tools/`) ‖ P5-ICS → P5-CALDAV; `p5-agent` FIX-150 → P4-NARR → P4-UTOK ‖ P4-EVAL-1 → {2 ∥ 4} → 3; `p5-platform` P4-011B-1 → {2 ∥ 3} → 4 → 5 ‖ P4-S3 ‖ P5-CALINV.
 - **No spec yet**: none in phase 5 (P4-NARR, P4-UTOK and P4-EVAL specified 2026-11-15; P5-SLACK moved to phase 6, D-285).
 
@@ -168,7 +172,7 @@ Proposed order (Q-P6-LIM-8): the limits framework (P6-LIM-1) together with the s
 
 ## Number allocation
 
-**Next free: FIX-156, D-316, C-898, SEC-125, migration `20261201000241`.** Edit this line in place when you take a number (check `git log -3`, `ls docs/tasks`, and this line right before committing; several sessions write briefs). Task briefs are `docs/tasks/<ID>.md`, named after the task id (`P<phase>-<NAME>` for phase features, `FIX-nnn` for fixes).
+**Next free: FIX-156, D-317, C-908, SEC-127, migration `20261201000243`.** Edit this line in place when you take a number (check `git log -3`, `ls docs/tasks`, and this line right before committing; several sessions write briefs). Task briefs are `docs/tasks/<ID>.md`, named after the task id (`P<phase>-<NAME>` for phase features, `FIX-nnn` for fixes).
 
 Live reservations (numbers inside a block that a lane has already used are recorded in its commits; unused blocks are released when the lane or task closes):
 
@@ -186,6 +190,7 @@ Live reservations (numbers inside a block that a lane has already used are recor
 | P5-CALINV | D-274 (used) | C-844 (used) | `20261201000230` | SEC-108 (used) |
 | agent-page follow-ups (coordinator) | D-202..D-209 | C-701..C-709 | | |
 | P5-GUIDE-1..7 (spec merged 2026-11-15; always-index, recipes, `aurora-agent`, platform tools on demand) | D-170..D-172, D-295..D-298 (used; D-299 released) | C-640..C-657 (used), C-658, C-659 | migration for P5-GUIDE-1 takes the next free number when placed | SEC-91, SEC-117..SEC-120 (used; SEC-117 replaces the branch's colliding SEC-90) |
+| P5-FILES-1..4 (spec merged 2026-11-15; Files page over SFTP, owner D-316) | D-316 (used) | C-898..C-907 (used) | `20261201000241`, `…000242` | SEC-125, SEC-126 (used) |
 | P5-MODELS-1..3 (spec merged 2026-11-15; the harness chooses models, owner D-302) | D-302..D-304 (used) | C-875..C-884 (used), C-885..C-889 | migrations for P5-MODELS-1 and -2 take the next free numbers when placed | SEC-122, SEC-123 (used) |
 
 ## Open questions for the owner

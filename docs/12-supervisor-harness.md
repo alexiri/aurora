@@ -685,7 +685,11 @@ file is logged and does not fail the sync. The sandbox image ships the `psql` cl
 
 An SSH session channel becomes one **exec** in the sandbox: the terminal's PTY posture plus the
 non-interactive modes SSH clients need. Only the runner sends `exec.open`, and only for an
-API-redeemed `auz_` grant of the current boot; agent tools can never open, signal or read one.
+API-redeemed `auz_` grant of the current boot — or (phase 5, P5-FILES-1, D-316) an `auf_` files grant,
+for which the runner only ever asks for mode `sftp` (`11 §Files`, `16 §W21`); agent tools can never open,
+signal or read one. P5-FILES-1 builds this engine with the pipes path and the `sftp` mode; P4-SSH-2 adds
+`shell`, `exec` and `tty`. The supervisor cannot tell a files session from an SSH `sftp` channel and
+treats both identically.
 
 - **Modes** (`exec.open { pty_id, window, mode, command?, tty?, env }`, the `pty_id` space and the
   `0x02` data tag shared with terminals):
@@ -716,7 +720,8 @@ API-redeemed `auz_` grant of the current boot; agent tools can never open, signa
   the three above, a `command` for `shell`/`sftp`, a `tty` for `sftp`, an `env` name outside the list
   — `exec.refused { reason: "unsupported" }`. There is **no** port forwarding, agent forwarding, X11
   or Unix-socket forwarding in the supervisor at all: it never dials or listens for an SSH channel.
-- **Limits.** At most `SSH_CHANNELS_PER_SANDBOX` (8) concurrent execs, separate from
+- **Limits.** At most `EXECS_PER_SANDBOX` (12 = `SSH_CHANNELS_PER_SANDBOX` 8 + `FILE_SESSIONS_PER_SANDBOX`
+  4; P5-FILES-1, D-316 — the per-kind caps are the runner's) concurrent execs, separate from
   `TERMINALS_PER_SANDBOX`, more → `exec.refused { limit }`; idle and lifetime as the runner
   instructs; everything closes on `shutdown`, channel loss, a stop, a restart or a freeze; nothing is
   resumed. An exec is not a process row, never a turn, never a transcript event and never stamps

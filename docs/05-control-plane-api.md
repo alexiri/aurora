@@ -149,6 +149,7 @@ matrix:
     | `simulate` | `POST …/policy/simulate`, `GET /v1/agents/{agent}/effective` | 20 / min, burst 5 |
     | `search` | `GET …/memories/search` and any future search route | 30 / min, burst 10 |
     | `export` | `GET /v1/conversations/{id}/export`, `POST /v1/admin/storage/refresh`, `POST /v1/orgs/{org}/storage/refresh` (FIX-126: the Storage *pages* are cached snapshots read in the ordinary buckets; only the deliberate Refresh buttons are strict); (phase 5, SET-1, SET-4) `GET /v1/admin/settings/export`, `POST /v1/admin/settings/email/test` | 6 / hour, burst 2 |
+    | `files` | (phase 5, P5-FILES-1, D-316) every `/v1/agents/{agent}/files*` route, reads included (instead of `write`/`upload`) | 300 / min, burst 60 |
     | `telemetry` | (phase 5, FIX-146, D-232) `POST /v1/telemetry/traces` (instead of `write`, so browser telemetry never spends the budget of real writes) | 60 / min, burst 20 |
     | `org` | every authenticated request touching an org's resources (all principals together) | 3 000 / min, burst 600 |
 
@@ -717,6 +718,11 @@ gains `features.push: bool` (C-830).
 | PUT/GET `/v1/agents/{agent}/avatar`; GET `/v1/public/avatars/{key}` | S/K; P | |
 | POST `/v1/agents/{agent}/restart` | S/K | restart sandbox (FIX-049, D-164, C-626: from `failed` performs the C-610 recovery — 423 `frozen` applies; from `stopped`/`unprovisioned`/`stopping` 409 `restart_not_applicable`) |
 | GET `/v1/agents/{agent}/terminal` | S | (phase 4, P4-TERM, D-161, C-616) WebSocket upgrade to the sandbox's shell (wterm + Ghostty core in the dashboard); session cookie only, `can_use`, hosted only (BYO 422 `terminal_not_supported`), 404 `terminal_disabled` while off, 423 frozen; mints the single-use `auy_` grant and proxies to the runner; best-effort audit `agent.terminal.open`; bytes never logged; (FIX-138) optional query `shell=bash\|zsh` (default `bash`; any other value 422 `invalid_shell`) is stored on the grant and reaches the PTY spawn (`12 §Terminal`) |
+| GET `/v1/agents/{agent}/files?path=` | S | (phase 5, P5-FILES-1, D-316, C-898) list a directory under `/workspace` (`FileEntry[]`, ≤ 5,000, `truncated`); the terminal's availability (404 `terminal_disabled`, BYO 422 `files_not_supported`, frozen 423), parked sandbox 503 `sandbox_waking` (wake demand), rate class `files`; paths per C-899 |
+| GET `/v1/agents/{agent}/files/content?path=` | S | (phase 5, P5-FILES-1, C-898, C-903) download a file, streamed, always `attachment` + `application/octet-stream` + `nosniff` + sandbox CSP; audit `agent.files.download` |
+| GET `/v1/agents/{agent}/files/text?path=` | S | (phase 5, P5-FILES-1, C-898) a UTF-8 text file ≤ 1 MiB for the editor: `{ content, etag, size, modified_at, line_ending }`; 422 `file_not_editable` |
+| PUT `/v1/agents/{agent}/files/content?path=` | S | (phase 5, P5-FILES-1, C-898) upload or save, raw body ≤ 512 MiB, `If-Match` (409 `file_changed`) or `If-None-Match: *` (409 `file_exists`); temp file + `posix-rename`; audit `agent.files.write` |
+| POST `/v1/agents/{agent}/files/ops` | S | (phase 5, P5-FILES-1, C-898) `mkdir` (with `parents`), `rename` (no replace), `delete` (with `recursive`, ≤ 10,000 entries); `/workspace/.aurora` 403 `path_read_only`; audit per op |
 | POST `/v1/agents/{agent}/sandbox/retry` | S/K | (phase 4, FIX-029, D-160, C-610; amended FIX-049/D-164) retry a failed start from `failed` only (409 `sandbox_not_failed`, 423 `frozen`; a live failure-backoff lease never refuses): clears the failure, resets `start_failures`, notifies due work for an ordinary start; audited `agent.sandbox_retry` |
 | GET `/v1/agents/{agent}/start-failures` | S/K | (phase 4, FIX-029, C-613) the agent's recent start failures (≤ 20, newest first, C-586 shape) |
 | GET `/v1/admin/agents/{agent}/start-failures` | IA | (phase 4, FIX-029, C-614) the same list with `runner_id` |
@@ -772,6 +778,14 @@ standard body.
 | DELETE `/v1/ssh-sessions/{id}` | S/K | (phase 5, P4-SSH-2, C-793) disconnect: the session's person or `can_own` of its workspace (404 otherwise); sets `revoke_requested_at`; 202 — the terminator ends the connection within one heartbeat (≤ 30 s); audit `ssh_session.disconnect` |
 | GET `/v1/admin/terminators` | IA | (phase 5, P4-SSH-2, C-793) terminator replicas seen: `{ id, version, host_key_fingerprint, sessions_open, last_seen_at, live }`, shown on Admin › Overview |
 | GET `/v1/instance` | none | (phase 5, P4-SSH-1; existing public route) gains `features.ssh: bool` so the dashboard shows the SSH surfaces only when they can work |
+
+(Phase 5, P5-FILES-1, D-316) `keep_awake_reasons` also gains `files` ("Files in use"). Files error
+codes (C-898..C-901): `invalid_path` (400), `path_outside_workspace`, `path_read_only`,
+`permission_denied` (403), `path_not_found` (404), `file_exists`, `file_changed`,
+`directory_not_empty`, `sandbox_unavailable` (409), `length_required` (411), `file_too_large` (413),
+`not_a_directory`, `is_directory`, `file_not_editable`, `too_many_entries`, `files_operation_failed`,
+`files_not_supported` (422), `too_many_transfers`, `wake_limited` (429), `sandbox_waking`,
+`files_unavailable` (503, `retry-after`).
 
 `GET /v1/agents/{agent}/sandbox`'s `keep_awake_reasons` gains `ssh` (phase 5, P4-SSH-2; "SSH session in
 use"). Error codes added: `ssh_disabled` (404), `ssh_not_supported` (422), `ssh_key_invalid` (422),

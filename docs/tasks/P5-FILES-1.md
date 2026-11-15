@@ -1,0 +1,55 @@
+# P5-FILES-1: Files backend — SFTP sessions through the runner, `/v1/agents/{agent}/files*` routes
+
+## Goal
+People who can use an agent's web terminal can list, download, upload, create, rename, delete and read/save text files under the sandbox's `/workspace` through REST routes on the API. The API is an SFTP client of the image's `sftp-server`, which the supervisor starts as an `exec` in mode `sftp` over the runner's :4108 listener with a single-use `auf_` grant (D-316). This task also builds the `exec.*` leg 2 and the supervisor's pipes-only exec engine that P4-SSH-2 will extend.
+
+## Linked requirements
+- D-316; C-898..C-903, C-906 (`docs/API_CONTRACTS.md` §Phase 5 — P5-FILES); SEC-125, SEC-126 (`docs/17`) and the P5-FILES residual.
+- `16 §W21` (normative wire for this task) and `16 §W20` leg 2 (`exec.*` frames: implement them as written there, `mode: "sftp"` only); `12 §SSH channels` (the engine; the `sftp` mode and Limits); `11 §Files` and §Keep-awake; `05` (routes, rate class `files`, error codes); `04 §Permission matrix` and `§Audit`; `03 §Planned changes` (`file_stream_grants`, `sandboxes.files_*`); `02 §Limits` (`EXECS_PER_SANDBOX`, `FILES_*`, `FILE_*`); `00` (`auf_`); `18 §Files` (API, runner, supervisor bullets).
+- Migrations: `20261201000241_file_stream_grants.sql`, `20261201000242_sandboxes_files_awake.sql` (re-check the next free timestamp after `origin/master` when you write them, LANE_RULES).
+
+## Context
+- The terminal path you mirror, end to end: API `services/aurora-api/src/domains/terminal/{mod,service,routes}.rs` (grant mint, `demand_wake`, `ACCESS_RECHECK`, the API's own WebSocket client to the runner's :4108, redemption), `domains/runner_plane/preview_streams.rs` (redemption by grant prefix: `aux_` port, `auy_` terminal → add `auf_` files), `domains/hosted/{routes,dto}.rs` (`keep_awake_reasons`); runner `services/aurora-runner/src/stream_listener.rs` (leg 1, limits, `with_limits` for tests), `src/api.rs` (redeem call), `src/channel/**`; supervisor `src/pty.rs`, `src/pty_exec.rs`, `src/streams.rs`, `src/spawn.rs` (`child_env` and the `AURORA_*` sweep, uid/gid); protocol `crates/aurora-protocol/src/{runner,supervisor}.rs` (`PtyOpen`, `PtyCredit`, `PtyClose`, …); `crates/aurora-core` (token prefixes in `token.rs`, limits in `limits.rs`, audit actions).
+- Tests to copy shape from: `services/aurora-api/tests/it/terminal.rs` (auth matrix, grant single use, fake runner leg), the supervisor `pty_leak` ITs (FIX-059/FIX-091), runner stream-listener ITs.
+- SFTP client: prefer the `russh-sftp` crate's **client** over any `AsyncRead + AsyncWrite` (adapt the leg-1 WebSocket's `[0x02]` frames into a duplex stream). Check its licence passes `deny.toml`, that it supports the requests of `16 §W21` and sending the `posix-rename@openssh.com` extension (or a raw extended request). If it cannot, write a minimal SFTP v3 client for exactly that request list in `services/aurora-api/src/domains/files/sftp.rs` (draft-ietf-secsh-filexfer-02; OpenSSH's `PROTOCOL` file for the extension). Do not pull in the whole `russh` SSH stack for this. Stop and report if neither works.
+- OpenSSH `sftp-server` status mapping (`errno_to_portable`): ENOENT → `NO_SUCH_FILE`, EPERM/EACCES → `PERMISSION_DENIED`, else `FAILURE` — hence C-899's error mapping.
+- The sandbox image's base provides `sftp-server` at `/usr/libexec/openssh/sftp-server` (verify in `images/sandbox/Containerfile`'s `os` stage; if the base puts it elsewhere, stop and report — the path is fixed in `12`).
+
+## Scope
+### In scope
+**Part A — protocol, supervisor, images.** `exec.*` types in `aurora-protocol` exactly as `16 §W20` leg 2 (`ExecOpen { pty_id, window, mode, command?, tty?, env }` with the full enum and optional fields so P4-SSH-2 adds behaviour, not wire; schemas regenerated with `UPDATE_SCHEMAS=1 cargo test -p aurora-protocol`). Supervisor `src/exec.rs` (new): pipes-only engine (stdin from `0x02`, stdout `0x02`, stderr `0x03`, `exec.eof` closes stdin, drain then `exec.exit { status | signal }` then `pty.close { eof }`, credit as W19, CLOEXEC ends, own process group killed on close after the hang-up grace as FIX-091), mode `sftp` only (fixed path, no argv, agent uid/gid, cwd `/workspace`, `child_env` minus `AURORA_*` and boot doc); `shell`/`exec`/`tty` answer `exec.refused { unsupported }` until P4-SSH-2; `EXECS_PER_SANDBOX` (12) → `exec.refused { limit }`; closes on shutdown/channel loss/stop. Images: the package providing `sftp-server` in `images/sandbox/Containerfile` and the e2e `sandbox-min`; a build-time assertion that `sshd` is not enabled or started.
+
+**Part B — runner.** `auf_` legs on :4108 (accepted where the terminal is enabled — the listener is already open then): redemption with `kind: "files"`; first Text frame within 5 s must be exactly `{"kind":"exec.open","mode":"sftp"}` (anything else, or `command`/`tty`/non-empty `env` → 4502); allocate `pty_id`, send leg-2 `exec.open`, answer `exec.opened` or close 4502/4409; relay `0x02`/`0x03`, `exec.eof`, `exec.exit`; `FILE_SESSIONS_PER_SANDBOX` (4) → 4409; no keep-awake stamping for `auf_`; register the `files` capability.
+
+**Part C — API.** Migrations + real `docs/03` sections (move the two planned blocks out of §Planned changes, `python3 scripts/extract-schema.py --check`). `auf_` in `aurora-core::token`; `domains/files/**` (new): grant mint and redemption branch (`kind: "files"`, single-use CAS, bound to agent/sandbox/boot/person, 24 h pruning in the existing grant sweep); the SFTP session pool per (person, agent) per replica (idle 60 s, lifetime 1 h, dropped on any leg close, in-flight requests 503 `files_unavailable`); the five routes of C-898 with C-899 path rules (validation before any SFTP call; `realpath` of target or parent; read-only `.aurora`; owner-write check before replace; temp file + `posix-rename`, cleanup on every failure path); C-900 authority per request (`can_use`, hosted, frozen 423, `terminal.enabled` off 404 `terminal_disabled`), wake demand on the terminal's path (503 `sandbox_waking`, shared budget 429 `wake_limited`, 409 `sandbox_unavailable`), keep-awake stamping (`files_active_until`/`files_awake_since`, throttle 30 s per sandbox per replica) and the `files` reason in the keep-awake predicate and `keep_awake_reasons`; 10 s `ACCESS_RECHECK` during transfers; rate class `files`; `FILE_TRANSFERS_PER_USER`; `FILES_TRANSFER_IDLE`; body-size, timeout and buffering exemptions for the two content routes only; C-903 headers; C-906 audit rows; every `FILES_*`/`FILE_*`/`EXECS_PER_SANDBOX` constant in `limits.rs` with its reader (remove its `doc-only` line from `scripts/guards/limits-gaps.allow`); OpenAPI regenerated (`UPDATE_OPENAPI=1 cargo test -p aurora-api --test it openapi_matches_checked_in`) and `pnpm -C web gen:api`.
+
+### Out of scope
+The dashboard (P5-FILES-2/3); `shell`/`exec`/`tty` modes and `auz_` legs (P4-SSH-2); folder download as an archive; chmod/chown; a CLI command; scanning uploads.
+
+## Constraints / file ownership
+- Owns: `crates/aurora-protocol/src/{runner,supervisor}.rs` + `schemas/` (exec types); `services/aurora-supervisor/src/{exec.rs (new),streams.rs,spawn.rs,channel.rs (dispatch only)}`; `services/aurora-runner/src/{stream_listener,api}.rs`, `src/channel/**` (exec legs); `services/aurora-api/src/domains/files/**` (new), `domains/runner_plane/preview_streams.rs` (the `auf_` branch), `domains/hosted/{routes,dto}.rs` (keep-awake reason), the keep-awake predicate's file, `domains/terminal/service.rs` (only to share the wake helper), the router registration and rate-class table; `crates/aurora-core/src/{token,limits}.rs` + audit actions; the two migrations and `docs/03`; `images/sandbox/**`, the e2e `sandbox-min` image; `services/aurora-api/tests/it/files.rs` (new) + `tests/it/main.rs` registration; `web/openapi.json`, `web/src/lib/api/schema.d.ts` (generated); `scripts/guards/limits-gaps.allow` (removals only).
+- Do not change the terminal's or previews' behaviour; `it/terminal.rs` and `it/previews.rs` must pass unchanged.
+- No new privilege: the sandbox gains no listener or network path (`sandbox-network` guard unchanged), no file code of the platform runs in the sandbox, contents are never logged (byte totals in metrics only, no path in metric labels).
+
+## Acceptance criteria (failing-first: each new test fails before its code)
+1. `api it/files.rs`: everything in `docs/18 §Files` **API** bullet, including the SEC-125 auth matrix, the path table (a counting fake leg proves no SFTP request on a 400), symlink-outside refusals for list/read/write/rename target, `.aurora` read-only, `0444` replace refused, `If-Match`/`If-None-Match` outcomes, 413 before any write and no temp file after an aborted body, atomic replace, recursive delete not following a symlink and refusing over a shortened `FILES_DELETE_MAX` with nothing deleted, C-903 headers for `.html`/`.svg`/HTML-in-`.png` and hostile names, wake demand and shared budget, keep-awake throttle and reason, pool reopen after a W6 reconnect, audit rows with paths and sizes but no content.
+2. Runner ITs per `18 §Files` **Runner** bullet; `auy_`/`auz_`/`aux_` never open a files exec and `auf_` never a PTY or port.
+3. Supervisor ITs per `18 §Files` **Supervisor** bullet (real `sftp-server` where the test host has one, else skipped with `require_or_skip`-style reason and covered by the e2e).
+4. A secret-grep over the API IT run that uploads and downloads a canary file finds the canary in no log line, audit row or request-log row.
+5. `cargo nextest run -p aurora-api -p aurora-runner -p aurora-supervisor -p aurora-protocol` (all targets), clippy `-D warnings`, `bash scripts/guards/run-all.sh` (limits guard with the allow lines removed, schema extract check, `sandbox-network`) pass.
+6. `scripts/e2e/kind.sh` still passes (terminal and previews unchanged).
+
+## Verification
+Per-task gates of `docs/tasks/LANE_RULES.md`; batch gate at the end of each Part (A → B → C) with the full suites of the touched crates.
+
+## Dependencies
+- Blocked by: nothing (placed before P4-SSH-1/2 in lane `p5-platform`, owner 2026-11-15).
+- Unblocks: P5-FILES-2, P5-FILES-3, P5-FILES-4; P4-SSH-2 Part B builds on its `exec.*` engine (its brief says so).
+
+## Suggested agent/model and reason
+`rust-developer` (Sonnet), Parts in order A → B → C. Opus reviews the C-899 path code and the temp-file/rename cleanup before merge. Size L.
+
+## Completion report
+- Files changed:
+- Tests/checks:
+- Remaining risks:

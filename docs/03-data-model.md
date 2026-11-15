@@ -1825,6 +1825,31 @@ The SSH **wake demand** reuses `terminal_wake_at` and the terminal's wake budget
 (`TERMINAL_WAKES_PER_AGENT_HOUR`, shared): both are a person asking for an interactive shell on a
 parked sandbox, and one budget keeps two front doors from doubling the wake rate (D-239(h)).
 
+#### `file_stream_grants` (new table; single-use Files grants, phase 5, P5-FILES-1, D-316, C-901)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| id | uuid pk | | 5 (P5-FILES-1) |
+| agent_id, sandbox_id, boot_id | uuid not null | the binding the runner receives (stale boot → redemption refused); no FK | 5 (P5-FILES-1) |
+| granted_for | uuid not null FK→users (cascade) | the person whose request opened the SFTP session | 5 (P5-FILES-1) |
+| grant_hash | text not null unique | SHA-256 of the `auf_` grant; the value is presented once by the API to the runner and never stored | 5 (P5-FILES-1) |
+| expires_at | timestamptz not null | `now() + FILES_GRANT_TTL` (30 s) | 5 (P5-FILES-1) |
+| consumed_at | timestamptz null | set by the single-use compare-and-set at redemption | 5 (P5-FILES-1) |
+| created_at | timestamptz not null default now() | | 5 (P5-FILES-1) |
+| index | unique `(grant_hash)`; `(expires_at)` | redemption, pruning after 24 h | 5 (P5-FILES-1) |
+
+Migration `20261201000241_file_stream_grants.sql`. A table of its own, not rows in
+`terminal_stream_grants` or `ssh_stream_grants`: the `auf_` prefix routes redemption to this table
+alone, so a files grant can only ever open an `sftp` exec (D-239(f) pattern).
+
+#### `sandboxes` (Files keep-awake; phase 5, P5-FILES-1)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| files_active_until | timestamptz null | `now() + FILES_AWAKE_GRACE` stamped by the API at a Files request (at most once per 30 s per sandbox per replica); keep-awake reason `files` (churn column) | 5 (P5-FILES-1) |
+| files_awake_since | timestamptz null | first Files stamp of the current boot; the `FILES_AWAKE_CAP` clock; reset at every start claim (churn column) | 5 (P5-FILES-1) |
+
+Migration `20261201000242_sandboxes_files_awake.sql`. The Files **wake demand** reuses
+`terminal_wake_at` and the terminal's per-agent wake budget, like SSH (D-239(h)).
+
 ### `preview_shares` (port previews, phase 4, P4-PRV-1, D-144, D-145)
 | Column | Type | Notes |
 |---|---|---|

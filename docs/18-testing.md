@@ -683,6 +683,41 @@ done when its tests exist, pass in CI, and the security invariants it touches
   with checksums, `-L`/`-R`/`-A`/`-X` refused while the shell works, a wrong pinned host key refused by
   the client, a parked sandbox wakes on connect, freeze closes the session within 35 s.
 
+### Files (phase 5, P5-FILES-1..4, D-316, SEC-125, SEC-126)
+- **API** (`api it/files.rs`; P5-FILES-1, against a real runner and supervisor over the kind-less
+  podman substrate or the in-process test harness the terminal ITs use): the SEC-125 auth matrix; the
+  C-899 path table (each refusal before any SFTP request — a counting fake leg proves it); listing
+  order, kinds, symlink targets (inside, outside, dangling), `truncated` at a shortened
+  `FILES_LIST_MAX`; download headers of C-903 and byte-exact content (sha256) for an empty, a 1-byte, a
+  16 KiB + 1 and a 20 MiB file; text endpoint reasons (`too_large`, `binary`, `not_utf8`) and CRLF
+  detection; PUT create/replace, `If-None-Match: *` → 409, `If-Match` stale → 409 with
+  `current_etag`, `0444` target → 403, missing parent → 404, over `FILES_UPLOAD_MAX` (shortened) → 413
+  before any write, aborted body → no target change and no temp file left; atomic replace (a
+  concurrent reader sees the old or the new bytes, never a mix); mkdir/rename/delete including
+  `parents`, existing targets, rename into itself, non-empty without `recursive`, recursive over a
+  shortened `FILES_DELETE_MAX` (nothing deleted), symlink-in-tree not followed; `.aurora` read-only;
+  wake demand on a parked sandbox (503 + `terminal_wake_at` set, shared budget → 429); keep-awake
+  stamping throttle and the `files` reason in `keep_awake_reasons`; pool idle close and reopen after a
+  W6 reconnect (503 `files_unavailable` once, then success); audit rows carry paths and sizes, never
+  content.
+- **Runner** (`aurora-runner` ITs): `auf_` redemption only as `kind: "files"`; first frame other than a
+  bare `sftp` `exec.open` → 4502; the cap → 4409; an older supervisor (ignores `exec.open`) → 4502;
+  no keep-awake stamp from `auf_` legs.
+- **Supervisor** (`aurora-supervisor` ITs): the `sftp` exec over pipes (stdout `0x02`, stderr `0x03`,
+  `exec.eof`, `exec.exit` status), env probe, uid/cwd, fd-leak probe (FIX-059 style), process-group kill
+  on close, `exec.refused` for a missing `sftp-server` and over `EXECS_PER_SANDBOX`, credit bounds
+  under a hostile writer.
+- **Web** (vitest, P5-FILES-2/3): breadcrumbs and `&path=`, hidden switch, clash dialog choices, upload
+  queue concurrency (3) and cancel, error-code sentences, editor dirty state, Save with `If-Match`,
+  conflict dialog's three actions, CRLF kept, image magic-byte check, SVG/HTML no preview.
+  Playwright + axe in both themes at 1280 and 390 px (no horizontal scroll).
+- **Journey** (P5-FILES-4): `scripts/e2e/files.sh` on kind (uses the e2e lock; `require_or_skip` when
+  `terminal.enabled` is off in the cluster) — upload a folder of three files, list it, download one
+  and compare sha256, edit and save, provoke a conflict by changing the file from the terminal leg,
+  rename, recursive delete, `.aurora` write refused, a symlink to `/etc` refused, freeze → 423, park →
+  next request wakes; plus the Playwright journey of C-907; a secret-grep over the run for a canary
+  uploaded in a file (no log, audit or request-log hit).
+
 ### Git skill library (phase 4, P4-GSL, D-148, D-149, SEC-83, SEC-84)
 - **Fake git host** in the test kit (`tests/kit`): serves a GitHub-shaped and a GitLab-shaped API (ref
   resolution, recursive and paginated trees, blobs, raw files, rate-limit responses, truncated trees, a
