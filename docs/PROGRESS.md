@@ -1,6 +1,6 @@
 # Implementation progress
 
-Last updated: 2026-11-15, master `a7998616`. **Phase 5 is running** in three lanes: `p5-apps` FIX-134 → FIX-135; `p5-agent` batch 2 (P5-CHAT-1, P5-CHAT-2, P5-CHAT-4 A+C) committed and awaiting merge, then P5-CHAT-3 → P5-CHAT-4 B; `p5-platform` P5-CERN-ADDONS. Phases 0–4 are closed; their record is in `docs/history/`. **Phase 6 is proposed only** (P6-ORGTREE, P6-LIMITS; owner answers so far: D-276) and starts on the owner's word.
+Last updated: 2026-11-15, master `fac817ae`. **Phase 5 is running**: wave 1 is merged except P5-CHAT-4 B (`p5-agent`) and P5-CERN-ADDONS's external repo (`p5-platform`; unblocked by the owner, D-277). `p5-apps` finished its chain (FIX-134, FIX-135 merged ada98f25); wave 2 is next (§Execution order). Phases 0–4 are closed; their record is in `docs/history/`. **Phase 6 is proposed only** (P6-ORGTREE, P6-LIMITS; owner answers so far: D-276) and starts on the owner's word.
 
 ## How this file is kept
 
@@ -21,7 +21,7 @@ One row per task id, counted from the task tables (closed phases: from their his
 | 2 | 52 | 51 | 1 (FIX-017: the owner's real-cluster install) | 0 | 0 | 0 | `docs/history/phase-1-2.md` (closed 2026-11-09, AUDIT-002) |
 | 3 | 15 | 15 | 0 | 0 | 0 | 0 | `docs/history/phase-3.md` (closed 2026-11-10, AUDIT-003) |
 | 4 | 124 | 123 | 0 | 0 | 0 | 1 (FIX-131 closed without a build, D-195) | `docs/history/phase-4.md` (closed 2026-11-14, AUDIT-004) |
-| 5 | 69 | 37 | 2 (P5-CERN-ADDONS (blocked on the owner), P5-CHAT-4 B) | 23 | 5 (no spec yet: P5-SLACK, P4-S3, P4-EVAL, P4-NARR, P4-UTOK) | 2 (OPS-022 deferred; FIX-049 moved to phase 4) | §Phase 5 tasks (TEST-021 and FIX-057, done, are counted here but their rows are in `docs/history/phase-0.md`'s task graph) |
+| 5 | 69 | 37 | 2 (P5-CERN-ADDONS (external repo; unblocked by D-277), P5-CHAT-4 B) | 23 | 5 (no spec yet: P5-SLACK, P4-S3, P4-EVAL, P4-NARR, P4-UTOK) | 2 (OPS-022 deferred; FIX-049 moved to phase 4) | §Phase 5 tasks (TEST-021 and FIX-057, done, are counted here but their rows are in `docs/history/phase-0.md`'s task graph) |
 | 6 (proposed) | 2 | 0 | 0 | 0 | 2 (P6-ORGTREE, P6-LIMITS: proposals awaiting the owner) | 0 | §Phase 6 tasks (proposed) |
 | **All** | **389** | **348** | **3** | **23** | **7** | **8** | |
 
@@ -53,7 +53,7 @@ Lane order, waves and number blocks: `docs/tasks/PHASE5-PLAN.md`. Lanes `p5-apps
 | OPS-021 | Dependabot, grouped, with ignore rules and a review policy | owner | S | ops | OPS-019, OPS-020 | `OPS-021.md` | done (merged 3c983224) |
 | P5-SLACK | Slack connector | `21`, D-78 | L | Rust | connector contract (`13`) | needed | not started (no spec; after P4-LLM/P4-SSH/P4-011B, D-235(c)) |
 | P5-ASRC | Addon sources: third-party package repositories (signed repo manifest, TOFU key, polling, update badges) | D-250, C-590..C-609, SEC-86, migration 000180 | L | both | — | `P5-ASRC.md` | done (merged 3c983224) |
-| P5-CERN-ADDONS | `aurora-addons-cern` repo (release script, CI, signed releases) with `cern-phonebook` (LDAP through the gateway LDAP lane) and `cern-maps` | D-235(d), D-251 | M–L | package + Rust | P5-ASRC | `P5-CERN-ADDONS.md` | in-progress (in-repo part merged 555f6058: gateway LDAP lane + staging cern-phonebook; **blocked on the owner**: external `aurora-addons-cern` repo content, signing key + release secret, cern-maps, live xldap check, kind e2e) |
+| P5-CERN-ADDONS | `aurora-addons-cern` repo (release script, CI, signed releases) with `cern-phonebook` (LDAP through the gateway LDAP lane) and `cern-maps` | D-235(d), D-251 | M–L | package + Rust | P5-ASRC | `P5-CERN-ADDONS.md` | in-progress (in-repo part merged 555f6058: gateway LDAP lane + staging cern-phonebook; owner answers D-277 (2026-11-15): push approved, deviations and icons accepted, signing key pair in the local checkout's root; **open**: external `aurora-addons-cern` repo content, cern-maps, live xldap check (`xldap.cern.ch:636` reachable from the dev machine), kind e2e; the owner sets up the `release` environment secret, so no `v*` tag before the owner confirms it) |
 | OPS-024 | `helm upgrade` covered by CI (kind upgrade legs) + hook NetworkPolicy guard | owner 2026-11-11 | M | ops | — | `OPS-024.md` | done (merged d0819942) |
 | FIX-045 | Personal-workspace names default to the OIDC `{sub}` | D-162, C-520..C-523 | M | both | — | `FIX-045.md` | done (merged 9ae49a47) |
 | FIX-046 | Shell alignment: workspace selector not indented, phone drawer from the right | D-163 | S | Next.js | — | `FIX-046.md` | done (merged 34a65d3f) |
@@ -147,7 +147,7 @@ Proposed order (Q-P6-LIM-8): the limits framework (P6-LIM-1) together with the s
 
 ## Number allocation
 
-**Next free: FIX-150, D-277, C-846, SEC-111, migration `20261201000231`.** (SEC-110 taken by P5-CERN-ADDONS on `alexiri/p5-platform`, not merged.) Edit this line in place when you take a number (check `git log -3`, `ls docs/tasks`, and this line right before committing; several sessions write briefs). Task briefs are `docs/tasks/<ID>.md`, named after the task id (`P<phase>-<NAME>` for phase features, `FIX-nnn` for fixes).
+**Next free: FIX-150, D-278, C-846, SEC-111, migration `20261201000231`.** Edit this line in place when you take a number (check `git log -3`, `ls docs/tasks`, and this line right before committing; several sessions write briefs). Task briefs are `docs/tasks/<ID>.md`, named after the task id (`P<phase>-<NAME>` for phase features, `FIX-nnn` for fixes).
 
 Live reservations (numbers inside a block that a lane has already used are recorded in its commits; unused blocks are released when the lane or task closes):
 
