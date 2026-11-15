@@ -111,8 +111,8 @@ serde_path_to_error = "0.1"
 serde_yaml = "0.9"
 schemars = { version = "1", features = ["uuid1", "chrono04"] }
 jsonschema = { version = "0.33", default-features = false }
-utoipa = { version = "5", features = ["axum_extras", "uuid", "chrono"] }
-utoipa-axum = "0.2"
+utoipa = { version = "6", features = ["axum_extras", "uuid", "chrono"] }
+utoipa-axum = "0.3"
 uuid = { version = "1.22", features = ["v7", "serde"] }
 chrono = { version = "0.4", default-features = false, features = ["std", "clock", "serde"] }
 chrono-tz = "0.10"
