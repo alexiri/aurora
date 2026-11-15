@@ -40,34 +40,56 @@ pub fn mcp_config(spec: &McpBridgeSpec) -> Result<Value, HarnessError> {
     } } }))
 }
 
+/// Variables the adapter owns: a caller or client environment never sets them.
+const OWN_ENV: &[&str] = &[
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_AUTH_TOKEN",
+    "ANTHROPIC_BASE_URL",
+    "ANTHROPIC_MODEL",
+    "HTTPS_PROXY",
+    "HTTP_PROXY",
+];
+
+/// The provider placeholders and model a Claude Code child gets for `m` (shared by a turn and
+/// the terminal's `harness.env`, so the two cannot drift). Never a real credential.
+pub fn model_env(m: &aurora_protocol::runner::ModelChoice) -> Vec<(String, String)> {
+    let mut env = Vec::with_capacity(3);
+    let mut set = |k: &str, v: &str| env.push((k.to_owned(), v.to_owned()));
+    if m.provider == "anthropic" {
+        set("ANTHROPIC_API_KEY", PLACEHOLDER);
+    } else {
+        set("ANTHROPIC_BASE_URL", &m.base_url);
+        set("ANTHROPIC_AUTH_TOKEN", PLACEHOLDER);
+    }
+    set("ANTHROPIC_MODEL", &m.model);
+    env
+}
+
+/// The choice's `client_env` pairs a Claude Code child receives (those the adapter owns are
+/// dropped), as in [`build_env`].
+pub fn client_env(
+    m: &aurora_protocol::runner::ModelChoice,
+) -> impl Iterator<Item = &(String, String)> {
+    m.client_env
+        .iter()
+        .filter(|(k, _)| !OWN_ENV.contains(&k.as_str()))
+}
+
 /// Child environment: caller env (minus credential-shaped keys), proxy, provider placeholders,
 /// model, and disabled auto-update/telemetry/non-essential traffic. Never carries secrets.
 pub fn build_env(opts: &SessionOptions) -> Vec<(String, String)> {
-    const OWN: &[&str] = &[
-        "ANTHROPIC_API_KEY",
-        "ANTHROPIC_AUTH_TOKEN",
-        "ANTHROPIC_BASE_URL",
-        "ANTHROPIC_MODEL",
-        "HTTPS_PROXY",
-        "HTTP_PROXY",
-    ];
     let mut env: Vec<(String, String)> = opts
         .env
         .iter()
         .chain(opts.model.client_env.iter())
-        .filter(|(k, _)| !OWN.contains(&k.as_str()))
+        .filter(|(k, _)| !OWN_ENV.contains(&k.as_str()))
         .cloned()
         .collect();
     let mut set = |k: &str, v: &str| env.push((k.to_owned(), v.to_owned()));
     set("HTTPS_PROXY", &opts.proxy_url);
     set("HTTP_PROXY", &opts.proxy_url);
-    if opts.model.provider == "anthropic" {
-        set("ANTHROPIC_API_KEY", PLACEHOLDER);
-    } else {
-        set("ANTHROPIC_BASE_URL", &opts.model.base_url);
-        set("ANTHROPIC_AUTH_TOKEN", PLACEHOLDER);
-    }
-    set("ANTHROPIC_MODEL", &opts.model.model);
+    env.extend(model_env(&opts.model));
+    let mut set = |k: &str, v: &str| env.push((k.to_owned(), v.to_owned()));
     set("DISABLE_AUTOUPDATER", "1");
     set("DISABLE_TELEMETRY", "1");
     set("DISABLE_ERROR_REPORTING", "1");

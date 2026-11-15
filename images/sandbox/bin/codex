@@ -22,12 +22,20 @@ case " ${HARNESSES_ENABLED:-} " in
 *" codex "*) ;;
 *) refuse ;;
 esac
+# No usable model for this agent (C-750 (4)): say why instead of calling a host with no credential.
+if [ -n "${AURORA_CODEX_UNAVAILABLE:-}" ]; then
+    echo "codex: $AURORA_CODEX_UNAVAILABLE" >&2
+    exit 1
+fi
 CODEX_HOME=/workspace/.aurora/terminal/codex
 export CODEX_HOME
 mkdir -p "$CODEX_HOME" 2>/dev/null
 model="${AURORA_CODEX_MODEL:-}"
 base="${AURORA_CODEX_BASE_URL:-}"
-unset HARNESSES_ENABLED AURORA_CODEX_MODEL AURORA_CODEX_BASE_URL
+# Codex uses none of the Claude Code variables.
+unset HARNESSES_ENABLED AURORA_CODEX_MODEL AURORA_CODEX_BASE_URL \
+    AURORA_CLAUDE_UNAVAILABLE AURORA_CODEX_UNAVAILABLE \
+    ANTHROPIC_MODEL ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN ANTHROPIC_API_KEY
 if [ -n "$base" ]; then
     # TOML basic strings: the values come from the supervisor (an endpoint URL, a model id).
     exec "$bin" \
