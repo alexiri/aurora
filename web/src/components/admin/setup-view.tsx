@@ -173,8 +173,8 @@ function RolesBody({ setup, step }: { setup: SetupStatus; step: SetupStep }) {
         <p className="text-sm text-ink-2">Your last sign-in did not read a role claim, so there is nothing to show here.</p>
       )}
       <Checks step={step} />
-      <Link href="/admin/identity" className={cn(buttonVariants({ variant: "outline", size: "sm" }))}>
-        Open Identity
+      <Link href="/admin/settings/sign-in" className={cn(buttonVariants({ variant: "outline", size: "sm" }))}>
+        Open Sign-in settings
       </Link>
     </div>
   );

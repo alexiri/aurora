@@ -400,8 +400,17 @@ async fn resolve_secrets(
                     _ => None,
                 };
                 let p = format!("{path}/{}", id.as_deref().unwrap_or("?"));
+                // A provider's secret is bound to its issuer and client id only (the other fields
+                // are edited freely); any other keyed entry to its whole connection (SEC-90).
+                let retargets = |o: &Value| {
+                    if path == "/auth.oidc_providers" {
+                        super::sign_in::keep_retargets(item, o)
+                    } else {
+                        keep_retargets(item, o)
+                    }
+                };
                 if let Some(o) = o
-                    && keep_retargets(item, o)
+                    && retargets(o)
                 {
                     return Err(reentry_required(&p));
                 }
@@ -472,7 +481,7 @@ fn normalize(
                 continue;
             }
             // A secret Helm sets is Helm's: the dashboard neither sets, keeps nor clears it.
-            if h.source.sets(key) {
+            if h.source.sets(key) || h.source.secret_env(key).is_some() {
                 if import && matches!(val["$secret"].as_str(), Some("set" | "keep")) {
                     warnings.push(SettingWarning {
                         code: "locked_ignored".into(),
@@ -818,7 +827,16 @@ async fn plan_section(
 ) -> Result<Plan, ApiError> {
     let h = &state.settings;
     let (current, old) = row_object(row);
-    let (norm, warnings) = normalize(h, section, values, import)?;
+    let (mut norm, warnings) = normalize(h, section, values, import)?;
+    if section == "sign_in" {
+        let fields = super::sign_in::prepare_entries(&mut norm, &old);
+        if !fields.is_empty() {
+            return Err(invalid(fields));
+        }
+    }
+    if section == "email" {
+        email_password_binding(h, &old, &norm)?;
+    }
     let mut new = build_new(h, section, &old, &norm);
     let mut fields = Vec::new();
     for d in registry().section(section) {
@@ -857,6 +875,41 @@ async fn plan_section(
         new,
         warnings,
     })
+}
+
+/// The keys that decide where the SMTP password goes.
+const SMTP_CONNECTION_KEYS: [&str; 2] = ["email.smtp_url", "email.smtp_username"];
+
+/// SEC-90 / D-310: the SMTP password may not be carried to a destination the dashboard chose.
+/// (1) While Helm supplies the password (`AURORA_SMTP_PASSWORD`), `email.smtp_url` and
+/// `email.smtp_username` cannot be changed from the dashboard (409 `setting_locked`).
+/// (2) `{ "$secret": "keep" }` on the password is refused (422 `secret_reentry_required`) when
+/// the URL or the user name differs from the stored one.
+fn email_password_binding(
+    h: &SettingsHandle,
+    old: &Map<String, Value>,
+    norm: &Map<String, Value>,
+) -> Result<(), ApiError> {
+    let changed = |key: &str| {
+        !h.source.sets(key)
+            && norm.get(key).unwrap_or(&Value::Null) != old.get(key).unwrap_or(&Value::Null)
+    };
+    if h.source.secret_env("email.smtp_password").is_some() {
+        for key in SMTP_CONNECTION_KEYS {
+            if changed(key) {
+                return Err(locked(key, "api.extraEnv: AURORA_SMTP_PASSWORD"));
+            }
+        }
+    }
+    let keeps = norm
+        .get("email.smtp_password")
+        .and_then(|v| v.get("$secret"))
+        .and_then(Value::as_str)
+        == Some("keep");
+    if keeps && SMTP_CONNECTION_KEYS.iter().any(|k| changed(k)) {
+        return Err(reentry_required("/email.smtp_password"));
+    }
+    Ok(())
 }
 
 fn has_marker(v: &Value) -> bool {
@@ -909,6 +962,22 @@ async fn guard_dashboard_addresses(
             }
         }
     }
+    // The SMTP server a dashboard names gets the same guard (an operator's `email.smtp_url` is
+    // never submitted: a locked key is not judged).
+    for r in reqs.iter().filter(|r| r.section == "email") {
+        if state.settings.source.sets("email.smtp_url") {
+            continue;
+        }
+        if let Some(url) = r.values.get("email.smtp_url").and_then(Value::as_str)
+            && !guard.permits_address(url).await
+        {
+            fields.push(field(
+                "/email.smtp_url".to_string(),
+                "destination_refused",
+                "this address is not reachable from here (private, loopback, link-local or metadata); an operator can open it with gateway.allowed_private",
+            ));
+        }
+    }
     if fields.is_empty() {
         Ok(())
     } else {
@@ -939,6 +1008,9 @@ pub async fn apply(
     // once: nothing references them.
     require_session(via)?;
     guard_dashboard_addresses(state, &reqs).await?;
+    for r in reqs.iter().filter(|r| r.section == "sign_in") {
+        super::sign_in::check_submitted(state, &r.values).await?;
+    }
     let mut fresh = Vec::new();
     let r = apply_inner(state, via, kind, reqs, import, &mut fresh).await;
     if r.is_err() && !fresh.is_empty() {
@@ -1035,8 +1107,16 @@ async fn apply_inner(
     let rows = repo::list_all(&mut *tx).await.map_err(dberr)?;
     let (mut stored, _) = stored_from_rows(&rows);
     overlay(&mut stored, &changed);
-    if let Err(problems) = h.evaluate(&stored) {
-        return Err(problems_error(problems));
+    let after = match h.evaluate(&stored) {
+        Ok(e) => e,
+        Err(problems) => return Err(problems_error(problems)),
+    };
+    // D-238(b): a save by an admin never strands that admin (the shell is exempt).
+    if let Via::Admin(c) = via
+        && changed.iter().any(|p| p.section == "sign_in")
+    {
+        super::sign_in::guard_own_provider(state, c.user_id, &h.snapshot().effective, &after)
+            .await?;
     }
     let mut written = Vec::new();
     for p in &changed {
@@ -1162,11 +1242,28 @@ fn notify_admins(state: &AppState, via: &Via, changed: &[&Plan], _reqs: &[Sectio
 
 // ---------------------------------------------------------------------------------- preview
 
+/// The merged view a section's proposed values would produce (nothing sealed, nothing written):
+/// the test e-mail's input.
+pub async fn proposed_effective(
+    state: &AppState,
+    section: &str,
+    values: &Map<String, Value>,
+) -> Result<Effective, ApiError> {
+    let rows = repo::list_all(&state.pool).await.map_err(dberr)?;
+    let row = rows.iter().find(|r| r.section == section);
+    let plan = plan_section(state, section, row, values, false, true, &mut Vec::new()).await?;
+    let (stored, _) = stored_from_rows(&rows);
+    let mut after = stored.clone();
+    overlay(&mut after, &[&plan]);
+    state.settings.evaluate(&after).map_err(problems_error)
+}
+
 pub async fn preview(
     state: &AppState,
     section: &str,
     generation: i64,
     values: &Map<String, Value>,
+    caller: Option<Uuid>,
 ) -> Result<SettingsPreview, ApiError> {
     section_def(section)?;
     let h = &state.settings;
@@ -1191,9 +1288,12 @@ pub async fn preview(
         Ok(e) => e,
         Err(p) => return Err(problems_error(p)),
     };
-    let (diff, loosening) = effective_diff(section, &before, &after, &plan.old, &plan.new);
+    let (diff, mut loosening) = effective_diff(section, &before, &after, &plan.old, &plan.new);
+    if section == "sign_in" {
+        loosening.extend(super::sign_in::entry_loosening(&before, &after));
+    }
     let (mut affected_orgs, affected_orgs_total, mut warnings) =
-        super::sections::affected(state, section, &diff, &before, &after).await?;
+        super::sections::affected(state, section, &diff, &before, &after, caller).await?;
     // At most SETTINGS_PREVIEW_ORGS_MAX are listed; `affected_orgs_total` counts the rest.
     affected_orgs.truncate(limits::SETTINGS_PREVIEW_ORGS_MAX);
     warnings.extend(plan.warnings);
@@ -1316,11 +1416,27 @@ pub fn build_view(
     })
 }
 
-pub async fn section_view(state: &AppState, section: &str) -> Result<SettingsSection, ApiError> {
+pub async fn section_view(
+    state: &AppState,
+    section: &str,
+    caller: Option<Uuid>,
+) -> Result<SettingsSection, ApiError> {
     section_def(section)?;
     let snap = state.settings.snapshot();
-    let extra = super::sections::extra(state, section).await?;
-    build_view(&snap.effective, &snap.stored, &snap.meta, section, extra)
+    let extra = super::sections::extra(state, section, caller).await?;
+    let mut view = build_view(&snap.effective, &snap.stored, &snap.meta, section, extra)?;
+    // A secret the environment supplies (`AURORA_SMTP_PASSWORD`) is locked and says so (C-772).
+    for s in &mut view.settings {
+        if let (Some(secret), Some(var)) =
+            (s.secret.as_mut(), state.settings.source.secret_env(&s.key))
+        {
+            secret.from_env = Some(var.to_owned());
+            secret.set = true;
+            s.locked = true;
+            s.source = "helm".into();
+        }
+    }
+    Ok(view)
 }
 
 pub fn index(state: &AppState) -> SettingsIndex {
@@ -1616,7 +1732,10 @@ async fn preview_import(
         )
     })?;
     let after = h.evaluate(&stored_after).map_err(problems_error)?;
-    let (diff, loosening) = effective_diff(section, &before, &after, &plan.old, &plan.new);
+    let (diff, mut loosening) = effective_diff(section, &before, &after, &plan.old, &plan.new);
+    if section == "sign_in" {
+        loosening.extend(super::sign_in::entry_loosening(&before, &after));
+    }
     Ok(SettingsPreview {
         generation,
         diff,

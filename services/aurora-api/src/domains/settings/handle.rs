@@ -91,15 +91,23 @@ pub struct SettingsHandle {
 /// (`llm.endpoints/<id>/allowed_paths`, C-773), and the stable code of a rule written as
 /// `<code> (<field>)` (the shared endpoint rules, C-800) is the problem's code.
 fn entry_problem(eff: &Effective, key: String, message: String) -> Problem {
-    let code = message
-        .split_once(" (")
-        .filter(|(c, rest)| {
-            rest.ends_with(')')
-                && !c.is_empty()
-                && c.bytes().all(|b| b.is_ascii_lowercase() || b == b'_')
-        })
-        .map_or("invalid", |(c, _)| c)
-        .to_owned();
+    // The startup rule "at least one provider" is the stable `last_oidc_provider` of a write (D-238(b)).
+    let code = if message.starts_with("no_oidc_provider") {
+        Some("last_oidc_provider")
+    } else {
+        None
+    };
+    let code = code.map(str::to_owned).unwrap_or_else(|| {
+        message
+            .split_once(" (")
+            .filter(|(c, rest)| {
+                rest.ends_with(')')
+                    && !c.is_empty()
+                    && c.bytes().all(|b| b.is_ascii_lowercase() || b == b'_')
+            })
+            .map_or("invalid", |(c, _)| c)
+            .to_owned()
+    });
     let Some((base, rest)) = key.split_once('[') else {
         return Problem::new(key, &code, message);
     };

@@ -4,6 +4,16 @@
 [docs/04 §OIDC](../04-identity-tenancy.md#oidc-sso) and [docs/04 §Development and end-to-end sign-in](../04-identity-tenancy.md#development-and-end-to-end-sign-in-phase-1-rfe-004).
 In Helm, put the keys under `config.auth` (and the client secret in `api.extraEnv` with `valueFrom`).
 
+## In the dashboard first (phase 5, SET-4, D-235(b), D-309)
+
+Everything below can also be set in **Admin › Settings › Sign-in** (sign-up mode, organization creation, session and CLI key lifetimes, identity providers with their role and group mappings and JIT) and **Admin › Settings › Email** (SMTP URL, from, user name, password) without `helm upgrade`; saving applies at once in every replica. Values you set in Helm stay possible and are **locked** ("Managed by Helm") in the dashboard; removing a key from the values file hands it to the dashboard with the value it had. `auth.instance_admins`, `auth.trusted_origins` and the development IdP are never dashboard settings.
+
+* **Client secrets** (and the SMTP password) are entered once in the dashboard, sealed in the built-in `inline` secret store and never shown, exported, logged or e-mailed. A dashboard provider cannot name an environment variable or a file; only a provider Helm used to define keeps its `client_secret_env` (until you enter a secret), and only while its issuer and client id stay as they were. `AURORA_SMTP_PASSWORD` locks the password field.
+* **Rules that protect sign-in.** Saving a new or re-pointed provider checks its OpenID discovery (the issuer must be `https`, or a loopback/private address you opened with `gateway.allowed_private`). The last provider cannot be removed (`last_oidc_provider`). You cannot save a change that would remove or re-point every provider *you* can sign in with (`removes_own_provider`). The preview before saving names accounts that stop being able to sign in (`identities_orphaned`), mappings to `instance_admin` (`grants_instance_admin`) and everything that loosens sign-in.
+* **Lifetimes.** A shorter `session_absolute_secs` ends existing sessions at their next request; a longer one extends none; `cli_key_ttl_days` applies to keys minted afterwards.
+* **Break-glass** (none of it needs a working dashboard setting): `auth.instance_admins` still grants the flag at sign-in; a provider defined in Helm signs in independently of stored settings; setting a key in Helm overrides any stored value at the next start; `aurora-api settings show sign_in` and `aurora-api settings reset sign_in` work from any pod with the API image (audited with source `cli`, no re-authentication).
+* `GET /v1/admin/identity` and the Identity page are gone; role mappings are edited on the provider.
+
 ## OIDC providers (production)
 
 At least one provider is required. Without one, and without the development IdP, the API refuses to start with `no_oidc_provider`.

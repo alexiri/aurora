@@ -153,7 +153,7 @@ pub async fn pending(
 
 /// The lifetime of a CLI-minted key in days (`auth.cli_key_ttl_days`, D-178), `None` = never.
 fn key_ttl_days(s: &AppState) -> Option<u32> {
-    Some(s.config.auth.cli_key_ttl_days).filter(|d| *d > 0)
+    Some(s.auth().auth.cli_key_ttl_days).filter(|d| *d > 0)
 }
 
 /// Approve a pending login for a workspace the approver can use.

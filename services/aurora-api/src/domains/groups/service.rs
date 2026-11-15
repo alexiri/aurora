@@ -158,7 +158,7 @@ pub async fn create(
                 return Err(bad("/idp_value", "must be 1 to 256 characters"));
             }
             let configured = s
-                .config
+                .auth()
                 .auth
                 .oidc_providers
                 .iter()

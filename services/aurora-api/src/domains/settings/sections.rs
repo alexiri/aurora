@@ -10,8 +10,14 @@ use aurora_core::{ApiError, limits};
 use serde_json::{Value, json};
 
 /// Section-specific read-only data shown beside the settings (`extra`).
-pub async fn extra(_state: &AppState, section: &str) -> Result<Option<Value>, ApiError> {
+pub async fn extra(
+    state: &AppState,
+    section: &str,
+    caller: Option<uuid::Uuid>,
+) -> Result<Option<Value>, ApiError> {
     Ok(match section {
+        // (C-780) How many providers Helm defines and which one the caller signs in with.
+        "sign_in" => Some(super::sign_in::extra(state, caller).await),
         // (C-779) The providers this release can enable: the page offers exactly these.
         "llm" => Some(json!({ "providers": aurora_llm::supported_providers() })),
         // (C-778) Where organizations stand against the instance ceiling.
@@ -28,9 +34,14 @@ pub async fn affected(
     _diff: &[DiffItem],
     before: &Effective,
     after: &Effective,
+    caller: Option<uuid::Uuid>,
 ) -> Result<(Vec<AffectedOrg>, i64, Vec<SettingWarning>), ApiError> {
     if section == "llm" {
         return affected_llm(state, before, after).await;
+    }
+    if section == "sign_in" {
+        let w = super::sign_in::warnings(state, caller, before, after).await?;
+        return Ok((Vec::new(), 0, w));
     }
     if section != "governance" {
         return Ok((Vec::new(), 0, Vec::new()));

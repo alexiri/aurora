@@ -2229,60 +2229,6 @@
         ]
       }
     },
-    "/v1/admin/identity": {
-      "get": {
-        "tags": [
-          "admin"
-        ],
-        "summary": "The Helm-configured role mapping per OIDC provider, read-only (D-139, C-511).",
-        "operationId": "adminIdentity",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AdminIdentity"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthenticated: no credential, or an invalid or expired one",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "429": {
-            "description": "Too many requests: the per-principal rate limit",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "session": []
-          }
-        ]
-      }
-    },
     "/v1/admin/oauth-clients": {
       "get": {
         "tags": [
@@ -5253,6 +5199,88 @@
         ]
       }
     },
+    "/v1/admin/settings/email/test": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Send one test message to the caller's own address with the proposed or effective e-mail\nsettings (C-781). Nothing is saved; the password is never logged or returned.",
+        "operationId": "adminTestEmail",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmailTestRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmailTestResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
     "/v1/admin/settings/export": {
       "get": {
         "tags": [
@@ -5569,6 +5597,88 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/EndpointTestResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/v1/admin/settings/sign_in/provider-test": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Discover an OIDC issuer without saving anything (C-780): the discovery document through the\ndestination guard, 10 s. No secret is needed or used.",
+        "operationId": "adminTestOidcProvider",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProviderTestRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderTestResult"
                 }
               }
             }
@@ -32277,21 +32387,6 @@
           }
         }
       },
-      "AdminIdentity": {
-        "type": "object",
-        "description": "`GET /v1/admin/identity` (C-511): the Helm-configured role mapping, read-only, no secrets.",
-        "required": [
-          "providers"
-        ],
-        "properties": {
-          "providers": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/IdentityProvider"
-            }
-          }
-        }
-      },
       "AdminOrg": {
         "type": "object",
         "description": "One organization in the instance-admin list (operator view: no org data).",
@@ -37404,6 +37499,37 @@
           "credentialed_only"
         ]
       },
+      "EmailTestRequest": {
+        "type": "object",
+        "description": "`POST /v1/admin/settings/email/test` body (C-781).",
+        "properties": {
+          "values": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "The section's values as in a save; absent = the settings in force. A secret written as\n`{ \"$secret\": \"<plaintext>\" }` is used for this test only and never stored."
+          }
+        }
+      },
+      "EmailTestResult": {
+        "type": "object",
+        "required": [
+          "sent"
+        ],
+        "properties": {
+          "error_code": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`connect`, `tls`, `auth`, `rejected`, `timeout` or `log_only`."
+          },
+          "sent": {
+            "type": "boolean"
+          }
+        }
+      },
       "EndpointTestRequest": {
         "type": "object",
         "description": "Request body (C-779).",
@@ -38466,82 +38592,6 @@
             }
           }
         ]
-      },
-      "IdentityMapping": {
-        "type": "object",
-        "required": [
-          "value",
-          "instance_admin",
-          "workspaces"
-        ],
-        "properties": {
-          "instance_admin": {
-            "type": "boolean"
-          },
-          "org": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/IdpOrgGrant"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "value": {
-            "type": "string"
-          },
-          "workspaces": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/IdpWorkspaceGrant"
-            }
-          }
-        }
-      },
-      "IdentityProvider": {
-        "type": "object",
-        "required": [
-          "id",
-          "issuer",
-          "role_claim_source",
-          "require_role",
-          "role_mappings"
-        ],
-        "properties": {
-          "display_name": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "id": {
-            "type": "string"
-          },
-          "issuer": {
-            "type": "string"
-          },
-          "require_role": {
-            "type": "boolean"
-          },
-          "role_claim": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Dot path of the role claim; `null` when the provider reads no roles."
-          },
-          "role_claim_source": {
-            "type": "string",
-            "description": "`id_token` | `userinfo`."
-          },
-          "role_mappings": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/IdentityMapping"
-            }
-          }
-        }
       },
       "IdpGrant": {
         "type": "object",
@@ -47670,6 +47720,62 @@
             "items": {
               "type": "string"
             }
+          }
+        }
+      },
+      "ProviderTestRequest": {
+        "type": "object",
+        "description": "`POST /v1/admin/settings/sign_in/provider-test` body (C-780).",
+        "required": [
+          "provider"
+        ],
+        "properties": {
+          "provider": {
+            "type": "object",
+            "description": "One provider entry, as in `auth.oidc_providers` (the secret is not needed)."
+          }
+        }
+      },
+      "ProviderTestResult": {
+        "type": "object",
+        "description": "What discovery found.",
+        "required": [
+          "ok"
+        ],
+        "properties": {
+          "authorization_endpoint": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "error_code": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`issuer_invalid`, `issuer_not_https`, `destination_refused`, `issuer_mismatch`,\n`not_oidc`, `http_error` or `unreachable`."
+          },
+          "issuer": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "jwks_uri": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ok": {
+            "type": "boolean"
+          },
+          "token_endpoint": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },

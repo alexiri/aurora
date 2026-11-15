@@ -5,9 +5,11 @@ pub mod cli;
 pub mod dto;
 pub mod endpoint_test;
 pub mod handle;
+pub mod live;
 mod routes;
 pub mod rules;
 pub mod sections;
 pub mod service;
+pub mod sign_in;
 
 pub use routes::router;

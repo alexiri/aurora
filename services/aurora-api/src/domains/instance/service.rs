@@ -53,21 +53,24 @@ pub struct InstanceInfo {
     pub setup_errors: Vec<String>,
 }
 
-pub fn instance_info(cfg: &ApiConfig) -> InstanceInfo {
+pub fn instance_info(
+    cfg: &ApiConfig,
+    live: &crate::domains::settings::live::LiveAuth,
+) -> InstanceInfo {
     InstanceInfo {
         version: env!("CARGO_PKG_VERSION").to_owned(),
-        signup_mode: match cfg.signup_mode {
+        signup_mode: match live.signup_mode {
             SignupMode::Open => "open",
             SignupMode::InviteOnly => "invite_only",
             SignupMode::SsoJit => "sso_jit",
         }
         .to_owned(),
-        org_creation: match cfg.org_creation {
+        org_creation: match live.org_creation {
             OrgCreation::InstanceAdmins => "instance_admins",
             OrgCreation::Anyone => "anyone",
         }
         .to_owned(),
-        oidc_providers: cfg
+        oidc_providers: live
             .auth
             .oidc_providers
             .iter()
@@ -92,15 +95,10 @@ pub fn instance_info(cfg: &ApiConfig) -> InstanceInfo {
         },
         default_agent_name: cfg.agents.default_name.clone(),
         external_url: cfg.external_url.clone(),
-        email_delivery: if cfg.email.smtp_url.is_some() {
-            "smtp"
-        } else {
-            "log"
-        }
-        .to_owned(),
+        email_delivery: if live.smtp { "smtp" } else { "log" }.to_owned(),
         approval_email: if !cfg.approvals.email_notifications {
             "disabled"
-        } else if cfg.email.smtp_url.is_some() {
+        } else if live.smtp {
             "smtp"
         } else {
             "log"

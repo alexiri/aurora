@@ -96,6 +96,8 @@ pub fn classify(method: &Method, path: &str) -> Option<Class> {
         ["admin", "storage", "refresh"] if post => return Some(Class::Export),
         // (phase 5, SET-1, C-775) the settings export reads every section.
         ["admin", "settings", "export"] if is_get => return Some(Class::Export),
+        // C-781: a test e-mail is a mail to the caller; the export class keeps it from being a mail cannon.
+        ["admin", "settings", "email", "test"] if post => return Some(Class::Export),
         ["orgs", _, "storage", "refresh"] if post => return Some(Class::Export),
         _ => {}
     }

@@ -118,6 +118,8 @@ pub enum Loosening {
     Bool { loosens_when: bool },
     /// The numeric value going up (`true`) or down (`false`) loosens.
     Number { up_loosens: bool },
+    /// Higher loosens, and `0` means "no limit": the loosest value (`auth.cli_key_ttl_days`).
+    NumberZeroIsMax,
     /// An order, strictest first: moving toward the end loosens.
     Order(Vec<&'static str>),
     /// A list gaining entries (`true`) or losing entries (`false`) loosens.
@@ -206,6 +208,10 @@ impl SettingDef {
                 (Some(_), None) if after.is_null() => *up_loosens,
                 _ => false,
             },
+            Loosening::NumberZeroIsMax => {
+                let rank = |v: &Value| v.as_f64().map(|n| if n == 0.0 { f64::INFINITY } else { n });
+                matches!((rank(before), rank(after)), (Some(b), Some(a)) if a > b)
+            }
             Loosening::Order(order) => {
                 let pos = |v: &Value| v.as_str().and_then(|s| order.iter().position(|o| *o == s));
                 matches!((pos(before), pos(after)), (Some(b), Some(a)) if a > b)
@@ -275,6 +281,8 @@ impl Registry {
         defs.extend(secrets_defs());
         defs.extend(governance_defs());
         defs.extend(llm_defs());
+        defs.extend(sign_in_defs());
+        defs.extend(email_defs());
         #[cfg(any(test, feature = "test-registry"))]
         defs.extend(test_defs());
         Self { defs }
@@ -470,6 +478,105 @@ fn llm_defs() -> Vec<SettingDef> {
             json!([]),
         )
         .keyed("id"),
+    ]
+}
+
+/// Most `auth.oidc_providers` entries (Helm and dashboard together).
+pub const OIDC_PROVIDERS_MAX: usize = 16;
+
+/// The `sign_in` section (SET-4, D-235(b), D-237): sign-up, session lifetimes and the OIDC
+/// providers (a keyed list by `id`: a Helm provider is one locked entry, dashboard providers sit
+/// beside it). `auth.instance_admins` and `auth.trusted_origins` stay in Helm (break-glass).
+fn sign_in_defs() -> Vec<SettingDef> {
+    use serde_json::json;
+    const S: &str = "sign_in";
+    vec![
+        SettingDef::new(
+            S,
+            "auth.signup_mode",
+            SettingType::Enum(vec!["invite_only", "sso_jit", "open"]),
+            json!("invite_only"),
+        )
+        .loosening(Loosening::Order(vec!["invite_only", "sso_jit", "open"])),
+        SettingDef::new(
+            S,
+            "auth.org_creation",
+            SettingType::Enum(vec!["instance_admins", "anyone"]),
+            json!("instance_admins"),
+        )
+        .loosening(Loosening::Order(vec!["instance_admins", "anyone"])),
+        SettingDef::new(
+            S,
+            "auth.session_idle_secs",
+            SettingType::DurationSecs {
+                min: 60,
+                max: 31_536_000,
+            },
+            json!(aurora_core::limits::SESSION_IDLE.as_secs()),
+        )
+        .loosening(Loosening::Number { up_loosens: true }),
+        SettingDef::new(
+            S,
+            "auth.session_absolute_secs",
+            SettingType::DurationSecs {
+                min: 300,
+                max: 31_536_000,
+            },
+            json!(aurora_core::limits::SESSION_ABSOLUTE.as_secs()),
+        )
+        .loosening(Loosening::Number { up_loosens: true }),
+        // 0 = never expires: the loosest value.
+        SettingDef::new(
+            S,
+            "auth.cli_key_ttl_days",
+            SettingType::Int { min: 0, max: 3650 },
+            json!(90),
+        )
+        .loosening(Loosening::NumberZeroIsMax),
+        SettingDef::new(
+            S,
+            "auth.oidc_providers",
+            SettingType::List {
+                item: Box::new(SettingType::Object),
+                max_items: OIDC_PROVIDERS_MAX,
+            },
+            json!([]),
+        )
+        .keyed("id"),
+    ]
+}
+
+/// The `email` section (SET-4, D-237(f)): the mailer. `email.log_links` is never a setting; the
+/// password is the dashboard counterpart of `AURORA_SMTP_PASSWORD` (locked while that is set).
+fn email_defs() -> Vec<SettingDef> {
+    const S: &str = "email";
+    vec![
+        SettingDef::new(
+            S,
+            "email.smtp_url",
+            SettingType::Str { max_len: 512 },
+            Value::Null,
+        ),
+        SettingDef::new(
+            S,
+            "email.from",
+            SettingType::Str { max_len: 320 },
+            Value::Null,
+        ),
+        SettingDef::new(
+            S,
+            "email.smtp_username",
+            SettingType::Str { max_len: 256 },
+            Value::Null,
+        ),
+        SettingDef::new(
+            S,
+            "email.smtp_password",
+            SettingType::Str { max_len: 1024 },
+            Value::Null,
+        )
+        .helm("api.extraEnv: AURORA_SMTP_PASSWORD")
+        .secret(),
     ]
 }
 
@@ -831,6 +938,17 @@ impl ConfigSource {
         Some(cur)
     }
 
+    /// The environment variable that supplies a **secret** key (`AURORA_SMTP_PASSWORD` or its
+    /// `_FILE` form, C-772 `secret.from_env`): while it is set the key is locked.
+    pub fn secret_env(&self, key: &str) -> Option<&'static str> {
+        let name = match key {
+            "email.smtp_password" => "AURORA_SMTP_PASSWORD",
+            _ => return None,
+        };
+        let set = |n: &str| self.env.get(n).is_some_and(|v| !v.is_empty());
+        (set(name) || set(&format!("{name}_FILE"))).then_some(name)
+    }
+
     /// Does the configuration set this registered key (a keyed list counts when it has entries)?
     pub fn sets(&self, key: &str) -> bool {
         self.presence.contains(key)
@@ -917,7 +1035,15 @@ impl ConfigSource {
         if !errors.is_empty() {
             return Err(ConfigErrors(errors));
         }
-        let raw = build_raw(&table, &self.env)?;
+        let mut raw = build_raw(&table, &self.env)?;
+        // A secret key is not part of the merged table: the sealed SMTP password rides in the
+        // typed configuration so validation sees it (the environment's password wins, D-237(f)).
+        if self.secret_env("email.smtp_password").is_none()
+            && let Some(v) = stored.get("email", "email.smtp_password")
+            && let Ok(s) = serde_json::from_value::<crate::raw::SealedSecret>(v.clone())
+        {
+            raw.email.smtp_password_sealed = Some(s);
+        }
         Ok(Effective { raw, keys })
     }
 }
@@ -1176,6 +1302,56 @@ mod tests {
         assert!(!names.is_loosening(&json!(["a", "b"]), &json!(["a"])));
         let limit = r.get("settings_test.limit").unwrap();
         assert!(limit.is_loosening(&json!(1), &json!(2)));
+    }
+
+    #[test]
+    fn the_sign_in_section_orders_what_loosens_and_the_cli_key_ttl_treats_zero_as_never() {
+        let r = registry();
+        let signup = r.get("auth.signup_mode").unwrap();
+        assert!(signup.is_loosening(&json!("invite_only"), &json!("sso_jit")));
+        assert!(signup.is_loosening(&json!("sso_jit"), &json!("open")));
+        assert!(!signup.is_loosening(&json!("open"), &json!("invite_only")));
+        let org = r.get("auth.org_creation").unwrap();
+        assert!(org.is_loosening(&json!("instance_admins"), &json!("anyone")));
+        let abs = r.get("auth.session_absolute_secs").unwrap();
+        assert!(abs.is_loosening(&json!(3600), &json!(7200)));
+        assert!(!abs.is_loosening(&json!(7200), &json!(3600)));
+        let ttl = r.get("auth.cli_key_ttl_days").unwrap();
+        assert!(ttl.is_loosening(&json!(90), &json!(0)), "0 = never expires");
+        assert!(ttl.is_loosening(&json!(30), &json!(90)));
+        assert!(!ttl.is_loosening(&json!(0), &json!(90)));
+        // Providers are a keyed list by id; the password is a write-only secret.
+        let p = r.get("auth.oidc_providers").unwrap();
+        assert_eq!(p.list, Some(ListKind::Keyed { id_field: "id" }));
+        assert!(r.get("email.smtp_password").unwrap().secret);
+        assert!(
+            r.get("email.log_links").is_none(),
+            "a development switch is never a setting"
+        );
+    }
+
+    #[test]
+    fn a_secret_the_environment_supplies_locks_its_key() {
+        let env = |pairs: &[(&str, &str)]| {
+            pairs
+                .iter()
+                .map(|(a, b)| ((*a).to_owned(), (*b).to_owned()))
+                .collect::<BTreeMap<_, _>>()
+        };
+        let none = ConfigSource::from_toml("", env(&[])).unwrap();
+        assert_eq!(none.secret_env("email.smtp_password"), None);
+        let var = ConfigSource::from_toml("", env(&[("AURORA_SMTP_PASSWORD", "x")])).unwrap();
+        assert_eq!(
+            var.secret_env("email.smtp_password"),
+            Some("AURORA_SMTP_PASSWORD")
+        );
+        let file =
+            ConfigSource::from_toml("", env(&[("AURORA_SMTP_PASSWORD_FILE", "/p")])).unwrap();
+        assert_eq!(
+            file.secret_env("email.smtp_password"),
+            Some("AURORA_SMTP_PASSWORD")
+        );
+        assert_eq!(var.secret_env("email.from"), None);
     }
 
     #[test]

@@ -124,7 +124,8 @@ async fn reachable(http: &reqwest::Client, url: &str) -> bool {
 
 pub async fn setup(state: &AppState, admin: Uuid) -> Result<SetupStatus, ApiError> {
     let placed = placement::view(state).await?;
-    let providers = &state.config.auth.oidc_providers;
+    let live = state.auth();
+    let providers = &live.auth.oidc_providers;
 
     // 1. Sign-in and roles.
     let you = match idp_roles::get_state(&state.pool, admin).await? {
