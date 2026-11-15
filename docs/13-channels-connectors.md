@@ -66,7 +66,7 @@ Manifest (JSON):
   "capabilities": {
     "threads": true, "edits": true, "buttons": true, "menus": true, "text_input": false,
     "reactions": true, "ephemeral": true, "native_status": false,
-    "presence_dedicated": true, "presence_shared": true, "user_tokens": false,
+    "presence_dedicated": true, "presence_shared": true, "user_tokens": true,
     "email_verified": true, "commands": true, "history": true,
     "files": { "max_bytes": 52428800, "max_count": 10 }
   },
@@ -239,8 +239,11 @@ code `reserved_event_id`.
 | `history.read` | `{ space_ref, thread_ref?, limit ≤ 50, before? }` → `{ messages: [{ message_ref, author, text, at }] }` |
 | `presence.provision` | `{ agent: { handle, name, avatar_url } }` → `{ platform_user_ref, handle, credentials }` |
 | `presence.deprovision` / `presence.rename` / `presence.set_icon` | `{ presence_id, … }` |
+| `user_token.verify` (phase 5, P4-UTOK, C-854) | `{ config, user_credential_ref }` (a per-op sealed copy of a person's token, §5.11; opened at claim and delivered as `user_credential`) → `{ platform_user_ref, handle }`; a platform `401` answers `credential_dead` |
 | `credentials.validate` | `{ config, credentials, mode?: "probe" }` → `{ tenant_ref, tenant_label, shared_bot?, capabilities? }` — `capabilities` may only **narrow** the manifest's for this integration (e.g. no `ephemeral` without an admin token); stored in `channel_integrations.config._capabilities` and used by the core for fallbacks. (FIX-127, C-710, D-217) **Probe mode**: `mode: "probe"` validates what it can (a field not yet set is not an error), has **no effect on the platform** (no command registration, profile edit or webhook) and returns `choices: { <field>: [{ value, label }] }` for every `integration_setup` field declaring `choices: "from_validate"`, plus `warnings: [string]`; the result fields above become optional. Nothing is stored. A connector without probe support returns `unsupported`. The dashboard's guided setup uses it (`§5.8`) |
 | `space.members` listing for binding | (FIX-127) also used by `POST /v1/agents/{agent}/space-bindings` and `GET /v1/integrations/{id}/spaces?mine=true` (§5.3) to check the caller's linked account is a member |
+
+(phase 5, P4-UTOK, D-282, C-857) `message.post` gains `sender: { user_token: <user_tokens id> }`, which posts as the token's owner (§5.11). Its payload carries `user_credential_ref`, a fresh SecretRef with purpose `channel_op_user_token` and owner = the op id; it is opened at claim, delivered to the connector as `user_credential` in the claimed operation, stripped from the stored payload, and discarded at the op's terminal state by the rule that follows for deprovision. A user-token post refuses `ephemeral_to` and `files` (`invalid`) in phase 5. A `401` marks the token `invalid` (§5.11), never the presence.
 
 **Self-contained deprovision operations** (phase 3, RFE-024, D-67). Phase 0–2
 enqueued `presence.deprovision` "before the delete commits", but the delete then
@@ -436,7 +439,7 @@ must match the event's. The connector never interprets tokens.
 | `ephemeral` | DM the person, naming the space it concerns by its label ("In #general: …", "In your group message with Ann, Bob: …"; FIX-128, D-194): never by an internal id, and with no prefix at all when the notice goes to the DM it is about |
 | `native_status` | placeholder post as above |
 | `presence_dedicated` / `presence_shared` | only the other mode is offered |
-| `user_tokens` | read-as-user / send-as-user features hidden (phase 0 implements none) |
+| `user_tokens` | read-as-user / send-as-user features hidden (phase 0 implements none). (phase 5, P4-UTOK, D-281) `true` on Mattermost: `send_as_me` is offered where a person has added a token and granted the agent (§5.11); read-as-user stays hidden (Q-UTOK-1) |
 | `email_verified` | linking always uses the sign-in link (phase 1, RFE-001: also whenever the integration's `verified_email_autolink` is `false`, which is the default; the platform email then only pre-fills the flow) |
 | `files` | the core enforces min(core caps, platform caps) |
 | `commands` | settings only in the dashboard |
@@ -550,6 +553,7 @@ no behaviour in phase 0.
   same info string, a table is split by rows with the header and delimiter
   rows repeated, a list between items; no post exceeds `message_max_chars`
   after the connector's conversion (§4.6).
+- **Narration cards** (phase 5, P4-NARR, D-279, C-847, C-848): when the agent's `narration_cards` is on and the platform declares `edits`, the turn's receipt is a card that lists its tool steps and is updated as they run; it is deleted when the answer posts or the turn ends, and it is never the answer. Bounds and privacy: §5.12.
 - **Doorless turns** (system follow-ups, watch fires, schedule and peer-task
   reports, action-approval outcomes) in a conversation that has thread links
   are posted to its most recently used thread link.
@@ -740,11 +744,68 @@ Available to an agent only while it has an `active` presence.
   are always defused, and model text never forms a token itself. A held `send_message`
   whose text carries `@here` adds "Notifies everyone online in the channel
   (@here)" to its approval summary (still platform-composed, never the text).
+- `send_as_me {to, text}` (phase 5, P4-UTOK, D-281, D-283, C-856): offered only where the integration declares `user_tokens` and the conditions of §5.11 hold at the call. It never sends directly: it is a held action approval of the token's owner. `text` is an agent message body (§4.3), rendered and defused as `send_message` renders it.
 - `read_conversation {target?, limit?}`: requires `history`; current thread by
   default, or a space bound to this agent; returns sanitized messages labelled
   untrusted.
 - `list_my_messages`, `edit_my_message`, `delete_my_message`: only messages the
   agent posted through these tools in the same conversation within 24 h.
+
+### 5.11 User tokens and `send_as_me` (phase 5, P4-UTOK, D-281..D-284, C-853..C-858, SEC-112, SEC-113)
+
+(phase 5, P4-UTOK) On an integration whose connector declares `user_tokens` (Mattermost, `20`), a
+person may give the agents they choose a token of their own platform account, so that those agents
+can post **as that person**, and only that way. Phase 5 implements sending only (D-281): read-as-user
+stays hidden until Q-UTOK-1 is answered.
+
+- **Adding a token.** `POST /v1/me/user-tokens` (C-853) takes the token in the body, which the request
+  log never records. The API seals it at once (`08 §1`, purpose `user_token`) and runs a
+  `user_token.verify` op (§4.2). The token becomes `active` only if the platform user it belongs to is
+  the caller's own link on that integration (`user_links`, `§5.9`). Otherwise the sealed value is
+  discarded and the request is refused (422 `user_token_mismatch` or `user_token_invalid`, nothing
+  stored). At most `USER_TOKENS_PER_PERSON` tokens per person.
+- **Granting agents.** The owner grants and removes single agents
+  (`PUT` / `DELETE /v1/me/user-tokens/{id}/agents/{agent}`, C-855). A grant needs the owner's `can_use`
+  on the agent. No grant, no send.
+- **The tool.** `send_as_me` (§5.10) is refused, with an agent-facing code, unless at the call the turn
+  speaker is the owner, the turn came through the owner's direct conversation with the agent or a thread
+  the owner started on that platform, the agent holds the grant, and the token and link are `active`.
+  Codes: `not_eligible` (no reason beyond that), `not_granted`, `token_inactive`. Scheduled, webhook,
+  watch, peer-task, system-follow-up, dashboard and API turns never qualify.
+- **Approval.** A permitted call creates an action approval (`07 §Action approvals`, action key
+  `send_as_me`) whose frozen payload is `{ token id, conversation, text }`. Its platform-composed summary
+  names the conversation and the text length, never the text. Only the token's owner may decide it, with
+  the clicker rule of `§5.5` applied to the owner alone, whatever other approval rights they hold. It
+  expires at `APPROVAL_TIMEOUT`. The dashboard approval page shows the full text before the decision.
+- **The send.** An approved send is a `message.post` with `sender: { user_token }` (§4.2). The connector
+  calls `POST /api/v4/posts` with that token and no other endpoint. The post ends with the platform-authored
+  footer naming the agent and the owner (`20 §Rendering`). A `401` marks the token `invalid` and fails the op
+  with `credential_dead`, which does not disable the presence.
+- **Revocation and audit.** Revocation, grant removal and the other ends of standing listed in D-284(a)
+  end the token in the same transaction as its discard and the cancellation of its pending approvals
+  (rejected with `credential_revoked`). Each attempted send writes one `user_token.send` audit row without
+  text (C-858).
+- **Invariants.** (1) Only the owner's own turns start a send. (2) No send without a held approval the owner
+  decided. (3) The token never reaches an agent, a sandbox, the gateway, a runner or a response (SEC-112).
+  (4) A grant of one agent is no grant of another.
+
+### 5.12 Narration cards (phase 5, P4-NARR, D-279, D-280, C-846..C-852, SEC-111)
+
+(phase 5, P4-NARR) The card's rules, on top of §5.2 and §4.5. The answer itself is unchanged.
+
+- **Creation.** When a turn with a thread-link door starts and the agent's `narration_cards` is on
+  and the connector declares `edits`, the core posts the card (`message.post`, `op_marker`
+  `narr:<turn_id>`, content of C-847) in place of the reaction or placeholder receipt.
+- **Updates.** Each change of the step list is a `message.update`, coalesced within the bounds of
+  C-849 (`NARR_MIN_INTERVAL`, `NARR_SPACE_UPDATES_PER_MINUTE`, `NARR_CARDS_PER_SPACE`). A pending
+  update that a newer state supersedes is dropped, never sent late.
+- **Completion.** When the answer posts, or the turn ends without one, the card is deleted
+  (`message.delete`, `dedupe_key narr:<turn_id>:end`). The answer rule of `10 §Turns` is unchanged.
+- **Content.** The card carries no ping and no link. Step labels are sanitized data; the card is never
+  an agent message body (§4.3). Who sees which fields: `10 §Live narration cards`, D-280.
+- **Failure never fails the turn.** `forbidden` (the bot is not in the channel) or `rate_limited` on a
+  card write leaves the turn running with no card. `credential_dead` takes the usual presence action.
+  Without `edits` the receipt is the reaction or placeholder of §4.5 and no card is posted.
 
 ## 6. Invariants (enforced by the core)
 
