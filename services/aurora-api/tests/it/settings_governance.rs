@@ -397,6 +397,45 @@ async fn preview_and_the_orgs_view_report_stricter_and_clamped_organizations() {
     assert_eq!(s, 403);
 }
 
+/// SET-2 criterion 7: SET-1's write guards reach this section — 412 without a recent
+/// re-authentication, 403 for a non-admin, and one `instance_settings.update` audit row per write.
+#[tokio::test]
+async fn writes_here_need_reauth_and_an_instance_admin_and_are_audited() {
+    let w = world_with(None).await;
+    let g = w.section().await["generation"].as_i64().unwrap();
+    let body = json!({ "generation": g, "values": {"byo.enabled": false} });
+    let uri = "/v1/admin/settings/governance";
+    // An instance admin whose session never re-authenticated: 412.
+    let stale = w.h.user("stale@x.io", true).await;
+    let (_, stok) = w.h.good_session(stale).await;
+    let (s, e) = w.call(Method::PUT, uri, &stok, Some(body.clone())).await;
+    assert_eq!(
+        (s, e["error"]["code"].as_str()),
+        (412, Some("reauth_required")),
+        "{e}"
+    );
+    // An org owner: 403.
+    let (s, e) = w.call(Method::PUT, uri, &w.owner, Some(body.clone())).await;
+    assert_eq!(
+        (s, e["error"]["code"].as_str()),
+        (403, Some("instance_admin_required")),
+        "{e}"
+    );
+    let audits = || async {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM audit_log WHERE action = 'instance_settings.update'",
+        )
+        .fetch_one(w.h.pool())
+        .await
+        .unwrap()
+    };
+    assert_eq!(audits().await, 0, "refused writes leave no audit row");
+    // The re-authenticated admin: 200, one audit row for this section.
+    let (s, v) = w.call(Method::PUT, uri, &w.admin, Some(body)).await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(audits().await, 1);
+}
+
 #[tokio::test]
 async fn loosening_is_reported_with_the_key_and_clamped_orgs_follow() {
     let w = world_with(None).await;
