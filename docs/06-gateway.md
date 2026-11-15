@@ -422,8 +422,13 @@ decide, and nothing is injected (an LDAP app declares no credentials). What diff
 **The lane answers instead of forwarding.** `decide` marks the prepared request with the app's
 approved `ldap` block **only** when the request won a *granted connection* of that app (the
 transport rule of `§MITM lane` applies: TLS to the claimed port). A request on an LDAP host without
-that mark — no connection, no grant, plain HTTP, a host of no LDAP app — is answered
-`403 ldap_no_connection` and never reaches a directory. The proxy then reads the body (≤ 16 KiB,
+that mark is answered without reaching a directory, and the refusal says what to do (FIX-153,
+D-306, C-892): plain HTTP → `400 ldap_https_required` (with the HTTPS URL); otherwise
+`403 ldap_no_connection` with `details.reason` — `not_connected` (no connection of the app in scope;
+`connect_url`, `access_url`), `not_granted` (a connection exists, none granted to this agent;
+`access_url`) or `no_app` (no installed LDAP app has this host). For a credential-free app (C-895)
+the message leads with `access_url`, where one **Give access** creates the connection (FIX-154,
+C-896). The proxy then reads the body (≤ 16 KiB,
 else 413 `ldap_request_invalid`), builds the query and runs it; the request-log hook sees the
 answer's status like an upstream answer.
 
@@ -827,12 +832,14 @@ dashboard URL to fix the problem when one exists.
 | `gateway_degraded` | 503 | (phase 3, RFE-014) database unreachable and the identity, host or credential value is not in cache (fail closed for new state); not for an invalid token | `reason` (`database_unavailable` \| `credential_store_unavailable`), `retry-after: 5` |
 | `multiple_connections` / `multiple_providers` | 409 | step 9 | `choices`, `header: "x-aurora-connection-id"` |
 | `connection_not_found` | 404 | stale/ungranted id | — |
-| `connection_reauth_required` | 403 | refresh refused earlier | `connection_id`, `reconnect_url` |
+| `connection_reauth_required` | 403 | refresh refused earlier | `connection_id`, `reconnect_url` (FIX-153: every dashboard URL is built per C-891) |
 | `credential_unavailable` | 502 | granted secret/connection could not be produced (store error, mint failure); (phase 5, P4-LLM, D-261) also a failed or held LLM mint (Vertex, Entra, STS) | `kind`; for an LLM mint `kind: "llm_mint"` and `reason` (`mint_rejected` \| `mint_unavailable`) |
 | `secret_store_unavailable` | 503 | external store unreachable | `store_id` |
 | `app_unavailable` | 403 | org posture restricts the app | `app_id` |
-| `access_restricted` | (upstream status) | upstream 401/403, nothing injected, workspace holds an ungranted candidate | `kind`, `provider`, `manage_url` |
-| `app_not_connected` | (upstream status) | known app host, no connection in scope | `app_id`, `connect_url` |
+| `access_restricted` | (upstream status) | upstream 401/403, nothing injected, workspace holds an ungranted candidate | `kind`, `provider`, `manage_url`; (FIX-153, C-893) `access_url` |
+| `app_not_connected` | (upstream status) | known app host, no connection in scope | `app_id`, `connect_url`; (FIX-154, C-897) for a credential-free app the message leads with `access_url` |
+| `ldap_https_required` | 400 | (FIX-153, C-892) plain HTTP to an LDAP app host | `app_id?`, `url` |
+| `ldap_no_connection` | 403 | (D-251, FIX-153, C-892) LDAP host without a granted connection of the app | `reason` (`not_connected` \| `not_granted` \| `no_app`), `app_id`, `app_name`, `connect_url`, `access_url` (per reason) |
 | `app_path_unserved` | (upstream status) | known app host, path no app serves | `host` |
 | `credential_not_found` | (upstream status) | unknown host, nothing stored | `create_secret_url` |
 | `host_mismatch` | 421 | tenant-bound (or, phase 2 D-74, instance-bound) credential on wrong host; (FIX-145, D-231) an instance-bound credential on its host but outside its base path | `expected_host`; `expected_base_url` when the instance has a base path |

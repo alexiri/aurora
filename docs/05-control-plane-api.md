@@ -608,8 +608,8 @@ state, external_id? }` in `GET /v1/orgs/{org}/members`.
 ### Apps, connections, OAuth clients
 | Method & path | Auth | Purpose |
 |---|---|---|
-| GET `/v1/apps?workspace_id=` | S/K | catalogue with availability and connection counts |
-| GET `/v1/apps/{app}` | S/K | about, connect methods (form schemas), scopes, tools, agent docs |
+| GET `/v1/apps?workspace_id=` | S/K | catalogue with availability and connection counts; (phase 5, FIX-154, C-895) `credential_free` |
+| GET `/v1/apps/{app}` | S/K | about, connect methods (form schemas), scopes, tools, agent docs; (phase 5, FIX-154, C-895) `credential_free` |
 | GET `/v1/apps/{app}/icon?variant=light|dark`, `/v1/apps/{app}/guide` | S/K | sanitized PNG; setup guide markdown |
 | POST `/v1/apps/{app}/connect` | S | `{ scope, workspace_id?, method_id, fields?, oauth_client_id?, access_level?, reconnect_connection_id? }` → `{ "kind": "redirect", "url" }` \| `{ "kind": "connected", "connection" }` |
 | GET `/v1/oauth/callback` | P | state-bound; renders a tiny HTML page that posts to the opener and closes |
@@ -655,6 +655,7 @@ by `id`, never by `host` alone.
 | PUT/DELETE `/v1/agents/{agent}/grants/secrets/{secret}` | S/K | |
 | GET `/v1/connections/{id}/grants` | S/K | agents granted |
 | POST `/v1/connections/{id}/grants` | S/K | (phase 4, FIX-020, D-137) bulk grant from the credential side: `{ agent_ids (1–`GRANT_BULK_MAX`), mode, allow_tools?, ask_tools?, ask_timeout_secs? }`; each agent passes exactly the checks of `PUT /v1/agents/{agent}/grants/connections/{conn}` (same service function, incl. 422 `full_grant_forbidden`); all-or-nothing, one audit row per new grant; an existing grant is left unchanged and reported `existing` (C-504) |
+| PUT `/v1/agents/{agent}/grants/apps/{app}` | S/K | (phase 5, FIX-154, D-306, C-896) give an agent access to a **credential-free** app (C-895) in one step: body as `PUT …/grants/connections/{conn}`; in one transaction serialized per (workspace, app) it reuses the workspace's oldest active connection of the app or creates one (audited `connection.created`, `via: "agent_grant"`), then upserts the grant; → `{ connection, grant, created }`; 404 `app_not_found`, 403 `app_unavailable`, 422 `app_not_credential_free`, 422 `full_grant_forbidden`. Removing access uses `DELETE …/grants/connections/{conn}` |
 | GET/POST `/v1/secrets/{id}/grants` | S/K | (phase 4, FIX-020, D-137) agents granted (only agents the caller can see) / bulk grant `{ agent_ids }` with exactly the checks of `PUT /v1/agents/{agent}/grants/secrets/{secret}`; all-or-nothing, idempotent (C-503) |
 | GET `/v1/agents/{agent}/model-readiness` | S/K | (phase 4, FIX-019, D-136) `can_own`: per granted LLM key `usable` or the failing reason, and the default model selection (`08 §Model readiness`, C-500). (phase 5, P5-MODELS-1, C-878) `default` also carries the role resolution and warnings |
 | GET `/v1/agents/{agent}/effective` | S/K | effective credentials and per-tool decisions with `org_ceiling`; (phase 2, RFE-005) optional `?speaker=<user_id>\|none` |
