@@ -1220,12 +1220,15 @@ pub struct RateClassOverride {
 pub struct TelemetrySection {
     pub otlp_endpoint: Option<String>,
     pub log_level: String,
+    /// Fraction of traces sampled (FIX-146, C-732 (7)); validated to 0.0..=1.0.
+    pub sample_ratio: f64,
 }
 impl Default for TelemetrySection {
     fn default() -> Self {
         Self {
             otlp_endpoint: None,
             log_level: "info".into(),
+            sample_ratio: 1.0,
         }
     }
 }

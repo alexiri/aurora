@@ -1,8 +1,39 @@
-import type { ReactNode } from "react";
+"use client";
 
+import { useState, type ReactNode } from "react";
+
+import { ApiError } from "@/lib/api/client";
 import { errorMessage } from "@/lib/api/errors";
 
 import { Button } from "./ui/button";
+
+/**
+ * (FIX-146, C-732 (1), docs/14) The failed request's id as a copyable "Reference" for support: the first 8
+ * characters with a copy button for the whole id. Nothing for an error without one (network failure, no header).
+ */
+export function RequestReference({ error }: { error: unknown }) {
+  const [copied, setCopied] = useState(false);
+  const id = error instanceof ApiError ? error.requestId : undefined;
+  if (!id) return null;
+  return (
+    <p className="mt-2 flex flex-wrap items-center gap-2 text-xs text-ink-2">
+      <span>
+        Reference: <code className="font-mono">{id.slice(0, 8)}…</code>
+      </span>
+      <Button
+        variant="ghost"
+        size="sm"
+        className="min-h-8 px-2 text-xs"
+        aria-label={`Copy reference ${id}`}
+        onClick={() => {
+          void navigator.clipboard?.writeText(id).then(() => setCopied(true));
+        }}
+      >
+        {copied ? "Copied" : "Copy"}
+      </Button>
+    </p>
+  );
+}
 
 export function Loading({ label = "Loading…" }: { label?: string }) {
   return (
@@ -20,6 +51,7 @@ export function ErrorState({ error, onRetry }: { error: unknown; onRetry?: () =>
   return (
     <div role="alert" className="rounded-card border border-danger-ink/30 bg-danger-soft p-4 text-sm text-danger-ink">
       <p>{errorMessage(error)}</p>
+      <RequestReference error={error} />
       {onRetry ? (
         <Button variant="outline" size="sm" className="mt-2" onClick={onRetry}>
           Try again

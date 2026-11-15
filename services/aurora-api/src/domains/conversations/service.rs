@@ -404,6 +404,7 @@ pub async fn create_turn_capped(
         Some(seq) => Some(super::reply::resolve(&mut *conn, conv.id, conv.agent_id, seq).await?),
         None => None,
     };
+    let trace_context = aurora_core::telemetry::current_traceparent();
     let n = NewTurn {
         conversation_id: conv.id,
         agent_id: conv.agent_id,
@@ -414,6 +415,8 @@ pub async fn create_turn_capped(
         text: m.text,
         source_event_id: m.source_event_id,
         reply_to_seq: m.reply_to_seq,
+        // (FIX-146, D-232) the turn is a child of the span that inserts it.
+        trace_context: trace_context.as_deref(),
     };
     let created = turns::create(&mut *conn, &n).await?;
     let row = match &created {

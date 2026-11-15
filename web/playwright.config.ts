@@ -51,6 +51,18 @@ if (!Number.isInteger(prodPort) || prodPort < 1 || prodPort > 65535) {
 const prodUrl = `http://localhost:${prodPort}`;
 const prodDist = ".next-e2e-prod";
 
+// FIX-146 (D-232 (i)): browser tracing is on only when the web workload has AURORA_TRACING_SAMPLE_RATIO, which
+// the root layout reads at request time. `tracing.spec.ts` therefore runs in its own project against a second dev
+// server of this checkout (own port, own dist dir) started with the variable; the default server has none, so the
+// same spec also proves that without it nothing loads and nothing is sent. Port: AURORA_E2E_WEB_TRACING_PORT
+// (default 4120).
+const TRACING_SPEC = /tracing\.spec\.ts$/;
+const tracingPort = Number(process.env.AURORA_E2E_WEB_TRACING_PORT ?? "4120");
+if (!Number.isInteger(tracingPort) || tracingPort < 1 || tracingPort > 65535) {
+  throw new Error(`AURORA_E2E_WEB_TRACING_PORT must be a TCP port, got "${process.env.AURORA_E2E_WEB_TRACING_PORT}"`);
+}
+const tracingUrl = `http://localhost:${tracingPort}`;
+
 export default defineConfig({
   testDir: "./e2e",
   timeout: 90_000,
@@ -62,7 +74,8 @@ export default defineConfig({
   projects: prodMode
     ? [{ name: "production", testMatch: PROD_SPEC, fullyParallel: true, use: { baseURL: prodUrl } }]
     : [
-        { name: "mocked", testIgnore: [...REAL_STACK, PROD_SPEC], fullyParallel: true },
+        { name: "mocked", testIgnore: [...REAL_STACK, PROD_SPEC, TRACING_SPEC], fullyParallel: true },
+        { name: "tracing", testMatch: TRACING_SPEC, fullyParallel: true, use: { baseURL: tracingUrl } },
         // One worker, files and tests strictly in order: they share one stack.
         { name: "real-stack", testMatch: REAL_STACK, fullyParallel: false, workers: 1 },
       ],
@@ -76,9 +89,16 @@ export default defineConfig({
       }
     : external
       ? undefined
-      : {
-          command: `pnpm exec next dev -p ${port}`,
-          url: webUrl,
-          reuseExistingServer: process.env.AURORA_E2E_REUSE === "1",
-        },
+      : [
+          {
+            command: `pnpm exec next dev -p ${port}`,
+            url: webUrl,
+            reuseExistingServer: process.env.AURORA_E2E_REUSE === "1",
+          },
+          {
+            command: `AURORA_TRACING_SAMPLE_RATIO=1 AURORA_NEXT_DIST_DIR=.next-e2e-tracing pnpm exec next dev -p ${tracingPort}`,
+            url: tracingUrl,
+            reuseExistingServer: process.env.AURORA_E2E_REUSE === "1",
+          },
+        ],
 });

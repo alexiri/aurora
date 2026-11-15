@@ -34,11 +34,14 @@ pub struct TurnRow {
     pub attachment_ids: Vec<Uuid>,
     /// (P5-CHAT-1, C-725) The `seq` of the event this message replies to.
     pub reply_to_seq: Option<i64>,
+    /// (FIX-146, D-232) the W3C traceparent of the span that inserted the turn.
+    pub trace_context: Option<String>,
 }
 
 const COLS: &str = "turns.id, turns.conversation_id, turns.agent_id, turns.role, turns.status, \
     turns.parent_turn_id, turns.door, turns.speaker_kind, turns.speaker_user_id, \
     turns.speaker_label, turns.text, turns.source_event_id, turns.reply_to_seq, \
+    turns.trace_context, \
     turns.abort_requested_at, \
     turns.send_now_requested_at, turns.error_code, turns.error_message, turns.usage, \
     turns.started_at, turns.finished_at, turns.created_at, \
@@ -59,6 +62,51 @@ pub struct NewTurn<'a> {
     pub source_event_id: Option<&'a str>,
     /// (C-725) validated by the caller.
     pub reply_to_seq: Option<i64>,
+    /// (FIX-146, SEC-88) the inserting span's W3C traceparent, from the API's own span only
+    /// (never from a sandbox or supervisor); an invalid value is stored as NULL.
+    pub trace_context: Option<&'a str>,
+}
+
+/// `trace_context` of the given turns (those that have one), for work items (C-732 (3)).
+pub async fn trace_contexts<'e, E: PgExecutor<'e>>(
+    exec: E,
+    ids: &[Uuid],
+) -> Result<std::collections::HashMap<Uuid, String>, DbError> {
+    let rows: Vec<(Uuid, String)> = sqlx::query_as(
+        "SELECT id, trace_context FROM turns WHERE id = ANY($1) AND trace_context IS NOT NULL",
+    )
+    .bind(ids)
+    .fetch_all(exec)
+    .await?;
+    Ok(rows.into_iter().collect())
+}
+
+/// The `trace_context` of the oldest queued turn of an agent: the turn that triggered a
+/// `sandbox.start` (a start with no queued turn — wake, schedule — starts its own trace).
+pub async fn queued_trace_context<'e, E: PgExecutor<'e>>(
+    exec: E,
+    agent_id: Uuid,
+) -> Result<Option<String>, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT trace_context FROM turns WHERE agent_id = $1 AND role = 'turn'
+            AND status = 'queued' ORDER BY created_at, id LIMIT 1",
+    )
+    .bind(agent_id)
+    .fetch_optional(exec)
+    .await?
+    .flatten())
+}
+
+/// The format the `turns.trace_context` CHECK enforces.
+pub fn valid_traceparent(s: &str) -> bool {
+    let b = s.as_bytes();
+    b.len() == 55
+        && s.starts_with("00-")
+        && b[35] == b'-'
+        && b[52] == b'-'
+        && s.bytes().enumerate().all(|(i, c)| {
+            matches!(i, 2 | 35 | 52) || c.is_ascii_digit() || (b'a'..=b'f').contains(&c)
+        })
 }
 
 pub enum Created {
@@ -110,8 +158,9 @@ async fn insert(
     let id = Uuid::now_v7();
     sqlx::query(
         "INSERT INTO turns (id, conversation_id, agent_id, role, status, parent_turn_id, door,
-            speaker_kind, speaker_user_id, speaker_label, text, source_event_id, reply_to_seq)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)",
+            speaker_kind, speaker_user_id, speaker_label, text, source_event_id, reply_to_seq,
+            trace_context)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)",
     )
     .bind(id)
     .bind(n.conversation_id)
@@ -126,6 +175,7 @@ async fn insert(
     .bind(n.text)
     .bind(n.source_event_id)
     .bind(n.reply_to_seq)
+    .bind(n.trace_context.filter(|t| valid_traceparent(t)))
     .execute(&mut *conn)
     .await?;
     get(&mut *conn, id).await?.ok_or(DbError::NotFound)
@@ -323,6 +373,8 @@ pub async fn promote_followup(
         text: &f.text,
         source_event_id: None,
         reply_to_seq: f.reply_to_seq,
+        // The promoted follow-up keeps the context it was inserted under.
+        trace_context: f.trace_context.as_deref(),
     };
     match insert(&mut sp, &n, "turn", "queued", None).await {
         Ok(row) => {

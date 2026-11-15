@@ -381,8 +381,15 @@ impl Holds {
         }
     }
 
-    /// Records the hold and waits for its resolution.
+    /// Records the hold and waits for its resolution. (FIX-146, D-232 (8)) The wait is one
+    /// `approval hold` span, a child of the request's `gateway` span: its duration is the time the
+    /// request was parked, and the resumed request continues under the same parent.
     pub async fn hold(&self, r: HoldRequest<'_>) -> HoldOutcome {
+        let span = tracing::info_span!("approval_hold", otel.name = "approval hold");
+        tracing::Instrument::instrument(self.hold_inner(r), span).await
+    }
+
+    async fn hold_inner(&self, r: HoldRequest<'_>) -> HoldOutcome {
         // (RFE-014) A new hold cannot be persisted while the database is unreachable.
         if self.db_down() {
             return HoldOutcome::StoreUnavailable;

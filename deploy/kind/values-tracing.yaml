@@ -1,0 +1,12 @@
+# Tracing profile for `deploy/dev/kind-dev.sh up --tracing` (FIX-146 Part C, D-232): export to the dev Jaeger that
+# deploy/dev/jaeger/jaeger.yaml installs beside the release. Dev only.
+config:
+  telemetry:
+    otlp_endpoint: http://jaeger.aurora.svc.cluster.local:4318
+    sample_ratio: 1.0
+
+networkPolicy:
+  # The default-deny policies block the collector otherwise (docs/23 §NetworkPolicy). A peer in the release's own
+  # namespace: a podSelector alone matches pods of that namespace.
+  telemetryTo:
+    - podSelector: {matchLabels: {app: jaeger}}

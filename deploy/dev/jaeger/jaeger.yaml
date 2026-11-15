@@ -1,0 +1,88 @@
+# Jaeger v2 all-in-one for `deploy/dev/kind-dev.sh up --tracing` (FIX-146 Part C, D-232). DEV ONLY: in-memory
+# storage (the last 100k traces, gone on restart), no auth, no TLS. Production points `telemetry.otlp_endpoint`
+# at the operator's own collector (docs/operator/README.md, item 7).
+#
+# Lives in the `aurora` namespace beside the release so the chart's default-deny policies apply to it too:
+# the NetworkPolicy below admits the Aurora pods to OTLP/HTTP 4318 (deploy/kind/values-tracing.yaml opens the
+# matching egress on the Aurora side through `networkPolicy.telemetryTo`). The UI is reached with
+#   kubectl -n aurora port-forward svc/jaeger 16686
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: jaeger-config, namespace: aurora}
+data:
+  config.yaml: |
+    service:
+      extensions: [jaeger_storage, jaeger_query]
+      pipelines:
+        traces:
+          receivers: [otlp]
+          processors: [batch]
+          exporters: [jaeger_storage_exporter]
+      telemetry:
+        resource: {service.name: jaeger}
+        logs: {level: info}
+    extensions:
+      jaeger_query:
+        storage: {traces: memstore}
+      jaeger_storage:
+        backends:
+          memstore:
+            memory: {max_traces: 100000}
+    receivers:
+      otlp:
+        protocols:
+          http: {endpoint: "0.0.0.0:4318"}
+    processors:
+      batch: {}
+    exporters:
+      jaeger_storage_exporter:
+        trace_storage: memstore
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: jaeger, namespace: aurora}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: jaeger}}
+  template:
+    metadata: {labels: {app: jaeger}}
+    spec:
+      enableServiceLinks: false
+      automountServiceAccountToken: false
+      containers:
+        - name: jaeger
+          # jaegertracing/jaeger 2.12.0, pinned by digest (FIX-103 supply-chain rule).
+          image: docker.io/jaegertracing/jaeger:2.12.0@sha256:4c8423cd8fa8b727bd632f0acda2cc39118f21a4bdcef322a6c9ddbeb6dcd424
+          args: ["--config", "/etc/jaeger/config.yaml"]
+          ports:
+            - {name: otlp-http, containerPort: 4318}
+            - {name: ui, containerPort: 16686}
+          readinessProbe:
+            httpGet: {path: /, port: 16686}
+          volumeMounts:
+            - {name: config, mountPath: /etc/jaeger, readOnly: true}
+      volumes:
+        - name: config
+          configMap: {name: jaeger-config}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: jaeger, namespace: aurora}
+spec:
+  selector: {app: jaeger}
+  ports:
+    - {name: otlp-http, port: 4318, targetPort: 4318}
+    - {name: ui, port: 16686, targetPort: 16686}
+---
+# The release's default-deny policy covers this pod: admit the Aurora pods to the OTLP port (and the UI port for
+# `kubectl port-forward`, which the node delivers from outside the pod network, so it needs no rule).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: jaeger-ingress, namespace: aurora}
+spec:
+  podSelector: {matchLabels: {app: jaeger}}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector: {}
+      ports: [{protocol: TCP, port: 4318}]
