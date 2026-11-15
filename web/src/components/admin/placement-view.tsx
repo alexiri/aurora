@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState, type FormEvent } from "react";
 
 import { ErrorState, Loading } from "@/components/states";
@@ -162,7 +163,7 @@ function PlacementForm({ saved, embedded, onSaved }: { saved: Placement; embedde
           title="Where new users land"
           description={
             <>
-              Sign-up is <strong>{saved.signup_mode.replace("_", "-")}</strong> (set in the Helm values). Placement applies to
+              Sign-up is <strong>{saved.signup_mode.replace("_", "-")}</strong> (change it in <Link className="underline underline-offset-2" href="/admin/settings/sign-in">Admin › Sign-in</Link>). Placement applies to
               everyone who is admitted, however they were admitted.
             </>
           }

@@ -337,6 +337,45 @@ export async function mockApi(
         ],
       });
     }
+    // (phase 5, SET-4) Admin › Settings › Sign-in and Email.
+    if (p === "/v1/admin/settings/sign_in") {
+      const sch = (kind: string, extra: Record<string, unknown> = {}) => ({ kind, min: null, max: null, max_len: null, options: null, item_kind: null, ...extra });
+      const k = { locked: false, helm_key: "config.auth.x", list: null, id_field: null, entries: null, secret: null, source: "default" };
+      const helm = { id: "helm", display_name: "Helm SSO", issuer: "https://sso.example.test", client_id: "aurora", client_secret_env: "AURORA_OIDC_SECRET" };
+      const corp = { id: "corp", display_name: "Corp directory", issuer: "https://corp.example.test/realms/main", client_id: "aurora-corp", client_secret: { $secret: { set: true } }, role_claim: "roles", role_mappings: [{ value: "ops", instance_admin: false, org: { slug: "acme", role: "member" } }] };
+      return json({
+        section: "sign_in", title: "Sign-in", description: "Sign-up, sessions and identity providers.", generation: 3,
+        updated_at: now, updated_by_label: "root@example.test", extra: { providers_from_helm: 1, signed_in_with: "helm" },
+        settings: [
+          { ...k, key: "auth.signup_mode", value: "invite_only", default: "invite_only", schema: sch("enum", { options: ["invite_only", "sso_jit", "open"] }) },
+          { ...k, key: "auth.org_creation", value: "instance_admins", default: "instance_admins", schema: sch("enum", { options: ["instance_admins", "anyone"] }) },
+          { ...k, key: "auth.session_idle_secs", value: 3600, default: 3600, schema: sch("duration_secs", { min: 60 }) },
+          { ...k, key: "auth.session_absolute_secs", value: 86400, default: 86400, schema: sch("duration_secs", { min: 60 }) },
+          { ...k, key: "auth.cli_key_ttl_days", value: 90, default: 90, schema: sch("int", { min: 1 }) },
+          {
+            ...k, key: "auth.oidc_providers", value: [helm, corp], source: "helm", helm_key: "config.auth.oidc_providers", default: [], list: "keyed", id_field: "id", schema: sch("list", { item_kind: "object" }),
+            entries: [
+              { id: "helm", value: helm, source: "helm", locked: true, warnings: null },
+              { id: "corp", value: corp, source: "dashboard", locked: false, warnings: null },
+            ],
+          },
+        ],
+      });
+    }
+    if (p === "/v1/admin/settings/email") {
+      const sch = (kind: string) => ({ kind, min: null, max: null, max_len: null, options: null, item_kind: null });
+      const k = { locked: false, helm_key: "config.email.x", list: null, id_field: null, entries: null, source: "dashboard", default: null };
+      return json({
+        section: "email", title: "Email", description: "The mail server for sign-in, invitations and notifications.", generation: 1,
+        updated_at: now, updated_by_label: "root@example.test", extra: null,
+        settings: [
+          { ...k, key: "email.smtp_url", value: "smtp://mail.example.test:25", schema: sch("string"), secret: null },
+          { ...k, key: "email.from", value: "aurora@example.test", schema: sch("string"), secret: null },
+          { ...k, key: "email.smtp_username", value: "aurora", schema: sch("string"), secret: null },
+          { ...k, key: "email.smtp_password", value: null, schema: sch("string"), secret: { set: true, updated_at: now, from_env: null } },
+        ],
+      });
+    }
     if (p === "/v1/admin/placement/preview") return json({ name: "bobj", slug: "bobj", used: 0, unresolved: [] });
     if (p === "/v1/admin/placement/choices") {
       return json({ workspaces: [{ id: id(2), slug: "main", name: "Main workspace" }], secrets: [{ id: id(300), name: "org-llm-key", kind: "llm" }], connections: [] });
@@ -463,6 +502,8 @@ export const ROUTES: { name: string; path: string; admin?: boolean }[] = [
   { name: "admin-settings", path: "/admin/settings" },
   { name: "admin-settings-section", path: "/admin/settings/governance" },
   { name: "admin-settings-llm", path: "/admin/settings/llm" },
+  { name: "admin-settings-sign-in", path: "/admin/settings/sign-in" },
+  { name: "admin-settings-email", path: "/admin/settings/email" },
   { name: "admin-secret-stores", path: "/admin/secret-stores" },
   { name: "admin-plugins", path: "/admin/plugins" },
   { name: "admin-plugin-detail", path: "/admin/plugins/github" },

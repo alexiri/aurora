@@ -1,6 +1,8 @@
 "use client";
 
 import { SecretStoresView } from "@/components/admin/secret-stores-view";
+import { EmailSettingsView } from "@/components/admin/settings/email-settings-view";
+import { SignInSettingsView } from "@/components/admin/settings/sign-in-settings-view";
 import { GovernanceSettingsView } from "@/components/admin/settings/governance-settings-view";
 import { LlmSettingsView } from "@/components/admin/settings/llm-settings-view";
 import { SettingsSectionForm } from "@/components/admin/settings/settings-section-form";
@@ -20,6 +22,9 @@ export function SettingsSectionView({ slug }: { slug: string }) {
   if (sectionFromSlug(slug) === "governance") return <GovernanceSettingsView />;
   // SET-3: providers, preference order and endpoints, with a connection test.
   if (sectionFromSlug(slug) === "llm") return <LlmSettingsView />;
+  // SET-4: sign-up, sessions and identity providers; the mailer with a test message.
+  if (sectionFromSlug(slug) === "sign_in") return <SignInSettingsView />;
+  if (sectionFromSlug(slug) === "email") return <EmailSettingsView />;
   return <GenericSectionView slug={slug} />;
 }
 

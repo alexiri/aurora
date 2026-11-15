@@ -99,6 +99,25 @@ export function useTestLlmEndpoint() {
   });
 }
 
+export type ProviderTestResult = components["schemas"]["ProviderTestResult"];
+export type EmailTestResult = components["schemas"]["EmailTestResult"];
+
+/** Discovery against a provider's issuer, from the API (C-780): nothing is saved, no secret is needed. */
+export function useTestProvider() {
+  return useMutation({
+    mutationFn: (provider: Record<string, unknown>) =>
+      unwrap(api.POST("/v1/admin/settings/sign_in/provider-test", { body: { provider } as never })),
+  });
+}
+
+/** One test e-mail to the caller's own address (C-781); `values` = the unsaved section values, absent = in force. */
+export function useTestEmail() {
+  return useMutation({
+    mutationFn: (values: SettingValues | null) =>
+      unwrap(api.POST("/v1/admin/settings/email/test", { body: (values ? { values } : {}) as never })),
+  });
+}
+
 /** Import a settings document: a dry run shows the diff, applying writes every section (C-776). */
 export function useImportSettings() {
   const qc = useQueryClient();
