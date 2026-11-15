@@ -520,7 +520,9 @@ dependencies = [
  "aws-lc-rs",
  "axum",
  "base64 0.22.1",
+ "futures",
  "http",
+ "http-body-util",
  "metrics",
  "metrics-exporter-prometheus",
  "opentelemetry",
@@ -528,10 +530,12 @@ dependencies = [
  "opentelemetry_sdk",
  "proptest",
  "pulldown-cmark",
+ "reqwest 0.12.28",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
  "tokio",
+ "tower",
  "tracing",
  "tracing-opentelemetry",
  "tracing-subscriber",
@@ -3998,6 +4002,7 @@ dependencies = [
  "portable-atomic",
  "rand 0.9.5",
  "thiserror 2.0.21",
+ "tokio",
 ]
 
 [[package]]

@@ -2,6 +2,7 @@
 //! reached over HTTP; the contract sits behind [`Minter`] so tests use a stub.
 
 use aurora_core::limits::HOOK_WALL;
+use aurora_core::telemetry::InternalRequest;
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
@@ -141,9 +142,8 @@ impl Minter for HttpMinter {
             .post(format!("{}/internal/v1/hooks/token.mint", self.base))
             .bearer_auth(&self.secret)
             .headers(crate::key_id_headers(self.key_id.as_deref()))
-            .headers(aurora_core::telemetry::headers())
             .json(&body)
-            .send()
+            .send_internal("aurora-hookhost")
             .await
             .map_err(|_| MintError::Unavailable)?;
         let reply: HookReply = resp.json().await.map_err(|_| MintError::Unavailable)?;
