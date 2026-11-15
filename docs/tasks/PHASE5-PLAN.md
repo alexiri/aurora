@@ -30,7 +30,7 @@ Owner, 2026-11-14: phase 5 starts when AUDIT-004 is merged; same working mode as
 |---|---|---|
 | `p5-apps` | P5-GUIDE-1 → {2 ∥ 4 ∥ 5} → 3 → FIX-151 → 6 → 7 ‖ P5-ICS → P5-CALDAV ‖ | the registry, package format and built-in packages are this lane's ground; P5-GUIDE-1 and P5-ICS both change the registry, so they run in one lane, one after the other |
 | `p5-agent` | FIX-150 → P4-NARR → P4-UTOK ‖ P4-EVAL-1 → {2 ∥ 4} → 3 ‖ | channels and messaging tools (FIX-150, `send_as_me`), then evals, whose judge builds on the LLM chain's providers |
-| `p5-platform` | P4-011B-1 → {2 ∥ 3} → 4 → 5 ‖ P4-S3 ‖ P5-CALINV ‖ | gateway holds and Web Push next to the SSH and tracing work; the blob store; the mailer-only calendar invite |
+| `p5-platform` | P4-011B-1 → {2 ∥ 3} → 4 → 5 ‖ P5-CALINV ‖ | gateway holds and Web Push next to the SSH and tracing work; the mailer-only calendar invite (P4-S3, the blob store, moved to phase 6, D-318) |
 
 **Ordering constraint:** P5-GUIDE-7 must not run beside a lane editing `services/aurora-api/src/domains/tools/` (FIX-150, P4-UTOK and P4-EVAL-2 do), so `p5-apps` holds P5-GUIDE-7 until those three are merged. If one lane finishes much earlier, the coordinator moves the head of another lane's queue to it. **FIX-150** (S–M, `channels/messaging.rs` + `tools/messaging.rs` only, disjoint from the wave-2 hot files) may be inserted at any lane's next batch gate; not concurrent with P4-UTOK/P4-NARR.
 
@@ -38,7 +38,7 @@ Owner, 2026-11-14: phase 5 starts when AUDIT-004 is merged; same working mode as
 1. **Spec step 0** for FIX-142, FIX-145, FIX-146 (unblocks wave 1/2 lanes).
 2. **SPEC-SETTINGS** spec batch → SET-1..SET-5 briefs (owner answers its open classification questions).
 3. **P5-CHAT-0** design boards + `docs/14` (owner reviews before P5-CHAT-2).
-4. Specs/briefs for the rows with none, in the owner's order (D-235(c)): **P4-LLM, P4-SSH-1/2, P4-011B** first; then P4-S3, P4-EVAL, P4-NARR, P4-UTOK (P5-SLACK moved to phase 6, D-285).
+4. Specs/briefs for the rows with none, in the owner's order (D-235(c)): **P4-LLM, P4-SSH-1/2, P4-011B** first; then P4-S3, P4-EVAL, P4-NARR, P4-UTOK (P5-SLACK moved to phase 6, D-285; P4-S3, specified, moved to phase 6, D-318).
 
 Done 2026-11-14: specs merged for SPEC-SETTINGS (SET-1..SET-5), P4-SSH (P4-SSH-1/2), P4-LLM (P4-LLM-1..6), P4-011B (P4-011B-1..5); owner answers D-235, D-268. Still to spec: P5-SLACK, P4-S3, P4-EVAL, P4-NARR, P4-UTOK; P5-CHAT-0 boards.
 Done 2026-11-14: step 0 of FIX-142 (46bbf084), FIX-145 (f8fb415b), FIX-146 (c8aa4cb5). SPEC-SETTINGS' owner questions answered (D-235(a)/(b)); P5-CERN-ADDONS uses the gateway lane (D-235(d)).

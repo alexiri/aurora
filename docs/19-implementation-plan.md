@@ -208,7 +208,7 @@ RFE-024 (self-contained deprovision ops).
 
 SSH front door, port previews, evals, git-backed skill library, groups and
 SCIM, shared rate-limit counters, S3 blob store, additional LLM providers.
-See `21`. (phase 4, SPEC-P4a) The groundwork batch P4-CNT (shared counters), P4-S3 (phase 5, D-138),
+See `21`. (phase 4, SPEC-P4a) The groundwork batch P4-CNT (shared counters), P4-S3 (phase 5, D-138; then phase 6, D-318),
 P4-LLM (phase 5, D-138), P4-HAR (after P4-LLM) and P4-GRANTS (custom grants only; Q8) is specified in
 `21 §Other later items` and the sections it names.
 Design-review item RFE-011b (approval park-and-resume, Web Push; phase 5, D-138).
@@ -216,8 +216,8 @@ Phases 3 and 4 start once phases 1 and 2 are done.
 
 ## Phase 5 — Later still
 
-Multi-arch (arm64) images, OPS-022 (owner, 2026-11-07: no arm deployment planned; images are
-amd64 only until then). Dependabot, OPS-021, and the Slack connector (owner, 2026-11-08, D-78; the Slack connector moved on to phase 6, D-285).
+Multi-arch (arm64) images, OPS-022, were deferred here (owner, 2026-11-07) and then cancelled
+(owner, 2026-11-15, D-318: not needed; images stay amd64 only). Dependabot, OPS-021, and the Slack connector (owner, 2026-11-08, D-78; the Slack connector moved on to phase 6, D-285).
 App guides and tools on demand, P5-GUIDE-1..8 (owner, 2026-11-13 and 2026-11-15, D-170..D-172,
 D-295..D-298; `24`, `21 §Phase 5 — App guides and tools on demand`): P5-GUIDE-1 is the first
 addon-related task of the phase, before addon sources (P5-ASRC) and the CERN addons.
@@ -228,7 +228,8 @@ Owner, 2026-11-14: ideas prepared ahead of time, not to be started yet. **Nested
 (an org tree: department → group → section, tighten-only inheritance of governance, policy,
 retention, availability and limits; `docs/tasks/P6-ORGTREE.md`) and **usage limits and load
 knobs** (quotas per user/agent/workspace/org, limit profiles, sandbox awake-time budgets, automation
-caps, expensive-endpoint classes, an instance pressure level; `docs/tasks/P6-LIMITS.md`), and the **Slack connector** (P6-SLACK, moved from phase 5 by the owner 2026-11-15, D-285: not a priority). The org tree
+caps, expensive-endpoint classes, an instance pressure level; `docs/tasks/P6-LIMITS.md`), and the **Slack connector** (P6-SLACK, moved from phase 5 by the owner 2026-11-15, D-285: not a priority), and the **S3-compatible blob store** (P4-S3, moved from phase 5 by the owner
+2026-11-15, D-318; already specified, D-120, with its brief `docs/tasks/P4-S3.md`). The org tree
 and limits items are proposals with open questions (`Q-P6-ORG-*`, `Q-P6-LIM-*`); the spec batches run
 when the owner starts phase 6. See `21 §Phase 6`. (The third proposal, "the harness chooses models",
 was moved to phase 5 by the owner on 2026-11-15, D-302(f), and is specified as P5-MODELS-1..3,

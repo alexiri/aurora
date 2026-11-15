@@ -124,7 +124,7 @@ database, no keys, no ambient network. It is called only on slow paths.
    plaintext per call. Connectors see their own platform credentials.
 9. **Chat traffic** to platforms is platform traffic, not agent traffic: it
    does not pass through the gateway.
-10. **Optional external stores** (phase 4, P4-CNT; the S3 half, P4-S3, is phase 5, D-138). The **API** may talk to an
+10. **Optional external stores** (phase 4, P4-CNT; the S3 half, P4-S3, is phase 6, D-318). The **API** may talk to an
     S3-compatible bucket (attachment bytes, nothing else) and the API and gateway
     to a Redis (rate-limit counters, nothing else). Both are operator-run
     infrastructure reached outbound over TLS with credentials from the workload

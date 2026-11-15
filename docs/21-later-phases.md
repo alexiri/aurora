@@ -294,6 +294,9 @@ instructions`, `§Usage and metering`, `§Evals`; `12 §Harness interface`, `§A
 `API_CONTRACTS` C-875..C-884.
 ## Phase 6 — Proposals (owner, 2026-11-14; not specified, not started)
 
+Also in phase 6, already specified: the **S3-compatible blob store** (P4-S3, D-120; moved from phase 5
+by the owner 2026-11-15, D-318), see *S3-compatible blob store* under §Other later items.
+
 - **Nested organizations — proposed (`docs/tasks/P6-ORGTREE.md`).** `organizations.parent_org_id`
   plus a closure table; root orgs are today's orgs. **Membership is upward-closed (owner, D-276(a))**: a
   sub-org member is a member of every ancestor, and removal cascades down. Recommended: ancestor owners/admins are implicit
@@ -327,7 +330,7 @@ instructions`, `§Usage and metering`, `§Evals`; `12 §Harness interface`, `§A
   `15 §Shared rate-limit counters`, `06 §Rate limiting`, `05 §Conventions`
   (*Shared counters*), `04 §Rate limits (auth)`, `07 §Evaluation`, `03 §Planned
   changes`, `18 §Shared rate-limit counters`.
-- **S3-compatible blob store — specified (phase 5 (D-138, moved from phase 4), P4-S3, D-120, SEC-63).**
+- **S3-compatible blob store — specified (phase 6 (D-318, moved from phase 5), P4-S3, D-120, SEC-63).**
   `BlobStore` backend `s3` beside `postgres` for attachment bytes; per-row backend,
   SSE verified at startup, no pre-signed URLs, explicit `aurora-api blobs migrate`.
   Owning sections: `10 §Attachments`, `15 §S3-compatible blob store`, `03 §Planned
