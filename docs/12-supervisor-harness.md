@@ -365,7 +365,8 @@ conversation and current turn) → runner (stamps sandbox and boot) →
 `POST /v1/runner/tool-calls` → **tool registry** → result back.
 
 (phase 5, P5-GUIDE-7, D-297, SEC-119, `24 §10b`) A second client takes the same path from the
-socket on: **`aurora-tool`** (`aurora-supervisor tool`, wrapper `/opt/aurora/bin/aurora-tool`),
+socket on: **`aurora-agent`** with the target `aurora` (`aurora-supervisor agent`, wrapper
+`/opt/aurora/bin/aurora-agent`, `24 §10a`),
 run by the agent from its shell, with the conversation from `AURORA_SESSION`, which the
 supervisor sets in the environment of every harness process it starts (not for the web
 terminal, SSH sessions or `process_start` children). Each `ToolDescriptor` carries `family` and

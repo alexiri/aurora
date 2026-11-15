@@ -9,7 +9,7 @@ guide blobs, snapshot keys, limits).
 **always the index** (C-645 as amended); there is no inline mode and no `AGENT_NOTES_INLINE_MAX`.
 Today's inline rendering remains only as the fallback when an app entry has no `guide_path`
 (older API). The index paragraph and the preamble are rendered in their "no `agent_cli`" form
-(the `aurora-app` sentences come with P5-GUIDE-6, C-653); write the renderer so P5-GUIDE-6 adds
+(the `aurora-agent` sentences come with P5-GUIDE-6, C-653); write the renderer so P5-GUIDE-6 adds
 them behind one boolean. Recipes are projected like reference files (with the *Procedure*
 header from P5-GUIDE-1's `reference_header`), and `PluginPackage.agent_guides[].files[]` carries
 `kind` (C-648 as amended); `operations` in C-648 is `null` until P5-GUIDE-6.

@@ -1,11 +1,12 @@
-# P5-GUIDE-7: Platform tools on demand — exposure, families, bridge filter, `aurora-tool` (owner, 2026-11-15)
+# P5-GUIDE-7: Platform tools on demand — exposure, families, bridge filter, the `aurora` target of `aurora-agent` (owner, 2026-11-15)
 
 Seventh task of "app guides and tools on demand": the same Code Mode treatment for Aurora's own
 MCP bridge. Owner, 2026-11-15: "spec out fixing the mcp bridge's issues the same way."
-Normative spec: `docs/24-app-guides.md` §10b and §11 (SEC-119, SEC-120); `12 §Platform tools`
-(as amended); `10 §Agent instructions` (*Platform tools on demand*); `16` (MCP surface).
-Contracts **C-654, C-655, C-657**. Decision **D-297**. Depends on **P5-GUIDE-6** (the `tool`
-subcommand placeholder, the wrappers, `agent_cli`, the preview/save helpers).
+Normative spec: `docs/24-app-guides.md` §10a (*Target `aurora`*), §10b and §11 (SEC-119,
+SEC-120); `12 §Platform tools` (as amended); `10 §Agent instructions` (*Platform tools on
+demand*); `16` (MCP surface). Contracts **C-654, C-655, C-657**. Decision **D-297**. Depends on
+**P5-GUIDE-6** (the `aurora-agent` command and its target model, the wrapper, `agent_cli`, the
+preview/save helpers, the `aurora` placeholder).
 
 ## Problem
 
@@ -17,7 +18,8 @@ session, used or not, and any change to any tool's description releases idle ses
 
 In mode `on_demand` (default) the harness sees only the core tools (`send_file`,
 `complete_task`); the instruction file lists every family in one line; the agent finds and calls
-the rest with `aurora-tool` through the same socket, registry, checks, narration and audit. Mode
+the rest with `aurora-agent search|describe|call` and the target `aurora` (one search also covers
+app operations and recipes) through the same socket, registry, checks, narration and audit. Mode
 `all` (`hosted.platform_tools`) is today's behaviour exactly.
 
 ## Scope
@@ -47,10 +49,12 @@ the rest with `aurora-tool` through the same socket, registry, checks, narration
 7. **`AURORA_SESSION`** (`services/aurora-supervisor/src/{harness_env.rs,spawn.rs}` and both
    adapters): set to the conversation id for every harness process; make sure the terminal
    (`pty.rs` strips `AURORA_*`), SSH and `process_start` environments do **not** carry it.
-8. **`aurora-tool`** (`services/aurora-supervisor/src/tool_cli/`, `main.rs`): replace
-   P5-GUIDE-6's placeholder with C-655: `list`, `search`, `describe`, `call`, the socket protocol
-   of `12 §Path`, schema-driven coercion, preview/save (shared helpers from P5-GUIDE-6), exit
-   codes 0/1/2/4.
+8. **Target `aurora`** (`services/aurora-supervisor/src/agent_cli/`): replace P5-GUIDE-6's
+   placeholder with C-655 as a second target kind behind the same verbs: `list aurora`, tools in
+   `search` (ranked with app operations and recipes), `describe aurora <tool>`, `call aurora
+   <tool>`, the socket protocol of `12 §Path`, schema-driven coercion, preview/save (shared
+   helpers), app-only options refused, exit codes of C-653 (1 tool error, 2 no session, 4
+   transport).
 9. **Docs you update**: `docs/tests/security-coverage.md` (SEC-119, SEC-120 test ids). If SET-5
    has merged, add `hosted.platform_tools` to the `agents` settings section (`15 §Instance
    settings`); otherwise SET-5 adds it.
@@ -65,7 +69,7 @@ Moving more tools into the core set (a spec change). App operations (P5-GUIDE-6)
 `services/aurora-api/src/domains/tools/**`, `crates/aurora-protocol/src/tools.rs`,
 `crates/aurora-config` (one key), `crates/aurora-core/src/limits.rs` (one constant),
 `services/aurora-api/src/domains/hosted/home.rs` (the `platform_tools` render input only),
-`services/aurora-supervisor/src/{mcp_bridge.rs,tools.rs,instructions.rs,harness_env.rs,spawn.rs,tool_cli/**,main.rs}`
+`services/aurora-supervisor/src/{mcp_bridge.rs,tools.rs,instructions.rs,harness_env.rs,spawn.rs,agent_cli/**}`
 and the adapters' environment code. **Not concurrent** with any lane that edits
 `domains/tools/` (e.g. FIX-150, P4-UTOK) or `mcp_bridge.rs`.
 
@@ -73,7 +77,7 @@ and the adapters' environment code. **Not concurrent** with any lane that edits
 
 - [ ] Every test of `18 §App guides on demand` marked P5-GUIDE-7, each named in the report.
 - [ ] SEC-119: every tool reachable by name in both modes with identical results, events and
-      audit rows; e2e `memory_save` through `aurora-tool` and through MCP produce the same
+      audit rows; e2e `memory_save` through `aurora-agent call aurora` and through MCP produce the same
       `tool.started` / `tool.finished` events and audit row.
 - [ ] Rolling upgrade: new API + old supervisor → the old supervisor ignores the new descriptor
       fields and `platform_tools` and lists everything; old API + new supervisor → no

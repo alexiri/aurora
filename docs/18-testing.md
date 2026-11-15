@@ -703,31 +703,35 @@ the supervisor snapshots are **index always** (one, two and 23 apps), the older-
   access), catalogue-only operations, two accounts with different grants, an instance-bound
   account's `base_url`, truncation at a lowered `AGENT_API_JSON_MAX`; `import-openapi` writes a
   byte-stable `operations.json` for the three checked-in documents and it validates.
-- **`aurora-app`** (P5-GUIDE-6, `services/aurora-supervisor` unit tests with a local mock proxy):
+- **`aurora-agent`** (P5-GUIDE-6, `services/aurora-supervisor` unit tests with a local mock proxy):
   `search` ranking on a fixed `api.json`; `describe` bound; `call` argument coercion and refusals
   (missing required, unknown name, enum) with exit 2 and **no request sent**; path encoding of
   `/`, `..`, `?`, `#`, `%2F` as one segment; `--path` refusals (scheme, `//host`, `@`); account
   selection (implicit with one, refused with several and none given); `x-aurora-connection-id`
   set and no other Aurora header; pagination for each style, the page cap and a cross-origin
   `next` refused; save path, `AGENT_CLI_SAVE_MAX` stop, preview bound on a 10 MiB body, `--raw`;
-  exit 1 on upstream 404, exit 3 on a gateway refusal body (SEC-118, SEC-120).
+  exit 1 on upstream 404, exit 3 on a gateway refusal body (SEC-118, SEC-120); options that do
+  not apply to the target refused with exit 2 and nothing sent; the linter rejects a package
+  with an app id `aurora` (`app_id_reserved`). P5-GUIDE-7 adds: one `search` returns app
+  operations, recipes and platform tools ranked together on a fixed `api.json` plus a fixed tool
+  list.
 - **Platform tools on demand** (P5-GUIDE-7): registry test that every tool declares a family and
   the core set equals `send_file`, `complete_task` (a new tool that forgets `family` fails the
   test); bridge tests: `tools/list` in `on_demand` = core set, in `all` = everything, without
   `agent_cli` = everything; `tools/call` of an on-demand tool served in every mode; instruction
   snapshots for the *platform tools* fragment (both modes, a family with an unavailable tool
-  omitted); `aurora-tool` tests: no `AURORA_SESSION` → exit 2 without touching the socket,
+  omitted); `aurora-agent` target-`aurora` tests: no `AURORA_SESSION` → exit 2 without touching the socket,
   argument coercion against a schema, preview/save, error result exit 1, socket down exit 4;
   `AURORA_SESSION` present in a harness spawn's environment and absent from terminal, SSH and
   `process_start` environments; session release: changing an on-demand tool's description
   releases no idle session, changing the core set does (SEC-119).
-- **End to end** (kind, `fake` harness scripted to run shell commands): `aurora-app call
+- **End to end** (kind, `fake` harness scripted to run shell commands): `aurora-agent call
   fixture-guide <op>` reaches the mock upstream with the connection header and the gateway's
-  injected credential; the same operation under a grant that blocks it exits 3; `aurora-tool call
+  injected credential; the same operation under a grant that blocks it exits 3; `aurora-agent call aurora
   memory_save key=… content=…` produces the same `tool.started` / `tool.finished` events and audit
   row as the MCP path.
 - **Live, env-gated** (as below, reported, not a gate): with `on_demand`, an agent asked to
-  "remind me every Monday at 9" creates a schedule through `aurora-tool`; with three connected
+  "remind me every Monday at 9" creates a schedule through `aurora-agent call aurora`; with three connected
   apps, an agent asked for the Indico free-room task opens the recipe before calling. P4-EVAL
   runs comparing `all` and `on_demand` are recorded in P5-GUIDE-7's completion report (`24 §13`).
 

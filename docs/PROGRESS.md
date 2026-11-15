@@ -1,6 +1,6 @@
 # Implementation progress
 
-Last updated: 2026-11-15, master after `8d556745` (P5-CHAT-4 B merged ece633ed). **Phase 5 is running**: wave 1 is merged; wave 2 started 2026-11-15 in the same three lanes (`p5-apps`: SET-1 → FIX-124 → SET-2..5 → P4-LLM-6; `p5-agent`: P5-CHAT-4 B merged, now P4-LLM-1..5; `p5-platform`: P5-CERN-ADDONS external repo (owner's GitHub side done, D-278) → FIX-146 → P4-SSH-1/2; §Execution order). Phase 6 stays closed until the owner's all-clear (D-278). Phases 0–4 are closed; their record is in `docs/history/`. **Phase 6 is proposed only** (P6-ORGTREE, P6-LIMITS; owner answers so far: D-276) and starts on the owner's word.
+Last updated: 2026-11-15, master after `8d556745` (P5-CHAT-4 B merged ece633ed) plus the P5-GUIDE spec merge (app guides and tools on demand, P5-GUIDE-1..7 ready, not yet placed). **Phase 5 is running**: wave 1 is merged; wave 2 started 2026-11-15 in the same three lanes (`p5-apps`: SET-1 → FIX-124 → SET-2..5 → P4-LLM-6; `p5-agent`: P5-CHAT-4 B merged, now P4-LLM-1..5; `p5-platform`: P5-CERN-ADDONS external repo (owner's GitHub side done, D-278) → FIX-146 → P4-SSH-1/2; §Execution order). Phase 6 stays closed until the owner's all-clear (D-278). Phases 0–4 are closed; their record is in `docs/history/`. **Phase 6 is proposed only** (P6-ORGTREE, P6-LIMITS; owner answers so far: D-276) and starts on the owner's word.
 
 ## How this file is kept
 
@@ -21,7 +21,7 @@ One row per task id, counted from the task tables (closed phases: from their his
 | 2 | 52 | 51 | 1 (FIX-017: the owner's real-cluster install) | 0 | 0 | 0 | `docs/history/phase-1-2.md` (closed 2026-11-09, AUDIT-002) |
 | 3 | 15 | 15 | 0 | 0 | 0 | 0 | `docs/history/phase-3.md` (closed 2026-11-10, AUDIT-003) |
 | 4 | 124 | 123 | 0 | 0 | 0 | 1 (FIX-131 closed without a build, D-195) | `docs/history/phase-4.md` (closed 2026-11-14, AUDIT-004) |
-| 5 | 80 | 38 | 3 (P5-CERN-ADDONS (external repo), SET-1, P4-LLM-1) | 36 (P5-GUIDE-1..7 counted with this branch) | 0 (every phase-5 item has a brief) | 3 (OPS-022 deferred; FIX-049 moved to phase 4; P5-SLACK moved to phase 6, D-285) | §Phase 5 tasks (TEST-021 and FIX-057, done, are counted here but their rows are in `docs/history/phase-0.md`'s task graph) |
+| 5 | 80 | 38 | 3 (P5-CERN-ADDONS (external repo), SET-1, P4-LLM-1) | 36 | 0 (every phase-5 item has a brief) | 3 (OPS-022 deferred; FIX-049 moved to phase 4; P5-SLACK moved to phase 6, D-285) | §Phase 5 tasks (TEST-021 and FIX-057, done, are counted here but their rows are in `docs/history/phase-0.md`'s task graph) |
 | 6 (proposed) | 3 | 0 | 0 | 0 | 3 (P6-ORGTREE, P6-LIMITS: proposals awaiting the owner; P6-SLACK, moved from phase 5, D-285) | 0 | §Phase 6 tasks (proposed) |
 | **All** | **401** | **349** | **4** | **36** | **3** | **9** | |
 
@@ -122,13 +122,13 @@ Lane order, waves and number blocks: `docs/tasks/PHASE5-PLAN.md`. Lanes `p5-apps
 | P5-CALINV | Agents add calendar events by e-mailing the person an invitation | D-274, C-844, SEC-108, migration 000230 | M | Rust | instance mailer | `P5-CALINV.md` | ready (not yet placed) |
 | P5-CALDAV | Read and write any CalDAV server with the person's own app password | D-275, C-845, SEC-109 | L | Rust + package | P5-ICS (same lane) | `P5-CALDAV.md` | ready (not yet placed) |
 | FIX-150 | `send_message` resolves an exact handle by itself; refusals list aliases to retry with; messaging-tool fields described | D-287, `13 §5.10` | S–M | Rust | — | `FIX-150.md` | ready (brief written 2026-11-15; not yet placed: any lane's next batch gate, not concurrent with P4-UTOK/P4-NARR) |
-| P5-GUIDE-1 | Agent guides: package format (summary, guide files, recipes), linter, blobs, snapshot, renderer, `aurora plugin guide`, `docs/22` paragraph | D-170, D-171, D-295, C-640..C-642, C-646, C-647, C-649, SEC-117, SEC-91, one migration | L | Rust | — | `P5-GUIDE-1.md` | ready (spec on branch alexiri/p5-guide, merges with it) |
-| P5-GUIDE-2 | Agent guides: home sync `apps` part, `.aurora/apps/` projection, always-index instruction file, admin API, advisory guard | D-171, D-295, C-643..C-645, C-648, SEC-117, SEC-91 | L | Rust | P5-GUIDE-1 | `P5-GUIDE-2.md` | ready (spec on branch alexiri/p5-guide) |
-| P5-GUIDE-3 | Dashboard Agent guide section (plugin page and review; recipes marked; plain-text viewer) | C-648, SEC-117 | S–M | Next.js | P5-GUIDE-2 (C-648) | `P5-GUIDE-3.md` | ready (spec on branch alexiri/p5-guide) |
-| P5-GUIDE-4 | Built-in packages adopt summaries, essentials, guide files and recipes (Indico free-room booking first) | D-295 | M | package | P5-GUIDE-1 | `P5-GUIDE-4.md` | ready (spec on branch alexiri/p5-guide) |
-| P5-GUIDE-5 | `aurora plugin import-openapi` (reference files, catalogue skeleton) | D-172, C-650 | M | Rust (CLI) | P5-GUIDE-1 | `P5-GUIDE-5.md` | ready (spec on branch alexiri/p5-guide) |
-| P5-GUIDE-6 | `aurora-app`: operations file, `api.json`, search/describe/call in the sandbox, image wrappers, import writes `operations.json` | D-296, C-651..C-653, C-656, SEC-118, SEC-120 | L | Rust + package | P5-GUIDE-2, P5-GUIDE-5 | `P5-GUIDE-6.md` | ready (spec on branch alexiri/p5-guide) |
-| P5-GUIDE-7 | Platform tools on demand: exposure/family, bridge lists core only, family index, `aurora-tool`, `AURORA_SESSION`, `hosted.platform_tools` | D-297, C-654, C-655, C-657, SEC-119, SEC-120 | M–L | Rust | P5-GUIDE-6; not beside lanes editing `domains/tools/` | `P5-GUIDE-7.md` | ready (spec on branch alexiri/p5-guide) |
+| P5-GUIDE-1 | Agent guides: package format (summary, guide files, recipes), linter, blobs, snapshot, renderer, `aurora plugin guide`, `docs/22` paragraph | D-170, D-171, D-295, C-640..C-642, C-646, C-647, C-649, SEC-117, SEC-91, one migration | L | Rust | — | `P5-GUIDE-1.md` | ready (spec merged 2026-11-15; not yet placed) |
+| P5-GUIDE-2 | Agent guides: home sync `apps` part, `.aurora/apps/` projection, always-index instruction file, admin API, advisory guard | D-171, D-295, C-643..C-645, C-648, SEC-117, SEC-91 | L | Rust | P5-GUIDE-1 | `P5-GUIDE-2.md` | ready (spec merged 2026-11-15; not yet placed) |
+| P5-GUIDE-3 | Dashboard Agent guide section (plugin page and review; recipes marked; plain-text viewer) | C-648, SEC-117 | S–M | Next.js | P5-GUIDE-2 (C-648) | `P5-GUIDE-3.md` | ready (spec merged 2026-11-15; not yet placed) |
+| P5-GUIDE-4 | Built-in packages adopt summaries, essentials, guide files and recipes (Indico free-room booking first) | D-295 | M | package | P5-GUIDE-1 | `P5-GUIDE-4.md` | ready (spec merged 2026-11-15; not yet placed) |
+| P5-GUIDE-5 | `aurora plugin import-openapi` (reference files, catalogue skeleton) | D-172, C-650 | M | Rust (CLI) | P5-GUIDE-1 | `P5-GUIDE-5.md` | ready (spec merged 2026-11-15; not yet placed) |
+| P5-GUIDE-6 | `aurora-agent`: operations file, `api.json`, one in-sandbox command (app targets; reserved app id `aurora`), image wrapper, import writes `operations.json` | D-296, C-651..C-653, C-656, SEC-118, SEC-120 | L | Rust + package | P5-GUIDE-2, P5-GUIDE-5 | `P5-GUIDE-6.md` | ready (spec merged 2026-11-15; not yet placed) |
+| P5-GUIDE-7 | Platform tools on demand: exposure/family, bridge lists core only, family index, target `aurora` of `aurora-agent`, `AURORA_SESSION`, `hosted.platform_tools` | D-297, C-654, C-655, C-657, SEC-119, SEC-120 | M–L | Rust | P5-GUIDE-6; not beside lanes editing `domains/tools/` | `P5-GUIDE-7.md` | ready (spec merged 2026-11-15; not yet placed) |
 
 ### Execution order (phase 5)
 
@@ -136,7 +136,7 @@ At most three implementation lanes at a time, disjoint ownership; a lane starts 
 
 - **Wave 1** (2026-11-14..15), all merged: `p5-apps` FIX-147, FIX-133, FIX-136, FIX-141, FIX-144, FIX-145, FIX-149, FIX-134, FIX-135; `p5-agent` P5-AGENT-1, FIX-137, P5-AGENT-2, FIX-138, P5-CHAT-1, P5-CHAT-2, P5-CHAT-3, P5-CHAT-4 A+C; `p5-platform` P5-ADMDEL, OPS-021, FIX-142, P5-ASRC, P5-CERN-ADDONS (in-repo part).
 - **Wave 2** (since 2026-11-15; `docs/tasks/PHASE5-PLAN.md` §Wave 2 lanes): `p5-apps` SET-1 → FIX-124 ‖ SET-2 → SET-3 ‖ SET-4 → SET-5 ‖ P4-LLM-6; `p5-agent` P5-CHAT-4 B ‖ P4-LLM-1 → 2 ‖ 3 → 4 → 5; `p5-platform` P5-CERN-ADDONS (external repo) ‖ FIX-146 ‖ P4-SSH-1 → P4-SSH-2. Then, as a lane frees: P4-011B-1 → {2 ∥ 3} → 4 → 5.
-- **Not yet placed**: FIX-150 (small; any lane's next batch gate); P4-011B-1..5 (the next free lane); P4-S3 (brief written 2026-11-15); P4-NARR, P4-UTOK (owner answers D-286, D-288); P4-EVAL-1..4 (owner answers D-300); P5-ICS → P5-CALDAV (same lane: registry, gateway decision, home sync), P5-CALINV (disjoint from the `p5-apps` hot files); P5-GUIDE-1 → {2 ∥ 4 ∥ 5} → 3, 6 → 7 (one lane; after the owner merges `alexiri/p5-guide`; P5-GUIDE-1 and P5-ICS both touch the registry, so not side by side).
+- **Not yet placed**: FIX-150 (small; any lane's next batch gate); P4-011B-1..5 (the next free lane); P4-S3 (brief written 2026-11-15); P4-NARR, P4-UTOK (owner answers D-286, D-288); P4-EVAL-1..4 (owner answers D-300); P5-ICS → P5-CALDAV (same lane: registry, gateway decision, home sync), P5-CALINV (disjoint from the `p5-apps` hot files); P5-GUIDE-1 → {2 ∥ 4 ∥ 5} → 3, 6 → 7 (one lane; P5-GUIDE-1 and P5-ICS both touch the registry, so not side by side).
 - **No spec yet**: none in phase 5 (P4-NARR, P4-UTOK and P4-EVAL specified 2026-11-15; P5-SLACK moved to phase 6, D-285).
 
 ### Exit criteria (phase 5)
@@ -177,12 +177,12 @@ Live reservations (numbers inside a block that a lane has already used are recor
 | P4-NARR / P4-UTOK (spec merged) | D-279..D-284 (used) | C-846..C-859 (used) | `20261201000231..233` (`234`, `235` released) | SEC-111..SEC-113 (used) |
 | P5-CALINV | D-274 (used) | C-844 (used) | `20261201000230` | SEC-108 (used) |
 | agent-page follow-ups (coordinator) | D-202..D-209 | C-701..C-709 | | |
-| branch `alexiri/p5-guide` (unmerged; amended 2026-11-15: always-index, recipes, `aurora-app`, platform tools on demand) | D-170..D-172, D-295..D-298 (used; D-299 released) | C-640..C-657 (used), C-658, C-659 | migration for P5-GUIDE-1 takes the next free number when placed | SEC-91, SEC-117..SEC-120 (used; SEC-117 replaces the branch's colliding SEC-90) |
+| P5-GUIDE-1..7 (spec merged 2026-11-15; always-index, recipes, `aurora-agent`, platform tools on demand) | D-170..D-172, D-295..D-298 (used; D-299 released) | C-640..C-657 (used), C-658, C-659 | migration for P5-GUIDE-1 takes the next free number when placed | SEC-91, SEC-117..SEC-120 (used; SEC-117 replaces the branch's colliding SEC-90) |
 
 ## Open questions for the owner
 
 - **Phase 5:** review of the coordinator defaults recorded in D-268.
-- **Phase 5 (branch `alexiri/p5-guide`, 2026-11-15):** (1) merge the branch (spec only; P5-GUIDE-1..7). (2) Q-GUIDE-1: platform-tool calls on `/run/aurora/tools.sock` name their conversation in the request, and any process in an agent's sandbox can name any of that agent's conversations that has an active turn (unchanged by P5-GUIDE-7, SEC-119 note). Bind calls to the calling harness process (for example a per-session socket or token)? Recommendation: yes, as its own FIX, because it also concerns today's MCP bridge; not a blocker for P5-GUIDE.
+- **Phase 5 (P5-GUIDE, 2026-11-15):** Q-GUIDE-1: platform-tool calls on `/run/aurora/tools.sock` name their conversation in the request, and any process in an agent's sandbox can name any of that agent's conversations that has an active turn (unchanged by P5-GUIDE-7, SEC-119 note). Bind calls to the calling harness process (for example a per-session socket or token)? Recommendation: yes, as its own FIX, because it also concerns today's MCP bridge; not a blocker for P5-GUIDE.
 - **Phase 6 (proposals):** Q-P6-ORG-2..8 in `docs/tasks/P6-ORGTREE.md` (membership flowing down? credentials shared down by flag? SCIM at roots? parent told of a child's critical events? subtree delete? placement by claim? depth 4?) and Q-P6-LIM-1, 3..8, 10 in `docs/tasks/P6-LIMITS.md` (limit profiles? interactive after the budget? LLM request counts only? defaults from production usage? manual pressure? report-only abuse signals? limits before the tree? only a person's engagement restarts the background cap?). Each has a recommendation; nothing blocks until phase 6 starts. Answered so far: D-276.
 
 ## Open security findings

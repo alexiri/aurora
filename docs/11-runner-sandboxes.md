@@ -684,9 +684,9 @@ entrypoint `/usr/local/bin/aurora-supervisor run`, user `agent` (uid 1000),
   also the image's `ENV PATH`; `/etc/bashrc` and `/etc/zshrc` carry the interactive defaults
   (aliases, `LS_COLORS`, prompt, history, zsh `compinit`) — system files, never the agent's home
   (`12 §Terminal`). (phase 5, P5-GUIDE-6/7, D-296, D-297, C-653) `/opt/aurora/bin` also holds
-  `aurora-app` and `aurora-tool`, two-line wrappers that `exec /usr/local/bin/aurora-supervisor
-  app|tool "$@"` (`24 §10a`, `§10b`); the supervisor treats their presence as the sandbox having
-  the commands (`agent_cli`). `/opt/aurora/bin` holds the `claude` and `codex` wrappers (FIX-138 item 1b,
+  `aurora-agent`, a two-line wrapper that does `exec /usr/local/bin/aurora-supervisor agent "$@"`
+  (`24 §10a`); the supervisor treats its presence as the sandbox having the command
+  (`agent_cli`). `/opt/aurora/bin` holds the `claude` and `codex` wrappers (FIX-138 item 1b,
   D-247; `images/sandbox/bin`, in the OS layer so every image has them): they refuse when the
   pinned binary is missing or the harness is not in the boot document's `enabled_harnesses`, source
   `/run/aurora/harness.env` (written by the supervisor, no secret) and keep their own state under

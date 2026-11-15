@@ -611,7 +611,7 @@ first request); `guide` lists the files of `agent/<app_id>/`, each with a one-li
 (D-295) marks task procedures as `kind: recipe`; `operations` (D-296) names the operations file
 (`24 §3.5`). The core projects them, with files it writes itself (`guide.md`: accounts, access,
 recipes, file list, essentials; `tools.md`: every catalogue tool and the agent's access to it;
-`api.json`: operations and access for `aurora-app`), into `.aurora/apps/<app_id>/` of each
+`api.json`: operations and access for `aurora-agent`), into `.aurora/apps/<app_id>/` of each
 hosted agent that holds a grant on a connection of the app (`24 §5`, `12 §Home projection`).
 The instruction file names the folder and never carries the notes themselves (D-295, `10
 §Agent instructions`). A package without the keys is untouched; a core that does not know them

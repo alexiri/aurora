@@ -78,7 +78,7 @@ build from. It is not a description of an existing system.
 | 20 | [Mattermost connector](20-mattermost-connector.md) | Phase 1 connector specification |
 | 21 | [Later phases](21-later-phases.md) | App catalogue, database lane, HashiCorp Vault store, SSH, previews, evals, … |
 | 22 | [Addon repositories](22-addon-repos.md) | How third parties publish app-package repositories (the `aurora-addons.yaml` format) |
-| 24 | [App guides and tools on demand](24-app-guides.md) | Phase 5: per-app folders in the agent's home (accounts, access, recipes, reference), package format additions, an instruction file that lists apps and platform-tool families by one line each, `aurora-app` and `aurora-tool` (search, describe, call from the sandbox), OpenAPI import; why Code Mode proper is not adopted |
+| 24 | [App guides and tools on demand](24-app-guides.md) | Phase 5: per-app folders in the agent's home (accounts, access, recipes, reference), package format additions, an instruction file that lists apps and platform-tool families by one line each, `aurora-agent` (search, describe, call from the sandbox), OpenAPI import; why Code Mode proper is not adopted |
 | 90 | [Decision log](90-decisions.md) | Every deliberate departure from OneCLI and the proposals, with rationale |
 
 ## Phases at a glance
