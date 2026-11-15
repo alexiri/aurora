@@ -21,9 +21,9 @@ One row per task id, counted from the task tables (closed phases: from their his
 | 2 | 52 | 51 | 1 (FIX-017: the owner's real-cluster install) | 0 | 0 | 0 | `docs/history/phase-1-2.md` (closed 2026-11-09, AUDIT-002) |
 | 3 | 15 | 15 | 0 | 0 | 0 | 0 | `docs/history/phase-3.md` (closed 2026-11-10, AUDIT-003) |
 | 4 | 124 | 123 | 0 | 0 | 0 | 1 (FIX-131 closed without a build, D-195) | `docs/history/phase-4.md` (closed 2026-11-14, AUDIT-004) |
-| 5 | 69 | 34 | 5 (FIX-134, FIX-135, P5-CERN-ADDONS, P5-CHAT-3, P5-CHAT-4 B) | 23 | 5 (no spec yet: P5-SLACK, P4-S3, P4-EVAL, P4-NARR, P4-UTOK) | 2 (OPS-022 deferred; FIX-049 moved to phase 4) | §Phase 5 tasks (TEST-021 and FIX-057, done, are counted here but their rows are in `docs/history/phase-0.md`'s task graph) |
+| 5 | 69 | 37 | 2 (P5-CERN-ADDONS (blocked on the owner), P5-CHAT-4 B) | 23 | 5 (no spec yet: P5-SLACK, P4-S3, P4-EVAL, P4-NARR, P4-UTOK) | 2 (OPS-022 deferred; FIX-049 moved to phase 4) | §Phase 5 tasks (TEST-021 and FIX-057, done, are counted here but their rows are in `docs/history/phase-0.md`'s task graph) |
 | 6 (proposed) | 2 | 0 | 0 | 0 | 2 (P6-ORGTREE, P6-LIMITS: proposals awaiting the owner) | 0 | §Phase 6 tasks (proposed) |
-| **All** | **389** | **345** | **6** | **23** | **7** | **8** | |
+| **All** | **389** | **348** | **3** | **23** | **7** | **8** | |
 
 ## Environment
 
@@ -53,7 +53,7 @@ Lane order, waves and number blocks: `docs/tasks/PHASE5-PLAN.md`. Lanes `p5-apps
 | OPS-021 | Dependabot, grouped, with ignore rules and a review policy | owner | S | ops | OPS-019, OPS-020 | `OPS-021.md` | done (merged 3c983224) |
 | P5-SLACK | Slack connector | `21`, D-78 | L | Rust | connector contract (`13`) | needed | not started (no spec; after P4-LLM/P4-SSH/P4-011B, D-235(c)) |
 | P5-ASRC | Addon sources: third-party package repositories (signed repo manifest, TOFU key, polling, update badges) | D-250, C-590..C-609, SEC-86, migration 000180 | L | both | — | `P5-ASRC.md` | done (merged 3c983224) |
-| P5-CERN-ADDONS | `aurora-addons-cern` repo (release script, CI, signed releases) with `cern-phonebook` (LDAP through the gateway LDAP lane) and `cern-maps` | D-235(d), D-251 | M–L | package + Rust | P5-ASRC | `P5-CERN-ADDONS.md` | in-progress (lane p5-platform; committed aec2760e, a0d1bb0e, 3f6e76b4 (spec: D-251, SEC-110, C-760..C-763) on alexiri/p5-platform, not merged; the external repo waits for the coordinator before any push or credential) |
+| P5-CERN-ADDONS | `aurora-addons-cern` repo (release script, CI, signed releases) with `cern-phonebook` (LDAP through the gateway LDAP lane) and `cern-maps` | D-235(d), D-251 | M–L | package + Rust | P5-ASRC | `P5-CERN-ADDONS.md` | in-progress (in-repo part merged 555f6058: gateway LDAP lane + staging cern-phonebook; **blocked on the owner**: external `aurora-addons-cern` repo content, signing key + release secret, cern-maps, live xldap check, kind e2e) |
 | OPS-024 | `helm upgrade` covered by CI (kind upgrade legs) + hook NetworkPolicy guard | owner 2026-11-11 | M | ops | — | `OPS-024.md` | done (merged d0819942) |
 | FIX-045 | Personal-workspace names default to the OIDC `{sub}` | D-162, C-520..C-523 | M | both | — | `FIX-045.md` | done (merged 9ae49a47) |
 | FIX-046 | Shell alignment: workspace selector not indented, phone drawer from the right | D-163 | S | Next.js | — | `FIX-046.md` | done (merged 34a65d3f) |
@@ -95,8 +95,8 @@ Lane order, waves and number blocks: `docs/tasks/PHASE5-PLAN.md`. Lanes `p5-apps
 | SET-5 | Agents, approvals, retention, skills, SCIM, previews, terminal and limits as settings | D-235(a), D-237 | L | both | SET-1 | `SET-5.md` | ready |
 | FIX-124 | Admin › Secret stores editable (unless set in Helm), value migration job | D-195 | M–L | both | SET-1 | `FIX-124.md` | ready |
 | FIX-133 | Read-only connections; GitHub App tokens narrowed; fine-grained GitHub auth | D-240, C-740 | M–L | both | FIX-123, FIX-107 | `FIX-133.md` | done (merged 787d5c02) |
-| FIX-134 | One Sentry app with preset region instances | D-93, D-195(a) | M | both | FIX-123, FIX-132 | `FIX-134.md` | in-progress (lane p5-apps; committed ffb295f0 on alexiri/p5-apps, not merged) |
-| FIX-135 | App families: one catalogue tile per product (GitHub/GHES, Atlassian Cloud/DC) | D-91..D-93 | M | both | FIX-134 (same lane) | `FIX-135.md` | in-progress (lane p5-apps; committed 3f8decac on alexiri/p5-apps, not merged; batch gate next) |
+| FIX-134 | One Sentry app with preset region instances | D-93, D-195(a) | M | both | FIX-123, FIX-132 | `FIX-134.md` | done (merged ada98f25) |
+| FIX-135 | App families: one catalogue tile per product (GitHub/GHES, Atlassian Cloud/DC) | D-91..D-93 | M | both | FIX-134 (same lane) | `FIX-135.md` | done (merged ada98f25) |
 | FIX-136 | Token-aware permissions (`tools[].scopes`, `tool_scope_missing`) | D-241, C-741 | M | both | FIX-118, FIX-133 | `FIX-136.md` | done (merged 787d5c02) |
 | FIX-137 | One chat Markdown renderer that renders like GitHub | D-227, D-245 | M–L | Next.js | FIX-099, FIX-117 | `FIX-137.md` | done (merged 05a5753f) |
 | FIX-138 | Terminal: bash/zsh, completion, bounded pane, own window, harness wrappers | D-246, D-247, C-750 | M–L | both | FIX-098, FIX-129 | `FIX-138.md` | done (merged 05a5753f; owner follow-ups on master: alternate-screen pane 6906cefe, terminal open carries the agent's models a7998616 (D-247(e), C-750(4))) |
@@ -106,7 +106,7 @@ Lane order, waves and number blocks: `docs/tasks/PHASE5-PLAN.md`. Lanes `p5-apps
 | P5-CHAT-0 | Chat as a messaging client: design boards + `14` text | D-228 | M | design/docs | — | `P5-CHAT-0.md` | done (boards approved by the owner, cdea8832) |
 | P5-CHAT-1 | Quote-reply and files-only messages, API | D-228, C-725, C-726, migration 000171 | M | Rust | — | `P5-CHAT-1.md` | done (merged ed41c9ed) |
 | P5-CHAT-2 | Web: reply action, reply bar, quote strip, permalinks, jump to latest | D-228, C-725 | M | Next.js | P5-CHAT-1, P5-AGENT-2, FIX-137 | `P5-CHAT-2.md` | done (merged ed41c9ed) |
-| P5-CHAT-3 | Web composer: formatting, preview, smart paste, files, drafts, emoji | D-228, C-726 | M–L | Next.js | P5-CHAT-2 | `P5-CHAT-3.md` | in-progress (lane p5-agent; committed 6e7c478a on alexiri/p5-agent, not merged) |
+| P5-CHAT-3 | Web composer: formatting, preview, smart paste, files, drafts, emoji | D-228, C-726 | M–L | Next.js | P5-CHAT-2 | `P5-CHAT-3.md` | done (merged 154d635a) |
 | P5-CHAT-4 | Message search: API (A), chat-panel search (B), agent conversation tools (C) | D-229, D-230, C-727, C-728, migration 000172 | M–L | Rust then Next.js | A after P5-CHAT-1; B after P5-CHAT-2 | `P5-CHAT-4.md` | in-progress (lane p5-agent; A + C done (merged ed41c9ed); B next after P5-CHAT-3) |
 | FIX-142 | Agent messages keep their Markdown on chat platforms; every Mattermost ping accounted for | D-226, D-227, D-270, D-271 | M | Rust | — | `FIX-142.md` | done (merged 3c983224) |
 | FIX-144 | Self-hosted host check says why it failed; agents told each server's address | C-730 | S–M | both | — | `FIX-144.md` | done (merged d1933319) |
