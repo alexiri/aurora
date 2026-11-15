@@ -129,7 +129,7 @@ psl = "2"
 pulldown-cmark = { version = "0.13", default-features = false }
 # WHATWG URL parsing for the deceptive-label check of markdown_safe (FIX-142 review): the host a browser would use.
 url = "2"
-sha2 = "0.10"
+sha2 = "0.11"
 # avatar re-encode (I-31): png/jpeg/webp decoders + png encoder only
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
 hmac = "0.12"
