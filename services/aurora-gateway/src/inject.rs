@@ -130,10 +130,46 @@ pub fn apply(cand: &SecretCand, value: &[u8], t: Target<'_>) -> Result<(), Injec
             // Strip every agent-supplied auth header, then set the provider's.
             t.headers.remove(header::AUTHORIZATION);
             t.headers.remove("x-api-key");
+            t.headers.remove("api-key");
             for h in &l.strip_request_headers {
                 t.headers.remove(*h);
             }
+            // (C-806) Prefix families (`x-amz-*`, `x-goog-*`) are removed whole, never merged.
+            if !l.strip_request_prefixes.is_empty() {
+                let drop: Vec<HeaderName> = t
+                    .headers
+                    .keys()
+                    .filter(|k| {
+                        l.strip_request_prefixes
+                            .iter()
+                            .any(|p| k.as_str().starts_with(p))
+                    })
+                    .cloned()
+                    .collect();
+                for k in drop {
+                    t.headers.remove(k);
+                }
+            }
+            for (name, value) in &l.set_headers {
+                t.headers.insert(
+                    HeaderName::from_static(name),
+                    header_value(value.as_bytes())?,
+                );
+            }
+            // A recipe that needs a mint or a signature is not implemented yet (P4-LLM-2..4): refuse, never send the
+            // request without the credential (the caller answers 502 `credential_unavailable`).
+            if !l.header.is_plain() {
+                return Err(InjectError);
+            }
             match l.header {
+                InjectionHeader::Header(name) => {
+                    t.headers
+                        .insert(HeaderName::from_static(name), header_value(value)?);
+                }
+                InjectionHeader::AwsSigV4
+                | InjectionHeader::AwsAssumeRole
+                | InjectionHeader::GcpToken
+                | InjectionHeader::EntraToken => return Err(InjectError),
                 InjectionHeader::Bearer => {
                     let mut v = b"Bearer ".to_vec();
                     v.extend_from_slice(value);

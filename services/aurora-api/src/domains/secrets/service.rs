@@ -501,6 +501,14 @@ fn llm_injection(p: &dyn aurora_llm::LlmProvider) -> Value {
         aurora_llm::InjectionHeader::XApiKey => {
             serde_json::json!({"kind": "header", "name": "x-api-key", "format": "{value}"})
         }
+        aurora_llm::InjectionHeader::Header(name) => {
+            serde_json::json!({"kind": "header", "name": name, "format": "{value}"})
+        }
+        // minted or signed recipes (P4-LLM-2..4) are not an injection recipe of the stored row: the gateway builds them
+        aurora_llm::InjectionHeader::AwsSigV4
+        | aurora_llm::InjectionHeader::AwsAssumeRole
+        | aurora_llm::InjectionHeader::GcpToken
+        | aurora_llm::InjectionHeader::EntraToken => serde_json::json!({"kind": "bearer"}),
     }
 }
 

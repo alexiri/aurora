@@ -257,6 +257,7 @@ async fn start_with(pool: sqlx::PgPool, snap: Value, mk: impl FnOnce(&World) -> 
         aurora_llm::ProviderRegistry::from_config(&LlmSection {
             enabled_providers: vec![],
             provider_preference: vec![],
+            dev_upstream_overrides: Default::default(),
             endpoints: vec![],
         })
         .unwrap(),

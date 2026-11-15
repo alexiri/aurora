@@ -664,11 +664,22 @@ fn llm_endpoint_allowed_paths_are_validated() {
         .api_config()
         .unwrap_err();
     assert!(e.has_key("llm.endpoints[0].allowed_paths"), "{e}");
-    let e = load_with(&ep("anthropic", r#"["/a"]"#), &[])
-        .unwrap()
-        .api_config()
-        .unwrap_err();
+    // (D-260(b)) `anthropic` accepts `allowed_paths` now; `bedrock` and `vertex` never do.
+    assert!(
+        load_with(&ep("anthropic", r#"["/a"]"#), &[])
+            .unwrap()
+            .api_config()
+            .is_ok()
+    );
+    let e = load_with(
+        &format!("{BASE}[llm]\nenabled_providers = [\"litellm\", \"anthropic\", \"bedrock\"]\n[[llm.endpoints]]\nid = \"b\"\nprovider = \"bedrock\"\nregion = \"eu-west-1\"\nallowed_paths = [\"/a\"]\n"),
+        &[],
+    )
+    .unwrap()
+    .api_config()
+    .unwrap_err();
     assert!(e.has_key("llm.endpoints[0].allowed_paths"), "{e}");
+    assert!(e.to_string().contains("allowed_paths_not_supported"), "{e}");
 }
 
 #[test]

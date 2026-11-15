@@ -337,6 +337,7 @@ async fn start(o: Opts) -> Env {
         Some(paths) => LlmSection {
             enabled_providers: vec!["litellm".into()],
             provider_preference: vec![],
+            dev_upstream_overrides: Default::default(),
             endpoints: vec![LlmEndpoint {
                 id: "central".into(),
                 provider: "litellm".into(),
@@ -348,6 +349,7 @@ async fn start(o: Opts) -> Env {
         None => LlmSection {
             enabled_providers: vec!["anthropic".into()],
             provider_preference: vec![],
+            dev_upstream_overrides: Default::default(),
             endpoints: vec![LlmEndpoint {
                 id: "anthropic".into(),
                 provider: "anthropic".into(),

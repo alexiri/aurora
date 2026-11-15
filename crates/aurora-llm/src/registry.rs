@@ -1,7 +1,7 @@
 use crate::http_util::host_of;
 use crate::{
     AnthropicProvider, Dialect, Endpoint, KeyOriginRule, LitellmProvider, LlmError, LlmProvider,
-    Result,
+    OpenaiCompatibleProvider, OpenaiProvider, Result,
 };
 use aurora_config::{LlmEndpoint, LlmSection, RawConfig};
 use std::collections::BTreeMap;
@@ -17,13 +17,41 @@ fn builtin(id: &str) -> Option<Arc<dyn LlmProvider>> {
     match id {
         "litellm" => Some(Arc::new(LitellmProvider)),
         "anthropic" => Some(Arc::new(AnthropicProvider::default())),
+        "openai" => Some(Arc::new(OpenaiProvider::default())),
+        "openai_compatible" => Some(Arc::new(OpenaiCompatibleProvider)),
         _ => None,
+    }
+}
+
+/// (C-812, D-260(e)) The provider table with `llm.dev_upstream_overrides` applied to the fixed bases: the target
+/// replaces the origin (`https://api.openai.com` → `http://127.0.0.1:9`), so the endpoint's host, injection target
+/// and requests all follow it. The config layer has already refused anything but loopback targets.
+fn with_overrides(
+    overrides: &BTreeMap<String, String>,
+) -> impl Fn(&str) -> Option<Arc<dyn LlmProvider>> + '_ {
+    move |id| {
+        let target = |origin: &str| {
+            overrides
+                .get(origin)
+                .map(|t| t.trim_end_matches('/').to_string())
+        };
+        match id {
+            "anthropic" => Some(match target(crate::ANTHROPIC_BASE_URL) {
+                Some(t) => Arc::new(AnthropicProvider::with_base_url(t)) as Arc<dyn LlmProvider>,
+                None => Arc::new(AnthropicProvider::default()),
+            }),
+            "openai" => Some(match target(crate::OPENAI_BASE_URL) {
+                Some(t) => Arc::new(OpenaiProvider::with_base_url(t)) as Arc<dyn LlmProvider>,
+                None => Arc::new(OpenaiProvider::default()),
+            }),
+            other => builtin(other),
+        }
     }
 }
 
 impl ProviderRegistry {
     pub fn from_config(cfg: &LlmSection) -> Result<Self> {
-        Self::build(cfg, builtin)
+        Self::build(cfg, with_overrides(&cfg.dev_upstream_overrides))
     }
 
     /// Like [`Self::from_config`] with a replaced Anthropic base URL (tests only).
@@ -83,6 +111,13 @@ impl ProviderRegistry {
                 allowed_models: vec![],
                 key_origin: None,
                 allowed_paths: vec![],
+                organization: None,
+                project: None,
+                auth_header: None,
+                models_path: None,
+                region: None,
+                project_id: None,
+                location: None,
             });
         }
         Ok(Self {
@@ -130,8 +165,9 @@ impl ProviderRegistry {
         let Some(ep) = self.endpoint(endpoint_id) else {
             return true;
         };
-        !matches!(ep.provider.as_str(), "litellm" | "openai_compatible")
-            || crate::inference_path_permitted(method, path, &ep.allowed_paths)
+        // a provider that is not in the registry has no endpoint, so this is always `Some`
+        self.provider_for(ep)
+            .is_none_or(|p| p.inference_path_permitted(ep, method, path))
     }
 
     /// (FIX-104, D-180) Whether a key of `provider` (and `endpoint_id` when the secret names
@@ -246,6 +282,13 @@ fn resolve(e: &LlmEndpoint, provider: &dyn LlmProvider) -> Result<Endpoint> {
         allowed_models: e.allowed_models.clone(),
         key_origin,
         allowed_paths: e.allowed_paths.clone(),
+        organization: e.organization.clone(),
+        project: e.project.clone(),
+        auth_header: e.auth_header.clone(),
+        models_path: e.models_path.clone(),
+        region: e.region.clone(),
+        project_id: e.project_id.clone(),
+        location: e.location.clone(),
     })
 }
 

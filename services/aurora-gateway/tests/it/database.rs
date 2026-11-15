@@ -275,6 +275,7 @@ async fn start_with(
         aurora_llm::ProviderRegistry::from_config(&LlmSection {
             enabled_providers: vec![],
             provider_preference: vec![],
+            dev_upstream_overrides: Default::default(),
             endpoints: vec![],
         })
         .unwrap(),
