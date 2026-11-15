@@ -21,9 +21,9 @@ One row per task id, counted from the task tables (closed phases: from their his
 | 2 | 52 | 51 | 1 (FIX-017: the owner's real-cluster install) | 0 | 0 | 0 | `docs/history/phase-1-2.md` (closed 2026-11-09, AUDIT-002) |
 | 3 | 15 | 15 | 0 | 0 | 0 | 0 | `docs/history/phase-3.md` (closed 2026-11-10, AUDIT-003) |
 | 4 | 124 | 123 | 0 | 0 | 0 | 1 (FIX-131 closed without a build, D-195) | `docs/history/phase-4.md` (closed 2026-11-14, AUDIT-004) |
-| 5 | 69 | 32 | 6 (FIX-134, FIX-135, P5-CERN-ADDONS, P5-CHAT-1, P5-CHAT-2, P5-CHAT-4) | 24 | 5 (no spec yet: P5-SLACK, P4-S3, P4-EVAL, P4-NARR, P4-UTOK) | 2 (OPS-022 deferred; FIX-049 moved to phase 4) | §Phase 5 tasks (TEST-021 and FIX-057, done, are counted here but their rows are in `docs/history/phase-0.md`'s task graph) |
+| 5 | 69 | 34 | 5 (FIX-134, FIX-135, P5-CERN-ADDONS, P5-CHAT-3, P5-CHAT-4 B) | 23 | 5 (no spec yet: P5-SLACK, P4-S3, P4-EVAL, P4-NARR, P4-UTOK) | 2 (OPS-022 deferred; FIX-049 moved to phase 4) | §Phase 5 tasks (TEST-021 and FIX-057, done, are counted here but their rows are in `docs/history/phase-0.md`'s task graph) |
 | 6 (proposed) | 2 | 0 | 0 | 0 | 2 (P6-ORGTREE, P6-LIMITS: proposals awaiting the owner) | 0 | §Phase 6 tasks (proposed) |
-| **All** | **389** | **343** | **7** | **24** | **7** | **8** | |
+| **All** | **389** | **345** | **6** | **23** | **7** | **8** | |
 
 ## Environment
 
@@ -104,10 +104,10 @@ Lane order, waves and number blocks: `docs/tasks/PHASE5-PLAN.md`. Lanes `p5-apps
 | P5-AGENT-2 | Agent page in five sections with a collapsible status rail | D-200, D-201 | L | Next.js | P5-AGENT-1 | `P5-AGENT-2.md` | done (merged 05a5753f) |
 | FIX-141 | Indico find-and-book recipe for agents | D-84, D-123 | S–M | package | FIX-136 | `FIX-141.md` | done (merged 7b46ca3d) |
 | P5-CHAT-0 | Chat as a messaging client: design boards + `14` text | D-228 | M | design/docs | — | `P5-CHAT-0.md` | done (boards approved by the owner, cdea8832) |
-| P5-CHAT-1 | Quote-reply and files-only messages, API | D-228, C-725, C-726, migration 000171 | M | Rust | — | `P5-CHAT-1.md` | in-progress (lane p5-agent; committed ebd1b8fe + ef4e9081 on alexiri/p5-agent, not merged; batch web gate running) |
-| P5-CHAT-2 | Web: reply action, reply bar, quote strip, permalinks, jump to latest | D-228, C-725 | M | Next.js | P5-CHAT-1, P5-AGENT-2, FIX-137 | `P5-CHAT-2.md` | in-progress (lane p5-agent; committed bc00a7c9 + 08b1a3c4 on alexiri/p5-agent, not merged; batch web gate running) |
-| P5-CHAT-3 | Web composer: formatting, preview, smart paste, files, drafts, emoji | D-228, C-726 | M–L | Next.js | P5-CHAT-2 | `P5-CHAT-3.md` | ready (p5-agent, after P5-CHAT-2) |
-| P5-CHAT-4 | Message search: API (A), chat-panel search (B), agent conversation tools (C) | D-229, D-230, C-727, C-728, migration 000172 | M–L | Rust then Next.js | A after P5-CHAT-1; B after P5-CHAT-2 | `P5-CHAT-4.md` | in-progress (lane p5-agent; A + C committed eb6de8ac on alexiri/p5-agent, not merged; batch web gate running; B after P5-CHAT-3) |
+| P5-CHAT-1 | Quote-reply and files-only messages, API | D-228, C-725, C-726, migration 000171 | M | Rust | — | `P5-CHAT-1.md` | done (merged ed41c9ed) |
+| P5-CHAT-2 | Web: reply action, reply bar, quote strip, permalinks, jump to latest | D-228, C-725 | M | Next.js | P5-CHAT-1, P5-AGENT-2, FIX-137 | `P5-CHAT-2.md` | done (merged ed41c9ed) |
+| P5-CHAT-3 | Web composer: formatting, preview, smart paste, files, drafts, emoji | D-228, C-726 | M–L | Next.js | P5-CHAT-2 | `P5-CHAT-3.md` | in-progress (lane p5-agent; committed 6e7c478a on alexiri/p5-agent, not merged) |
+| P5-CHAT-4 | Message search: API (A), chat-panel search (B), agent conversation tools (C) | D-229, D-230, C-727, C-728, migration 000172 | M–L | Rust then Next.js | A after P5-CHAT-1; B after P5-CHAT-2 | `P5-CHAT-4.md` | in-progress (lane p5-agent; A + C done (merged ed41c9ed); B next after P5-CHAT-3) |
 | FIX-142 | Agent messages keep their Markdown on chat platforms; every Mattermost ping accounted for | D-226, D-227, D-270, D-271 | M | Rust | — | `FIX-142.md` | done (merged 3c983224) |
 | FIX-144 | Self-hosted host check says why it failed; agents told each server's address | C-730 | S–M | both | — | `FIX-144.md` | done (merged d1933319) |
 | FIX-145 | Self-hosted apps served under a path (`base_path`) | D-231, C-731, migration 000140 | M–L | both | FIX-144 | `FIX-145.md` | done (merged d1933319) |
