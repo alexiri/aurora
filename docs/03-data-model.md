@@ -644,7 +644,6 @@ Rules compiled from grants and app blocklists; always live (not drafted).
 | bytes_up, bytes_down | bigint not null default 0 | |
 | context_label | text null | (phase 2, RFE-025) label of the BYO context credential (a labelled `aurora run`), ≤128, sanitized (`08 §11.9`) |
 | speaker_user_id | uuid null | (phase 2, RFE-005) the request identity's speaker (no FK, ledger table); lets operators see which person's turn caused a request |
-| llm_model | text null | (phase 5, P5-MODELS-2, D-304, C-880) `model_from_request` of a request with an injected key on a governed LLM endpoint (`08 §11.5`); null otherwise or when `Unknown`. Audit only: no decision reads it |
 
 Partitions are created ahead by the API (next 2 months); rows are deleted when older than
 `retention.request_log_days` (default 30), checked daily: whole partitions past the period are
@@ -740,8 +739,6 @@ Pruning: the API's `counters_prune` due-work arm (every 60 s, any replica, `FOR 
 | model_provider | text null | stamped with the provider of `model_id` (`08 §Model selection`) |
 | model_endpoint_id | text null | LLM endpoint id from configuration |
 | model_id | text null | provider's model id; null ⇒ endpoint/provider default. (phase 5, P5-MODELS, D-302(a)) The harness's **default** model, not a limit |
-| model_roles | jsonb null | (phase 5, P5-MODELS-1, D-303) `{ endpoint_id, large?, medium?, small? }`: role models stamped with the endpoint they were chosen for. Dropped per role under the override rule (`08 §Model roles`) |
-| subagent_model | text not null default `'inherit'` | (phase 5, P5-MODELS-1) CHECK in (`inherit`,`large`,`medium`,`small`) |
 | proactive_messaging | text CHECK in (`ask`,`allow`,`off`) default `ask` | `13 §Messaging tools` |
 | effort | text null CHECK in (`low`,`medium`,`high`,`max`) | |
 | brief | text not null default `''` | ≤20 000 chars |
@@ -1669,6 +1666,15 @@ Migration `20261201000140_app_instance_base_path.sql` (block `000140..149`) adds
 index still serves the conflict check and the gateway's instance lookup. The gateway role already
 has table-level `SELECT` on `app_instances` (`§Gateway database role grants`), so it reads
 `base_path` without a new grant (instance selection, `06 §MITM lane: connect-time resolution`).
+
+#### `agents` and `request_log` columns (phase 5, P5-MODELS, D-302..D-304)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| agents.model_roles | jsonb null | (phase 5, P5-MODELS-1, D-303) `{ endpoint_id, large?, medium?, small? }`: role models stamped with the endpoint they were chosen for. Dropped per role under the override rule (`08 §Model roles`) | 5 (P5-MODELS-1) |
+| agents.subagent_model | text not null default `'inherit'` | (phase 5, P5-MODELS-1) CHECK in (`inherit`,`large`,`medium`,`small`) | 5 (P5-MODELS-1) |
+| request_log.llm_model | text null | (phase 5, P5-MODELS-2, D-304, C-880) `model_from_request` of a request with an injected key on a governed LLM endpoint (`08 §11.5`); null otherwise or when `Unknown`. Audit only: no decision reads it | 5 (P5-MODELS-2) |
+
+The migrations land with P5-MODELS-1 and -2 (next free numbers when placed); the rows then move into `§agents` and `§request_log` above.
 
 #### `instance_settings` (new table; instance-wide; phase 5, SET-1, D-236)
 | Planned column | Type | Notes | Phase |
