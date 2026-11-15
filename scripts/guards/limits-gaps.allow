@@ -165,3 +165,30 @@ TERMINAL_PTY_OPEN_TIMEOUT no-row
 TERMINALS_PER_AGENT no-row
 TERMINALS_PER_USER no-row
 TERMINAL_WAKE_WAIT no-row
+# P4-NARR / P4-UTOK spec batch (2026-11-15): doc-only until the named task defines them in limits.rs (P4-NARR, P4-UTOK remove their lines)
+NARR_MIN_INTERVAL doc-only
+NARR_SPACE_UPDATES_PER_MINUTE doc-only
+NARR_CARDS_PER_SPACE doc-only
+NARR_MAX_STEPS doc-only
+NARR_STEP_CHARS doc-only
+USER_TOKENS_PER_PERSON doc-only
+USER_TOKEN_PENDING_MAX doc-only
+# P4-EVAL spec batch (2026-11-15) — the EVAL_* limits of docs/02 are specified; their briefs
+# (P4-EVAL-1 for the question and settings limits, P4-EVAL-2 for the run and schedule limits,
+# P4-EVAL-3 for the judge limits) remove each line when the constant lands in aurora-core::limits.
+EVAL_QUESTIONS_PER_AGENT doc-only
+EVAL_QUESTION_CHARS doc-only
+EVAL_EXPECTED_TEXT_CHARS doc-only
+EVAL_CRITERIA_CHARS doc-only
+EVAL_ANSWER_CHARS doc-only
+EVAL_TURN_TIMEOUT doc-only
+EVAL_RUNS_ACTIVE_PER_AGENT doc-only
+EVAL_RUNS_PER_AGENT_DAY doc-only
+EVAL_SCHEDULE_MIN_INTERVAL doc-only
+EVAL_SCHEDULES_PER_AGENT doc-only
+EVAL_JUDGE_TIMEOUT doc-only
+EVAL_JUDGE_MAX_TOKENS doc-only
+EVAL_JUDGE_INPUT_MAX doc-only
+EVAL_RATIONALE_CHARS doc-only
+EVAL_RUN_RETENTION doc-only
+EVAL_REGRESSION_DROP doc-only

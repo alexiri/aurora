@@ -176,6 +176,8 @@ turns in `eval` conversations, configuration fingerprint (instructions, model,
 effort, skills, granted rule ids) for regression attribution, optional
 schedules; judge calls through the `PlatformLlm` service with a granted key.
 
+- **Specified (phase 5, P4-EVAL, D-289..D-294, SEC-114..SEC-116, C-860..C-874; owner answers Q-EVAL-1..10, the spec follows the recommendations).** Questions with numeric, text and judged expected answers per hosted agent; each question runs as a real turn in its own `eval` conversation under every existing rule, with writes refused in eval turns (`10 §Evals`, SEC-114); a run records a configuration fingerprint of hashes and ids (D-291); the judge is `PlatformLlm`'s `eval_judge` purpose with a granted, governance-admitted key and fails closed (D-292, SEC-115); eval schedules fire through the schedules engine under the same caps (D-293); expected answers stay in the agent's audience (D-294, SEC-116). Owning sections: `10 §Evals`, `05 §Evals` and jobs, `03 §Planned changes` (`eval_questions`, `eval_runs`, `eval_results`, `eval_schedules`, migrations `20261201000236..240`), `04` matrix and §Audit, `08 §Platform-internal LLM calls`, `02 §Limits` (`EVAL_*`), `14` (Behaviour › Evals), `17` SEC-114..SEC-116, `18 §Evals`, `API_CONTRACTS.md` §Phase 5 — P4-EVAL. Briefs `docs/tasks/P4-EVAL-1.md` (questions, settings, fingerprint), `P4-EVAL-2.md` (runs, refusal, schedules), `P4-EVAL-3.md` (judge), `P4-EVAL-4.md` (dashboard). Not in phase 5: more than one judge, eval results as a public or shared report, cross-agent comparisons, eval-driven automatic tuning of an agent, a second judge scale.
+
 ## Phase 4 — Git skill library
 
 An org connects a repository (through an app connection of a git-hosting
@@ -315,7 +317,12 @@ tokens), group → workspace access bindings, group identities in policy
   org-level parking opt-out, push for anything other than approvals.
 - Live narration cards in chat (steps list updated under the connector's write
   rate hint), user-token features (`user_tokens` capability).
-- **Slack connector**: decision deferred; if built, it is a connector covering
+  (phase 5 spec, 2026-11-15, coordinator) Specified as **P4-NARR** (`10 §Live narration cards`,
+  `13 §5.12`, D-279, D-280, SEC-111) and **P4-UTOK** (`13 §5.11`, D-281..D-284, SEC-112, SEC-113), with
+  C-846..C-859 and migrations `20261201000231..233`; briefs `docs/tasks/P4-NARR.md` and
+  `docs/tasks/P4-UTOK.md`. Owner answers: Q-NARR-4 collapse (D-286), every other recommendation accepted (D-288).
+  Read-as-user (the other user-token feature) is not specified in phase 5 (Q-UTOK-1).
+- **Slack connector** (phase 6, P6-SLACK; owner 2026-11-15, D-285: moved from phase 5, not a priority): decision deferred; if built, it is a connector covering
   events and OAuth endpoints, the shared app, app provisioning via the manifest
   API, configuration-token rotation through `POST /v1/connector/credentials`,
   and Block Kit rendering. Nothing in the core changes.

@@ -32,7 +32,7 @@ aurora-registry = { workspace = true }
 arc-swap = { workspace = true }
 hex = { workspace = true }
 hmac = { workspace = true }
-md-5 = "0.10"
+md-5 = "0.11"
 metrics = { workspace = true }
 chrono = { workspace = true }
 regex = { workspace = true }

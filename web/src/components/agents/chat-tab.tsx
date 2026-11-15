@@ -1,9 +1,15 @@
 "use client";
 
 import { useQueryClient } from "@tanstack/react-query";
-import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent } from "react";
 
 import { ChatPanel } from "@/components/chat/chat-panel";
+import { SearchBox } from "@/components/chat/search/search-box";
+import { resultKey, SearchResults, type SearchScope, type SearchSort } from "@/components/chat/search/search-results";
+import { ApiError } from "@/lib/api/client";
+import { useAgents } from "@/lib/api/queries";
+import { useMessageSearch, type SearchItem } from "@/lib/api/search";
+import { extractFilters, queryOf, toSearchParams, type FilterChip } from "@/lib/chat/search-syntax";
 import { ChatThread } from "@/components/chat/chat-thread";
 import { ConversationList } from "@/components/chat/conversation-list";
 import type { AgentIdent } from "@/components/chat/types";
@@ -44,12 +50,15 @@ function subscribe(cb: () => void) {
 const snapshot = (): string | null => new URLSearchParams(window.location.search).get(PARAM);
 const serverSnapshot = (): string | null => null;
 
-function useSelectedConversation(): [string | null, (id: string | null, mode?: "push" | "replace") => void] {
+function useSelectedConversation(): [string | null, (id: string | null, mode?: "push" | "replace", seq?: number) => void] {
   const selected = useSyncExternalStore(subscribe, snapshot, serverSnapshot);
-  const select = useCallback((id: string | null, mode: "push" | "replace" = "push") => {
+  // `seq` makes it a permalink (`?c=&m=`, P5-CHAT-2): the thread jumps to that message and highlights it.
+  const select = useCallback((id: string | null, mode: "push" | "replace" = "push", seq?: number) => {
     const url = new URL(window.location.href);
     if (id) url.searchParams.set(PARAM, id);
     else url.searchParams.delete(PARAM);
+    if (id && seq !== undefined) url.searchParams.set("m", String(seq));
+    else url.searchParams.delete("m");
     const next = `${url.pathname}${url.search}${url.hash}`;
     if (next === `${window.location.pathname}${window.location.search}${window.location.hash}`) return;
     if (mode === "push") window.history.pushState(window.history.state, "", next);
@@ -95,7 +104,22 @@ export function ChatTab({
   const qc = useQueryClient();
   const direct = useDirectConversation(agentId);
   const [archived, setArchived] = useState(false);
+  // (P5-CHAT-4) The search box: `text` filters titles as you type; Enter submits a message search (`submitted`).
   const [query, setQuery] = useState("");
+  const [chips, setChips] = useState<FilterChip[]>([]);
+  const [submitted, setSubmitted] = useState<{ q: string; chips: FilterChip[] } | null>(null);
+  const [scope, setScope] = useState<SearchScope>("agent");
+  const [sort, setSort] = useState<SearchSort>("recent");
+  const [selectedResult, setSelectedResult] = useState<string | null>(null);
+  const [openNonce, setOpenNonce] = useState(0);
+  const searchInput = useRef<HTMLInputElement>(null);
+  const params = useMemo(
+    () => (submitted ? toSearchParams(submitted.q, submitted.chips, { agentId: scope === "agent" ? agentId : undefined, sort }) : null),
+    [submitted, scope, sort, agentId],
+  );
+  const search = useMessageSearch(wsId, params);
+  // Other agents' results link to their own page: their handles come from the workspace's agent list.
+  const agents = useAgents(submitted && scope === "all" ? wsId : undefined);
   const list = useConversations(agentId, archived);
   // The rail's "Doing now" reads the active conversations even while the Archived list is shown (same query when not).
   const activeList = useConversations(agentId, false);
@@ -125,6 +149,57 @@ export function ChatTab({
     const all = directConv && !convs.some((c) => c.id === directConv.id) ? [directConv, ...convs] : convs;
     return groupConversations(filterConversations(all, query), directConv?.id ?? null);
   }, [archived, convs, directConv, query]);
+
+  const searchError = (() => {
+    const e = search.error;
+    if (!(e instanceof ApiError) || e.code !== "search_query_invalid") return null;
+    const reason = (e.details as { reason?: string } | null)?.reason;
+    return reason === "too_long" ? "Searches are limited to 200 characters." : reason === "too_many_terms" ? "Use at most 12 words." : "Type something to search for.";
+  })();
+  /** Enter: the finished filters become chips, the rest is `q`; nothing is sent without words. */
+  const runSearch = (text: string, current: FilterChip[]) => {
+    const r = extractFilters(text, current, true);
+    setChips(r.chips);
+    setQuery(r.rest);
+    const q = queryOf(r.rest);
+    if (!q) return;
+    setSelectedResult(null);
+    setSubmitted({ q, chips: r.chips });
+  };
+  const clearSearch = () => {
+    setQuery("");
+    setChips([]);
+    setSubmitted(null);
+    setSelectedResult(null);
+  };
+  const changeChips = (next: FilterChip[]) => {
+    setChips(next);
+    // removing a chip of a running search runs it again without that filter
+    if (submitted && next.length < chips.length) setSubmitted({ ...submitted, chips: next });
+  };
+  const handleOf = (id: string) => agents.data?.items.find((a) => a.id === id)?.handle;
+  const hrefOf = (i: SearchItem) => {
+    const q = `?c=${i.conversation.id}&m=${i.seq}`;
+    if (i.agent.id === agentId) return q;
+    const handle = handleOf(i.agent.id);
+    return handle ? `${base}/agents/${handle}${q}` : `${base}/agents`;
+  };
+  const openResult = (i: SearchItem) => {
+    setSelectedResult(resultKey(i));
+    select(i.conversation.id, "push", i.seq);
+    setOpenNonce((n) => n + 1);
+  };
+  // `/` (not in a text field) and Ctrl/Cmd+F, with focus anywhere in the panel, go to the search box.
+  const panelKey = (e: KeyboardEvent<HTMLDivElement>) => {
+    if (e.defaultPrevented) return;
+    const typing = (e.target as HTMLElement).closest("input, textarea, select, [contenteditable]:not([contenteditable='false'])");
+    const plain = !e.ctrlKey && !e.metaKey && !e.altKey;
+    if ((e.key === "/" && plain && !typing) || ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "f")) {
+      e.preventDefault();
+      searchInput.current?.focus();
+      searchInput.current?.select();
+    }
+  };
 
   const ownId = directConv?.id ?? null;
   const convId = picked ?? (archived ? null : ownId);
@@ -184,6 +259,8 @@ export function ChatTab({
       <StatusSheet ctx={ctx} open={statusSheetOpen} onOpenChange={(o) => onStatusSheetOpenChange?.(o)} />
     <ChatPanel
       threadOpen={threadOpen}
+      listWide={!!submitted}
+      onKeyDown={panelKey}
       railExpanded={railExpanded}
       rail={(overlay) => <StatusRail ctx={ctx} expanded={railExpanded} onExpandedChange={setRailExpanded} overlay={overlay} />}
       list={
@@ -198,7 +275,41 @@ export function ChatTab({
             select(null, "replace");
           }}
           query={query}
-          onQueryChange={setQuery}
+          searchBox={
+            <SearchBox
+              text={query}
+              onTextChange={setQuery}
+              chips={chips}
+              onChipsChange={changeChips}
+              conversations={convs}
+              onSelectConversation={(id) => {
+                setQuery("");
+                select(id);
+              }}
+              onSubmit={runSearch}
+              onClear={clearSearch}
+              inputRef={searchInput}
+              error={searchError}
+              searching={!!submitted}
+            />
+          }
+          results={
+            submitted ? (
+              <SearchResults
+                query={search}
+                text={submitted.q}
+                scope={scope}
+                onScopeChange={setScope}
+                sort={sort}
+                onSortChange={setSort}
+                now={now}
+                selectedKey={selectedResult}
+                hrefOf={hrefOf}
+                isLocal={(i) => i.agent.id === agentId}
+                onOpen={openResult}
+              />
+            ) : undefined
+          }
           onSelect={(id) => select(id)}
           now={now}
           status={list.isError ? <ErrorState error={list.error} onRetry={() => void list.refetch()} /> : list.isPending ? <Loading /> : undefined}
@@ -207,7 +318,7 @@ export function ChatTab({
       thread={
         convId ? (
           <ChatThread
-            key={convId}
+            key={`${convId}:${openNonce}`}
             agent={agent}
             agentId={agentId}
             wsId={wsId}
