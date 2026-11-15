@@ -69,6 +69,14 @@ PREVIEWS_DOMAIN="${AURORA_E2E_PREVIEWS_DOMAIN:-}"
 if [ -n "$PREVIEWS_DOMAIN" ]; then
   HELM_OVERRIDES+=(--set relay.enabled=true --set "relay.domain=$PREVIEWS_DOMAIN" --set config.previews.enabled=true)
 fi
+# (P5-CERN-ADDONS) AURORA_E2E_EXTRA_CA_FILE=<PEM file>: trust extra root(s) in every workload (the chart's
+# extraCaBundle, from a ConfigMap kind.sh creates), e.g. the CERN Root CA that signs xldap.cern.ch.
+# AURORA_E2E_CERN_ADDONS=1 additionally runs k7 (registers github.com/alexiri/aurora-addons-cern, needs internet).
+EXTRA_CA_FILE="${AURORA_E2E_EXTRA_CA_FILE:-}"
+if [ -n "$EXTRA_CA_FILE" ]; then
+  [ -s "$EXTRA_CA_FILE" ] || { echo "AURORA_E2E_EXTRA_CA_FILE is not a readable file" >&2; exit 1; }
+  HELM_OVERRIDES+=(--set extraCaBundle.existingConfigMap=aurora-e2e-extra-ca)
+fi
 LOGDIR="$ROOT/target/kind-logs"
 WORK="$ROOT/target/kind"
 KEEP=0; FRESH=0; SKIP_BUILD="${SKIP_IMAGE_BUILD:-0}"; RELEASE_IMAGES="${AURORA_E2E_RELEASE_IMAGES:-0}"
@@ -251,6 +259,9 @@ k -n "$NS" create configmap aurora-e2e-pg-init \
   --from-literal=10-gateway-role.sql="CREATE ROLE aurora_gateway LOGIN PASSWORD 'gwe2e-evaluation-pw';" >/dev/null || exit 1
 k -n "$NS" create secret generic aurora-gateway-database \
   --from-literal=AURORA_DATABASE_URL="postgres://aurora_gateway:gwe2e-evaluation-pw@$FULL-postgres:5432/aurora" >/dev/null || exit 1
+if [ -n "$EXTRA_CA_FILE" ]; then
+  k -n "$NS" create configmap aurora-e2e-extra-ca --from-file=ca-bundle.pem="$EXTRA_CA_FILE" >/dev/null || exit 1
+fi
 log "helm install"
 helm --kube-context "$CTX" install "$RELEASE" deploy/helm/aurora -n "$NS" --create-namespace \
   -f deploy/kind/values-e2e.yaml "${HELM_OVERRIDES[@]}" --wait --timeout 8m || exit 1

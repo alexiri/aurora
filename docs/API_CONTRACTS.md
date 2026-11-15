@@ -101,13 +101,6 @@ Rule: `04 §Fire-time authority`, `05 §Schedules/§Webhooks/§Members`, SEC-51.
 - C-94 **`GET /v1/orgs/{org}/members/{user}/offboarding`** (org `owner`/`admin`; 404 unknown member) and **`GET /v1/workspaces/{ws}/members/{user}/offboarding`** (`can_own`; 404 when the person has no access): `200 { schedules: [Item], webhooks: [Item], peer_tasks: [Item], api_keys: number }`, `Item = { id, name, agent: { id, name }, workspace: { id, name }, enabled: bool, anchor, next_fire_at: timestamp | null, would_disable: bool }`. Lists exactly what removal would disable: enabled creator-anchored schedules and webhooks of the person (`would_disable` is always true), queued/open peer tasks they requested (`name` = "from → to"), and `api_keys` = live personal keys that would stop working (org view: every key in the org; workspace view: keys confined to that workspace, since organization-wide keys survive losing one binding). The workspace view of an org owner/admin is empty (a binding removal cannot take implicit access away).
 - C-95 **Fire-time authority** (no route change): a schedule fire or webhook delivery of an `anchor = workspace` item is authorized when the workspace has at least one active member with `can_own` (workspace `owner` binding or org owner/admin); otherwise the item is disabled `authorization` (schedule run `skipped_unauthorized`; webhook 403 `forbidden` + delivery row), as for a creator-anchored item whose creator lost access.
 
-### FIX-152 (failed re-authentication returns to its page; `auth_time` evidence, D-305)
-
-- C-890 **Re-authentication failure redirect and audit detail** (FIX-152, D-305; amends the `/v1/auth/oidc/{provider}/callback` row of `05`).
-  - **Redirect.** Once the callback has opened the flow state, every failure of a re-authentication flow (`reauth=1`) redirects 302 to the flow's `return_to` with `reauth_error=<code>`. The code goes before any `#fragment`, after `&` if the path has a query and `?` otherwise; codes are fixed snake_case and not encoded. Failures before the state opens, and every failure of a normal sign-in, still go to `/auth/login?error=<code>`.
-  - **Audit.** A `reauth_stale` denial (`user.login`, `denied`) gains exactly one of `auth_time_age_s: i64` (`now − auth_time`; negative means in the future) or `auth_time_missing: true`. A `warn` log carries the provider id and the same value, with no identity data.
-  - **Dashboard.** `/account/delete`, `/admin/orgs`, `/admin/orgs/[org]` and `/o/[org]/settings/directory` show a danger `Notice` for `reauth_error`, with text from the error-code map and a generic fallback for unknown codes.
-
 ## Shared schemas (M1)
 
 ```ts
@@ -1374,7 +1367,7 @@ Rule: `06 §LDAP lane`, `09 §3 ldap`, `90 D-251`, SEC-110. Reserved numbers C-7
 - C-760 **Manifest `ldap`** (`09 §3 ldap`): `apps[].ldap = { server, port = 636, base_dn, attributes[1..64], max_entries = 50 (1..500) }`, copied into the snapshot's `apps[].ldap` (absent in older snapshots). Linter codes: `ldap_server_invalid`, `ldap_port_invalid`, `ldap_base_dn_invalid`, `ldap_attributes_invalid`, `ldap_max_entries_invalid`, `ldap_database_exclusive`, `ldap_credentials_declared`, `ldap_host_missing`, `ldap_host_foreign`, `ldap_host_inject`. The synthetic host `<app id>.ldap.aurora.internal` is the only `*.aurora.internal` host a package may claim (reserved-host rule exempt), and only for the app that declares `ldap`.
 - C-761 **Lane request** `POST https://<app id>.ldap.aurora.internal/search`, `application/json` ≤ 16 KiB: `{ filter: string (RFC 4515, ≤ 1 KiB), attributes?: string[], scope?: "sub"|"one"|"base", base?: string, limit?: integer }`; unknown keys, other paths and other methods are refused. Answer `200 { entries: [{ dn, attributes: { <name>: string[] } }], truncated: boolean }`. Errors (the usual `ApiError` envelope): `400 ldap_request_invalid` (body, filter, attribute, scope, base), `413 ldap_request_invalid` (body > 16 KiB), `403 ldap_no_connection` (no granted connection of the app, or plain HTTP), `404 ldap_operation_unknown`, `502 ldap_unavailable` (dial/TLS/protocol), `502 ldap_refused` (the directory refused the bind or search), `504 ldap_timeout`; a refused destination is `destination_refused`.
 - C-762 **Permission diff**: `Widening::Directory { app, server: "host:port", base_dn }` for a new or wider `ldap` block (another server, port or base, an attribute not in the installed block, a larger `max_entries`); `GET /v1/admin/plugins/{id}` `widenings[]` carries `{ kind: "directory", detail: "<app> can read directory entries from <server:port> under <base_dn>" }`. A narrower or identical block is not a widening.
-- C-763 **Tests** (`18`): registry (`tests/it/ldap.rs`: shape rules, host exception, snapshot copy, widening); gateway unit (BER codec, filter grammar and refusals, base confinement, query building) and pipeline ITs against a fake LDAPS directory (`tests/it/ldap_lane.rs`); package fixtures of `plugins/addons/cern-phonebook/tests`.
+- C-763 **Tests** (`18`): registry (`tests/it/ldap.rs`: shape rules, host exception, snapshot copy, widening); gateway unit (BER codec, filter grammar and refusals, base confinement, query building) and pipeline ITs against a fake LDAPS directory (`tests/it/ldap_lane.rs`); package fixtures of `cern-phonebook` (in `github.com/alexiri/aurora-addons-cern`, `plugins/cern-phonebook/tests`, D-252; the staging copy in this repository is deleted); the kind e2e `k7_cern_addons_source_to_phonebook_search_and_route`.
 
 ### Phase 5 — P5-ASRC (addon sources: third-party app-package repositories, D-250)
 
@@ -1482,6 +1475,50 @@ Rule: `08 §Model selection`, `§Model roles`, `§Model readiness`, *Error class
 - C-882 **`GET /v1/harnesses`** (P5-MODELS-1; extends C-420). `HarnessView` gains `model_roles: string[]`.
 - C-883 **Eval fingerprint** (P5-MODELS-1; amends C-866). It gains `model_roles: { large: string|null, medium: string|null, small: string|null }` (resolved) and `subagent_model`, and the field-level diff shows them.
 - C-884 **Instructions fragment** (P5-MODELS-1; `10 §Agent instructions`). It is a fixed template, rendered only when a role resolves or `subagent_role` is set. Its ids are inserted verbatim: they are pattern-checked, so they need no escaping beyond Markdown code spans.
+
+### FIX-152 (failed re-authentication returns to its page; `auth_time` evidence, D-305)
+
+- C-890 **Re-authentication failure redirect and audit detail** (FIX-152, D-305; amends the `/v1/auth/oidc/{provider}/callback` row of `05`).
+  - **Redirect.** Once the callback has opened the flow state, every failure of a re-authentication flow (`reauth=1`) redirects 302 to the flow's `return_to` with `reauth_error=<code>`. The code goes before any `#fragment`, after `&` if the path has a query and `?` otherwise; codes are fixed snake_case and not encoded. Failures before the state opens, and every failure of a normal sign-in, still go to `/auth/login?error=<code>`.
+  - **Audit.** A `reauth_stale` denial (`user.login`, `denied`) gains exactly one of `auth_time_age_s: i64` (`now − auth_time`; negative means in the future) or `auth_time_missing: true`. A `warn` log carries the provider id and the same value, with no identity data.
+  - **Dashboard.** `/account/delete`, `/admin/orgs`, `/admin/orgs/[org]` and `/o/[org]/settings/directory` show a danger `Notice` for `reauth_error`, with text from the error-code map and a generic fallback for unknown codes.
+
+### FIX-153 / FIX-154 (connecting and granting apps without dead ends; credential-free apps in one step, D-306)
+
+Rule: `90 D-306`, `06 §LDAP lane` and §Error codes, `05` (apps and grants rows), `14 §Visual design`. Reserved C-891..C-897. No migration. D-251(d) and SEC-110 unchanged.
+
+- C-891 **Gateway dashboard links** (FIX-153; amends the `connect_url`, `reconnect_url`, `create_secret_url` details of `06 §Error codes`). One builder in the gateway produces every dashboard URL it emits, from `external_url`, the org and workspace slugs of the resolved host:
+  - `connect_url(app)` = `/o/<org>/w/<ws>/credentials?tab=apps&connect=<app>` (the C-842 deep link); with no app, `…/credentials?tab=apps`.
+  - `reconnect_url(conn)` = `/o/<org>/w/<ws>/credentials?tab=connections&reconnect=<connection id>`.
+  - `create_secret_url` = `/o/<org>/w/<ws>/credentials?tab=secrets`.
+  - `access_url(agent)` = `/o/<org>/w/<ws>/agents/<agent id>?tab=access` (C-894).
+  - `manage_url` (`…/policy`, `/o/<org>/policy`, `/o/<org>/governance`) unchanged.
+  - The paths `/o/<org>/w/<ws>/apps/<app>` and `/o/<org>/w/<ws>/secrets` are no longer emitted (no dashboard page serves them). A shared fixture lists every template; the gateway's unit test pins its output to the fixture and a web test checks that each template is an existing route and that each `tab` value is one the page accepts.
+- C-892 **LDAP lane refusals** (FIX-153; amends C-761). A request on `<app id>.ldap.aurora.internal` that reaches the lane check without the approved block is answered:
+  - plain HTTP (not TLS through the proxy) → `400 ldap_https_required`, `details: { app_id?, url: "https://<host>/search" }`, message naming the HTTPS URL;
+  - an installed LDAP app with no connection in scope → `403 ldap_no_connection`, `details: { app_id, app_name, reason: "not_connected", connect_url, access_url }`; message "<App name> is not connected in this workspace. A workspace owner can connect it at <connect_url> and give this agent access.";
+  - a connection of the app in scope, none granted to this agent → `403 ldap_no_connection`, `details: { app_id, app_name, reason: "not_granted", access_url }`; message "This agent has not been given access to <App name>. A workspace owner can give it on the agent's Access tab: <access_url>";
+  - a host of no installed LDAP app → `403 ldap_no_connection`, `details: { reason: "no_app" }`, no links.
+  - In every case no directory is dialled (unchanged). The reason is derived from the candidate classification `decide` already computes (`Fallback`), not from a second lookup. The request-log row records the code as before.
+- C-893 **`access_restricted` and `app_not_connected` point at the fix** (FIX-153). `access_restricted` for an ungranted candidate gains `details.access_url` and its message names it ("…Ask a workspace owner to give this agent access: <access_url>"); `manage_url` stays in details. The `disabled` variant is unchanged. `app_not_connected` keeps `connect_url` (now C-891's) and its message adds "…then give this agent access".
+- C-894 **Dashboard routes** (FIX-153; no wire change; amends C-506).
+  - The agent page `/o/<org>/w/<ws>/agents/<segment>` accepts an agent id as well as a handle. An id that names an agent of the workspace is replaced (`router.replace`, query kept) by its handle; an unknown id or handle is the existing not-found state.
+  - The org Apps page `/o/<org>/apps` lists the installed apps (`GET /v1/apps`), whatever the posture, each with **Connect…**. It opens a dialog to choose one of the caller's workspaces where they are owner. Each workspace is shown as available or not for that app, from `GET /v1/apps?workspace_id=`. Choosing navigates to C-842's deep link. With no owned workspace the dialog says who can connect instead. The posture notice and the restricted-posture allow-list stay on the page.
+  - The org Credentials › Connections empty state links to `/o/<org>/apps` (no Apps tab exists on org pages); the workspace one links its "Apps tab" to `?tab=apps`.
+- C-895 **`credential_free`** (FIX-154). `AppSummary` (`GET /v1/apps`) and `App` (`GET /v1/apps/{app}`) gain `credential_free: boolean`. True iff the app declares no credentials, no `token`, no `instances`, no `secret_link` and no `database`, and it has at least one connect method and every connect method is `kind: "fields"` with `fields: []` and no scopes. It is derived from the installed manifest (one shared function used by the API and the gateway), not stored.
+- C-896 **`PUT /v1/agents/{agent}/grants/apps/{app}`** (FIX-154; S/K, same caller rule as `PUT /v1/agents/{agent}/grants/connections/{conn}`).
+  - **Body.** As that route: `{ mode, allow_tools?, ask_tools?, ask_timeout_secs? }`, same validation (incl. 422 `full_grant_forbidden` for `custom_only`).
+  - **Checks, before any write.** 404 `app_not_found` when not installed. 403 `app_unavailable` when the posture does not make it available to the agent's workspace. 422 `app_not_credential_free` (`details: { app_id }`) when C-895 is false.
+  - **Effect, in one transaction serialized per (workspace, app)** (e.g. `pg_advisory_xact_lock` on the pair), so parallel calls never create two connections:
+    1. Take the oldest `active` workspace-scope connection of the app in the agent's workspace. If there is none, create one through the same service path as `POST /v1/apps/{app}/connect` with the first credential-free method. Its label is `connect_note.label_hint`, else the app name. It is audited `connection.created` with `details.via = "agent_grant"` and `details.agent_id`.
+    2. Upsert the agent's grant on that connection exactly as `PUT …/grants/connections/{conn}` does, with the same audit, snapshot invalidation and `app_restrictions`.
+  - **Answer.** `200 { connection: Connection, grant: ConnectionGrant, created: boolean }`.
+  - **Removing access.** Uses the existing `DELETE /v1/agents/{agent}/grants/connections/{conn}`; the connection is kept.
+- C-897 **Credential-free apps in the dashboard and the gateway** (FIX-154).
+  - **Access tab.** The agent's Access tab (Connections section) also lists each available credential-free app that has no connection in the agent's scope: app icon and name, a "No sign-in needed" badge and **Give access**. It opens the same grant editor (`GrantForm`), which saves through C-896. Once granted, the row becomes the ordinary connection row.
+  - **Connect dialog.** For a credential-free app the Connect dialog (C-842) shows the app's `connect_note` and the label, with no form step. It goes straight to the agent picker (`GiveAccessPanel`) with one primary action that connects and then grants (`POST /v1/connections/{id}/grants`).
+  - **Gateway.** For a credential-free app, `ldap_no_connection` `not_connected` and `app_not_connected` name `access_url` first ("A workspace owner can give this agent access on its Access tab: <access_url>"); `connect_url` stays in details.
+  - **Agent notice.** The agent's `request_app_connection` notice (I-29) for a credential-free app links to the Access tab of the requesting agent instead of the connect deep link.
 
 ## Shared schemas
 

@@ -231,10 +231,15 @@ fn ldap_snapshot(port: u16) -> Value {
                  "attributes": ["uid", "mail", "displayName"], "max_entries": 2}
     });
     app["grants"] = json!({});
-    snapshot(
+    let mut snap = snapshot(
         vec![app],
         vec![host_json("phonebook", None, json!({"host": HOST}))],
-    )
+    );
+    // Exactly what the API compiles into every real snapshot (`plugins/ingest.rs`): the platform's
+    // own namespace is reserved. The synthetic host sits in it, and the lane must still resolve
+    // the app's connections there (found by the kind e2e: they were dropped before D-252).
+    snap["reserved_hosts"] = json!(["*.aurora.internal"]);
+    snap
 }
 
 async fn lane(script: Script, trust_directory: bool) -> (Env, Arc<Mutex<Seen>>) {
