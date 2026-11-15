@@ -1,7 +1,8 @@
 use crate::http_util::host_of;
 use crate::{
-    AnthropicProvider, Dialect, Endpoint, KeyOriginRule, LitellmProvider, LlmError, LlmProvider,
-    OpenaiCompatibleProvider, OpenaiProvider, Overrides, Result, VertexProvider,
+    AnthropicProvider, AzureOpenaiProvider, Dialect, Endpoint, KeyOriginRule, LitellmProvider,
+    LlmError, LlmProvider, OpenaiCompatibleProvider, OpenaiProvider, Overrides, Result,
+    VertexProvider,
 };
 use aurora_config::{LlmEndpoint, LlmSection, RawConfig};
 use std::collections::BTreeMap;
@@ -21,6 +22,7 @@ fn builtin(id: &str) -> Option<Arc<dyn LlmProvider>> {
         "openai" => Some(Arc::new(OpenaiProvider::default())),
         "openai_compatible" => Some(Arc::new(OpenaiCompatibleProvider)),
         "vertex" => Some(Arc::new(VertexProvider::default())),
+        "azure_openai" => Some(Arc::new(AzureOpenaiProvider::default())),
         _ => None,
     }
 }
@@ -49,6 +51,9 @@ fn with_overrides(
             "vertex" => Some(Arc::new(VertexProvider::with_overrides(Overrides::new(
                 overrides,
             )))),
+            "azure_openai" => Some(Arc::new(AzureOpenaiProvider::with_overrides(
+                Overrides::new(overrides),
+            ))),
             other => builtin(other),
         }
     }

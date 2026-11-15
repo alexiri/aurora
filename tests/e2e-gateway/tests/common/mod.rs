@@ -39,6 +39,9 @@ pub struct Opts {
     /// (P4-LLM-2) A `vertex` endpoint `vx` (project `inference-proj`, `us-east5`): `(google token base, vertex base)`, both
     /// loopback targets of `llm.dev_upstream_overrides`.
     pub llm_vertex: Option<(String, String)>,
+    /// (P4-LLM-3) An `azure_openai` endpoint `az` (deployment `gpt-4o`) on a loopback resource: `(entra authority base,
+    /// azure resource base)`; the authority is a target of `llm.dev_upstream_overrides`, the resource is the `base_url`.
+    pub llm_azure: Option<(String, String)>,
     /// Writes `gateway.insecure_loopback_injection = false` (the config the override must refuse).
     pub no_insecure_loopback: bool,
     /// Run the gateway once with this config, expect it to refuse to start (log in `<dir>/refused.log`) and return.
@@ -177,6 +180,11 @@ api_internal_url = "http://{API_IP}:4111"
         if let Some((google, vertex)) = &o.llm_vertex {
             toml.push_str(&format!(
                 "\n[llm]\nenabled_providers = [\"vertex\"]\nprovider_preference = [\"vertex\"]\n\n[llm.dev_upstream_overrides]\n\"https://oauth2.googleapis.com\" = \"{google}\"\n\"https://us-east5-aiplatform.googleapis.com\" = \"{vertex}\"\n\n[[llm.endpoints]]\nid = \"vx\"\nprovider = \"vertex\"\nproject_id = \"inference-proj\"\nlocation = \"us-east5\"\nmodels = [\"claude-x\"]\ndefault_model = \"claude-x\"\n"
+            ));
+        }
+        if let Some((entra, azure)) = &o.llm_azure {
+            toml.push_str(&format!(
+                "\n[llm]\nenabled_providers = [\"azure_openai\"]\nprovider_preference = [\"azure_openai\"]\n\n[llm.dev_upstream_overrides]\n\"https://login.microsoftonline.com\" = \"{entra}\"\n\n[[llm.endpoints]]\nid = \"az\"\nprovider = \"azure_openai\"\nbase_url = \"{azure}\"\nmodels = [\"gpt-4o\"]\ndefault_model = \"gpt-4o\"\n"
             ));
         }
         let mut stack = Stack {
