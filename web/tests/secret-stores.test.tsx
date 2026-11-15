@@ -164,14 +164,20 @@ describe("Admin › Secret stores", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Add a Vault store" }));
     fireEvent.change(screen.getByLabelText("Store id"), { target: { value: "prod" } });
     fireEvent.change(screen.getByLabelText("Address"), { target: { value: "https://vault.example.org:8200" } });
-    fireEvent.change(screen.getByLabelText("Vault role"), { target: { value: "aurora" } });
+    // D-307: a dashboard store is AppRole only (the Kubernetes login is for Helm stores).
+    fireEvent.change(screen.getByLabelText("Role id"), { target: { value: "aurora" } });
+    fireEvent.change(screen.getByLabelText("Secret id"), { target: { value: "s3cret" } });
     fireEvent.click(screen.getByRole("button", { name: "Test connection" }));
     const out = await screen.findByRole("status", { name: "Connection test result" });
     expect(within(out).getByText("The connection failed.")).toBeTruthy();
     expect(within(out).getByText(/Signed in to the store — the store did not answer/)).toBeTruthy();
     expect(tested).toEqual({
       id: "prod",
-      store: { kind: "hashicorp-vault", address: "https://vault.example.org:8200", auth: { method: "kubernetes", role: "aurora" } },
+      store: {
+        kind: "hashicorp-vault",
+        address: "https://vault.example.org:8200",
+        auth: { method: "approle", role_id: "aurora", secret_id: { $secret: "s3cret" } },
+      },
     });
   });
 
