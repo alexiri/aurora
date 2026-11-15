@@ -24,7 +24,7 @@ Owner, 2026-11-14: phase 5 starts when AUDIT-004 is merged; same working mode as
 | `p5-agent` | P5-CHAT-4 B ‖ P4-LLM-1 → P4-LLM-2 ‖ P4-LLM-3 → P4-LLM-4 → P4-LLM-5 ‖ | finishes the chat chain, then the LLM provider chain (runner harness config + gateway mint) | `components/chat/**` search, `aurora-runner` provider/harness config, gateway `llm/**` |
 | `p5-platform` | P5-CERN-ADDONS external repo ‖ FIX-146 A → B/C/D → E ‖ P4-SSH-1 → P4-SSH-2 ‖ | the addon repo's release, then cross-cutting tracing, then SSH (both need `web/package.json`) | `web/package.json` + `pnpm-lock.yaml` (this wave), `/home/alex/agent-platform/aurora-addons-cern`, tracing middleware, `aurora-terminator` |
 
-Next, as a lane frees up: **P4-011B-1 → {2 ∥ 3} → 4 → 5**; **P5-ICS → P5-CALDAV** (same lane); **P5-CALINV**.
+Next, as a lane frees up: **P4-011B-1 → {2 ∥ 3} → 4 → 5**; **P5-ICS → P5-CALDAV** (same lane); **P5-CALINV**. **FIX-150** (S–M, `channels/messaging.rs` + `tools/messaging.rs` only, disjoint from the wave-2 hot files) may be inserted at any lane's next batch gate; not concurrent with P4-UTOK/P4-NARR.
 
 ## Coordinator (Opus) work, in order
 1. **Spec step 0** for FIX-142, FIX-145, FIX-146 (unblocks wave 1/2 lanes).

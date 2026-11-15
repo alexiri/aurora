@@ -21,9 +21,9 @@ One row per task id, counted from the task tables (closed phases: from their his
 | 2 | 52 | 51 | 1 (FIX-017: the owner's real-cluster install) | 0 | 0 | 0 | `docs/history/phase-1-2.md` (closed 2026-11-09, AUDIT-002) |
 | 3 | 15 | 15 | 0 | 0 | 0 | 0 | `docs/history/phase-3.md` (closed 2026-11-10, AUDIT-003) |
 | 4 | 124 | 123 | 0 | 0 | 0 | 1 (FIX-131 closed without a build, D-195) | `docs/history/phase-4.md` (closed 2026-11-14, AUDIT-004) |
-| 5 | 69 | 37 | 3 (P5-CERN-ADDONS (external repo), P5-CHAT-4 B, SET-1) | 25 | 1 (no spec yet: P4-EVAL) | 3 (OPS-022 deferred; FIX-049 moved to phase 4; P5-SLACK moved to phase 6, D-285) | §Phase 5 tasks (TEST-021 and FIX-057, done, are counted here but their rows are in `docs/history/phase-0.md`'s task graph) |
+| 5 | 70 | 37 | 3 (P5-CERN-ADDONS (external repo), P5-CHAT-4 B, SET-1) | 26 | 1 (no spec yet: P4-EVAL) | 3 (OPS-022 deferred; FIX-049 moved to phase 4; P5-SLACK moved to phase 6, D-285) | §Phase 5 tasks (TEST-021 and FIX-057, done, are counted here but their rows are in `docs/history/phase-0.md`'s task graph) |
 | 6 (proposed) | 3 | 0 | 0 | 0 | 3 (P6-ORGTREE, P6-LIMITS: proposals awaiting the owner; P6-SLACK, moved from phase 5, D-285) | 0 | §Phase 6 tasks (proposed) |
-| **All** | **390** | **348** | **4** | **25** | **4** | **9** | |
+| **All** | **391** | **348** | **4** | **26** | **4** | **9** | |
 
 ## Environment
 
@@ -118,6 +118,7 @@ Lane order, waves and number blocks: `docs/tasks/PHASE5-PLAN.md`. Lanes `p5-apps
 | P5-ICS | Generic "Calendar link (ICS)" app: secret-link credential, gateway fetches the stored URL | D-273, C-843, SEC-107 | M–L | Rust + package | p5-apps hot files | `P5-ICS.md` | ready (not yet placed) |
 | P5-CALINV | Agents add calendar events by e-mailing the person an invitation | D-274, C-844, SEC-108, migration 000230 | M | Rust | instance mailer | `P5-CALINV.md` | ready (not yet placed) |
 | P5-CALDAV | Read and write any CalDAV server with the person's own app password | D-275, C-845, SEC-109 | L | Rust + package | P5-ICS (same lane) | `P5-CALDAV.md` | ready (not yet placed) |
+| FIX-150 | `send_message` resolves an exact handle by itself; refusals list aliases to retry with; messaging-tool fields described | D-287, `13 §5.10` | S–M | Rust | — | `FIX-150.md` | ready (brief written 2026-11-15; not yet placed: any lane's next batch gate, not concurrent with P4-UTOK/P4-NARR) |
 
 ### Execution order (phase 5)
 
@@ -125,7 +126,7 @@ At most three implementation lanes at a time, disjoint ownership; a lane starts 
 
 - **Wave 1** (2026-11-14..15), all merged: `p5-apps` FIX-147, FIX-133, FIX-136, FIX-141, FIX-144, FIX-145, FIX-149, FIX-134, FIX-135; `p5-agent` P5-AGENT-1, FIX-137, P5-AGENT-2, FIX-138, P5-CHAT-1, P5-CHAT-2, P5-CHAT-3, P5-CHAT-4 A+C; `p5-platform` P5-ADMDEL, OPS-021, FIX-142, P5-ASRC, P5-CERN-ADDONS (in-repo part).
 - **Wave 2** (since 2026-11-15; `docs/tasks/PHASE5-PLAN.md` §Wave 2 lanes): `p5-apps` SET-1 → FIX-124 ‖ SET-2 → SET-3 ‖ SET-4 → SET-5 ‖ P4-LLM-6; `p5-agent` P5-CHAT-4 B ‖ P4-LLM-1 → 2 ‖ 3 → 4 → 5; `p5-platform` P5-CERN-ADDONS (external repo) ‖ FIX-146 ‖ P4-SSH-1 → P4-SSH-2. Then, as a lane frees: P4-011B-1 → {2 ∥ 3} → 4 → 5.
-- **Not yet placed**: P4-011B-1..5 (the next free lane); P4-S3 (brief written 2026-11-15); P4-NARR, P4-UTOK (after the owner's answers); P5-ICS → P5-CALDAV (same lane: registry, gateway decision, home sync), P5-CALINV (disjoint from the `p5-apps` hot files).
+- **Not yet placed**: FIX-150 (small; any lane's next batch gate); P4-011B-1..5 (the next free lane); P4-S3 (brief written 2026-11-15); P4-NARR, P4-UTOK (after the owner's answers); P5-ICS → P5-CALDAV (same lane: registry, gateway decision, home sync), P5-CALINV (disjoint from the `p5-apps` hot files).
 - **No spec yet**: P4-EVAL (P4-NARR and P4-UTOK specified 2026-11-15; P5-SLACK moved to phase 6, D-285) — after the P4-LLM/P4-SSH/P4-011B batches (D-235(c)); their order is an open owner question. OPS-022 deferred.
 
 ### Exit criteria (phase 5)
@@ -149,7 +150,7 @@ Proposed order (Q-P6-LIM-8): the limits framework (P6-LIM-1) together with the s
 
 ## Number allocation
 
-**Next free: FIX-150, D-287, C-860, SEC-114, migration `20261201000236`.** Edit this line in place when you take a number (check `git log -3`, `ls docs/tasks`, and this line right before committing; several sessions write briefs). Task briefs are `docs/tasks/<ID>.md`, named after the task id (`P<phase>-<NAME>` for phase features, `FIX-nnn` for fixes).
+**Next free: FIX-151, D-288, C-860, SEC-114, migration `20261201000236`.** Edit this line in place when you take a number (check `git log -3`, `ls docs/tasks`, and this line right before committing; several sessions write briefs). Task briefs are `docs/tasks/<ID>.md`, named after the task id (`P<phase>-<NAME>` for phase features, `FIX-nnn` for fixes).
 
 Live reservations (numbers inside a block that a lane has already used are recorded in its commits; unused blocks are released when the lane or task closes):
 
