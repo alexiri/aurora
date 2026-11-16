@@ -310,7 +310,19 @@ fn fd_targets(pid: u32) -> Vec<String> {
 async fn no_descriptor_leaks_into_another_exec() {
     let d = TempDir::new();
     let sftp = script(d.path(), "echo $$; cat");
+    // A descriptor of the *test process* that is not CLOEXEC (what a CI runner or nextest can
+    // leak into it): both children inherit it, and it must not count as "exec 1's pipe".
+    let (reader, _writer) = std::io::pipe().unwrap();
+    let _leaked = rustix::io::dup(&reader).unwrap();
     let mut r = rig(d.path(), true, sftp);
+    // The pipes the test process itself holds before any exec exists: whatever a child shares
+    // with *those* is the test process's own inheritance, not another exec's. (Filtering
+    // against /proc/self afterwards would also drop exec 1's real pipes, which the supervisor
+    // holds, so the snapshot is taken first.)
+    let own: Vec<String> = fd_targets(std::process::id())
+        .into_iter()
+        .filter(|t| t.starts_with("pipe:"))
+        .collect();
     let mut pids = Vec::new();
     for id in [1, 2] {
         opened(&mut r, id, 65_536).await;
@@ -326,7 +338,7 @@ async fn no_descriptor_leaks_into_another_exec() {
     let pipes = |pid: u32| -> Vec<String> {
         fd_targets(pid)
             .into_iter()
-            .filter(|t| t.starts_with("pipe:"))
+            .filter(|t| t.starts_with("pipe:") && !own.contains(t))
             .collect()
     };
     let (p1, p2) = (pipes(pids[0]), pipes(pids[1]));
