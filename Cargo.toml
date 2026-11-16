@@ -80,7 +80,7 @@ aurora-hookhost = { path = "services/aurora-hookhost" }
 tokio = { version = "1.50", features = ["rt-multi-thread", "macros", "net", "time", "sync", "signal", "io-util", "fs", "process"] }
 axum = { version = "0.8", features = ["macros", "multipart", "ws"] }
 tower = { version = "0.5", features = ["util", "timeout", "limit"] }
-tower-http = { version = "0.6", features = ["trace", "request-id", "limit", "timeout", "sensitive-headers"] }
+tower-http = { version = "0.7", features = ["trace", "request-id", "limit", "timeout", "sensitive-headers"] }
 hyper = { version = "1.8", features = ["full"] }
 hyper-util = { version = "0.1", features = ["full"] }
 http = "1"
@@ -93,7 +93,7 @@ rustls-native-certs = "0.8"
 rcgen = "0.14"
 x509-parser = "0.18"
 futures = "0.3"
-tokio-tungstenite = { version = "0.28", default-features = false, features = ["connect", "handshake"] }
+tokio-tungstenite = { version = "0.29", default-features = false, features = ["connect", "handshake"] }
 # (P5-FILES-1, D-316) the SFTP v3 client of the Files page (Apache-2.0; the raw session over any
 # AsyncRead + AsyncWrite, `extended()` for `posix-rename@openssh.com`; no SSH stack).
 russh-sftp = { version = "3.0.1", default-features = false }
