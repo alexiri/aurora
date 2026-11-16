@@ -54,3 +54,30 @@ pub async fn workspace_contacts<'e, E: PgExecutor<'e>>(
     .fetch_all(exec)
     .await?)
 }
+
+/// The slugs of an organization and (optionally) one of its workspaces, for dashboard paths.
+pub async fn slugs<'e, E: PgExecutor<'e> + Copy>(
+    exec: E,
+    org: Uuid,
+    workspace: Option<Uuid>,
+) -> Result<Option<(String, Option<String>)>, DbError> {
+    let Some(o): Option<String> =
+        sqlx::query_scalar("SELECT slug FROM organizations WHERE id = $1")
+            .bind(org)
+            .fetch_optional(exec)
+            .await?
+    else {
+        return Ok(None);
+    };
+    let w = match workspace {
+        Some(w) => {
+            sqlx::query_scalar("SELECT slug FROM workspaces WHERE id = $1 AND org_id = $2")
+                .bind(w)
+                .bind(org)
+                .fetch_optional(exec)
+                .await?
+        }
+        None => None,
+    };
+    Ok(Some((o, w)))
+}

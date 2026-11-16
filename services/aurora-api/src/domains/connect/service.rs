@@ -10,6 +10,7 @@ use crate::domains::connections::dto::Connection;
 use crate::domains::plugins::registry;
 use crate::domains::secrets::service::secret_err;
 use crate::http::auth::{Caller, require_own};
+use crate::http::who_can::{self, WhoCanRole};
 use aurora_core::{ApiError, ids};
 use aurora_db::DbError;
 use aurora_db::repo::app_instances::{self, InstanceRow};
@@ -28,7 +29,7 @@ use uuid::Uuid;
 
 pub enum ConnectErr {
     Api(ApiError),
-    Probe(Option<u16>),
+    Probe(probe::ProbeFail),
     Hook(String),
     Exchange,
 }
@@ -49,9 +50,15 @@ impl From<ConnectErr> for ApiError {
     fn from(e: ConnectErr) -> Self {
         match e {
             ConnectErr::Api(a) => a,
-            ConnectErr::Probe(s) => {
+            // (C-958) The journey tells the person why: `rejected` (401/403), `unreachable`
+            // (DNS, connect, TLS, timeout; with the host) or `unexpected` (the status is kept).
+            ConnectErr::Probe(f) => {
                 ApiError::unprocessable("connect_probe_failed", "The connection probe failed.")
-                    .with_details(json!({"upstream_status": s}))
+                    .with_details(json!({
+                        "upstream_status": f.status,
+                        "cause": f.cause.as_str(),
+                        "host": f.host,
+                    }))
             }
             ConnectErr::Hook(m) => ApiError::unprocessable("connect_hook_failed", m),
             ConnectErr::Exchange => {
@@ -223,19 +230,23 @@ fn client_ctx(c: &aurora_db::repo::oauth_clients::ClientRow) -> SealContext {
 
 type ClientRow = aurora_db::repo::oauth_clients::ClientRow;
 
-fn client_required(msg: &str) -> ConnectErr {
-    ConnectErr::Api(ApiError::unprocessable(
-        "oauth_client_required",
-        msg.to_owned(),
-    ))
+fn client_required(org: Uuid, msg: &str) -> ConnectErr {
+    ConnectErr::Api(
+        ApiError::unprocessable("oauth_client_required", msg.to_owned())
+            // (C-958) Who can register the client: the organization's administrators.
+            .with_details(who_can::stub(WhoCanRole::OrgAdmin, Some(org), None)),
+    )
 }
 
 /// OAuth methods of a self-hosted instance use only a BYOC client bound to that instance (C-243).
-fn instance_client_required() -> ConnectErr {
-    ConnectErr::Api(ApiError::unprocessable(
-        "instance_oauth_client_required",
-        "Register an OAuth application for this instance first.",
-    ))
+fn instance_client_required(org: Uuid) -> ConnectErr {
+    ConnectErr::Api(
+        ApiError::unprocessable(
+            "instance_oauth_client_required",
+            "Register an OAuth application for this instance first.",
+        )
+        .with_details(who_can::stub(WhoCanRole::OrgAdmin, Some(org), None)),
+    )
 }
 
 async fn resolve_client(
@@ -253,9 +264,9 @@ async fn resolve_client(
     };
     found.ok_or_else(|| {
         if instance.is_some() {
-            instance_client_required()
+            instance_client_required(t.org)
         } else {
-            client_required("No usable OAuth client is configured.")
+            client_required(t.org, "No usable OAuth client is configured.")
         }
     })
 }
@@ -528,7 +539,7 @@ impl Ctx<'_> {
                 },
             )
             .await
-            .map_err(|f| ConnectErr::Probe(f.status))?;
+            .map_err(ConnectErr::Probe)?;
             metadata.extend(out.metadata);
             label = out.label.or(label);
         }
@@ -1129,7 +1140,7 @@ async fn find_ce_client(
     });
     usable
         .map(Some)
-        .ok_or_else(|| client_required("OAuth client not usable here."))
+        .ok_or_else(|| client_required(ctx.t.org, "OAuth client not usable here."))
 }
 
 fn continue_to(
@@ -1161,7 +1172,7 @@ async fn start_oauth(
         .oauth_clients
         .iter()
         .find(|c| c.package_id == ctx.pkg.package_id && c.client_key == o.client)
-        .ok_or_else(|| client_required("The app's OAuth client is not declared."))?;
+        .ok_or_else(|| client_required(ctx.t.org, "The app's OAuth client is not declared."))?;
     let client = resolve_client(
         ctx.state,
         &ctx.pkg.package_id,
@@ -1188,7 +1199,7 @@ async fn start_oauth(
         .fields
         .get("client_id")
         .and_then(Value::as_str)
-        .ok_or_else(|| client_required("The OAuth client has no client_id."))?
+        .ok_or_else(|| client_required(ctx.t.org, "The OAuth client has no client_id."))?
         .to_owned();
     let parsed = fields::parse(&o.fields, &req.fields)?;
     let tenant = parsed

@@ -9,6 +9,7 @@ mod agent_token_age;
 mod agents;
 mod api_ratelimit;
 mod app_instances;
+mod app_setup;
 mod approval_notify;
 mod approval_stall;
 mod approvals;

@@ -128,3 +128,41 @@ pub async fn delete<'e, E: PgExecutor<'e>>(exec: E, id: Uuid) -> Result<bool, Db
         .rows_affected()
         > 0)
 }
+
+/// One OAuth client of an app's package, with the level it is registered at (P5-UX-2, C-931).
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct ClientLevel {
+    pub id: Uuid,
+    pub client_key: String,
+    pub enabled: bool,
+    /// `workspace` | `organization` | `instance`.
+    pub level: String,
+}
+
+/// The clients of `package_id` for `keys` that a scope can see, by level: the workspace's own,
+/// the organization's, and the instance's. Self-hosted-instance clients (`instance_id` set) are
+/// left out: they serve one registered server, not the app's default host. Refs only: the
+/// public fields and the sealed secret are never read here.
+pub async fn levels_for_keys<'e, E: PgExecutor<'e>>(
+    exec: E,
+    package_id: &str,
+    keys: &[String],
+    org: Uuid,
+    workspace: Option<Uuid>,
+) -> Result<Vec<ClientLevel>, DbError> {
+    Ok(sqlx::query_as(
+        "SELECT c.id, c.client_key, c.enabled, \
+         CASE WHEN c.workspace_id IS NOT NULL THEN 'workspace' \
+              WHEN c.org_id IS NOT NULL THEN 'organization' ELSE 'instance' END AS level \
+         FROM app_oauth_clients c \
+         WHERE c.package_id = $1 AND c.client_key = ANY($2) AND c.instance_id IS NULL \
+         AND (c.org_id IS NULL OR (c.org_id = $3 AND (c.workspace_id IS NULL OR c.workspace_id = $4))) \
+         ORDER BY c.created_at, c.id",
+    )
+    .bind(package_id)
+    .bind(keys)
+    .bind(org)
+    .bind(workspace)
+    .fetch_all(exec)
+    .await?)
+}

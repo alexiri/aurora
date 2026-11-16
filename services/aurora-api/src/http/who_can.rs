@@ -98,7 +98,8 @@ pub async fn people(
 }
 
 impl WhoCan {
-    /// The one builder. `path` is `Some` when the caller can do it themselves.
+    /// The one builder. `path` is `Some` when the caller can do it themselves; the names are
+    /// given either way (a page can offer both the action and the people who share it).
     pub async fn build(
         s: &AppState,
         role: WhoCanRole,
@@ -111,12 +112,7 @@ impl WhoCan {
         Self {
             action: action.to_owned(),
             role,
-            // A caller who can act needs no one to ask.
-            people: if you_can {
-                Vec::new()
-            } else {
-                people(s, role, org, workspace).await
-            },
+            people: people(s, role, org, workspace).await,
             path,
             you_can,
         }
@@ -140,7 +136,9 @@ pub async fn org_contacts(s: &AppState, org: Uuid) -> ApiResult<Contacts> {
 }
 
 /// The refusal stub: `who_can` with the role and (until [`middleware`] resolves it) the scope.
-fn stub(role: WhoCanRole, org: Option<Uuid>, workspace: Option<Uuid>) -> Value {
+/// Use it as the `details` of a 4xx whose sentence needs "who can fix this" (C-958 uses it for
+/// `oauth_client_required`).
+pub fn stub(role: WhoCanRole, org: Option<Uuid>, workspace: Option<Uuid>) -> Value {
     let mut who = json!({
         "action": "", "role": role, "people": [], "you_can": false,
     });
@@ -176,7 +174,11 @@ pub fn forbid_code(
 pub async fn middleware(State(s): State<AppState>, req: Request, next: Next) -> Response {
     let method = req.method().clone();
     let res = next.run(req).await;
-    if res.status() != http::StatusCode::FORBIDDEN {
+    // 403 refusals and the 422 "an admin must set this up first" answers carry a stub.
+    if !matches!(
+        res.status(),
+        http::StatusCode::FORBIDDEN | http::StatusCode::UNPROCESSABLE_ENTITY
+    ) {
         return res;
     }
     let (parts, body) = res.into_parts();

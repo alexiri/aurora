@@ -13051,6 +13051,113 @@
         ]
       }
     },
+    "/v1/apps/{app}/connect-plan": {
+      "get": {
+        "tags": [
+          "apps"
+        ],
+        "summary": "The connect journey's plan: a projection of the setup status (C-955).",
+        "operationId": "getAppConnectPlan",
+        "parameters": [
+          {
+            "name": "app",
+            "in": "path",
+            "description": "App id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "workspace_id",
+            "in": "query",
+            "description": "A workspace view (needs workspace owner).",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "org_id",
+            "in": "query",
+            "description": "An organization view when `workspace_id` is absent (needs organization owner or admin).",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Connect plan",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectPlan"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
     "/v1/apps/{app}/guide": {
       "get": {
         "tags": [
@@ -13186,6 +13293,113 @@
           },
           "404": {
             "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/apps/{app}/setup": {
+      "get": {
+        "tags": [
+          "apps"
+        ],
+        "summary": "Setup status of an app for a workspace or an organization: which ways to connect work here,\nwhat is missing and who can fix it (C-931).",
+        "operationId": "getAppSetup",
+        "parameters": [
+          {
+            "name": "app",
+            "in": "path",
+            "description": "App id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "workspace_id",
+            "in": "query",
+            "description": "A workspace view (needs workspace owner).",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "org_id",
+            "in": "query",
+            "description": "An organization view when `workspace_id` is absent (needs organization owner or admin).",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Setup status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SetupStatus"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
             "content": {
               "application/json": {
                 "schema": {
@@ -34244,7 +34458,8 @@
         "required": [
           "client_key",
           "fields",
-          "redirect_uri"
+          "redirect_uri",
+          "used_by_methods"
         ],
         "properties": {
           "client_key": {
@@ -34264,6 +34479,13 @@
               "string",
               "null"
             ]
+          },
+          "used_by_methods": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MethodRef"
+            },
+            "description": "(P5-UX-2, C-946) The connect methods that use this client: forms and lists say\n\"<app> — for <method label>\", never a bare `client_key`."
           }
         }
       },
@@ -35410,6 +35632,34 @@
           }
         }
       },
+      "ClientRef": {
+        "type": "object",
+        "description": "An OAuth client by reference: never its id (the provider's), its secret or its fields.",
+        "required": [
+          "id",
+          "client_key",
+          "enabled",
+          "used_by_methods"
+        ],
+        "properties": {
+          "client_key": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "used_by_methods": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MethodRef"
+            }
+          }
+        }
+      },
       "Condition": {
         "type": "object",
         "required": [
@@ -35501,7 +35751,9 @@
           "scopes",
           "default_scopes",
           "access_levels",
-          "probe_scopes"
+          "probe_scopes",
+          "audience",
+          "scope_presets"
         ],
         "properties": {
           "access_levels": {
@@ -35509,6 +35761,10 @@
             "items": {
               "$ref": "#/components/schemas/AccessLevel"
             }
+          },
+          "audience": {
+            "$ref": "#/components/schemas/MethodAudience",
+            "description": "(P5-UX-2, C-956) Who the method is for; an `admin` method is never suggested."
           },
           "callback": {
             "type": [
@@ -35567,6 +35823,10 @@
             "type": "boolean",
             "description": "The chooser preselects this method and badges it \"Recommended\" (at most one per app)."
           },
+          "scope_presets": {
+            "$ref": "#/components/schemas/MethodScopePresets",
+            "description": "(P5-UX-2, C-956) The scopes of \"Read only\" and \"Read and change\", already defaulted."
+          },
           "scopes": {
             "type": "array",
             "items": {
@@ -35585,6 +35845,45 @@
             "type": "string"
           },
           "url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "ConnectPlan": {
+        "type": "object",
+        "description": "The journey's view of [`SetupStatus`] (C-955): the same methods and availability, nothing else.",
+        "required": [
+          "app_id",
+          "available",
+          "methods"
+        ],
+        "properties": {
+          "app_id": {
+            "type": "string"
+          },
+          "available": {
+            "type": "boolean"
+          },
+          "available_who_can": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/WhoCan"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "methods": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SetupMethod"
+            }
+          },
+          "suggested_method": {
             "type": [
               "string",
               "null"
@@ -40060,6 +40359,17 @@
           }
         }
       },
+      "InstanceClients": {
+        "type": "object",
+        "required": [
+          "set_up"
+        ],
+        "properties": {
+          "set_up": {
+            "type": "boolean"
+          }
+        }
+      },
       "InstanceEgress": {
         "type": "object",
         "required": [
@@ -41694,6 +42004,50 @@
                 "type": "null"
               }
             ]
+          }
+        }
+      },
+      "MethodAudience": {
+        "type": "string",
+        "enum": [
+          "person",
+          "admin"
+        ]
+      },
+      "MethodRef": {
+        "type": "object",
+        "required": [
+          "id",
+          "label"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          }
+        }
+      },
+      "MethodScopePresets": {
+        "type": "object",
+        "description": "The scopes each journey choice requests (C-956), already defaulted.",
+        "required": [
+          "read",
+          "write"
+        ],
+        "properties": {
+          "read": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "write": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         }
       },
@@ -51689,6 +52043,38 @@
           }
         }
       },
+      "SetupCan": {
+        "type": "object",
+        "description": "What the caller can do at this level (the page renders an action or the `who_can` sentence).",
+        "required": [
+          "register_workspace_client",
+          "register_org_client",
+          "register_instance",
+          "set_availability",
+          "connect_workspace",
+          "connect_org"
+        ],
+        "properties": {
+          "connect_org": {
+            "type": "boolean"
+          },
+          "connect_workspace": {
+            "type": "boolean"
+          },
+          "register_instance": {
+            "type": "boolean"
+          },
+          "register_org_client": {
+            "type": "boolean"
+          },
+          "register_workspace_client": {
+            "type": "boolean"
+          },
+          "set_availability": {
+            "type": "boolean"
+          }
+        }
+      },
       "SetupCheck": {
         "type": "object",
         "required": [
@@ -51727,6 +52113,138 @@
             "description": "The current value (never a secret): a model id, an image, a count."
           }
         }
+      },
+      "SetupClients": {
+        "type": "object",
+        "required": [
+          "instance"
+        ],
+        "properties": {
+          "instance": {
+            "$ref": "#/components/schemas/InstanceClients"
+          },
+          "organization": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/ClientRef"
+            }
+          },
+          "workspace": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/ClientRef"
+            },
+            "description": "This workspace's own clients; `null` in an organization view."
+          }
+        }
+      },
+      "SetupInstance": {
+        "type": "object",
+        "required": [
+          "id",
+          "label",
+          "base_url",
+          "scope"
+        ],
+        "properties": {
+          "base_url": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "label": {
+            "type": "string"
+          },
+          "scope": {
+            "type": "string",
+            "description": "`instance` (registered for every organization or shipped by a package) | `organization`."
+          }
+        }
+      },
+      "SetupMethod": {
+        "type": "object",
+        "required": [
+          "id",
+          "label",
+          "kind",
+          "audience",
+          "recommended",
+          "ready",
+          "needs",
+          "scope_presets"
+        ],
+        "properties": {
+          "audience": {
+            "$ref": "#/components/schemas/MethodAudience"
+          },
+          "client_key": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "OAuth methods: the package's client key."
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "description": "`oauth2` | `fields` | `hook`."
+          },
+          "label": {
+            "type": "string"
+          },
+          "needs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SetupNeed"
+            }
+          },
+          "ready": {
+            "type": "boolean",
+            "description": "The method works for people here."
+          },
+          "recommended": {
+            "type": "boolean"
+          },
+          "scope_presets": {
+            "$ref": "#/components/schemas/MethodScopePresets"
+          },
+          "who_can": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/WhoCan",
+                "description": "Present when something is missing: who can fix it."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "SetupNeed": {
+        "type": "string",
+        "description": "What a method still needs before people here can use it.",
+        "enum": [
+          "oauth_client",
+          "instance",
+          "admin_material"
+        ]
       },
       "SetupState": {
         "type": "string",
@@ -51793,6 +52311,25 @@
           },
           "status": {
             "$ref": "#/components/schemas/SetupState"
+          }
+        }
+      },
+      "SetupValues": {
+        "type": "object",
+        "required": [
+          "callback_url"
+        ],
+        "properties": {
+          "callback_url": {
+            "type": "string",
+            "description": "The redirect URI to register at the provider."
+          },
+          "external_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Only when the app's package reads `org_external_id` (e.g. `aws-keys`)."
           }
         }
       },
@@ -54277,6 +54814,42 @@
           }
         }
       },
+      "WhoCan": {
+        "type": "object",
+        "description": "Who can do something, and where (C-981).",
+        "required": [
+          "action",
+          "role",
+          "people",
+          "you_can"
+        ],
+        "properties": {
+          "action": {
+            "type": "string",
+            "description": "A snake_case key for what is asked (`view_this` / `change_this` when a refusal does not\nknow better); the dashboard words it."
+          },
+          "path": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A dashboard path (`aurora_core::dash_paths`), present only when `you_can`."
+          },
+          "people": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WhoCanPerson"
+            },
+            "description": "At most three display names; always empty for `instance_admin`."
+          },
+          "role": {
+            "$ref": "#/components/schemas/WhoCanRole"
+          },
+          "you_can": {
+            "type": "boolean"
+          }
+        }
+      },
       "WhoCanPerson": {
         "type": "object",
         "required": [
@@ -54288,6 +54861,17 @@
             "description": "Display name, never an e-mail."
           }
         }
+      },
+      "WhoCanRole": {
+        "type": "string",
+        "description": "The role that can fix it.",
+        "enum": [
+          "workspace_owner",
+          "workspace_approver",
+          "org_admin",
+          "org_owner",
+          "instance_admin"
+        ]
       },
       "WinningCredential": {
         "type": "object",
