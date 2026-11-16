@@ -18,6 +18,7 @@ content inside those pages.
 
 ## Linked requirements
 
+- **Design** (D-354): the canvas “Aurora — agents, accounts and access”, https://claude.ai/artifact/3UwmUgrhh6MLCsfqdhTFmQ, boards Read me › Navigation rail, Agent header and Patterns; Workspace › “Pages have new names” and A member's view; States › Tour and Navigation at 390 px; the page frame (rail, level, header sentence, tabs) of every board. Read each board's note; where a board and the spec disagree, the spec wins.
 - D-338, D-340, D-351, D-352; contracts **C-926, C-960, C-961, C-962, C-971, C-975, C-987**.
 - Normative: `14 §Information architecture` › "One structure for every level" (the five sentences, the
   vocabulary, topics per level, who sees what, settings in their topics), `14 §Onboarding` §3 (tour),

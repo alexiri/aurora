@@ -15,6 +15,7 @@ This task builds:
 
 ## Linked requirements
 
+- **Design** (D-354): the canvas “Aurora — agents, accounts and access”, https://claude.ai/artifact/3UwmUgrhh6MLCsfqdhTFmQ, boards Workspace › Internet access; Organization › Internet access; Read me › Patterns (scope ladder, Apply bar). Read each board's note; where a board and the spec disagree, the spec wins.
 - D-339, D-347, D-351, D-353; contracts **C-926 (the Internet access labels), C-963, C-964, C-965, C-986
   (`internet.ts`), C-989**.
 - Normative: `14 §Information architecture` (scope ladder, Internet access row), `14 §Agents, accounts and

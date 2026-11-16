@@ -12,6 +12,7 @@ agent's access are made in one request. The existing controls stay under **Advan
 
 ## Linked requirements
 
+- **Design** (D-354): the canvas “Aurora — agents, accounts and access”, https://claude.ai/artifact/3UwmUgrhh6MLCsfqdhTFmQ, boards Agent › Give Daneel an app (the journey); Workspace › Apps & accounts › Apps and › Accounts (the Add menu); Read me › Patterns (Done sentences). Read each board's note; where a board and the spec disagree, the spec wins.
 - D-337, D-321, D-322, D-344, D-345, D-353; contracts **C-914, C-942 (the Copy blocks)**; reads C-917,
   C-955, C-957, C-958, C-988.
 - Normative: `14 §Agents, accounts and access` §3 (the button labels, steps, Done and failure sentences),

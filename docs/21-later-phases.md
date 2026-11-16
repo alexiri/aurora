@@ -293,7 +293,7 @@ instructions`, `§Usage and metering`, `§Evals`; `12 §Harness interface`, `§A
 `§Adapter codex`; `16`; `03`; `05`; `15`; `14`; `02 §Limits`; `17` (SEC-122, SEC-123); `18`;
 `API_CONTRACTS` C-875..C-884.
 
-### Agents, accounts and access; one structure for every level (phase 5, P5-UX and P5-IA, owner 2026-11-15, D-321..D-353) — specified
+### Agents, accounts and access; one structure for every level (phase 5, P5-UX and P5-IA, owner 2026-11-15, D-321..D-354) — specified
 
 Owner, after three walkthroughs on the kind cluster (a new user, a team lead setting up apps, the
 instance owner): "the experience of figuring out how to connect their agent to things and how they have
@@ -325,7 +325,9 @@ Twenty briefs in four fixed waves (D-352, D-353): FIX-159, P5-IA-1..5, P5-UX-1..
 -17. Owning sections: `14 §Information architecture` › "One structure for every level" and
 `14 §Agents, accounts and access`; `04 §Workspace access by e-mail`, `§New-user placement`; `05`;
 `07 §Authoring`; `09 §3.4`, `§6`; `03 §Planned changes`; `02 §Limits`; `15 §Instance settings`;
-`17` (SEC-128..SEC-132); `API_CONTRACTS` "P5-UX and P5-IA".
+`17` (SEC-128..SEC-132); `API_CONTRACTS` "P5-UX and P5-IA". Design reference: the canvas “Aurora —
+agents, accounts and access” (D-354, `14 §Visual design` › “Redesign canvas (phase 5)”). Owner,
+2026-11-16: “the redesign is good to go”; merged to master the same day.
 ## Phase 6 — Proposals (owner, 2026-11-14; not specified, not started)
 
 Also in phase 6, already specified: the **S3-compatible blob store** (P4-S3, D-120; moved from phase 5

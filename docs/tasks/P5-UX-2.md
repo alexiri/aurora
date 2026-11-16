@@ -21,6 +21,7 @@ this" sentence need:
 
 ## Linked requirements
 
+- **Design** (D-354): the canvas “Aurora — agents, accounts and access”, https://claude.ai/artifact/3UwmUgrhh6MLCsfqdhTFmQ, boards none of its own (backend); its data drives Agent › Give Daneel an app and Workspace › Apps & accounts › Linear. Read each board's note; where a board and the spec disagree, the spec wins.
 - D-321, D-322, D-330, D-344, D-349; SEC-130.
 - Contracts **C-931, C-946 (API), C-955, C-956, C-957, C-958, C-981 (server), C-988**.
 - Normative: `14 §Agents, accounts and access` §3 and §4, `14 §Information architecture` "Who can fix

@@ -12,6 +12,7 @@ and without exposing the organization's member list.
 
 ## Linked requirements
 
+- **Design** (D-354): the canvas “Aurora — agents, accounts and access”, https://claude.ai/artifact/3UwmUgrhh6MLCsfqdhTFmQ, boards Workspace › People › Add people; States › Empty states. Read each board's note; where a board and the spec disagree, the spec wins.
 - D-325, D-328 (owner: a workspace owner can never let a non-member into the organization; the dialog may
   say whether one exact address is already a member), D-352 (Approver only where already used).
 - SEC-128; contracts **C-919, C-920**.

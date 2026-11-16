@@ -16,6 +16,7 @@ agent's Access tab (D-350).
 
 ## Linked requirements
 
+- **Design** (D-354): the canvas “Aurora — agents, accounts and access”, https://claude.ai/artifact/3UwmUgrhh6MLCsfqdhTFmQ, boards Workspace › Welcome and Overview; Agent › Access (the summary) and Agents (list). Read each board's note; where a board and the spec disagree, the spec wins.
 - D-350, D-326, D-343; contracts **C-927, C-986 (`agent.ts`)**.
 - Normative: `14 §Information architecture` "The model in five sentences" and the vocabulary,
   `14 §Agents, accounts and access` §8 and §9, `14 §Onboarding` §2 (superseded where §9 says so),

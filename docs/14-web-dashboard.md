@@ -92,6 +92,31 @@ Phase: **0**. App: `web/` (Next.js App Router, TypeScript strict). Port 4100.
 Decision D-68. Reference mock-ups: `docs/design/ui-refresh/` (static HTML;
 where a mock-up and this section disagree, this section wins).
 
+**Redesign canvas (phase 5, P5-UX and P5-IA, D-354).** The reference for the phase-5 redesign is the
+design canvas **“Aurora — agents, accounts and access”**,
+<https://claude.ai/artifact/3UwmUgrhh6MLCsfqdhTFmQ> (owner, 2026-11-16: “the redesign is good to go”).
+Every UI developer and designer working on a P5-UX or P5-IA brief, or on any dashboard screen after
+them, starts there.
+- **What it holds:** 64 boards on six pages (Read me, Workspace, Agent, Organization, Administration,
+  States and phone). Each board has a note naming its briefs, contracts and spec section, what it
+  shows and what it leaves out. The **Read me** page holds the look, the vocabulary, the navigation rail
+  and agent header components, and a **Patterns** board with the shared pieces and their exact words.
+- **The look it sets** (on top of this section, not instead of it): a navy navigation rail in both
+  themes (a dark-theme island carrying the dark lockup, a scope switcher and the topics of
+  §Information architecture); every topic page opening with a sentence that says what is true now; the
+  access choice drawn as one three-way switch everywhere; amber for anything that needs a person, teal
+  for allowed, works and selected. Colours, type, radii and spacing stay the tokens of this section.
+- **Shared classes:** the canvas's `aurora-ui.css` uses only the tokens; each class names a primitive
+  to build once in `web/src/components/ui` (or `components/accounts`) and reuse. Do not copy the
+  canvas's HTML or class names into the code.
+- **Precedence:** this document and `API_CONTRACTS.md` win. Where a board and the text disagree, the
+  board is wrong: build the text, and tell the spec owner so the board is corrected. Text on a board
+  that the spec does not give (sample names, counts, some sentences on pages whose content is
+  "unchanged") is illustrative. The agent chat panel's internals keep the “Agent page redesign”
+  canvas of §Agent page (phase 5) as their reference.
+- **Keeping it current:** a spec change that changes a screen updates its board in the same change
+  (the canvas is edited by whoever owns the spec batch).
+
 **Scope: the whole dashboard.** This section is the dashboard's visual
 identity, not a restyle of individual screens. **Every** screen MUST follow
 it — the screens in the mock-ups and every other existing screen (org,
@@ -1914,6 +1939,9 @@ The first specs fixed each symptom. A design review (D-343) then showed that the
 caused them. This section is the result. It follows the five sentences of §Information architecture: an
 agent has **accounts** it can use and **one access choice per account**; anything that needs a person
 waits in **Approvals**; limits come from above.
+
+**Design** (D-354): every screen of this section and of §Information architecture › "One structure for
+every level" is drawn on the design canvas of §Visual design › "Redesign canvas (phase 5)".
 
 ### 1. Accounts: one list of what agents can use (P5-UX-4, D-345, C-917, C-925)
 

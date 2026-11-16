@@ -17,6 +17,7 @@ adds a test that keeps spec references, raw values and retired words out of the 
 
 ## Linked requirements
 
+- **Design** (D-354): the canvas “Aurora — agents, accounts and access”, https://claude.ai/artifact/3UwmUgrhh6MLCsfqdhTFmQ, boards Administration › People › Sign-in, Platform › Email, Agents › Defaults, All settings (labels, help, “Default:” badges, Helm locks); Read me › Patterns. Read each board's note; where a board and the spec disagree, the spec wins.
 - D-340, D-341; contracts **C-972, C-973, C-974**.
 - Normative: `14 §Information architecture` › "Settings in words" and the vocabulary table,
   `15 §Instance settings` (sections, movable keys), `05` (settings section row).

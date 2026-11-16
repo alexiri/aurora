@@ -14,6 +14,7 @@ states, repairs the broken Welcome links and fixes the small first-run defects.
 
 ## Linked requirements
 
+- **Design** (D-354): the canvas “Aurora — agents, accounts and access”, https://claude.ai/artifact/3UwmUgrhh6MLCsfqdhTFmQ, boards Read me › Patterns (who can fix this); Workspace › A member's view and Welcome (links); States › Empty states and Loading, refusals, errors. Read each board's note; where a board and the spec disagree, the spec wins.
 - D-323, D-349; contracts **C-915, C-916, C-981 (component)**.
 - Normative: `14 §Information architecture` "Who can fix this", `14 §Agents, accounts and access` §9
   (first-run fixes), `14 §Visual design`.

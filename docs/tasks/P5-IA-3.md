@@ -13,6 +13,7 @@ tabs (D-338, D-339, D-351).
 
 ## Linked requirements
 
+- **Design** (D-354): the canvas “Aurora — agents, accounts and access”, https://claude.ai/artifact/3UwmUgrhh6MLCsfqdhTFmQ, boards Organization › AI models and Agents › BYO; Administration › AI models › Endpoints and Agents › Defaults. Read each board's note; where a board and the spec disagree, the spec wins.
 - D-338, D-339, D-340, D-351; contracts **C-966, C-967**; uses C-963 (`ScopeLadder`), C-971
   (`SettingsSectionFields`), C-917 (accounts, for the keys notice).
 - Normative: `14 §Information architecture` (AI models and Agents rows, the settings map),

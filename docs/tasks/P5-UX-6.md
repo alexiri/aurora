@@ -19,6 +19,7 @@ the defaults so that a new person's agent works from the first minute.
 
 ## Linked requirements
 
+- **Design** (D-354): the canvas “Aurora — agents, accounts and access”, https://claude.ai/artifact/3UwmUgrhh6MLCsfqdhTFmQ, boards Administration › Overview, People › New users, Apps & accounts › Apps; Organization › Apps & accounts › Apps (the “can't sign in yet” notice). Read each board's note; where a board and the spec disagree, the spec wins.
 - D-326, D-351, D-353; contracts **C-922, C-923, C-924**.
 - Normative: `14 §Agents, accounts and access` §9 (Administration › Overview, defaults),
   `14 §Onboarding` §1 (the setup steps), `04 §New-user placement` (the name of a personal workspace,

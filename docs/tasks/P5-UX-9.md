@@ -15,6 +15,7 @@ In the app-setup walkthrough:
 
 ## Linked requirements
 
+- **Design** (D-354): the canvas “Aurora — agents, accounts and access”, https://claude.ai/artifact/3UwmUgrhh6MLCsfqdhTFmQ, boards Workspace › Apps & accounts › Linear (setup page) and › Apps; Organization › Apps & accounts › Apps; Administration › Apps & accounts › Apps. Read each board's note; where a board and the spec disagree, the spec wins.
 - D-330, D-334, D-351; contracts **C-932, C-933, C-946 (forms)**; reads C-931, C-940, C-917, C-942.
 - Normative: `14 §Agents, accounts and access` §4, `14 §Information architecture` (Apps & accounts row,
   "Who can fix this"), `14 §Visual design`.

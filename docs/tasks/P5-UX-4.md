@@ -18,6 +18,7 @@ This task builds the heart of the new model (D-344, D-345):
 
 ## Linked requirements
 
+- **Design** (D-354): the canvas “Aurora — agents, accounts and access”, https://claude.ai/artifact/3UwmUgrhh6MLCsfqdhTFmQ, boards Agent › Access, Access › Custom… and Access at 390 px; Workspace › Apps & accounts › Accounts; Read me › Patterns (account row, access switch). Read each board's note; where a board and the spec disagree, the spec wins.
 - D-344, D-345, D-351, D-353; SEC-131 (the access part).
 - Contracts **C-917, C-925, C-938, C-948, C-980**.
 - Normative: `14 §Agents, accounts and access` §1 and §2, `14 §Information architecture` (vocabulary),

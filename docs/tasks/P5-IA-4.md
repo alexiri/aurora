@@ -12,6 +12,7 @@ P5-IA-1 moved the existing pieces under these topics. This task makes each a coh
 
 ## Linked requirements
 
+- **Design** (D-354): the canvas “Aurora — agents, accounts and access”, https://claude.ai/artifact/3UwmUgrhh6MLCsfqdhTFmQ, boards Administration › People › Sign-in, Data › Retention, Platform › Email, Chat platforms; Organization › People, Data › Retention, Chat platforms, Settings; Workspace › Settings; Agent › Agents (list) (the BYO row). Read each board's note; where a board and the spec disagree, the spec wins.
 - D-338, D-339, D-340, D-351; contracts **C-968, C-969, C-970, C-967 (the workspace part)**; uses C-963
   (`ScopeLadder`) and C-971 (`SettingsSectionFields`).
 - Normative: `14 §Information architecture` (People, Data, Platform, Chat platforms and Settings rows;
