@@ -146,6 +146,13 @@ async fn me(headers: axum::http::HeaderMap) -> Response {
     if a == "Bearer bad" {
         return StatusCode::FORBIDDEN.into_response();
     }
+    // (P5-UX-2, C-958) `nope` is a refused credential (401), `boom` a provider failure (500).
+    if a == "Bearer nope" {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    if a == "Bearer boom" {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    }
     // `X-OAuth-Scopes` is how some providers report a token's scopes (a probe can store it).
     (
         [("x-oauth-scopes", "repo, read:org")],

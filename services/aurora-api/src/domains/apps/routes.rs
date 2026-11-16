@@ -1,7 +1,7 @@
 use super::dto::*;
-use super::{assets, service};
+use super::{assets, service, setup};
 use crate::app::AppState;
-use crate::http::auth::Caller;
+use crate::http::auth::{Caller, require_own};
 use crate::http::error::ErrorEnvelope;
 use crate::http::json::{Json, Path, Query};
 use aurora_core::{ApiError, FieldError};
@@ -16,6 +16,91 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(get_app))
         .routes(routes!(app_icon))
         .routes(routes!(app_guide))
+        .routes(routes!(app_setup))
+        .routes(routes!(app_connect_plan))
+}
+
+/// Resolve and authorize the level of a setup status: a workspace needs `can_own`, an
+/// organization alone needs owner or admin (the refusals carry `who_can`, C-981).
+async fn setup_view(
+    caller: &Caller,
+    state: &AppState,
+    q: &SetupQuery,
+) -> Result<setup::SetupView, ApiError> {
+    match (q.workspace_id, q.org_id) {
+        (Some(ws), org) => {
+            let a = caller.workspace(state, ws).await?;
+            require_own(&a)?;
+            if org.is_some_and(|o| o != a.org_id) {
+                return Err(ApiError::invalid_request(
+                    "org_id does not match the workspace.",
+                    vec![FieldError::new(
+                        "/org_id",
+                        "not the workspace's organization",
+                    )],
+                ));
+            }
+            Ok(setup::SetupView {
+                org: a.org_id,
+                workspace: Some(ws),
+                org_admin: a.org_role.is_admin(),
+            })
+        }
+        (None, Some(org)) => {
+            caller.org(state, org).await?.require_admin()?;
+            Ok(setup::SetupView {
+                org,
+                workspace: None,
+                org_admin: true,
+            })
+        }
+        (None, None) => Err(ApiError::invalid_request(
+            "Name a level.",
+            vec![FieldError::new(
+                "/workspace_id",
+                "give workspace_id, or org_id for an organization",
+            )],
+        )),
+    }
+}
+
+/// Setup status of an app for a workspace or an organization: which ways to connect work here,
+/// what is missing and who can fix it (C-931).
+#[utoipa::path(
+    get, path = "/apps/{app}/setup", operation_id = "getAppSetup", tag = "apps",
+    params(("app" = String, Path, description = "App id"), SetupQuery),
+    responses((status = 200, description = "Setup status", body = setup::SetupStatus),
+              (status = 400, body = ErrorEnvelope), (status = 403, body = ErrorEnvelope),
+              (status = 404, body = ErrorEnvelope)),
+    security(("session" = []), ("api_key" = []))
+)]
+async fn app_setup(
+    caller: Caller,
+    State(state): State<AppState>,
+    Path(app): Path<String>,
+    Query(q): Query<SetupQuery>,
+) -> Result<Json<setup::SetupStatus>, ApiError> {
+    let view = setup_view(&caller, &state, &q).await?;
+    Ok(Json(setup::setup_status(&state, &app, view).await?))
+}
+
+/// The connect journey's plan: a projection of the setup status (C-955).
+#[utoipa::path(
+    get, path = "/apps/{app}/connect-plan", operation_id = "getAppConnectPlan", tag = "apps",
+    params(("app" = String, Path, description = "App id"), SetupQuery),
+    responses((status = 200, description = "Connect plan", body = setup::ConnectPlan),
+              (status = 400, body = ErrorEnvelope), (status = 403, body = ErrorEnvelope),
+              (status = 404, body = ErrorEnvelope)),
+    security(("session" = []), ("api_key" = []))
+)]
+async fn app_connect_plan(
+    caller: Caller,
+    State(state): State<AppState>,
+    Path(app): Path<String>,
+    Query(q): Query<SetupQuery>,
+) -> Result<Json<setup::ConnectPlan>, ApiError> {
+    let view = setup_view(&caller, &state, &q).await?;
+    Ok(Json(setup::setup_status(&state, &app, view).await?.into()))
 }
 
 /// App catalogue from the active registry snapshot, with availability and connection counts.

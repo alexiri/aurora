@@ -611,11 +611,15 @@ the differences. Off unless `ssh.enabled`.
   string `SSH-2.0-aurora` without a version number.
 - *Authentication*: the only method advertised and accepted is `publickey` with an OpenSSH **user
   certificate** of type `ssh-ed25519-cert-v01@openssh.com`. In the *query* phase (no signature) the
-  terminator answers OK only when the whole certificate law passes offline: CA signature by one of the
+  terminator answers OK to any `ssh-ed25519` offer and refuses every other algorithm (D-356: the
+  SSH library shows the handler only the subject key there, and a certificate offer and a plain
+  ed25519 key look the same, so every ed25519 offer gets the same answer whoever holds it). In the
+  *signature* phase the library verifies possession of the key; a plain key is then refused, and for
+  a certificate, **before any API call**,
+  the terminator applies the whole certificate law offline: CA signature by one of the
   `ca_public_keys` of its registration, type `user`, inside the validity window (60 s skew),
   principal list exactly `[<username>]` and the username a UUID, **no critical options**, the key id
-  in the `aurora:u=…:k=…:a=…:w=…` shape. In the *signature* phase the library verifies possession of
-  the certified key; only then does the terminator call `POST /v1/terminator/sessions`, and
+  in the `aurora:u=…:k=…:a=…:w=…` shape. Only when it passes does the terminator call `POST /v1/terminator/sessions`, and
   authentication succeeds only if the API answers 201. Every other outcome — plain keys, `password`,
   `keyboard-interactive`, `hostbased`, a failing certificate, an API refusal or error — is the same
   `USERAUTH_FAILURE` listing `publickey` only, after the same 1 s delay, no banner (hint-free). The

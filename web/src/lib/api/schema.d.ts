@@ -2206,6 +2206,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/apps/{app}/connect-plan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The connect journey's plan: a projection of the setup status (C-955). */
+        get: operations["getAppConnectPlan"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/apps/{app}/guide": {
         parameters: {
             query?: never;
@@ -2232,6 +2249,26 @@ export interface paths {
         };
         /** App icon (`image/png`). */
         get: operations["getAppIcon"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/apps/{app}/setup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Setup status of an app for a workspace or an organization: which ways to connect work here,
+         *     what is missing and who can fix it (C-931).
+         */
+        get: operations["getAppSetup"];
         put?: never;
         post?: never;
         delete?: never;
@@ -5750,6 +5787,11 @@ export interface components {
             fields: components["schemas"]["OauthClientField"][];
             redirect_uri: string;
             setup_note?: string | null;
+            /**
+             * @description (P5-UX-2, C-946) The connect methods that use this client: forms and lists say
+             *     "<app> — for <method label>", never a bare `client_key`.
+             */
+            used_by_methods: components["schemas"]["MethodRef"][];
         };
         /**
          * @description (phase 4, P4-GRANTS, D-123, C-410) The app's manifest restrictions, so clients can explain
@@ -6108,6 +6150,14 @@ export interface components {
             org_slug: string;
             slug: string;
         };
+        /** @description An OAuth client by reference: never its id (the provider's), its secret or its fields. */
+        ClientRef: {
+            client_key: string;
+            enabled: boolean;
+            /** Format: uuid */
+            id: string;
+            used_by_methods: components["schemas"]["MethodRef"][];
+        };
         Condition: {
             json_pointer?: string | null;
             on: components["schemas"]["ConditionOn"];
@@ -6134,8 +6184,17 @@ export interface components {
         ConfirmRequest: {
             confirm: string;
         };
+        /** @description The access a connect gives (C-957): the agents and one level for all of them. */
+        ConnectGrant: {
+            /** @description 1 to `GRANT_BULK_MAX` distinct agents of the workspace; the caller must own the workspace. */
+            agent_ids: string[];
+            /** @description Expanded on the server from the app's tools (C-980); never client-supplied tool lists. */
+            level: components["schemas"]["Level"];
+        };
         ConnectMethod: {
             access_levels: components["schemas"]["AccessLevel"][];
+            /** @description (P5-UX-2, C-956) Who the method is for; an `admin` method is never suggested. */
+            audience: components["schemas"]["MethodAudience"];
             /** @description `query` | `fragment` (OAuth only). */
             callback?: string | null;
             client_key?: string | null;
@@ -6158,11 +6217,21 @@ export interface components {
             probe_scopes: string[];
             /** @description The chooser preselects this method and badges it "Recommended" (at most one per app). */
             recommended: boolean;
+            /** @description (P5-UX-2, C-956) The scopes of "Read only" and "Read and change", already defaulted. */
+            scope_presets: components["schemas"]["MethodScopePresets"];
             scopes: components["schemas"]["ScopeInfo"][];
         };
         ConnectNote: {
             text: string;
             url?: string | null;
+        };
+        /** @description The journey's view of [`SetupStatus`] (C-955): the same methods and availability, nothing else. */
+        ConnectPlan: {
+            app_id: string;
+            available: boolean;
+            available_who_can?: components["schemas"]["WhoCan"] | null;
+            methods: components["schemas"]["SetupMethod"][];
+            suggested_method?: string | null;
         };
         ConnectRequest: {
             /**
@@ -6175,6 +6244,7 @@ export interface components {
             fields?: {
                 [key: string]: string;
             };
+            grant?: components["schemas"]["ConnectGrant"] | null;
             /**
              * Format: uuid
              * @description A registered self-hosted instance of an instance-bound app (C-243). Absent = the app's
@@ -6209,6 +6279,8 @@ export interface components {
             url: string;
         } | {
             connection: components["schemas"]["Connection"];
+            /** @description The access written with the connection (empty without a `grant`). */
+            grants: components["schemas"]["ConnectionGrant"][];
             /** @enum {string} */
             kind: "connected";
             missing_scopes: string[];
@@ -6437,6 +6509,16 @@ export interface components {
             connector: components["schemas"]["ConnectorAdmin"];
             /** @description `aun_…`, shown once; absent for a managed connector. */
             token?: string | null;
+        };
+        /**
+         * @description `contacts` on a workspace or an organization (C-981): the people to ask where nothing was
+         *     refused. Readable by every member of that level.
+         */
+        Contacts: {
+            /** @description Administrators (organization level only), at most three. */
+            admins?: components["schemas"]["WhoCanPerson"][] | null;
+            /** @description Owners, at most three. */
+            owners: components["schemas"]["WhoCanPerson"][];
         };
         ContainerByo: {
             /** @description Effective posture: `enabled` | `owners_only` | `disabled`. */
@@ -6689,6 +6771,7 @@ export interface components {
             timezone?: string | null;
         };
         CreateSecretRequest: {
+            grant?: components["schemas"]["SecretGrantRequest"] | null;
             host_pattern?: string | null;
             injection?: components["schemas"]["InjectionRecipe"] | null;
             /** @description `generic` | `llm`. */
@@ -7578,6 +7661,9 @@ export interface components {
             minimum_posture: string;
             require_context_credentials: boolean;
         };
+        InstanceClients: {
+            set_up: boolean;
+        };
         InstanceEgress: {
             baseline_allowlist: components["schemas"]["AllowlistEntry"][];
             minimum_posture: string;
@@ -7709,6 +7795,11 @@ export interface components {
             secret_id: string;
             usable: boolean;
         };
+        /**
+         * @description What one agent may do with one account.
+         * @enum {string}
+         */
+        Level: "read" | "ask" | "act";
         LibraryCatalogue: {
             /** @description The commit the listing was read at: quote it when adding. */
             commit_sha: string;
@@ -8049,6 +8140,17 @@ export interface components {
             followup?: components["schemas"]["Followup"] | null;
             turn?: components["schemas"]["Turn"] | null;
         };
+        /** @enum {string} */
+        MethodAudience: "person" | "admin";
+        MethodRef: {
+            id: string;
+            label: string;
+        };
+        /** @description The scopes each journey choice requests (C-956), already defaulted. */
+        MethodScopePresets: {
+            read: string[];
+            write: string[];
+        };
         /** @description A migration job, or the report of a dry run (C-747). */
         MigrationView: {
             error?: string | null;
@@ -8208,6 +8310,7 @@ export interface components {
         Org: {
             /** @description `open` | `restricted`. */
             app_posture: string;
+            contacts?: components["schemas"]["Contacts"] | null;
             /** Format: date-time */
             created_at: string;
             external_id: string;
@@ -9057,6 +9160,7 @@ export interface components {
             items: {
                 /** @description `open` | `restricted`. */
                 app_posture: string;
+                contacts?: components["schemas"]["Contacts"] | null;
                 /** Format: date-time */
                 created_at: string;
                 external_id: string;
@@ -9498,6 +9602,7 @@ export interface components {
             items: {
                 /** @description (phase 2, RFE-025) The workspace's own BYO posture (`null` = inherit). */
                 byo_posture?: string | null;
+                contacts?: components["schemas"]["Contacts"] | null;
                 /** Format: date-time */
                 created_at: string;
                 effective_byo_posture?: components["schemas"]["ByoPostureView"] | null;
@@ -10960,6 +11065,14 @@ export interface components {
             /** Format: uuid */
             secret_id: string;
         };
+        /**
+         * @description The agents a new website or AI key is given to (C-988). Access to such an account has no
+         *     level: it is `use`.
+         */
+        SecretGrantRequest: {
+            /** @description 1 to `GRANT_BULK_MAX` distinct agents of the workspace; the caller must own it. */
+            agent_ids: string[];
+        };
         /** @description A secret grant seen from the secret (FIX-020, C-503). */
         SecretGrantView: components["schemas"]["SecretGrant"] & {
             agent_name: string;
@@ -11135,6 +11248,15 @@ export interface components {
             updated_at?: string | null;
             updated_by_label?: string | null;
         };
+        /** @description What the caller can do at this level (the page renders an action or the `who_can` sentence). */
+        SetupCan: {
+            connect_org: boolean;
+            connect_workspace: boolean;
+            register_instance: boolean;
+            register_org_client: boolean;
+            register_workspace_client: boolean;
+            set_availability: boolean;
+        };
         SetupCheck: {
             /** @description The Helm value that changes it, for config-only things. */
             helm?: string | null;
@@ -11147,6 +11269,41 @@ export interface components {
             /** @description The current value (never a secret): a model id, an image, a count. */
             value?: string | null;
         };
+        SetupClients: {
+            instance: components["schemas"]["InstanceClients"];
+            organization?: components["schemas"]["ClientRef"][] | null;
+            /** @description This workspace's own clients; `null` in an organization view. */
+            workspace?: components["schemas"]["ClientRef"][] | null;
+        };
+        SetupInstance: {
+            base_url: string;
+            /** Format: uuid */
+            id: string;
+            label: string;
+            /** @description `instance` (registered for every organization or shipped by a package) | `organization`. */
+            scope: string;
+        };
+        SetupMethod: {
+            audience: components["schemas"]["MethodAudience"];
+            /** @description OAuth methods: the package's client key. */
+            client_key?: string | null;
+            description?: string | null;
+            id: string;
+            /** @description `oauth2` | `fields` | `hook`. */
+            kind: string;
+            label: string;
+            needs: components["schemas"]["SetupNeed"][];
+            /** @description The method works for people here. */
+            ready: boolean;
+            recommended: boolean;
+            scope_presets: components["schemas"]["MethodScopePresets"];
+            who_can?: components["schemas"]["WhoCan"] | null;
+        };
+        /**
+         * @description What a method still needs before people here can use it.
+         * @enum {string}
+         */
+        SetupNeed: "oauth_client" | "instance" | "admin_material";
         /**
          * @description Status of one setup step or check.
          * @enum {string}
@@ -11166,6 +11323,12 @@ export interface components {
             /** @description Machine-readable reason of the worst check (see `API_CONTRACTS` C-533). */
             reason: string;
             status: components["schemas"]["SetupState"];
+        };
+        SetupValues: {
+            /** @description The redirect URI to register at the provider. */
+            callback_url: string;
+            /** @description Only when the app's package reads `org_external_id` (e.g. `aws-keys`). */
+            external_id?: string | null;
         };
         SetupYou: {
             granted: components["schemas"]["IdpGrant"][];
@@ -11926,6 +12089,29 @@ export interface components {
             url: string;
             webhook: components["schemas"]["Webhook"];
         };
+        /** @description Who can do something, and where (C-981). */
+        WhoCan: {
+            /**
+             * @description A snake_case key for what is asked (`view_this` / `change_this` when a refusal does not
+             *     know better); the dashboard words it.
+             */
+            action: string;
+            /** @description A dashboard path (`aurora_core::dash_paths`), present only when `you_can`. */
+            path?: string | null;
+            /** @description At most three display names; always empty for `instance_admin`. */
+            people: components["schemas"]["WhoCanPerson"][];
+            role: components["schemas"]["WhoCanRole"];
+            you_can: boolean;
+        };
+        WhoCanPerson: {
+            /** @description Display name, never an e-mail. */
+            name: string;
+        };
+        /**
+         * @description The role that can fix it.
+         * @enum {string}
+         */
+        WhoCanRole: "workspace_owner" | "workspace_approver" | "org_admin" | "org_owner" | "instance_admin";
         WinningCredential: {
             /** Format: uuid */
             id: string;
@@ -11935,6 +12121,7 @@ export interface components {
         Workspace: {
             /** @description (phase 2, RFE-025) The workspace's own BYO posture (`null` = inherit). */
             byo_posture?: string | null;
+            contacts?: components["schemas"]["Contacts"] | null;
             /** Format: date-time */
             created_at: string;
             effective_byo_posture?: components["schemas"]["ByoPostureView"] | null;
@@ -21612,6 +21799,76 @@ export interface operations {
             };
         };
     };
+    getAppConnectPlan: {
+        parameters: {
+            query?: {
+                /** @description A workspace view (needs workspace owner). */
+                workspace_id?: string;
+                /** @description An organization view when `workspace_id` is absent (needs organization owner or admin). */
+                org_id?: string;
+            };
+            header?: never;
+            path: {
+                /** @description App id */
+                app: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Connect plan */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConnectPlan"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     getAppGuide: {
         parameters: {
             query?: never;
@@ -21705,6 +21962,76 @@ export interface operations {
                 };
             };
             /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    getAppSetup: {
+        parameters: {
+            query?: {
+                /** @description A workspace view (needs workspace owner). */
+                workspace_id?: string;
+                /** @description An organization view when `workspace_id` is absent (needs organization owner or admin). */
+                org_id?: string;
+            };
+            header?: never;
+            path: {
+                /** @description App id */
+                app: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Setup status */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SetupStatus"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             404: {
                 headers: {
                     [name: string]: unknown;

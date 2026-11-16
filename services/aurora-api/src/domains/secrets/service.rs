@@ -380,6 +380,28 @@ pub async fn create(
         org_id: scope.org,
         workspace_id: scope.ws,
     };
+    // (P5-UX-2, C-988, SEC-130) The agents the new account is given to are checked like the bulk
+    // grant (C-504) before anything is read or written; the grants are written in the secret's
+    // own transaction, so the account and its access are made together or not at all.
+    let grant_agents: Vec<Uuid> = match &req.grant {
+        None => Vec::new(),
+        Some(g) => {
+            let Some(ws) = scope.ws else {
+                return Err(bad(
+                    "/grant",
+                    "only a workspace secret can be given to agents",
+                ));
+            };
+            crate::domains::grants::service::check_agents_for_new_account(
+                state,
+                caller,
+                ws,
+                &g.agent_ids,
+            )
+            .await?;
+            g.agent_ids.clone()
+        }
+    };
     let inp = input(req.value, req.reference)?;
     let is_llm = match req.kind.as_str() {
         "generic" => false,
@@ -503,6 +525,7 @@ pub async fn create(
             proposed_by_agent_id: None,
             created_by: Some(caller.user_id),
         },
+        &grant_agents,
     )
     .await;
     if let Err(e) = res {
@@ -516,6 +539,7 @@ async fn insert_tx(
     state: &AppState,
     caller: &Caller,
     n: &repo::NewSecret<'_>,
+    grant_agents: &[Uuid],
 ) -> Result<(), ApiError> {
     let mut tx = audit::begin(state).await?;
     repo::insert(&mut *tx, n)
@@ -526,7 +550,28 @@ async fn insert_tx(
     let row = repo::get(&mut *tx, n.id)
         .await?
         .ok_or_else(|| ApiError::internal("Internal error."))?;
-    audit::commit_critical(tx, &event(caller, "secret.create", &row, Value::Null)).await?;
+    let meta = if grant_agents.is_empty() {
+        Value::Null
+    } else {
+        serde_json::json!({"via": "connect_journey", "agent_ids": grant_agents})
+    };
+    let mut events = vec![event(caller, "secret.create", &row, meta)];
+    // Each agent is authorized again by the grant service (visible, `can_own`, the secret in the
+    // agent's workspace); a failure rolls the secret back with it.
+    for &agent_id in grant_agents {
+        let w = crate::domains::grants::service::grant_secret_in_tx(
+            &mut tx,
+            state,
+            caller,
+            agent_id,
+            n.id,
+            crate::domains::grants::service::Origin::ConnectJourney,
+        )
+        .await
+        .map_err(|e| crate::domains::grants::service::at_agent(e, agent_id))?;
+        events.extend(w.event);
+    }
+    audit::commit_critical_many(tx, &events).await?;
     Ok(())
 }
 

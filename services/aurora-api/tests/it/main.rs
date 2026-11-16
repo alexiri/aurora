@@ -9,6 +9,7 @@ mod agent_token_age;
 mod agents;
 mod api_ratelimit;
 mod app_instances;
+mod app_setup;
 mod approval_notify;
 mod approval_stall;
 mod approvals;
@@ -32,6 +33,7 @@ mod chat_search;
 mod cli;
 mod common;
 mod connect;
+mod connect_access;
 mod connector_ops;
 mod connectors;
 mod connectors_host_tokens;
@@ -113,6 +115,7 @@ mod tools;
 mod trace_e2e;
 mod turn_trace_context;
 mod webhooks;
+mod who_can;
 
 #[test]
 fn init_scim_logs() {
