@@ -1,0 +1,79 @@
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { afterEach, describe, expect, it } from "vitest";
+
+import { ScopeLadder, type LadderAbove, type LadderBelow } from "@/components/ui/scope-ladder";
+
+afterEach(cleanup);
+
+const admin = { action: "change_this", role: "instance_admin" as const, people: [], you_can: false };
+const orgAdmins = { action: "change_this", role: "org_admin" as const, people: [{ name: "Ada Lovelace" }, { name: "Alan Turing" }], you_can: false };
+
+const above: LadderAbove[] = [
+  { label: "Requests without an account", value_display: "Blocked unless the allow-list names the website.", source: "instance", who_can: admin },
+  { label: "Allow-list", value_display: "4 websites.", source: "org", who_can: orgAdmins },
+];
+
+const below: LadderBelow = {
+  columns: ["Without an account", "Browser connections", "Rules"],
+  rows: [
+    { label: "Release engineering", values: ["Blocked", "Allow-list only", "3"], link: { href: "/o/acme/w/release/internet-access", label: "Open" } },
+    { label: "Bob's workspace", values: ["Inherit", "Off", "0"], link: { href: "/o/acme/w/bob/internet-access", label: "Open" } },
+  ],
+};
+
+describe("ScopeLadder (C-963)", () => {
+  it("shows the limits from above with their source and who can change them", () => {
+    render(<ScopeLadder above={above} here={<p>Workspace controls</p>} />);
+    const list = screen.getByRole("list", { name: "Limits set above this level" });
+    const rows = within(list).getAllByRole("listitem");
+    expect(rows).toHaveLength(2);
+    expect(within(rows[0]!).getByText("Set by Administration")).toBeInTheDocument();
+    expect(within(rows[0]!).getByText("An Aurora administrator can set this up.")).toBeInTheDocument();
+    expect(within(rows[1]!).getByText("Set by your organization")).toBeInTheDocument();
+    expect(within(rows[1]!).getByText("Ask Ada Lovelace or Alan Turing (organization owners and admins).")).toBeInTheDocument();
+    expect(screen.getByText("Workspace controls")).toBeInTheDocument();
+  });
+
+  it("names the limit in the controls' own section when there is a minimum", () => {
+    render(<ScopeLadder above={above} here={<p>Controls</p>} minimumNote="Looser options are not available: Administration requires blocking requests without an account." />);
+    expect(screen.getByText(/Looser options are not available: Administration requires/)).toBeInTheDocument();
+  });
+
+  it("collapsed: the controls stay out of the page until Tighten… is opened", () => {
+    render(<ScopeLadder collapsed above={above} here={<p>Four workspace controls</p>} />);
+    expect(screen.queryByText("Four workspace controls")).toBeNull();
+    const button = screen.getByRole("button", { name: "Tighten…" });
+    expect(button.getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(button);
+    expect(screen.getByText("Four workspace controls")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Hide" }).getAttribute("aria-expanded")).toBe("true");
+    fireEvent.click(screen.getByRole("button", { name: "Hide" }));
+    expect(screen.queryByText("Four workspace controls")).toBeNull();
+  });
+
+  it("not collapsed: the controls are open and there is no disclosure", () => {
+    render(<ScopeLadder above={[]} here={<p>Organization controls</p>} />);
+    expect(screen.getByText("Organization controls")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Tighten/ })).toBeNull();
+    expect(screen.queryByText("Limits from above")).toBeNull();
+  });
+
+  it("below: a table of what the levels below tightened, with a link per row, and a stacked copy for a phone", () => {
+    render(<ScopeLadder above={[]} here={<p>Controls</p>} below={below} />);
+    const table = screen.getByRole("table", { name: "What the levels below tightened" });
+    expect(within(table).getAllByRole("columnheader", { hidden: true }).map((h) => h.textContent)).toEqual(["", "Without an account", "Browser connections", "Rules", ""]);
+    const row = within(table).getByText("Release engineering").closest("tr")!;
+    expect(within(row).getByText("Allow-list only")).toBeInTheDocument();
+    expect(within(row).getByRole("link", { name: "Open" }).getAttribute("href")).toBe("/o/acme/w/release/internet-access");
+    // The stacked list carries the same rows for 390 px.
+    const stacked = screen.getByRole("list", { name: "What the levels below tightened" });
+    expect(within(stacked).getAllByRole("listitem")).toHaveLength(2);
+    expect(within(stacked).getAllByText("Browser connections")).toHaveLength(2);
+  });
+
+  it("below, with no row, says nothing below has tightened it", () => {
+    render(<ScopeLadder above={[]} here={<p>Controls</p>} below={{ columns: ["Rules"], rows: [], empty: "No workspace has tightened this." }} />);
+    expect(screen.getByText("No workspace has tightened this.")).toBeInTheDocument();
+    expect(screen.queryByRole("table")).toBeNull();
+  });
+});

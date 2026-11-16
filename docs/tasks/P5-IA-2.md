@@ -136,3 +136,21 @@ This task builds:
 
 Sonnet: one shared primitive, a small API route, a pure function whose truth matters, and three page
 compositions over existing components.
+
+## Completion report — PARTIAL (lane `p5-apps`, worker 20; handed off at the context limit, 2026-11-17)
+
+**Not done: P5-IA-2 as a whole.** Built and committed (`P5-IA-2: part 1`): scope item 1 (the `ScopeLadder` primitive) and item 2 (the summary sentences), both with unit tests. Everything else below is open.
+
+**Done.**
+- `web/src/components/ui/scope-ladder.tsx` (C-963): `above` rows (label, value in words, "Set by Administration" / "Set by your organization", `WhoCan`), `here`, optional `minimumNote`, `collapsed` (**Tighten…**, `aria-expanded`/`aria-controls`, closed until opened), `below` (a `DataTable` from `md` up and a stacked `ItemList` below it, an `empty` sentence). Tests: `web/tests/scope-ladder.test.tsx` (6). A `readOnly` prop is not built: a member's page simply passes no controls and shows `MainAction`/`WhoCan` (P5-UX-1) in place of Add rule.
+- `web/src/lib/summary/internet.ts` (C-986): `reachSentence`, `askSentence`, `internetSummary`, `internetAccessOf(generation, aboveBlocks)`. The table in `web/tests/internet-summary.test.ts` (20 rows + 3) walks each condition and says why it is true under `07 §Evaluation`. Deviations from the brief's wording, all for truth: a blocking rule gives "…can reach any website, except where a rule blocks it."; an enabled allow rule under `block` gives "…only the websites on the allow-list and those a rule allows."; a rule with no targets matches every request ("A rule asks you first on every website." / "can't reach the internet."); a rule whose targets are secrets or apps says nothing about websites ("A rule asks you first."). The reviewer should check the table against `07`, as the brief says.
+
+**Open, in the brief's order.**
+3. C-964 route `GET /v1/orgs/{org}/workspace-overrides` (org owner/admin; only workspaces that differ unless `?all=true`; `Page<{ workspace: { id, name, personal_of? }, uncredentialed: "inherit"|"block", open_lane: "inherit"|"allowlist_only"|"disabled", default_rule: "none"|"allow"|"block", rule_count }>`), OpenAPI, `gen:api`, a `permission_matrix` row, IT tests (difference detection, pagination, member refused). Not started.
+4./6./7. The three pages (workspace `…/internet-access`, organization `/o/<org>/internet-access`, Administration `/admin/internet-access`): P5-IA-1's placeholders are still there; compose the summary (item 2), the line "What agents may do in apps is set for each agent, on its Access tab." (link to Agents), Common changes (C-989: **Ask before changes on a website**, **Block a website**), the rules with **Add rule**, the ladder with **Tighten…** (workspace) or open limits (organization), **Check what would happen** with Speaker and Lane under **More**, and the organizations/workspaces tables. Reuse `policy-view.tsx`, `rule-editor.tsx`, `org-policy.tsx`, `workspace-policy.tsx`, the egress panel of `governance-view.tsx`, `SettingsSectionFields` with `keys` for Administration (C-778 `GET /v1/admin/settings/governance/orgs` for its table).
+5. C-926 labels on these pages and in `simulate-panel.tsx` (FIX-159's result text stays).
+8. One save bar (**Apply changes** / **Discard**; no "Save draft"; edits write to the draft as they are made; organization: governance document first, then publish, with the "which part was applied" message when the second step fails).
+9. Remove the hosted editors P5-IA-1 placed on these pages.
+10. The remaining tests: save bar (workspace; organization with the second step failing), each Common change's draft rule, the four Playwright journeys, axe and narrow-route suites for the three pages in both themes.
+
+**Where things are.** `MainAction`, `WhoCan`, `useWhoCan` (P5-UX-1) are in `components/ui` and `lib/api/who-can.ts`; the policy view's view-only notice is already a `WhoCan` sentence. Contracts are in `docs/API_CONTRACTS.md` C-963..C-965, C-986, C-989 (read on master; this branch has them after the merge of ac36d862). The batch gate for P5-IA-2 has not run (only `pnpm typecheck` and the two new vitest files).
