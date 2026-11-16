@@ -1462,7 +1462,7 @@ fn check_keyring(c: &mut Ctx, s: &EnvSecrets) -> Option<Keyring> {
 }
 
 /// Class names accepted under `ratelimit.api.classes` (docs/05 §Conventions).
-pub const API_RATE_CLASSES: [&str; 8] = [
+pub const API_RATE_CLASSES: [&str; 9] = [
     "general",
     "write",
     "message",
@@ -1471,6 +1471,7 @@ pub const API_RATE_CLASSES: [&str; 8] = [
     "search",
     "export",
     "telemetry",
+    "files",
 ];
 
 fn check_ratelimit(c: &mut Ctx, r: &ApiRateSection) {

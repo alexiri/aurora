@@ -44,12 +44,21 @@ FROM ${SANDBOX_BASE_IMAGE} AS os
 # (P2-DBL-2; the supervisor writes the libpq service, password and CA files).
 # (FIX-138) The web terminal's shells: bash (default, with bash-completion) and zsh, both in the
 # OS layer so every target has them; `which` for the shells' `type`/completion helpers.
+# (P5-FILES-1, D-316) `openssh-server` provides `/usr/libexec/openssh/sftp-server`, the binary the
+# supervisor starts for a Files / SFTP session (`12 §SSH channels`: fixed path). Only that binary is
+# used: `sshd` is never enabled or started (the assertion below), the sandbox gains no listener.
 RUN dnf -y install --setopt=install_weak_deps=False shadow-utils glibc-common postgresql rpm \
-         bash bash-completion zsh which ncurses \
+         bash bash-completion zsh which ncurses openssh-server \
     && useradd --uid 1000 --user-group --home-dir /workspace --no-create-home --shell /bin/bash agent \
     && mkdir -p /workspace /run/aurora /opt/aurora /opt/aurora/bin \
     && chown 1000:1000 /workspace \
     && test -x /usr/bin/zsh && test -x /bin/bash \
+    && test -x /usr/libexec/openssh/sftp-server \
+    && rm -f /etc/systemd/system/multi-user.target.wants/sshd.service \
+             /etc/systemd/system/sockets.target.wants/sshd.socket \
+    && ! test -e /etc/systemd/system/multi-user.target.wants/sshd.service \
+    && ! test -e /etc/systemd/system/sockets.target.wants/sshd.socket \
+    && ! (command -v systemctl >/dev/null && systemctl is-enabled sshd.service sshd.socket 2>/dev/null | grep -qx enabled) \
     && dnf clean all && rm -rf /var/cache/dnf /var/log/dnf* /tmp/*
 # (FIX-138) One PATH for both shells, a turn and the terminal (`12 §Terminal`): the image ENV,
 # /etc/profile.d/aurora.sh (bash login + interactive defaults) and /etc/zshenv + /etc/zshrc (zsh).

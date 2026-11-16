@@ -22,6 +22,9 @@ const ALLOWED: Record<string, [string, string][]> = {
     ["h-[calc(100dvh-", "the chat panel fills the viewport below the page header (docs/14: the page itself does not scroll)"],
     ["min-h-[560px]", "the chat panel's minimum height (docs/14 agent page: at least 560 px)"],
   ],
+  "src/components/agents/files/viewer/file-viewer.tsx": [
+    ["h-[min(65dvh,40rem)]", "the editor card is 65 % of the viewport, at most 40 rem, so it never pushes the page into a second scroll (P5-FILES-3)"],
+  ],
   "src/components/app-shell.tsx": [
     ["w-[min(18rem,calc(100vw-3rem))]", "the mobile navigation drawer leaves a 3 rem strip of page visible"],
   ],

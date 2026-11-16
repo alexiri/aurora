@@ -334,7 +334,8 @@ pub async fn prune_preview_expiries<'e, E: PgExecutor<'e> + Copy>(exec: E) -> Re
     .await?
     .rows_affected();
     let t = crate::repo::terminal_grants::prune_terminal_grants(exec).await?;
-    Ok(g + s + dead + t)
+    let f = crate::repo::file_grants::prune_file_grants(exec).await?;
+    Ok(g + s + dead + t + f)
 }
 
 // ------------------------------------------------------------ accounting

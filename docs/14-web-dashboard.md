@@ -350,7 +350,10 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
     then a 2 px dashed `accent` frame inset 12 px (radius 14 px) holding a 48 px
     `accent-soft` circle with `UploadIcon`, a title (16/600 Space Grotesk) and a
     12 px `ink-2` line. `onFiles` receives the dropped files; leaving or Esc
-    removes the overlay.
+    removes the overlay. (P5-FILES-2) `label` and `icon` set the overlay's
+    words and circle icon ("Drop to upload to /workspace"); `onDataTransfer`
+    receives the whole `DataTransfer` instead of the file list, so a dropped
+    folder can be read through `webkitGetAsEntry()` inside the drop event.
   - **FilterChip** [P5-CHAT-4 part B]: a removable pill, at least 28 px high
     (44 px target below 768 px), `subtle` with a `line-strong` border: the key in
     mono `muted` (`from:`), the value 600 `ink`, and a 24 px remove button named
@@ -930,6 +933,8 @@ here, add it here and document it.
 | Auth layout | `AuthCard` | Split layout with the dark brand panel, for every public auth view. |
 | Chat | `ChatPanel`, `ConversationList` + `ConversationRow`, `MessageGroup`, `ToolCallGroup`, `Composer` (in `web/src/components/chat`) | The agent Chat tab (see **Agent chat** above): a fixed-height panel with the list pane and the thread pane, sender-grouped bubbles, folded tool calls and a pinned composer. Inline approvals reuse the approval card in a compact variant. (Phase 5, P5-CHAT: `QuoteStrip`, `ReplyBar`, `JumpToLatest`, the formatting row and drafts under `components/chat/composer/`, and `components/chat/search/`, built from the phase-5 primitives listed under **Components**.) |
 | Composer tools | `Toolbar` + `ToolbarButton`, `Tooltip` + `Kbd`, `SuggestionList`, `EmojiPicker`, `DropZone` | (phase 5, P5-CHAT) Any row of icon actions is a `Toolbar`; any shortcut is shown with `Kbd` in a `Tooltip`; any typed-ahead choice under a field is a `SuggestionList`; a file drop target is a `DropZone`. |
+| Breadcrumb | `Breadcrumb` (`ui/breadcrumb.tsx`) | (phase 5, P5-FILES-2) A trail of places: every segment but the last is a link (a plain click may navigate in place through `onSelect`), the last is the current place (`aria-current="page"`). It wraps instead of scrolling and long segments break anywhere, so it never scrolls the page at 390 px. The Files page's path bar; any path-like location uses it. |
+| Upload tray | `UploadTray` (`ui/upload-tray.tsx`) | (phase 5, P5-FILES-2) The list of uploads in flight and just finished, under a toolbar: the chat attachment chip states (progress with Cancel, done, a failed `danger` chip with the reason in words), "Clear finished", dismiss per item. Presentational: the page owns the queue (at most three at once). Any multi-file transfer shows its progress in it. |
 | Search results | `FilterChip`, `HighlightedText` | (phase 5, P5-CHAT-4) Active filters as removable chips; server-highlighted plain-text snippets, never HTML. |
 
 ## Information architecture
@@ -1466,7 +1471,17 @@ every other topic is owners/admins and is not listed for a member.)
     connected" and keystrokes are not sent (nor queued); session end states (frozen, parked, stopped, runner without terminal
     support) render as notices, never silent closes. wterm never touches the clipboard
     automatically: selection copy is the browser's own; an application's OSC 52 write shows a
-    "Copy to clipboard" confirmation (wterm's `onClipboardWrite`). Keystrokes leave the tab as
+    "Copy to clipboard" confirmation (wterm's `onClipboardWrite`; where `navigator.clipboard` is
+    missing, e.g. a plain `http://` address, it copies through a temporary textarea and
+    `execCommand("copy")`, and when that fails it keeps the text with "Could not copy — select the
+    text and press Ctrl+Shift+C"). (phase 5, FIX-156) **Clipboard keys:** Ctrl+Shift+V pastes
+    through wterm's own paste path (bracketed paste, ESC stripped, 16 KiB chunks), never as ^V;
+    Ctrl+Shift+C copies a selection and with none does nothing (not ^C); plain Ctrl+C stays the
+    interrupt, plain Ctrl+V and ⌘V/⌘C are the browser's. **Right-click** over the pane opens the
+    shared `Menu` with Copy (a selection), Paste (reads the clipboard; disabled outside a secure
+    context, with the reason) and Select all; a full-screen app that asked for mouse reports keeps
+    the right button (Shift+right-click opens the menu). The pane's footer names the platform's
+    shortcuts. Clipboard contents are never logged or stored. Keystrokes leave the tab as
     UTF-8 **Binary** WebSocket frames, at most one 16 KiB `TERMINAL_CHUNK` each (a paste is
     chunked); Text frames are resize-control only (FIX-054, `16 §W19`). An open session keeps the
     sandbox awake ("awake because…" says "Terminal in use") up to the 4 h cap.

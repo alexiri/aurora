@@ -120,6 +120,13 @@ impl ApiError {
         self
     }
 
+    /// (P5-FILES-1) A `retry-after` hint (seconds) on a non-429 answer, e.g. 503 `sandbox_waking`.
+    #[must_use]
+    pub fn with_retry_after(mut self, secs: u64) -> Self {
+        self.retry_after_secs = Some(secs);
+        self
+    }
+
     pub fn status(&self) -> StatusCode {
         self.status
     }

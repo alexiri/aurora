@@ -386,6 +386,16 @@
       "integration_id",
       "platform_user_ref"
     ],
+    "file_stream_grants": [
+      "agent_id",
+      "boot_id",
+      "consumed_at",
+      "expires_at",
+      "grant_hash",
+      "granted_for",
+      "id",
+      "sandbox_id"
+    ],
     "gateway_credentials": [
       "agent_id",
       "boot_id",
@@ -840,6 +850,8 @@
       "container_ref",
       "failure_code",
       "failure_message",
+      "files_active_until",
+      "files_awake_since",
       "home_applied_generation",
       "home_ref",
       "id",
@@ -1628,6 +1640,16 @@
       "integration_id": "uuid",
       "platform_user_ref": "text"
     },
+    "file_stream_grants": {
+      "agent_id": "uuid not null",
+      "boot_id": "uuid not null",
+      "consumed_at": "timestamptz null",
+      "expires_at": "timestamptz not null",
+      "grant_hash": "text not null",
+      "granted_for": "uuid not null",
+      "id": "uuid not null",
+      "sandbox_id": "uuid not null"
+    },
     "gateway_credentials": {
       "agent_id": "uuid",
       "boot_id": "uuid null",
@@ -2082,6 +2104,8 @@
       "container_ref": "text null",
       "failure_code": "text null",
       "failure_message": "text null",
+      "files_active_until": "timestamptz null",
+      "files_awake_since": "timestamptz null",
       "home_applied_generation": "bigint not null",
       "home_ref": "text null",
       "id": "uuid not null",
