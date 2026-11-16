@@ -1240,7 +1240,17 @@ sessions → the section is hidden. Mobile (390 px): the tables collapse to stac
     connected" and keystrokes are not sent (nor queued); session end states (frozen, parked, stopped, runner without terminal
     support) render as notices, never silent closes. wterm never touches the clipboard
     automatically: selection copy is the browser's own; an application's OSC 52 write shows a
-    "Copy to clipboard" confirmation (wterm's `onClipboardWrite`). Keystrokes leave the tab as
+    "Copy to clipboard" confirmation (wterm's `onClipboardWrite`; where `navigator.clipboard` is
+    missing, e.g. a plain `http://` address, it copies through a temporary textarea and
+    `execCommand("copy")`, and when that fails it keeps the text with "Could not copy — select the
+    text and press Ctrl+Shift+C"). (phase 5, FIX-156) **Clipboard keys:** Ctrl+Shift+V pastes
+    through wterm's own paste path (bracketed paste, ESC stripped, 16 KiB chunks), never as ^V;
+    Ctrl+Shift+C copies a selection and with none does nothing (not ^C); plain Ctrl+C stays the
+    interrupt, plain Ctrl+V and ⌘V/⌘C are the browser's. **Right-click** over the pane opens the
+    shared `Menu` with Copy (a selection), Paste (reads the clipboard; disabled outside a secure
+    context, with the reason) and Select all; a full-screen app that asked for mouse reports keeps
+    the right button (Shift+right-click opens the menu). The pane's footer names the platform's
+    shortcuts. Clipboard contents are never logged or stored. Keystrokes leave the tab as
     UTF-8 **Binary** WebSocket frames, at most one 16 KiB `TERMINAL_CHUNK` each (a paste is
     chunked); Text frames are resize-control only (FIX-054, `16 §W19`). An open session keeps the
     sandbox awake ("awake because…" says "Terminal in use") up to the 4 h cap.

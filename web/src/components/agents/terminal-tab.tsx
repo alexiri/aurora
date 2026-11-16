@@ -9,9 +9,9 @@
 // `pty.resize`
 // (`{"kind":"pty.resize","pty_id":0,...}` — the browser cannot know the leg's allocated
 // `pty_id`). Reconnects back off and stay visible; end states (frozen, refused, lost) render
-// as notices, never a silent close. wterm never touches the clipboard itself: an application's
-// OSC 52 write surfaces a "Copy to clipboard" confirmation (C-622); selection copy is the
-// browser's own.
+// as notices, never a silent close. An application's OSC 52 write surfaces a "Copy to clipboard"
+// confirmation (C-622); selection copy is the browser's own, and the pane adds the Linux
+// terminal chords and the context-menu Paste wterm lacks (FIX-156, ./terminal-clipboard.ts).
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps, type RefObject } from "react";
 
@@ -20,9 +20,21 @@ import { Terminal, useTerminal } from "@wterm/react";
 import "@wterm/react/css";
 
 import { Button, buttonVariants } from "@/components/ui/button";
+import { Menu, MenuContent, MenuItem, MenuTrigger } from "@/components/ui/menu";
 import { Notice } from "@/components/ui/notice";
 import { useSandbox } from "@/lib/api/conversations";
 
+import {
+  clipboardChord,
+  clipboardHelp,
+  copyFailedNotice,
+  copyToClipboard,
+  canReadClipboard,
+  hasTextSelection,
+  isMac,
+  pasteInto,
+  readClipboardText,
+} from "./terminal-clipboard";
 import { readShell } from "./terminal-shell";
 
 // The vendored, version-named Ghostty WASM (sha256 recorded in scripts/guards/ghostty-wasm.sha256) (`web/public`, served same-origin as
@@ -55,6 +67,9 @@ function sendInput(ws: WebSocket, data: string): void {
     ws.send(bytes.subarray(offset, offset + TERMINAL_CHUNK));
   }
 }
+
+/** How long Ctrl+Shift+V waits for the browser's own `paste` event before reading the clipboard itself (FIX-156). */
+const PASTE_FALLBACK_MS = 150;
 
 /** Close codes the browser sees (`16 §W19`, the W18 table): the only end-state signal. */
 const CLOSE_COPY: Record<number, string> = {
@@ -222,6 +237,21 @@ export function TerminalPane({
   const [droppedInput, setDroppedInput] = useState(false);
   // The OSC 52 clipboard-write confirmation (C-622: never automatic, always confirmed).
   const [copied, setCopied] = useState<string | null>(null);
+  // The confirmation's copy failed (no clipboard API and no legacy copy): the text stays, with the way to copy it.
+  const [copyFailed, setCopyFailed] = useState(false);
+  // FIX-156: a Ctrl+Shift+V the browser did not turn into a paste event, and whose clipboard read was refused.
+  const [pasteFailed, setPasteFailed] = useState(false);
+  // The pending read for Ctrl+Shift+V (cancelled when the browser's own paste event arrives).
+  const pasteTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // The right-click menu: where it opened and what was selected then (opening it moves focus away from the pane).
+  const [menu, setMenu] = useState<{ x: number; y: number; selected: string } | null>(null);
+  const mac = useMemo(() => isMac(), []);
+  useEffect(
+    () => () => {
+      if (pasteTimer.current !== null) clearTimeout(pasteTimer.current);
+    },
+    [],
+  );
   const wsRef = useRef<WebSocket | null>(null);
   // The latest measured grid: a reconnect re-opens at the current size, and the first
   // `pty.resize` rides the freshly opened socket.
@@ -388,6 +418,49 @@ export function TerminalPane({
     );
   }
 
+  /** wterm's hidden input: the one editable element of the pane (focus, paste and the native Paste item live there). */
+  const inputEl = () => paneEl.current?.querySelector("textarea") ?? null;
+
+  /**
+   * Ctrl+Shift+V: wterm only knows `e.key === "v"` and would send ^V, so the chord is kept from it (`stopPropagation`)
+   * and the browser's own paste — a `paste` event on the input — does the work through wterm's handler. A browser that
+   * raises none within a moment (a context without the shortcut) is read with the async Clipboard API instead, which
+   * feeds the same handler; where that is unavailable or refused the pane says so.
+   */
+  const armPaste = () => {
+    if (pasteTimer.current !== null) clearTimeout(pasteTimer.current);
+    setPasteFailed(false);
+    pasteTimer.current = setTimeout(() => {
+      pasteTimer.current = null;
+      void readClipboardText().then((text) => {
+        const ta = inputEl();
+        if (text === null) setPasteFailed(true);
+        else if (ta && text !== "") pasteInto(ta, text);
+      });
+    }, PASTE_FALLBACK_MS);
+  };
+
+  /**
+   * Right-click: the browser's menu has no Paste over the (non-editable) grid, so the pane shows its own: Copy, Paste,
+   * Select all. A full-screen app that asked for mouse reports keeps the right button (Shift+right-click still opens the
+   * menu, as in other terminals).
+   */
+  const onContextMenu = (e: React.MouseEvent) => {
+    const tracking = (wtRef.current?.bridge?.mouseTracking?.() ?? 0) !== 0;
+    if (tracking && !e.shiftKey) return;
+    e.preventDefault();
+    e.stopPropagation();
+    setMenu({ x: e.clientX, y: e.clientY, selected: window.getSelection()?.toString() ?? "" });
+  };
+  const pasteFromMenu = () => {
+    setPasteFailed(false);
+    void readClipboardText().then((text) => {
+      const ta = inputEl();
+      if (text === null) setPasteFailed(true);
+      else if (ta && text !== "") pasteInto(ta, text);
+    });
+  };
+
   return (
     <div className="space-y-3">
       {status ? (
@@ -424,25 +497,57 @@ export function TerminalPane({
         </Notice>
       ) : null}
       {copied !== null ? (
-        <Notice tone="accent" role="status">
+        <Notice tone={copyFailed ? "danger" : "accent"} role="status">
           <span className="flex items-center justify-between gap-3">
-            <span className="min-w-0 truncate font-mono text-xs">{copied}</span>
+            <span className={copyFailed ? "min-w-0 select-text break-all font-mono text-xs" : "min-w-0 truncate font-mono text-xs"}>{copied}</span>
             <button
               type="button"
               className="shrink-0 underline underline-offset-2"
               onClick={() => {
-                void navigator.clipboard.writeText(copied).finally(() => setCopied(null));
+                // The confirmation clears on success or when dismissed, never on a failed copy.
+                void copyToClipboard(copied).then((ok) => {
+                  if (ok) {
+                    setCopyFailed(false);
+                    setCopied(null);
+                  } else {
+                    setCopyFailed(true);
+                  }
+                });
               }}
             >
               Copy to clipboard
             </button>
           </span>
+          {copyFailed ? <span className="mt-1 block text-xs">{copyFailedNotice(mac)}</span> : null}
         </Notice>
       ) : null}
       <div
         className="relative"
+        onContextMenuCapture={onContextMenu}
+        // A paste event of the browser's own (Ctrl+V, ⌘V, the menu, a Ctrl+Shift+V it handled): nothing to read.
+        onPasteCapture={() => {
+          if (pasteTimer.current !== null) {
+            clearTimeout(pasteTimer.current);
+            pasteTimer.current = null;
+          }
+        }}
         // Esc, then Tab leaves the terminal (the shell still gets Esc; Tab on its own is the shell's completion key).
         onKeyDownCapture={(e) => {
+          const chord = clipboardChord(e);
+          if (chord === "paste") {
+            // Never ^V: the paste is the browser's (or the read above), through wterm's own paste path.
+            e.stopPropagation();
+            armPaste();
+            return;
+          }
+          if (chord === "copy") {
+            // With a selection wterm copies it; without one the Linux copy chord is not an interrupt.
+            if (!hasTextSelection()) {
+              e.preventDefault();
+              e.stopPropagation();
+            }
+            return;
+          }
           if (e.key === "Escape") {
             lastEscape.current = Date.now();
             setLeft(false);
@@ -515,12 +620,45 @@ export function TerminalPane({
           </Button>
         ) : null}
       </div>
+      <Menu open={menu !== null} onOpenChange={(open) => !open && setMenu(null)}>
+        <MenuTrigger asChild>
+          <span aria-hidden="true" className="pointer-events-none fixed size-0" style={{ left: menu?.x ?? 0, top: menu?.y ?? 0 }} />
+        </MenuTrigger>
+        <MenuContent
+          aria-label="Terminal"
+          className="min-w-40"
+          // Back to the terminal, not to the invisible anchor.
+          onCloseAutoFocus={(e) => {
+            e.preventDefault();
+            ref.current?.focus();
+          }}
+        >
+          <MenuItem disabled={!menu?.selected} onSelect={() => void copyToClipboard(menu?.selected ?? "")}>
+            Copy
+          </MenuItem>
+          <MenuItem
+            disabled={!canReadClipboard()}
+            title={canReadClipboard() ? undefined : "Paste needs a secure (https) connection; use the keyboard paste instead."}
+            onSelect={pasteFromMenu}
+          >
+            Paste
+          </MenuItem>
+          <MenuItem onSelect={() => void wtRef.current?.selectAll()}>Select all</MenuItem>
+        </MenuContent>
+      </Menu>
       {left ? (
         <p role="status" className="text-xs text-muted">
           Left the terminal.
         </p>
       ) : null}
-      <p className="text-xs text-muted">The shell runs inside the agent&apos;s sandbox as its own user. Terminal output is never logged.</p>
+      {pasteFailed ? (
+        <p role="status" className="text-xs text-muted">
+          Could not read the clipboard — use the right-click menu&apos;s Paste.
+        </p>
+      ) : null}
+      <p className="text-xs text-muted">
+        The shell runs inside the agent&apos;s sandbox as its own user. Terminal output is never logged. {clipboardHelp(mac)}
+      </p>
     </div>
   );
 }
