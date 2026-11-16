@@ -41,14 +41,24 @@ type SectionRow = NonNullable<ReturnType<typeof useSettingsIndex>["data"]>["sect
 /** The order the topics appear in the sidebar (`14` topics per level); sections without a topic come last. */
 const TOPIC_ORDER = ["Agents", "Apps & accounts", "AI models", "Internet access", "People", "Data", "Platform", "Other"];
 
-/** Sections grouped by topic, in sidebar order, those matching `search` (name, description or topic; case-insensitive). */
+/** The fields of a section whose label or help contains `search` (case-insensitive; C-972). */
+export function matchingFields(s: SectionRow, search: string): SectionRow["fields"] {
+  const needle = search.trim().toLowerCase();
+  if (!needle) return [];
+  return (s.fields ?? []).filter((f) => `${f.label} ${f.help}`.toLowerCase().includes(needle));
+}
+
+/**
+ * Sections grouped by topic, in sidebar order, those matching `search`: the section's name, description or topic, or
+ * the label or help of any of its fields (case-insensitive).
+ */
 export function groupSections(sections: SectionRow[], search: string): { topic: string; sections: SectionRow[] }[] {
   const needle = search.trim().toLowerCase();
   const byTopic = new Map<string, SectionRow[]>();
   for (const s of sections) {
     const homes = sectionHomes(s.section);
     const hay = `${s.title} ${s.description} ${homes.map((h) => h.label).join(" ")}`.toLowerCase();
-    if (needle && !hay.includes(needle)) continue;
+    if (needle && !hay.includes(needle) && matchingFields(s, search).length === 0) continue;
     const topic = homes[0]!.topic;
     byTopic.set(topic, [...(byTopic.get(topic) ?? []), s]);
   }
@@ -133,7 +143,7 @@ export function SettingsIndexView() {
           id="settings-search"
           type="search"
           className={inputClass}
-          placeholder="Search settings by name or description"
+          placeholder="Search settings by name or what they do"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
@@ -167,6 +177,18 @@ export function SettingsIndexView() {
                       {s.title}
                     </Link>
                     <p className="text-sm text-ink-2">{s.description}</p>
+                    {matchingFields(s, search).length > 0 ? (
+                      <ul aria-label={`Settings in ${s.title} that match`} className="space-y-1 text-sm">
+                        {matchingFields(s, search).map((f) => (
+                          <li key={f.key}>
+                            <Link href={`${homes[0]!.href}#${f.key}`} className="font-medium text-ink underline-offset-2 hover:underline">
+                              {f.label}
+                            </Link>
+                            <span className="text-ink-2"> — {f.help}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
                     {homes.length > 1 ? (
                       <p className="text-xs text-ink-2">
                         Also on:{" "}

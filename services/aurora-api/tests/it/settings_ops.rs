@@ -495,3 +495,72 @@ async fn a_lowered_retention_ceiling_lists_the_organizations_above_it() {
         .await;
     assert_eq!(p["affected_orgs_total"], json!(0), "{p}");
 }
+
+/// P5-IA-5 (C-972, D-341): every section answers one `fields[]` entry per setting, in order, with a
+/// written label, help and default; enumerations carry a label and sentence per choice; the index
+/// carries the same words for All settings' search; no section is read-only any more.
+#[tokio::test]
+async fn sections_answer_their_fields_in_words() {
+    let w = world().await;
+    let (s, index) = w.call(Method::GET, "/v1/admin/settings", None).await;
+    assert_eq!(s, 200, "{index}");
+    for sec in index["sections"].as_array().unwrap() {
+        let id = sec["section"].as_str().unwrap();
+        // The harness registers two test-only sections: they have no words.
+        if id.starts_with("settings_test") {
+            continue;
+        }
+        let v = w.section(id).await;
+        let keys: Vec<&str> = v["settings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|x| x["key"].as_str().unwrap())
+            .collect();
+        let fields: Vec<&str> = v["fields"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|x| x["key"].as_str().unwrap())
+            .collect();
+        assert_eq!(keys, fields, "{id}: fields follow the settings");
+        assert_eq!(
+            sec["fields"].as_array().unwrap().len(),
+            fields.len(),
+            "{id}: index"
+        );
+        assert_eq!(v["editable"], json!(true), "{id}");
+        assert!(v["current"].is_null(), "{id}");
+        for f in v["fields"].as_array().unwrap() {
+            for k in ["label", "help", "default_display", "kind"] {
+                assert!(f[k].as_str().is_some_and(|t| !t.is_empty()), "{id}: {f}");
+            }
+            let text = format!("{} {}", f["label"], f["help"]);
+            assert!(!text.contains('§') && !text.contains("docs/"), "{id}: {f}");
+        }
+    }
+    let g = w.section("governance").await;
+    let posture = g["fields"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["key"] == "governance.llm.minimum_posture")
+        .unwrap();
+    assert_eq!(posture["kind"], "enum");
+    let choices = posture["choices"].as_array().unwrap();
+    assert_eq!(choices.len(), 2);
+    assert!(
+        choices
+            .iter()
+            .all(|c| c["label"] != c["value"] && c["description"].as_str().is_some())
+    );
+    // The e-mail password is a secret field: its value is never in the answer.
+    let e = w.section("email").await;
+    let pw = e["settings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|x| x["key"] == "email.smtp_password")
+        .unwrap();
+    assert!(pw["value"].is_null());
+}

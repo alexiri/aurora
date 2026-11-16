@@ -26,7 +26,10 @@ export function ChoiceCards<T extends string>({
   options,
   onChange,
   disabled = false,
+  legendHidden = false,
 }: {
+  /** Visible by default; `legendHidden` keeps it for assistive technology when a label above already says it. */
+  legendHidden?: boolean;
   legend: string;
   value: T;
   options: ChoiceCardOption<T>[];
@@ -37,7 +40,7 @@ export function ChoiceCards<T extends string>({
   const legendId = `${name}-legend`;
   return (
     <div role="radiogroup" aria-labelledby={legendId} className="min-w-0 space-y-2">
-      <p id={legendId} className="text-sm font-medium text-ink">
+      <p id={legendId} className={legendHidden ? "sr-only" : "text-sm font-medium text-ink"}>
         {legend}
       </p>
       {options.map((o) => (

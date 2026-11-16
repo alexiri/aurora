@@ -114,7 +114,7 @@ export function IntegrationStepper({
     <Dialog open onOpenChange={(o) => !o && !pending && onClose()}>
       <DialogContent
         title={step === "done" ? `${connector.display_name} is connected` : `Connect ${connector.display_name}`}
-        description={step === "done" ? "Three things to do next." : "Credentials are stored securely and are never shown again."}
+        description={step === "done" ? "Three things to do next." : "Access details are stored securely and are never shown again."}
       >
         <ol aria-label="Steps" className="mb-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted">
           {STEPS.map((s, i) => (

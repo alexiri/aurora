@@ -38137,6 +38137,32 @@
           "connection"
         ]
       },
+      "CurrentValue": {
+        "type": "object",
+        "description": "A key's current value, read-only (C-973).",
+        "required": [
+          "key",
+          "label",
+          "value_display",
+          "source"
+        ],
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string",
+            "description": "`helm` or `default`."
+          },
+          "value_display": {
+            "type": "string",
+            "description": "The value in words; a secret reads only \"Set\" or \"Not set\"."
+          }
+        }
+      },
       "DatabaseRef": {
         "type": "object",
         "description": "How an agent reaches a database connection (P2-DBL-2, C-230); `null` for other apps.",
@@ -38881,6 +38907,99 @@
           "terminal": {
             "type": "boolean",
             "description": "(phase 4, P4-TERM, C-622) The web terminal is enabled on this instance; the Terminal\ntab exists only when this is true."
+          }
+        }
+      },
+      "FieldChoice": {
+        "type": "object",
+        "description": "One choice of an enumeration field (C-972).",
+        "required": [
+          "value",
+          "label",
+          "description"
+        ],
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "value": {
+            "type": "string"
+          }
+        }
+      },
+      "FieldDoc": {
+        "type": "object",
+        "description": "An operator document, by title (C-972).",
+        "required": [
+          "title",
+          "path"
+        ],
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          }
+        }
+      },
+      "FieldInfo": {
+        "type": "object",
+        "description": "A settings field in words (C-972, D-341): what the dashboard shows instead of a key.",
+        "required": [
+          "key",
+          "label",
+          "help",
+          "kind",
+          "default_display"
+        ],
+        "properties": {
+          "choices": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/FieldChoice"
+            }
+          },
+          "default_display": {
+            "type": "string",
+            "description": "The default, in words."
+          },
+          "doc": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/FieldDoc"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "help": {
+            "type": "string",
+            "description": "One sentence: what the setting does and when to change it."
+          },
+          "key": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "description": "`bool`, `int`, `float`, `duration`, `enum`, `list`, `text`, `secret` or `keyed_list`."
+          },
+          "label": {
+            "type": "string"
+          },
+          "unit": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The unit the control edits in (a duration: `seconds`, `minutes`, `hours` or `days`)."
           }
         }
       },
@@ -51701,11 +51820,19 @@
           "generation",
           "keys_total",
           "keys_locked",
-          "keys_dashboard"
+          "keys_dashboard",
+          "fields"
         ],
         "properties": {
           "description": {
             "type": "string"
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FieldInfo"
+            },
+            "description": "The section's fields in words: All settings searches their labels and help (C-972)."
           },
           "generation": {
             "type": "integer",
@@ -52113,11 +52240,27 @@
           "title",
           "description",
           "generation",
-          "settings"
+          "settings",
+          "fields",
+          "editable"
         ],
         "properties": {
+          "current": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/CurrentValue"
+            },
+            "description": "The running configuration's values, read-only; only when `editable` is `false` (C-973)."
+          },
           "description": {
             "type": "string"
+          },
+          "editable": {
+            "type": "boolean",
+            "description": "`false` for a section whose keys are not editable yet: `current` holds its values (C-973)."
           },
           "extra": {
             "type": [
@@ -52125,6 +52268,13 @@
               "null"
             ],
             "description": "Section-specific read-only data (C-778..C-782)."
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FieldInfo"
+            },
+            "description": "The words of every setting above, in the same order (C-972)."
           },
           "generation": {
             "type": "integer",

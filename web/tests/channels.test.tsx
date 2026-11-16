@@ -76,7 +76,7 @@ describe("ChannelsView", () => {
   async function fill() {
     wrap(<ChannelsView orgId="o1" />);
     expect(await screen.findByText("Acme Slack")).toBeInTheDocument();
-    expect(screen.getByText("Credentials: stored")).toBeInTheDocument();
+    expect(screen.getByText("Access details: stored")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /Connect Slack/ }));
     fireEvent.change(await screen.findByLabelText("Workspace"), { target: { value: "acme" } });
     const secret = screen.getByLabelText("Bot token") as HTMLInputElement;

@@ -139,7 +139,7 @@ describe("skill libraries page", () => {
     wrap(<SkillLibrariesPage />);
     fireEvent.click((await screen.findAllByRole("button", { name: "Connect a repository" }))[0]);
     expect(await screen.findByText(/Use a read-only token/)).toBeTruthy();
-    const options = within(screen.getByLabelText("Connection")).getAllByRole("option");
+    const options = within(screen.getByLabelText("Account")).getAllByRole("option");
     expect(options.map((o) => o.textContent)).toEqual(["github-conn (github)"]);
     fireEvent.change(screen.getByLabelText("Label"), { target: { value: "Team" } });
     fireEvent.change(screen.getByLabelText("Repository"), { target: { value: "acme/skills" } });

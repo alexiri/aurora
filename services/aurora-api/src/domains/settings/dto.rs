@@ -25,6 +25,51 @@ pub struct SectionSummary {
     pub keys_total: i64,
     pub keys_locked: i64,
     pub keys_dashboard: i64,
+    /// The section's fields in words: All settings searches their labels and help (C-972).
+    pub fields: Vec<FieldInfo>,
+}
+
+/// One choice of an enumeration field (C-972).
+#[derive(Serialize, ToSchema)]
+pub struct FieldChoice {
+    pub value: String,
+    pub label: String,
+    pub description: String,
+}
+
+/// An operator document, by title (C-972).
+#[derive(Serialize, ToSchema)]
+pub struct FieldDoc {
+    pub title: String,
+    pub path: String,
+}
+
+/// A settings field in words (C-972, D-341): what the dashboard shows instead of a key.
+#[derive(Serialize, ToSchema)]
+pub struct FieldInfo {
+    pub key: String,
+    pub label: String,
+    /// One sentence: what the setting does and when to change it.
+    pub help: String,
+    /// `bool`, `int`, `float`, `duration`, `enum`, `list`, `text`, `secret` or `keyed_list`.
+    pub kind: String,
+    pub choices: Option<Vec<FieldChoice>>,
+    /// The default, in words.
+    pub default_display: String,
+    /// The unit the control edits in (a duration: `seconds`, `minutes`, `hours` or `days`).
+    pub unit: Option<String>,
+    pub doc: Option<FieldDoc>,
+}
+
+/// A key's current value, read-only (C-973).
+#[derive(Serialize, ToSchema)]
+pub struct CurrentValue {
+    pub key: String,
+    pub label: String,
+    /// The value in words; a secret reads only "Set" or "Not set".
+    pub value_display: String,
+    /// `helm` or `default`.
+    pub source: String,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -99,6 +144,12 @@ pub struct SettingsSection {
     pub updated_at: Option<DateTime<Utc>>,
     pub updated_by_label: Option<String>,
     pub settings: Vec<Setting>,
+    /// The words of every setting above, in the same order (C-972).
+    pub fields: Vec<FieldInfo>,
+    /// `false` for a section whose keys are not editable yet: `current` holds its values (C-973).
+    pub editable: bool,
+    /// The running configuration's values, read-only; only when `editable` is `false` (C-973).
+    pub current: Option<Vec<CurrentValue>>,
     /// Section-specific read-only data (C-778..C-782).
     #[schema(value_type = Option<Object>)]
     pub extra: Option<Value>,

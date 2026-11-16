@@ -419,7 +419,7 @@ export function InstancesView({ scope, canManage }: { scope: InstanceScope; canM
       <Notice tone="neutral" role="status">
         Register your own GitLab, GitHub Enterprise Server, Indico … so people can connect to it. An app that
         supports self-hosted servers is served on its SaaS host by default; register the host of each of your
-        servers here and members then choose it when they connect. Credentials are only ever sent to the exact host
+        servers here and members then choose it when they connect. Sign-in details are only ever sent to the exact host
         a connection is bound to.
       </Notice>
       <Section
@@ -460,7 +460,7 @@ export function InstancesView({ scope, canManage }: { scope: InstanceScope; canM
                 {adminAll ? <Th>Organization</Th> : null}
                 <Th>Scope</Th>
                 <Th>Status</Th>
-                <Th>Connections</Th>
+                <Th>Accounts</Th>
                 <Th>
                   <span className="sr-only">Actions</span>
                 </Th>

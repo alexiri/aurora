@@ -49,8 +49,8 @@ export function LlmSettingsView() {
         description={section.description}
       />
       <Notice tone="neutral" role="status" className="max-w-3xl">
-        LLM keys are added by organizations and never stored in an endpoint. Removing an endpoint keeps their keys but
-        stops them working; the save shows how many. See docs/operator/llm-endpoints.md.
+        AI keys are added by organizations and never stored in an endpoint. Removing an endpoint keeps their keys but
+        stops them working; the save shows how many. See “AI endpoints and rules” in the operator guide.
       </Notice>
       <SettingsSectionForm
         key={section.generation}

@@ -73,7 +73,7 @@ export function IntegrationDialog({
     <Dialog open={connector !== null} onOpenChange={(o) => !o && !pending && onClose()}>
       <DialogContent
         title={`${existing ? "Update" : "Connect"} ${connector?.display_name ?? ""}`}
-        description="Credentials are stored securely and are never shown again."
+        description="Access details are stored securely and are never shown again."
       >
         {connector ? (
           <form className="space-y-3" onSubmit={submit} aria-busy={pending}>
@@ -89,7 +89,7 @@ export function IntegrationDialog({
               onChange={(n, v) => setValues((p) => ({ ...p, [n]: v }))}
             />
             {existing ? (
-              <p className="text-xs text-muted">Credentials: stored. Leave blank to keep them.</p>
+              <p className="text-xs text-muted">Access details: stored. Leave blank to keep them.</p>
             ) : null}
             <MutationError error={error} />
             {pending ? (

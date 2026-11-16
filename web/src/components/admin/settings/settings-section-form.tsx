@@ -3,9 +3,17 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState, type FormEvent, type ReactNode } from "react";
 
+import {
+  ChoiceListEditor,
+  CurrentValues,
+  HostListEditor,
+  StringListEditor,
+  UnitNumberControl,
+} from "@/components/admin/settings/settings-field-controls";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { ConfirmDialog, FormDialog } from "@/components/ui/confirm-dialog";
+import { ChoiceCards } from "@/components/ui/choice-cards";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { inputClass } from "@/components/ui/field";
 import { FormActions, FormSection } from "@/components/ui/form";
 import { Notice } from "@/components/ui/notice";
@@ -13,9 +21,11 @@ import { ItemList, ListRow } from "@/components/ui/section";
 import { SettingField, settingControlId } from "@/components/ui/setting-field";
 import { ApiError } from "@/lib/api/client";
 import { errorMessage, fieldErrors } from "@/lib/api/errors";
+import { valueWords } from "@/lib/settings-words";
 import {
   usePreviewSettings,
   usePutSettings,
+  type FieldInfo,
   type Setting,
   type SettingsPreview,
   type SettingsSection,
@@ -109,32 +119,14 @@ function toValues(section: SettingsSection, d: Draft): SettingValues {
   return out;
 }
 
-function formatValue(s: Setting): ReactNode {
+/** A locked setting's value, in words (never a raw id or JSON). */
+function formatValue(s: Setting, field: FieldInfo | undefined): ReactNode {
   const v = s.value as unknown;
-  if (v === null || v === undefined) return <span className="text-muted">Not set</span>;
-  if (typeof v === "boolean") return v ? "On" : "Off";
-  if (Array.isArray(v)) {
-    if (v.length === 0) return <span className="text-muted">Empty list</span>;
-    return v.map((x, i) => (
-      <div key={i}>{typeof x === "string" ? x : <code className="font-mono text-xs">{JSON.stringify(x)}</code>}</div>
-    ));
+  if (Array.isArray(v) && v.length > 0 && field?.kind !== "keyed_list") {
+    return v.map((x, i) => <div key={i}>{valueWords(field, [x])}</div>);
   }
-  if (typeof v === "object") return <code className="font-mono text-xs">{JSON.stringify(v)}</code>;
-  return String(v);
-}
-
-function defaultText(s: Setting): string | undefined {
-  const d = s.default as unknown;
-  if (d === null || d === undefined) return undefined;
-  if (typeof d === "boolean") return d ? "on" : "off";
-  if (Array.isArray(d)) return d.length === 0 ? "empty" : d.join(", ");
-  return typeof d === "object" ? undefined : String(d);
-}
-
-function labelOf(key: string): string {
-  const last = key.split(".").slice(-1)[0] ?? key;
-  const text = last.replace(/_/g, " ");
-  return text.charAt(0).toUpperCase() + text.slice(1);
+  const text = valueWords(field, v);
+  return text === "Not set" || text === "None" ? <span className="text-muted">{text}</span> : text;
 }
 
 /** Save needs a confirmation when the preview reports loosening, affected organizations or warnings. */
@@ -143,21 +135,29 @@ function needsConfirmation(p: SettingsPreview): boolean {
 }
 
 /**
- * The generic section form (SET-1): renders any C-772 section — scalars, enums, booleans, whole lists,
- * keyed lists and write-only secrets — through `SettingField`. Save calls the preview route first and
- * asks for confirmation when something loosens; 409 / 422 follow `14 §Instance administration`.
+ * The generic section form (SET-1, P5-IA-5): renders any C-772 section from its `fields` (C-972) — a label, one
+ * sentence of help, choice cards, list editors, numbers with units and a "Default: …" badge in words — through
+ * `SettingField`. A section that is not editable yet (C-973) shows its current values read-only instead, with no
+ * Save. Save calls the preview route first and asks for confirmation when something loosens; 409 / 422 follow
+ * `14 §Instance administration`.
  */
-export function SettingsSectionForm({
+export function SettingsSectionForm(props: Parameters<typeof EditableSectionForm>[0]) {
+  if (props.section.editable === false) {
+    const keys = props.groups?.flatMap((g) => g.keys ?? []);
+    const shown = (props.section.current ?? []).filter((c) => !keys || keys.includes(c.key));
+    return <CurrentValues title={props.section.title} current={shown} fields={props.section.fields ?? []} />;
+  }
+  return <EditableSectionForm {...props} />;
+}
+
+function EditableSectionForm({
   section,
   onReload,
   groups,
   controls,
-  hints,
   footer,
 }: {
   section: SettingsSection;
-  /** One line under a key's control, from the owning spec section (SET-5: the operational pages). */
-  hints?: Record<string, string>;
   /** Extra content above Save, given the values a save would send (SET-4: the e-mail page's test button). */
   footer?: (values: SettingValues, dirty: boolean) => ReactNode;
   /** Refetch the section (stale revision / locked key). */
@@ -179,6 +179,7 @@ export function SettingsSectionForm({
 
   const dirty = JSON.stringify(toValues(section, draft)) !== JSON.stringify(toValues(section, initial));
   const errs = error ? fieldErrors(error) : {};
+  const fieldsByKey = useMemo(() => new Map((section.fields ?? []).map((f) => [f.key, f])), [section.fields]);
   const knownKeys = new Set(section.settings.map((s) => s.key));
   const otherErrs = Object.entries(errs).filter(([k]) => !knownKeys.has(k.split("/")[0] ?? k));
   const code = error instanceof ApiError ? error.code : null;
@@ -278,13 +279,14 @@ export function SettingsSectionForm({
 
       {(groups ?? [{ title: section.title, description: section.description, keys: null }]).map((g) => {
         const shown = g.keys ? section.settings.filter((s) => g.keys?.includes(s.key)) : section.settings;
+        if (shown.length === 0) return null;
         return (
           <FormSection key={g.title} title={g.title} description={g.description}>
-            {shown.length === 0 ? <p className="text-sm text-ink-2">No settings in this section yet.</p> : null}
             {shown.map((s) => (
               <SettingRow
                 key={s.key}
                 setting={s}
+                field={fieldsByKey.get(s.key)}
                 draft={draft}
                 error={errs[s.key]}
                 entryErrors={Object.entries(errs).filter(([k]) => k.startsWith(`${s.key}/`))}
@@ -292,7 +294,6 @@ export function SettingsSectionForm({
                 resetValue={resetValue}
                 setSecret={setSecret}
                 custom={controls?.[s.key]}
-                hint={hints?.[s.key]}
               />
             ))}
           </FormSection>
@@ -398,6 +399,7 @@ function ConfirmDetails({ preview }: { preview: SettingsPreview }) {
 
 function SettingRow({
   setting: s,
+  field,
   draft,
   error,
   entryErrors,
@@ -405,12 +407,11 @@ function SettingRow({
   resetValue,
   setSecret,
   custom,
-  hint,
 }: {
   setting: Setting;
+  /** The setting's words (C-972): label, help, choices, default, unit, operator doc. */
+  field: FieldInfo | undefined;
   draft: Draft;
-  /** The key's hint from the owning spec section (a section page's own text). */
-  hint?: string;
   error?: string;
   entryErrors: [string, string][];
   setValue: (key: string, v: unknown) => void;
@@ -418,7 +419,10 @@ function SettingRow({
   setSecret: (key: string, sd: SecretDraft | null) => void;
   custom?: (ctx: SettingControlCtx) => ReactNode;
 }) {
-  const label = labelOf(s.key);
+  // The registry completeness test keeps every movable key in `fields`; the key is only a last resort for a bare fixture.
+  const label = field?.label ?? s.key;
+  const hint = field?.help;
+  const docTitle = field?.doc?.title;
   const cid = settingControlId(s.key);
 
   if (custom && !s.secret) {
@@ -445,11 +449,11 @@ function SettingRow({
     const fromEnv = s.secret.from_env;
     if (fromEnv) {
       return (
-        <SettingField id={s.key} label={label} source="helm" helmKey={fromEnv} lockedValue="Set from the environment" />
+        <SettingField id={s.key} label={label} source="helm" helmKey={fromEnv} lockedValue="Set from the environment" doc={docTitle} />
       );
     }
     return (
-      <SettingField id={s.key} label={label} source={sd ? "dashboard" : "default"} error={error}>
+      <SettingField id={s.key} label={label} hint={hint} doc={docTitle} source={sd ? "dashboard" : "default"} error={error}>
         <div id={cid} className="flex flex-wrap items-center gap-2">
           {sd?.mode === "replace" ? (
             <input
@@ -481,6 +485,8 @@ function SettingRow({
       <KeyedList
         setting={s}
         label={label}
+        hint={hint}
+        doc={docTitle}
         entries={draft.values[s.key] as Record<string, unknown>[] | undefined}
         error={error}
         entryErrors={entryErrors}
@@ -493,9 +499,22 @@ function SettingRow({
   const has = s.key in draft.values;
   const current = has ? draft.values[s.key] : (s.default as unknown);
   const source = locked ? "helm" : has ? "dashboard" : "default";
-  const kind = s.schema.kind;
+  const kind = field?.kind;
   let control: ReactNode;
-  if (kind === "bool") {
+  if (kind === "enum" && field?.choices) {
+    // An enumeration is a choice among sentences, never a raw id (D-341). The label above is the legend.
+    control = (
+      <div id={cid}>
+        <ChoiceCards
+          legend={label}
+          legendHidden
+          value={String(current ?? "")}
+          options={field.choices.map((c) => ({ value: c.value, label: c.label, description: c.description }))}
+          onChange={(v) => setValue(s.key, v)}
+        />
+      </div>
+    );
+  } else if (kind === "bool" || (!field && s.schema.kind === "bool")) {
     control = (
       <input
         id={cid}
@@ -505,7 +524,7 @@ function SettingRow({
         onChange={(e) => setValue(s.key, e.target.checked)}
       />
     );
-  } else if (kind === "enum") {
+  } else if (s.schema.kind === "enum") {
     control = (
       <select id={cid} className={inputClass} value={String(current ?? "")} onChange={(e) => setValue(s.key, e.target.value)}>
         {(s.schema.options ?? []).map((o) => (
@@ -515,54 +534,58 @@ function SettingRow({
         ))}
       </select>
     );
-  } else if (kind === "int" || kind === "duration_secs" || kind === "float") {
-    // A decimal setting (SET-5: the rate multiplier): the schema's bounds are whole numbers, so only the
-    // upper one is offered to the browser; the server names the exact bound.
-    const decimal = kind === "float";
+  } else if (field && (kind === "int" || kind === "float" || kind === "duration")) {
+    // A decimal setting (the rate multiplier) offers no lower bound: the schema's bounds are whole numbers and the
+    // server names the exact one.
+    control = (
+      <UnitNumberControl
+        id={cid}
+        field={field}
+        value={current}
+        min={s.schema.min}
+        max={s.schema.max}
+        decimal={kind === "float"}
+        onChange={(v) => setValue(s.key, v)}
+        onClear={() => resetValue(s.key)}
+      />
+    );
+  } else if (s.schema.kind === "int" || s.schema.kind === "float" || s.schema.kind === "duration_secs") {
     control = (
       <input
         id={cid}
         type="number"
-        inputMode={decimal ? "decimal" : "numeric"}
-        step={decimal ? "any" : undefined}
+        step={s.schema.kind === "float" ? "any" : undefined}
         className={`${inputClass} max-w-48`}
-        min={decimal ? undefined : (s.schema.min ?? undefined)}
-        max={s.schema.max ?? undefined}
         value={current === null || current === undefined ? "" : String(current)}
         onChange={(e) => (e.target.value === "" ? resetValue(s.key) : setValue(s.key, Number(e.target.value)))}
       />
     );
-  } else if (kind === "string") {
-    control = (
-      <input
-        id={cid}
-        className={inputClass}
-        maxLength={s.schema.max_len ?? undefined}
-        value={typeof current === "string" ? current : ""}
-        onChange={(e) => setValue(s.key, e.target.value)}
-      />
+  } else if (s.schema.kind === "string") {
+    const long = (s.schema.max_len ?? 0) > 500;
+    const common = {
+      id: cid,
+      className: inputClass,
+      maxLength: s.schema.max_len ?? undefined,
+      value: typeof current === "string" ? current : "",
+    };
+    control = long ? (
+      <textarea {...common} rows={6} onChange={(e) => setValue(s.key, e.target.value)} />
+    ) : (
+      <input {...common} onChange={(e) => setValue(s.key, e.target.value)} />
     );
-  } else if (kind === "list" && s.schema.item_kind === "string") {
-    control = (
-      <textarea
-        id={cid}
-        rows={4}
-        className={`${inputClass} font-mono`}
-        placeholder="One per line"
-        value={Array.isArray(current) ? (current as string[]).join("\n") : ""}
-        onChange={(e) =>
-          setValue(
-            s.key,
-            e.target.value
-              .split("\n")
-              .map((x) => x.trim())
-              .filter(Boolean),
-          )
-        }
-      />
-    );
+  } else if (s.schema.kind === "list" && field?.choices) {
+    control = <ChoiceListEditor id={cid} field={field} value={current} onChange={(v) => setValue(s.key, v)} />;
+  } else if (s.schema.kind === "list" && s.schema.item_kind === "string") {
+    control = <StringListEditor id={cid} label={label} value={current} onChange={(v) => setValue(s.key, v)} />;
+  } else if (s.schema.kind === "list" && s.key === "governance.egress.baseline_allowlist") {
+    control = <HostListEditor id={cid} label={label} value={current} onChange={(v) => setValue(s.key, v)} />;
   } else {
-    control = <JsonControl id={cid} value={current} onChange={(v) => setValue(s.key, v)} />;
+    // A list this page has no editor for: its entries in words, read-only.
+    control = (
+      <p id={cid} className="text-sm text-ink">
+        {valueWords(field, current)}
+      </p>
+    );
   }
   return (
     <SettingField
@@ -571,8 +594,9 @@ function SettingRow({
       hint={hint}
       source={source}
       helmKey={s.helm_key}
-      lockedValue={formatValue(s)}
-      defaultLabel={defaultText(s)}
+      lockedValue={formatValue(s, field)}
+      defaultLabel={field?.default_display}
+      doc={docTitle}
       onReset={() => resetValue(s.key)}
       error={error}
     >
@@ -581,38 +605,15 @@ function SettingRow({
   );
 }
 
-/** A list or object edited as JSON text (the generic fallback; sections add typed editors). */
-function JsonControl({ id, value, onChange }: { id: string; value: unknown; onChange: (v: unknown) => void }) {
-  const [text, setText] = useState(JSON.stringify(value ?? null, null, 2));
-  const [bad, setBad] = useState(false);
-  return (
-    <div>
-      <textarea
-        id={id}
-        rows={5}
-        spellCheck={false}
-        aria-invalid={bad}
-        className={`${inputClass} font-mono`}
-        value={text}
-        onChange={(e) => {
-          setText(e.target.value);
-          try {
-            onChange(JSON.parse(e.target.value));
-            setBad(false);
-          } catch {
-            setBad(true);
-          }
-        }}
-      />
-      {bad ? <p className="mt-1 text-xs text-danger-ink">Not valid JSON.</p> : null}
-    </div>
-  );
-}
-
-/** A keyed list: the Helm entries are locked ("Managed by Helm", read-only), the others are edited in a dialog. */
+/**
+ * A keyed list no page has an editor for (every real one has: sign-in providers, AI endpoints, secret stores, rate
+ * classes): the Helm entries are locked ("Managed by Helm"), the others can be removed. Entries are never typed as JSON.
+ */
 function KeyedList({
   setting: s,
   label,
+  hint,
+  doc,
   entries: mine,
   error,
   entryErrors,
@@ -620,6 +621,8 @@ function KeyedList({
 }: {
   setting: Setting;
   label: string;
+  hint?: string;
+  doc?: string;
   entries: Record<string, unknown>[] | undefined;
   error?: string;
   entryErrors: [string, string][];
@@ -628,32 +631,18 @@ function KeyedList({
   const idField = s.id_field ?? "id";
   const own = mine ?? [];
   const helm = (s.entries ?? []).filter((e) => e.source === "helm");
-  const [editing, setEditing] = useState<{ index: number | null; text: string } | null>(null);
-  const [formError, setFormError] = useState<string | null>(null);
   const idError = entryErrors.find(([, m]) => m)?.[1];
 
-  function save(e: FormEvent) {
-    e.preventDefault();
-    if (!editing) return;
-    try {
-      const v = JSON.parse(editing.text) as unknown;
-      if (typeof v !== "object" || v === null || Array.isArray(v) || typeof (v as Record<string, unknown>)[idField] !== "string") {
-        setFormError(`An entry is an object with a text \`${idField}\`.`);
-        return;
-      }
-      const next = [...own];
-      if (editing.index === null) next.push(v as Record<string, unknown>);
-      else next[editing.index] = v as Record<string, unknown>;
-      onChange(next);
-      setEditing(null);
-      setFormError(null);
-    } catch {
-      setFormError("Not valid JSON.");
-    }
-  }
-
   return (
-    <SettingField id={s.key} label={label} source={own.length > 0 ? "dashboard" : "default"} error={error ?? idError}>
+    <SettingField
+      id={s.key}
+      label={label}
+      hint={hint}
+      doc={doc}
+      source={own.length > 0 ? "dashboard" : "default"}
+      defaultLabel="None"
+      error={error ?? idError}
+    >
       <div id={settingControlId(s.key)} className="space-y-2">
         <ItemList aria-label={label}>
           {helm.map((e) => (
@@ -666,14 +655,9 @@ function KeyedList({
             <ListRow
               key={`d-${String(e[idField])}-${i}`}
               actions={
-                <>
-                  <Button type="button" variant="ghost" size="sm" onClick={() => setEditing({ index: i, text: JSON.stringify(e, null, 2) })}>
-                    Edit
-                  </Button>
-                  <Button type="button" variant="ghost" size="sm" onClick={() => onChange(own.filter((_, j) => j !== i))}>
-                    Remove
-                  </Button>
-                </>
+                <Button type="button" variant="ghost" size="sm" onClick={() => onChange(own.filter((_, j) => j !== i))}>
+                  Remove
+                </Button>
               }
             >
               <span className="font-medium text-ink">{String(e[idField])}</span>
@@ -682,32 +666,7 @@ function KeyedList({
           ))}
           {helm.length + own.length === 0 ? <ListRow>None yet.</ListRow> : null}
         </ItemList>
-        <Button type="button" variant="outline" size="sm" onClick={() => setEditing({ index: null, text: JSON.stringify({ [idField]: "" }, null, 2) })}>
-          Add entry…
-        </Button>
       </div>
-      <FormDialog
-        open={editing !== null}
-        onOpenChange={(o) => {
-          if (!o) {
-            setEditing(null);
-            setFormError(null);
-          }
-        }}
-        title={editing?.index === null ? "Add entry" : "Edit entry"}
-        submitLabel="Done"
-        onSubmit={save}
-      >
-        <textarea
-          aria-label="Entry (JSON)"
-          rows={10}
-          spellCheck={false}
-          className={`${inputClass} font-mono`}
-          value={editing?.text ?? ""}
-          onChange={(e) => setEditing((x) => (x ? { ...x, text: e.target.value } : x))}
-        />
-        {formError ? <p className="text-xs text-danger-ink">{formError}</p> : null}
-      </FormDialog>
     </SettingField>
   );
 }

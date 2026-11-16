@@ -41,7 +41,7 @@ describe("admin ownerless-org banner (FIX-050, C-630)", () => {
     expect(banner).toHaveTextContent("acme");
     expect(banner).toHaveTextContent("globex");
     expect(banner.textContent).toContain("no active owner");
-    expect(banner.textContent).toContain("docs/operator/install-helm.md");
+    expect(banner.textContent).toContain("“Install with Helm” in the operator guide");
   });
 
   it("renders nothing for an overview without ownerless_orgs (none)", async () => {
