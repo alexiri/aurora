@@ -84,6 +84,8 @@ impl Membership {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WorkspaceAuth {
     pub org_id: Uuid,
+    /// (P5-UX-2) The workspace the access was resolved for: a refusal names who can help in it.
+    pub workspace_id: Uuid,
     pub org_role: OrgRole,
     pub effective_ws_role: WorkspaceRole,
 }
@@ -229,6 +231,7 @@ pub async fn effective_access<'e, E: PgExecutor<'e>>(
         |(org_id, org_role, ws_role, direct_org, direct_ws, idp_source, base_role, groups)| {
             let auth = WorkspaceAuth {
                 org_id,
+                workspace_id: ws,
                 org_role: OrgRole::parse(&org_role)?,
                 effective_ws_role: WorkspaceRole::parse(&ws_role)?,
             };
@@ -579,6 +582,7 @@ mod tests {
     fn auth(r: WorkspaceRole) -> WorkspaceAuth {
         WorkspaceAuth {
             org_id: Uuid::nil(),
+            workspace_id: Uuid::nil(),
             org_role: OrgRole::Member,
             effective_ws_role: r,
         }

@@ -176,7 +176,7 @@ async fn writable(caller: &Caller, state: &AppState, id: Uuid) -> Result<ClientR
         (Some(org), None) => caller.org(state, org).await?.require_admin()?,
         (None, _) => {
             if !(caller.is_instance_admin && caller.is_session()) {
-                return Err(ApiError::forbidden("Instance administrator required."));
+                return Err(crate::http::auth::instance_admin_forbidden());
             }
         }
     }

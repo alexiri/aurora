@@ -112,6 +112,7 @@ mod tools;
 mod trace_e2e;
 mod turn_trace_context;
 mod webhooks;
+mod who_can;
 
 #[test]
 fn init_scim_logs() {

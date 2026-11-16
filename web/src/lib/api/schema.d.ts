@@ -6365,6 +6365,16 @@ export interface components {
             /** @description `aun_…`, shown once; absent for a managed connector. */
             token?: string | null;
         };
+        /**
+         * @description `contacts` on a workspace or an organization (C-981): the people to ask where nothing was
+         *     refused. Readable by every member of that level.
+         */
+        Contacts: {
+            /** @description Administrators (organization level only), at most three. */
+            admins?: components["schemas"]["WhoCanPerson"][] | null;
+            /** @description Owners, at most three. */
+            owners: components["schemas"]["WhoCanPerson"][];
+        };
         ContainerByo: {
             /** @description Effective posture: `enabled` | `owners_only` | `disabled`. */
             posture: string;
@@ -8073,6 +8083,7 @@ export interface components {
         Org: {
             /** @description `open` | `restricted`. */
             app_posture: string;
+            contacts?: components["schemas"]["Contacts"] | null;
             /** Format: date-time */
             created_at: string;
             external_id: string;
@@ -8922,6 +8933,7 @@ export interface components {
             items: {
                 /** @description `open` | `restricted`. */
                 app_posture: string;
+                contacts?: components["schemas"]["Contacts"] | null;
                 /** Format: date-time */
                 created_at: string;
                 external_id: string;
@@ -9363,6 +9375,7 @@ export interface components {
             items: {
                 /** @description (phase 2, RFE-025) The workspace's own BYO posture (`null` = inherit). */
                 byo_posture?: string | null;
+                contacts?: components["schemas"]["Contacts"] | null;
                 /** Format: date-time */
                 created_at: string;
                 effective_byo_posture?: components["schemas"]["ByoPostureView"] | null;
@@ -11714,6 +11727,10 @@ export interface components {
             url: string;
             webhook: components["schemas"]["Webhook"];
         };
+        WhoCanPerson: {
+            /** @description Display name, never an e-mail. */
+            name: string;
+        };
         WinningCredential: {
             /** Format: uuid */
             id: string;
@@ -11723,6 +11740,7 @@ export interface components {
         Workspace: {
             /** @description (phase 2, RFE-025) The workspace's own BYO posture (`null` = inherit). */
             byo_posture?: string | null;
+            contacts?: components["schemas"]["Contacts"] | null;
             /** Format: date-time */
             created_at: string;
             effective_byo_posture?: components["schemas"]["ByoPostureView"] | null;

@@ -36473,6 +36473,32 @@
           }
         }
       },
+      "Contacts": {
+        "type": "object",
+        "description": "`contacts` on a workspace or an organization (C-981): the people to ask where nothing was\nrefused. Readable by every member of that level.",
+        "required": [
+          "owners"
+        ],
+        "properties": {
+          "admins": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/WhoCanPerson"
+            },
+            "description": "Administrators (organization level only), at most three."
+          },
+          "owners": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WhoCanPerson"
+            },
+            "description": "Owners, at most three."
+          }
+        }
+      },
       "ContainerByo": {
         "type": "object",
         "required": [
@@ -42149,6 +42175,17 @@
             "type": "string",
             "description": "`open` | `restricted`."
           },
+          "contacts": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Contacts",
+                "description": "(P5-UX-2, C-981) Who to ask: owners and admins, up to three names each. Present on\n`GET /v1/orgs/{org}` only."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "created_at": {
             "type": "string",
             "format": "date-time"
@@ -44841,6 +44878,17 @@
                   "type": "string",
                   "description": "`open` | `restricted`."
                 },
+                "contacts": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Contacts",
+                      "description": "(P5-UX-2, C-981) Who to ask: owners and admins, up to three names each. Present on\n`GET /v1/orgs/{org}` only."
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
                 "created_at": {
                   "type": "string",
                   "format": "date-time"
@@ -46440,6 +46488,17 @@
                     "null"
                   ],
                   "description": "(phase 2, RFE-025) The workspace's own BYO posture (`null` = inherit)."
+                },
+                "contacts": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Contacts",
+                      "description": "(P5-UX-2, C-981) The workspace owners to ask (up to three names); present on\n`GET /v1/workspaces/{ws}` only."
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 },
                 "created_at": {
                   "type": "string",
@@ -54196,6 +54255,18 @@
           }
         }
       },
+      "WhoCanPerson": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Display name, never an e-mail."
+          }
+        }
+      },
       "WinningCredential": {
         "type": "object",
         "required": [
@@ -54236,6 +54307,17 @@
               "null"
             ],
             "description": "(phase 2, RFE-025) The workspace's own BYO posture (`null` = inherit)."
+          },
+          "contacts": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Contacts",
+                "description": "(P5-UX-2, C-981) The workspace owners to ask (up to three names); present on\n`GET /v1/workspaces/{ws}` only."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "created_at": {
             "type": "string",

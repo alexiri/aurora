@@ -154,7 +154,9 @@ async fn get_org(
     Path(org): Path<Uuid>,
 ) -> Result<Json<Org>, ApiError> {
     c.org(&s, org).await?;
-    Ok(Json(load_org(&s, org, c.user_id).await?))
+    let mut o = load_org(&s, org, c.user_id).await?;
+    o.contacts = Some(crate::http::who_can::org_contacts(&s, org).await?);
+    Ok(Json(o))
 }
 
 /// Update organization name, slug or settings (owner).
@@ -474,7 +476,9 @@ async fn get_workspace(
     Path(ws): Path<Uuid>,
 ) -> Result<Json<Workspace>, ApiError> {
     let a = c.workspace(&s, ws).await?;
-    Ok(Json(load_ws(&s, ws, &a).await?))
+    let mut w = load_ws(&s, ws, &a).await?;
+    w.contacts = Some(crate::http::who_can::workspace_contacts(&s, ws).await?);
+    Ok(Json(w))
 }
 
 /// Update workspace name, timezone or memory language (`can_own`).

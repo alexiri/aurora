@@ -130,7 +130,7 @@ pub async fn decide_batch(
     if !approvals::batch_visible(&s.pool, c.user_id, org, ws, agent_id, batch_id).await? {
         // RFE-012: a plain member who can see the batch is told it needs an approver.
         if approvals::batch_undecidable(&s.pool, c.user_id, org, ws, agent_id, batch_id).await? {
-            return Err(crate::http::auth::approver_required());
+            return Err(crate::http::auth::approver_required(org, ws));
         }
         return Err(ApiError::not_found("Batch not found."));
     }
