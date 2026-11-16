@@ -14,10 +14,10 @@ pub async fn find_user<'e, E: PgExecutor<'e>>(
     provider: &str,
     subject: &str,
 ) -> Result<Option<UserRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {COLS} FROM users WHERE id =
            (SELECT user_id FROM user_identities WHERE provider_id = $1 AND subject = $2)"
-    ))
+    )))
     .bind(provider)
     .bind(subject)
     .fetch_optional(exec)
@@ -91,11 +91,11 @@ pub async fn insert_user<'e, E: PgExecutor<'e>>(
     exec: E,
     u: &NewSsoUser<'_>,
 ) -> Result<UserRow, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "INSERT INTO users (id, email, display_name, email_verified_at, is_instance_admin)
          VALUES ($1, $2::citext, $3, CASE WHEN $4 THEN now() END, $5)
          RETURNING {COLS}"
-    ))
+    )))
     .bind(u.id)
     .bind(u.email)
     .bind(u.display_name)

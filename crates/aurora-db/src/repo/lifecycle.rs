@@ -459,26 +459,27 @@ pub async fn orgs_over_retention_ceilings(
           OR ($3::bigint > 0 AND (settings #>> '{retention,attachment_quota_mib}')::bigint IS NOT NULL
               AND ((settings #>> '{retention,attachment_quota_mib}')::bigint = 0
                    OR (settings #>> '{retention,attachment_quota_mib}')::bigint > $3::bigint))";
-    let rows: Vec<RetentionOver> = sqlx::query_as(&format!(
+    let rows: Vec<RetentionOver> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT id, slug, name,
                 (settings #>> '{{retention,conversations_days}}')::bigint AS conversations_days,
                 (settings #>> '{{retention,attachments_days}}')::bigint AS attachments_days,
                 (settings #>> '{{retention,attachment_quota_mib}}')::bigint AS attachment_quota_mib
            FROM organizations WHERE {WHERE} ORDER BY slug LIMIT $4"
-    ))
+    )))
     .bind(conversation_days_max)
     .bind(attachment_days_max)
     .bind(quota_mib_max)
     .bind(limit)
     .fetch_all(pool)
     .await?;
-    let total: i64 =
-        sqlx::query_scalar(&format!("SELECT count(*) FROM organizations WHERE {WHERE}"))
-            .bind(conversation_days_max)
-            .bind(attachment_days_max)
-            .bind(quota_mib_max)
-            .fetch_one(pool)
-            .await?;
+    let total: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        "SELECT count(*) FROM organizations WHERE {WHERE}"
+    )))
+    .bind(conversation_days_max)
+    .bind(attachment_days_max)
+    .bind(quota_mib_max)
+    .fetch_one(pool)
+    .await?;
     Ok((rows, total))
 }
 

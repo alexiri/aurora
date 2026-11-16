@@ -53,9 +53,9 @@ pub async fn resolve<'e, E: PgExecutor<'e>>(
     conversation: Uuid,
     alias: &str,
 ) -> Result<Option<AnchorRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {COLS} FROM mention_anchors WHERE conversation_id=$1 AND alias=$2"
-    ))
+    )))
     .bind(conversation)
     .bind(normalize(alias))
     .fetch_optional(exec)
@@ -66,9 +66,9 @@ pub async fn list_for_conversation<'e, E: PgExecutor<'e>>(
     exec: E,
     conversation: Uuid,
 ) -> Result<Vec<AnchorRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {COLS} FROM mention_anchors WHERE conversation_id=$1 ORDER BY alias"
-    ))
+    )))
     .bind(conversation)
     .fetch_all(exec)
     .await?)

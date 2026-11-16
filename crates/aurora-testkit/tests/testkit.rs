@@ -124,10 +124,12 @@ async fn clone_has_no_provenance_table_and_matches_the_legacy_schema() {
     let mut admin = sqlx::PgConnection::connect(db.server_url())
         .await
         .expect("connect");
-    sqlx::query(&format!("CREATE DATABASE \"{legacy_name}\""))
-        .execute(&mut admin)
-        .await
-        .expect("create legacy db");
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "CREATE DATABASE \"{legacy_name}\""
+    )))
+    .execute(&mut admin)
+    .await
+    .expect("create legacy db");
     let legacy_url = db.url().replacen(db.name(), &legacy_name, 1);
     let legacy_pool = sqlx::PgPool::connect(&legacy_url)
         .await
@@ -141,10 +143,12 @@ async fn clone_has_no_provenance_table_and_matches_the_legacy_schema() {
         .await
         .expect("list legacy relations");
     legacy_pool.close().await;
-    sqlx::query(&format!("DROP DATABASE \"{legacy_name}\" WITH (FORCE)"))
-        .execute(&mut admin)
-        .await
-        .expect("drop legacy db");
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "DROP DATABASE \"{legacy_name}\" WITH (FORCE)"
+    )))
+    .execute(&mut admin)
+    .await
+    .expect("drop legacy db");
     assert!(!mine.is_empty());
     assert_eq!(
         mine, theirs,
@@ -288,7 +292,7 @@ async fn a_leaked_database_older_than_the_ttl_is_reaped_and_fresh_or_connected_o
         .await
         .expect("take the reap lock");
     for n in [&old, &fresh, &old_connected] {
-        sqlx::query(&format!("CREATE DATABASE \"{n}\""))
+        sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE \"{n}\"")))
             .execute(&mut admin)
             .await
             .expect("create leaked db");
@@ -328,10 +332,12 @@ async fn a_leaked_database_older_than_the_ttl_is_reaped_and_fresh_or_connected_o
 
     held.close().await.expect("close");
     for n in [&fresh, &old_connected] {
-        sqlx::query(&format!("DROP DATABASE IF EXISTS \"{n}\" WITH (FORCE)"))
-            .execute(&mut admin)
-            .await
-            .expect("cleanup");
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "DROP DATABASE IF EXISTS \"{n}\" WITH (FORCE)"
+        )))
+        .execute(&mut admin)
+        .await
+        .expect("cleanup");
     }
     anchor.cleanup().await.expect("cleanup anchor");
 }
@@ -344,9 +350,9 @@ async fn connect_admin_waits_for_a_free_slot_instead_of_failing_with_too_many_cl
     let server = anchor.server_url().to_owned();
     let role = format!("aurora_test_limit_{}", uuid::Uuid::now_v7().simple());
     let mut admin = sqlx::PgConnection::connect(&server).await.expect("connect");
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "CREATE ROLE \"{role}\" LOGIN PASSWORD 'pw' CONNECTION LIMIT 1"
-    ))
+    )))
     .execute(&mut admin)
     .await
     .expect("create the limited role");
@@ -389,7 +395,7 @@ async fn connect_admin_waits_for_a_free_slot_instead_of_failing_with_too_many_cl
         .expect("connect_admin failed after the slot was released");
     conn.close().await.expect("close");
 
-    sqlx::query(&format!("DROP ROLE \"{role}\""))
+    sqlx::query(sqlx::AssertSqlSafe(format!("DROP ROLE \"{role}\"")))
         .execute(&mut admin)
         .await
         .expect("drop the limited role");

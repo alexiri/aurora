@@ -92,12 +92,12 @@ pub async fn insert_package(
 }
 
 pub async fn get<'e, E: PgExecutor<'e>>(exec: E, id: Uuid) -> Result<Option<PackageRow>, DbError> {
-    Ok(
-        sqlx::query_as(&format!("SELECT {SEL} FROM {FROM} WHERE p.id = $1"))
-            .bind(id)
-            .fetch_optional(exec)
-            .await?,
-    )
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT {SEL} FROM {FROM} WHERE p.id = $1"
+    )))
+    .bind(id)
+    .fetch_optional(exec)
+    .await?)
 }
 
 pub async fn find_identity<'e, E: PgExecutor<'e>>(
@@ -106,10 +106,10 @@ pub async fn find_identity<'e, E: PgExecutor<'e>>(
     version: &str,
     digest: &str,
 ) -> Result<Option<PackageRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {SEL} FROM {FROM}
          WHERE p.package_id = $1 AND p.version = $2 AND p.digest = $3"
-    ))
+    )))
     .bind(package_id)
     .bind(version)
     .bind(digest)
@@ -124,12 +124,12 @@ pub async fn list<'e, E: PgExecutor<'e>>(
     fetch: i64,
 ) -> Result<Vec<PackageRow>, DbError> {
     let (t, id) = split(after);
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {SEL} FROM {FROM}
          WHERE ($1::text IS NULL OR p.status = $1)
            AND ($2::timestamptz IS NULL OR (p.created_at, p.id) < ($2, $3))
          ORDER BY p.created_at DESC, p.id DESC LIMIT $4"
-    ))
+    )))
     .bind(status)
     .bind(t)
     .bind(id)
@@ -144,11 +144,11 @@ pub async fn previous_approved<'e, E: PgExecutor<'e>>(
     exec: E,
     package_id: &str,
 ) -> Result<Option<PackageRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {SEL} FROM {FROM}
          WHERE p.package_id = $1 AND p.status IN ('active','superseded') AND p.approved_at IS NOT NULL
          ORDER BY (p.status = 'active') DESC, p.approved_at DESC, p.id DESC LIMIT 1"
-    ))
+    )))
     .bind(package_id)
     .fetch_optional(exec)
     .await?)
@@ -213,11 +213,11 @@ const KEY_SEL: &str = "id, publisher, name, public_key, revoked_at, created_at";
 pub async fn all_trusted_keys<'e, E: PgExecutor<'e>>(
     exec: E,
 ) -> Result<Vec<TrustedKeyRow>, DbError> {
-    Ok(
-        sqlx::query_as(&format!("SELECT {KEY_SEL} FROM trusted_keys"))
-            .fetch_all(exec)
-            .await?,
-    )
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT {KEY_SEL} FROM trusted_keys"
+    )))
+    .fetch_all(exec)
+    .await?)
 }
 
 pub async fn list_trusted_keys<'e, E: PgExecutor<'e>>(
@@ -226,11 +226,11 @@ pub async fn list_trusted_keys<'e, E: PgExecutor<'e>>(
     fetch: i64,
 ) -> Result<Vec<TrustedKeyRow>, DbError> {
     let (t, id) = split(after);
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {KEY_SEL} FROM trusted_keys
          WHERE ($1::timestamptz IS NULL OR (created_at, id) < ($1, $2))
          ORDER BY created_at DESC, id DESC LIMIT $3"
-    ))
+    )))
     .bind(t)
     .bind(id)
     .bind(fetch)
@@ -246,10 +246,10 @@ pub async fn insert_trusted_key<'e, E: PgExecutor<'e>>(
     public_key: &str,
     added_by: Uuid,
 ) -> Result<TrustedKeyRow, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "INSERT INTO trusted_keys (id, publisher, name, public_key, added_by)
          VALUES ($1,$2,$3,$4,$5) RETURNING {KEY_SEL}"
-    ))
+    )))
     .bind(id)
     .bind(publisher)
     .bind(name)
@@ -264,10 +264,10 @@ pub async fn revoke_trusted_key(
     conn: &mut PgConnection,
     id: Uuid,
 ) -> Result<Option<TrustedKeyRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "UPDATE trusted_keys SET revoked_at = COALESCE(revoked_at, now()), updated_at = now()
          WHERE id = $1 RETURNING {KEY_SEL}"
-    ))
+    )))
     .bind(id)
     .fetch_optional(conn)
     .await?)
@@ -358,9 +358,9 @@ pub async fn get_for_update(
     conn: &mut PgConnection,
     id: Uuid,
 ) -> Result<Option<PackageRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {SEL} FROM {FROM} WHERE p.id = $1 FOR UPDATE OF p"
-    ))
+    )))
     .bind(id)
     .fetch_optional(conn)
     .await?)
@@ -372,10 +372,10 @@ pub async fn list_by_status<'e, E: PgExecutor<'e>>(
     statuses: &[&str],
 ) -> Result<Vec<PackageRow>, DbError> {
     let statuses: Vec<String> = statuses.iter().map(|s| (*s).to_owned()).collect();
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {SEL} FROM {FROM} WHERE p.status = ANY($1)
          ORDER BY p.package_id, p.created_at DESC, p.id DESC"
-    ))
+    )))
     .bind(statuses)
     .fetch_all(exec)
     .await?)
@@ -533,9 +533,9 @@ pub async fn active_of_package<'e, E: PgExecutor<'e>>(
     exec: E,
     package_id: &str,
 ) -> Result<Option<PackageRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {SEL} FROM {FROM} WHERE p.package_id = $1 AND p.status = 'active' LIMIT 1"
-    ))
+    )))
     .bind(package_id)
     .fetch_optional(exec)
     .await?)

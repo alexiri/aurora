@@ -69,10 +69,12 @@ pub async fn insert(conn: &mut PgConnection, n: &NewPeerTask) -> Result<PeerTask
 }
 
 pub async fn get<'e, E: PgExecutor<'e>>(exec: E, id: Uuid) -> Result<Option<PeerTaskRow>, DbError> {
-    Ok(sqlx::query_as(&format!("{SELECT} WHERE t.id = $1"))
-        .bind(id)
-        .fetch_optional(exec)
-        .await?)
+    Ok(
+        sqlx::query_as(sqlx::AssertSqlSafe(format!("{SELECT} WHERE t.id = $1")))
+            .bind(id)
+            .fetch_optional(exec)
+            .await?,
+    )
 }
 
 /// Row-locked read (transaction required).
@@ -80,12 +82,12 @@ pub async fn get_for_update(
     conn: &mut PgConnection,
     id: Uuid,
 ) -> Result<Option<PeerTaskRow>, DbError> {
-    Ok(
-        sqlx::query_as(&format!("{SELECT} WHERE t.id = $1 FOR UPDATE OF t"))
-            .bind(id)
-            .fetch_optional(conn)
-            .await?,
-    )
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "{SELECT} WHERE t.id = $1 FOR UPDATE OF t"
+    )))
+    .bind(id)
+    .fetch_optional(conn)
+    .await?)
 }
 
 /// The task whose `peer` conversation this is.
@@ -93,12 +95,12 @@ pub async fn by_task_conversation<'e, E: PgExecutor<'e>>(
     exec: E,
     conversation_id: Uuid,
 ) -> Result<Option<PeerTaskRow>, DbError> {
-    Ok(
-        sqlx::query_as(&format!("{SELECT} WHERE t.task_conversation_id = $1"))
-            .bind(conversation_id)
-            .fetch_optional(exec)
-            .await?,
-    )
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "{SELECT} WHERE t.task_conversation_id = $1"
+    )))
+    .bind(conversation_id)
+    .fetch_optional(exec)
+    .await?)
 }
 
 /// Queued tasks of the ordered pair (FIX-110 cap; call under the link lock).
@@ -139,12 +141,12 @@ pub async fn open_between<'e, E: PgExecutor<'e>>(
     x: Uuid,
     y: Uuid,
 ) -> Result<Vec<PeerTaskRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "{SELECT} WHERE t.status = 'open'
            AND ((t.from_agent_id = $1 AND t.to_agent_id = $2)
              OR (t.from_agent_id = $2 AND t.to_agent_id = $1))
          ORDER BY t.created_at, t.id"
-    ))
+    )))
     .bind(x)
     .bind(y)
     .fetch_all(exec)
@@ -157,10 +159,10 @@ pub async fn next_queued(
     from: Uuid,
     to: Uuid,
 ) -> Result<Option<PeerTaskRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "{SELECT} WHERE t.from_agent_id = $1 AND t.to_agent_id = $2 AND t.status = 'queued'
          ORDER BY t.created_at, t.id LIMIT 1 FOR UPDATE OF t"
-    ))
+    )))
     .bind(from)
     .bind(to)
     .fetch_optional(conn)
@@ -236,12 +238,12 @@ pub async fn list_for_agent<'e, E: PgExecutor<'e>>(
     fetch: i64,
 ) -> Result<Vec<PeerTaskRow>, DbError> {
     let (t, id) = split(after);
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "{SELECT} WHERE (t.from_agent_id = $1 OR t.to_agent_id = $1)
            AND ($2::text IS NULL OR t.status = $2)
            AND ($3::timestamptz IS NULL OR (t.created_at, t.id) < ($3, $4))
          ORDER BY t.created_at DESC, t.id DESC LIMIT $5"
-    ))
+    )))
     .bind(agent)
     .bind(status)
     .bind(t)

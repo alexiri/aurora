@@ -58,12 +58,12 @@ pub async fn insert<'e, E: PgExecutor<'e>>(exec: E, n: &NewCard<'_>) -> Result<(
 }
 
 pub async fn get<'e, E: PgExecutor<'e>>(exec: E, id: Uuid) -> Result<Option<CardRow>, DbError> {
-    Ok(
-        sqlx::query_as(&format!("SELECT {COLS} FROM channel_cards WHERE id=$1"))
-            .bind(id)
-            .fetch_optional(exec)
-            .await?,
-    )
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT {COLS} FROM channel_cards WHERE id=$1"
+    )))
+    .bind(id)
+    .fetch_optional(exec)
+    .await?)
 }
 
 pub async fn for_subject<'e, E: PgExecutor<'e>>(
@@ -71,10 +71,10 @@ pub async fn for_subject<'e, E: PgExecutor<'e>>(
     kind: &str,
     subject: Uuid,
 ) -> Result<Vec<CardRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {COLS} FROM channel_cards WHERE subject_kind=$1 AND subject_id=$2
           ORDER BY created_at, id"
-    ))
+    )))
     .bind(kind)
     .bind(subject)
     .fetch_all(exec)
@@ -86,10 +86,10 @@ pub async fn unsettled<'e, E: PgExecutor<'e>>(
     exec: E,
     limit: i64,
 ) -> Result<Vec<CardRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {COLS} FROM channel_cards WHERE state IN ('posting','posted')
           ORDER BY created_at, id LIMIT $1"
-    ))
+    )))
     .bind(limit)
     .fetch_all(exec)
     .await?)

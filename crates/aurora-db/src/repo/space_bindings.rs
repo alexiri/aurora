@@ -27,10 +27,12 @@ const SELECT: &str =
     FROM space_bindings b LEFT JOIN users u ON u.id = b.bound_by_user_id";
 
 pub async fn get<'e, E: PgExecutor<'e>>(exec: E, id: Uuid) -> Result<Option<BindingRow>, DbError> {
-    Ok(sqlx::query_as(&format!("{SELECT} WHERE b.id=$1"))
-        .bind(id)
-        .fetch_optional(exec)
-        .await?)
+    Ok(
+        sqlx::query_as(sqlx::AssertSqlSafe(format!("{SELECT} WHERE b.id=$1")))
+            .bind(id)
+            .fetch_optional(exec)
+            .await?,
+    )
 }
 
 /// Active bindings of an agent (inactive ones are history only).
@@ -38,9 +40,9 @@ pub async fn list_for_agent<'e, E: PgExecutor<'e>>(
     exec: E,
     agent: Uuid,
 ) -> Result<Vec<BindingRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "{SELECT} WHERE b.agent_id=$1 AND b.active ORDER BY b.created_at, b.id"
-    ))
+    )))
     .bind(agent)
     .fetch_all(exec)
     .await?)
@@ -52,9 +54,9 @@ pub async fn active_binding<'e, E: PgExecutor<'e>>(
     integration: Uuid,
     space_ref: &str,
 ) -> Result<Option<BindingRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "{SELECT} WHERE b.integration_id=$1 AND b.space_ref=$2 AND b.active"
-    ))
+    )))
     .bind(integration)
     .bind(space_ref)
     .fetch_optional(exec)

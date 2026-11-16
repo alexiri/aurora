@@ -136,10 +136,10 @@ pub async fn generation_by_status<'e, E: PgExecutor<'e>>(
     workspace: Option<Uuid>,
     status: &str,
 ) -> Result<Option<GenerationRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {GEN_COLS} {GEN_FROM} \
          WHERE g.org_id = $1 AND g.workspace_id IS NOT DISTINCT FROM $2 AND g.status = $3"
-    ))
+    )))
     .bind(org)
     .bind(workspace)
     .bind(status)
@@ -153,10 +153,10 @@ pub async fn generation_by_number<'e, E: PgExecutor<'e>>(
     workspace: Option<Uuid>,
     number: i32,
 ) -> Result<Option<GenerationRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {GEN_COLS} {GEN_FROM} \
          WHERE g.org_id = $1 AND g.workspace_id IS NOT DISTINCT FROM $2 AND g.number = $3"
-    ))
+    )))
     .bind(org)
     .bind(workspace)
     .bind(number)
@@ -170,11 +170,11 @@ pub async fn lock_draft(
     org: Uuid,
     workspace: Option<Uuid>,
 ) -> Result<Option<GenerationRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {GEN_COLS} {GEN_FROM} \
          WHERE g.org_id = $1 AND g.workspace_id IS NOT DISTINCT FROM $2 AND g.status = 'draft' \
          FOR UPDATE OF g"
-    ))
+    )))
     .bind(org)
     .bind(workspace)
     .fetch_optional(conn)
@@ -342,12 +342,12 @@ pub async fn list_generations<'e, E: PgExecutor<'e>>(
     limit: i64,
 ) -> Result<Vec<GenerationSummaryRow>, DbError> {
     let (t, id) = split(after);
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {GEN_COLS}, (SELECT count(*) FROM policy_rules r WHERE r.generation_id = g.id) AS rule_count \
          {GEN_FROM} WHERE g.org_id = $1 AND g.workspace_id IS NOT DISTINCT FROM $2 \
            AND ($3::timestamptz IS NULL OR (g.created_at, g.id) < ($3, $4)) \
          ORDER BY g.created_at DESC, g.id DESC LIMIT $5"
-    ))
+    )))
     .bind(org)
     .bind(workspace)
     .bind(t)

@@ -34,10 +34,10 @@ pub async fn insert<'e, E: PgExecutor<'e>>(
     timezone: &str,
     memory_language: &str,
 ) -> Result<WorkspaceRow, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "INSERT INTO workspaces (id, org_id, slug, name, timezone, memory_language)
          VALUES ($1,$2,$3,$4,$5,$6) RETURNING {COLS}"
-    ))
+    )))
     .bind(id)
     .bind(org)
     .bind(slug)
@@ -66,12 +66,12 @@ pub async fn get<'e, E: PgExecutor<'e>>(
     exec: E,
     id: Uuid,
 ) -> Result<Option<WorkspaceRow>, DbError> {
-    Ok(
-        sqlx::query_as(&format!("SELECT {COLS} FROM workspaces WHERE id = $1"))
-            .bind(id)
-            .fetch_optional(exec)
-            .await?,
-    )
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT {COLS} FROM workspaces WHERE id = $1"
+    )))
+    .bind(id)
+    .fetch_optional(exec)
+    .await?)
 }
 
 pub async fn get_by_slug<'e, E: PgExecutor<'e>>(
@@ -79,9 +79,9 @@ pub async fn get_by_slug<'e, E: PgExecutor<'e>>(
     org: Uuid,
     slug: &str,
 ) -> Result<Option<WorkspaceRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {COLS} FROM workspaces WHERE org_id = $1 AND slug = $2"
-    ))
+    )))
     .bind(org)
     .bind(slug)
     .fetch_optional(exec)
@@ -99,12 +99,12 @@ pub async fn list_visible<'e, E: PgExecutor<'e>>(
     fetch: i64,
 ) -> Result<Vec<WorkspaceRow>, DbError> {
     let (t, id) = split(after);
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {COLS} FROM workspaces w WHERE w.org_id = $1
          AND ($2 OR EXISTS (SELECT 1 FROM effective_workspace_access a WHERE a.workspace_id = w.id AND a.user_id = $3))
          AND ($4::timestamptz IS NULL OR (w.created_at, w.id) < ($4, $5))
          ORDER BY w.created_at DESC, w.id DESC LIMIT $6"
-    ))
+    )))
     .bind(org)
     .bind(all)
     .bind(user)
@@ -122,13 +122,13 @@ pub async fn update<'e, E: PgExecutor<'e>>(
     timezone: Option<&str>,
     memory_language: Option<&str>,
 ) -> Result<WorkspaceRow, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "UPDATE workspaces SET name = COALESCE($2, name), timezone = COALESCE($3, timezone),
          home_sync_generation = home_sync_generation
              + CASE WHEN $4::text IS NOT NULL AND $4::text <> memory_language THEN 1 ELSE 0 END,
          memory_language = COALESCE($4, memory_language), updated_at = now()
          WHERE id = $1 RETURNING {COLS}"
-    ))
+    )))
     .bind(id)
     .bind(name)
     .bind(timezone)
@@ -276,11 +276,11 @@ pub async fn list_access<'e, E: PgExecutor<'e>>(
     fetch: i64,
 ) -> Result<Vec<AccessRow>, DbError> {
     let (t, id) = split(after);
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT * FROM ({ACCESS_SEL}) x
          WHERE ($2::timestamptz IS NULL OR (x.created_at, x.user_id) < ($2, $3))
          ORDER BY x.created_at DESC, x.user_id DESC LIMIT $4"
-    ))
+    )))
     .bind(ws)
     .bind(t)
     .bind(id)
@@ -294,9 +294,9 @@ pub async fn get_access<'e, E: PgExecutor<'e>>(
     ws: Uuid,
     user: Uuid,
 ) -> Result<Option<AccessRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT * FROM ({ACCESS_SEL}) x WHERE x.user_id = $2"
-    ))
+    )))
     .bind(ws)
     .bind(user)
     .fetch_optional(exec)
@@ -309,9 +309,9 @@ pub async fn set_byo_posture<'e, E: PgExecutor<'e>>(
     id: Uuid,
     posture: Option<&str>,
 ) -> Result<Option<WorkspaceRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "UPDATE workspaces SET byo_posture = $2, updated_at = now() WHERE id = $1 RETURNING {COLS}"
-    ))
+    )))
     .bind(id)
     .bind(posture)
     .fetch_optional(exec)

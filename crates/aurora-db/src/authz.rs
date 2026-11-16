@@ -479,13 +479,13 @@ pub async fn can_see_conversation_id<'e, E: PgExecutor<'e>>(
     user: Uuid,
     conv: Uuid,
 ) -> Result<bool, DbError> {
-    Ok(sqlx::query_scalar(&format!(
+    Ok(sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT EXISTS (SELECT 1 FROM conversations c \
            JOIN workspaces w ON w.id = c.workspace_id \
            JOIN effective_workspace_access ea ON ea.workspace_id = w.id AND ea.user_id = $1 \
            WHERE c.id = $2 AND NOT {})",
         hidden_direct_conversation_sql("c.id", "$1", "w.id")
-    ))
+    )))
     .bind(user)
     .bind(conv)
     .fetch_one(exec)
@@ -501,10 +501,10 @@ pub async fn hidden_conversations<'e, E: PgExecutor<'e>>(
     if ids.is_empty() {
         return Ok(Vec::new());
     }
-    Ok(sqlx::query_scalar(&format!(
+    Ok(sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT t.id FROM unnest($2::uuid[]) AS t(id) WHERE {}",
         hidden_direct_conversation_sql("t.id", "$1", "hc.workspace_id")
-    ))
+    )))
     .bind(user)
     .bind(ids)
     .fetch_all(exec)

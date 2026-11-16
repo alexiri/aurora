@@ -33,12 +33,12 @@ pub async fn get<'e, E: PgExecutor<'e>>(
     exec: E,
     id: Uuid,
 ) -> Result<Option<InvitationRow>, DbError> {
-    Ok(
-        sqlx::query_as(&format!("SELECT {SEL} FROM {FROM} WHERE i.id = $1"))
-            .bind(id)
-            .fetch_optional(exec)
-            .await?,
-    )
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT {SEL} FROM {FROM} WHERE i.id = $1"
+    )))
+    .bind(id)
+    .fetch_optional(exec)
+    .await?)
 }
 
 pub async fn list<'e, E: PgExecutor<'e>>(
@@ -49,12 +49,12 @@ pub async fn list<'e, E: PgExecutor<'e>>(
     fetch: i64,
 ) -> Result<Vec<InvitationRow>, DbError> {
     let (t, id) = split(after);
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT * FROM (SELECT {SEL} FROM {FROM} WHERE i.org_id = $1) x
          WHERE ($2::text IS NULL OR x.status = $2)
          AND ($3::timestamptz IS NULL OR (x.created_at, x.id) < ($3, $4))
          ORDER BY x.created_at DESC, x.id DESC LIMIT $5"
-    ))
+    )))
     .bind(org)
     .bind(status)
     .bind(t)

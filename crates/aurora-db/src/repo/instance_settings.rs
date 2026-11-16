@@ -24,9 +24,9 @@ const COLS: &str =
     "section, schema_version, value, generation, updated_by, updated_by_label, updated_at";
 
 pub async fn list_all<'e, E: PgExecutor<'e>>(exec: E) -> Result<Vec<SettingsRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {COLS} FROM instance_settings ORDER BY section"
-    ))
+    )))
     .fetch_all(exec)
     .await?)
 }
@@ -35,9 +35,9 @@ pub async fn get<'e, E: PgExecutor<'e>>(
     exec: E,
     section: &str,
 ) -> Result<Option<SettingsRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {COLS} FROM instance_settings WHERE section = $1"
-    ))
+    )))
     .bind(section)
     .fetch_optional(exec)
     .await?)
@@ -58,9 +58,9 @@ pub async fn get_for_update(
     conn: &mut PgConnection,
     section: &str,
 ) -> Result<Option<SettingsRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {COLS} FROM instance_settings WHERE section = $1 FOR UPDATE"
-    ))
+    )))
     .bind(section)
     .fetch_optional(conn)
     .await?)

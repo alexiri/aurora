@@ -66,12 +66,14 @@ pub async fn find_credential_identity<'e, E: PgExecutor<'e>>(
     exec: E,
     token_hash: &[u8],
 ) -> Result<Option<CredentialIdentityRow>, DbError> {
-    Ok(sqlx::query_as::<_, CredentialIdentityRow>(&format!(
-        "{IDENTITY_SELECT}{NOT_EXPIRED} AND c.token_hash = $1"
-    ))
-    .bind(token_hash)
-    .fetch_optional(exec)
-    .await?)
+    Ok(
+        sqlx::query_as::<_, CredentialIdentityRow>(sqlx::AssertSqlSafe(format!(
+            "{IDENTITY_SELECT}{NOT_EXPIRED} AND c.token_hash = $1"
+        )))
+        .bind(token_hash)
+        .fetch_optional(exec)
+        .await?,
+    )
 }
 
 /// (RFE-013) Like [`find_credential_identity`] but an expired credential is returned too
@@ -81,12 +83,14 @@ pub async fn find_credential_identity_incl_expired<'e, E: PgExecutor<'e>>(
     exec: E,
     token_hash: &[u8],
 ) -> Result<Option<CredentialIdentityRow>, DbError> {
-    Ok(sqlx::query_as::<_, CredentialIdentityRow>(&format!(
-        "{IDENTITY_SELECT} AND c.token_hash = $1"
-    ))
-    .bind(token_hash)
-    .fetch_optional(exec)
-    .await?)
+    Ok(
+        sqlx::query_as::<_, CredentialIdentityRow>(sqlx::AssertSqlSafe(format!(
+            "{IDENTITY_SELECT} AND c.token_hash = $1"
+        )))
+        .bind(token_hash)
+        .fetch_optional(exec)
+        .await?,
+    )
 }
 
 /// (FIX-050, C-630) Classification of a credential row that the identity lookup refused: is it
@@ -128,12 +132,14 @@ pub async fn find_credential_identity_by_id<'e, E: PgExecutor<'e>>(
     exec: E,
     id: Uuid,
 ) -> Result<Option<CredentialIdentityRow>, DbError> {
-    Ok(sqlx::query_as::<_, CredentialIdentityRow>(&format!(
-        "{IDENTITY_SELECT}{NOT_EXPIRED} AND c.id = $1"
-    ))
-    .bind(id)
-    .fetch_optional(exec)
-    .await?)
+    Ok(
+        sqlx::query_as::<_, CredentialIdentityRow>(sqlx::AssertSqlSafe(format!(
+            "{IDENTITY_SELECT}{NOT_EXPIRED} AND c.id = $1"
+        )))
+        .bind(id)
+        .fetch_optional(exec)
+        .await?,
+    )
 }
 
 /// (RFE-013, C-316) Records the use of credentials: `last_used_at = now()` for each id, only

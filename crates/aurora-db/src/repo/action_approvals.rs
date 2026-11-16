@@ -75,10 +75,12 @@ pub async fn get<'e, E: PgExecutor<'e>>(
     exec: E,
     id: Uuid,
 ) -> Result<Option<ActionApprovalRow>, DbError> {
-    Ok(sqlx::query_as(&format!("{SELECT} WHERE a.id = $1"))
-        .bind(id)
-        .fetch_optional(exec)
-        .await?)
+    Ok(
+        sqlx::query_as(sqlx::AssertSqlSafe(format!("{SELECT} WHERE a.id = $1")))
+            .bind(id)
+            .fetch_optional(exec)
+            .await?,
+    )
 }
 
 /// Row-locked read (transaction required).
@@ -86,12 +88,12 @@ pub async fn get_for_update(
     conn: &mut PgConnection,
     id: Uuid,
 ) -> Result<Option<ActionApprovalRow>, DbError> {
-    Ok(
-        sqlx::query_as(&format!("{SELECT} WHERE a.id = $1 FOR UPDATE OF a"))
-            .bind(id)
-            .fetch_optional(conn)
-            .await?,
-    )
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "{SELECT} WHERE a.id = $1 FOR UPDATE OF a"
+    )))
+    .bind(id)
+    .fetch_optional(conn)
+    .await?)
 }
 
 /// Approvals of a workspace, newest first; `after` is `(created_at, id)`.
@@ -106,14 +108,14 @@ pub async fn list_workspace<'e, E: PgExecutor<'e>>(
 ) -> Result<Vec<ActionApprovalRow>, DbError> {
     let (t, id) = split(after);
     // RFE-009: rows naming an invisible direct conversation are omitted.
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "{SELECT} WHERE a.workspace_id = $1 AND ($2::text IS NULL OR a.status = $2)
            AND ($3::uuid IS NULL OR a.agent_id = $3)
            AND ($4::timestamptz IS NULL OR (a.created_at, a.id) < ($4, $5))
            AND NOT {}
          ORDER BY a.created_at DESC, a.id DESC LIMIT $6",
         crate::authz::hidden_direct_conversation_sql("a.conversation_id", "$7", "a.workspace_id")
-    ))
+    )))
     .bind(workspace_id)
     .bind(status)
     .bind(agent_id)

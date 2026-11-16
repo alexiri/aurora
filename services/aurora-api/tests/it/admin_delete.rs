@@ -61,7 +61,7 @@ impl E {
     }
 
     async fn n(&self, sql: &str, id: Uuid) -> i64 {
-        sqlx::query_scalar(sql)
+        sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
             .bind(id)
             .fetch_one(self.h.pool())
             .await
@@ -137,11 +137,13 @@ impl E {
             if t == "audit_log" || t == "request_log" || t.starts_with("runtime_") {
                 continue;
             }
-            let n: i64 = sqlx::query_scalar(&format!("SELECT count(*) FROM {t} WHERE org_id = $1"))
-                .bind(org)
-                .fetch_one(self.h.pool())
-                .await
-                .unwrap();
+            let n: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+                "SELECT count(*) FROM {t} WHERE org_id = $1"
+            )))
+            .bind(org)
+            .fetch_one(self.h.pool())
+            .await
+            .unwrap();
             if n > 0 {
                 left.push(format!("{t}={n}"));
             }
