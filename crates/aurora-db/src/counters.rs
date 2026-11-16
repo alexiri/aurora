@@ -315,7 +315,7 @@ pub async fn prune(pool: &PgPool, batch: i64) -> std::result::Result<u64, sqlx::
             "DELETE FROM {table} WHERE ctid IN (SELECT ctid FROM {table} \
              WHERE expires_at < now() ORDER BY expires_at LIMIT $1 FOR UPDATE SKIP LOCKED)"
         );
-        total += sqlx::query(&sql)
+        total += sqlx::query(sqlx::AssertSqlSafe(&*sql))
             .bind(batch)
             .execute(pool)
             .await?

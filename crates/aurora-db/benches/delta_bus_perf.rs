@@ -188,7 +188,7 @@ async fn main() {
         .connect(&url)
         .await
         .expect("admin connect");
-    sqlx::query(&format!("CREATE DATABASE {db}"))
+    sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE {db}")))
         .execute(&admin)
         .await
         .expect("create throwaway database (role needs CREATEDB)");
@@ -198,9 +198,11 @@ async fn main() {
     report("paced", &paced);
     let sat = phase(&url, publishers, secs, None).await;
     report("sat", &sat);
-    let dropped = sqlx::query(&format!("DROP DATABASE {db} WITH (FORCE)"))
-        .execute(&admin)
-        .await;
+    let dropped = sqlx::query(sqlx::AssertSqlSafe(format!(
+        "DROP DATABASE {db} WITH (FORCE)"
+    )))
+    .execute(&admin)
+    .await;
     match dropped {
         Ok(_) => println!("dropped {db}"),
         Err(e) => {

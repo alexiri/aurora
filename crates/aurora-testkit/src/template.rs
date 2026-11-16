@@ -114,7 +114,7 @@ pub fn migration_set_hash() -> String {
     for m in aurora_db::MIGRATOR.migrations.iter() {
         field(&m.version.to_le_bytes());
         field(m.description.as_bytes());
-        field(m.sql.as_bytes());
+        field(m.sql.as_str().as_bytes());
         field(&m.checksum);
     }
     sha.finalize()
@@ -255,7 +255,11 @@ fn now_millis() -> u64 {
 /// when it could not be had, in which case the caller skips its reap — reaping is best effort.
 async fn lock_reap_exclusive(conn: &mut PgConnection) -> bool {
     let wait = format!("SET lock_timeout = '{}ms'", REAP_LOCK_WAIT.as_millis());
-    if sqlx::query(&wait).execute(&mut *conn).await.is_err() {
+    if sqlx::query(sqlx::AssertSqlSafe(&*wait))
+        .execute(&mut *conn)
+        .await
+        .is_err()
+    {
         return false;
     }
     let got = sqlx::query("SELECT pg_advisory_lock(hashtext($1))")
@@ -344,10 +348,12 @@ pub async fn reap_leaked(server_url: &str, now_ms: u64) -> anyhow::Result<usize>
         if !matches!(busy, Ok((0,))) {
             continue;
         }
-        if sqlx::query(&format!("DROP DATABASE IF EXISTS \"{name}\""))
-            .execute(&mut conn)
-            .await
-            .is_ok()
+        if sqlx::query(sqlx::AssertSqlSafe(format!(
+            "DROP DATABASE IF EXISTS \"{name}\""
+        )))
+        .execute(&mut conn)
+        .await
+        .is_ok()
         {
             dropped += 1;
             eprintln!("aurora-testkit: reaped leaked test database `{name}`");
@@ -355,9 +361,11 @@ pub async fn reap_leaked(server_url: &str, now_ms: u64) -> anyhow::Result<usize>
     }
     for role in &old_roles {
         // Fails harmlessly while the role still has privileges in a live database.
-        let _ = sqlx::query(&format!("DROP ROLE IF EXISTS \"{role}\""))
-            .execute(&mut conn)
-            .await;
+        let _ = sqlx::query(sqlx::AssertSqlSafe(format!(
+            "DROP ROLE IF EXISTS \"{role}\""
+        )))
+        .execute(&mut conn)
+        .await;
     }
     unlock_reap_exclusive(&mut conn).await;
     conn.close().await.ok();
@@ -404,20 +412,22 @@ async fn rebuild_template(
     // legacy plain `CREATE DATABASE` produced. Starts unsealed; it is sealed
     // below once the migrations are in, before it becomes visible under its
     // final name.
-    sqlx::query(&format!("CREATE DATABASE \"{wip}\" TEMPLATE template0"))
-        .execute(&mut *lock_conn)
-        .await
-        .context("creating template database")?;
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "CREATE DATABASE \"{wip}\" TEMPLATE template0"
+    )))
+    .execute(&mut *lock_conn)
+    .await
+    .context("creating template database")?;
 
     // Provenance goes into the database comment (a shared-catalog entry that
     // `CREATE DATABASE … TEMPLATE` does not copy), so cloned test databases
     // carry exactly the schema of the legacy create + migrate path.
     let built = migrate(server_url, &wip).await;
     let built = match built {
-        Ok(()) => sqlx::query(&format!(
+        Ok(()) => sqlx::query(sqlx::AssertSqlSafe(format!(
             "COMMENT ON DATABASE \"{wip}\" IS 'aurora-testkit migration template: hash={hash} migrations={}'",
             aurora_db::MIGRATOR.migrations.len()
-        ))
+        )))
         .execute(&mut *lock_conn)
         .await
         .map(|_| ())
@@ -426,27 +436,31 @@ async fn rebuild_template(
     };
     if let Err(e) = built {
         // Leave nothing half-built behind.
-        let _ = sqlx::query(&format!("DROP DATABASE IF EXISTS \"{wip}\" WITH (FORCE)"))
-            .execute(&mut *lock_conn)
-            .await;
+        let _ = sqlx::query(sqlx::AssertSqlSafe(format!(
+            "DROP DATABASE IF EXISTS \"{wip}\" WITH (FORCE)"
+        )))
+        .execute(&mut *lock_conn)
+        .await;
         return Err(e);
     }
 
     // Seal before renaming: from now on the template is guaranteed a quiet
     // source for every clone (no session can log into it), for its whole
     // life.
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "ALTER DATABASE \"{wip}\" WITH ALLOW_CONNECTIONS false"
-    ))
+    )))
     .execute(&mut *lock_conn)
     .await
     .context("sealing template")?;
 
     let name = template_name(hash);
-    sqlx::query(&format!("ALTER DATABASE \"{wip}\" RENAME TO \"{name}\""))
-        .execute(&mut *lock_conn)
-        .await
-        .context("publishing template under its content-addressed name")?;
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "ALTER DATABASE \"{wip}\" RENAME TO \"{name}\""
+    )))
+    .execute(&mut *lock_conn)
+    .await
+    .context("publishing template under its content-addressed name")?;
     Ok(name)
 }
 
@@ -487,9 +501,11 @@ async fn reap_stale_templates(lock_conn: &mut PgConnection) {
         let Some(reason) = reap_decision(&name, &current_hash, now) else {
             continue;
         };
-        let dropped = sqlx::query(&format!("DROP DATABASE IF EXISTS \"{name}\" WITH (FORCE)"))
-            .execute(&mut *lock_conn)
-            .await;
+        let dropped = sqlx::query(sqlx::AssertSqlSafe(format!(
+            "DROP DATABASE IF EXISTS \"{name}\" WITH (FORCE)"
+        )))
+        .execute(&mut *lock_conn)
+        .await;
         if dropped.is_ok() {
             eprintln!("aurora-testkit: reaped {reason} `{name}`");
         }
@@ -539,9 +555,9 @@ pub async fn clone_from_template(
         .execute(&mut *admin)
         .await
         .context("taking the clone lock")?;
-    let cloned = sqlx::query(&format!(
+    let cloned = sqlx::query(sqlx::AssertSqlSafe(format!(
         "CREATE DATABASE \"{name}\" TEMPLATE \"{template}\""
-    ))
+    )))
     .execute(&mut *admin)
     .await
     .context("cloning test database from template");

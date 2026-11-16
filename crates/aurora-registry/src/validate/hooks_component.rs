@@ -11,7 +11,7 @@
 //! Limitation: an implemented hook and an SDK-default (`unsupported`) hook are
 //! indistinguishable at the component level, so `permissions.hooks` is not
 //! cross-checked against exports; only the world shape is enforced.
-use wasmparser::{Encoding, Parser, Payload, Validator};
+use wasmparser::{ComponentExternName, Encoding, Parser, Payload, Validator};
 
 use crate::Violation;
 
@@ -44,6 +44,13 @@ fn std_baseline_import(name: &str) -> bool {
                 | "wasi:clocks/wall-clock"
                 | "wasi:random/random"
         )
+}
+
+/// The extern name when it carries no name options (`implements`, a split version suffix, an
+/// external id): only plain names are matched against the allow-lists, anything else fails closed.
+fn plain<'a>(n: &ComponentExternName<'a>) -> Option<&'a str> {
+    (n.implements.is_none() && n.version_suffix.is_none() && n.external_id.is_none())
+        .then_some(n.name)
 }
 
 /// Check `bytes` against the `aurora:plugin/plugin` world; `path` is the
@@ -86,11 +93,14 @@ pub fn hooks_component(path: &str, bytes: &[u8]) -> Vec<Violation> {
             Payload::ComponentImportSection(s) if depth == 1 => {
                 for imp in s {
                     match imp {
-                        Ok(i) if i.name.0 == HOST_IMPORT || i.name.0 == TYPES_IMPORT => {}
-                        Ok(i) if std_baseline_import(i.name.0) => {}
+                        Ok(i) if matches!(plain(&i.name), Some(HOST_IMPORT | TYPES_IMPORT)) => {}
+                        Ok(i) if plain(&i.name).is_some_and(std_baseline_import) => {}
                         Ok(i) => out.push(bad(
                             "hooks_wasm_import_forbidden",
-                            format!("import `{}` is not allowed; only `{HOST_IMPORT}`", i.name.0),
+                            format!(
+                                "import `{}` is not allowed; only `{HOST_IMPORT}`",
+                                i.name.full_name()
+                            ),
                         )),
                         Err(_) => {
                             return vec![bad("hooks_wasm_invalid", "malformed imports".into())];
@@ -101,10 +111,13 @@ pub fn hooks_component(path: &str, bytes: &[u8]) -> Vec<Violation> {
             Payload::ComponentExportSection(s) if depth == 1 => {
                 for exp in s {
                     match exp {
-                        Ok(e) if e.name.0 == HOOKS_EXPORT => has_hooks = true,
+                        Ok(e) if plain(&e.name) == Some(HOOKS_EXPORT) => has_hooks = true,
                         Ok(e) => out.push(bad(
                             "hooks_wasm_export_unexpected",
-                            format!("export `{}` is not part of the plugin world", e.name.0),
+                            format!(
+                                "export `{}` is not part of the plugin world",
+                                e.name.full_name()
+                            ),
                         )),
                         Err(_) => {
                             return vec![bad("hooks_wasm_invalid", "malformed exports".into())];

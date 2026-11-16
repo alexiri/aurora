@@ -1,8 +1,10 @@
 //! Provider metadata cache and the HTTP client used for discovery and token exchange.
 use aurora_config::{ApiConfig, OidcProvider};
 use openidconnect::core::CoreProviderMetadata;
-use openidconnect::{AsyncHttpClient, HttpRequest, IssuerUrl, reqwest};
+use openidconnect::{AsyncHttpClient, HttpClientError, HttpRequest, HttpResponse, IssuerUrl};
 use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 
@@ -12,15 +14,23 @@ const METADATA_TTL: Duration = Duration::from_secs(600);
 /// the browser reaches the IdP at its issuer URL (e.g. through the ingress), the API reaches it at
 /// the in-cluster address. Requests to anything under the issuer go to `internal_url` instead; the
 /// issuer string in discovery and in the ID token stays the public one.
+///
+/// The `AsyncHttpClient` adapter is ours (the same shape as oauth2's own `reqwest` one) so the
+/// workspace `reqwest` is used: openidconnect 4 / oauth2 5 are built for reqwest 0.12, and their
+/// `reqwest` feature stays off.
 pub struct OidcHttp {
     inner: reqwest::Client,
     /// `(public prefix, internal prefix)`, no trailing slash.
     rewrite: Option<(String, String)>,
 }
 
+type OidcHttpFuture<'c> = Pin<
+    Box<dyn Future<Output = Result<HttpResponse, HttpClientError<reqwest::Error>>> + Send + 'c>,
+>;
+
 impl<'c> AsyncHttpClient<'c> for OidcHttp {
-    type Error = <reqwest::Client as AsyncHttpClient<'c>>::Error;
-    type Future = <reqwest::Client as AsyncHttpClient<'c>>::Future;
+    type Error = HttpClientError<reqwest::Error>;
+    type Future = OidcHttpFuture<'c>;
 
     fn call(&'c self, mut request: HttpRequest) -> Self::Future {
         if let Some((public, internal)) = &self.rewrite {
@@ -34,7 +44,18 @@ impl<'c> AsyncHttpClient<'c> for OidcHttp {
                 *request.uri_mut() = u;
             }
         }
-        self.inner.call(request)
+        Box::pin(async move {
+            let request = reqwest::Request::try_from(request).map_err(Box::new)?;
+            let response = self.inner.execute(request).await.map_err(Box::new)?;
+            let mut builder = http::Response::builder()
+                .status(response.status())
+                .version(response.version());
+            for (name, value) in response.headers() {
+                builder = builder.header(name, value);
+            }
+            let body = response.bytes().await.map_err(Box::new)?;
+            builder.body(body.to_vec()).map_err(HttpClientError::Http)
+        })
     }
 }
 

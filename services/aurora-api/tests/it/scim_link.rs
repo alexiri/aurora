@@ -868,10 +868,10 @@ async fn org_surface(fx: &ScimFx, cookie: &str, org: Uuid, ws: Uuid) -> Vec<u16>
 }
 
 async fn audit_count(fx: &ScimFx, user: Uuid, extra: &str) -> i64 {
-    sqlx::query_scalar(&format!(
+    sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT count(*) FROM audit_log WHERE org_id = $1 AND action = 'member.add' \
          AND outcome = 'success' AND target_id = $2 {extra}"
-    ))
+    )))
     .bind(fx.org)
     .bind(user.to_string())
     .fetch_one(fx.h.pool())

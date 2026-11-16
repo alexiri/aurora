@@ -49,10 +49,12 @@ const SEL: &str = "SELECT g.id, g.org_id, g.name::text AS name, g.description, g
     FROM groups g";
 
 pub async fn get<'e, E: PgExecutor<'e>>(exec: E, id: Uuid) -> Result<Option<GroupRow>, DbError> {
-    Ok(sqlx::query_as(&format!("{SEL} WHERE g.id = $1"))
-        .bind(id)
-        .fetch_optional(exec)
-        .await?)
+    Ok(
+        sqlx::query_as(sqlx::AssertSqlSafe(format!("{SEL} WHERE g.id = $1")))
+            .bind(id)
+            .fetch_optional(exec)
+            .await?,
+    )
 }
 
 /// Lock the group row (`FOR UPDATE`) so membership/binding limit checks do not race.
@@ -98,7 +100,7 @@ pub async fn list<'e, E: PgExecutor<'e>>(
     fetch: i64,
 ) -> Result<Vec<GroupRow>, DbError> {
     let (t, id) = split(after);
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "{SEL} WHERE g.org_id = $1 \
            AND ($2::text IS NULL OR strpos(lower(g.name::text), lower($2)) > 0) \
            AND ($3::text IS NULL OR g.source = $3) \
@@ -106,7 +108,7 @@ pub async fn list<'e, E: PgExecutor<'e>>(
                   WHERE m.group_id = g.id AND m.user_id = $4)) \
            AND ($5::timestamptz IS NULL OR (g.created_at, g.id) < ($5, $6)) \
          ORDER BY g.created_at DESC, g.id DESC LIMIT $7"
-    ))
+    )))
     .bind(org)
     .bind(q)
     .bind(source)

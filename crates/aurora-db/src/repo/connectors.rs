@@ -55,12 +55,12 @@ pub async fn insert_managed<'e, E: PgExecutor<'e>>(
     exec: E,
     n: &NewManaged<'_>,
 ) -> Result<ConnectorRow, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "INSERT INTO connectors (id, display_name, status, managed, type_id, settings,
                 secret_owner, secret_refs, secret_updated_at, manifest, manifest_digest,
                 approved_manifest_digest)
          VALUES ($1,$2,'awaiting_registration',true,$1,$3,$4,$5,$8,$6,$7,$7) RETURNING {COLS}"
-    ))
+    )))
     .bind(n.id)
     .bind(n.display_name)
     .bind(n.settings)
@@ -106,11 +106,11 @@ pub async fn list_managed_enabled<'e, E: PgExecutor<'e>>(
     exec: E,
     types: &[String],
 ) -> Result<Vec<ConnectorRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {COLS} FROM connectors
          WHERE managed AND status IN ('active', 'awaiting_registration')
            AND type_id = ANY($1) ORDER BY id"
-    ))
+    )))
     .bind(types)
     .fetch_all(exec)
     .await?)
@@ -164,10 +164,10 @@ pub async fn insert<'e, E: PgExecutor<'e>>(
     token_hash: &[u8],
     display_name: &str,
 ) -> Result<ConnectorRow, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "INSERT INTO connectors (id, token_hash, display_name, status)
          VALUES ($1,$2,$3,'awaiting_registration') RETURNING {COLS}"
-    ))
+    )))
     .bind(id)
     .bind(token_hash)
     .bind(display_name)
@@ -202,12 +202,12 @@ pub async fn get<'e, E: PgExecutor<'e>>(
     exec: E,
     id: &str,
 ) -> Result<Option<ConnectorRow>, DbError> {
-    Ok(
-        sqlx::query_as(&format!("SELECT {COLS} FROM connectors WHERE id=$1"))
-            .bind(id)
-            .fetch_optional(exec)
-            .await?,
-    )
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT {COLS} FROM connectors WHERE id=$1"
+    )))
+    .bind(id)
+    .fetch_optional(exec)
+    .await?)
 }
 
 /// Row lock for read-modify-write of the registration state (inside a transaction).
@@ -215,9 +215,9 @@ pub async fn get_for_update<'e, E: PgExecutor<'e>>(
     exec: E,
     id: &str,
 ) -> Result<Option<ConnectorRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {COLS} FROM connectors WHERE id=$1 FOR UPDATE"
-    ))
+    )))
     .bind(id)
     .fetch_optional(exec)
     .await?)
@@ -227,28 +227,28 @@ pub async fn find_by_token_hash<'e, E: PgExecutor<'e>>(
     exec: E,
     hash: &[u8],
 ) -> Result<Option<ConnectorRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {COLS} FROM connectors WHERE token_hash=$1"
-    ))
+    )))
     .bind(hash)
     .fetch_optional(exec)
     .await?)
 }
 
 pub async fn list<'e, E: PgExecutor<'e>>(exec: E) -> Result<Vec<ConnectorRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {COLS} FROM connectors ORDER BY created_at, id"
-    ))
+    )))
     .fetch_all(exec)
     .await?)
 }
 
 /// Connectors serving the public catalogue (`active` with a manifest).
 pub async fn list_active<'e, E: PgExecutor<'e>>(exec: E) -> Result<Vec<ConnectorRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {COLS} FROM connectors
          WHERE status='active' AND manifest IS NOT NULL ORDER BY display_name, id"
-    ))
+    )))
     .fetch_all(exec)
     .await?)
 }

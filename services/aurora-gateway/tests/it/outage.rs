@@ -900,7 +900,7 @@ async fn a_statement_error_is_not_an_outage() {
     // connections does.
     let name = format!("p3014_blank_{}", Uuid::now_v7().simple());
     let admin = g.db.pool();
-    sqlx::query(&format!("CREATE DATABASE \"{name}\""))
+    sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE \"{name}\"")))
         .execute(admin)
         .await
         .unwrap();
@@ -919,10 +919,12 @@ async fn a_statement_error_is_not_an_outage() {
     assert_eq!(g.health.state(), State::Ready);
     assert!(!g.health.db_unreachable());
     blank.close().await;
-    sqlx::query(&format!("DROP DATABASE \"{name}\" WITH (FORCE)"))
-        .execute(admin)
-        .await
-        .unwrap();
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "DROP DATABASE \"{name}\" WITH (FORCE)"
+    )))
+    .execute(admin)
+    .await
+    .unwrap();
 }
 
 #[tokio::test]

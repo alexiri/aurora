@@ -496,6 +496,7 @@ impl PolicyHandler {
         let mode = match l.header {
             InjectionHeader::GcpToken => AuthMode::GcpServiceAccount,
             InjectionHeader::EntraToken => AuthMode::AzureEntra,
+            InjectionHeader::AwsAssumeRole => AuthMode::AwsAssumeRole,
             _ => return Ok(None),
         };
         let unavailable = aurora_llm::mint::MintError::unavailable;
@@ -506,7 +507,25 @@ impl PolicyHandler {
             .as_deref()
             .and_then(|id| llm.endpoint(id))
             .ok_or_else(unavailable)?;
+        // (D-261(b)) The organization's own external id, read here and never taken from the request or the secret; without
+        // it the role is not assumed at all (the confused-deputy guard fails closed).
+        let external = if mode == AuthMode::AwsAssumeRole {
+            let pool = self
+                .touch_pool
+                .as_ref()
+                .or_else(|| self.tokens.as_ref().map(|t| t.pool()))
+                .ok_or_else(unavailable)?;
+            aurora_db::repo::connections::org_external_id(pool, c.org_id)
+                .await
+                .ok()
+                .flatten()
+                .filter(|e| !e.is_empty())
+                .ok_or_else(unavailable)?
+        } else {
+            String::new()
+        };
         mint.token(&crate::llm_mint::MintRequest {
+            org_external_id: (mode == AuthMode::AwsAssumeRole).then_some(external.as_str()),
             secret_id: c.id,
             version: c.version,
             org_id: c.org_id,
@@ -517,6 +536,79 @@ impl PolicyHandler {
         })
         .await
         .map(Some)
+    }
+
+    /// (P4-LLM-4, D-261) SigV4-sign an LLM request with the static key (`aws_sigv4`) or the session credentials the mint
+    /// produced (`aws_assume_role`; the source key never signs inference), service `bedrock`, the endpoint's region.
+    #[allow(clippy::too_many_arguments)]
+    fn sign_llm(
+        &self,
+        c: &SecretCand,
+        minted: Option<&aurora_core::Secret<String>>,
+        value: &[u8],
+        method: &http::Method,
+        scheme: crate::pipeline::Scheme,
+        host: &str,
+        port: u16,
+        body: &[u8],
+        target: Target<'_>,
+    ) -> Result<(), inject::InjectError> {
+        use aurora_llm::mint::sts;
+        let llm = self.resolver.llm();
+        let region = c
+            .llm_endpoint
+            .as_deref()
+            .and_then(|id| llm.endpoint(id))
+            .and_then(|e| e.region.clone())
+            .filter(|r| !r.is_empty())
+            .ok_or(inject::InjectError)?;
+        let host_header = if port
+            == if scheme == crate::pipeline::Scheme::Https {
+                443
+            } else {
+                80
+            } {
+            host.to_owned()
+        } else {
+            format!("{host}:{port}")
+        };
+        let req = inject::SignReq {
+            method,
+            host_header: &host_header,
+            region: &region,
+            service: "bedrock",
+            body,
+            now: std::time::SystemTime::now(),
+        };
+        match minted {
+            Some(m) => {
+                let creds: sts::SessionCredentials =
+                    serde_json::from_str(m.expose()).map_err(|_| inject::InjectError)?;
+                inject::apply_signed(
+                    c,
+                    &inject::SigningKey {
+                        access_key: &creds.access_key_id,
+                        secret_key: &creds.secret_access_key,
+                        session_token: Some(&creds.session_token),
+                    },
+                    &req,
+                    target,
+                )
+            }
+            None => {
+                let k = sts::parse_sigv4_value(value).map_err(|_| inject::InjectError)?;
+                inject::apply_signed(
+                    c,
+                    &inject::SigningKey {
+                        access_key: &k.access_key_id,
+                        secret_key: k.secret_access_key(),
+                        session_token: k.session_token(),
+                    },
+                    &req,
+                    target,
+                )
+            }
+        }
     }
 
     /// (FIX-104, D-180) `gateway.insecure_loopback_injection`: tests and development only.
@@ -1538,6 +1630,32 @@ impl PolicyHandler {
             });
         }
         if let Some(Cand::Secret(c)) = &winner {
+            // (P4-LLM-4, 06 step 6a, C-805) A SigV4-signed LLM request is buffered whole, up to `LLM_SIGN_BODY_MAX`;
+            // a larger one is refused 413 before any secret is opened.
+            let signs = matches!(
+                &c.injection,
+                crate::resolve::Injection::Llm(l) if matches!(
+                    l.header,
+                    aurora_llm::InjectionHeader::AwsSigV4 | aurora_llm::InjectionHeader::AwsAssumeRole
+                )
+            );
+            let sign_body = if signs {
+                let limit = aurora_core::limits::LLM_SIGN_BODY_MAX;
+                let (prefix, _, replay) = buffer_prefix(body, limit + 1).await;
+                body = replay;
+                if prefix.len() > limit {
+                    let err = ApiError::new(
+                        StatusCode::PAYLOAD_TOO_LARGE,
+                        "llm_request_too_large",
+                        "The request body is too large to be signed for this endpoint.",
+                    )
+                    .with_details(json!({ "limit_bytes": limit }));
+                    return Outcome::Respond(self.refuse(ctx, &err, "error"));
+                }
+                Some(prefix)
+            } else {
+                None
+            };
             let value = match self.plaintext.get(c).await {
                 Ok(v) => v,
                 Err(PlaintextError::StoreUnavailable(store_id)) => {
@@ -1590,9 +1708,23 @@ impl PolicyHandler {
                 path: &mut new_path,
                 query: &mut query,
             };
-            let r = match &minted {
-                Some(t) => inject::apply_minted(c, t.expose().as_bytes(), target),
-                None => inject::apply(c, value.expose(), target),
+            let r = if let Some(sb) = &sign_body {
+                self.sign_llm(
+                    c,
+                    minted.as_deref(),
+                    value.expose(),
+                    &method,
+                    scheme,
+                    &host,
+                    port,
+                    sb,
+                    target,
+                )
+            } else {
+                match &minted {
+                    Some(t) => inject::apply_minted(c, t.expose().as_bytes(), target),
+                    None => inject::apply(c, value.expose(), target),
+                }
             };
             if r.is_err() {
                 return Outcome::Respond(self.refuse(

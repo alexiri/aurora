@@ -90,10 +90,12 @@ pub async fn insert<'e, E: PgExecutor<'e>>(exec: E, n: &NewSecret<'_>) -> Result
 }
 
 pub async fn get<'e, E: PgExecutor<'e>>(exec: E, id: Uuid) -> Result<Option<SecretRow>, DbError> {
-    Ok(sqlx::query_as(&format!("{SELECT} WHERE s.id = $1"))
-        .bind(id)
-        .fetch_optional(exec)
-        .await?)
+    Ok(
+        sqlx::query_as(sqlx::AssertSqlSafe(format!("{SELECT} WHERE s.id = $1")))
+            .bind(id)
+            .fetch_optional(exec)
+            .await?,
+    )
 }
 
 /// Secrets of one scope (`workspace = None` = organization scope). Without a status
@@ -108,13 +110,13 @@ pub async fn list_scope<'e, E: PgExecutor<'e>>(
     fetch: i64,
 ) -> Result<Vec<SecretRow>, DbError> {
     let (t, id) = split(after);
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "{SELECT} WHERE s.org_id = $1 AND s.workspace_id IS NOT DISTINCT FROM $2 \
          AND ($3::text IS NULL OR s.kind = $3) \
          AND (($4::text IS NULL AND s.status <> 'rejected') OR s.status = $4) \
          AND ($5::timestamptz IS NULL OR (s.created_at, s.id) < ($5, $6)) \
          ORDER BY s.created_at DESC, s.id DESC LIMIT $7"
-    ))
+    )))
     .bind(org)
     .bind(workspace)
     .bind(kind)

@@ -234,11 +234,13 @@ impl W {
     }
 
     async fn status(&self, table: &str, id: Uuid) -> String {
-        sqlx::query_scalar(&format!("SELECT status FROM {table} WHERE id=$1"))
-            .bind(id)
-            .fetch_one(self.pool())
-            .await
-            .unwrap()
+        sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "SELECT status FROM {table} WHERE id=$1"
+        )))
+        .bind(id)
+        .fetch_one(self.pool())
+        .await
+        .unwrap()
     }
 
     async fn token_uses(&self) -> i64 {

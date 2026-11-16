@@ -125,7 +125,7 @@ impl W {
         .unwrap()
     }
     async fn sql(&self, q: &str, agent: Uuid) {
-        sqlx::query(q)
+        sqlx::query(sqlx::AssertSqlSafe(q))
             .bind(agent)
             .execute(self.h.pool())
             .await

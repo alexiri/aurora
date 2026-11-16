@@ -19,7 +19,7 @@ use rsa::pkcs1::DecodeRsaPrivateKey;
 use rsa::pkcs1v15::SigningKey;
 use rsa::pkcs8::DecodePrivateKey;
 use rsa::signature::{SignatureEncoding, Signer};
-use rsa::RsaPrivateKey;
+use rsa::PrivateKey;
 use sha2::Sha256;
 
 const APP_SAAS: &str = "github";
@@ -217,7 +217,7 @@ fn mint_body(s: &Settings, installation: Option<&serde_json::Value>) -> Result<O
 /// Accept PKCS#1 (`RSA PRIVATE KEY`, what GitHub downloads) and PKCS#8 PEM, tolerating the
 /// whitespace damage of a pasted key: the body is re-wrapped before parsing. Errors never
 /// include any part of the input.
-fn load_key(pem: &str) -> Result<RsaPrivateKey, HookError> {
+fn load_key(pem: &str) -> Result<PrivateKey, HookError> {
     let bad = || HookError::InvalidInput("the private key is not a valid RSA private key in PEM format".into());
     let t = pem.trim();
     let rest = t.strip_prefix("-----BEGIN ").ok_or_else(bad)?;
@@ -236,8 +236,8 @@ fn load_key(pem: &str) -> Result<RsaPrivateKey, HookError> {
     wrapped.push_str(&end);
     wrapped.push('\n');
     let key = match label {
-        "RSA PRIVATE KEY" => RsaPrivateKey::from_pkcs1_pem(&wrapped).map_err(|_| ()),
-        "PRIVATE KEY" => RsaPrivateKey::from_pkcs8_pem(&wrapped).map_err(|_| ()),
+        "RSA PRIVATE KEY" => PrivateKey::from_pkcs1_pem(&wrapped).map_err(|_| ()),
+        "PRIVATE KEY" => PrivateKey::from_pkcs8_pem(&wrapped).map_err(|_| ()),
         _ => return Err(bad()),
     };
     key.map_err(|()| bad())
@@ -245,7 +245,7 @@ fn load_key(pem: &str) -> Result<RsaPrivateKey, HookError> {
 
 /// The app JWT (RS256): `iat = now - 60`, `exp = now + 540` (never more than 10 minutes),
 /// `iss = <app id>`.
-fn app_jwt(key: &RsaPrivateKey, app_id: &str, now: u64) -> Result<String, HookError> {
+fn app_jwt(key: &PrivateKey, app_id: &str, now: u64) -> Result<String, HookError> {
     let header = base64url(br#"{"alg":"RS256","typ":"JWT"}"#);
     let claims = serde_json::json!({
         "iat": now.saturating_sub(IAT_SKEW),
@@ -335,7 +335,7 @@ fn send(s: &Settings, req: &HttpRequest) -> Result<HttpResponse, HookError> {
     Ok(r)
 }
 
-fn mint(s: &Settings, key: &RsaPrivateKey) -> Result<(String, u64), HookError> {
+fn mint(s: &Settings, key: &PrivateKey) -> Result<(String, u64), HookError> {
     let now = now_unix_seconds();
     let jwt = app_jwt(key, &s.app_id, now)?;
     // A read-only connection first learns what the installation holds, so the narrowed
@@ -486,8 +486,8 @@ mod tests {
         out
     }
 
-    fn key() -> RsaPrivateKey {
-        RsaPrivateKey::new(&mut rsa::rand_core::OsRng, 1024).expect("key")
+    fn key() -> PrivateKey {
+        PrivateKey::new(&mut getrandom::SysRng, 1024).expect("key")
     }
 
     fn saas() -> Settings {

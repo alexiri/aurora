@@ -284,6 +284,45 @@ mod tests {
         assert_eq!(effort("ludicrous"), None);
     }
 
+    /// (P4-LLM-5, C-809, `12 §Adapter codex`) The provider block's `base_url` is the endpoint's own `OPENAI_BASE_URL`
+    /// for every provider Codex reaches; no Azure- or AWS-specific setting is rendered and no credential is in the file.
+    #[test]
+    fn the_provider_block_follows_c809_for_every_provider() {
+        for (provider, url) in [
+            ("openai", "https://api.openai.com/v1"),
+            ("azure_openai", "https://res.openai.azure.com/openai/v1"),
+            ("openai_compatible", "https://compat.example/v1"),
+            (
+                "bedrock",
+                "https://bedrock-runtime.us-east-1.amazonaws.com/openai/v1",
+            ),
+        ] {
+            let mut o = opts("openai_responses", "high");
+            o.model.provider = provider.into();
+            o.model.client_env = vec![
+                ("OPENAI_BASE_URL".into(), url.into()),
+                ("OPENAI_API_KEY".into(), "aurora-placeholder".into()),
+            ];
+            assert_eq!(provider_base_url(&o), url, "{provider}");
+            let t = render_config(&o).unwrap();
+            assert!(
+                t.contains(&format!("base_url = {}", s(url))),
+                "{provider}\n{t}"
+            );
+            for bad in [
+                "api-version",
+                "api_version",
+                "query_params",
+                "AWS",
+                "aws_",
+                "azure_",
+                "SECRET",
+            ] {
+                assert!(!t.contains(bad), "{provider}: `{bad}` in\n{t}");
+            }
+        }
+    }
+
     #[test]
     fn only_the_responses_dialect_is_spoken() {
         assert_eq!(wire_api("openai_responses").unwrap(), "responses");

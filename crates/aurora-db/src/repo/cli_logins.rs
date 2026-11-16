@@ -60,9 +60,9 @@ pub async fn find_by_device_hash<'e, E: PgExecutor<'e>>(
     exec: E,
     hash: &[u8; 32],
 ) -> Result<Option<CliLogin>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {SEL} FROM cli_logins WHERE device_code_hash = $1"
-    ))
+    )))
     .bind(&hash[..])
     .fetch_optional(exec)
     .await?)
@@ -73,10 +73,10 @@ pub async fn find_pending_by_user_code<'e, E: PgExecutor<'e>>(
     exec: E,
     user_code: &str,
 ) -> Result<Option<CliLogin>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {SEL} FROM cli_logins
          WHERE user_code = $1 AND status = 'pending' AND expires_at > now()"
-    ))
+    )))
     .bind(user_code)
     .fetch_optional(exec)
     .await?)

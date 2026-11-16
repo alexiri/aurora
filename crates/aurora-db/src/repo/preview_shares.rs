@@ -56,20 +56,24 @@ const SEL: &str = "SELECT p.id, p.org_id, p.workspace_id, p.agent_id, p.port, p.
     p.created_at, p.updated_at, p.last_accessed_at FROM preview_shares p";
 
 pub async fn get<'e, E: PgExecutor<'e>>(exec: E, id: Uuid) -> Result<Option<ShareRow>, DbError> {
-    Ok(sqlx::query_as(&format!("{SEL} WHERE p.id = $1"))
-        .bind(id)
-        .fetch_optional(exec)
-        .await?)
+    Ok(
+        sqlx::query_as(sqlx::AssertSqlSafe(format!("{SEL} WHERE p.id = $1")))
+            .bind(id)
+            .fetch_optional(exec)
+            .await?,
+    )
 }
 
 pub async fn get_by_label<'e, E: PgExecutor<'e>>(
     exec: E,
     label: &str,
 ) -> Result<Option<ShareRow>, DbError> {
-    Ok(sqlx::query_as(&format!("{SEL} WHERE p.label = $1"))
-        .bind(label)
-        .fetch_optional(exec)
-        .await?)
+    Ok(
+        sqlx::query_as(sqlx::AssertSqlSafe(format!("{SEL} WHERE p.label = $1")))
+            .bind(label)
+            .fetch_optional(exec)
+            .await?,
+    )
 }
 
 pub async fn lock(conn: &mut PgConnection, id: Uuid) -> Result<Option<ShareRow>, DbError> {
@@ -92,11 +96,11 @@ pub async fn list_for_agent<'e, E: PgExecutor<'e>>(
     fetch: i64,
 ) -> Result<Vec<ShareRow>, DbError> {
     let (t, id) = split(after);
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "{SEL} WHERE p.agent_id = $1 \
            AND ($2::timestamptz IS NULL OR (p.created_at, p.id) < ($2, $3)) \
          ORDER BY p.created_at DESC, p.id DESC LIMIT $4"
-    ))
+    )))
     .bind(agent)
     .bind(t)
     .bind(id)
@@ -137,9 +141,9 @@ pub async fn active_for_agent<'e, E: PgExecutor<'e>>(
     exec: E,
     agent: Uuid,
 ) -> Result<Vec<ShareRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "{SEL} WHERE p.agent_id = $1 AND p.state = 'active' ORDER BY p.port, p.id"
-    ))
+    )))
     .bind(agent)
     .fetch_all(exec)
     .await?)

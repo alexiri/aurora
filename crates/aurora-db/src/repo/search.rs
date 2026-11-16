@@ -487,7 +487,7 @@ pub async fn read_window(
         "SELECT c.title, c.kind, a.name FROM conversations c JOIN agents a ON a.id = c.agent_id WHERE {}",
         w.join(" AND ")
     );
-    let mut q = sqlx::query_as::<_, (Option<String>, String, String)>(&head);
+    let mut q = sqlx::query_as::<_, (Option<String>, String, String)>(sqlx::AssertSqlSafe(&*head));
     for v in &b.0 {
         q = match v {
             B::Text(s) => q.bind(s.clone()),
@@ -503,9 +503,9 @@ pub async fn read_window(
     let cols = "SELECT e.seq, e.type, e.payload, e.created_at, e.redacted_at, t.speaker_kind, t.speaker_label
          FROM transcript_events e LEFT JOIN turns t ON t.id = e.turn_id
          WHERE e.conversation_id = $1 AND e.type IN ('turn.queued', 'text', 'attachment')";
-    let mut rows = sqlx::query(&format!(
+    let mut rows = sqlx::query(sqlx::AssertSqlSafe(format!(
         "{cols} AND e.seq <= $2 ORDER BY e.seq DESC LIMIT $3"
-    ))
+    )))
     .bind(conversation_id)
     .bind(seq)
     .bind(before.clamp(0, 20) + 1)
@@ -513,12 +513,14 @@ pub async fn read_window(
     .await?;
     rows.reverse();
     rows.extend(
-        sqlx::query(&format!("{cols} AND e.seq > $2 ORDER BY e.seq LIMIT $3"))
-            .bind(conversation_id)
-            .bind(seq)
-            .bind(after.clamp(0, 20))
-            .fetch_all(pool)
-            .await?,
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "{cols} AND e.seq > $2 ORDER BY e.seq LIMIT $3"
+        )))
+        .bind(conversation_id)
+        .bind(seq)
+        .bind(after.clamp(0, 20))
+        .fetch_all(pool)
+        .await?,
     );
     let mut messages = Vec::new();
     for r in rows {
@@ -674,12 +676,12 @@ pub async fn search(pool: &PgPool, p: &Params<'_>) -> Result<Page, DbError> {
         start = START as u32,
     );
     let mut tx = pool.begin().await?;
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "SET LOCAL statement_timeout = {STATEMENT_TIMEOUT_MS}"
-    ))
+    )))
     .execute(&mut *tx)
     .await?;
-    let mut query = sqlx::query(&sql);
+    let mut query = sqlx::query(sqlx::AssertSqlSafe(&*sql));
     for v in &b.0 {
         query = match v {
             B::Text(s) => query.bind(s),
@@ -1004,10 +1006,10 @@ pub async fn backfill_step(pool: &PgPool, batch: i64) -> Result<Step, DbError> {
          WHERE e.type IN ('turn.queued', 'text', 'attachment') AND e.redacted_at IS NULL";
     let rows = match (cc, cs) {
         (Some(c), Some(s)) => {
-            sqlx::query(&format!(
+            sqlx::query(sqlx::AssertSqlSafe(format!(
                 "{select} AND (e.conversation_id, e.seq) > ($1, $2)
                  ORDER BY e.conversation_id, e.seq LIMIT $3 FOR SHARE OF e"
-            ))
+            )))
             .bind(c)
             .bind(s)
             .bind(batch)
@@ -1015,9 +1017,9 @@ pub async fn backfill_step(pool: &PgPool, batch: i64) -> Result<Step, DbError> {
             .await?
         }
         _ => {
-            sqlx::query(&format!(
+            sqlx::query(sqlx::AssertSqlSafe(format!(
                 "{select} ORDER BY e.conversation_id, e.seq LIMIT $1 FOR SHARE OF e"
-            ))
+            )))
             .bind(batch)
             .fetch_all(&mut *tx)
             .await?

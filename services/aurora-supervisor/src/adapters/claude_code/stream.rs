@@ -15,6 +15,7 @@ use std::collections::{HashMap, HashSet};
 
 use serde_json::Value;
 
+use crate::adapters::provider_error;
 use crate::harness::HarnessEvent;
 
 /// Name of the MCP server the adapter configures.
@@ -320,9 +321,14 @@ pub fn classify_failure(status: Option<u64>, text: &str, subtype: &str) -> (Stri
         .and_then(|e| e.get("message"))
         .and_then(Value::as_str)
         .unwrap_or(text);
-    if let Some(code) = err.and_then(|e| e.get("code")).and_then(Value::as_str) {
+    if let Some(e) = err
+        && let Some(code) = e.get("code").and_then(Value::as_str)
+        && e.get("type").is_none()
+    {
+        // (P4-LLM-5, D-261) A rejected LLM credential mint is `provider_auth`; every other gateway code stays
+        // `gateway_refused`.
         return (
-            "gateway_refused".into(),
+            provider_error::gateway_code(e).into(),
             trunc(&format!("[{code}] {message}"), 500),
         );
     }
@@ -336,17 +342,23 @@ pub fn classify_failure(status: Option<u64>, text: &str, subtype: &str) -> (Stri
         || lower.contains("insufficient_quota")
         || lower.contains("billing")
         || status == Some(402);
-    let code = match status {
-        _ if quota => "provider_quota",
-        Some(401 | 403) => "provider_auth",
-        Some(429) => "provider_rate_limited",
-        Some(503 | 529) => "provider_overloaded",
-        _ if err_type == "authentication_error" || err_type == "permission_error" => {
-            "provider_auth"
+    // (P4-LLM-5, C-808) The shared table first, on the error type the body or stream event carries; then the status
+    // and phrase rules for what the CLI reports as free text.
+    let code = if let Some(c) = provider_error::table_code(err, body.as_ref(), text) {
+        c
+    } else {
+        match status {
+            _ if quota => "provider_quota",
+            Some(401 | 403) => "provider_auth",
+            Some(429) => "provider_rate_limited",
+            Some(503 | 529) => "provider_overloaded",
+            _ if err_type == "authentication_error" || err_type == "permission_error" => {
+                "provider_auth"
+            }
+            _ if err_type == "rate_limit_error" => "provider_rate_limited",
+            _ if err_type == "overloaded_error" => "provider_overloaded",
+            _ => "harness_failed",
         }
-        _ if err_type == "rate_limit_error" => "provider_rate_limited",
-        _ if err_type == "overloaded_error" => "provider_overloaded",
-        _ => "harness_failed",
     };
     let message = if message.is_empty() {
         format!("claude-code failed ({subtype})")
@@ -475,6 +487,66 @@ mod tests {
             msg.starts_with("[blocked_by_policy] Blocked by policy"),
             "{msg}"
         );
+    }
+
+    /// (P4-LLM-5, C-808, D-261) The shared table on provider error types, and the gateway's codes.
+    #[test]
+    fn the_shared_table_and_the_gateway_codes_drive_the_turn_code() {
+        let c = |status, text: &str| classify_failure(status, text, "").0;
+        // A Bedrock event-stream exception the CLI prints, an OpenAI 429 whose body says the quota is gone.
+        assert_eq!(
+            c(
+                None,
+                "API Error: ThrottlingException: Too many requests, please wait"
+            ),
+            "provider_rate_limited"
+        );
+        assert_eq!(
+            c(
+                Some(429),
+                r#"API Error: 429 {"error":{"type":"insufficient_quota","code":"insufficient_quota"}}"#
+            ),
+            "provider_quota"
+        );
+        assert_eq!(
+            c(
+                None,
+                r#"{"error":{"status":"PERMISSION_DENIED","message":"no"}}"#
+            ),
+            "provider_auth"
+        );
+        // A gateway refusal stays the gateway's, except a rejected mint: the credential is at fault.
+        let gw = |code: &str, details: &str| {
+            c(
+                Some(502),
+                &format!(
+                    r#"API Error: 502 {{"error":{{"code":"{code}","message":"m","details":{details}}}}}"#
+                ),
+            )
+        };
+        assert_eq!(gw("llm_path_not_permitted", "{}"), "gateway_refused");
+        assert_eq!(gw("llm_request_too_large", "{}"), "gateway_refused");
+        assert_eq!(
+            gw(
+                "credential_unavailable",
+                r#"{"kind":"llm_mint","reason":"mint_rejected"}"#
+            ),
+            "provider_auth"
+        );
+        assert_eq!(
+            gw(
+                "credential_unavailable",
+                r#"{"kind":"llm_mint","reason":"mint_unavailable"}"#
+            ),
+            "gateway_refused"
+        );
+        let (code, msg) = classify_failure(
+            Some(502),
+            r#"API Error: 502 {"error":{"code":"credential_unavailable","message":"rejected","details":{"kind":"llm_mint","reason":"mint_rejected"}}}"#,
+            "",
+        );
+        assert_eq!(code, "provider_auth");
+        assert!(msg.starts_with("[credential_unavailable]"), "{msg}");
     }
 
     #[test]

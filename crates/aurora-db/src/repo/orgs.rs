@@ -60,9 +60,9 @@ pub async fn get<'e, E: PgExecutor<'e>>(
     org: Uuid,
     user: Uuid,
 ) -> Result<Option<OrgRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {SEL} FROM organizations o JOIN org_members m ON m.org_id = o.id AND m.user_id = $2 {EFFECTIVE} WHERE o.id = $1"
-    ))
+    )))
     .bind(org)
     .bind(user)
     .fetch_optional(exec)
@@ -77,12 +77,12 @@ pub async fn list_for_user<'e, E: PgExecutor<'e>>(
     fetch: i64,
 ) -> Result<Vec<OrgRow>, DbError> {
     let (t, id) = split(after);
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {SEL} FROM organizations o JOIN org_members m ON m.org_id = o.id AND m.user_id = $1 AND m.status = 'active'
          {EFFECTIVE}
          WHERE ($2::timestamptz IS NULL OR (o.created_at, o.id) < ($2, $3))
          ORDER BY o.created_at DESC, o.id DESC LIMIT $4"
-    ))
+    )))
     .bind(user)
     .bind(t)
     .bind(id)
@@ -185,13 +185,14 @@ pub async fn managed_refs(
             "SELECT id, org_id, workspace_id, secret_ref FROM app_oauth_clients WHERE true",
         ),
     ] {
-        let rows: Vec<(Uuid, Option<Uuid>, Option<Uuid>, String)> = sqlx::query_as(&format!(
-            "{sql} AND org_id = $1 AND ($2::uuid IS NULL OR workspace_id = $2) ORDER BY id"
-        ))
-        .bind(org)
-        .bind(workspace)
-        .fetch_all(&mut *conn)
-        .await?;
+        let rows: Vec<(Uuid, Option<Uuid>, Option<Uuid>, String)> =
+            sqlx::query_as(sqlx::AssertSqlSafe(format!(
+                "{sql} AND org_id = $1 AND ($2::uuid IS NULL OR workspace_id = $2) ORDER BY id"
+            )))
+            .bind(org)
+            .bind(workspace)
+            .fetch_all(&mut *conn)
+            .await?;
         out.extend(
             rows.into_iter()
                 .map(|(owner_id, org_id, workspace_id, value_ref)| ManagedRef {
@@ -289,10 +290,12 @@ pub async fn agent_owned_refs(
 /// M6: connector deprovisioning must be enqueued before calling this.
 pub async fn delete_cascade(conn: &mut PgConnection, org: Uuid) -> Result<(), DbError> {
     for table in ORG_CASCADE_TABLES {
-        sqlx::query(&format!("DELETE FROM {table} WHERE org_id = $1"))
-            .bind(org)
-            .execute(&mut *conn)
-            .await?;
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "DELETE FROM {table} WHERE org_id = $1"
+        )))
+        .bind(org)
+        .execute(&mut *conn)
+        .await?;
     }
     sqlx::query("DELETE FROM organizations WHERE id = $1")
         .bind(org)

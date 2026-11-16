@@ -91,7 +91,7 @@ pub async fn get(
         scope.table(),
         if lock { " FOR UPDATE OF t" } else { "" }
     );
-    Ok(sqlx::query_as(&sql)
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(&*sql))
         .bind(id)
         .fetch_optional(&mut *conn)
         .await?)
@@ -100,7 +100,7 @@ pub async fn get(
 /// Lock the resource row (serializes concurrent freeze/unfreeze). `false` when it is gone.
 pub async fn lock(conn: &mut PgConnection, scope: Scope, id: Uuid) -> Result<bool, DbError> {
     let sql = format!("SELECT 1 FROM {} WHERE id = $1 FOR UPDATE", scope.table());
-    Ok(sqlx::query_scalar::<_, i32>(&sql)
+    Ok(sqlx::query_scalar::<_, i32>(sqlx::AssertSqlSafe(&*sql))
         .bind(id)
         .fetch_optional(&mut *conn)
         .await?
@@ -110,7 +110,7 @@ pub async fn lock(conn: &mut PgConnection, scope: Scope, id: Uuid) -> Result<boo
 /// Does the resource exist (no row lock)?
 pub async fn exists(conn: &mut PgConnection, scope: Scope, id: Uuid) -> Result<bool, DbError> {
     let sql = format!("SELECT 1 FROM {} WHERE id = $1", scope.table());
-    Ok(sqlx::query_scalar::<_, i32>(&sql)
+    Ok(sqlx::query_scalar::<_, i32>(sqlx::AssertSqlSafe(&*sql))
         .bind(id)
         .fetch_optional(&mut *conn)
         .await?
@@ -132,7 +132,7 @@ pub async fn freeze(
              frozen_authority = $4 WHERE id = $1 AND frozen_at IS NULL",
         scope.table()
     );
-    Ok(sqlx::query(&sql)
+    Ok(sqlx::query(sqlx::AssertSqlSafe(&*sql))
         .bind(id)
         .bind(by)
         .bind(reason)
@@ -168,7 +168,7 @@ pub async fn escalate(
         rank("frozen_authority"),
         rank("$4::text"),
     );
-    Ok(sqlx::query(&sql)
+    Ok(sqlx::query(sqlx::AssertSqlSafe(&*sql))
         .bind(id)
         .bind(by)
         .bind(reason)
@@ -186,7 +186,7 @@ pub async fn unfreeze(conn: &mut PgConnection, scope: Scope, id: Uuid) -> Result
              frozen_authority = NULL WHERE id = $1 AND frozen_at IS NOT NULL",
         scope.table()
     );
-    Ok(sqlx::query(&sql)
+    Ok(sqlx::query(sqlx::AssertSqlSafe(&*sql))
         .bind(id)
         .execute(&mut *conn)
         .await?
@@ -400,12 +400,13 @@ pub async fn frozen_of_orgs(
 
 /// Is the agent effectively frozen?
 pub async fn is_agent_frozen(conn: &mut PgConnection, agent: Uuid) -> Result<bool, DbError> {
-    Ok(
-        sqlx::query_scalar(&format!("SELECT {}", frozen_agent_sql("$1")))
-            .bind(agent)
-            .fetch_one(&mut *conn)
-            .await?,
-    )
+    Ok(sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        "SELECT {}",
+        frozen_agent_sql("$1")
+    )))
+    .bind(agent)
+    .fetch_one(&mut *conn)
+    .await?)
 }
 
 /// Agents covered by a flag of `scope`.
@@ -480,12 +481,12 @@ pub async fn active_turns_of_frozen(
     conn: &mut PgConnection,
     limit: i64,
 ) -> Result<Vec<(Uuid, Uuid)>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT t.id, t.conversation_id FROM turns t
          WHERE t.role = 'turn' AND t.status IN ('queued','dispatched','running')
            AND {} ORDER BY t.created_at LIMIT $1",
         frozen_agent_sql("t.agent_id")
-    ))
+    )))
     .bind(limit)
     .fetch_all(&mut *conn)
     .await?)
@@ -536,11 +537,11 @@ pub async fn get_admin_org(
     conn: &mut PgConnection,
     org: Uuid,
 ) -> Result<Option<AdminOrgRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {ADMIN_ORG_COLS}
          FROM organizations o LEFT JOIN users u ON u.id = o.frozen_by_user_id
          WHERE o.id = $1"
-    ))
+    )))
     .bind(org)
     .fetch_optional(&mut *conn)
     .await?)
@@ -607,13 +608,13 @@ pub async fn list_orgs(
     limit: i64,
 ) -> Result<Vec<AdminOrgRow>, DbError> {
     let (t, id) = after.map_or((None, None), |(t, i)| (Some(t), Some(i)));
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {ADMIN_ORG_COLS}
              FROM organizations o LEFT JOIN users u ON u.id = o.frozen_by_user_id
              WHERE (NOT $1 OR o.frozen_at IS NOT NULL)
                AND ($2::timestamptz IS NULL OR (o.created_at, o.id) < ($2, $3))
              ORDER BY o.created_at DESC, o.id DESC LIMIT $4"
-    ))
+    )))
     .bind(frozen_only)
     .bind(t)
     .bind(id)

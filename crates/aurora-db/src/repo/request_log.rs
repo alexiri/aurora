@@ -58,7 +58,7 @@ pub async fn list_activity(
     fetch: i64,
 ) -> Result<Vec<LogRow>, DbError> {
     let (t, id) = split(after);
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT id, ts, agent_id, conversation_id, turn_id, credential_kind, lane, method, host, \
                 path, app_id, tool_id, connection_id, secret_id, decision, rule_logical_id, \
                 rule_name, upstream_status, status, error_code, injected, latency_ms, bytes_up, \
@@ -72,7 +72,7 @@ pub async fn list_activity(
            AND ($7::timestamptz IS NULL OR (ts, id) < ($7, $8)) \
          ORDER BY ts DESC, id DESC LIMIT $9",
         crate::authz::hidden_direct_conversation_sql("conversation_id", "$10", "workspace_id")
-    ))
+    )))
     .bind(ws)
     .bind(f.agent_id)
     .bind(f.conversation_id)
@@ -124,20 +124,20 @@ pub async fn ensure_partitions(
         // Names and bounds are generated from integers only.
         let (lo, hi) = (format!("{from} 00:00:00+00"), format!("{to} 00:00:00+00"));
         let mut tx = pool.begin().await?;
-        sqlx::query(&format!(
+        sqlx::query(sqlx::AssertSqlSafe(format!(
             "CREATE TABLE IF NOT EXISTS {name} (LIKE request_log INCLUDING DEFAULTS INCLUDING CONSTRAINTS)"
-        ))
+        )))
         .execute(&mut *tx)
         .await?;
-        sqlx::query(&format!(
+        sqlx::query(sqlx::AssertSqlSafe(format!(
             "WITH moved AS (DELETE FROM request_log_default WHERE ts >= '{lo}' AND ts < '{hi}' RETURNING *) \
              INSERT INTO {name} SELECT * FROM moved"
-        ))
+        )))
         .execute(&mut *tx)
         .await?;
-        sqlx::query(&format!(
+        sqlx::query(sqlx::AssertSqlSafe(format!(
             "ALTER TABLE request_log ATTACH PARTITION {name} FOR VALUES FROM ('{lo}') TO ('{hi}')"
-        ))
+        )))
         .execute(&mut *tx)
         .await?;
         tx.commit().await?;
@@ -168,7 +168,7 @@ pub async fn drop_expired(
         };
         let end = add_months(month_start(y, m), 1);
         if end.and_hms_opt(0, 0, 0).map(|e| e.and_utc()) <= Some(cutoff) {
-            sqlx::query(&format!("DROP TABLE IF EXISTS {name}"))
+            sqlx::query(sqlx::AssertSqlSafe(format!("DROP TABLE IF EXISTS {name}")))
                 .execute(pool)
                 .await?;
             dropped.push(name);
@@ -195,9 +195,9 @@ async fn delete_older_in_batches(
 ) -> Result<u64, DbError> {
     let mut total = 0;
     loop {
-        let n = sqlx::query(&format!(
+        let n = sqlx::query(sqlx::AssertSqlSafe(format!(
             "DELETE FROM {table} WHERE ctid IN (SELECT ctid FROM {table} WHERE ts < $1 LIMIT $2)"
-        ))
+        )))
         .bind(cutoff)
         .bind(TRIM_BATCH)
         .execute(pool)
