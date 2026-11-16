@@ -459,24 +459,16 @@ async fn serve(
         Err(e) => tracing::warn!(error = %e.message(), "agent token maximum age not applied"),
     }
     // (FU-P2-015b) Quota notices ride the RFE-011a e-mail channel when it is enabled.
-    let quota_mail = cfg.approvals.email_notifications.then(|| {
-        aurora_api::domains::attachments::sweep::QuotaMail {
-            mailer: state.mailer.clone(),
-            external_url: cfg.external_url.clone(),
-        }
-    });
+    let quota_mail = aurora_api::domains::attachments::sweep::QuotaMail {
+        mailer: state.mailer.clone(),
+        external_url: cfg.external_url.clone(),
+    };
     // (P4-CNT) `counters_prune`: dead rows of the shared-counter tables, whatever the backend
     // (rows stay behind after a switch back to `memory` and are removed here).
     aurora_api::jobs::spawn_counters_prune(pool.clone());
     // (P4-PRV-1) preview housekeeping: stale wake/start stamps and the shares gauge.
     aurora_api::jobs::spawn_preview_housekeeping(pool.clone());
-    aurora_api::jobs::spawn(
-        pool,
-        cfg.retention.request_log_days,
-        cfg.retention.conversation_days_max,
-        cfg.attachments.clone(),
-        quota_mail,
-    );
+    aurora_api::jobs::spawn(pool, state.ops_live.clone(), quota_mail);
     aurora_api::domains::approvals::notify::spawn(state.clone());
     // (FIX-025, D-158) No turn waits forever for a sandbox, runner connected or not.
     aurora_api::domains::hosted::readiness::spawn(state.clone());

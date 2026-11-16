@@ -430,7 +430,7 @@ pub async fn check(
 ) -> Result<Checked, ApiError> {
     let mut e = Errs(Vec::new());
     check_shape(&mut req, scope, &mut e);
-    let range = check_timeouts(&req, state.config.approvals.max_timeout_secs, &mut e);
+    let range = check_timeouts(&req, state.ops().approvals.max_timeout_secs, &mut e);
     if e.0.is_empty() {
         check_scope(state, &req, scope, &mut e).await?;
     }

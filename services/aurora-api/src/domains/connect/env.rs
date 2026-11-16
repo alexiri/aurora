@@ -12,7 +12,9 @@ pub struct Env {
     /// The client for requests to a registered app instance (D-74): the same guard, plus the
     /// addresses the operator opened with `gateway.allowed_private`.
     pub http_instance: reqwest::Client,
-    pub allow: PrivateAllow,
+    /// `gateway.allowed_private`, swapped live when the `limits` settings change (SET-5); the
+    /// instance client's resolver reads the same cell. Read it with `allow.load()`.
+    pub allow: std::sync::Arc<arc_swap::ArcSwap<PrivateAllow>>,
     pub hooks: HookClient,
     pub override_origin: Option<reqwest::Url>,
     /// How long the registration probe waits for an answer (10 s; tests shorten it).
@@ -122,11 +124,12 @@ pub fn classify_send_error(e: &reqwest::Error) -> &'static str {
 pub use aurora_core::ranges::PrivateAllow;
 
 /// Resolver for an app instance's host: public addresses plus what `allowed_private` opens.
-struct GuardedAllow(PrivateAllow);
+struct GuardedAllow(std::sync::Arc<arc_swap::ArcSwap<PrivateAllow>>);
 
 impl Resolve for GuardedAllow {
     fn resolve(&self, name: Name) -> Resolving {
-        let allow = self.0.clone();
+        // One load per lookup: a change of the list applies to the next connection.
+        let allow = self.0.load_full();
         Box::pin(async move {
             let host = name.as_str().to_owned();
             let addrs = resolve_guarded(&host, |ip| allow.permits(ip, &host)).await?;
@@ -156,7 +159,9 @@ impl Env {
         )?
         .build()
         .map_err(|e| format!("connect http client: {e}"))?;
-        let allow = PrivateAllow::new(allowed_private);
+        let allow = std::sync::Arc::new(arc_swap::ArcSwap::from_pointee(PrivateAllow::new(
+            allowed_private,
+        )));
         let http_instance = with_extra_roots(
             reqwest::Client::builder()
                 .redirect(reqwest::redirect::Policy::none())
@@ -174,6 +179,12 @@ impl Env {
             override_origin: None,
             probe_timeout_ms: std::sync::atomic::AtomicU64::new(10_000),
         })
+    }
+
+    /// Replace the addresses `gateway.allowed_private` opens (SET-5): applies from the next lookup.
+    pub fn set_allowed_private(&self, entries: &[String]) {
+        self.allow
+            .store(std::sync::Arc::new(PrivateAllow::new(entries)));
     }
 
     /// The registration probe's timeout.

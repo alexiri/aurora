@@ -311,15 +311,16 @@ relay:
 # Web terminal (P4-TERM, D-161, docs/15 §Web terminal operations): the dashboard's Terminal
 # tab — a wterm pane over the API's same-origin WebSocket (`/v1/agents/{agent}/terminal`),
 # bridged to a PTY in the sandbox through the runner's stream listener :4108 (C-616..C-619).
-# There is no new workload: turning it on (a) renders `config.terminal.enabled = true`,
+# There is no new workload: turning it on (a) renders `config.terminal.available = true`,
 # (b) opens the runner's :4108 stream listener beside previews (either switch opens it), and
 # (c) renders the NetworkPolicy flows api -> runner:4108 (leg 1) and, beside previews,
-# relay/api -> runner:4108. While off, the API answers 404 terminal_disabled and nothing
-# about the chart changes.
+# relay/api -> runner:4108. Whether the terminal is *on* is then an instance setting
+# (Admin > Settings > Terminal, default on once the deployment provides it, SET-5, D-237(d));
+# set `config.terminal.enabled` only to lock it. While off, the API answers 404
+# terminal_disabled and nothing about the chart changes.
 terminal:
-  enabled: false          # the single switch (FIX-053): mirrors config.terminal.enabled — set
-                          # only this; both set and unequal, or config.terminal.enabled=true
-                          # alone, fails the render
+  enabled: false          # the deployment provides the terminal (wiring above): renders
+                          # terminal.available. config.terminal.enabled=true alone fails the render
 
 # Plugin packages (`*.aurora-plugin`) for the api pods (docs/15 §Production). The api scans
 # `plugins.dir` at startup and every 60 s. The chart never writes to the packages.
@@ -388,9 +389,15 @@ devIdp:
 # the /v1 and / rules); while false no /scim route is rendered and the API answers 404 for the
 # whole surface (SEC-72).
 scim:
+  # The deployment routes /scim/v2 to the API: renders `config.scim.available = true` (SET-5,
+  # D-237(d)). Whether SCIM is *on* is an instance setting (Admin > Settings > Directory sync)
+  # that defaults to it.
   enabled: false
-  # Rate limit per SCIM token per minute ([scim] rate_per_minute; burst is a fifth of it).
-  ratePerMinute: 600
+  # Rate limit per SCIM token per minute ([scim] rate_per_minute; burst is a fifth of it). Unset:
+  # the application default (600) applies and the limit is editable in the dashboard; set it
+  # here to lock it.
+  # ratePerMinute: 600
+  ratePerMinute:
 
 ingress:
   enabled: true

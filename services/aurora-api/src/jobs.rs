@@ -370,19 +370,29 @@ pub fn spawn_counters_prune(pool: PgPool) {
 }
 
 /// Start all jobs on the current runtime. Tasks end with the runtime.
+///
+/// `ops` is the live operational settings cell (SET-5): retention, attachment ceilings and the
+/// quota-mail switch are read at every sweep, so a changed setting applies to the next one.
 pub fn spawn(
     pool: PgPool,
-    retention_days: u32,
-    conversation_days_max: Option<u32>,
-    attachments: AttachmentsSection,
-    quota_mail: Option<crate::domains::attachments::sweep::QuotaMail>,
+    ops: std::sync::Arc<arc_swap::ArcSwap<aurora_config::ApiConfig>>,
+    quota_mail: crate::domains::attachments::sweep::QuotaMail,
 ) {
     let rp = pool.clone();
+    let sweep_ops = ops.clone();
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(RETENTION_SWEEP_EVERY);
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
             tick.tick().await;
+            let cfg = sweep_ops.load_full();
+            let conversation_days_max = cfg.retention.conversation_days_max;
+            let attachments: AttachmentsSection = cfg.attachments.clone();
+            // `approvals.email_notifications = false` switches the quota notices off too.
+            let quota_mail = cfg
+                .approvals
+                .email_notifications
+                .then(|| quota_mail.clone());
             match sweep_conversation_retention(&rp, conversation_days_max).await {
                 Ok(Some(n)) if n > 0 => tracing::info!(deleted = n, "conversation retention sweep"),
                 Ok(_) => {}
@@ -492,6 +502,7 @@ pub fn spawn(
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
             tick.tick().await;
+            let retention_days = ops.load().retention.request_log_days;
             if let Err(e) = maintain_request_log(&pool, retention_days).await {
                 tracing::warn!(error = %e, "request-log maintenance failed");
             }

@@ -389,7 +389,7 @@ pub async fn run(
         ),
     };
     let approval_timeout_secs = (d.verdict == Verdict::NeedsApproval)
-        .then(|| effective_timeout_secs(&state.config.approvals, d.approval_timeout_secs));
+        .then(|| effective_timeout_secs(&state.ops().approvals, d.approval_timeout_secs));
     Ok(Simulation {
         approval_timeout_secs,
         verdict: sim_verdict(d.verdict),

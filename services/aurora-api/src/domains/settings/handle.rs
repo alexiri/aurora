@@ -451,7 +451,7 @@ pub async fn mirror(
                         .cloned()
                         .unwrap_or_default();
                     let mut touched = false;
-                    for e in helm.as_array().into_iter().flatten() {
+                    for e in &aurora_config::list_entries(d, helm) {
                         let id = e.get(id_field).and_then(Value::as_str).unwrap_or_default();
                         match list
                             .iter_mut()

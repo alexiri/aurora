@@ -1,5 +1,17 @@
 "use client";
 
+import type { ReactNode } from "react";
+
+import {
+  AgentsSettingsView,
+  ApprovalsSettingsView,
+  LimitsSettingsView,
+  PreviewsSettingsView,
+  RetentionSettingsView,
+  ScimSettingsView,
+  SkillsSettingsView,
+  TerminalSettingsView,
+} from "@/components/admin/settings/operational-settings-views";
 import { SecretStoresView } from "@/components/admin/secret-stores-view";
 import { EmailSettingsView } from "@/components/admin/settings/email-settings-view";
 import { SignInSettingsView } from "@/components/admin/settings/sign-in-settings-view";
@@ -9,6 +21,17 @@ import { SettingsSectionForm } from "@/components/admin/settings/settings-sectio
 import { ErrorState, Loading } from "@/components/states";
 import { PageHeader } from "@/components/ui/page-header";
 import { sectionFromSlug, useSettingsSection } from "@/lib/api/settings";
+
+const OPERATIONAL_VIEWS: Record<string, ReactNode> = {
+  agents: <AgentsSettingsView />,
+  approvals: <ApprovalsSettingsView />,
+  retention: <RetentionSettingsView />,
+  skills: <SkillsSettingsView />,
+  scim: <ScimSettingsView />,
+  previews: <PreviewsSettingsView />,
+  terminal: <TerminalSettingsView />,
+  limits: <LimitsSettingsView />,
+};
 
 function when(iso: string | null | undefined): string {
   return iso ? new Date(iso).toLocaleString() : "never";
@@ -25,6 +48,9 @@ export function SettingsSectionView({ slug }: { slug: string }) {
   // SET-4: sign-up, sessions and identity providers; the mailer with a test message.
   if (sectionFromSlug(slug) === "sign_in") return <SignInSettingsView />;
   if (sectionFromSlug(slug) === "email") return <EmailSettingsView />;
+  // SET-5: the operational sections, each a self-contained page (no sidebar link: reached from the index).
+  const operational = OPERATIONAL_VIEWS[sectionFromSlug(slug)];
+  if (operational) return operational;
   return <GenericSectionView slug={slug} />;
 }
 

@@ -68,7 +68,7 @@ pub async fn retention(state: &AppState) -> Result<Option<(u64, u64)>, aurora_co
 /// One pass: claim due libraries (lease, `SKIP LOCKED`, at most `LIBRARY_REFRESH_CONCURRENCY`) and
 /// refresh them. Returns how many were refreshed. Safe on every replica at once.
 pub async fn run_once(state: &AppState) -> Result<usize, aurora_core::ApiError> {
-    if !state.config.skills_library.enabled {
+    if !state.ops().skills_library.enabled {
         return Ok(0);
     }
     let owner = state.library.replica;
@@ -136,7 +136,7 @@ pub async fn refresh_library_within(
 ) {
     let started = Instant::now();
     let interval = state
-        .config
+        .ops()
         .skills_library
         .refresh_interval_secs
         .max(limits::LIBRARY_REFRESH_INTERVAL_MIN.as_secs());

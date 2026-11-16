@@ -151,6 +151,8 @@ pub use crate::raw::SkillsLibrarySection;
 pub struct ScimConfig {
     /// Serve `/scim/v2` (404 everywhere while `false`).
     pub enabled: bool,
+    /// The deployment routes `/scim/v2` to the API (SET-5); `enabled` cannot be set without it.
+    pub available: bool,
     /// Instance allow-list of provisionable e-mail domains (lower-case; empty = unrestricted).
     pub allowed_email_domains: Vec<String>,
     /// `SCIM_RATE` per token per minute.
@@ -683,6 +685,7 @@ impl RawConfig {
             skills_library: self.skills.library.clone(),
             scim: ScimConfig {
                 enabled: self.scim.enabled,
+                available: self.scim.available,
                 allowed_email_domains: self
                     .scim
                     .allowed_email_domains

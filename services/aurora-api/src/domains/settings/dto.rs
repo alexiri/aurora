@@ -38,7 +38,7 @@ pub struct LockedKey {
 /// The value type of a setting, so a generic form can render it (additive to C-772, C-745).
 #[derive(Serialize, ToSchema)]
 pub struct SettingSchema {
-    /// `bool`, `int`, `duration_secs`, `string`, `enum`, `list`, `object`.
+    /// `bool`, `int`, `float`, `duration_secs`, `string`, `enum`, `list`, `object`.
     pub kind: String,
     pub min: Option<i64>,
     pub max: Option<i64>,

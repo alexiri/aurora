@@ -97,7 +97,7 @@ pub async fn run(
     if let Some(host) = url.host_str() {
         let bare = host.trim_matches(['[', ']']);
         if let Ok(ip) = bare.parse::<IpAddr>()
-            && !env.allow.permits(ip, bare)
+            && !env.allow.load().permits(ip, bare)
         {
             return Ok(failed("destination_refused", None));
         }

@@ -128,7 +128,7 @@ async fn compute(
     });
     // The runner's registered `runner.held_awake_ceiling`, else `max(1, max_sandboxes − 1)`.
     let ceiling = held_awake_ceiling(caps.as_ref().and_then(|c| c.held_awake_ceiling), max_slots);
-    let hosted = &s.config.hosted;
+    let hosted = &s.ops().hosted;
     let default_harness = hosted.default_harness.as_str();
 
     let mut tx = s.pool.begin().await.map_err(DbError::from)?;
@@ -144,8 +144,8 @@ async fn compute(
         hosted.idle_stop_secs as f64,
         hosted.background_cap_secs as f64,
         STOP_LEASE_SECS,
-        s.config.previews.awake_cap_secs as f64,
-        s.config.terminal.awake_cap_secs as f64,
+        s.ops().previews.awake_cap_secs as f64,
+        s.ops().terminal.awake_cap_secs as f64,
         ARM_LIMIT,
     )
     .await?;
@@ -182,7 +182,7 @@ async fn compute(
             start_lease_secs(hosted.sandbox_ready_timeout_secs),
             // (P4-TERM, C-621) The terminal wake demand shares the preview demand's window
             // clock (both are 60 s; the API's `terminal_wake_at` is the newer stamp).
-            s.config.terminal.wake_window_secs as f64,
+            s.ops().terminal.wake_window_secs as f64,
         )
         .await?;
         if !claims.is_empty() {
@@ -236,7 +236,7 @@ async fn mint_start(
     let harness = agent
         .harness
         .clone()
-        .unwrap_or_else(|| s.config.hosted.default_harness.clone());
+        .unwrap_or_else(|| s.ops().hosted.default_harness.clone());
     let agent_row = aurora_db::repo::agents::get(&mut *tx, c.agent_id)
         .await?
         .ok_or_else(|| ApiError::internal("sandbox agent vanished"))?;
@@ -311,7 +311,7 @@ async fn mint_start(
             body: WorkItemBody::SandboxStart(SandboxStart {
                 spec,
                 start_timeout_secs: Some(runner_start_bound_secs(
-                    s.config.hosted.sandbox_ready_timeout_secs,
+                    s.ops().hosted.sandbox_ready_timeout_secs,
                 )),
             }),
         },

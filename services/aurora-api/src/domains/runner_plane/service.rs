@@ -68,13 +68,18 @@ pub async fn register(
             poll_wait_secs: MAX_WAIT_SECS,
             reconcile_interval_secs: limits::RECONCILE_INTERVAL.as_secs() as u32,
             orphan_grace_secs: limits::ORPHAN_GRACE.as_secs() as u32,
-            idle_stop_secs: s.config.hosted.idle_stop_secs as u32,
+            idle_stop_secs: s.ops().hosted.idle_stop_secs as u32,
             previews: s.config.previews.enabled,
-            // (P4-TERM, C-623) The runner opens :4108 for terminal grants and speaks the
-            // W19 `pty.*` frames only when the operator enabled the terminal — and only if
-            // this runner advertised the capability (an older runner binary must not be
-            // told to open the port).
-            terminal: s.config.terminal.enabled && req.capabilities.terminal,
+            // (P4-TERM, C-623; SET-5, D-237(d)) The runner opens :4108 for terminal grants and
+            // speaks the W19 `pty.*` frames whenever the deployment provides the wiring
+            // (`terminal.available`) or the terminal is on — and only if this runner
+            // advertised the capability (an older runner binary must not be told to open the
+            // port). Whether the terminal is *on* is the live switch, checked at each open and
+            // when a boot document is built.
+            terminal: {
+                let t = &s.ops().terminal;
+                (t.enabled || t.available) && req.capabilities.terminal
+            },
         },
     })
 }
@@ -168,7 +173,7 @@ async fn apply(
                 message: st.message.as_deref(),
                 events: &st.events,
                 lease_secs: super::work::start_lease_secs(
-                    s.config.hosted.sandbox_ready_timeout_secs,
+                    s.ops().hosted.sandbox_ready_timeout_secs,
                 ),
             };
             let (a, revoked) =

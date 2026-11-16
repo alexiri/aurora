@@ -862,7 +862,7 @@ async fn create_user(
         let short: String = name.chars().take(74).collect();
         let org = tenancy::service::create_organization(
             tx,
-            &state.config,
+            &state.ops(),
             user.id,
             &format!("{short}'s org"),
             None,

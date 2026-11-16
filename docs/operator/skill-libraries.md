@@ -14,6 +14,9 @@ Then **Skills › Skill libraries › Connect a repository** (or `POST /v1/orgs/
 
 ## Configuration
 
+(Phase 5, SET-5.) The three keys below are edited on **Admin › Settings › Skill libraries** and read at each refresh and fetch;
+setting one under `config.skills.library.*` in Helm locks it.
+
 | Key | Default | Meaning |
 |-----|---------|---------|
 | `skills.library.enabled` | `true` | Kill-switch. `false` hides the feature (every route answers 404 `skill_libraries_disabled`) and stops the refresh job; stored skills keep working. |

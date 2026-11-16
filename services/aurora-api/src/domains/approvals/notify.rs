@@ -193,7 +193,7 @@ fn digest_mail(external_url: &str, to: &str, u: &repo::Unseen, waiting: usize) -
 /// One notifier sweep; returns the number of e-mails handed to the mailer.
 pub async fn notify_once(s: &AppState) -> Result<usize, ApiError> {
     // `approvals.email_notifications = false` switches the channel off instance-wide.
-    if !s.config.approvals.email_notifications {
+    if !s.ops().approvals.email_notifications {
         return Ok(0);
     }
     let unseen = repo::unseen(
@@ -263,7 +263,7 @@ pub fn spawn(state: AppState) {
             }
         }
     });
-    if !state.config.approvals.email_notifications {
+    if !state.ops().approvals.email_notifications {
         tracing::info!(
             "approval e-mail notifications are disabled (approvals.email_notifications)"
         );

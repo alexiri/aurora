@@ -88,7 +88,7 @@ pub async fn get_settings(
 
 fn settings_payload(state: &AppState, scim: &OrgScim) -> ScimSettings {
     ScimSettings {
-        available: state.config.scim.enabled,
+        available: state.ops().scim.enabled,
         enabled: scim.enabled,
         email_domains: scim.email_domains.clone(),
         exclusive: scim.exclusive,
@@ -171,7 +171,7 @@ pub async fn put_settings(
 ) -> Result<Json<ScimSettings>, aurora_core::ApiError> {
     let a = c.org(&state, org).await?;
     owner_only(&a)?;
-    if !state.config.scim.enabled {
+    if !state.ops().scim.enabled {
         return Err(scim_unavailable());
     }
     require_session(&c)?;
@@ -183,7 +183,7 @@ pub async fn put_settings(
             let domains = clean_domains(raw)?;
             for d in &domains {
                 if !OrgScim::instance_domain_allowed(
-                    &state.config.scim.allowed_email_domains,
+                    &state.ops().scim.allowed_email_domains,
                     &format!("u@{d}"),
                 ) {
                     return Err(aurora_core::ApiError::unprocessable(
@@ -311,7 +311,7 @@ pub async fn create_token(
 ) -> Result<Response, aurora_core::ApiError> {
     let a = c.org(&state, org).await?;
     owner_only(&a)?;
-    if !state.config.scim.enabled {
+    if !state.ops().scim.enabled {
         return Err(scim_unavailable());
     }
     let scim = settings::org_scim(&state.pool, org).await.map_err(dberr)?;
@@ -333,7 +333,7 @@ pub async fn create_token(
     let days = p
         .expires_in_days
         .unwrap_or(limits::SCIM_TOKEN_DEFAULT_DAYS)
-        .min(state.config.scim.token_max_days)
+        .min(state.ops().scim.token_max_days)
         .max(1);
     let mut tx = state.pool.begin().await.map_err(sqlerr)?;
     // Serialize the count + insert per org (the `organizations` row lock the codebase uses

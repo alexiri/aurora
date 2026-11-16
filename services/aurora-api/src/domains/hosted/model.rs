@@ -72,7 +72,7 @@ pub const HARNESSES: [(&str, &str); 3] = [
 /// Harness ids agents may use on this instance: `hosted.enabled_harnesses`, plus `fake` when it
 /// is allowed (tests and dev).
 pub fn allowed_harnesses(state: &AppState) -> Vec<String> {
-    let h = &state.config.hosted;
+    let h = &state.ops().hosted;
     let mut v = h.enabled_harnesses.clone();
     if h.allow_fake_harness && !v.iter().any(|x| x == "fake") {
         v.push("fake".into());
@@ -476,7 +476,7 @@ pub async fn select(
     harness: &str,
 ) -> Result<Selection, ApiError> {
     // The scripted `fake` harness talks to no LLM: no key, no model (12 §Adapter fake).
-    if harness == "fake" && state.config.hosted.allow_fake_harness {
+    if harness == "fake" && state.ops().hosted.allow_fake_harness {
         return Ok(Selection::Chosen {
             choice: ModelChoice {
                 provider: "fake".into(),

@@ -50,7 +50,7 @@ async fn list_harnesses(
     )
     .await?;
     let items = s
-        .config
+        .ops()
         .hosted
         .enabled_harnesses
         .iter()
@@ -69,7 +69,7 @@ async fn list_harnesses(
         .collect();
     Ok(Json(HarnessList {
         items,
-        default: s.config.hosted.default_harness.clone(),
+        default: s.ops().hosted.default_harness.clone(),
     }))
 }
 
@@ -513,7 +513,7 @@ async fn model_readiness(
     let harness = a
         .harness
         .clone()
-        .unwrap_or_else(|| s.config.hosted.default_harness.clone());
+        .unwrap_or_else(|| s.ops().hosted.default_harness.clone());
     let mut conn = s.pool.acquire().await.map_err(DbError::from)?;
     let llm = s.llm();
     let r = model::readiness(
@@ -575,7 +575,7 @@ async fn list_models(
     let harness = a
         .harness
         .clone()
-        .unwrap_or_else(|| s.config.hosted.default_harness.clone());
+        .unwrap_or_else(|| s.ops().hosted.default_harness.clone());
     let eff = crate::domains::secrets::gov::effective_for(&s, a.org_id).await?;
     let mut conn = s.pool.acquire().await.map_err(DbError::from)?;
     let cands = hosted::granted_llm_secrets(&mut conn, a.id, a.org_id, a.workspace_id).await?;
