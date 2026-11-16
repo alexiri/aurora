@@ -20,7 +20,7 @@ use std::collections::HashMap;
 use std::os::unix::fs::{FileExt, MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio_tungstenite::tungstenite::Message;
@@ -336,7 +336,57 @@ impl Handler for Fs {
 
 // --------------------------------------------------------------------------- the fake runner
 
+/// The runner's API → supervisor credit window as the worst case the contract allows: the
+/// supervisor returns credit for a request no later than its reply, so the bytes of requests
+/// the server has not yet answered count against `TERMINAL_STREAM_WINDOW` (a real supervisor
+/// credits at the stdin write, earlier; the runner closes the leg 4502 when the window is
+/// exceeded). Both directions are SFTP streams: `u32` length + payload per packet, one reply
+/// per request, in order.
+#[derive(Default)]
+struct Window {
+    up: Vec<u8>,
+    down: Vec<u8>,
+    pending: std::collections::VecDeque<u64>,
+    inflight: u64,
+}
+
+impl Window {
+    fn packets(buf: &mut Vec<u8>) -> Vec<u64> {
+        let mut out = Vec::new();
+        while buf.len() >= 4 {
+            let n = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]) as usize;
+            if buf.len() < 4 + n {
+                break;
+            }
+            out.push(4 + n as u64);
+            buf.drain(..4 + n);
+        }
+        out
+    }
+    /// Bytes API → server; `true` while within the window.
+    fn request(&mut self, b: &[u8]) -> bool {
+        self.up.extend_from_slice(b);
+        for p in Self::packets(&mut self.up) {
+            self.pending.push_back(p);
+            self.inflight += p;
+        }
+        self.inflight <= aurora_core::limits::TERMINAL_STREAM_WINDOW as u64
+    }
+    /// Bytes server → API: each reply credits the oldest request.
+    fn reply(&mut self, b: &[u8]) {
+        self.down.extend_from_slice(b);
+        for _ in Self::packets(&mut self.down) {
+            self.inflight -= self.pending.pop_front().unwrap_or(0);
+        }
+    }
+}
+
 struct Fake {
+    /// Legs closed 4502 because the API sent more than the credit window allows.
+    window_violations: Arc<AtomicUsize>,
+    /// Milliseconds the fake holds each SFTP reply (a runner ↔ supervisor round trip); `0`
+    /// answers as fast as the in-process server does.
+    reply_delay_ms: Arc<AtomicU64>,
     root: PathBuf,
     outside: PathBuf,
     /// SFTP requests the server handled (INIT excluded).
@@ -377,6 +427,7 @@ async fn fake_runner(r: &Rig, api: &str) -> Fake {
     std::fs::create_dir_all(&outside).unwrap();
     let reqs = Arc::new(AtomicUsize::new(0));
     let legs = Arc::new(AtomicUsize::new(0));
+    let violations = Arc::new(AtomicUsize::new(0));
     let (kill, _) = tokio::sync::watch::channel(0u64);
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap().to_string();
@@ -395,14 +446,19 @@ async fn fake_runner(r: &Rig, api: &str) -> Fake {
         .unwrap();
     let (api, tok) = (api.to_owned(), r.tok.clone());
     let (root2, reqs2, legs2, kill2) = (root.clone(), reqs.clone(), legs.clone(), kill.clone());
+    let viol2 = violations.clone();
+    let delay = Arc::new(AtomicU64::new(0));
+    let delay2 = delay.clone();
     tokio::spawn(async move {
         while let Ok((tcp, _)) = listener.accept().await {
-            let (api, tok, root, reqs, legs) = (
+            let (api, tok, root, reqs, legs, viol, delay) = (
                 api.clone(),
                 tok.clone(),
                 root2.clone(),
                 reqs2.clone(),
                 legs2.clone(),
+                viol2.clone(),
+                delay2.clone(),
             );
             let mut kill_rx = kill2.subscribe();
             tokio::spawn(async move {
@@ -462,6 +518,9 @@ async fn fake_runner(r: &Rig, api: &str) -> Fake {
                 .await;
                 let mut buf = vec![0u8; 16 * 1024 + 1];
                 buf[0] = 0x02;
+                let mut window = Window::default();
+                let mut held: std::collections::VecDeque<(tokio::time::Instant, Vec<u8>)> =
+                    std::collections::VecDeque::new();
                 loop {
                     tokio::select! {
                         _ = kill_rx.changed() => {
@@ -475,6 +534,16 @@ async fn fake_runner(r: &Rig, api: &str) -> Fake {
                         }
                         m = ws.next() => match m {
                             Some(Ok(Message::Binary(b))) if b.first() == Some(&0x02) => {
+                                if !window.request(&b[1..]) {
+                                    viol.fetch_add(1, Ordering::SeqCst);
+                                    let _ = ws.send(Message::Close(Some(
+                                        tokio_tungstenite::tungstenite::protocol::CloseFrame {
+                                            code: 4502.into(),
+                                            reason: "".into(),
+                                        })))
+                                        .await;
+                                    return;
+                                }
                                 if sftp_io.write_all(&b[1..]).await.is_err() { return; }
                             }
                             Some(Ok(Message::Close(_))) | None | Some(Err(_)) => return,
@@ -482,16 +551,32 @@ async fn fake_runner(r: &Rig, api: &str) -> Fake {
                         },
                         n = sftp_io.read(&mut buf[1..]) => match n {
                             Ok(n) if n > 0 => {
-                                if ws.send(Message::Binary(buf[..=n].to_vec().into())).await.is_err() { return; }
+                                let due = tokio::time::Instant::now()
+                                    + std::time::Duration::from_millis(delay.load(Ordering::Relaxed));
+                                held.push_back((due, buf[..=n].to_vec()));
                             }
                             _ => return,
                         },
+                        // A held reply is due: send it. Credit comes back with the reply, so
+                        // only now may the API's next request count against a smaller window.
+                        () = async {
+                            match held.front() {
+                                Some((due, _)) => tokio::time::sleep_until(*due).await,
+                                None => std::future::pending().await,
+                            }
+                        } => {
+                            let Some((_, reply)) = held.pop_front() else { continue };
+                            if ws.send(Message::Binary(reply.clone().into())).await.is_err() { return; }
+                            window.reply(&reply[1..]);
+                        }
                     }
                 }
             });
         }
     });
     Fake {
+        window_violations: violations,
+        reply_delay_ms: delay,
         root,
         outside,
         reqs,
@@ -1181,6 +1266,30 @@ async fn large_file_round_trips() {
         .await
         .unwrap();
     assert_eq!(res.bytes().await.unwrap().to_vec(), data);
+}
+
+/// The pipelined upload stays inside the leg's credit window (`TERMINAL_STREAM_WINDOW`) even
+/// when credit lags until the reply: 4 × 32 KiB of data plus the SFTP request headers must not
+/// exceed 128 KiB, or the runner closes the leg 4502 and the upload dies mid-transfer (found
+/// on kind: 1 MiB and 20 MiB uploads answered 422 intermittently).
+#[tokio::test]
+async fn upload_never_exceeds_the_credit_window() {
+    let t = env().await;
+    // Replies take a round trip: the whole pipeline is on the wire before the first one lands.
+    t.fake.reply_delay_ms.store(25, Ordering::Relaxed);
+    for (i, size) in [1usize << 20, (1 << 20) + 5, 160 * 1024, 5 * 32 * 1024]
+        .into_iter()
+        .enumerate()
+    {
+        let data: Vec<u8> = (0..size).map(|j| (j % 253) as u8).collect();
+        let name = format!("win{i}.bin");
+        let (s, v) = t
+            .put(&format!("%2Fworkspace%2F{name}"), data.clone(), &[])
+            .await;
+        assert_eq!(s, 201, "{size} bytes: {v}");
+        assert_eq!(std::fs::read(t.ws(&name)).unwrap(), data, "{size} bytes");
+    }
+    assert_eq!(t.fake.window_violations.load(Ordering::SeqCst), 0);
 }
 
 /// Keep-awake: a request stamps `files_active_until` (throttled to once per 30 s) and the

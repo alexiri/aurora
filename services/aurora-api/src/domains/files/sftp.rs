@@ -21,10 +21,21 @@ const CHUNK: usize = 16 * 1024;
 const TAG_DATA: u8 = 0x02;
 const TAG_STDERR: u8 = 0x03;
 const POSIX_RENAME: &str = "posix-rename@openssh.com";
-/// Bytes per SFTP READ/WRITE request (OpenSSH's `sftp-server` caps a request at 256 KiB).
-pub const BLOCK: usize = 32 * 1024;
+/// SFTP header bytes of a WRITE request on top of its data (length, type, id, handle string,
+/// offset, data length: ~30 B with OpenSSH's 4-byte handles) plus headroom for longer handles.
+const REQUEST_HEADROOM: usize = 512;
+/// Data bytes per SFTP READ/WRITE request: 32 KiB less [`REQUEST_HEADROOM`], so a full pipeline
+/// of whole requests fits the leg's credit window (OpenSSH's `sftp-server` caps a request at
+/// 256 KiB). With exactly 32 KiB of data, 4 requests are 131 180 bytes: over the 131 072 the
+/// runner allows unreplied, and it closes the leg when credit lags the burst.
+pub const BLOCK: usize = 32 * 1024 - REQUEST_HEADROOM;
 /// Requests outstanding per transfer (`16 §W21`: "4 × 32 KiB").
 pub const PIPELINE: usize = 4;
+
+const _: () = assert!(
+    PIPELINE * (BLOCK + REQUEST_HEADROOM) <= aurora_core::limits::TERMINAL_STREAM_WINDOW,
+    "a full write pipeline must fit the leg's credit window"
+);
 
 /// Why a session could not be opened.
 #[derive(Debug)]
@@ -62,6 +73,8 @@ fn map_err(e: ClientError) -> Fail {
             _ => Fail::Failed,
         },
         ClientError::Timeout | ClientError::IO(_) | ClientError::UnexpectedPacket => Fail::Down,
+        // The leg task ended (the runner closed it): the session is gone, not the operation.
+        ClientError::UnexpectedBehavior(m) if m == "session closed" => Fail::Down,
         _ => Fail::Failed,
     }
 }
