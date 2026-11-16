@@ -57,7 +57,7 @@ test.describe("agent Files page", () => {
       el.dispatchEvent(new DragEvent("drop", { dataTransfer: dt, bubbles: true, cancelable: true }));
     });
     await expect(page.getByRole("region", { name: "Uploads" }).getByText("Done")).toBeVisible();
-    await expect(page.getByRole("button", { name: "dropped.txt" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "dropped.txt", exact: true })).toBeVisible();
     expect(fs.puts.map((p) => [p.path, p.headers["if-none-match"], p.bytes])).toEqual([["/workspace/dropped.txt", "*", 13]]);
   });
 
