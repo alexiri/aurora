@@ -52,6 +52,18 @@ export function SimulationResult({ sim }: { sim: Simulation }) {
           <span className="text-ink-2">none</span>
         )}
       </p>
+      {sim.app ? (
+        <p className="text-sm" data-testid="recognized-as">
+          Recognized as: <strong>{sim.app.app_id}</strong>
+          {" · "}
+          {sim.app.tool_id ? (
+            <code className="font-mono">{sim.app.tool_id}</code>
+          ) : (
+            <span className="text-ink-2">an action that is not in the app&apos;s list</span>
+          )}
+          {sim.winning_credential ? <span>, with the account {sim.winning_credential.name}</span> : null}
+        </p>
+      ) : null}
       <TraceList title="Organization" trace={sim.trace.organization} />
       <TraceList title="Workspace" trace={sim.trace.workspace} />
     </div>

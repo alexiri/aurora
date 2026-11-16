@@ -16,14 +16,7 @@ pub enum GuardError {
 /// (FIX-104, D-180, SEC-04) A credential claimed by a package's host entry or a generic secret's
 /// host pattern is injected only into a request that leaves over TLS to the claimed port (443
 /// when the claim names none). Plain HTTP or another port: an uncredentialed request.
-pub fn claim_transport_ok(claim_port: Option<u16>, https: bool, port: u16) -> bool {
-    https && port == claim_port.unwrap_or(443)
-}
-
-/// The port a host-entry claim names (`host:port`), if any.
-pub fn claim_port(claim: &str) -> Option<u16> {
-    HostPattern::lenient(claim).port()
-}
+pub use aurora_registry::identify::{claim_port, claim_transport_ok};
 
 /// `gateway.insecure_loopback_injection` (tests only): the destination is a loopback address
 /// literal or `localhost`, which no network peer can be reached through.

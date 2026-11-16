@@ -2,6 +2,7 @@
 mod builtin_versions;
 mod family;
 mod grants_params;
+mod identify;
 mod instances;
 mod ldap;
 mod library;

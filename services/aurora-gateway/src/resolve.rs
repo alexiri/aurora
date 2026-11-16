@@ -701,16 +701,14 @@ impl Resolver {
                 .iter()
                 .map(|i| (i.id, (i.host.clone(), i.base_path.clone())))
                 .collect();
-            instances = visible
-                .into_iter()
-                .filter(|i| i.host.eq_ignore_ascii_case(&k.host))
-                .filter(|i| {
-                    l.snapshot
-                        .app(&i.app_id)
-                        .is_some_and(|a| a.instances.is_some())
-                })
-                .filter(|i| !entries.iter().any(|e| e.app_id != i.app_id))
-                .collect();
+            instances = aurora_registry::identify::host_instances(
+                &l.snapshot,
+                visible,
+                &k.host,
+                &entries,
+                |i| i.host.as_str(),
+                |i| i.app_id.as_str(),
+            );
             known_app_host = !entries.is_empty() || !instances.is_empty();
             let mut app_ids: Vec<String> = entries.iter().map(|e| e.app_id.clone()).collect();
             app_ids.extend(instances.iter().map(|i| i.app_id.clone()));
