@@ -33,6 +33,8 @@ export function OriginView({ origin }: { origin: Origin | null | undefined }) {
     ["Organization", origin.organization_id],
     ["Workspace", origin.workspace_id],
     ["Team", origin.team_id],
+    // Assume-role and Entra keys: the role ARN or the application id the provider reported (C-804).
+    ["Role or application", origin.user_id],
   ].filter(([, v]) => !!v);
   // A key that reports no team verifies with `team_id = null` under `litellm_team` (C-502).
   const teamless = verified && origin.method === "litellm_team" && !origin.team_id;

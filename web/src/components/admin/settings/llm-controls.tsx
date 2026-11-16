@@ -1,14 +1,18 @@
 "use client";
 
+import Link from "next/link";
 import { useState, type ReactNode } from "react";
 
 import { EndpointDialog, HelmEndpointDialog, PROVIDER_LABEL } from "@/components/admin/settings/llm-endpoint-dialog";
 import type { SettingControlCtx } from "@/components/admin/settings/settings-section-form";
+import { HARNESS_LABEL } from "@/components/credentials/llm-key-modes";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { CheckboxField } from "@/components/ui/form";
+import { Notice } from "@/components/ui/notice";
 import { ItemList, ListRow } from "@/components/ui/section";
 import { SettingField, settingControlId } from "@/components/ui/setting-field";
+import { adminRoutes } from "@/lib/routes";
 
 export const ENABLED = "llm.enabled_providers";
 export const PREFERENCE = "llm.provider_preference";
@@ -138,18 +142,43 @@ function hostOf(url: unknown): string {
   return typeof url === "string" ? url : "";
 }
 
+/** The harnesses an endpoint serves as `Badge`s, or the notice that it serves none (D-260(a), C-811). */
+function HarnessLine({ harnesses }: { harnesses: string[] | undefined }) {
+  if (harnesses === undefined) return null;
+  if (harnesses.length === 0) {
+    return (
+      <Notice tone="pending" role="status" className="max-w-xl text-xs">
+        No enabled harness speaks this API. Put a LiteLLM endpoint in front to translate.
+      </Notice>
+    );
+  }
+  return (
+    <div role="group" className="flex flex-wrap items-center gap-1.5" aria-label="Harnesses this endpoint serves">
+      {harnesses.map((h) => (
+        <Badge key={h}>{HARNESS_LABEL[h] ?? h}</Badge>
+      ))}
+    </div>
+  );
+}
+
 /** The endpoints: Helm entries read-only ("Managed by Helm"), dashboard entries editable and removable. */
 export function EndpointsControl({
   ctx,
   available,
   enabledEffective,
+  harnesses,
 }: {
   ctx: SettingControlCtx;
   available: string[];
   enabledEffective: unknown;
+  /** The enabled harnesses that speak each endpoint's API, by endpoint id (`extra.endpoint_harnesses`). */
+  harnesses?: Record<string, string[]>;
 }) {
   const s = ctx.setting;
   const helm = (s.entries ?? []).filter((e) => e.source === "helm");
+  // C-813: the saved dashboard endpoint whose host the gateway would refuse (a private name nothing opens).
+  const needsPrivate = (id: string): boolean =>
+    (s.entries ?? []).some((e) => e.id === id && e.source === "dashboard" && e.warnings?.includes("needs_allowed_private"));
   const own = ctx.own;
   const helmIds = helm.map((e) => e.id);
   const enabled = enabledNow(ctx, enabledEffective);
@@ -192,6 +221,7 @@ export function EndpointsControl({
             <Badge tone="pending">Managed by Helm</Badge>
           </div>
           {hostOf(v.base_url) ? <p className="break-all text-xs text-ink-2">{hostOf(v.base_url)}</p> : null}
+          <HarnessLine harnesses={harnesses?.[e.id]} />
         </div>
       </ListRow>,
     );
@@ -220,8 +250,19 @@ export function EndpointsControl({
             <Badge>{label(String(e.provider ?? ""))}</Badge>
             <Badge tone="accent">Dashboard</Badge>
             {bad ? <Badge tone="danger">Needs attention</Badge> : null}
+            {needsPrivate(id) ? (
+              <Link href={adminRoutes.sectionPage("limits", "gateway.allowed_private")} className="rounded-control focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent">
+                <Badge tone="danger">Private address not allowed</Badge>
+              </Link>
+            ) : null}
           </div>
           {hostOf(e.base_url) ? <p className="break-all text-xs text-ink-2">{hostOf(e.base_url)}</p> : null}
+          {needsPrivate(id) ? (
+            <p className="text-xs text-ink-2">
+              The gateway refuses this address until it is added to the allowed private destinations in Limits.
+            </p>
+          ) : null}
+          <HarnessLine harnesses={harnesses?.[id]} />
           {bad ? (
             <ul className="list-disc pl-5 text-xs text-danger-ink">
               {Object.entries(errs).map(([f, m]) => (

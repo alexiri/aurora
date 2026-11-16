@@ -90,6 +90,10 @@ for (const scheme of ["light", "dark"] as const) {
         await expect(page.getByText("Managed by Helm")).toBeVisible();
         await expect(page.getByRole("button", { name: "Edit team" })).toBeVisible();
         await expect(page.getByRole("button", { name: "Edit central" })).toHaveCount(0);
+        // P4-LLM-6: harness badges, the no-harness notice and the private-address mark with its link to Limits.
+        await expect(page.getByLabel("Harnesses this endpoint serves").getByText("Claude Code")).toBeVisible();
+        await expect(page.getByText("No enabled harness speaks this API.")).toBeVisible();
+        await expect(page.getByRole("link", { name: "Private address not allowed" })).toBeVisible();
         await page.getByRole("button", { name: "Edit team" }).click();
         const dialog = page.getByRole("dialog");
         await expect(dialog.getByRole("button", { name: "Test connection" })).toBeVisible();

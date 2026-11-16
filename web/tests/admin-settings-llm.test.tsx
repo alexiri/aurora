@@ -51,14 +51,16 @@ interface Opts {
   enabled?: string[];
   enabledLocked?: boolean;
   prefLocked?: boolean;
-  entries?: { id: string; value: Record<string, unknown>; source: "helm" | "dashboard" }[];
+  entries?: { id: string; value: Record<string, unknown>; source: "helm" | "dashboard"; warnings?: string[] }[];
+  /** `extra.endpoint_harnesses` (C-811): the enabled harnesses that speak each endpoint's API. */
+  harnesses?: Record<string, string[]>;
 }
 
 function llm(o: Opts = {}) {
   const enabled = o.enabled ?? ["litellm", "anthropic"];
-  const entries = o.entries ?? [
-    { id: "central", value: central, source: "helm" as const },
-    { id: "team", value: team, source: "dashboard" as const },
+  const entries: NonNullable<Opts["entries"]> = o.entries ?? [
+    { id: "central", value: central, source: "helm" },
+    { id: "team", value: team, source: "dashboard" },
   ];
   return {
     section: "llm",
@@ -67,7 +69,7 @@ function llm(o: Opts = {}) {
     generation: 4,
     updated_at: "2026-11-15T10:00:00Z",
     updated_by_label: "root@x.io",
-    extra: { providers: PROVIDERS },
+    extra: { providers: PROVIDERS, ...(o.harnesses ? { endpoint_harnesses: o.harnesses } : {}) },
     settings: [
       {
         key: "llm.enabled_providers",
@@ -105,7 +107,7 @@ function llm(o: Opts = {}) {
         schema: schema("list", { item_kind: "object" }),
         list: "keyed",
         id_field: "id",
-        entries: entries.map((e) => ({ id: e.id, value: e.value, source: e.source, locked: e.source === "helm", warnings: null })),
+        entries: entries.map((e) => ({ id: e.id, value: e.value, source: e.source, locked: e.source === "helm", warnings: e.warnings ?? null })),
         secret: null,
       },
     ],
@@ -355,5 +357,106 @@ describe("Admin › Settings › LLM endpoints (SET-3)", () => {
     expect(puts).not.toHaveBeenCalled();
     fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
     await waitFor(() => expect(puts).toHaveBeenCalledTimes(1));
+  });
+
+  it("shows the harnesses each endpoint serves as badges, and a notice for one that serves none (D-260(a))", async () => {
+    await open({}, { harnesses: { central: ["claude_code", "codex"], team: [] } });
+    const rows = within(screen.getByRole("list", { name: "Endpoints" })).getAllByRole("listitem");
+    const badges = within(rows[0]!).getByLabelText("Harnesses this endpoint serves");
+    expect(within(badges).getByText("Claude Code")).toBeTruthy();
+    expect(within(badges).getByText("Codex")).toBeTruthy();
+    expect(within(rows[0]!).queryByText(/No enabled harness speaks this API/)).toBeNull();
+    expect(within(rows[1]!).getByText("No enabled harness speaks this API. Put a LiteLLM endpoint in front to translate.")).toBeTruthy();
+  });
+
+  it("marks a dashboard endpoint on a private address the gateway refuses, linking to Limits (C-813)", async () => {
+    await open(
+      {},
+      {
+        entries: [
+          { id: "central", value: central, source: "helm" },
+          { id: "team", value: team, source: "dashboard", warnings: ["needs_allowed_private"] },
+        ],
+      },
+    );
+    const rows = within(screen.getByRole("list", { name: "Endpoints" })).getAllByRole("listitem");
+    expect(within(rows[0]!).queryByText("Private address not allowed")).toBeNull();
+    const badge = within(rows[1]!).getByText("Private address not allowed");
+    const link = badge.closest("a")!;
+    expect(link.getAttribute("href")).toMatch(/^\/admin\/platform\?tab=limits#gateway\.allowed_private$/);
+  });
+
+  it("words http_needs_private_host and endpoint_host_claimed on the endpoint's base URL", async () => {
+    await open({
+      "POST /v1/admin/settings/llm/preview": () => json(200, preview()),
+      "PUT /v1/admin/settings/llm": () =>
+        json(422, {
+          error: {
+            code: "settings_invalid",
+            message: "Some settings are not valid.",
+            details: {
+              fields: [
+                { path: "/llm.endpoints/team/base_url", code: "http_needs_private_host", message: "plain http is only allowed to a private address that gateway.allowed_private opens" },
+                { path: "/llm.endpoints/team/base_url", code: "endpoint_host_claimed", message: "the host belongs to the app `jira`", app_id: "jira" },
+              ],
+            },
+          },
+        }),
+    });
+    fireEvent.click(screen.getByRole("checkbox", { name: "OpenAI" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    const row = (await screen.findByText("Needs attention")).closest("li")!;
+    expect(within(row).getByText(/plain http is only allowed to a private address/)).toBeTruthy();
+    // The dialog puts the message on the base URL field itself.
+    fireEvent.click(within(row).getByRole("button", { name: "Edit team" }));
+    const dialog = await screen.findByRole("dialog");
+    const base = within(dialog).getByLabelText("Base URL");
+    expect(base.getAttribute("aria-invalid")).toBe("true");
+    expect(within(dialog).getByText(/plain http is only allowed to a private address/)).toBeTruthy();
+  });
+
+  it("shows the endpoint_resolves_private warning in the save confirmation (C-813)", async () => {
+    const puts = vi.fn();
+    await open({
+      "POST /v1/admin/settings/llm/preview": () =>
+        json(
+          200,
+          preview({
+            warnings: [
+              {
+                code: "endpoint_resolves_private",
+                key: "llm.endpoints",
+                entry_id: "team",
+                message: "The host of endpoint `team` resolves to a private, loopback or link-local address.",
+              },
+            ],
+          }),
+        ),
+      "PUT /v1/admin/settings/llm": () => {
+        puts();
+        return json(200, llm());
+      },
+    });
+    fireEvent.click(screen.getByRole("checkbox", { name: "OpenAI" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText(/resolves to a private, loopback or link-local address/)).toBeTruthy();
+    expect(puts).not.toHaveBeenCalled();
+  });
+
+  it("hides allowed_paths for Bedrock and Vertex and shows each provider's own fields", async () => {
+    await open({}, { enabled: ["litellm", "anthropic", "vertex", "openai_compatible"] });
+    fireEvent.click(screen.getByRole("button", { name: "Add endpoint…" }));
+    let dialog = await screen.findByRole("dialog");
+    fireEvent.change(within(dialog).getByLabelText("Provider"), { target: { value: "vertex" } });
+    expect(within(dialog).getByLabelText("Project id")).toBeTruthy();
+    expect(within(dialog).getByLabelText("Location")).toBeTruthy();
+    expect(within(dialog).queryByLabelText("Allowed paths")).toBeNull();
+    fireEvent.change(within(dialog).getByLabelText("Provider"), { target: { value: "openai_compatible" } });
+    expect(within(dialog).getByLabelText("Key header")).toBeTruthy();
+    expect(within(dialog).getByLabelText("Models path")).toBeTruthy();
+    expect(within(dialog).getByLabelText("Allowed paths")).toBeTruthy();
+    dialog = screen.getByRole("dialog");
+    expect(dialog).toBeTruthy();
   });
 });

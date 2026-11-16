@@ -78,6 +78,65 @@ An unknown name in `enabled_providers` also stops startup.
 `llm.provider_preference` (default `["litellm", "anthropic"]`) sets the auto-selection order
 for hosted agents (`services/aurora-api/src/domains/hosted/model.rs`).
 
+## Cloud providers and how a key signs in (phase 5, P4-LLM-2..6)
+
+Three cloud providers sit beside the key-only ones. Enable the provider (`llm.enabled_providers`, or the
+checkbox on the page), add an endpoint, then organizations add their keys on **Credentials › LLM keys**.
+A provider's **auth modes** decide what a key is; the key form offers the modes the endpoint admits, the
+recommended one first, and shows the verified account after saving (never a secret again).
+
+| Provider | Endpoint fields | Auth modes (recommended first) |
+|----------|-----------------|--------------------------------|
+| `openai` | optional `organization`, `project` | API key |
+| `azure_openai` | `base_url` (`https://<resource>.openai.azure.com`, host only), `models` and `default_model` (deployment names) | Microsoft Entra application (tenant id, client id, client secret); resource key |
+| `bedrock` | `region` (for example `eu-central-1`), optional `base_url` (a VPC endpoint, https, host only); no `allowed_paths` | Assume a role (role ARN, source access key, optional session length); access keys; Bedrock API key |
+| `vertex` | `project_id`, `location` (`global` or a region), `models` and `default_model`; no `base_url`, no `allowed_paths` | Service account key file |
+| `openai_compatible` | `base_url`, optional `auth_header` and `models_path` | API key |
+
+**Assume a role (Bedrock).** Aurora never stores long-lived access to the role: it assumes it with short-lived
+credentials. Create an IAM role in the account whose Bedrock models you want, give it a trust policy that allows
+the source IAM user and **requires the organization's external id** (the form shows the id and a policy you can
+copy; Aurora always sends that id, so a role that does not require it works for anyone who knows the ARN), and
+attach `bedrock:InvokeModel*`. A refused assume shows "AWS refused to let this key assume the role"; check the
+trust policy first. Access keys should be limited to `bedrock:InvokeModel*` as well.
+
+**Harnesses.** An endpoint's API format decides which agent harnesses can use it: Claude Code speaks the Anthropic,
+Bedrock and Vertex formats, Codex the OpenAI Responses format. The endpoint list shows the enabled harnesses an
+endpoint serves; one that serves none says so. To use a model across formats (a Claude agent on an OpenAI-only
+endpoint, say), put a **LiteLLM** endpoint in front: it translates, and the agent talks to LiteLLM.
+
+## Where an endpoint may point (D-262)
+
+An LLM endpoint is a destination the gateway dials on every agent request, so who defines it matters:
+
+- **An endpoint defined in Helm** (`config.llm.endpoints`) is the operator's own choice. Its host passes the
+  gateway's destination guard even when it resolves to a private address (an in-cluster LiteLLM, say).
+  Plain `http` is allowed for `litellm` and `openai_compatible` entries, as before.
+- **An endpoint added in the dashboard has no such pass.** To reach a private, loopback or otherwise special
+  address its host (or address) must be covered by `gateway.allowed_private` (Administration › Platform › Limits),
+  the audited setting that governs every private destination. A dashboard endpoint on a private name is
+  marked **Private address not allowed** on the list, and the save confirmation warns
+  (`endpoint_resolves_private`); the gateway refuses it at dial time until an operator opens the address. Plain
+  `http` is accepted only for a loopback host or one that `gateway.allowed_private` covers
+  (`http_needs_private_host`).
+- **Cloud metadata and link-local addresses** (`169.254.0.0/16`, `fe80::/10`, `fd00:ec2::254`) are never opened
+  implicitly for any source, whatever the name resolves to. Only an exact-IP `gateway.allowed_private` entry
+  opens a metadata address.
+- **Host ownership.** A dashboard endpoint whose host an active app claims, or that an app-instance registration
+  holds, is refused (`endpoint_host_claimed`, naming the app). Remove the claim or the registration first. The
+  reverse, a package claiming an endpoint's host, is already refused.
+- **Handing a Helm endpoint to the dashboard.** Remove the entry from the values file (or keep a copy on the
+  page under another id): the dashboard copy loses the implicit pass at that start. If it points at a private
+  address, add the address to `gateway.allowed_private` in the same change, or the endpoint stops working
+  (the page marks it; the save warns).
+- The gateway rebuilds the endpoint table and this allowance together on every `llm` or `limits` change, with
+  no restart; removing an endpoint revokes its pass at the next request.
+
+**Test connection** probes each provider's own path with no credential, through the same guard: OpenAI
+`/v1/models`, Azure `<resource>/openai/v1/models`, Bedrock the regional runtime host (or the VPC endpoint) root,
+Vertex `/v1/projects/<project>/locations/<location>`, compatible servers `<base>` plus `models_path`
+(default `/v1/models`). Any answer below 500, a 401 or 403 included, means the endpoint is there.
+
 ## Endpoint keys
 
 Each entry of `[[llm.endpoints]]` accepts:
