@@ -687,7 +687,9 @@ mod tls_roots {
                     let mut buf = [0u8; 1024];
                     let _ = tls.read(&mut buf).await;
                     let _ = tls
-                        .write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\nconnection: close\r\n\r\n")
+                        .write_all(
+                            b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\nconnection: close\r\n\r\n",
+                        )
                         .await;
                     let _ = tls.shutdown().await;
                 });
@@ -706,7 +708,8 @@ mod tls_roots {
         let (pem, params, key) = ca();
         let (other_pem, _, _) = ca();
         let url = serve(&params, &key).await;
-        let bundle = std::env::temp_dir().join(format!("aurora-fix160-{}.pem", uuid::Uuid::now_v7()));
+        let bundle =
+            std::env::temp_dir().join(format!("aurora-fix160-{}.pem", uuid::Uuid::now_v7()));
         std::fs::write(&bundle, &pem).unwrap();
         let bundle = bundle.to_string_lossy().into_owned();
 

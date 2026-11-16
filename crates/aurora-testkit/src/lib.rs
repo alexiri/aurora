@@ -265,24 +265,91 @@ impl Drop for TestDb {
         }
         // Best effort: run the DROP on a dedicated thread with its own runtime,
         // so this works whether or not the caller's runtime is still alive.
+        // (FIX-160) Wait until the DROP has finished, unless it is stuck on Postgres's
+        // ProcSignalBarrier. While this blocks, the test's (current-thread) runtime is frozen, and
+        // a pool connection it was opening stays in Postgres's `authentication` phase. Such a
+        // backend never absorbs the barrier `DROP DATABASE` waits on, so a plain join stalled
+        // every such test until `authentication_timeout` (60 s) with sqlx 0.9. When the barrier
+        // wait is detected we return; the test's runtime ends, the half-open connection closes
+        // and the DROP completes in the background (a DROP still pending when the process exits
+        // is lost).
         let server_url = self.server_url.clone();
         let name = self.name.clone();
         let role = self.gateway_role.clone();
-        let handle = std::thread::spawn(move || {
+        let (tx, rx) = std::sync::mpsc::channel::<()>();
+        std::thread::spawn(move || {
             let rt = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
                 .ok()?;
-            rt.block_on(async {
-                let r = drop_database(&server_url, &name).await.ok();
+            let r = rt.block_on(async {
+                let r = drop_database_watched(&server_url, &name, tx.clone())
+                    .await
+                    .ok();
                 if let Some(role) = role {
                     drop_role(&server_url, &role).await.ok();
                 }
                 r
-            })
+            });
+            let _ = tx.send(());
+            r
         });
-        let _ = handle.join();
+        // Done, or blocked on the barrier; the bound is only a safety net.
+        let _ = rx.recv_timeout(std::time::Duration::from_secs(120));
     }
+}
+
+/// [`drop_database`], signalling `blocked` once the DROP has waited on `ProcSignalBarrier` for a
+/// full second (it then still runs to completion).
+async fn drop_database_watched(
+    server_url: &str,
+    name: &str,
+    blocked: std::sync::mpsc::Sender<()>,
+) -> anyhow::Result<()> {
+    let mut admin = connect_admin(server_url)
+        .await
+        .context("connecting to test server for DROP")?;
+    let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut admin)
+        .await
+        .context("reading the DROP session's pid")?;
+    let watch = async {
+        let Ok(mut probe) = connect_admin(server_url).await else {
+            return std::future::pending::<()>().await;
+        };
+        let mut waited = 0;
+        while waited < 10 {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            let wait: Option<String> =
+                sqlx::query_scalar("SELECT wait_event FROM pg_stat_activity WHERE pid = $1")
+                    .bind(pid)
+                    .fetch_optional(&mut probe)
+                    .await
+                    .ok()
+                    .flatten()
+                    .flatten();
+            waited = if wait.as_deref() == Some("ProcSignalBarrier") {
+                waited + 1
+            } else {
+                0
+            };
+        }
+        let _ = blocked.send(());
+        probe.close().await.ok();
+    };
+    {
+        let drop = sqlx::query(sqlx::AssertSqlSafe(format!(
+            "DROP DATABASE IF EXISTS \"{name}\" WITH (FORCE)"
+        )))
+        .execute(&mut admin);
+        tokio::pin!(drop);
+        tokio::select! {
+            r = &mut drop => { r.context("dropping test database")?; }
+            () = watch => { drop.await.context("dropping test database")?; }
+        }
+    }
+    admin.close().await.ok();
+    Ok(())
 }
 
 async fn drop_database(server_url: &str, name: &str) -> anyhow::Result<()> {
