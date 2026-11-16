@@ -372,8 +372,8 @@ pub fn sections() -> &'static [SectionDef] {
         let mut v = vec![
             SectionDef {
                 id: "governance",
-                title: "Governance",
-                description: "Instance floors for LLM keys, egress and bring-your-own agents.",
+                title: "Instance rules",
+                description: "What organizations may not go below: AI keys, Internet access and agents people run themselves.",
             },
             SectionDef {
                 id: "llm",

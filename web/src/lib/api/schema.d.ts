@@ -6882,6 +6882,15 @@ export interface components {
         };
         /** @enum {string} */
         CredentialKind: "secret" | "connection";
+        /** @description A key's current value, read-only (C-973). */
+        CurrentValue: {
+            key: string;
+            label: string;
+            /** @description `helm` or `default`. */
+            source: string;
+            /** @description The value in words; a secret reads only "Set" or "Not set". */
+            value_display: string;
+        };
         /** @description How an agent reaches a database connection (P2-DBL-2, C-230); `null` for other apps. */
         DatabaseRef: {
             /** @description `postgres`. */
@@ -7138,6 +7147,32 @@ export interface components {
              *     tab exists only when this is true.
              */
             terminal: boolean;
+        };
+        /** @description One choice of an enumeration field (C-972). */
+        FieldChoice: {
+            description: string;
+            label: string;
+            value: string;
+        };
+        /** @description An operator document, by title (C-972). */
+        FieldDoc: {
+            path: string;
+            title: string;
+        };
+        /** @description A settings field in words (C-972, D-341): what the dashboard shows instead of a key. */
+        FieldInfo: {
+            choices?: components["schemas"]["FieldChoice"][] | null;
+            /** @description The default, in words. */
+            default_display: string;
+            doc?: components["schemas"]["FieldDoc"] | null;
+            /** @description One sentence: what the setting does and when to change it. */
+            help: string;
+            key: string;
+            /** @description `bool`, `int`, `float`, `duration`, `enum`, `list`, `text`, `secret` or `keyed_list`. */
+            kind: string;
+            label: string;
+            /** @description The unit the control edits in (a duration: `seconds`, `minutes`, `hours` or `days`). */
+            unit?: string | null;
         };
         FileEntry: {
             /** @description `file` | `dir` | `symlink` | `other`. */
@@ -11042,6 +11077,8 @@ export interface components {
         };
         SectionSummary: {
             description: string;
+            /** @description The section's fields in words: All settings searches their labels and help (C-972). */
+            fields: components["schemas"]["FieldInfo"][];
             /** Format: int64 */
             generation: number;
             /** Format: int64 */
@@ -11156,9 +11193,15 @@ export interface components {
         };
         /** @description `GET`/`PUT /v1/admin/settings/{section}` (C-772, C-773). */
         SettingsSection: {
+            /** @description The running configuration's values, read-only; only when `editable` is `false` (C-973). */
+            current?: components["schemas"]["CurrentValue"][] | null;
             description: string;
+            /** @description `false` for a section whose keys are not editable yet: `current` holds its values (C-973). */
+            editable: boolean;
             /** @description Section-specific read-only data (C-778..C-782). */
             extra?: Record<string, never> | null;
+            /** @description The words of every setting above, in the same order (C-972). */
+            fields: components["schemas"]["FieldInfo"][];
             /** Format: int64 */
             generation: number;
             section: string;

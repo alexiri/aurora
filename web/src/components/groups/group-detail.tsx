@@ -448,7 +448,7 @@ function DeleteGroup({ g, orgId, orgSlug }: { g: Group; orgId: string; orgSlug: 
     <Section id="grp-danger" title="Delete group" card>
       <div className="space-y-3">
         <p className="text-sm text-ink-2">
-          Deleting a group removes its members and bindings. Policy rules that name it stay as they are and match
+          Deleting a group removes its members and bindings. Rules that name it stay as they are and match
           nobody.
         </p>
         {scim ? (

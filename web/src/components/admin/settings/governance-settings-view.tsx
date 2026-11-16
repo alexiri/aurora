@@ -18,9 +18,9 @@ import { orgRoutes } from "@/lib/routes";
 /** The four groups of the page (`08 §11`); every key of the registry's `governance` section appears once. */
 export const GOVERNANCE_GROUPS: SettingsGroup[] = [
   {
-    title: "LLM",
+    title: "AI keys",
     description:
-      "The floor every organization's model governance stays above: which key scopes may hold provider keys, the minimum posture, and whether a key's origin must be verified (08 §11.1).",
+      "The floor every organization's AI rules stay above: who may add AI keys, which AI endpoints agents may use, and whether a key's origin must be checked.",
     keys: [
       "governance.llm.minimum_posture",
       "governance.llm.allowed_key_scopes",
@@ -29,7 +29,7 @@ export const GOVERNANCE_GROUPS: SettingsGroup[] = [
     ],
   },
   {
-    title: "Egress",
+    title: "Internet access",
     description:
       "The baseline for what agents may reach: the minimum egress posture, the hosts allowed everywhere, and how far the open lane may be opened.",
     keys: [
@@ -52,15 +52,15 @@ export const GOVERNANCE_GROUPS: SettingsGroup[] = [
   {
     title: "Agent tokens",
     description:
-      "The longest life of an agent token. Lowering it shortens live tokens, keeping at least seven days; raising or removing it never extends one (08 §7).",
+      "The longest life of an agent token. Lowering it shortens live tokens, keeping at least seven days; raising or removing it never extends one.",
     keys: ["governance.agent_tokens.max_age_days"],
   },
 ];
 
 /** The governance section split over its topic pages (C-971): AI models › Rules, Internet access, Agents › BYO. */
 export const GOVERNANCE_PARTS = {
-  rules: GOVERNANCE_GROUPS.filter((g) => g.title === "LLM"),
-  internet: GOVERNANCE_GROUPS.filter((g) => g.title === "Egress"),
+  rules: GOVERNANCE_GROUPS.filter((g) => g.title === "AI keys"),
+  internet: GOVERNANCE_GROUPS.filter((g) => g.title === "Internet access"),
   byo: GOVERNANCE_GROUPS.filter((g) => g.title === "BYO agents" || g.title === "Agent tokens"),
 } as const;
 
@@ -97,8 +97,8 @@ export function GovernanceSettingsView() {
         description={section.description}
       />
       <Notice tone="neutral" role="status" className="max-w-3xl">
-        Policy is set per organization and workspace. There is no instance-wide rule scope: this page sets the
-        floor those policies cannot go below. See docs/operator/gateway-posture.md.
+        Rules are set per organization and workspace. There is no instance-wide rule scope: this page sets the
+        floor those rules cannot go below. See “Gateway posture and BYO agents” in the operator guide.
       </Notice>
       <SettingsSectionForm
         key={section.generation}

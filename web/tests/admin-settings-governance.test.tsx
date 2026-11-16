@@ -11,6 +11,7 @@ vi.mock("next/navigation", () => ({
 
 import { SettingsSectionView } from "@/components/admin/settings/settings-section-view";
 import { Locked } from "@/components/governance/governance-view";
+import { withFields } from "./support/settings-fields";
 
 const json = (status: number, body: unknown) =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -61,7 +62,7 @@ const posture = (key: string, options: string[], value: string, over: Record<str
   setting(key, { value, default: options[0], schema: schema("enum", { options }), ...over });
 
 function governance() {
-  return {
+  return withFields({
     section: "governance",
     title: "Governance",
     description: "The instance ceiling.",
@@ -83,7 +84,7 @@ function governance() {
       setting("byo.default_source_cidrs", { value: [], list: "whole", schema: schema("list", { item_kind: "string" }) }),
       setting("byo.require_context_credentials", { value: false, default: false, schema: schema("bool") }),
     ],
-  };
+  });
 }
 
 const orgs = {
@@ -123,10 +124,10 @@ describe("Admin › Settings › Governance (SET-2)", () => {
       "GET /v1/admin/settings/governance/orgs": () => json(200, orgs),
     });
     wrap(<SettingsSectionView slug="governance" />);
-    for (const t of ["LLM", "Egress", "BYO agents", "Agent tokens", "Where organizations stand"]) {
+    for (const t of ["AI keys", "Internet access", "BYO agents", "Agent tokens", "Where organizations stand"]) {
       await screen.findByText(t, { selector: "legend" });
     }
-    expect(screen.getByText(/Policy is set per organization and workspace/)).toBeTruthy();
+    expect(screen.getByText(/Rules are set per organization and workspace/)).toBeTruthy();
     // The Helm key is locked: read-only, with the "Managed by Helm" marker.
     const locked = document.getElementById("governance.llm.minimum_posture") as HTMLSelectElement | null;
     expect(locked?.disabled ?? true).toBe(true);

@@ -31,9 +31,6 @@ import {
 } from "@/lib/api/addon-sources";
 import { errorMessage } from "@/lib/api/errors";
 
-/** The documented format of an addon repository (docs/22-addon-repos.md in the repository). */
-const FORMAT_DOC = "docs/22-addon-repos.md";
-
 function Fingerprint({ value, label = "Signing key fingerprint" }: { value: string; label?: string }) {
   const [copied, setCopied] = useState(false);
   return (
@@ -150,7 +147,7 @@ export function AddSourceDialog({ open, onOpenChange }: { open: boolean; onOpenC
             />
           </Field>
           <p className="text-xs text-muted">
-            What a repository publishes is described in the format documentation (<code>{FORMAT_DOC}</code>).
+            What a repository publishes is described in the add-on repository format documentation.
           </p>
           {preview.isError ? (
             <Notice tone="danger" role="alert">

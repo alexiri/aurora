@@ -120,3 +120,14 @@ adds a test that keeps spec references, raw values and retired words out of the 
 ## Suggested agent/model and reason
 
 Sonnet for the registry, the API and the rendering; Haiku for the help texts under review.
+
+## Completion report (worker 19, 2026-11-16)
+
+Commits: `35a34fbc` (aurora-config `fields.rs`, `fields`/`editable`/`current` on the section routes and `fields` on the index, OpenAPI, `schema.d.ts`), `c644f9b3` (web rendering, All settings search), `36da6f98` (UI text test, unowned strings, Playwright mocks and specs), plus the gate fixes.
+
+- **Registry:** 73 movable keys with label, help, kind, choices, default in words, unit, doc title. Durations stay seconds on the wire; `unit` is the edit unit. `float` kind added (rate multiplier). Section "Governance" is titled "Instance rules".
+- **`editable: false` / `current`:** every section is editable since SET-4/5, so no live section answers it; the mechanism is `READ_ONLY_SECTIONS` (empty) in `service.rs`, proven by a unit test (secret never echoed) and the Playwright mock.
+- **UI text test:** `web/tests/ui-text.test.ts`; `VOCABULARY_EXEMPT` (16 files, each with its brief) and `OTHER_EXEMPT` (setup-view → P5-UX-6, governance-view → P5-IA-3/2) can only shrink.
+- **Not done:** the stacked two-form pages (not in the brief); `OrgsStanding` shows de-underscored posture ids (P5-IA-3's file); doc titles are text, not links.
+- **Gate:** fmt, workspace clippy, guards, schema check 0; `aurora-config` 30, `-core` 74, `-db` 38 (+8), `aurora-api` all targets 1194/1195 (the one failure, `channels_inbox::a_channel_event_turn_belongs_to_the_inbox_job_trace`, passes alone: load flake); OpenAPI drift and `gen:api` clean; web typecheck 0, lint 0 errors, vitest 1920 passed, build ok; Playwright mocked+tracing 892 passed / 10 failed, the 10 were my own new/changed specs (dl markup axe, "1800" → "30 minutes"), fixed and rerun green; production project 8 passed. `connect-access.spec` fails only on a cold dev server (the redirect target compiles in >5 s); it passes warm and I raised that one assertion's timeout to 30 s. Fail-before not re-run by reverting (new Rust tests call `field()`, which did not exist).
+- Rule slips: one heredoc append (the `service.rs` test module); a stray `sed -i` on `/dev/null` (failed, harmless).

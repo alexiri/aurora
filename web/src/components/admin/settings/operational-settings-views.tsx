@@ -30,8 +30,6 @@ function when(iso: string | null | undefined): string {
 }
 
 export interface OperationalPage {
-  /** Spec-section hints under a key's control. */
-  hints: Record<string, string>;
   groups: SettingsGroup[];
 }
 
@@ -61,19 +59,6 @@ export const AGENTS_PAGE: OperationalPage = {
       ],
     },
   ],
-  hints: {
-    "agents.default_name": "The name a new agent is given unless its creator picks one.",
-    "agents.default_brief": "The brief a new agent starts with.",
-    "hosted.default_timezone": "An IANA time zone such as Europe/Zurich; a user's own zone wins.",
-    "hosted.enabled": "Off stops new hosted agents and sandbox starts; BYO agents are unaffected.",
-    "hosted.default_harness": "Must be one of the enabled harnesses.",
-    "hosted.enabled_harnesses": "One harness id per line, each reported by at least one runner.",
-    "hosted.idle_stop_secs": "Seconds without activity before a sandbox is stopped. Applies from the next idle check.",
-    "hosted.background_cap_secs": "The longest a sandbox is kept awake for background work.",
-    "hosted.turn_ceiling_secs": "The longest one turn may run; at least the longest approval timeout plus 15 minutes.",
-    "hosted.turn_stall_secs": "A turn that produces nothing for this long is treated as stalled.",
-    "hosted.sandbox_ready_timeout_secs": "How long a start waits for its sandbox before the turn fails.",
-  },
 };
 
 export const APPROVALS_PAGE: OperationalPage = {
@@ -85,11 +70,6 @@ export const APPROVALS_PAGE: OperationalPage = {
       keys: ["approvals.timeout_secs", "approvals.max_timeout_secs", "approvals.email_notifications"],
     },
   ],
-  hints: {
-    "approvals.timeout_secs": "How long a request waits when its rule names no timeout, in seconds.",
-    "approvals.max_timeout_secs": "The longest a rule may ask for. Must stay below the hosted turn ceiling minus 15 minutes.",
-    "approvals.email_notifications": "Also switches the attachment quota notices off when disabled.",
-  },
 };
 
 export const RETENTION_PAGE: OperationalPage = {
@@ -106,13 +86,6 @@ export const RETENTION_PAGE: OperationalPage = {
       keys: ["attachments.default_org_quota_mib", "attachments.org_quota_mib_max", "attachments.days_max"],
     },
   ],
-  hints: {
-    "retention.request_log_days": "Days the gateway request log is kept.",
-    "retention.conversation_days_max": "Empty: organizations choose freely. Otherwise no organization keeps conversations longer.",
-    "attachments.default_org_quota_mib": "MiB per organization until it sets its own; 0 is unlimited.",
-    "attachments.org_quota_mib_max": "The most an organization may set, in MiB; 0 is no ceiling.",
-    "attachments.days_max": "Empty: organizations choose freely. Otherwise no organization keeps attachments longer.",
-  },
 };
 
 export const SKILLS_PAGE: OperationalPage = {
@@ -123,11 +96,6 @@ export const SKILLS_PAGE: OperationalPage = {
       keys: ["skills.library.enabled", "skills.library.refresh_interval_secs", "skills.library.bytes_per_agent"],
     },
   ],
-  hints: {
-    "skills.library.enabled": "Off stops refreshes and fetches; agents keep the skills already in their sandboxes.",
-    "skills.library.refresh_interval_secs": "Seconds between refreshes of a library; at least 300.",
-    "skills.library.bytes_per_agent": "The most library content one agent receives, in bytes. It can only be lowered from the default.",
-  },
 };
 
 export const SCIM_PAGE: OperationalPage = {
@@ -138,12 +106,6 @@ export const SCIM_PAGE: OperationalPage = {
       keys: ["scim.enabled", "scim.allowed_email_domains", "scim.rate_per_minute", "scim.token_max_days"],
     },
   ],
-  hints: {
-    "scim.enabled": "Off answers 404 for every /scim/v2 path and no organization can enable provisioning.",
-    "scim.allowed_email_domains": "One domain per line. Empty: any domain an organization owner lists.",
-    "scim.rate_per_minute": "Requests per token per minute, 30 to 6000.",
-    "scim.token_max_days": "The longest life of a provisioning token, 1 to 730 days.",
-  },
 };
 
 export const PREVIEWS_PAGE: OperationalPage = {
@@ -161,14 +123,6 @@ export const PREVIEWS_PAGE: OperationalPage = {
       ],
     },
   ],
-  hints: {
-    "previews.session_ttl_secs": "The longest a visitor's preview session lasts.",
-    "previews.session_idle_secs": "A session with no traffic for this long ends.",
-    "previews.awake_cap_secs": "The longest a preview keeps its sandbox awake.",
-    "previews.shares_per_agent": "Shares one agent may have at the same time.",
-    "previews.shares_per_org": "Shares one organization may have at the same time.",
-    "previews.bytes_per_share_day": "Bytes one share may serve per day.",
-  },
 };
 
 export const TERMINAL_PAGE: OperationalPage = {
@@ -180,12 +134,6 @@ export const TERMINAL_PAGE: OperationalPage = {
       keys: ["terminal.enabled", "terminal.awake_cap_secs", "terminal.wake_window_secs", "terminal.wake_wait_secs"],
     },
   ],
-  hints: {
-    "terminal.enabled": "An interactive path into sandboxes is a deliberate choice: it defaults to what the deployment provides.",
-    "terminal.awake_cap_secs": "The longest a terminal keeps its sandbox awake; at most the background cap.",
-    "terminal.wake_window_secs": "How long a request to wake a sandbox stays due.",
-    "terminal.wake_wait_secs": "How long opening a terminal waits for a waking sandbox.",
-  },
 };
 
 export const LIMITS_PAGE: OperationalPage = {
@@ -202,14 +150,6 @@ export const LIMITS_PAGE: OperationalPage = {
       keys: ["gateway.allowed_private", "gateway.condition_body_bytes", "gateway.upstream_header_timeout_secs"],
     },
   ],
-  hints: {
-    "ratelimit.api.multiplier": "Scales every bucket, 0.1 to 100.",
-    "ratelimit.api.org_per_minute": "Requests per organization per minute; the burst is a fifth of it.",
-    "gateway.allowed_private":
-      "Addresses reachable by agents and apps although they are private: CIDR, IP, host name or *.suffix, one per line. Cloud metadata addresses stay refused unless listed as an exact IP.",
-    "gateway.condition_body_bytes": "How much of a request body the gateway reads to evaluate rule conditions: 4096 to 8388608 bytes.",
-    "gateway.upstream_header_timeout_secs": "How long the gateway waits for an upstream's response headers.",
-  },
 };
 
 /** The shared page: header, optional notices, the form, optional content beneath. */
@@ -242,7 +182,6 @@ function OperationalView({
         key={section.generation}
         section={section}
         groups={page.groups}
-        hints={page.hints}
         controls={controls}
         onReload={() => void q.refetch()}
       />

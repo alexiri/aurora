@@ -30,8 +30,8 @@ export function OwnerlessBanner() {
       {orgs.length === 1 ? "has" : "have"} no active owner, so the gateway refuses every credential
       of {orgs.length === 1 ? "its" : "their"} agents. Restore an owner (dashboard &rsaquo;{" "}
       {orgs.length === 1 ? orgs[0].slug : "the organization"} &rsaquo; Members) or run the repair
-      UPDATE in docs/operator/install-helm.md &sect;Troubleshooting; the change takes effect within
-      seconds.
+      UPDATE described under “Troubleshooting” in “Install with Helm” in the operator guide; the change takes effect
+      within seconds.
     </Notice>
   );
 }

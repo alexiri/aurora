@@ -13,6 +13,7 @@ import { GovernanceFields } from "@/components/admin/settings/governance-setting
 import { SettingsSectionFields } from "@/components/admin/settings/settings-section-fields";
 import { SettingsIndexView, groupSections } from "@/components/admin/settings/settings-index-view";
 import { adminRoutes } from "@/lib/routes";
+import { withFields } from "./support/settings-fields";
 
 const json = (status: number, body: unknown) =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -64,7 +65,7 @@ const bool = (key: string, value: boolean, source = "default") =>
 
 /** A governance document with one dashboard value in each of the three topics' keys. */
 function governance() {
-  return {
+  return withFields({
     section: "governance",
     title: "Governance",
     description: "The instance ceiling.",
@@ -80,7 +81,7 @@ function governance() {
       bool("byo.enabled", true, "dashboard"),
       setting("governance.agent_tokens.max_age_days", { value: 30, source: "dashboard", schema: schema("int", { min: 1, max: 3650 }) }),
     ],
-  };
+  });
 }
 
 describe("SettingsSectionFields (C-971)", () => {
@@ -96,12 +97,12 @@ describe("SettingsSectionFields (C-971)", () => {
       },
     });
     wrap(<GovernanceFields part="internet" />);
-    await screen.findByText("Egress", { selector: "legend" });
+    await screen.findByText("Internet access", { selector: "legend" });
     // Only the egress keys are on this page.
     expect(document.getElementById("governance.egress.minimum_posture")).toBeTruthy();
     expect(document.getElementById("byo.enabled")).toBeNull();
     expect(document.getElementById("governance.llm.require_key_origin")).toBeNull();
-    fireEvent.change(document.getElementById("governance.egress.minimum_posture-c")!, { target: { value: "credentialed_only" } });
+    fireEvent.click(screen.getByRole("radio", { name: /Choice credentialed_only/ }));
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(put).not.toBeNull());
     const sent = put as unknown as { generation: number; values: Record<string, unknown> };

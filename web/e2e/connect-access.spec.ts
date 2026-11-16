@@ -73,7 +73,9 @@ for (const scheme of ["light", "dark"] as const) {
         await page.goto("/o/acme/w/main/credentials?tab=apps&connect=github");
 
         const methods = page.getByRole("radiogroup", { name: "How do you want to connect?" });
-        await expect(methods.getByText("GitHub enforces the app's permissions and repositories.")).toBeVisible();
+        // The first visit goes through the legacy-address redirect and compiles the topic page under `next dev`: on a loaded host
+        // that takes longer than the default 5 s (the page reads "Loading…" meanwhile).
+        await expect(methods.getByText("GitHub enforces the app's permissions and repositories.")).toBeVisible({ timeout: 30_000 });
         const access = page.getByRole("radiogroup", { name: "What may agents do with this connection?" });
         // Offered on every method; Read only is the preselected, recommended choice.
         for (const method of ["GitHub App", "Personal access token", "OAuth"]) {
