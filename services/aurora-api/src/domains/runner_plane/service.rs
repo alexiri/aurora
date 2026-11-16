@@ -80,6 +80,10 @@ pub async fn register(
                 let t = &s.ops().terminal;
                 (t.enabled || t.available) && req.capabilities.terminal
             },
+            // (P4-SSH-2, D-239) `auz_` legs on :4108: instance `ssh.enabled` and a runner that
+            // advertised `ssh`. Decided at registration, like `terminal`; the grant redemption
+            // re-checks `ssh.enabled` live (`409 not_current`).
+            ssh_enabled: s.config.ssh.enabled && req.capabilities.ssh,
         },
     })
 }

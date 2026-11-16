@@ -7,5 +7,6 @@ mod leg_limits;
 mod podman;
 mod preview_streams_flow;
 mod runner;
+mod ssh_streams;
 mod streams;
 mod terminal_streams;

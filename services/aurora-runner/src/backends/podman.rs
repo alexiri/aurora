@@ -548,6 +548,7 @@ impl Backend for PodmanBackend {
             // registration from the answered `terminal` config flag.
             terminal: false,
             files: false,
+            ssh: false,
         }
     }
 

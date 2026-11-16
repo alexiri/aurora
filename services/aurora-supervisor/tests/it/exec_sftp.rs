@@ -81,6 +81,17 @@ fn open_frame(id: u32, window: u32, mode: ExecMode) -> ExecOpen {
     }
 }
 
+trait WithCommand {
+    fn with_command(self, c: &str) -> Self;
+}
+
+impl WithCommand for ExecOpen {
+    fn with_command(mut self, c: &str) -> Self {
+        self.command = Some(c.to_owned());
+        self
+    }
+}
+
 /// What the engine sent, in order.
 #[derive(Debug)]
 enum Out {
@@ -231,8 +242,10 @@ async fn unsupported_shapes_are_refused() {
     let d = TempDir::new();
     let sftp = script(d.path(), "cat");
     let mut r = rig(d.path(), true, sftp);
+    // (P4-SSH-2: `shell` and `exec` exist now; an `exec` without a command is still refused and
+    // the `exec_ssh` tests own the shapes of the two new modes.)
     let mut cases = vec![
-        open_frame(1, 4096, ExecMode::Shell),
+        open_frame(1, 4096, ExecMode::Shell).with_command("ls"),
         open_frame(2, 4096, ExecMode::Exec),
     ];
     let mut c = open_frame(3, 4096, ExecMode::Sftp);
@@ -481,3 +494,6 @@ async fn the_real_sftp_server_speaks_sftp_over_the_exec() {
         "{got:?}"
     );
 }
+
+#[path = "exec_ssh.rs"]
+mod ssh;

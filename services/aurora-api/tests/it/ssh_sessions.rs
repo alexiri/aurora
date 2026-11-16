@@ -1040,3 +1040,44 @@ async fn ssh_sessions_keep_awake_kind_ssh() {
             .unwrap();
     assert!(ssh.is_none());
 }
+
+/// (Part B, C-796) The runner registration answer carries `ssh_enabled` only when the instance
+/// has `ssh.enabled` **and** the runner advertised `ssh`; otherwise the field is absent (false).
+#[tokio::test(flavor = "multi_thread")]
+async fn ssh_runner_registration_answers_ssh_enabled_only_for_a_runner_with_it() {
+    let r = sess_rig(None).await;
+    for (adv, want) in [(Some(true), true), (Some(false), false), (None, false)] {
+        let mut caps = crate::hosted::caps();
+        if let Some(b) = adv {
+            caps["ssh"] = json!(b);
+        }
+        let (s, v) = r
+            .runner(
+                None,
+                "/v1/runner/register",
+                json!({"version": "0.1", "backend": "fake", "capabilities": caps,
+                       "advertised_host": "runner-a"}),
+            )
+            .await;
+        assert_eq!(s, 200, "{v}");
+        assert_eq!(
+            v["config"].get("ssh_enabled").and_then(Value::as_bool),
+            want.then_some(true),
+            "advertised {adv:?}: {v}"
+        );
+    }
+    // SSH off on the instance: a runner that advertises `ssh` is still not enabled.
+    let off = rig_with(|_| {}).await;
+    let mut caps = crate::hosted::caps();
+    caps["ssh"] = json!(true);
+    let (s, v) = off
+        .runner(
+            None,
+            "/v1/runner/register",
+            json!({"version": "0.1", "backend": "fake", "capabilities": caps,
+                   "advertised_host": "runner-a"}),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert!(v["config"].get("ssh_enabled").is_none(), "{v}");
+}

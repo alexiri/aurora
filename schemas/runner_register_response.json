@@ -26,6 +26,10 @@
           "minimum": 0,
           "type": "integer"
         },
+        "ssh_enabled": {
+          "description": "(phase 5, P4-SSH-2, D-239) When true (instance `ssh.enabled` and the runner advertised\n`ssh`) the runner opens :4108 and redeems `auz_` SSH grants. Absent (false) for older\nrunners and when SSH is off.",
+          "type": "boolean"
+        },
         "terminal": {
           "description": "(phase 4, P4-TERM, D-161) When true the runner must open the stream listener\n:4108 for terminal grants too and speak the W19 `pty.*` frames. Absent (false)\nfor older runners. The listener opens when **either** flag is set (C-623).",
           "type": "boolean"

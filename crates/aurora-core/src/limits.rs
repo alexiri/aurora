@@ -413,6 +413,12 @@ pub const TERMINALS_PER_USER: u32 = 2;
 pub const EXECS_PER_SANDBOX: u32 = 12;
 /// (phase 5, P5-FILES-1) live `auf_` files legs per sandbox at the runner (close 4409).
 pub const FILE_SESSIONS_PER_SANDBOX: u32 = 4;
+/// (phase 5, P4-SSH-2, D-239) live `auz_` SSH channels per sandbox at the runner (close 4409).
+pub const SSH_CHANNELS_PER_SANDBOX: u32 = 8;
+/// (16 §W20) the longest `exec` command line (no NUL) and the most `env` variables a channel
+/// passes (each ≤ 256 bytes); checked by the terminator, the runner and the supervisor.
+pub const SSH_EXEC_COMMAND_MAX: usize = 8 * KIB;
+pub const SSH_ENV_VARS_MAX: usize = 16;
 /// (phase 5, P5-FILES-1, C-901) single-use `auf_` files grant lifetime.
 pub const FILES_GRANT_TTL: Duration = Duration::from_secs(30);
 /// (C-901) a pooled SFTP session without a request closes after this.
