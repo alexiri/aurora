@@ -144,6 +144,9 @@ pub struct ConnectMethod {
     pub audience: super::setup::MethodAudience,
     /// (P5-UX-2, C-956) The scopes of "Read only" and "Read and change", already defaulted.
     pub scope_presets: super::setup::MethodScopePresets,
+    /// (P5-UX-13, C-942) Values the person copies into the other service, shown with Copy above
+    /// the method's fields: `org_external_id` (the AWS role's trust policy).
+    pub show_context: Vec<String>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]

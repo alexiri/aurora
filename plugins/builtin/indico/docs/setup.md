@@ -20,8 +20,8 @@ The package has two tiers:
 
 ## 1. Register your Indico server in Aurora (administrators)
 
-Open *Instances* (organization owners and admins for one organization, instance admins for
-everyone), choose Indico and enter the host name, for example `indico.example.org` (host name
+Open {{aurora.page:self_hosted}} (organization owners and admins for one organization, instance
+admins for everyone), choose Indico and enter the host name, for example `indico.example.org` (host name
 only: no `https://`, port or path). Aurora checks `GET /api/user/` first.
 
 - Registering decides where Indico credentials may be sent, so only register servers you trust.
@@ -37,7 +37,7 @@ only: no `https://`, port or path). Aurora checks `GET /api/user/` first.
 - **Personal tokens**: decide whether users may create them (`/user/tokens/`). If you restrict
   this, administrators create the tokens for users.
 - **Sign in with Indico (OAuth)**: add an application at `/admin/apps/`:
-  1. Redirect URI: `<your Aurora URL>/v1/oauth/callback`.
+  1. Redirect URI: {{aurora.callback_url}}
   2. **Allowed scopes**: exactly the scopes you are willing to offer. Leaving `full:everything`
      out is the Indico-side switch that keeps the extended write tools off for every OAuth user.
   3. Enable the application. Mark it *trusted* (no consent screen) only if you want that.

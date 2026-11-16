@@ -165,11 +165,18 @@ pub fn validate(
 ) -> Result<i32> {
     let pkg = pack::load(path)?;
     let v = lint(&pkg, pubkeys, allow_unsigned, reserved, core)?;
+    // (P5-UX-13, C-939) Findings that do not reject the package, such as a tool without a description.
+    let warnings = pkg
+        .manifest(core)
+        .map(|m| aurora_registry::validate::warnings(&m))
+        .unwrap_or_default();
     println!(
         "{}",
-        serde_json::to_string_pretty(
-            &json!({ "ok": v.is_empty(), "violations": violations_json(&v) })
-        )?
+        serde_json::to_string_pretty(&json!({
+            "ok": v.is_empty(),
+            "violations": violations_json(&v),
+            "warnings": violations_json(&warnings),
+        }))?
     );
     Ok(i32::from(!v.is_empty()))
 }

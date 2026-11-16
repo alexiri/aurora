@@ -1,6 +1,6 @@
 package:
   id: google-workspace
-  version: 1.0.2
+  version: 1.0.3
   contract: 1
   min_core: 0.1.0
   publisher: aurora
@@ -44,6 +44,8 @@ apps:
     connect:
       - id: oauth
         kind: oauth2
+        label: Sign in with Google
+        description: "You sign in to Google and choose what Aurora may read or change. Needs a Google OAuth client registered first."
         client: google
         scopes:
           - { scope: "https://www.googleapis.com/auth/gmail.readonly", name: "Read your Gmail messages, threads and labels (Google restricted scope)", access: read }
@@ -79,19 +81,19 @@ apps:
     tools:
       read:
         items:
-          - { id: get_profile, name: Get the mailbox profile, host: gmail.googleapis.com, path: "/gmail/v1/users/*/profile", methods: [GET] }
-          - { id: list_messages, name: List and search messages, host: gmail.googleapis.com, path: "/gmail/v1/users/*/messages", methods: [GET] }
-          - { id: get_message, name: Read a message, host: gmail.googleapis.com, path: "/gmail/v1/users/*/messages/*", methods: [GET] }
-          - { id: list_threads, name: List and search threads, host: gmail.googleapis.com, path: "/gmail/v1/users/*/threads", methods: [GET] }
-          - { id: get_thread, name: Read a thread, host: gmail.googleapis.com, path: "/gmail/v1/users/*/threads/*", methods: [GET] }
-          - { id: list_labels, name: List labels, host: gmail.googleapis.com, path: "/gmail/v1/users/*/labels", methods: [GET] }
-          - { id: get_label, name: Get a label, host: gmail.googleapis.com, path: "/gmail/v1/users/*/labels/*", methods: [GET] }
+          - { id: get_profile, description: "Shows the Gmail address and mailbox totals.", name: Get the mailbox profile, host: gmail.googleapis.com, path: "/gmail/v1/users/*/profile", methods: [GET] }
+          - { id: list_messages, description: "Lists and searches mail messages.", name: List and search messages, host: gmail.googleapis.com, path: "/gmail/v1/users/*/messages", methods: [GET] }
+          - { id: get_message, description: "Reads one mail message.", name: Read a message, host: gmail.googleapis.com, path: "/gmail/v1/users/*/messages/*", methods: [GET] }
+          - { id: list_threads, description: "Lists and searches mail conversations.", name: List and search threads, host: gmail.googleapis.com, path: "/gmail/v1/users/*/threads", methods: [GET] }
+          - { id: get_thread, description: "Reads a whole mail conversation.", name: Read a thread, host: gmail.googleapis.com, path: "/gmail/v1/users/*/threads/*", methods: [GET] }
+          - { id: list_labels, description: "Lists the mailbox's labels.", name: List labels, host: gmail.googleapis.com, path: "/gmail/v1/users/*/labels", methods: [GET] }
+          - { id: get_label, description: "Reads one label.", name: Get a label, host: gmail.googleapis.com, path: "/gmail/v1/users/*/labels/*", methods: [GET] }
       write:
         items:
-          - { id: send_message, name: Send mail, host: gmail.googleapis.com, path: "/gmail/v1/users/*/messages/send", methods: [POST] }
-          - { id: create_draft, name: Create a draft, host: gmail.googleapis.com, path: "/gmail/v1/users/*/drafts", methods: [POST] }
-          - { id: send_draft, name: Send a draft, host: gmail.googleapis.com, path: "/gmail/v1/users/*/drafts/send", methods: [POST] }
-          - { id: modify_message, name: Add or remove labels on a message, host: gmail.googleapis.com, path: "/gmail/v1/users/*/messages/*/modify", methods: [POST] }
+          - { id: send_message, description: "Sends an email.", name: Send mail, host: gmail.googleapis.com, path: "/gmail/v1/users/*/messages/send", methods: [POST] }
+          - { id: create_draft, description: "Saves an email as a draft without sending it.", name: Create a draft, host: gmail.googleapis.com, path: "/gmail/v1/users/*/drafts", methods: [POST] }
+          - { id: send_draft, description: "Sends a saved draft.", name: Send a draft, host: gmail.googleapis.com, path: "/gmail/v1/users/*/drafts/send", methods: [POST] }
+          - { id: modify_message, description: "Adds or removes labels on a message, such as marking it read.", name: Add or remove labels on a message, host: gmail.googleapis.com, path: "/gmail/v1/users/*/messages/*/modify", methods: [POST] }
     approvals:
       # Every recipient (all To/Cc/Bcc lines), a clamped body preview and the attachment count:
       # the approval is the only control on outbound mail (FIX-118, 09 §approvals).
@@ -158,6 +160,8 @@ apps:
     connect:
       - id: oauth
         kind: oauth2
+        label: Sign in with Google
+        description: "You sign in to Google and choose what Aurora may read or change. Needs a Google OAuth client registered first."
         client: google
         scopes:
           - { scope: "https://www.googleapis.com/auth/calendar.readonly", name: See your calendars and their events (Google sensitive scope), access: read }
@@ -195,17 +199,17 @@ apps:
     tools:
       read:
         items:
-          - { id: list_calendars, name: List calendars, host: www.googleapis.com, path: /calendar/v3/users/me/calendarList, methods: [GET] }
-          - { id: get_calendar, name: Get a calendar, host: www.googleapis.com, path: "/calendar/v3/calendars/*", methods: [GET] }
-          - { id: list_events, name: List and search events, host: www.googleapis.com, path: "/calendar/v3/calendars/*/events", methods: [GET] }
-          - { id: get_event, name: Get an event, host: www.googleapis.com, path: "/calendar/v3/calendars/*/events/*", methods: [GET] }
+          - { id: list_calendars, description: "Lists your calendars.", name: List calendars, host: www.googleapis.com, path: /calendar/v3/users/me/calendarList, methods: [GET] }
+          - { id: get_calendar, description: "Reads one calendar's details.", name: Get a calendar, host: www.googleapis.com, path: "/calendar/v3/calendars/*", methods: [GET] }
+          - { id: list_events, description: "Lists and searches the events of a calendar.", name: List and search events, host: www.googleapis.com, path: "/calendar/v3/calendars/*/events", methods: [GET] }
+          - { id: get_event, description: "Reads one calendar event.", name: Get an event, host: www.googleapis.com, path: "/calendar/v3/calendars/*/events/*", methods: [GET] }
       write:
         items:
           # freeBusy.query is a read over POST; read tools must be GET, so it is held for approval (D-93).
-          - { id: query_freebusy, name: Query free and busy times (a read over POST), host: www.googleapis.com, path: /calendar/v3/freeBusy, methods: [POST] }
-          - { id: create_event, name: Create an event, host: www.googleapis.com, path: "/calendar/v3/calendars/*/events", methods: [POST] }
-          - { id: update_event, name: Change an event, host: www.googleapis.com, path: "/calendar/v3/calendars/*/events/*", methods: [PATCH] }
-          - { id: delete_event, name: Delete an event, host: www.googleapis.com, path: "/calendar/v3/calendars/*/events/*", methods: [DELETE] }
+          - { id: query_freebusy, description: "Checks when people or calendars are free or busy. It reads data only, even though it is sent as a POST.", name: Query free and busy times (a read over POST), host: www.googleapis.com, path: /calendar/v3/freeBusy, methods: [POST] }
+          - { id: create_event, description: "Creates a calendar event.", name: Create an event, host: www.googleapis.com, path: "/calendar/v3/calendars/*/events", methods: [POST] }
+          - { id: update_event, description: "Changes a calendar event.", name: Change an event, host: www.googleapis.com, path: "/calendar/v3/calendars/*/events/*", methods: [PATCH] }
+          - { id: delete_event, description: "Deletes a calendar event.", name: Delete an event, host: www.googleapis.com, path: "/calendar/v3/calendars/*/events/*", methods: [DELETE] }
     approvals:
       query_freebusy:
         title: Query free and busy times
@@ -263,6 +267,8 @@ apps:
     connect:
       - id: oauth
         kind: oauth2
+        label: Sign in with Google
+        description: "You sign in to Google and choose what Aurora may read or change. Needs a Google OAuth client registered first."
         client: google
         scopes:
           - { scope: "https://www.googleapis.com/auth/drive.readonly", name: See and download all your Drive files (Google restricted scope), access: read }
@@ -301,19 +307,19 @@ apps:
     tools:
       read:
         items:
-          - { id: get_about, name: Get the Drive user and storage quota, host: www.googleapis.com, path: /drive/v3/about, methods: [GET] }
-          - { id: list_files, name: List and search files, host: www.googleapis.com, path: /drive/v3/files, methods: [GET] }
-          - { id: get_file, name: "Get file metadata, or download the content with alt=media", host: www.googleapis.com, path: "/drive/v3/files/*", methods: [GET] }
-          - { id: export_file, name: "Export a Google Docs, Sheets or Slides file to another format", host: www.googleapis.com, path: "/drive/v3/files/*/export", methods: [GET] }
-          - { id: list_permissions, name: List who a file is shared with, host: www.googleapis.com, path: "/drive/v3/files/*/permissions", methods: [GET] }
+          - { id: get_about, description: "Shows the Drive account and its storage quota.", name: Get the Drive user and storage quota, host: www.googleapis.com, path: /drive/v3/about, methods: [GET] }
+          - { id: list_files, description: "Lists and searches files in Drive.", name: List and search files, host: www.googleapis.com, path: /drive/v3/files, methods: [GET] }
+          - { id: get_file, description: "Reads a file's details, or downloads its content.", name: "Get file metadata, or download the content with alt=media", host: www.googleapis.com, path: "/drive/v3/files/*", methods: [GET] }
+          - { id: export_file, description: "Exports a Google Docs, Sheets or Slides file as another format, such as PDF.", name: "Export a Google Docs, Sheets or Slides file to another format", host: www.googleapis.com, path: "/drive/v3/files/*/export", methods: [GET] }
+          - { id: list_permissions, description: "Lists who a file is shared with.", name: List who a file is shared with, host: www.googleapis.com, path: "/drive/v3/files/*/permissions", methods: [GET] }
       write:
         items:
-          - { id: create_file, name: Create a file or folder (metadata only), host: www.googleapis.com, path: /drive/v3/files, methods: [POST] }
-          - { id: upload_file, name: Upload a new file, host: www.googleapis.com, path: /upload/drive/v3/files, methods: [POST] }
-          - { id: update_file, name: "Change file metadata, rename, move or trash", host: www.googleapis.com, path: "/drive/v3/files/*", methods: [PATCH] }
-          - { id: upload_file_content, name: Replace the content of a file, host: www.googleapis.com, path: "/upload/drive/v3/files/*", methods: [PATCH] }
-          - { id: copy_file, name: Copy a file, host: www.googleapis.com, path: "/drive/v3/files/*/copy", methods: [POST] }
-          - { id: create_permission, name: Share a file (create a permission), host: www.googleapis.com, path: "/drive/v3/files/*/permissions", methods: [POST] }
+          - { id: create_file, description: "Creates a file or folder in Drive without content.", name: Create a file or folder (metadata only), host: www.googleapis.com, path: /drive/v3/files, methods: [POST] }
+          - { id: upload_file, description: "Uploads a new file to Drive.", name: Upload a new file, host: www.googleapis.com, path: /upload/drive/v3/files, methods: [POST] }
+          - { id: update_file, description: "Renames, moves or trashes a file, or changes its details.", name: "Change file metadata, rename, move or trash", host: www.googleapis.com, path: "/drive/v3/files/*", methods: [PATCH] }
+          - { id: upload_file_content, description: "Replaces the content of an existing file.", name: Replace the content of a file, host: www.googleapis.com, path: "/upload/drive/v3/files/*", methods: [PATCH] }
+          - { id: copy_file, description: "Makes a copy of a file.", name: Copy a file, host: www.googleapis.com, path: "/drive/v3/files/*/copy", methods: [POST] }
+          - { id: create_permission, description: "Shares a file with someone.", name: Share a file (create a permission), host: www.googleapis.com, path: "/drive/v3/files/*/permissions", methods: [POST] }
     approvals:
       # The hook is tried first; the template is the fallback when the hook cannot read the request
       # (for example a multipart body that is not JSON). Neither shows file content.

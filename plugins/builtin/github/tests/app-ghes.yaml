@@ -160,7 +160,7 @@
   expect:
     app: github-ghes
     tool: graphql_mutation
-    summary: { title: "GraphQL mutation", fields: { Operation: AddStar, Fields: addStar } }
+    summary: { title: "Make a change through GraphQL", fields: { Operation: AddStar, Fields: addStar } }
 - name: "github app: ghes git_push"
   connection: { method: github_app, instance_host: github.example.com, credentials: { access_token: "tok-git-1" } }
   request: { method: POST, url: "https://github.example.com/example/demo.git/git-receive-pack" }

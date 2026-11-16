@@ -271,6 +271,28 @@ pub fn manifest(m: &Manifest) -> Vec<Violation> {
             ));
         }
     }
+    // (P5-UX-13, C-942) `show_context`: only `org_external_id`, and only when the package is
+    // allowed to read it (`permissions.context`).
+    for (i, a) in m.apps.iter().enumerate() {
+        for (j, c) in a.connect.iter().enumerate() {
+            for (k, v) in c.show_context().iter().enumerate() {
+                let p = format!("/apps/{i}/connect/{j}/show_context/{k}");
+                if v != "org_external_id" {
+                    out.push(Violation::new(
+                        "show_context_unknown",
+                        p,
+                        format!("`show_context` accepts only `org_external_id`, not `{v}`"),
+                    ));
+                } else if !m.permissions.context.iter().any(|c| c == v) {
+                    out.push(Violation::new(
+                        "show_context_not_permitted",
+                        p,
+                        "`org_external_id` must be listed in permissions.context",
+                    ));
+                }
+            }
+        }
+    }
     if m.permissions.egress.contains_key(&Hook::ApprovalSummarize) {
         out.push(Violation::new(
             "egress_summarize",
@@ -352,6 +374,33 @@ pub fn manifest(m: &Manifest) -> Vec<Violation> {
             "/permissions/hooks",
             format!("declared {declared:?} but manifest references {used_hooks:?}"),
         ));
+    }
+    out
+}
+
+/// (P5-UX-13, C-939) Findings that do not reject a package: a tool without a description shows
+/// as a bare method and host on the access screens. `aurora plugin validate` prints them;
+/// `check-builtin.sh` turns them into failures for the builtin packages.
+pub fn warnings(m: &Manifest) -> Vec<Violation> {
+    let mut out = Vec::new();
+    for (i, a) in m.apps.iter().enumerate() {
+        let Some(tools) = &a.tools else { continue };
+        for (gname, g) in [("read", &tools.read), ("write", &tools.write)] {
+            let Some(g) = g else { continue };
+            for (j, it) in g.items.iter().enumerate() {
+                if it
+                    .description
+                    .as_deref()
+                    .is_none_or(|d| d.trim().is_empty())
+                {
+                    out.push(Violation::new(
+                        "tool_description_missing",
+                        format!("/apps/{i}/tools/{gname}/items/{j}/description"),
+                        format!("tool `{}` has no description", it.id),
+                    ));
+                }
+            }
+        }
     }
     out
 }

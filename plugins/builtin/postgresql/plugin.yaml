@@ -1,6 +1,6 @@
 package:
   id: postgresql
-  version: 1.1.1
+  version: 1.1.2
   contract: 1
   min_core: 0.1.0
   publisher: aurora
@@ -33,6 +33,8 @@ apps:
     connect:
       - id: login
         kind: fields
+        label: Database login
+        description: "The server, database, user and password of a PostgreSQL account. Use an account that has only the rights agents need."
         fields:
           - name: host
             label: Server host
@@ -87,12 +89,12 @@ apps:
     tools:
       read:
         items:
-          - { id: read, name: "Read data (SELECT, SHOW, EXPLAIN)", host: "*.db.aurora.internal", path: /read, methods: [POST] }
+          - { id: read, description: "Reads data: SELECT, SHOW and EXPLAIN.", name: "Read data (SELECT, SHOW, EXPLAIN)", host: "*.db.aurora.internal", path: /read, methods: [POST] }
       write:
         items:
-          - { id: write, name: "Change data (INSERT, UPDATE, DELETE, COPY FROM, SELECT FOR UPDATE)", host: "*.db.aurora.internal", path: /write, methods: [POST] }
-          - { id: ddl, name: "Change the schema (CREATE, ALTER, DROP, TRUNCATE, GRANT)", host: "*.db.aurora.internal", path: /ddl, methods: [POST] }
-          - { id: admin, name: "Administer (VACUUM, ANALYZE, SET, LISTEN, DO, CALL, unlisted functions)", host: "*.db.aurora.internal", path: /admin, methods: [POST] }
+          - { id: write, description: "Changes data: INSERT, UPDATE, DELETE, COPY FROM and SELECT FOR UPDATE.", name: "Change data (INSERT, UPDATE, DELETE, COPY FROM, SELECT FOR UPDATE)", host: "*.db.aurora.internal", path: /write, methods: [POST] }
+          - { id: ddl, description: "Changes the schema: CREATE, ALTER, DROP, TRUNCATE and GRANT.", name: "Change the schema (CREATE, ALTER, DROP, TRUNCATE, GRANT)", host: "*.db.aurora.internal", path: /ddl, methods: [POST] }
+          - { id: admin, description: "Runs administration commands: VACUUM, ANALYZE, SET, LISTEN, DO, CALL and unlisted functions.", name: "Administer (VACUUM, ANALYZE, SET, LISTEN, DO, CALL, unlisted functions)", host: "*.db.aurora.internal", path: /admin, methods: [POST] }
     database: { engine: postgres }
     agent:
       instructions: |

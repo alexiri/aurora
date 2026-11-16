@@ -413,3 +413,58 @@ fn every_builtin_and_fixture_validates_and_the_journey_keys_are_set() {
     };
     assert_eq!(o.scope_presets.as_ref().unwrap().write, ["read", "write"]);
 }
+
+// ---- P5-UX-13 (C-939, C-942): `show_context` and `tool_description_missing` ----
+
+#[test]
+fn show_context_accepts_only_the_org_external_id_and_needs_the_permission() {
+    let with = |ctx: &str, v: &str| {
+        METHODS
+            .replace(
+                "permissions:\n",
+                &format!("permissions:\n  context: [{ctx}]\n"),
+            )
+            .replace(
+                "        token: { kind: hook, max_lifetime_secs: 3600 }\n",
+                &format!(
+                    "        token: {{ kind: hook, max_lifetime_secs: 3600 }}\n        show_context: [{v}]\n"
+                ),
+            )
+    };
+    let ok = with("org_external_id", "org_external_id");
+    assert!(run(&ok).is_empty(), "{:#?}", run(&ok));
+    let m = Manifest::parse(&ok, RUNNING).unwrap();
+    assert_eq!(m.apps[0].connect[1].show_context(), ["org_external_id"]);
+    assert!(m.apps[0].connect[0].show_context().is_empty());
+    // Another value is refused; so is the right one without `permissions.context`.
+    assert_eq!(
+        codes(&with("org_external_id, org_id", "org_id")),
+        BTreeSet::from(["show_context_unknown"])
+    );
+    assert_eq!(
+        codes(&with("org_id", "org_external_id")),
+        BTreeSet::from(["show_context_not_permitted"])
+    );
+}
+
+#[test]
+fn a_tool_without_a_description_is_a_warning_not_a_rejection() {
+    let m = Manifest::parse(METHODS, RUNNING).unwrap();
+    assert!(validate::manifest(&m).is_empty());
+    let w = validate::warnings(&m);
+    assert_eq!(
+        w.iter()
+            .map(|x| (x.code, x.path.as_str()))
+            .collect::<Vec<_>>(),
+        [(
+            "tool_description_missing",
+            "/apps/0/tools/read/items/0/description"
+        )]
+    );
+    let y = METHODS.replace(
+        "name: List user,",
+        "name: List user, description: Lists the signed-in user.,",
+    );
+    let m = Manifest::parse(&y, RUNNING).unwrap();
+    assert!(validate::warnings(&m).is_empty());
+}

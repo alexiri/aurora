@@ -9,6 +9,7 @@ Per package: validate, test, fixture coverage, scopes, token, docs. Link checks 
 import fnmatch
 import json
 import os
+import re
 import subprocess
 import sys
 import tarfile
@@ -104,11 +105,52 @@ def check_archive(aurora, pdir, archive):
         return errs
     paired = list(zip(cases, results))
 
+    if os.path.basename(os.path.dirname(pdir.rstrip("/"))) == "builtin":
+        check_texts(manifest, pdir, err)  # not the test-only fixture packages
     for app in manifest["apps"]:
         check_app(app, paired, err)
     check_hooks(manifest, hooks, paired, err)
     check_docs(aurora, archive, err)
     return errs
+
+
+# Page names and placeholders a builtin guide or connect_note may not spell out (P5-UX-13, C-941):
+# the guide route fills `{{aurora.*}}` placeholders for the viewer, and "Instances" was renamed
+# Self-hosted apps.
+REFUSED_TEXT = [
+    (re.compile(r"<your Aurora URL>"), "<your Aurora URL> (use {{aurora.callback_url}})"),
+    (re.compile(r"<external_url>"), "<external_url> (use {{aurora.callback_url}})"),
+    (re.compile(r"Admin, Apps,"), "Admin, Apps, ... (use {{aurora.page:oauth_clients}})"),
+    (re.compile(r"\bInstances\b"), "Instances as a page name (it is Self-hosted apps: {{aurora.page:self_hosted}})"),
+]
+
+
+def check_texts(manifest, pdir, err):
+    """Texts people read (P5-UX-13, C-939, C-941, C-949): every tool a description of at most 200
+    characters, every connect method a label and a description, and no refused literal in the
+    guide or a connect_note."""
+    for app in manifest["apps"]:
+        aid = app["about"]["id"]
+        for group in ("read", "write"):
+            for t in ((app.get("tools") or {}).get(group) or {}).get("items", []):
+                d = (t.get("description") or "").strip()
+                if not d:
+                    err(f"app {aid}: tool {t['id']} has no description (C-939)")
+                elif len(d) > 200:
+                    err(f"app {aid}: tool {t['id']} description is {len(d)} characters, at most 200")
+        for m in app.get("connect", []):
+            for key in ("label", "description"):
+                if not (m.get(key) or "").strip():
+                    err(f"app {aid}: connect method {m['id']} has no {key} (C-949)")
+        note = ((app["about"].get("connect_note") or {}).get("text")) or ""
+        for rx, what in REFUSED_TEXT:
+            if rx.search(note):
+                err(f"app {aid}: connect_note contains {what}")
+    with open(os.path.join(pdir, "docs", "setup.md")) as f:
+        guide = f.read()
+    for rx, what in REFUSED_TEXT:
+        if rx.search(guide):
+            err(f"docs/setup.md contains {what}")
 
 
 def hook_steps(c):

@@ -1,6 +1,6 @@
 package:
   id: aws-keys
-  version: 2.0.0
+  version: 2.0.1
   contract: 1
   min_core: 0.1.0
   publisher: aurora
@@ -47,6 +47,8 @@ apps:
         description: "Aurora gets short-lived credentials for an IAM role whose trust policy requires this organization's external id. The stored source key is only used to assume the role. Recommended."
         recommended: true
         authorize: false
+        # (P5-UX-13, C-942) The trust policy of the role needs this value: shown with Copy.
+        show_context: [org_external_id]
         # AssumeRole sessions last at most 12 hours (DurationSeconds 900..43200).
         token: { kind: hook, max_lifetime_secs: 43200 }
         fields:
@@ -146,18 +148,20 @@ apps:
     tools:
       read:
         items:
-          - { id: s3_list_buckets, name: List buckets, host: "s3.*.amazonaws.com", path: /, methods: [GET] }
-          - { id: s3_list_objects, name: List objects in a bucket, host: "s3.*.amazonaws.com", path: "/*", methods: [GET] }
-          - { id: s3_get_object, name: Get or inspect an object, host: "s3.*.amazonaws.com", path: "/*/*/**", methods: [GET, HEAD] }
+          - { id: s3_list_buckets, description: "Lists the S3 buckets in the account.", name: List buckets, host: "s3.*.amazonaws.com", path: /, methods: [GET] }
+          - { id: s3_list_objects, description: "Lists the objects in a bucket.", name: List objects in a bucket, host: "s3.*.amazonaws.com", path: "/*", methods: [GET] }
+          - { id: s3_get_object, description: "Downloads an object from a bucket, or reads its details.", name: Get or inspect an object, host: "s3.*.amazonaws.com", path: "/*/*/**", methods: [GET, HEAD] }
           # Read-only EC2 Describe* calls (Action in a form body). Declared before the generic
           # ec2_call, which keeps every other EC2 request (and every GET) as a held write tool.
           - id: ec2_describe
+            description: "Read-only EC2 Describe actions (instances, volumes, security groups, ...)."
             name: Describe EC2 resources (read-only Describe* actions)
             host: "ec2.*.amazonaws.com"
             path: /
             methods: [POST]
             params: [ { source: form, name: Action, match: { prefix: Describe } } ]
           - id: sts_get_caller_identity
+            description: "Shows which AWS account and identity the connection uses."
             name: Show which AWS identity the connection belongs to (GetCallerIdentity)
             host: "sts.*.amazonaws.com"
             path: /
@@ -165,24 +169,24 @@ apps:
             params: [ { source: form, name: Action, match: { equals: GetCallerIdentity } } ]
       write:
         items:
-          - { id: s3_put_object, name: Upload or copy an object, host: "s3.*.amazonaws.com", path: "/*/*/**", methods: [PUT] }
-          - { id: s3_delete_object, name: Delete an object, host: "s3.*.amazonaws.com", path: "/*/*/**", methods: [DELETE] }
-          - { id: ec2_call, name: Call an EC2 action (for example DescribeInstances), host: "ec2.*.amazonaws.com", path: /, methods: [GET, POST] }
+          - { id: s3_put_object, description: "Uploads an object to a bucket, or copies one.", name: Upload or copy an object, host: "s3.*.amazonaws.com", path: "/*/*/**", methods: [PUT] }
+          - { id: s3_delete_object, description: "Deletes an object from a bucket.", name: Delete an object, host: "s3.*.amazonaws.com", path: "/*/*/**", methods: [DELETE] }
+          - { id: ec2_call, description: "Any EC2 action that is not a read-only Describe: changes, and reads the Describe tool does not cover.", name: "Any other EC2 action (changes, and reads not covered above)", host: "ec2.*.amazonaws.com", path: /, methods: [GET, POST] }
     approvals:
       s3_put_object:
-        title: Upload S3 object
+        title: Upload a file to a bucket
         fields:
           - { label: Bucket, source: path, segment: 1 }
           - { label: Key, source: path, segment: 2 }
         link: "https://console.aws.amazon.com/s3/"
       s3_delete_object:
-        title: Delete S3 object
+        title: Delete a file from a bucket
         fields:
           - { label: Bucket, source: path, segment: 1 }
           - { label: Key, source: path, segment: 2 }
         link: "https://console.aws.amazon.com/s3/"
       ec2_call:
-        title: Call EC2 action
+        title: Run an EC2 action
         fields:
           - { label: Action, source: query, name: Action }
           - { label: Action in form, source: body, steps: [ { form: Action } ] }

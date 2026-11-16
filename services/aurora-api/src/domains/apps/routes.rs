@@ -1,5 +1,5 @@
 use super::dto::*;
-use super::{assets, service, setup};
+use super::{assets, guide_render, service, setup};
 use crate::app::AppState;
 use crate::http::auth::{Caller, require_own};
 use crate::http::error::ErrorEnvelope;
@@ -196,25 +196,37 @@ async fn app_icon(
     ))
 }
 
-/// Setup guide (`text/markdown`).
+/// Setup guide (`text/markdown`), filled in for the caller (C-940): the callback URL, the
+/// organization's external id (members only) and links to the app's setup page and to the tabs
+/// the guide names, at the highest level the caller can open, else who can. Name the level with
+/// `workspace_id` or `org_id`; without either only the callback URL is a real value.
 #[utoipa::path(
     get, path = "/apps/{app}/guide", operation_id = "getAppGuide", tag = "apps",
-    params(("app" = String, Path, description = "App id")),
+    params(("app" = String, Path, description = "App id"), SetupQuery),
     responses((status = 200, description = "Markdown", content_type = "text/markdown", body = String),
-              (status = 404, description = "Not found", body = ErrorEnvelope)),
+              (status = 400, body = ErrorEnvelope), (status = 404, body = ErrorEnvelope)),
     security(("session" = []), ("api_key" = []))
 )]
 async fn app_guide(
-    _caller: Caller,
+    caller: Caller,
     State(state): State<AppState>,
     Path(app): Path<String>,
+    Query(q): Query<SetupQuery>,
 ) -> Result<Response, ApiError> {
     let snap = service::snapshot(&state)
         .await?
         .ok_or_else(|| ApiError::not_found("App not found."))?;
-    let (_, p) = service::find_app(&snap, &app)?;
-    Ok(with_type(
-        assets::guide(&state, &p.digest).await?,
-        "text/markdown; charset=utf-8",
-    ))
+    let (a, p) = service::find_app(&snap, &app)?;
+    let raw = assets::guide(&state, &p.digest).await?;
+    let values = guide_render::resolve(
+        &state,
+        &caller,
+        &a.app_id,
+        &a.about.name,
+        q.workspace_id,
+        q.org_id,
+    )
+    .await?;
+    let text = guide_render::render(&String::from_utf8_lossy(&raw), &values);
+    Ok(with_type(text.into_bytes(), "text/markdown; charset=utf-8"))
 }

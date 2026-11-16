@@ -6,8 +6,10 @@ agents never see it.
 ## Register the OAuth application (admins)
 
 1. In Linear open *Settings, API, OAuth applications* and create an application.
-2. Add `<your Aurora URL>/v1/oauth/callback` as a callback URL.
-3. Copy the client ID and client secret into Aurora under *Admin, Apps, Linear*.
+2. Add {{aurora.callback_url}} as a callback URL.
+3. Copy the client ID and client secret into Aurora under {{aurora.page:oauth_clients}}. A workspace
+   owner can register a client for their own workspace on the app's setup page,
+   {{aurora.app_setup}}, instead.
 
 Aurora uses the authorization code flow with PKCE. Linear access tokens last 24 hours and every
 sign-in comes with a refresh token that lasts 30 days; each refresh returns a new pair and starts a

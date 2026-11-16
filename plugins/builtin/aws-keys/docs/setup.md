@@ -21,9 +21,10 @@ Neither way gives agents access to STS beyond `GetCallerIdentity` (see *What age
 
 ### 1. Find your organization's external id
 
-Aurora sends your organization's **external id** with every `AssumeRole` call (the `ExternalId`
-parameter). It is a stable, opaque value per organization, shown in Aurora under *Organization
-settings*, and it protects you from the confused-deputy problem: another Aurora organization cannot
+Your organization's **external id** is {{aurora.external_id}} Aurora sends it with every
+`AssumeRole` call (the `ExternalId` parameter). It is a stable, opaque value per organization,
+shown here and on the connect form for this method (with a Copy button). It is not a secret. It
+protects you from the confused-deputy problem: another Aurora organization cannot
 get your role assumed, even if it learns the role's ARN. Aurora refuses to assume a role when the
 external id is not available.
 
@@ -46,7 +47,7 @@ external id is not available.
 
 Create the role (for example `aurora-agent`) in the account the agents should work in. Its **trust
 policy** must allow the source user **and require your external id**; replace the account id, the
-user name and `<external id>`:
+user name and `<external id>` (the value from step 1):
 
 ```json
 {

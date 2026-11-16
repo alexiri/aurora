@@ -13268,7 +13268,7 @@
         "tags": [
           "apps"
         ],
-        "summary": "Setup guide (`text/markdown`).",
+        "summary": "Setup guide (`text/markdown`), filled in for the caller (C-940): the callback URL, the\norganization's external id (members only) and links to the app's setup page and to the tabs\nthe guide names, at the highest level the caller can open, else who can. Name the level with\n`workspace_id` or `org_id`; without either only the callback URL is a real value.",
         "operationId": "getAppGuide",
         "parameters": [
           {
@@ -13279,6 +13279,26 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "workspace_id",
+            "in": "query",
+            "description": "A workspace view (needs workspace owner).",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "org_id",
+            "in": "query",
+            "description": "An organization view when `workspace_id` is absent (needs organization owner or admin).",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
           }
         ],
         "responses": {
@@ -13288,6 +13308,15 @@
               "text/markdown": {
                 "schema": {
                   "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
                 }
               }
             }
@@ -13303,7 +13332,6 @@
             }
           },
           "404": {
-            "description": "Not found",
             "content": {
               "application/json": {
                 "schema": {
@@ -36241,7 +36269,8 @@
           "access_levels",
           "probe_scopes",
           "audience",
-          "scope_presets"
+          "scope_presets",
+          "show_context"
         ],
         "properties": {
           "access_levels": {
@@ -36320,6 +36349,13 @@
             "items": {
               "$ref": "#/components/schemas/ScopeInfo"
             }
+          },
+          "show_context": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "(P5-UX-13, C-942) Values the person copies into the other service, shown with Copy above\nthe method's fields: `org_external_id` (the AWS role's trust policy)."
           }
         }
       },
