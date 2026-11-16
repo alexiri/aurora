@@ -109,6 +109,11 @@ struct Target {
 }
 
 impl Proxy {
+    /// Replace the upstream header timeout live (SET-5, `gateway.upstream_header_timeout_secs`).
+    pub fn set_header_timeout(&self, d: Duration) {
+        self.upstream.set_header_timeout(d);
+    }
+
     pub fn new(p: ProxyParts) -> Result<Arc<Self>, String> {
         Self::with_byo(p, ByoParts::default())
     }

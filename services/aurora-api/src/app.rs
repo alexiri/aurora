@@ -247,6 +247,8 @@ impl AppState {
     /// that does not resolve keeps the previous set (the reload validated it already).
     fn install_live_ops(&self) {
         let cell = self.ops_live.clone();
+        let limiter = self.api_limiter.clone();
+        let connect = self.connect.clone();
         self.settings.on_swap(Arc::new(move |old, new| {
             const PREFIXES: [&str; 11] = [
                 "agents.",
@@ -275,7 +277,13 @@ impl AppState {
                 return;
             }
             match new.effective.raw.api_config() {
-                Ok(c) => cell.store(Arc::new(c)),
+                Ok(c) => {
+                    // (SET-5) The limiter takes the new bucket parameters, keeping its state.
+                    limiter.set_limits(web::apilimit::Limits::from_config(&c.ratelimit.api));
+                    // The app-instance probes read `gateway.allowed_private` live (D-74).
+                    connect.set_allowed_private(&c.gateway_allowed_private);
+                    cell.store(Arc::new(c));
+                }
                 Err(e) => tracing::error!(error = %e, "operational settings did not resolve; keeping the previous ones"),
             }
         }));
@@ -421,8 +429,6 @@ impl AppState {
     #[must_use]
     pub fn with_config_source(mut self, source: aurora_config::ConfigSource) -> Self {
         self.settings = Arc::new(domains::settings::handle::SettingsHandle::new(Some(source)));
-        self.vault
-            .set_allowed_private(self.config.gateway_allowed_private.clone());
         self.install_live_secrets();
         self.install_live_governance();
         self.install_live_sign_in();
@@ -431,6 +437,8 @@ impl AppState {
         if let Ok(c) = self.settings.snapshot().effective.raw.api_config() {
             self.auth_live
                 .store(Arc::new(domains::settings::live::LiveAuth::from_config(&c)));
+            self.api_limiter
+                .set_limits(web::apilimit::Limits::from_config(&c.ratelimit.api));
             self.ops_live.store(Arc::new(c));
         }
         // The merged view (the configuration's stores, nothing stored yet) is the first registry.
@@ -460,7 +468,12 @@ impl AppState {
             return;
         };
         self.settings.on_swap(Arc::new(move |old, new| {
-            const KEYS: [&str; 2] = ["secrets.stores", "secrets.default_store"];
+            // `gateway.allowed_private` opens private addresses to dashboard stores (SET-5).
+            const KEYS: [&str; 3] = [
+                "secrets.stores",
+                "secrets.default_store",
+                "gateway.allowed_private",
+            ];
             let differs = KEYS.iter().any(|k| {
                 old.effective.keys.get(*k).map(|e| &e.value)
                     != new.effective.keys.get(*k).map(|e| &e.value)
@@ -532,6 +545,8 @@ impl AppState {
             let mut env = env;
             env.override_origin = reqwest::Url::parse(origin).ok();
             self.connect = Arc::new(env);
+            // The live `allowed_private` follows the replaced client.
+            self.install_live_ops();
         }
         self
     }
@@ -638,11 +653,13 @@ pub fn api_router(state: Option<&AppState>) -> (Router<AppState>, utoipa::openap
     // wired when actually serving (`Some`); the document build passes `None`.
     let router = match state {
         Some(s) => {
-            let scim_enabled = s.config.scim.enabled;
+            // (SET-5) The switch is a live setting: read it per request.
+            let live = s.ops_live.clone();
             router
                 .nest("/scim/v2", domains::scim::router(s))
                 .layer(middleware::from_fn(move |req, next| {
-                    scim_gate(scim_enabled, req, next)
+                    let enabled = live.load().scim.enabled;
+                    scim_gate(enabled, req, next)
                 }))
         }
         None => router,

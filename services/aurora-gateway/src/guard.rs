@@ -2,6 +2,7 @@
 
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+use std::sync::Arc;
 
 #[derive(Debug, thiserror::Error)]
 pub enum DialError {
@@ -21,9 +22,14 @@ enum Allow {
     Suffix(String),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Guard {
-    allow: Vec<Allow>,
+    /// What is allowed now: the operator's `gateway.allowed_private` plus the derived hosts
+    /// (LLM endpoints). Replaced live (SET-5); every judgement loads it once.
+    allow: arc_swap::ArcSwap<Vec<Allow>>,
+    /// The parts of `allow`, kept so either can be replaced alone.
+    operator: arc_swap::ArcSwap<Vec<String>>,
+    derived: arc_swap::ArcSwap<Vec<String>>,
     /// Gateway listeners and database (address, port); an unspecified address
     /// means every loopback, unspecified and local interface address.
     own: Vec<(IpAddr, u16)>,
@@ -72,6 +78,32 @@ fn parse_if_inet6(text: &str) -> Vec<Ipv6Addr> {
                 .map(Ipv6Addr::from)
         })
         .collect()
+}
+
+/// `allowed` entries: CIDR, IP, hostname or `*.suffix`.
+fn parse_allow(allowed: &[String]) -> Result<Vec<Allow>, String> {
+    let mut allow = Vec::new();
+    for e in allowed {
+        let e = e.trim();
+        if let Some((a, b)) = e.split_once('/') {
+            let ip: IpAddr = a.parse().map_err(|_| format!("bad CIDR {e:?}"))?;
+            let bits: u8 = b.parse().map_err(|_| format!("bad CIDR {e:?}"))?;
+            let max = if ip.is_ipv4() { 32 } else { 128 };
+            if bits > max {
+                return Err(format!("bad CIDR {e:?}"));
+            }
+            allow.push(Allow::Cidr(canon(ip), bits));
+        } else if let Ok(ip) = e.parse::<IpAddr>() {
+            allow.push(Allow::Ip(canon(ip)));
+        } else if let Some(sfx) = e.strip_prefix("*.") {
+            allow.push(Allow::Suffix(normalize_host(sfx)));
+        } else if !e.is_empty() {
+            allow.push(Allow::Host(normalize_host(e)));
+        } else {
+            return Err("empty allowed_private entry".into());
+        }
+    }
+    Ok(allow)
 }
 
 pub fn normalize_host(host: &str) -> String {
@@ -126,30 +158,46 @@ impl Guard {
         own: Vec<SocketAddr>,
         local: Vec<IpAddr>,
     ) -> Result<Self, String> {
-        let mut allow = Vec::new();
-        for e in allowed {
-            let e = e.trim();
-            if let Some((a, b)) = e.split_once('/') {
-                let ip: IpAddr = a.parse().map_err(|_| format!("bad CIDR {e:?}"))?;
-                let bits: u8 = b.parse().map_err(|_| format!("bad CIDR {e:?}"))?;
-                let max = if ip.is_ipv4() { 32 } else { 128 };
-                if bits > max {
-                    return Err(format!("bad CIDR {e:?}"));
-                }
-                allow.push(Allow::Cidr(canon(ip), bits));
-            } else if let Ok(ip) = e.parse::<IpAddr>() {
-                allow.push(Allow::Ip(canon(ip)));
-            } else if let Some(sfx) = e.strip_prefix("*.") {
-                allow.push(Allow::Suffix(normalize_host(sfx)));
-            } else if !e.is_empty() {
-                allow.push(Allow::Host(normalize_host(e)));
-            } else {
-                return Err("empty allowed_private entry".into());
-            }
-        }
+        let allow = parse_allow(allowed)?;
         let own = own.into_iter().map(|a| (canon(a.ip()), a.port())).collect();
         let local = local.into_iter().map(canon).collect();
-        Ok(Self { allow, own, local })
+        Ok(Self {
+            allow: arc_swap::ArcSwap::from_pointee(allow),
+            operator: arc_swap::ArcSwap::from_pointee(allowed.to_vec()),
+            derived: arc_swap::ArcSwap::from_pointee(Vec::new()),
+            own,
+            local,
+        })
+    }
+
+    /// Replace the operator's list (`gateway.allowed_private`, SET-5): applies to the next
+    /// judgement. A list that does not parse changes nothing.
+    pub fn set_allowed_private(&self, entries: &[String]) -> Result<(), String> {
+        let all: Vec<String> = entries
+            .iter()
+            .chain(self.derived.load().iter())
+            .cloned()
+            .collect();
+        let allow = parse_allow(&all)?;
+        self.operator.store(Arc::new(entries.to_vec()));
+        self.allow.store(Arc::new(allow));
+        Ok(())
+    }
+
+    /// Replace the hosts derived from configuration beyond the operator's list (the LLM
+    /// endpoints' hosts); the operator's list stays.
+    pub fn set_derived_hosts(&self, hosts: &[String]) -> Result<(), String> {
+        let all: Vec<String> = self
+            .operator
+            .load()
+            .iter()
+            .chain(hosts.iter())
+            .cloned()
+            .collect();
+        let allow = parse_allow(&all)?;
+        self.derived.store(Arc::new(hosts.to_vec()));
+        self.allow.store(Arc::new(allow));
+        Ok(())
     }
 
     fn is_own(&self, ip: IpAddr, port: u16) -> bool {
@@ -162,7 +210,7 @@ impl Guard {
     }
 
     fn name_allowed(&self, host: &str) -> bool {
-        self.allow.iter().any(|a| match a {
+        self.allow.load().iter().any(|a| match a {
             Allow::Host(h) => h == host,
             Allow::Suffix(s) => {
                 host.len() > s.len()
@@ -183,6 +231,7 @@ impl Guard {
         if is_metadata(ip) {
             return if self
                 .allow
+                .load()
                 .iter()
                 .any(|a| matches!(a, Allow::Ip(x) if *x == ip))
             {
@@ -195,7 +244,7 @@ impl Guard {
             return Ok(());
         }
         let ok = self.name_allowed(&normalize_host(host))
-            || self.allow.iter().any(|a| match a {
+            || self.allow.load().iter().any(|a| match a {
                 Allow::Ip(x) => *x == ip,
                 Allow::Cidr(n, b) => cidr_contains(*n, *b, ip),
                 _ => false,

@@ -919,7 +919,7 @@ async fn test_store(
         Ok(c) => c,
         Err(_) => return Ok(fail("configuration", "invalid_config")),
     };
-    let guard = aurora_secrets::DialGuard::new(&s.config.gateway_allowed_private);
+    let guard = aurora_secrets::DialGuard::new(&s.ops().gateway_allowed_private);
     if let Some(addr) = cfg
         .settings
         .expose()

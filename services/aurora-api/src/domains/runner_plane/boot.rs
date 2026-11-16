@@ -237,7 +237,7 @@ pub async fn capabilities_for(
     }
     // Only when this runner advertised the terminal too (C-623, same gate as `register`): a
     // runner without the capability cannot serve the `pty.*` frames the boot would promise.
-    if state.config.terminal.enabled && caps.is_some_and(|c| c.terminal) {
+    if state.ops().terminal.enabled && caps.is_some_and(|c| c.terminal) {
         out.push("terminal".to_owned());
     }
     Ok(out)

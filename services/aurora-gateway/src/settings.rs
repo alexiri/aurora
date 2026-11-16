@@ -159,6 +159,52 @@ impl Settings {
         }));
     }
 
+    /// (SET-5) The destination guard's list (`gateway.allowed_private` plus the LLM endpoints'
+    /// hosts), the condition body cap and the upstream header timeout follow the `limits`
+    /// settings live. Applied once now (the stored values loaded before the proxy existed) and
+    /// after every swap that changes one of them, for requests begun afterwards.
+    pub fn apply_limits_on_change(
+        &self,
+        guard: Arc<crate::guard::Guard>,
+        handler: Arc<crate::decide::PolicyHandler>,
+        proxy: Arc<crate::proxy::Proxy>,
+    ) {
+        let apply = move |e: &Effective, guard_changed: bool| {
+            if guard_changed {
+                if let Err(err) = guard.set_allowed_private(&e.raw.gateway.allowed_private) {
+                    tracing::error!(error = %err, "gateway.allowed_private did not resolve; keeping the previous list");
+                }
+                match aurora_llm::ProviderRegistry::from_config(&e.raw.llm) {
+                    Ok(r) => {
+                        let hosts: Vec<String> = r
+                            .endpoint_hosts()
+                            .iter()
+                            .map(|h| h.rsplit_once(':').map_or(h.as_str(), |(b, _)| b).to_owned())
+                            .filter(|b| !b.is_empty())
+                            .collect();
+                        if let Err(err) = guard.set_derived_hosts(&hosts) {
+                            tracing::error!(error = %err, "LLM endpoint hosts did not resolve for the destination guard");
+                        }
+                    }
+                    Err(err) => {
+                        tracing::error!(error = %err, "llm settings did not resolve; keeping the previous endpoint allowance")
+                    }
+                }
+            }
+            handler.set_condition_body_limit(e.raw.gateway.condition_body_bytes as usize);
+            proxy.set_header_timeout(std::time::Duration::from_secs(
+                e.raw.gateway.upstream_header_timeout_secs,
+            ));
+        };
+        apply(&self.snapshot().effective, true);
+        self.on_swap(Arc::new(move |old, new| {
+            let guard_changed = section_changed(old, new, &["gateway.allowed_private", "llm."]);
+            if guard_changed || section_changed(old, new, &["gateway."]) {
+                apply(new, guard_changed);
+            }
+        }));
+    }
+
     /// (SET-5) The hold timeouts follow the `approvals` settings live.
     pub fn apply_approvals_on_change(&self, holds: Arc<crate::hold::Holds>) {
         self.on_swap(Arc::new(move |old, new| {

@@ -111,7 +111,7 @@ impl ScimToken {
         }
         // Org switch + instance switch, read fresh on every request (no cache).
         let org = org_scim(state, row.org_id).await?;
-        if !org.enabled || !state.config.scim.enabled {
+        if !org.enabled || !state.ops().scim.enabled {
             return Err(unauthorized());
         }
         Ok(Self { token: row, org })

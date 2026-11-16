@@ -942,7 +942,7 @@ async fn guard_dashboard_addresses(
     state: &AppState,
     reqs: &[SectionRequest],
 ) -> Result<(), ApiError> {
-    let guard = aurora_secrets::DialGuard::new(&state.config.gateway_allowed_private);
+    let guard = aurora_secrets::DialGuard::new(&state.ops().gateway_allowed_private);
     let mut fields = Vec::new();
     for r in reqs.iter().filter(|r| r.section == "secrets") {
         let Some(list) = r.values.get("secrets.stores").and_then(Value::as_array) else {
@@ -1040,6 +1040,51 @@ async fn check_harnesses(state: &AppState, reqs: &[SectionRequest]) -> Result<()
     }
 }
 
+/// SET-5 (C-782, D-237(d)): turning `terminal.enabled` / `scim.enabled` on while the deployment
+/// does not provide the wiring (`terminal.available` / `scim.available` is false) is refused with
+/// 422 `setting_requires_deployment`. Only a change to `true` is judged: a switch that is already
+/// on (the chart was rolled back) does not block saving the section's other keys.
+fn check_deployment(state: &AppState, reqs: &[SectionRequest]) -> Result<(), ApiError> {
+    let ops = state.ops();
+    for (section, key, available, requires, helm_key) in [
+        (
+            "terminal",
+            "terminal.enabled",
+            ops.terminal.available,
+            "terminal.available",
+            "terminal.enabled",
+        ),
+        (
+            "scim",
+            "scim.enabled",
+            ops.scim.available,
+            "scim.available",
+            "scim.enabled",
+        ),
+    ] {
+        let wants_on = reqs
+            .iter()
+            .filter(|r| r.section == section)
+            .any(|r| r.values.get(key).and_then(Value::as_bool) == Some(true));
+        let is_on = state
+            .settings
+            .snapshot()
+            .effective
+            .keys
+            .get(key)
+            .and_then(|k| k.value.as_bool())
+            == Some(true);
+        if wants_on && !is_on && !available {
+            return Err(ApiError::unprocessable(
+                "setting_requires_deployment",
+                "The deployment does not provide this feature's wiring, so it cannot be turned on here.",
+            )
+            .with_details(json!({ "key": key, "requires": requires, "helm_key": helm_key })));
+        }
+    }
+    Ok(())
+}
+
 pub struct SectionRequest {
     pub section: String,
     /// The generation the writer read; `None` for the CLI (the current one under the row lock).
@@ -1064,6 +1109,7 @@ pub async fn apply(
     require_session(via)?;
     guard_dashboard_addresses(state, &reqs).await?;
     check_harnesses(state, &reqs).await?;
+    check_deployment(state, &reqs)?;
     for r in reqs.iter().filter(|r| r.section == "sign_in") {
         super::sign_in::check_submitted(state, &r.values).await?;
     }
@@ -1380,6 +1426,12 @@ fn schema_of(ty: &SettingType) -> SettingSchema {
             s.kind = "int".into();
             s.min = Some(*min);
             s.max = Some(*max);
+        }
+        SettingType::Float { min, max } => {
+            // Whole bounds only (the schema's bounds are integers); the exact ones are checked.
+            s.kind = "float".into();
+            s.min = Some(min.floor() as i64);
+            s.max = Some(max.ceil() as i64);
         }
         SettingType::DurationSecs { min, max } => {
             s.kind = "duration_secs".into();

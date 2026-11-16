@@ -90,7 +90,7 @@ async fn take(state: &AppState, charges: &[Charge], management: bool) -> Result<
 /// bearer far enough to find its bucket: a *rejected* bearer is limited per IP instead.
 pub async fn middleware(State(state): State<AppState>, req: Request, next: Next) -> Response {
     let headers = req.headers().clone();
-    if !state.config.scim.enabled {
+    if !state.ops().scim.enabled {
         // The whole surface is 404 while the instance switch is off; no buckets apply.
         return next.run(req).await;
     }
@@ -197,7 +197,7 @@ async fn resolve_for_rate(state: &AppState, headers: &http::HeaderMap) -> RateRe
         return RateResolve::Rejected;
     }
     match aurora_db::repo::scim::token_by_hash(&state.pool, &token::hash(tok)).await {
-        Ok(Some(row)) => RateResolve::Token(row, state.config.scim.rate_per_minute),
+        Ok(Some(row)) => RateResolve::Token(row, state.ops().scim.rate_per_minute),
         Ok(None) => RateResolve::Rejected,
         Err(e) => {
             tracing::error!(error = %e, "scim: token lookup (rate) failed");
@@ -219,7 +219,7 @@ pub async fn body_limit_middleware(
     req: Request,
     next: Next,
 ) -> Response {
-    if !state.config.scim.enabled {
+    if !state.ops().scim.enabled {
         return next.run(req).await;
     }
     let len = req

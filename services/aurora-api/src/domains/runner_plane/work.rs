@@ -145,7 +145,7 @@ async fn compute(
         hosted.background_cap_secs as f64,
         STOP_LEASE_SECS,
         s.ops().previews.awake_cap_secs as f64,
-        s.config.terminal.awake_cap_secs as f64,
+        s.ops().terminal.awake_cap_secs as f64,
         ARM_LIMIT,
     )
     .await?;
@@ -182,7 +182,7 @@ async fn compute(
             start_lease_secs(hosted.sandbox_ready_timeout_secs),
             // (P4-TERM, C-621) The terminal wake demand shares the preview demand's window
             // clock (both are 60 s; the API's `terminal_wake_at` is the newer stamp).
-            s.config.terminal.wake_window_secs as f64,
+            s.ops().terminal.wake_window_secs as f64,
         )
         .await?;
         if !claims.is_empty() {
