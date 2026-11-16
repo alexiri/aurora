@@ -33,6 +33,8 @@ use serde_json::{Value, json};
 pub struct Seen {
     pub path: String,
     pub authorization: Option<String>,
+    /// (P4-LLM-5) The `api-key` header (an Azure resource key).
+    pub api_key: Option<String>,
     pub body: Value,
 }
 
@@ -123,6 +125,10 @@ async fn responses(State(me): State<MockResponses>, headers: HeaderMap, body: By
             .get(header::AUTHORIZATION)
             .and_then(|v| v.to_str().ok())
             .map(str::to_owned),
+        api_key: headers
+            .get("api-key")
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_owned),
         body: json.clone(),
     });
     let n = me.seen.lock().unwrap().len();
@@ -168,6 +174,14 @@ async fn responses(State(me): State<MockResponses>, headers: HeaderMap, body: By
         .unwrap()
 }
 
+async fn models() -> Response {
+    Response::builder()
+        .status(200)
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(r#"{"data":[{"id":"say"},{"id":"tool"}]}"#))
+        .unwrap()
+}
+
 impl MockResponses {
     pub async fn start() -> Self {
         Self::start_on("127.0.0.1").await
@@ -182,6 +196,10 @@ impl MockResponses {
         };
         let app = Router::new()
             .route("/v1/responses", post(responses))
+            // (P4-LLM-5) Azure OpenAI's v1 surface.
+            .route("/openai/v1/responses", post(responses))
+            // (P4-LLM-5) The key validation of Azure OpenAI (`GET /openai/v1/models`); not recorded in `requests()`.
+            .route("/openai/v1/models", axum::routing::get(models))
             .with_state(me.clone());
         let l = tokio::net::TcpListener::bind(format!("{ip}:0"))
             .await

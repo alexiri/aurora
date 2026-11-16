@@ -1241,6 +1241,346 @@ default_model = "say"
     st.finish().await;
 }
 
+/// (P4-LLM-5, SEC-01, SEC-64, SEC-97) The sandbox holds none of `needles`: not in the container's configured
+/// environment, not in any file under the places a harness writes, not in any process environment.
+fn assert_sandbox_holds_none(c: &str, needles: &[&str]) {
+    let (_, env) = podman_rc(&["inspect", "--format", "{{json .Config.Env}}", c]);
+    for n in needles {
+        assert!(!env.contains(n), "{n} is in the container environment");
+        let (_, found) = exec_in(
+            c,
+            &format!(
+                "grep -rIl --exclude-dir=proc --exclude-dir=sys -e '{n}' /workspace /run /tmp /etc /home 2>/dev/null; \
+                 for p in /proc/[0-9]*; do cat $p/environ 2>/dev/null | tr '\\0' '\\n'; done | grep -c -e '{n}'"
+            ),
+        );
+        assert!(
+            found
+                .lines()
+                .all(|l| l.trim() == "0" || l.trim().is_empty()),
+            "{n} is present in the sandbox: {found}"
+        );
+    }
+}
+
+/// (P4-LLM-5, D-261, C-809, SEC-64) A Codex agent on `azure_openai` with each auth mode: the turn completes, the
+/// gateway injects `api-key` (resource key) or a minted `Bearer` token (Entra application) and nothing Azure-specific is
+/// rendered for Codex; neither the key, the client secret nor the minted token is found in the sandbox or the
+/// transcript. Needs the full image (pinned Codex CLI): `AURORA_E2EH_FULL_IMAGE=1 scripts/e2e/hosted.sh`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn s25_codex_on_azure_openai_holds_no_credential_in_the_sandbox_for_either_auth_mode() {
+    use aurora_testkit::llm::entra::{MockEntra, TestApp};
+    if !enabled() {
+        return;
+    }
+    let Ok(image) = std::env::var("AURORA_E2EH_FULL_IMAGE_TAG") else {
+        eprintln!(
+            "SKIPPED: AURORA_E2EH_FULL_IMAGE_TAG is not set; run AURORA_E2EH_FULL_IMAGE=1 scripts/e2e/hosted.sh"
+        );
+        return;
+    };
+    const KEY: &str = "azure-resource-key-SEEDED-5b2e7f10";
+    let app = TestApp {
+        tenant_id: "11111111-2222-3333-4444-555555555555".into(),
+        client_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee".into(),
+        client_secret: "entra-client-secret-SEEDED-3a9c41d2".into(),
+    };
+    for entra_mode in [false, true] {
+        let entra = MockEntra::start(&app).await;
+        // 127.0.0.2: outside the sandbox's NO_PROXY, so the model call goes through the gateway.
+        let up = aurora_testkit::responses::MockResponses::start_on("127.0.0.2").await;
+        let toml = format!(
+            r#"
+[llm]
+enabled_providers = ["azure_openai"]
+provider_preference = ["azure_openai"]
+
+[llm.dev_upstream_overrides]
+"https://login.microsoftonline.com" = "{}"
+
+[[llm.endpoints]]
+id = "az"
+provider = "azure_openai"
+base_url = "{}"
+models = ["say", "tool"]
+default_model = "say"
+"#,
+            entra.base(),
+            up.base()
+        );
+        Stack::wipe();
+        let st = Stack::start_with(
+            Opts {
+                image: Some(image.clone()),
+                ..Opts::default()
+            },
+            &toml,
+        )
+        .await;
+        let api = st.signup("owner@e2e.test").await;
+        sqlx::query(
+            "UPDATE agents SET harness = 'codex', model_provider = 'azure_openai', \
+             model_endpoint_id = 'az', model_id = 'say' WHERE id = $1::uuid",
+        )
+        .bind(&api.daneel)
+        .execute(st.pool())
+        .await
+        .unwrap();
+        let (mode, value) = if entra_mode {
+            ("azure_entra", app.json())
+        } else {
+            ("api_key", KEY.to_owned())
+        };
+        let (s, v) = api
+            .post(
+                &format!("/v1/workspaces/{}/secrets", api.ws),
+                json!({"name": "azure-key", "kind": "llm",
+                       "llm": {"endpoint_id": "az", "auth_mode": mode}, "value": value}),
+            )
+            .await;
+        assert_eq!(s, 201, "{mode}: {v}\n{}", st.log_tails());
+        api.grant(&api.daneel, v["id"].as_str().unwrap()).await;
+
+        let conv = api.direct().await;
+        let v = api.say(&conv, "Reply with exactly the word: pong").await;
+        let (status, err) = st
+            .wait_turn(&turn_id(&v), &["done", "failed", "aborted"], 120)
+            .await;
+        assert_eq!(status, "done", "{mode}: {err:?}\n{}", st.log_tails());
+        let t = transcript_text(&api.events(&conv).await);
+        assert!(t.contains("pong"), "{mode}: {t}\n{}", st.log_tails());
+
+        let seen = up.requests();
+        assert!(!seen.is_empty(), "{mode}: the upstream saw nothing");
+        let tokens = entra.issued();
+        for r in &seen {
+            if entra_mode {
+                let token = tokens.last().expect("a minted token");
+                assert_eq!(
+                    r.authorization.as_deref(),
+                    Some(format!("Bearer {token}").as_str()),
+                    "{mode}: {r:?}"
+                );
+                assert!(r.api_key.is_none(), "{mode}: {r:?}");
+            } else {
+                assert_eq!(r.api_key.as_deref(), Some(KEY), "{mode}: {r:?}");
+                assert!(
+                    r.authorization.is_none(),
+                    "the placeholder is replaced: {r:?}"
+                );
+            }
+            assert!(!r.body.to_string().contains(KEY));
+        }
+        let cs = containers();
+        assert_eq!(cs.len(), 1, "{cs:?}");
+        let c = cs[0].as_str();
+        let (_, cfg) = exec_in(c, "cat /workspace/.codex/config.toml 2>&1");
+        assert!(
+            !cfg.contains("api-version") && !cfg.contains("azure_") && !cfg.contains("auth.json"),
+            "{cfg}"
+        );
+        let mut needles = vec![KEY, app.client_secret.as_str()];
+        needles.extend(tokens.iter().map(String::as_str));
+        assert_sandbox_holds_none(c, &needles);
+        for n in &needles {
+            assert!(!t.contains(n), "{mode}: transcript holds {n}");
+        }
+        st.finish().await;
+    }
+}
+
+/// (P4-LLM-5, D-261, C-809, SEC-64, SEC-97) A Claude Code agent on `bedrock` with each of `aws_assume_role`,
+/// `aws_sigv4` and `api_key`: the turn completes against the verifying Bedrock mock (valid signature from the session
+/// key, the static key, or the Bedrock API key as bearer); the sandbox's Claude Code environment (`harness.env`) is
+/// byte-identical across the three modes and holds only the "skip auth" switches; none of the source key, secret,
+/// session credentials, API key or the signature is in the sandbox or the transcript. Needs the full image.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn s26_claude_code_on_bedrock_holds_no_credential_in_the_sandbox_for_every_auth_mode() {
+    use aurora_testkit::llm::{bedrock::MockBedrock, sts::MockSts};
+    if !enabled() {
+        return;
+    }
+    let Ok(image) = std::env::var("AURORA_E2EH_FULL_IMAGE_TAG") else {
+        eprintln!(
+            "SKIPPED: AURORA_E2EH_FULL_IMAGE_TAG is not set; run AURORA_E2EH_FULL_IMAGE=1 scripts/e2e/hosted.sh"
+        );
+        return;
+    };
+    const SOURCE_KEY: &str = "AKIAE2EHSOURCE000001";
+    const SOURCE_SECRET: &str = "e2eh-source-secret-SEEDED-8d41c07a";
+    const API_KEY: &str = "bedrock-api-key-SEEDED-61f0a3be";
+    const MODEL: &str = "anthropic.claude-3-haiku-20240307-v1:0";
+    let mut env_files: Vec<(&str, String)> = Vec::new();
+    for mode in ["aws_assume_role", "aws_sigv4", "api_key"] {
+        let bedrock = MockBedrock::start_on("127.0.0.2").await;
+        let sts = MockSts::start(SOURCE_KEY, SOURCE_SECRET, "123456789012").await;
+        {
+            let b = bedrock.clone();
+            sts.on_session(move |ak, sk, tok| b.accept_key(ak, sk, Some(tok)));
+        }
+        bedrock.accept_key(SOURCE_KEY, SOURCE_SECRET, None);
+        bedrock.accept_api_key(API_KEY);
+        let toml = format!(
+            r#"
+[llm]
+enabled_providers = ["bedrock"]
+provider_preference = ["bedrock"]
+
+[llm.dev_upstream_overrides]
+"https://sts.us-east-1.amazonaws.com" = "{sts}"
+"https://bedrock.us-east-1.amazonaws.com" = "{bd}"
+
+[[llm.endpoints]]
+id = "bd"
+provider = "bedrock"
+region = "us-east-1"
+base_url = "{bd}"
+models = ["{MODEL}"]
+default_model = "{MODEL}"
+"#,
+            sts = sts.base(),
+            bd = bedrock.base()
+        );
+        Stack::wipe();
+        let st = Stack::start_with(
+            Opts {
+                image: Some(image.clone()),
+                ..Opts::default()
+            },
+            &toml,
+        )
+        .await;
+        let api = st.signup("owner@e2e.test").await;
+        sqlx::query(
+            "UPDATE agents SET harness = 'claude-code', model_provider = 'bedrock', \
+             model_endpoint_id = 'bd', model_id = $2 WHERE id = $1::uuid",
+        )
+        .bind(&api.daneel)
+        .bind(MODEL)
+        .execute(st.pool())
+        .await
+        .unwrap();
+        let value = match mode {
+            "aws_assume_role" => {
+                json!({"access_key_id": SOURCE_KEY, "secret_access_key": SOURCE_SECRET,
+                "role_arn": "arn:aws:iam::123456789012:role/aurora-e2eh"})
+                .to_string()
+            }
+            "aws_sigv4" => {
+                json!({"access_key_id": SOURCE_KEY, "secret_access_key": SOURCE_SECRET}).to_string()
+            }
+            _ => API_KEY.to_owned(),
+        };
+        let (s, v) = api
+            .post(
+                &format!("/v1/workspaces/{}/secrets", api.ws),
+                json!({"name": "bedrock-key", "kind": "llm",
+                       "llm": {"endpoint_id": "bd", "auth_mode": mode}, "value": value}),
+            )
+            .await;
+        assert_eq!(s, 201, "{mode}: {v}\n{}", st.log_tails());
+        api.grant(&api.daneel, v["id"].as_str().unwrap()).await;
+
+        let conv = api.direct().await;
+        let v = api.say(&conv, "Reply with exactly the word: pong").await;
+        let (status, err) = st
+            .wait_turn(&turn_id(&v), &["done", "failed", "aborted"], 180)
+            .await;
+        if status != "done" {
+            let ev = api.events(&conv).await;
+            panic!(
+                "{mode}: {status} {err:?}\nevents: {ev:?}\n{}",
+                st.log_tails()
+            );
+        }
+        let t = transcript_text(&api.events(&conv).await);
+        assert!(t.contains("pong"), "{mode}: {t}\n{}", st.log_tails());
+
+        // The runtime saw a verified request of the right credential and no agent-side AWS material.
+        let seen: Vec<_> = bedrock
+            .requests()
+            .into_iter()
+            .filter(|r| {
+                r.req.path.ends_with("/invoke-with-response-stream")
+                    || r.req.path.ends_with("/invoke")
+            })
+            .collect();
+        assert!(
+            !seen.is_empty(),
+            "{mode}: no inference request reached Bedrock"
+        );
+        let mut needles: Vec<String> =
+            vec![SOURCE_KEY.into(), SOURCE_SECRET.into(), API_KEY.into()];
+        for r in &seen {
+            match mode {
+                "api_key" => assert!(r.bearer_ok, "{mode}: {r:?}"),
+                "aws_sigv4" => assert_eq!(r.verified.as_ref().unwrap().access_key, SOURCE_KEY),
+                _ => assert!(
+                    r.verified
+                        .as_ref()
+                        .unwrap()
+                        .access_key
+                        .starts_with("ASIAMOCKSESSION"),
+                    "{mode}: {r:?}"
+                ),
+            }
+            if let Some((_, a)) = r.req.headers.iter().find(|(k, _)| k == "authorization")
+                && let Some(sig) = a.split("Signature=").nth(1)
+            {
+                needles.push(sig.to_owned());
+            }
+        }
+        for (ak, sk, tok) in sts.sessions() {
+            needles.extend([ak, sk, tok]);
+        }
+        let cs = containers();
+        assert_eq!(cs.len(), 1, "{cs:?}");
+        let c = cs[0].as_str();
+        let refs: Vec<&str> = needles.iter().map(String::as_str).collect();
+        assert_sandbox_holds_none(c, &refs);
+        for n in &refs {
+            assert!(!t.contains(n), "{mode}: transcript holds {n}");
+        }
+        let (_, env_file) = exec_in(c, "cat /run/aurora/harness.env 2>&1");
+        assert!(
+            env_file.contains("CLAUDE_CODE_USE_BEDROCK")
+                && env_file.contains("CLAUDE_CODE_SKIP_BEDROCK_AUTH"),
+            "{mode}: {env_file}"
+        );
+        assert!(
+            !env_file.contains("AWS_SECRET")
+                && !env_file.contains("AWS_ACCESS")
+                && !env_file.contains("AWS_BEARER"),
+            "{mode}: {env_file}"
+        );
+        env_files.push((mode, env_file));
+        st.finish().await;
+    }
+    // The environment is the same whatever the credential (the mode never reaches the sandbox).
+    let first = &env_files[0].1;
+    for (mode, f) in &env_files[1..] {
+        // The base URL carries the mock's port, which differs per run: compare with it masked.
+        let mask = |s: &str| {
+            s.lines()
+                .map(|l| {
+                    if l.contains("127.0.0.2:") {
+                        "<base>"
+                    } else {
+                        l
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        assert_eq!(
+            mask(first),
+            mask(f),
+            "{mode} differs from {}",
+            env_files[0].0
+        );
+    }
+}
+
 /// Poll until `check` holds or `secs` pass.
 async fn eventually(secs: u64, mut check: impl FnMut() -> bool) -> bool {
     let end = std::time::Instant::now() + Duration::from_secs(secs);

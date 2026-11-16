@@ -622,8 +622,11 @@ minted.
      `vertex`, the project and location in it) must be in the set, else 403
      `llm_path_not_permitted`; for `bedrock` with `aws_sigv4` (phase 5, D-261: or
      `aws_assume_role`) a request body above
-     `LLM_SIGN_BODY_MAX` (8 MiB) → 413 `llm_request_too_large`. Both are decided before
-     policy and before any credential is opened (SEC-03). (phase 5, P4-LLM spec batch,
+     `LLM_SIGN_BODY_MAX` (8 MiB) → 413 `llm_request_too_large`. The path refusal is decided
+     before policy; the body bound once policy has allowed the request (the winner is not
+     known earlier, D-313(d)); neither opens a credential (SEC-03). The body is buffered
+     whole for signing (`x-amz-content-sha256` is the hash of those bytes) and forwarded
+     from the buffer; the response is never read. (phase 5, P4-LLM spec batch,
      D-260(b)/(c)) `anthropic` has a set too (`/v1/messages`, `/v1/messages/count_tokens`,
      `GET /v1/models[/{id}]`), and the endpoint's `allowed_paths` only ever **adds** to a
      set (never for `bedrock`/`vertex`, whose entries cannot carry it).

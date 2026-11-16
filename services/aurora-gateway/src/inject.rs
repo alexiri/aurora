@@ -124,6 +124,100 @@ pub(crate) fn echoes(needles: &[Vec<u8>], hay: &[u8]) -> bool {
         .any(|n| !n.is_empty() && hay.windows(n.len()).any(|w| w == n.as_slice()))
 }
 
+/// (C-806) Remove every agent-supplied auth header, then (by prefix families, `x-amz-*`, `x-goog-*`) the provider's
+/// own: they are removed whole, never merged.
+fn strip_agent_auth(l: &aurora_llm::LlmInjection, headers: &mut HeaderMap) {
+    headers.remove(header::AUTHORIZATION);
+    headers.remove("x-api-key");
+    headers.remove("api-key");
+    for h in &l.strip_request_headers {
+        headers.remove(*h);
+    }
+    if !l.strip_request_prefixes.is_empty() {
+        let drop: Vec<HeaderName> = headers
+            .keys()
+            .filter(|k| {
+                l.strip_request_prefixes
+                    .iter()
+                    .any(|p| k.as_str().starts_with(p))
+            })
+            .cloned()
+            .collect();
+        for k in drop {
+            headers.remove(k);
+        }
+    }
+}
+
+/// What a SigV4-signed LLM request is signed over (P4-LLM-4, D-261): everything the signature covers besides the
+/// credentials.
+pub struct SignReq<'a> {
+    pub method: &'a http::Method,
+    /// The `Host` the upstream sees (`host`, `:port` only when it is not the scheme's default).
+    pub host_header: &'a str,
+    pub region: &'a str,
+    pub service: &'static str,
+    /// The whole request body (buffered up to `LLM_SIGN_BODY_MAX`).
+    pub body: &'a [u8],
+    pub now: std::time::SystemTime,
+}
+
+/// The credentials of a signed request: the static key, or the session credentials the mint produced.
+pub struct SigningKey<'a> {
+    pub access_key: &'a str,
+    pub secret_key: &'a str,
+    pub session_token: Option<&'a str>,
+}
+
+/// (P4-LLM-4, C-806) `aws_sigv4` / `aws_assume_role`: strip every agent `Authorization` and `X-Amz-*` header, then
+/// SigV4-sign the final request (path and query as they will be sent, the payload hash of the buffered body) and set
+/// `Authorization`, `X-Amz-Date`, `X-Amz-Content-Sha256` and, with a session, `X-Amz-Security-Token`.
+pub fn apply_signed(
+    cand: &SecretCand,
+    key: &SigningKey<'_>,
+    req: &SignReq<'_>,
+    t: Target<'_>,
+) -> Result<(), InjectError> {
+    let Injection::Llm(l) = &cand.injection else {
+        return Err(InjectError);
+    };
+    if !matches!(
+        l.header,
+        aurora_llm::InjectionHeader::AwsSigV4 | aurora_llm::InjectionHeader::AwsAssumeRole
+    ) {
+        return Err(InjectError);
+    }
+    strip_agent_auth(l, t.headers);
+    let amz_date = aurora_llm::sigv4::amz_date(req.now);
+    let payload = aurora_llm::sigv4::sha256_hex(req.body);
+    let signed = aurora_llm::sigv4::sign(&aurora_llm::sigv4::SignParams {
+        method: req.method,
+        host_header: req.host_header,
+        path: t.path,
+        query: t.query.as_deref(),
+        region: req.region,
+        service: req.service,
+        access_key: key.access_key,
+        secret_key: key.secret_key,
+        session_token: key.session_token,
+        amz_date: &amz_date,
+        payload_hash: &payload,
+        sign_content_sha256: true,
+    });
+    let mut set = |n: &'static str, v: &str| -> Result<(), InjectError> {
+        t.headers
+            .insert(HeaderName::from_static(n), header_value(v.as_bytes())?);
+        Ok(())
+    };
+    set("authorization", &signed.authorization)?;
+    set("x-amz-date", &amz_date)?;
+    set("x-amz-content-sha256", &payload)?;
+    if let Some(tok) = key.session_token {
+        set("x-amz-security-token", tok)?;
+    }
+    Ok(())
+}
+
 pub fn apply(cand: &SecretCand, value: &[u8], t: Target<'_>) -> Result<(), InjectError> {
     apply_value(cand, value, false, t)
 }
@@ -143,29 +237,7 @@ fn apply_value(
 ) -> Result<(), InjectError> {
     match &cand.injection {
         Injection::Llm(l) => {
-            // Strip every agent-supplied auth header, then set the provider's.
-            t.headers.remove(header::AUTHORIZATION);
-            t.headers.remove("x-api-key");
-            t.headers.remove("api-key");
-            for h in &l.strip_request_headers {
-                t.headers.remove(*h);
-            }
-            // (C-806) Prefix families (`x-amz-*`, `x-goog-*`) are removed whole, never merged.
-            if !l.strip_request_prefixes.is_empty() {
-                let drop: Vec<HeaderName> = t
-                    .headers
-                    .keys()
-                    .filter(|k| {
-                        l.strip_request_prefixes
-                            .iter()
-                            .any(|p| k.as_str().starts_with(p))
-                    })
-                    .cloned()
-                    .collect();
-                for k in drop {
-                    t.headers.remove(k);
-                }
-            }
+            strip_agent_auth(l, t.headers);
             for (name, value) in &l.set_headers {
                 t.headers.insert(
                     HeaderName::from_static(name),

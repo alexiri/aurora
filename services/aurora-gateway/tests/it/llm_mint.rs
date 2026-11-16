@@ -66,6 +66,7 @@ fn req<'a>(r: &'a Rig, secret: Uuid, version: i32, value: &'a [u8]) -> MintReque
         endpoint: &r.ep,
         mode: AuthMode::GcpServiceAccount,
         value,
+        org_external_id: None,
     }
 }
 
@@ -85,6 +86,7 @@ async fn fifty_concurrent_requests_make_one_mint_and_share_the_token() {
                     endpoint: &ep,
                     mode: AuthMode::GcpServiceAccount,
                     value: json.as_bytes(),
+                    org_external_id: None,
                 })
                 .await
                 .map(|t| t.expose().clone())

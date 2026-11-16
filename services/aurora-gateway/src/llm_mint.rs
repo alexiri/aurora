@@ -60,6 +60,8 @@ pub struct MintRequest<'a> {
     pub mode: AuthMode,
     /// The secret's opened value.
     pub value: &'a [u8],
+    /// The organization's own `external_id` (`aws_assume_role` only: the `ExternalId` of `AssumeRole`, D-261(b)).
+    pub org_external_id: Option<&'a str>,
 }
 
 pub struct LlmMint {
@@ -236,7 +238,7 @@ impl LlmMint {
             endpoint: r.endpoint,
             value: r.value,
             org_id: &org,
-            org_external_id: None,
+            org_external_id: r.org_external_id,
             now,
             overrides: &self.overrides,
         };

@@ -35,9 +35,34 @@ struct World {
     azure: aurora_testkit::llm::azure::MockAzure,
     entra: aurora_testkit::llm::entra::MockEntra,
     azure_app: aurora_testkit::llm::entra::TestApp,
+    /// (P4-LLM-4) Bedrock (runtime = control plane on one mock) and the STS that knows `BEDROCK_SOURCE_KEY`; every
+    /// session STS hands out is registered with the Bedrock mock.
+    bedrock: aurora_testkit::llm::bedrock::MockBedrock,
+    sts: aurora_testkit::llm::sts::MockSts,
 }
 
 const AZURE_TENANT: &str = "11111111-2222-3333-4444-555555555555";
+const BEDROCK_SOURCE_KEY: &str = "AKIASOURCEKEY00001";
+const BEDROCK_SOURCE_SECRET: &str = "source-secret-never-returned";
+const BEDROCK_API_KEY: &str = "bedrock-api-key-value";
+const BEDROCK_ACCOUNT: &str = "123456789012";
+const BEDROCK_ROLE: &str = "arn:aws:iam::123456789012:role/aurora-bedrock";
+
+fn bedrock_endpoint(id: &str, base: &str, account: Option<&str>, models: &[&str]) -> LlmEndpoint {
+    LlmEndpoint {
+        id: id.into(),
+        provider: "bedrock".into(),
+        region: Some("us-east-1".into()),
+        base_url: Some(base.into()),
+        models: models.iter().map(|m| (*m).to_owned()).collect(),
+        key_origin: account.map(|a| KeyOrigin {
+            method: "provider_account".into(),
+            allowed_organization_ids: vec![a.into()],
+            ..KeyOrigin::default()
+        }),
+        ..LlmEndpoint::default()
+    }
+}
 
 fn endpoint(id: &str, base: &str, rule: Option<KeyOrigin>) -> LlmEndpoint {
     LlmEndpoint {
@@ -172,6 +197,21 @@ async fn world() -> World {
     let entra = aurora_testkit::llm::entra::MockEntra::start(&azure_app).await;
     let azure = aurora_testkit::llm::azure::MockAzure::start("azure-key").await;
     let (eu, zu) = (entra.base().to_owned(), azure.base().to_owned());
+    let bedrock = aurora_testkit::llm::bedrock::MockBedrock::start().await;
+    bedrock.accept_api_key(BEDROCK_API_KEY);
+    // The source key doubles as a static IAM key (`aws_sigv4`) in the tests.
+    bedrock.accept_key(BEDROCK_SOURCE_KEY, BEDROCK_SOURCE_SECRET, None);
+    let sts = aurora_testkit::llm::sts::MockSts::start(
+        BEDROCK_SOURCE_KEY,
+        BEDROCK_SOURCE_SECRET,
+        BEDROCK_ACCOUNT,
+    )
+    .await;
+    {
+        let b = bedrock.clone();
+        sts.on_session(move |ak, sk, tok| b.accept_key(ak, sk, Some(tok)));
+    }
+    let (bu, su) = (bedrock.base().to_owned(), sts.base().to_owned());
     let (lu, au, fu) = (litellm.uri(), anthropic.uri(), flaky.uri());
     let ou = openai.uri();
     let h = Harness::with_config(move |c| {
@@ -182,9 +222,16 @@ async fn world() -> World {
             "openai_compatible",
             "vertex",
             "azure_openai",
+            "bedrock",
         ]
         .map(String::from)
         .to_vec();
+        c.llm
+            .dev_upstream_overrides
+            .insert("https://sts.us-east-1.amazonaws.com".into(), su.clone());
+        c.llm
+            .dev_upstream_overrides
+            .insert("https://bedrock.us-east-1.amazonaws.com".into(), bu.clone());
         c.llm
             .dev_upstream_overrides
             .insert("https://oauth2.googleapis.com".into(), gu.clone());
@@ -291,6 +338,11 @@ async fn world() -> World {
                 &zu,
                 Some("99999999-2222-3333-4444-555555555555"),
             ),
+            // (P4-LLM-4) Bedrock: no rule (with a static model list), the key's account is allowed / is not.
+            bedrock_endpoint("bd", &bu, None, &["static-model"]),
+            bedrock_endpoint("bd_static", &bu, None, &["static-model"]),
+            bedrock_endpoint("bd_acct", &bu, Some(BEDROCK_ACCOUNT), &[]),
+            bedrock_endpoint("bd_other", &bu, Some("999999999999"), &[]),
             LlmEndpoint {
                 id: "compat".into(),
                 provider: "openai_compatible".into(),
@@ -340,7 +392,8 @@ async fn world() -> World {
             "central": {"key_scopes": ["organization"]},
             "dead": {}, "dead_rule": {}, "anthropic": {}, "team": {}, "team_req": {},
             "flaky": {}, "flaky_rule": {}, "oai": {}, "compat": {}, "vx": {}, "vx_other": {},
-            "az": {}, "az_tenant": {}, "az_other": {}
+            "az": {}, "az_tenant": {}, "az_other": {},
+            "bd": {}, "bd_static": {}, "bd_acct": {}, "bd_other": {}
         }}}))
         .execute(h.pool())
         .await
@@ -373,6 +426,8 @@ async fn world() -> World {
         azure,
         entra,
         azure_app,
+        bedrock,
+        sts,
     }
 }
 
@@ -1783,4 +1838,220 @@ async fn azure_keys_and_entra_applications_are_validated_and_attributed() {
     };
     assert_eq!(mode_of("az"), json!(["api_key", "azure_entra"]));
     assert_eq!(mode_of("az_tenant"), json!(["azure_entra"]));
+}
+
+fn bedrock_save(ep: &str, mode: &str, value: String, name: &str) -> Value {
+    json!({"name": name, "kind": "llm", "llm": {"endpoint_id": ep, "auth_mode": mode}, "value": value})
+}
+
+fn assume_value() -> String {
+    json!({"access_key_id": BEDROCK_SOURCE_KEY, "secret_access_key": BEDROCK_SOURCE_SECRET,
+           "role_arn": BEDROCK_ROLE})
+    .to_string()
+}
+
+fn static_value() -> String {
+    json!({"access_key_id": BEDROCK_SOURCE_KEY, "secret_access_key": BEDROCK_SOURCE_SECRET})
+        .to_string()
+}
+
+/// (P4-LLM-4, C-801, C-804, SEC-97, acceptance 4) Bedrock credentials: assume-role is validated by a real `AssumeRole`
+/// with the organization's own external id (the account of the role becomes the origin, judged by a `provider_account`
+/// rule); a refused role is `assume_role_denied`; a static IAM key proves itself by `GetCallerIdentity`; a Bedrock API
+/// key cannot report an account (`llm_key_unverifiable` under a rule); bad value shapes call nothing.
+#[tokio::test]
+async fn bedrock_credentials_are_validated_and_attributed() {
+    let w = world().await;
+    let url = w.ws_url();
+    let post = |body: Value| w.call(Method::POST, &url, &w.owner, Some(body));
+    let code = |s: u16, v: &Value| (s, v["error"]["code"].as_str().map(str::to_owned));
+    let secrets = [BEDROCK_SOURCE_SECRET, "session-secret", "session-token"];
+    let org_ext: String = sqlx::query_scalar("SELECT external_id FROM organizations WHERE id = $1")
+        .bind(w.org)
+        .fetch_one(w.h.pool())
+        .await
+        .unwrap();
+
+    // Value shapes: refused with a reason before any call.
+    for (name, value, reason) in [
+        (
+            "partition",
+            assume_value().replace("arn:aws:", "arn:aws-us-gov:"),
+            "partition_mismatch",
+        ),
+        (
+            "arn",
+            assume_value().replace("role/", "user/"),
+            "role_arn_invalid",
+        ),
+        ("not-json", "just a string".to_owned(), "missing_field"),
+    ] {
+        let (s, v) = post(bedrock_save("bd", "aws_assume_role", value, name)).await;
+        assert_eq!(
+            code(s, &v),
+            (422, Some("llm_key_invalid".into())),
+            "{name}: {v}"
+        );
+        assert_eq!(v["error"]["details"]["reason"], reason, "{name}: {v}");
+        no_value(&v, &secrets);
+    }
+    assert_eq!(w.sts.calls(), 0, "shape refusals make no outbound call");
+
+    // A valid role: assumed with the org's external id; the role's account is the origin.
+    let (s, v) = post(bedrock_save(
+        "bd_acct",
+        "aws_assume_role",
+        assume_value(),
+        "r1",
+    ))
+    .await;
+    assert_eq!(s, 201, "{v}");
+    assert_eq!(v["origin"]["status"], "verified");
+    assert_eq!(v["origin"]["method"], "provider_account");
+    assert_eq!(v["origin"]["organization_id"], BEDROCK_ACCOUNT);
+    assert_eq!(v["llm"]["auth_mode"], "aws_assume_role");
+    no_value(&v, &secrets);
+    let calls = w.sts.assume_calls();
+    // The validation and the `provider_account` origin each mint (one per call of the trait, D-311(d)).
+    assert!(!calls.is_empty(), "AssumeRole was called");
+    for c in &calls {
+        assert_eq!(c.signed_by, BEDROCK_SOURCE_KEY);
+        assert_eq!(c.role_arn, BEDROCK_ROLE);
+        assert_eq!(c.external_id, org_ext, "the organization's own external id");
+        assert_eq!(c.role_session_name, format!("aurora-{}", w.org));
+    }
+
+    // Another account in the rule.
+    let (s, v) = post(bedrock_save(
+        "bd_other",
+        "aws_assume_role",
+        assume_value(),
+        "r2",
+    ))
+    .await;
+    assert_eq!(
+        code(s, &v),
+        (422, Some("llm_key_wrong_organization".into())),
+        "{v}"
+    );
+
+    // The role refuses the source key or external id: `assume_role_denied` (an `llm_key_invalid` reason).
+    w.sts.deny_assume(true);
+    let (s, v) = post(bedrock_save("bd", "aws_assume_role", assume_value(), "r3")).await;
+    assert_eq!(code(s, &v), (422, Some("llm_key_invalid".into())), "{v}");
+    assert_eq!(v["error"]["details"]["reason"], "assume_role_denied", "{v}");
+    no_value(&v, &secrets);
+    w.sts.deny_assume(false);
+
+    // A static IAM key: the caller's account.
+    let assumed = w.sts.assume_calls().len();
+    let (s, v) = post(bedrock_save("bd_acct", "aws_sigv4", static_value(), "s1")).await;
+    assert_eq!(s, 201, "{v}");
+    assert_eq!(v["origin"]["organization_id"], BEDROCK_ACCOUNT);
+    assert_eq!(
+        w.sts.assume_calls().len(),
+        assumed,
+        "GetCallerIdentity is not an AssumeRole"
+    );
+    let wrong =
+        json!({"access_key_id": "AKIAUNKNOWN0000001", "secret_access_key": "x"}).to_string();
+    let (s, v) = post(bedrock_save("bd", "aws_sigv4", wrong, "s2")).await;
+    assert_eq!(code(s, &v), (422, Some("llm_key_invalid".into())), "{v}");
+
+    // A Bedrock API key: validated by the listing; it cannot report an account.
+    let (s, v) = post(bedrock_save("bd", "api_key", BEDROCK_API_KEY.into(), "a1")).await;
+    assert_eq!(s, 201, "{v}");
+    assert_eq!(v["origin"]["method"], "endpoint");
+    assert!(w.bedrock.requests().iter().any(|r| r.bearer_ok));
+    let (s, v) = post(bedrock_save("bd", "api_key", "wrong".into(), "a2")).await;
+    assert_eq!(code(s, &v), (422, Some("llm_key_invalid".into())), "{v}");
+    let (s, v) = post(bedrock_save(
+        "bd_acct",
+        "api_key",
+        BEDROCK_API_KEY.into(),
+        "a3",
+    ))
+    .await;
+    assert_eq!(
+        code(s, &v),
+        (422, Some("llm_key_unverifiable".into())),
+        "{v}"
+    );
+    no_value(&v, &[BEDROCK_API_KEY]);
+}
+
+/// (P4-LLM-4, C-810, acceptance 4) The model listing is signed by the API (the assumed-role session for an
+/// assume-role secret) and merges inference profiles (first) with foundation models; when the control plane answers 403
+/// it falls back to the endpoint's static list.
+#[tokio::test]
+async fn bedrock_model_listing_merges_profiles_and_falls_back_to_the_static_list() {
+    let w = world().await;
+    let url = w.ws_url();
+    let save = |ep: &str, name: &str| {
+        w.call(
+            Method::POST,
+            &url,
+            &w.owner,
+            Some(bedrock_save(ep, "aws_assume_role", assume_value(), name)),
+        )
+    };
+    let (s, v) = save("bd", "list-1").await;
+    assert_eq!(s, 201, "{v}");
+    let id = v["id"].as_str().unwrap().to_owned();
+    let (s, v) = w
+        .call(
+            Method::GET,
+            &format!("/v1/secrets/{id}/models"),
+            &w.owner,
+            None,
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let ids: Vec<&str> = v["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| m["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        ids,
+        [
+            "us.anthropic.claude-3-haiku-20240307-v1:0",
+            "anthropic.claude-3-haiku-20240307-v1:0"
+        ],
+        "profiles first"
+    );
+    // The listing was signed with the session of the assumed role (never the source key).
+    let listed: Vec<_> = w
+        .bedrock
+        .requests()
+        .into_iter()
+        .filter(|r| r.req.path == "/foundation-models")
+        .collect();
+    let signer = &listed.last().unwrap().verified.as_ref().unwrap().access_key;
+    assert!(signer.starts_with("ASIAMOCKSESSION"), "{signer}");
+    assert!(
+        w.sts.assume_calls().len() >= 2,
+        "one mint to validate, one to list"
+    );
+
+    // 403 from the control plane: the static list answers (another endpoint: the listing is cached per endpoint).
+    let (s, v) = save("bd_static", "list-2").await;
+    assert_eq!(s, 201, "{v}");
+    let id2 = v["id"].as_str().unwrap().to_owned();
+    w.bedrock.set_list_status(403);
+    let (s, v) = w
+        .call(
+            Method::GET,
+            &format!("/v1/secrets/{id2}/models"),
+            &w.owner,
+            None,
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(
+        v["items"],
+        json!([{"id": "static-model", "display_name": null}]),
+        "{v}"
+    );
 }

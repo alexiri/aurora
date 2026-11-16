@@ -1,8 +1,8 @@
 use crate::http_util::{check, host_of, json, send};
 use crate::mint::{self, MintClass, MintCtx};
 use crate::{
-    AuthMode, Dialect, Endpoint, EndpointKind, InjectionHeader, KeyOrigin, LlmError, LlmInjection,
-    LlmProvider, ModelInfo, OriginMethod, Overrides, Result,
+    AuthMode, Dialect, Endpoint, EndpointKind, InjectionHeader, KeyCheck, KeyOrigin, LlmError,
+    LlmInjection, LlmProvider, ModelInfo, OriginMethod, Overrides, Result,
 };
 use aurora_core::Secret;
 use http::{HeaderMap, Method};
@@ -141,17 +141,17 @@ impl LlmProvider for AzureOpenaiProvider {
         key: &Secret<String>,
         http: &reqwest::Client,
     ) -> Result<Vec<ModelInfo>> {
-        self.list_models_strict_as(ep, AuthMode::ApiKey, key, http)
+        self.list_models_strict_as(ep, &KeyCheck::new(AuthMode::ApiKey), key, http)
             .await
     }
     async fn list_models_strict_as(
         &self,
         ep: &Endpoint,
-        mode: AuthMode,
+        check: &KeyCheck,
         key: &Secret<String>,
         http: &reqwest::Client,
     ) -> Result<Vec<ModelInfo>> {
-        match self.prove(ep, mode, key, http).await {
+        match self.prove(ep, check.mode, key, http).await {
             // A value that is not an Entra application is a bad key, not an unverifiable origin.
             Err(LlmError::Unverifiable(_)) => Err(LlmError::InvalidKey),
             Err(e) => Err(e),
@@ -183,19 +183,19 @@ impl LlmProvider for AzureOpenaiProvider {
         key: &Secret<String>,
         http: &reqwest::Client,
     ) -> Result<KeyOrigin> {
-        self.verify_key_origin_as(ep, AuthMode::ApiKey, method, key, http)
+        self.verify_key_origin_as(ep, &KeyCheck::new(AuthMode::ApiKey), method, key, http)
             .await
     }
     async fn verify_key_origin_as(
         &self,
         ep: &Endpoint,
-        mode: AuthMode,
+        check: &KeyCheck,
         method: OriginMethod,
         key: &Secret<String>,
         http: &reqwest::Client,
     ) -> Result<KeyOrigin> {
-        match (method, mode) {
-            (OriginMethod::Endpoint, _) => {
+        match (method, check.mode) {
+            (OriginMethod::Endpoint, mode) => {
                 self.prove(ep, mode, key, http).await?;
                 Ok(KeyOrigin::default())
             }

@@ -50,29 +50,74 @@ const OWN_ENV: &[&str] = &[
     "HTTP_PROXY",
 ];
 
+/// The dialects Claude Code speaks (`12 §Adapter claude-code`, D-260(a)): the Messages API, and the
+/// Bedrock and Vertex surfaces it reaches through its own "use provider" switches. The cloud ones
+/// carry **no credential** in the sandbox: the CLI is told to skip auth and the gateway signs or
+/// mints. (P4-LLM-5; the variable names below are pinned for the Claude Code version in the sandbox
+/// image's lockfile and re-checked by the live suites.)
+pub const DIALECTS: &[&str] = &[
+    "anthropic_messages",
+    "anthropic_bedrock",
+    "anthropic_vertex",
+];
+
+/// The turn is refused (`harness_failed`) for a dialect Claude Code cannot speak.
+pub fn check_dialect(dialect: &str) -> Result<(), HarnessError> {
+    if DIALECTS.contains(&dialect) {
+        Ok(())
+    } else {
+        Err(HarnessError::new(
+            "harness_failed",
+            format!("the claude-code harness does not speak the `{dialect}` dialect"),
+        ))
+    }
+}
+
+/// A variable that can carry (or point at) a cloud credential: never passed to the child, from a
+/// caller or from `client_env`, on any dialect (`12 §Adapter claude-code`: no AWS key variables, no
+/// Bedrock API key, no profile, no application-default credentials file). The region survives.
+fn is_credential_env(k: &str) -> bool {
+    (k.starts_with("AWS_") && !matches!(k, "AWS_REGION" | "AWS_DEFAULT_REGION"))
+        || matches!(
+            k,
+            "GOOGLE_APPLICATION_CREDENTIALS"
+                | "GOOGLE_API_KEY"
+                | "GOOGLE_CLOUD_ACCESS_TOKEN"
+                | "CLOUDSDK_AUTH_ACCESS_TOKEN"
+                | "CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE"
+                | "OPENAI_API_KEY"
+                | "AZURE_OPENAI_API_KEY"
+        )
+}
+
+fn passes(k: &str) -> bool {
+    !OWN_ENV.contains(&k) && !is_credential_env(k)
+}
+
 /// The provider placeholders and model a Claude Code child gets for `m` (shared by a turn and
-/// the terminal's `harness.env`, so the two cannot drift). Never a real credential.
+/// the terminal's `harness.env`, so the two cannot drift). Never a real credential. The cloud
+/// dialects set only the model: their switches and endpoint come from `client_env` (C-809).
 pub fn model_env(m: &aurora_protocol::runner::ModelChoice) -> Vec<(String, String)> {
     let mut env = Vec::with_capacity(3);
     let mut set = |k: &str, v: &str| env.push((k.to_owned(), v.to_owned()));
-    if m.provider == "anthropic" {
-        set("ANTHROPIC_API_KEY", PLACEHOLDER);
-    } else {
-        set("ANTHROPIC_BASE_URL", &m.base_url);
-        set("ANTHROPIC_AUTH_TOKEN", PLACEHOLDER);
+    match (m.dialect.as_str(), m.provider.as_str()) {
+        ("anthropic_bedrock" | "anthropic_vertex", _) => {}
+        (_, "anthropic") => set("ANTHROPIC_API_KEY", PLACEHOLDER),
+        _ => {
+            set("ANTHROPIC_BASE_URL", &m.base_url);
+            set("ANTHROPIC_AUTH_TOKEN", PLACEHOLDER);
+        }
     }
     set("ANTHROPIC_MODEL", &m.model);
     env
 }
 
-/// The choice's `client_env` pairs a Claude Code child receives (those the adapter owns are
-/// dropped), as in [`build_env`].
+/// The choice's `client_env` pairs a Claude Code child receives (those the adapter owns and
+/// anything credential-shaped are dropped), as in [`build_env`].
 pub fn client_env(
     m: &aurora_protocol::runner::ModelChoice,
 ) -> impl Iterator<Item = &(String, String)> {
-    m.client_env
-        .iter()
-        .filter(|(k, _)| !OWN_ENV.contains(&k.as_str()))
+    m.client_env.iter().filter(|(k, _)| passes(k))
 }
 
 /// Child environment: caller env (minus credential-shaped keys), proxy, provider placeholders,
@@ -82,7 +127,7 @@ pub fn build_env(opts: &SessionOptions) -> Vec<(String, String)> {
         .env
         .iter()
         .chain(opts.model.client_env.iter())
-        .filter(|(k, _)| !OWN_ENV.contains(&k.as_str()))
+        .filter(|(k, _)| passes(k))
         .cloned()
         .collect();
     let mut set = |k: &str, v: &str| env.push((k.to_owned(), v.to_owned()));
@@ -134,6 +179,7 @@ pub fn launch_spec(
     opts: &SessionOptions,
     resume: Option<&str>,
 ) -> Result<LaunchSpec, HarnessError> {
+    check_dialect(&opts.model.dialect)?;
     Ok(LaunchSpec {
         args: build_args(opts, resume)?,
         env: build_env(opts),
@@ -254,6 +300,132 @@ mod tests {
         assert!(get(&env, "ANTHROPIC_AUTH_TOKEN").is_empty());
         assert!(get(&env, "ANTHROPIC_BASE_URL").is_empty());
         assert_eq!(get(&env, "MAX_THINKING_TOKENS"), ["0"]);
+    }
+
+    /// The C-809 environment of the cloud dialects with credential variables smuggled in by the endpoint's
+    /// `client_env` or by the caller.
+    fn cloud_opts(provider: &str, dialect: &str, switches: &[(&str, &str)]) -> SessionOptions {
+        let mut o = opts(provider, "high");
+        o.model.dialect = dialect.into();
+        o.model.client_env = switches
+            .iter()
+            .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+            .chain([
+                ("AWS_SECRET_ACCESS_KEY".into(), "REAL-aws-secret".into()),
+                ("AWS_ACCESS_KEY_ID".into(), "AKIAREAL".into()),
+                ("AWS_BEARER_TOKEN_BEDROCK".into(), "REAL-bearer".into()),
+                ("AWS_PROFILE".into(), "REAL-profile".into()),
+                (
+                    "GOOGLE_APPLICATION_CREDENTIALS".into(),
+                    "/REAL/key.json".into(),
+                ),
+                ("ANTHROPIC_API_KEY".into(), "REAL-anthropic".into()),
+            ])
+            .collect();
+        o.env
+            .push(("AWS_SESSION_TOKEN".into(), "REAL-session".into()));
+        o
+    }
+
+    fn assert_no_credential(env: &[(String, String)]) {
+        for (k, v) in env {
+            assert!(
+                !v.contains("REAL") && !v.contains("AKIA"),
+                "{k}={v} is credential-shaped"
+            );
+            assert!(
+                !k.starts_with("AWS_") || k == "AWS_REGION",
+                "{k} must not reach the child"
+            );
+        }
+        for k in [
+            "ANTHROPIC_API_KEY",
+            "ANTHROPIC_AUTH_TOKEN",
+            "ANTHROPIC_BASE_URL",
+        ] {
+            assert!(get(env, k).is_empty(), "{k} is not set on a cloud dialect");
+        }
+    }
+
+    /// (P4-LLM-5, C-809, D-261) Bedrock: the "use Bedrock, skip auth" switches, the endpoint and the model, and nothing
+    /// that could be a credential, whatever the auth mode (the mode never reaches the adapter) and whatever the
+    /// endpoint's `client_env` or the caller smuggles in.
+    #[test]
+    fn bedrock_env_is_switches_only_and_credential_variables_are_dropped() {
+        let o = cloud_opts(
+            "bedrock",
+            "anthropic_bedrock",
+            &[
+                ("CLAUDE_CODE_USE_BEDROCK", "1"),
+                ("AWS_REGION", "us-east-1"),
+                (
+                    "ANTHROPIC_BEDROCK_BASE_URL",
+                    "https://bedrock-runtime.us-east-1.amazonaws.com",
+                ),
+                ("CLAUDE_CODE_SKIP_BEDROCK_AUTH", "1"),
+            ],
+        );
+        let env = build_env(&o);
+        assert_no_credential(&env);
+        assert_eq!(get(&env, "CLAUDE_CODE_USE_BEDROCK"), ["1"]);
+        assert_eq!(get(&env, "CLAUDE_CODE_SKIP_BEDROCK_AUTH"), ["1"]);
+        assert_eq!(get(&env, "AWS_REGION"), ["us-east-1"]);
+        assert_eq!(
+            get(&env, "ANTHROPIC_BEDROCK_BASE_URL"),
+            ["https://bedrock-runtime.us-east-1.amazonaws.com"]
+        );
+        assert_eq!(get(&env, "ANTHROPIC_MODEL"), ["claude-sonnet-4-5"]);
+        assert_eq!(get(&env, "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"), ["1"]);
+        assert_eq!(get(&env, "HTTPS_PROXY"), ["http://127.0.0.1:4100"]);
+        // The terminal's `harness.env` takes the same two helpers.
+        let t: Vec<_> = client_env(&o.model)
+            .cloned()
+            .chain(model_env(&o.model))
+            .collect();
+        assert_no_credential(&t);
+        assert_eq!(get(&t, "CLAUDE_CODE_SKIP_BEDROCK_AUTH"), ["1"]);
+    }
+
+    #[test]
+    fn vertex_env_is_switches_only_and_credential_variables_are_dropped() {
+        let o = cloud_opts(
+            "vertex",
+            "anthropic_vertex",
+            &[
+                ("CLAUDE_CODE_USE_VERTEX", "1"),
+                ("CLOUD_ML_REGION", "us-east5"),
+                ("ANTHROPIC_VERTEX_PROJECT_ID", "proj-1"),
+                (
+                    "ANTHROPIC_VERTEX_BASE_URL",
+                    "https://us-east5-aiplatform.googleapis.com/v1",
+                ),
+                ("CLAUDE_CODE_SKIP_VERTEX_AUTH", "1"),
+            ],
+        );
+        let env = build_env(&o);
+        assert_no_credential(&env);
+        assert!(get(&env, "GOOGLE_APPLICATION_CREDENTIALS").is_empty());
+        assert_eq!(get(&env, "CLAUDE_CODE_USE_VERTEX"), ["1"]);
+        assert_eq!(get(&env, "CLAUDE_CODE_SKIP_VERTEX_AUTH"), ["1"]);
+        assert_eq!(get(&env, "CLOUD_ML_REGION"), ["us-east5"]);
+        assert_eq!(get(&env, "ANTHROPIC_VERTEX_PROJECT_ID"), ["proj-1"]);
+        assert_eq!(get(&env, "ANTHROPIC_MODEL"), ["claude-sonnet-4-5"]);
+    }
+
+    /// (D-260(a)) A dialect Claude Code does not speak refuses the turn instead of guessing an environment.
+    #[test]
+    fn an_unknown_dialect_refuses_the_turn() {
+        for d in ["openai_responses", "openai_chat", "", "anthropic_converse"] {
+            let mut o = opts("litellm", "low");
+            o.model.dialect = d.into();
+            let e = launch_spec(&o, None).unwrap_err();
+            assert_eq!(e.code, "harness_failed", "{d}");
+        }
+        for d in DIALECTS {
+            let mut o = opts("litellm", "low");
+            o.model.dialect = (*d).into();
+            assert!(launch_spec(&o, None).is_ok(), "{d}");
+        }
     }
 
     #[test]
