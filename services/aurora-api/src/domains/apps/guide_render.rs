@@ -366,8 +366,8 @@ mod tests {
             external_id: external_id.map(str::to_owned),
             base_url: "https://aurora.example".into(),
             app_setup: Target::Link {
-                label: "Linear setup".into(),
-                path: "/o/acme/w/web/apps/linear".into(),
+                label: "Demo setup".into(),
+                path: "/o/acme/w/web/apps/demo".into(),
             },
             oauth_clients: Target::Ask {
                 label: "OAuth clients".into(),
@@ -393,7 +393,7 @@ mod tests {
         let out = render(raw, &values(Some("ext`*[x](y)")));
         assert_eq!(
             out,
-            "`https://aurora.example/v1/oauth/callback` | ``ext`*[x](y)`` | [Linear setup](https://aurora.example/o/acme/w/web/apps/linear) | OAuth clients (ask an organization admin: Ana \\*B\\*, Bo) | Self-hosted apps (ask an organization admin) | Packages (ask an administrator of this Aurora instance)"
+            "`https://aurora.example/v1/oauth/callback` | ``ext`*[x](y)`` | [Demo setup](https://aurora.example/o/acme/w/web/apps/demo) | OAuth clients (ask an organization admin: Ana \\*B\\*, Bo) | Self-hosted apps (ask an organization admin) | Packages (ask an administrator of this Aurora instance)"
         );
         // A non-member gets the sentence, not the id.
         assert_eq!(
