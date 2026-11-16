@@ -8,7 +8,7 @@ import { useCallback, useId, useState, type ComponentType, type ReactNode, type 
 import { useCanApprove, usePendingApprovals } from "@/lib/api/approvals";
 import { useScimSettings } from "@/lib/api/scim";
 import { clearDrafts } from "@/components/chat/composer/drafts";
-import { logout, useInstance, useMe, useOrg, useOrgs, useResolve, useWorkspaces } from "@/lib/api/queries";
+import { logout, useMe, useOrg, useOrgs, useResolve, useWorkspaces } from "@/lib/api/queries";
 import { loginUrl, useUnauthorizedRedirect } from "@/lib/auth/use-unauthorized-redirect";
 import { cn } from "@/lib/utils";
 
@@ -375,18 +375,11 @@ const ACCOUNT_LINKS: { href: string; label: string; icon: IconType }[] = [
   { href: "/account/delete", label: "Delete account", icon: TrashIcon },
 ];
 
-/** (P4-SSH-1, C-795) SSH keys sit after API keys, and only while the instance has SSH access (`features.ssh`). */
-const SSH_KEYS_LINK = { href: "/account/ssh", label: "SSH keys", icon: KeyIcon };
-
 function AccountNavList({ pathname }: { pathname: string }) {
-  const ssh = useInstance().data?.features.ssh === true;
-  const links = ssh
-    ? ACCOUNT_LINKS.flatMap((l) => (l.href === "/account/api-keys" ? [l, SSH_KEYS_LINK] : [l]))
-    : ACCOUNT_LINKS;
   return (
     <nav aria-label="Account">
       <ul className="space-y-0.5">
-        {links.map((l) => (
+        {ACCOUNT_LINKS.map((l) => (
           <NavItem key={l.href} href={l.href} label={l.label} icon={l.icon} active={pathname === l.href} />
         ))}
       </ul>

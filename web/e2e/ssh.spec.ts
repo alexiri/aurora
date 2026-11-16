@@ -66,13 +66,12 @@ for (const scheme of ["light", "dark"] as const) {
     test.describe(`${scheme} theme, ${width} px`, () => {
       test.use({ viewport: { width, height: 900 } });
 
-      test("Account › SSH keys: table, nav entry, no serious axe violations, no horizontal scroll", async ({ page }) => {
+      test("Account › SSH keys: table, no serious axe violations, no horizontal scroll", async ({ page }) => {
         await mockSsh(page);
         await open(page, "/account/ssh", scheme);
         await expect(page.getByRole("heading", { name: "SSH keys", level: 2 })).toBeVisible();
         await expect(page.getByText("work laptop with a rather long descriptive name")).toBeVisible();
         await expect(page.getByRole("button", { name: "Add key" })).toBeVisible();
-        if (width >= 1024) await expect(page.getByRole("navigation", { name: "Account" }).getByRole("link", { name: "SSH keys" })).toBeVisible();
         expect(await serious(page)).toEqual([]);
         if (width === 390) expect(await overflow(page)).toBeLessThanOrEqual(0);
         // The Add key dialog too.
