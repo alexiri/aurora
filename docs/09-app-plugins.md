@@ -295,6 +295,25 @@ key pair are two methods of `aws-keys`). Every method (any `kind`) accepts, all 
 - The connect window asks "How do you want to connect?" when an app has more than one method,
   showing `label`, `description` and a **Recommended** badge; a reconnect keeps the connection's
   method unless the person picks another.
+- (Phase 5, P5-UX-2, D-321, C-956) **Journey keys**, all optional and additive (contract 1):
+  - `audience: person|admin` (default `person`). `admin` marks a method that needs material only an
+    administrator holds (the GitHub App installation: App ID, installation id, private key). The connect
+    journey never suggests it; it stays under **Advanced**.
+  - `scope_presets: { read: [scope], write: [scope] }`. The scopes that "Read only" and the two
+    choices that allow changes request. Each must be one of the method's scopes, and `read` may hold
+    only `access: read` scopes. Without it, `read` is the method's read scopes and `write` is all of
+    them.
+  - `show_context: [org_external_id]` (P5-UX-13, C-942). Values the person must copy into the other
+    service, shown with Copy above the method's fields.
+
+  The setup status (C-931) reports, per method, whether it is ready for a workspace (an `oauth2` method
+  needs a client that §11 step 2 can resolve) and who can fix it. The journey
+  (`14 §Agents, accounts and access` §3) uses the first ready `person` method in the order:
+  `recommended`, `oauth2`, `fields`, `hook`.
+
+  Every tool has a one-sentence `description` and every method a `label` and a `description` (required
+  for builtin packages, C-939, C-949); an approval template's title should complete the sentence
+  "<Agent> wants to …" (C-982).
 
 Server-owned values are never taken from client input: templates and hooks
 read them from **context variables** listed in `permissions.context`:
@@ -807,6 +826,14 @@ if any of:
 
 - signature missing/invalid/untrusted (unless dev override), publisher mismatch;
 - archive rules violated; sizes exceeded; icon not PNG; guide contains raw HTML;
+  (phase 5, P5-UX-13, D-334, C-940/C-941) guide contains a `{{aurora.…}}` placeholder outside the
+  set `callback_url`, `external_id`, `app_setup`, `page:oauth_clients`, `page:self_hosted`,
+  `page:packages` (`guide_unknown_placeholder`); the guide route fills them
+  for the viewer. (Builtin packages only, `check-builtin.sh`: no literal `<your Aurora URL>`,
+  `<external_url>`, `Admin, Apps,` or "Instances" as a page name. Every builtin tool has a
+  `description` (C-939); third-party packages get the warning `tool_description_missing`.)
+  (P5-UX-13, C-942) a `connect[].show_context` entry other than `org_external_id`, or one the
+  package does not list in `permissions.context`;
 - unknown keys, unknown contract, `min_core` above the running version;
 - duplicate ids (apps across *all* active packages; tools within an app);
 - host pattern with more than one `*`; a tool host not covered by the app's

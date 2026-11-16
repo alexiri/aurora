@@ -165,7 +165,10 @@ starts even when the stored settings are invalid. On Kubernetes:
 `kubectl -n <ns> debug` / a one-off pod from the API image with the same ConfigMap and Secret
 (`docs/operator/upgrades.md`).
 
-**Movable keys** (sections, Admin pages, list kinds, and how today's startup-only readers become live):
+**Movable keys** (sections, Admin pages, list kinds, and how today's startup-only readers become live).
+(Phase 5, P5-IA, D-340: the "Admin › page" column names each section's settings form. The dashboard
+renders the form inside its topic page (`14 §Information architecture` › "Settings live in their
+topics"), not as a sidebar entry, and `/admin/settings` is the All settings index.)
 
 | Section | Admin › page | Keys | Lists | Readers → live |
 |---|---|---|---|---|

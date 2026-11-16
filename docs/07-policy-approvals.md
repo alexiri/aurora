@@ -357,7 +357,7 @@ facts of the approved manifest, copied into the snapshot, and apply **below** th
   within the two pre-rule checks: `block_untooled` first, then read-only. No grant, rule or
   approval overrides it; it applies under every grant mode, to hand-written rules, and not at
   CONNECT time. It works for any app with a read/write split and does not rely on the vendor.
-  The effective view and the simulator evaluate it too. Grants of a read-only connection are
+  The effective view and the simulator evaluate it too (the simulator from FIX-159 on, D-329). Grants of a read-only connection are
   shown with a "Read-only connection" note (`14`).
 - **Tool scopes** (phase 5, FIX-136, D-241, C-741). A tool may declare `scopes` (any of). When the
   request's `tool_id` declares them and the winning connection's scopes are **known** (non-empty:
@@ -458,7 +458,12 @@ facts per tool (one per tool's first method/path example).
   caller) using the same resolution code as the
   gateway (candidates, selection, app/tool identification) and returns the
   verdict, the winning credential, and the full trace; `use_draft: true`
-  substitutes the draft generations.
+  substitutes the draft generations. (Phase 5, FIX-159, D-329, C-930: until FIX-159 the
+  simulator built only secret candidates and never identified the app or tool, so every
+  connection grant was skipped as `target_mismatch` and requests the gateway blocks could show
+  `allow`. FIX-159 makes the sentence above true: app and tool identification is one shared
+  function in `aurora-registry` used by the gateway, the simulator and the effective view, and
+  a test asserts that simulate and the gateway decide the same.)
 
 ## Approvals (gateway holds)
 
