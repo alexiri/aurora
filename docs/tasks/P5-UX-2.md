@@ -159,3 +159,14 @@ this" sentence need:
 
 Sonnet (`rust-developer`). Several domains, each part bounded. The OAuth re-authorization needs care, and
 the reviewer should read SEC-130 against the callback code.
+
+## Completion report
+
+Worker 13 (lane `p5-agent`), 2026-11-16. The task is split into parts, each its own commit `P5-UX-2: …`; a next worker picks up at the first part not marked done.
+
+| Part | Scope items | Content | Status |
+|---|---|---|---|
+| (a) | 1 | Manifest keys `connect[].audience` and `scope_presets` (model, snapshot, linter, golden test), the two builtin packages, the shared table of dashboard paths in `aurora-core` | in progress |
+| (b) | 2, 4 | `WhoCan` type and builder, role helpers put it in every 403, `contacts` on workspace and org, the level expansion in `domains/grants` | open |
+| (c) | 3, 7 (probe part) | `setup_status` in `domains/apps/setup.rs`, `/setup` and `/connect-plan`, `used_by_methods`, probe `cause` and `host`, `who_can` on the two client refusals | open |
+| (d) | 5, 6, 8 | Connect with access (fields and OAuth, SEC-130), secrets with `grant`, OpenAPI and web types, `permission_matrix`, `security-coverage.md` | open |
