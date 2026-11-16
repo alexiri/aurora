@@ -97,7 +97,10 @@ async fn a_workspace_refusal_names_the_role_and_up_to_three_owners() {
     // effective role), then by name; at most three; no e-mail; never the instance admin.
     let n = names(who);
     assert_eq!(n.len(), 3, "{v}");
-    assert!(!n.iter().any(|x| x.contains("Root") || x.contains('@')), "{n:?}");
+    assert!(
+        !n.iter().any(|x| x.contains("Root") || x.contains('@')),
+        "{n:?}"
+    );
     assert!(!v.to_string().contains("@x.io"), "no e-mail anywhere: {v}");
 }
 
@@ -145,7 +148,12 @@ async fn an_instance_admin_only_route_names_no_one() {
 async fn contacts_are_readable_by_a_member_and_hold_at_most_three_names() {
     let w = world().await;
     let (s, v) = w
-        .call(&w.member, Method::GET, &format!("/v1/workspaces/{}", w.ws), None)
+        .call(
+            &w.member,
+            Method::GET,
+            &format!("/v1/workspaces/{}", w.ws),
+            None,
+        )
         .await;
     assert_eq!(s, 200, "{v}");
     let owners = v["contacts"]["owners"].as_array().unwrap();
@@ -155,7 +163,11 @@ async fn contacts_are_readable_by_a_member_and_hold_at_most_three_names() {
         .call(&w.member, Method::GET, &format!("/v1/orgs/{}", w.org), None)
         .await;
     assert_eq!(s, 200, "{v}");
-    assert_eq!(v["contacts"]["owners"], json!([{"name": "Zoe Owner"}]), "{v}");
+    assert_eq!(
+        v["contacts"]["owners"],
+        json!([{"name": "Zoe Owner"}]),
+        "{v}"
+    );
     let admins: Vec<&str> = v["contacts"]["admins"]
         .as_array()
         .unwrap()
