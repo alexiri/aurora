@@ -2,7 +2,7 @@
 
 // The agent's SSH page (P4-SSH-1, D-239, C-795, docs/14 §Agent page › SSH): how to connect with the Aurora CLI or plain
 // ssh, the certificate download, the host key and what works. Hosted agents only, on an instance with `ssh.enabled`; the
-// API re-checks `can_use`, BYO and freeze on every request. The sessions list is P4-SSH-2's.
+// API re-checks `can_use`, BYO and freeze on every request. P4-SSH-2 adds the sessions list (C-793).
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
@@ -15,7 +15,16 @@ import { Section } from "@/components/ui/section";
 import { ApiError } from "@/lib/api/client";
 import { errorMessage } from "@/lib/api/errors";
 import { accountRoutes } from "@/lib/routes";
-import { nextHourAt, sshErrorText, useMintSshCertificate, useSshFacts, useSshKeys, type SshCertificate } from "@/lib/api/ssh";
+import {
+  nextHourAt,
+  sshErrorText,
+  useAgentSshSessions,
+  useMintSshCertificate,
+  useSshFacts,
+  useSshKeys,
+  type SshCertificate,
+} from "@/lib/api/ssh";
+import { SshSessionsList } from "@/components/ssh/sessions-list";
 
 /** The certificate as a download named like the file OpenSSH looks for next to `id_ed25519`. */
 function CertificateDownload({ cert }: { cert: SshCertificate }) {
@@ -52,6 +61,7 @@ export function SshPage({ agentId, frozen }: { agentId: string; frozen: boolean 
 function SshContent({ agentId }: { agentId: string }) {
   const facts = useSshFacts();
   const keys = useSshKeys();
+  const sessions = useAgentSshSessions(agentId);
   const mint = useMintSshCertificate(agentId);
   const [keyId, setKeyId] = useState<string>("");
   const [cert, setCert] = useState<SshCertificate | null>(null);
@@ -179,6 +189,14 @@ function SshContent({ agentId }: { agentId: string }) {
             </p>
           </div>
         )}
+      </Section>
+
+      <Section
+        id="ssh-sessions"
+        title="Active sessions"
+        description="Open SSH connections to this agent. Someone who can manage the agent sees everyone's; otherwise only yours."
+      >
+        <SshSessionsList query={sessions} scope="agent" emptyWhen="A session appears here while someone is connected to this agent with ssh, sftp or scp." />
       </Section>
 
       <Section id="ssh-what-works" title="What works" card>

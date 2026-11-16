@@ -14,9 +14,19 @@ export type SshKey = S["SshKey"];
 export type SshFacts = S["SshFacts"];
 export type SshCertificate = S["SshCertificate"];
 
+export type SshSession = S["SshSession"];
+export type TerminatorInfo = S["TerminatorInfo"];
+
 export const sshKeys = {
   list: ["me", "ssh-keys"] as const,
   facts: ["ssh", "facts"] as const,
+};
+
+/** (P4-SSH-2, C-793) Open SSH sessions: the caller's, one agent's, and the terminator replicas (instance admin). */
+export const sshSessions = {
+  mine: ["me", "ssh-sessions"] as const,
+  agent: (agent: string) => ["agents", agent, "ssh-sessions"] as const,
+  terminators: ["admin", "terminators"] as const,
 };
 
 const retry = (count: number, err: unknown) =>
@@ -77,6 +87,54 @@ export function useMintSshCertificate(agent: string) {
       unwrap(api.POST("/v1/agents/{agent}/ssh-certificate", { params: { path: { agent } }, body: { public_key: publicKey } })),
     // The mint stamps the key's `last_used_at`.
     onSuccess: () => qc.invalidateQueries({ queryKey: sshKeys.list }),
+  });
+}
+
+// A session opens and closes within seconds of the person's `ssh`; a list that is open on screen follows it.
+const SESSIONS_REFRESH_MS = 10_000;
+
+/** The caller's open sessions on every agent (Account › SSH keys). */
+export function useMySshSessions(enabled = true) {
+  return useQuery({
+    queryKey: sshSessions.mine,
+    queryFn: async () => (await unwrap(api.GET("/v1/me/ssh-sessions"))).sessions,
+    enabled,
+    retry,
+    refetchInterval: SESSIONS_REFRESH_MS,
+  });
+}
+
+/** The open sessions on one agent: all of them for someone who can own it (with `user`), else the caller's own. */
+export function useAgentSshSessions(agent: string, enabled = true) {
+  return useQuery({
+    queryKey: sshSessions.agent(agent),
+    queryFn: async () => (await unwrap(api.GET("/v1/agents/{agent}/ssh-sessions", { params: { path: { agent } } }))).sessions,
+    enabled,
+    retry,
+    refetchInterval: SESSIONS_REFRESH_MS,
+  });
+}
+
+/** Ask for a session to end (202): the terminator closes it at its next heartbeat, so the lists are refetched on a short delay too. */
+export function useDisconnectSshSession() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => unwrap(api.DELETE("/v1/ssh-sessions/{id}", { params: { path: { id } } })),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: sshSessions.mine });
+      void qc.invalidateQueries({ queryKey: ["agents"] });
+    },
+  });
+}
+
+/** The terminator replicas the API has seen (Admin › Overview; instance admins only). */
+export function useTerminators(enabled = true) {
+  return useQuery({
+    queryKey: sshSessions.terminators,
+    queryFn: async () => (await unwrap(api.GET("/v1/admin/terminators"))).terminators,
+    enabled,
+    retry,
+    refetchInterval: 30_000,
   });
 }
 

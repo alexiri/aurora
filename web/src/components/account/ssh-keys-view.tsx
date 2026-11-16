@@ -13,7 +13,16 @@ import { Notice } from "@/components/ui/notice";
 import { Section } from "@/components/ui/section";
 import { useInstance } from "@/lib/api/queries";
 import { errorMessage } from "@/lib/api/errors";
-import { sshErrorText, useAddSshKey, useDeleteSshKey, useRenameSshKey, useSshKeys, type SshKey } from "@/lib/api/ssh";
+import {
+  sshErrorText,
+  useAddSshKey,
+  useDeleteSshKey,
+  useMySshSessions,
+  useRenameSshKey,
+  useSshKeys,
+  type SshKey,
+} from "@/lib/api/ssh";
+import { SshSessionsList } from "@/components/ssh/sessions-list";
 
 import { CopyBlock, CopyButton, middleTruncate } from "./ssh-copy";
 
@@ -130,6 +139,7 @@ export function SshKeysView() {
   const instance = useInstance();
   const enabled = instance.data?.features.ssh === true;
   const keys = useSshKeys(enabled);
+  const sessions = useMySshSessions(enabled);
   const del = useDeleteSshKey();
   const [adding, setAdding] = useState(false);
   const [renaming, setRenaming] = useState<SshKey | null>(null);
@@ -209,6 +219,18 @@ export function SshKeysView() {
             </tbody>
           </DataTable>
         )}
+      </Section>
+      <Section
+        id="ssh-sessions"
+        title="Active SSH sessions"
+        description="Your open SSH connections to agents. Disconnect one to end it now."
+        className="mt-8"
+      >
+        <SshSessionsList
+          query={sessions}
+          scope="account"
+          emptyWhen="A session appears here while you are connected to an agent with ssh, sftp or scp."
+        />
       </Section>
       <AddKeyDialog open={adding} onOpenChange={setAdding} />
       <RenameDialog target={renaming} onClose={() => setRenaming(null)} />

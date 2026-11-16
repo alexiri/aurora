@@ -238,6 +238,7 @@ export function AgentPage() {
               agentKind={agent.kind}
               isDefault={agent.is_default}
               terminalAvailable={terminalEnabled}
+              sshAvailable={sshEnabled && !byo}
               onNavigate={choosePage}
               statusSheetOpen={statusOpen}
               onStatusSheetOpenChange={setStatusOpen}

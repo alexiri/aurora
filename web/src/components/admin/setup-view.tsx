@@ -26,6 +26,7 @@ import { cn } from "@/lib/utils";
 import { OwnerlessBanner } from "./ownerless-banner";
 import { PlacementView } from "./placement-view";
 import { PreviewsLine } from "./previews-line";
+import { SshLine } from "./ssh-line";
 
 type Tone = "accent" | "pending" | "neutral";
 
@@ -301,6 +302,7 @@ export function SetupView() {
       <OwnerlessBanner />
       <ConnectorAvailableCallout />
       <PreviewsLine />
+      <SshLine />
       {setup.data ? (
         <>
           {!setup.data.placement_saved ? (
