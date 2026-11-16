@@ -66,7 +66,8 @@ the defaults so that a new person's agent works from the first minute.
      tab with the app and client prefilled) and a link to the app's setup page. Apps a person can connect
      with a token get one informational line.
    - It replaces the wizard's step 5, and is also shown at the top of the organization's Apps tab for org
-     admins.
+     admins. Mount it from the organization's Apps & accounts page, above the tab's content, not inside
+     `org-apps-list.tsx` (P5-UX-11 edits that file beside this task).
 3. **Starter by default (C-922).** Adding an AI key for the default organization in the checklist also
    adds it to the starter grants, whenever placement allows them. The switch shows **on**: "Every new
    person's agent can use this key from the first minute. Turn off to make people add their own."

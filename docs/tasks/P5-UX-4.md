@@ -94,7 +94,7 @@ This task builds the heart of the new model (D-344, D-345):
    - Three `ChoiceCards` from the account's `levels`, in the fixed order and with the sentences of `14`
      §2; "Limited by <org>" with `WhoCan` when choices are cut; no control for accounts with no choice.
    - Under Ask before changes, the list "Always allowed: <action>, <action>", each with a remove button
-     that makes the agent ask again.
+     that makes the agent ask again (a save that moves that tool from allowed back to asked).
    - "Custom: <n> actions differ from <level>" when the saved choice is custom.
    - **The actions table**: each tool's name and description with its saved choice (Allowed, Asks you,
      Blocked), editable by people who may change the access; method and host pattern under **Technical
