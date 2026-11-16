@@ -93,7 +93,7 @@ rustls-native-certs = "0.8"
 rcgen = "0.14"
 x509-parser = "0.18"
 futures = "0.3"
-tokio-tungstenite = { version = "0.28", default-features = false, features = ["connect", "handshake"] }
+tokio-tungstenite = { version = "0.29", default-features = false, features = ["connect", "handshake"] }
 lru = "0.19"
 openidconnect = { version = "4.1", default-features = false, features = ["reqwest", "rustls-tls"] }
 
