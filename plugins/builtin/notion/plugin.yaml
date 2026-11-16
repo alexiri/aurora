@@ -1,6 +1,6 @@
 package:
   id: notion
-  version: 1.0.2
+  version: 1.0.3
   contract: 1
   min_core: 0.1.0
   publisher: aurora
@@ -38,6 +38,8 @@ apps:
     connect:
       - id: oauth
         kind: oauth2
+        label: Connect a Notion workspace
+        description: "You choose the pages Aurora may use when you sign in to Notion. Needs a public Notion integration registered first."
         client: notion
         scopes: []
         default_scopes: []
@@ -69,25 +71,25 @@ apps:
     tools:
       read:
         items:
-          - { id: get_bot_user, name: Get the connection's bot user, host: api.notion.com, path: /v1/users/me, methods: [GET] }
-          - { id: list_users, name: List workspace users, host: api.notion.com, path: /v1/users, methods: [GET] }
-          - { id: get_user, name: Get a user, host: api.notion.com, path: "/v1/users/*", methods: [GET] }
-          - { id: get_page, name: Get a page, host: api.notion.com, path: "/v1/pages/*", methods: [GET] }
-          - { id: get_page_property, name: Get a page property item, host: api.notion.com, path: "/v1/pages/*/properties/*", methods: [GET] }
-          - { id: get_database, name: Get a database and its data sources, host: api.notion.com, path: "/v1/databases/*", methods: [GET] }
-          - { id: get_data_source, name: Get a data source, host: api.notion.com, path: "/v1/data_sources/*", methods: [GET] }
-          - { id: get_block, name: Get a block, host: api.notion.com, path: "/v1/blocks/*", methods: [GET] }
-          - { id: list_block_children, name: List the child blocks of a block or page, host: api.notion.com, path: "/v1/blocks/*/children", methods: [GET] }
-          - { id: list_comments, name: List the comments of a page or block, host: api.notion.com, path: /v1/comments, methods: [GET] }
-          - { id: get_comment, name: Get a comment, host: api.notion.com, path: "/v1/comments/*", methods: [GET] }
+          - { id: get_bot_user, description: "Shows the integration Aurora is connected as.", name: Get the connection's bot user, host: api.notion.com, path: /v1/users/me, methods: [GET] }
+          - { id: list_users, description: "Lists the people in the Notion workspace.", name: List workspace users, host: api.notion.com, path: /v1/users, methods: [GET] }
+          - { id: get_user, description: "Reads one person's profile.", name: Get a user, host: api.notion.com, path: "/v1/users/*", methods: [GET] }
+          - { id: get_page, description: "Reads a page's properties.", name: Get a page, host: api.notion.com, path: "/v1/pages/*", methods: [GET] }
+          - { id: get_page_property, description: "Reads one property of a page in full.", name: Get a page property item, host: api.notion.com, path: "/v1/pages/*/properties/*", methods: [GET] }
+          - { id: get_database, description: "Reads a database and its data sources.", name: Get a database and its data sources, host: api.notion.com, path: "/v1/databases/*", methods: [GET] }
+          - { id: get_data_source, description: "Reads a data source's structure.", name: Get a data source, host: api.notion.com, path: "/v1/data_sources/*", methods: [GET] }
+          - { id: get_block, description: "Reads one block of a page.", name: Get a block, host: api.notion.com, path: "/v1/blocks/*", methods: [GET] }
+          - { id: list_block_children, description: "Lists the blocks inside a page or block.", name: List the child blocks of a block or page, host: api.notion.com, path: "/v1/blocks/*/children", methods: [GET] }
+          - { id: list_comments, description: "Lists the comments on a page or block.", name: List the comments of a page or block, host: api.notion.com, path: /v1/comments, methods: [GET] }
+          - { id: get_comment, description: "Reads one comment.", name: Get a comment, host: api.notion.com, path: "/v1/comments/*", methods: [GET] }
       write:
         items:
-          - { id: search, name: "Search pages and data sources by title (a POST, so held for approval)", host: api.notion.com, path: /v1/search, methods: [POST] }
-          - { id: query_data_source, name: "Query a data source (a POST, so held for approval)", host: api.notion.com, path: "/v1/data_sources/*/query", methods: [POST] }
-          - { id: create_page, name: Create a page, host: api.notion.com, path: /v1/pages, methods: [POST] }
-          - { id: update_page, name: "Update or trash a page", host: api.notion.com, path: "/v1/pages/*", methods: [PATCH] }
-          - { id: append_block_children, name: Append blocks to a page or block, host: api.notion.com, path: "/v1/blocks/*/children", methods: [PATCH] }
-          - { id: create_comment, name: "Comment on a page, block or discussion", host: api.notion.com, path: /v1/comments, methods: [POST] }
+          - { id: search, description: "Searches pages and data sources by title. It is sent as a POST, so it asks first.", name: "Search pages and data sources by title (a POST, so held for approval)", host: api.notion.com, path: /v1/search, methods: [POST] }
+          - { id: query_data_source, description: "Reads rows from a data source, with filters. It is sent as a POST, so it asks first.", name: "Query a data source (a POST, so held for approval)", host: api.notion.com, path: "/v1/data_sources/*/query", methods: [POST] }
+          - { id: create_page, description: "Creates a page.", name: Create a page, host: api.notion.com, path: /v1/pages, methods: [POST] }
+          - { id: update_page, description: "Changes a page's properties, or moves it to the trash.", name: "Update or trash a page", host: api.notion.com, path: "/v1/pages/*", methods: [PATCH] }
+          - { id: append_block_children, description: "Adds content to the end of a page or block.", name: Append blocks to a page or block, host: api.notion.com, path: "/v1/blocks/*/children", methods: [PATCH] }
+          - { id: create_comment, description: "Adds a comment to a page, block or discussion.", name: "Comment on a page, block or discussion", host: api.notion.com, path: /v1/comments, methods: [POST] }
     approvals:
       search:
         title: Search Notion

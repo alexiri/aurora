@@ -1,6 +1,6 @@
 package:
   id: indico
-  version: 1.2.0
+  version: 1.2.1
   contract: 1
   min_core: 0.1.0
   publisher: aurora
@@ -26,7 +26,7 @@ apps:
       category: productivity
       api_docs: https://docs.getindico.io/en/stable/http-api/
       connect_note:
-        text: "An administrator registers your Indico server first (Instances). Bookings, favorites and room search by free time use Indico's internal endpoints and the broad 'Everything' scopes, which Indico does not keep compatible between versions; read the setup guide before choosing them. To find free rooms and book them, also tick 'Extended: read everything' and 'Book rooms through the documented HTTP API'; 'Everything' write access is only needed for recurring bookings, cancellations and favorites."
+        text: "An administrator registers your Indico server first (Self-hosted apps). Bookings, favorites and room search by free time use Indico's internal endpoints and the broad 'Everything' scopes, which Indico does not keep compatible between versions; read the setup guide before choosing them. To find free rooms and book them, also tick 'Extended: read everything' and 'Book rooms through the documented HTTP API'; 'Everything' write access is only needed for recurring bookings, cancellations and favorites."
         url: https://docs.getindico.io/en/stable/http-api/access/
       label_hint: Indico account email
     instances:
@@ -37,6 +37,8 @@ apps:
     connect:
       - id: token
         kind: fields
+        label: Personal API token
+        description: "A token you create on your Indico profile. It does not tell Aurora which scopes it has, so you say which ones you gave it."
         fields:
           - name: access_token
             label: Personal API token
@@ -65,6 +67,8 @@ apps:
           label: /email
       - id: oauth
         kind: oauth2
+        label: Sign in with Indico
+        description: "You sign in to your Indico server and Aurora gets a token that renews itself. Needs an OAuth client registered for that server first."
         client: indico
         scopes:
           - { scope: "read:user", name: Read your Indico profile, access: read }
@@ -114,48 +118,48 @@ apps:
     tools:
       read:
         items:
-          - { id: get_current_user, name: Get the connected Indico user, host: "{instance}", path: /api/user/, methods: [GET], scopes: ["read:user"] }
-          - { id: list_favorite_category_events, name: List events in my favorite categories, host: "{instance}", path: "/export/categ/favorites*", methods: [GET], scopes: ["read:legacy_api"] }
-          - { id: list_category_events, name: List events in categories, host: "{instance}", path: "/export/categ/*", methods: [GET], scopes: ["read:legacy_api"] }
-          - { id: search_events, name: Search events by title, host: "{instance}", path: "/export/event/search/*", methods: [GET], scopes: ["read:legacy_api"] }
-          - { id: get_event, name: "Read an event (contributions, sessions, attachments, notes)", host: "{instance}", path: "/export/event/*", methods: [GET], scopes: ["read:legacy_api"] }
-          - { id: get_event_file, name: Download an event file or read part of an event, host: "{instance}", path: "/export/event/*/*/**", methods: [GET], scopes: ["read:legacy_api"] }
-          - { id: get_timetable, name: Read an event timetable, host: "{instance}", path: "/export/timetable/*", methods: [GET], scopes: ["read:legacy_api"] }
-          - { id: get_rooms, name: "Read rooms and their bookings (official API)", host: "{instance}", path: "/export/room/*/*", methods: [GET], scopes: ["read:legacy_api"] }
-          - { id: find_room_by_name, name: "Find a room by name (official API)", host: "{instance}", path: "/export/roomName/*/**", methods: [GET], scopes: ["read:legacy_api"] }
-          - { id: list_reservations, name: "List room bookings at a location (official API)", host: "{instance}", path: "/export/reservation/*", methods: [GET], scopes: ["read:legacy_api"] }
-          - { id: search, name: "Search events, contributions, categories, notes and files (Indico web API)", host: "{instance}", path: /search/api/search, methods: [GET], scopes: ["read:everything", "full:everything"] }
-          - { id: search_categories, name: Search categories (Indico web API), host: "{instance}", path: /category/search, methods: [GET], scopes: ["read:everything", "full:everything"] }
-          - { id: list_favorite_users, name: List my favorite users (Indico web API), host: "{instance}", path: /user/api/favorites/users, methods: [GET], scopes: ["read:everything", "full:everything"] }
-          - { id: list_favorite_categories, name: List my favorite categories (Indico web API), host: "{instance}", path: "/user/api/favorites/categories/**", methods: [GET], scopes: ["read:everything", "full:everything"] }
-          - { id: list_favorite_events, name: List my favorite events (Indico web API), host: "{instance}", path: "/user/api/favorites/events/**", methods: [GET], scopes: ["read:everything", "full:everything"] }
-          - { id: list_favorite_rooms, name: List my favorite rooms (Indico web API), host: "{instance}", path: "/rooms/api/user/favorite-rooms/**", methods: [GET], scopes: ["read:everything", "full:everything"] }
-          - { id: list_room_locations, name: List room booking locations (Indico web API), host: "{instance}", path: /rooms/api/locations, methods: [GET], scopes: ["read:everything", "full:everything"] }
-          - { id: list_equipment_types, name: List room equipment types (Indico web API), host: "{instance}", path: /rooms/api/equipment, methods: [GET], scopes: ["read:everything", "full:everything"] }
-          - { id: list_all_rooms, name: "List all rooms with details (Indico web API)", host: "{instance}", path: /rooms/api/rooms/, methods: [GET], scopes: ["read:everything", "full:everything"] }
-          - { id: search_rooms, name: "Search rooms free in a time slot (Indico web API)", host: "{instance}", path: /rooms/api/rooms/search, methods: [GET], scopes: ["read:everything", "full:everything"] }
-          - { id: get_room_availability, name: Check a room's availability (Indico web API), host: "{instance}", path: "/rooms/api/rooms/*/availability/**", methods: [GET], scopes: ["read:everything", "full:everything"] }
-          - { id: get_room_details, name: Read a room's details (Indico web API), host: "{instance}", path: "/rooms/api/rooms/*", methods: [GET], scopes: ["read:everything", "full:everything"] }
-          - { id: list_my_upcoming_bookings, name: List my next room bookings (Indico web API), host: "{instance}", path: /rooms/api/bookings/mine, methods: [GET], scopes: ["read:everything", "full:everything"] }
-          - { id: get_booking_calendar, name: Read the booking calendar (Indico web API), host: "{instance}", path: /rooms/api/calendar, methods: [GET], scopes: ["read:everything", "full:everything"] }
-          - { id: get_booking, name: Read a room booking (Indico web API), host: "{instance}", path: "/rooms/api/bookings/*", methods: [GET], scopes: ["read:everything", "full:everything"] }
-          - { id: get_user_search_token, name: Start a user search (Indico web API), host: "{instance}", path: /user/search/token, methods: [GET], scopes: ["read:everything", "full:everything"] }
-          - { id: search_users, name: Search Indico users (Indico web API; returns personal data), host: "{instance}", path: /user/search/, methods: [GET], scopes: ["read:everything", "full:everything"] }
+          - { id: get_current_user, description: "Shows the Indico account Aurora is connected as.", name: Get the connected Indico user, host: "{instance}", path: /api/user/, methods: [GET], scopes: ["read:user"] }
+          - { id: list_favorite_category_events, description: "Lists events in the categories you follow.", name: List events in my favorite categories, host: "{instance}", path: "/export/categ/favorites*", methods: [GET], scopes: ["read:legacy_api"] }
+          - { id: list_category_events, description: "Lists the events in one or more categories.", name: List events in categories, host: "{instance}", path: "/export/categ/*", methods: [GET], scopes: ["read:legacy_api"] }
+          - { id: search_events, description: "Searches events by title.", name: Search events by title, host: "{instance}", path: "/export/event/search/*", methods: [GET], scopes: ["read:legacy_api"] }
+          - { id: get_event, description: "Reads an event: contributions, sessions, attachments and notes.", name: "Read an event (contributions, sessions, attachments, notes)", host: "{instance}", path: "/export/event/*", methods: [GET], scopes: ["read:legacy_api"] }
+          - { id: get_event_file, description: "Downloads an event's file, or reads part of an event.", name: Download an event file or read part of an event, host: "{instance}", path: "/export/event/*/*/**", methods: [GET], scopes: ["read:legacy_api"] }
+          - { id: get_timetable, description: "Reads an event's timetable.", name: Read an event timetable, host: "{instance}", path: "/export/timetable/*", methods: [GET], scopes: ["read:legacy_api"] }
+          - { id: get_rooms, description: "Lists rooms with their bookings.", name: "Read rooms and their bookings (official API)", host: "{instance}", path: "/export/room/*/*", methods: [GET], scopes: ["read:legacy_api"] }
+          - { id: find_room_by_name, description: "Finds a room by its name.", name: "Find a room by name (official API)", host: "{instance}", path: "/export/roomName/*/**", methods: [GET], scopes: ["read:legacy_api"] }
+          - { id: list_reservations, description: "Lists the room bookings at a location.", name: "List room bookings at a location (official API)", host: "{instance}", path: "/export/reservation/*", methods: [GET], scopes: ["read:legacy_api"] }
+          - { id: search, description: "Searches events, contributions, categories, notes and files.", name: "Search events, contributions, categories, notes and files (Indico web API)", host: "{instance}", path: /search/api/search, methods: [GET], scopes: ["read:everything", "full:everything"] }
+          - { id: search_categories, description: "Searches categories.", name: Search categories (Indico web API), host: "{instance}", path: /category/search, methods: [GET], scopes: ["read:everything", "full:everything"] }
+          - { id: list_favorite_users, description: "Lists the people you marked as favorites.", name: List my favorite users (Indico web API), host: "{instance}", path: /user/api/favorites/users, methods: [GET], scopes: ["read:everything", "full:everything"] }
+          - { id: list_favorite_categories, description: "Lists your favorite categories.", name: List my favorite categories (Indico web API), host: "{instance}", path: "/user/api/favorites/categories/**", methods: [GET], scopes: ["read:everything", "full:everything"] }
+          - { id: list_favorite_events, description: "Lists your favorite events.", name: List my favorite events (Indico web API), host: "{instance}", path: "/user/api/favorites/events/**", methods: [GET], scopes: ["read:everything", "full:everything"] }
+          - { id: list_favorite_rooms, description: "Lists your favorite rooms.", name: List my favorite rooms (Indico web API), host: "{instance}", path: "/rooms/api/user/favorite-rooms/**", methods: [GET], scopes: ["read:everything", "full:everything"] }
+          - { id: list_room_locations, description: "Lists the places where rooms can be booked.", name: List room booking locations (Indico web API), host: "{instance}", path: /rooms/api/locations, methods: [GET], scopes: ["read:everything", "full:everything"] }
+          - { id: list_equipment_types, description: "Lists the equipment a room can have.", name: List room equipment types (Indico web API), host: "{instance}", path: /rooms/api/equipment, methods: [GET], scopes: ["read:everything", "full:everything"] }
+          - { id: list_all_rooms, description: "Lists all rooms with their details.", name: "List all rooms with details (Indico web API)", host: "{instance}", path: /rooms/api/rooms/, methods: [GET], scopes: ["read:everything", "full:everything"] }
+          - { id: search_rooms, description: "Finds rooms that are free in a time slot.", name: "Search rooms free in a time slot (Indico web API)", host: "{instance}", path: /rooms/api/rooms/search, methods: [GET], scopes: ["read:everything", "full:everything"] }
+          - { id: get_room_availability, description: "Checks whether a room is free at a given time.", name: Check a room's availability (Indico web API), host: "{instance}", path: "/rooms/api/rooms/*/availability/**", methods: [GET], scopes: ["read:everything", "full:everything"] }
+          - { id: get_room_details, description: "Reads one room's details.", name: Read a room's details (Indico web API), host: "{instance}", path: "/rooms/api/rooms/*", methods: [GET], scopes: ["read:everything", "full:everything"] }
+          - { id: list_my_upcoming_bookings, description: "Lists your next room bookings.", name: List my next room bookings (Indico web API), host: "{instance}", path: /rooms/api/bookings/mine, methods: [GET], scopes: ["read:everything", "full:everything"] }
+          - { id: get_booking_calendar, description: "Reads the room booking calendar.", name: Read the booking calendar (Indico web API), host: "{instance}", path: /rooms/api/calendar, methods: [GET], scopes: ["read:everything", "full:everything"] }
+          - { id: get_booking, description: "Reads one room booking.", name: Read a room booking (Indico web API), host: "{instance}", path: "/rooms/api/bookings/*", methods: [GET], scopes: ["read:everything", "full:everything"] }
+          - { id: get_user_search_token, description: "Starts a search for people, the first step of searching users.", name: Start a user search (Indico web API), host: "{instance}", path: /user/search/token, methods: [GET], scopes: ["read:everything", "full:everything"] }
+          - { id: search_users, description: "Searches for people in Indico. The answer contains personal data.", name: Search Indico users (Indico web API; returns personal data), host: "{instance}", path: /user/search/, methods: [GET], scopes: ["read:everything", "full:everything"] }
       write:
         items:
-          - { id: book_room, name: "Book a room: one slot (official API)", host: "{instance}", path: "/api/roomBooking/bookRoom*", methods: [POST], scopes: ["write:legacy_api"] }
-          - { id: create_booking, name: "Book a room: recurring, with all options (Indico web API)", host: "{instance}", path: /rooms/api/booking/create, methods: [POST], scopes: ["full:everything"] }
-          - { id: cancel_booking, name: Cancel a room booking (Indico web API), host: "{instance}", path: "/rooms/api/bookings/*/cancel", methods: [POST], scopes: ["full:everything"] }
-          - { id: cancel_booking_occurrence, name: Cancel one date of a room booking (Indico web API), host: "{instance}", path: "/rooms/api/bookings/*/*/cancel", methods: [POST], scopes: ["full:everything"] }
-          - { id: add_favorite_user, name: Add a favorite user (Indico web API), host: "{instance}", path: "/user/api/favorites/users/*", methods: [PUT], scopes: ["full:everything"] }
-          - { id: remove_favorite_user, name: Remove a favorite user (Indico web API), host: "{instance}", path: "/user/api/favorites/users/*", methods: [DELETE], scopes: ["full:everything"] }
-          - { id: add_favorite_category, name: Add a favorite category (Indico web API), host: "{instance}", path: "/user/api/favorites/categories/*", methods: [PUT], scopes: ["full:everything"] }
-          - { id: remove_favorite_category, name: Remove a favorite category (Indico web API), host: "{instance}", path: "/user/api/favorites/categories/*", methods: [DELETE], scopes: ["full:everything"] }
-          - { id: add_favorite_event, name: Add a favorite event (Indico web API), host: "{instance}", path: "/user/api/favorites/events/*", methods: [PUT], scopes: ["full:everything"] }
-          - { id: remove_favorite_event, name: Remove a favorite event (Indico web API), host: "{instance}", path: "/user/api/favorites/events/*", methods: [DELETE], scopes: ["full:everything"] }
-          - { id: add_favorite_room, name: Add a favorite room (Indico web API), host: "{instance}", path: "/rooms/api/user/favorite-rooms/*", methods: [PUT], scopes: ["full:everything"] }
-          - { id: remove_favorite_room, name: Remove a favorite room (Indico web API), host: "{instance}", path: "/rooms/api/user/favorite-rooms/*", methods: [DELETE], scopes: ["full:everything"] }
-          - { id: prepare_event, name: Prepare an event for me to create (Indico web API), host: "{instance}", path: /event/create/prepare, methods: [POST], scopes: ["full:everything"] }
+          - { id: book_room, description: "Books a room for one time slot.", name: "Book a room: one slot (official API)", host: "{instance}", path: "/api/roomBooking/bookRoom*", methods: [POST], scopes: ["write:legacy_api"] }
+          - { id: create_booking, description: "Books a room with all options, including recurring bookings.", name: "Book a room: recurring, with all options (Indico web API)", host: "{instance}", path: /rooms/api/booking/create, methods: [POST], scopes: ["full:everything"] }
+          - { id: cancel_booking, description: "Cancels a room booking.", name: Cancel a room booking (Indico web API), host: "{instance}", path: "/rooms/api/bookings/*/cancel", methods: [POST], scopes: ["full:everything"] }
+          - { id: cancel_booking_occurrence, description: "Cancels one date of a recurring room booking.", name: Cancel one date of a room booking (Indico web API), host: "{instance}", path: "/rooms/api/bookings/*/*/cancel", methods: [POST], scopes: ["full:everything"] }
+          - { id: add_favorite_user, description: "Adds a person to your favorites.", name: Add a favorite user (Indico web API), host: "{instance}", path: "/user/api/favorites/users/*", methods: [PUT], scopes: ["full:everything"] }
+          - { id: remove_favorite_user, description: "Removes a person from your favorites.", name: Remove a favorite user (Indico web API), host: "{instance}", path: "/user/api/favorites/users/*", methods: [DELETE], scopes: ["full:everything"] }
+          - { id: add_favorite_category, description: "Adds a category to your favorites.", name: Add a favorite category (Indico web API), host: "{instance}", path: "/user/api/favorites/categories/*", methods: [PUT], scopes: ["full:everything"] }
+          - { id: remove_favorite_category, description: "Removes a category from your favorites.", name: Remove a favorite category (Indico web API), host: "{instance}", path: "/user/api/favorites/categories/*", methods: [DELETE], scopes: ["full:everything"] }
+          - { id: add_favorite_event, description: "Adds an event to your favorites.", name: Add a favorite event (Indico web API), host: "{instance}", path: "/user/api/favorites/events/*", methods: [PUT], scopes: ["full:everything"] }
+          - { id: remove_favorite_event, description: "Removes an event from your favorites.", name: Remove a favorite event (Indico web API), host: "{instance}", path: "/user/api/favorites/events/*", methods: [DELETE], scopes: ["full:everything"] }
+          - { id: add_favorite_room, description: "Adds a room to your favorites.", name: Add a favorite room (Indico web API), host: "{instance}", path: "/rooms/api/user/favorite-rooms/*", methods: [PUT], scopes: ["full:everything"] }
+          - { id: remove_favorite_room, description: "Removes a room from your favorites.", name: Remove a favorite room (Indico web API), host: "{instance}", path: "/rooms/api/user/favorite-rooms/*", methods: [DELETE], scopes: ["full:everything"] }
+          - { id: prepare_event, description: "Prepares an event for you to review and create in Indico.", name: Prepare an event for me to create (Indico web API), host: "{instance}", path: /event/create/prepare, methods: [POST], scopes: ["full:everything"] }
     approvals:
       book_room:
         title: Book room
@@ -236,7 +240,7 @@ apps:
           - { label: Room, source: path, segment: 5 }
         link: "https://{request.host}/rooms/"
       prepare_event:
-        title: Prepare event
+        title: Prepare an event to create
         fields:
           - { label: Title, source: body, steps: [ { json: /title } ] }
           - { label: Start, source: body, steps: [ { json: /start_dt } ] }

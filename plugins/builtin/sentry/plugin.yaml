@@ -1,6 +1,6 @@
 package:
   id: sentry
-  version: 2.0.0
+  version: 2.0.1
   contract: 1
   min_core: 0.1.0
   publisher: aurora
@@ -34,6 +34,8 @@ apps:
     connect:
       - id: token
         kind: fields
+        label: Auth token
+        description: "An internal integration token or a personal auth token from Sentry, with the organization it belongs to. Give it only the scopes agents need."
         fields:
           - name: access_token
             label: Auth token
@@ -65,19 +67,19 @@ apps:
     tools:
       read:
         items:
-          - { id: list_organizations, name: List the organizations the token can see, host: "{instance}", path: /api/0/organizations/, methods: [GET] }
-          - { id: get_organization, name: Get an organization, host: "{instance}", path: "/api/0/organizations/*/", methods: [GET] }
-          - { id: list_projects, name: List an organization's projects, host: "{instance}", path: "/api/0/organizations/*/projects/", methods: [GET] }
-          - { id: get_project, name: Get a project, host: "{instance}", path: "/api/0/projects/*/*/", methods: [GET] }
-          - { id: list_issues, name: List an organization's issues, host: "{instance}", path: "/api/0/organizations/*/issues/", methods: [GET] }
-          - { id: get_issue, name: Get an issue, host: "{instance}", path: "/api/0/organizations/*/issues/*/", methods: [GET] }
-          - { id: list_issue_events, name: List an issue's events, host: "{instance}", path: "/api/0/organizations/*/issues/*/events/", methods: [GET] }
-          - { id: get_issue_event, name: Get one event of an issue, host: "{instance}", path: "/api/0/organizations/*/issues/*/events/*/", methods: [GET] }
-          - { id: list_releases, name: List an organization's releases, host: "{instance}", path: "/api/0/organizations/*/releases/", methods: [GET] }
-          - { id: get_release, name: Get a release, host: "{instance}", path: "/api/0/organizations/*/releases/*/", methods: [GET] }
+          - { id: list_organizations, description: "Lists the Sentry organizations the token can see.", name: List the organizations the token can see, host: "{instance}", path: /api/0/organizations/, methods: [GET] }
+          - { id: get_organization, description: "Reads one Sentry organization.", name: Get an organization, host: "{instance}", path: "/api/0/organizations/*/", methods: [GET] }
+          - { id: list_projects, description: "Lists an organization's projects.", name: List an organization's projects, host: "{instance}", path: "/api/0/organizations/*/projects/", methods: [GET] }
+          - { id: get_project, description: "Reads one project.", name: Get a project, host: "{instance}", path: "/api/0/projects/*/*/", methods: [GET] }
+          - { id: list_issues, description: "Lists an organization's issues.", name: List an organization's issues, host: "{instance}", path: "/api/0/organizations/*/issues/", methods: [GET] }
+          - { id: get_issue, description: "Reads one issue.", name: Get an issue, host: "{instance}", path: "/api/0/organizations/*/issues/*/", methods: [GET] }
+          - { id: list_issue_events, description: "Lists the events of an issue.", name: List an issue's events, host: "{instance}", path: "/api/0/organizations/*/issues/*/events/", methods: [GET] }
+          - { id: get_issue_event, description: "Reads one event of an issue.", name: Get one event of an issue, host: "{instance}", path: "/api/0/organizations/*/issues/*/events/*/", methods: [GET] }
+          - { id: list_releases, description: "Lists an organization's releases.", name: List an organization's releases, host: "{instance}", path: "/api/0/organizations/*/releases/", methods: [GET] }
+          - { id: get_release, description: "Reads one release.", name: Get a release, host: "{instance}", path: "/api/0/organizations/*/releases/*/", methods: [GET] }
       write:
         items:
-          - { id: update_issue, name: "Update or resolve an issue (status, assignee, bookmarks)", host: "{instance}", path: "/api/0/organizations/*/issues/*/", methods: [PUT] }
+          - { id: update_issue, description: "Changes an issue: resolve it, assign it, or bookmark it.", name: "Update or resolve an issue (status, assignee, bookmarks)", host: "{instance}", path: "/api/0/organizations/*/issues/*/", methods: [PUT] }
     approvals:
       update_issue:
         title: Update issue

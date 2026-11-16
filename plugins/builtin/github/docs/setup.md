@@ -68,9 +68,11 @@ were moved to **GitHub** with their grants intact; see *Upgrading* below.)
 
 1. On GitHub open *Settings, Developer settings, OAuth Apps* (your own, or the organization's) and
    choose *New OAuth App*.
-2. Set the authorization callback URL to `<your Aurora URL>/v1/oauth/callback`.
+2. Set the authorization callback URL to {{aurora.callback_url}}
 3. Generate a client secret.
-4. Enter the Client ID and Client secret in Aurora under *Admin, Apps, GitHub*.
+4. Enter the Client ID and Client secret in Aurora under {{aurora.page:oauth_clients}}. A workspace
+   owner can register a client for their own workspace on the app's setup page,
+   {{aurora.app_setup}}, instead.
 
 Aurora uses the authorization code flow with PKCE. If your OAuth app is configured to expire user
 tokens, Aurora refreshes them with the refresh token; otherwise the token stays valid until it is
@@ -80,14 +82,15 @@ revoked.
 
 1. On GitHub open *Settings, Developer settings, GitHub Apps* and choose *New GitHub App* (on
    Enterprise Server, on your server).
-2. Set the callback URL to `<your Aurora URL>/v1/oauth/callback`, keep **Expire user authorization
+2. Set the callback URL to {{aurora.callback_url}}, keep **Expire user authorization
    tokens** enabled, and tick *Request user authorization (OAuth) during installation* only if you
    want it. Webhooks can stay disabled.
 3. Grant the permissions you want agents to have (for read-only: *Contents*, *Issues*, *Pull
    requests*: Read). A user token has only the permissions that both the app and the person have,
    and only on repositories both can reach. Install the app where it is needed.
 4. Generate a client secret and enter the **Client ID** (not the App ID) and secret in Aurora under
-   *Admin, Apps, GitHub*, for the *github-app* client.
+   {{aurora.page:oauth_clients}}, for the *github-app* client. A workspace owner can register it
+   on the app's setup page, {{aurora.app_setup}}, instead.
 
 There are no scopes to tick: GitHub Apps get their permissions from the registration. Aurora
 uses the authorization code flow with PKCE; the user token expires after eight hours and Aurora
@@ -114,7 +117,7 @@ or the token.
    (`https://github.com/settings/installations/<id>`, or the organization's equivalent).
 6. In Aurora choose *Connect*, *GitHub App*, enter the App ID and the installation ID and upload
    the `.pem` file. On **GitHub Enterprise Server** the administrator first registers the server
-   under *Instances* (below); then choose that instance and enter the same host name as *Server
+   under {{aurora.page:self_hosted}} (below); then choose that instance and enter the same host name as *Server
    host*. A server host that differs from the registered instance is refused.
 
 **Limit to repositories** (optional) takes repository names (not `owner/name`, comma separated,
@@ -140,8 +143,8 @@ token connections, and *List repositories of the installation* only for GitHub A
 
 ## GitHub Enterprise Server
 
-1. An administrator registers the server once: open *Instances* (organization owners and admins
-   for one organization, instance admins for all), choose GitHub Enterprise Server and enter the
+1. An administrator registers the server once: open {{aurora.page:self_hosted}} (organization owners
+   and admins for one organization, instance admins for all), choose GitHub Enterprise Server and enter the
    host name, for example `github.example.com` (no `https://`, port or path). Aurora checks
    `GET /api/v3/meta` first. Registering decides where the credentials may be sent, so only
    register hosts you trust.

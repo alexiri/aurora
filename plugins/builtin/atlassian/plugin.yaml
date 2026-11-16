@@ -1,6 +1,6 @@
 package:
   id: atlassian
-  version: 1.1.0
+  version: 1.1.1
   contract: 1
   min_core: 0.1.0
   publisher: aurora
@@ -44,6 +44,8 @@ apps:
     connect:
       - id: oauth
         kind: oauth2
+        label: Sign in with Atlassian
+        description: "You sign in to Atlassian and choose the sites Aurora may use. Needs an OAuth client (an Atlassian OAuth 2.0 app) registered first."
         client: atlassian
         scopes:
           - { scope: offline_access, name: Stay connected (refresh the sign-in without asking again), access: read }
@@ -83,21 +85,21 @@ apps:
     tools:
       read:
         items:
-          - { id: list_accessible_sites, name: List the Atlassian sites this sign-in can reach (cloud ids), host: api.atlassian.com, path: /oauth/token/accessible-resources, methods: [GET] }
-          - { id: get_myself, name: Get the connected user, host: api.atlassian.com, path: "/ex/jira/*/rest/api/3/myself", methods: [GET] }
-          - { id: list_projects, name: Search projects, host: api.atlassian.com, path: "/ex/jira/*/rest/api/3/project/search", methods: [GET] }
-          - { id: get_project, name: Get a project, host: api.atlassian.com, path: "/ex/jira/*/rest/api/3/project/*", methods: [GET] }
-          - { id: search_issues, name: Search issues with JQL, host: api.atlassian.com, path: "/ex/jira/*/rest/api/3/search/jql", methods: [GET] }
-          - { id: get_issue, name: Get an issue, host: api.atlassian.com, path: "/ex/jira/*/rest/api/3/issue/*", methods: [GET] }
-          - { id: list_issue_comments, name: List issue comments, host: api.atlassian.com, path: "/ex/jira/*/rest/api/3/issue/*/comment", methods: [GET] }
-          - { id: get_issue_comment, name: Get an issue comment, host: api.atlassian.com, path: "/ex/jira/*/rest/api/3/issue/*/comment/*", methods: [GET] }
-          - { id: list_issue_transitions, name: List the transitions available for an issue, host: api.atlassian.com, path: "/ex/jira/*/rest/api/3/issue/*/transitions", methods: [GET] }
+          - { id: list_accessible_sites, description: "Lists the Atlassian sites this sign-in can reach, with their cloud ids.", name: List the Atlassian sites this sign-in can reach (cloud ids), host: api.atlassian.com, path: /oauth/token/accessible-resources, methods: [GET] }
+          - { id: get_myself, description: "Shows the Jira account Aurora is connected as.", name: Get the connected user, host: api.atlassian.com, path: "/ex/jira/*/rest/api/3/myself", methods: [GET] }
+          - { id: list_projects, description: "Lists or searches the Jira projects you can see.", name: Search projects, host: api.atlassian.com, path: "/ex/jira/*/rest/api/3/project/search", methods: [GET] }
+          - { id: get_project, description: "Reads one Jira project.", name: Get a project, host: api.atlassian.com, path: "/ex/jira/*/rest/api/3/project/*", methods: [GET] }
+          - { id: search_issues, description: "Searches Jira issues with a JQL query.", name: Search issues with JQL, host: api.atlassian.com, path: "/ex/jira/*/rest/api/3/search/jql", methods: [GET] }
+          - { id: get_issue, description: "Reads one Jira issue with its fields.", name: Get an issue, host: api.atlassian.com, path: "/ex/jira/*/rest/api/3/issue/*", methods: [GET] }
+          - { id: list_issue_comments, description: "Lists the comments on a Jira issue.", name: List issue comments, host: api.atlassian.com, path: "/ex/jira/*/rest/api/3/issue/*/comment", methods: [GET] }
+          - { id: get_issue_comment, description: "Reads one comment on a Jira issue.", name: Get an issue comment, host: api.atlassian.com, path: "/ex/jira/*/rest/api/3/issue/*/comment/*", methods: [GET] }
+          - { id: list_issue_transitions, description: "Lists the workflow steps an issue can move to.", name: List the transitions available for an issue, host: api.atlassian.com, path: "/ex/jira/*/rest/api/3/issue/*/transitions", methods: [GET] }
       write:
         items:
-          - { id: create_issue, name: Create an issue, host: api.atlassian.com, path: "/ex/jira/*/rest/api/3/issue", methods: [POST] }
-          - { id: edit_issue, name: Edit an issue, host: api.atlassian.com, path: "/ex/jira/*/rest/api/3/issue/*", methods: [PUT] }
-          - { id: add_issue_comment, name: Comment on an issue, host: api.atlassian.com, path: "/ex/jira/*/rest/api/3/issue/*/comment", methods: [POST] }
-          - { id: transition_issue, name: Move an issue through a workflow transition, host: api.atlassian.com, path: "/ex/jira/*/rest/api/3/issue/*/transitions", methods: [POST] }
+          - { id: create_issue, description: "Creates a Jira issue.", name: Create an issue, host: api.atlassian.com, path: "/ex/jira/*/rest/api/3/issue", methods: [POST] }
+          - { id: edit_issue, description: "Changes the fields of a Jira issue.", name: Edit an issue, host: api.atlassian.com, path: "/ex/jira/*/rest/api/3/issue/*", methods: [PUT] }
+          - { id: add_issue_comment, description: "Adds a comment to a Jira issue.", name: Comment on an issue, host: api.atlassian.com, path: "/ex/jira/*/rest/api/3/issue/*/comment", methods: [POST] }
+          - { id: transition_issue, description: "Moves a Jira issue to another workflow step, such as Done.", name: Move an issue through a workflow transition, host: api.atlassian.com, path: "/ex/jira/*/rest/api/3/issue/*/transitions", methods: [POST] }
     approvals:
       create_issue:
         title: Create Jira issue
@@ -154,6 +156,8 @@ apps:
     connect:
       - id: oauth
         kind: oauth2
+        label: Sign in with Atlassian
+        description: "You sign in to Atlassian and choose the sites Aurora may use. Needs an OAuth client (an Atlassian OAuth 2.0 app) registered first."
         client: atlassian
         scopes:
           - { scope: offline_access, name: Stay connected (refresh the sign-in without asking again), access: read }
@@ -200,21 +204,21 @@ apps:
     tools:
       read:
         items:
-          - { id: list_spaces, name: List spaces, host: api.atlassian.com, path: "/ex/confluence/*/wiki/api/v2/spaces", methods: [GET] }
-          - { id: get_space, name: Get a space, host: api.atlassian.com, path: "/ex/confluence/*/wiki/api/v2/spaces/*", methods: [GET] }
-          - { id: list_space_pages, name: List pages in a space, host: api.atlassian.com, path: "/ex/confluence/*/wiki/api/v2/spaces/*/pages", methods: [GET] }
-          - { id: list_pages, name: List pages, host: api.atlassian.com, path: "/ex/confluence/*/wiki/api/v2/pages", methods: [GET] }
-          - { id: get_page, name: Get a page, host: api.atlassian.com, path: "/ex/confluence/*/wiki/api/v2/pages/*", methods: [GET] }
-          - { id: list_page_children, name: List the child pages of a page, host: api.atlassian.com, path: "/ex/confluence/*/wiki/api/v2/pages/*/children", methods: [GET] }
-          - { id: list_page_footer_comments, name: List page comments, host: api.atlassian.com, path: "/ex/confluence/*/wiki/api/v2/pages/*/footer-comments", methods: [GET] }
-          - { id: list_page_inline_comments, name: List inline comments on a page, host: api.atlassian.com, path: "/ex/confluence/*/wiki/api/v2/pages/*/inline-comments", methods: [GET] }
-          - { id: get_footer_comment, name: Get a page comment, host: api.atlassian.com, path: "/ex/confluence/*/wiki/api/v2/footer-comments/*", methods: [GET] }
-          - { id: search_content, name: Search content with CQL, host: api.atlassian.com, path: "/ex/confluence/*/wiki/rest/api/search", methods: [GET] }
+          - { id: list_spaces, description: "Lists the Confluence spaces you can see.", name: List spaces, host: api.atlassian.com, path: "/ex/confluence/*/wiki/api/v2/spaces", methods: [GET] }
+          - { id: get_space, description: "Reads one Confluence space.", name: Get a space, host: api.atlassian.com, path: "/ex/confluence/*/wiki/api/v2/spaces/*", methods: [GET] }
+          - { id: list_space_pages, description: "Lists the pages in a Confluence space.", name: List pages in a space, host: api.atlassian.com, path: "/ex/confluence/*/wiki/api/v2/spaces/*/pages", methods: [GET] }
+          - { id: list_pages, description: "Lists Confluence pages.", name: List pages, host: api.atlassian.com, path: "/ex/confluence/*/wiki/api/v2/pages", methods: [GET] }
+          - { id: get_page, description: "Reads a Confluence page and its content.", name: Get a page, host: api.atlassian.com, path: "/ex/confluence/*/wiki/api/v2/pages/*", methods: [GET] }
+          - { id: list_page_children, description: "Lists the pages below a Confluence page.", name: List the child pages of a page, host: api.atlassian.com, path: "/ex/confluence/*/wiki/api/v2/pages/*/children", methods: [GET] }
+          - { id: list_page_footer_comments, description: "Lists the comments at the bottom of a Confluence page.", name: List page comments, host: api.atlassian.com, path: "/ex/confluence/*/wiki/api/v2/pages/*/footer-comments", methods: [GET] }
+          - { id: list_page_inline_comments, description: "Lists the comments written on parts of a Confluence page.", name: List inline comments on a page, host: api.atlassian.com, path: "/ex/confluence/*/wiki/api/v2/pages/*/inline-comments", methods: [GET] }
+          - { id: get_footer_comment, description: "Reads one comment on a Confluence page.", name: Get a page comment, host: api.atlassian.com, path: "/ex/confluence/*/wiki/api/v2/footer-comments/*", methods: [GET] }
+          - { id: search_content, description: "Searches Confluence with a CQL query.", name: Search content with CQL, host: api.atlassian.com, path: "/ex/confluence/*/wiki/rest/api/search", methods: [GET] }
       write:
         items:
-          - { id: create_page, name: Create a page, host: api.atlassian.com, path: "/ex/confluence/*/wiki/api/v2/pages", methods: [POST] }
-          - { id: update_page, name: Update a page, host: api.atlassian.com, path: "/ex/confluence/*/wiki/api/v2/pages/*", methods: [PUT] }
-          - { id: create_footer_comment, name: Comment on a page, host: api.atlassian.com, path: "/ex/confluence/*/wiki/api/v2/footer-comments", methods: [POST] }
+          - { id: create_page, description: "Creates a Confluence page.", name: Create a page, host: api.atlassian.com, path: "/ex/confluence/*/wiki/api/v2/pages", methods: [POST] }
+          - { id: update_page, description: "Changes the title or content of a Confluence page.", name: Update a page, host: api.atlassian.com, path: "/ex/confluence/*/wiki/api/v2/pages/*", methods: [PUT] }
+          - { id: create_footer_comment, description: "Adds a comment to a Confluence page.", name: Comment on a page, host: api.atlassian.com, path: "/ex/confluence/*/wiki/api/v2/footer-comments", methods: [POST] }
     approvals:
       create_page:
         title: Create Confluence page
@@ -256,7 +260,7 @@ apps:
       category: productivity
       api_docs: https://developer.atlassian.com/server/jira/platform/rest/
       connect_note:
-        text: "An administrator registers the Jira host first (Instances); then choose it when connecting with a personal access token."
+        text: "An administrator registers the Jira host first (Self-hosted apps); then choose it when connecting with a personal access token."
         url: https://confluence.atlassian.com/enterprise/using-personal-access-tokens-1026032365.html
       label_hint: Jira display name
     instances:
@@ -269,6 +273,8 @@ apps:
     connect:
       - id: token
         kind: fields
+        label: Personal access token
+        description: "A token you create in your Data Center profile. It can do what your account can, so create it for a limited account and set an expiry date."
         fields:
           - name: access_token
             label: Personal access token
@@ -290,20 +296,20 @@ apps:
     tools:
       read:
         items:
-          - { id: get_myself, name: Get the connected user, host: "{instance}", path: /rest/api/2/myself, methods: [GET] }
-          - { id: list_projects, name: List projects, host: "{instance}", path: /rest/api/2/project, methods: [GET] }
-          - { id: get_project, name: Get a project, host: "{instance}", path: "/rest/api/2/project/*", methods: [GET] }
-          - { id: search_issues, name: Search issues with JQL, host: "{instance}", path: /rest/api/2/search, methods: [GET] }
-          - { id: get_issue, name: Get an issue, host: "{instance}", path: "/rest/api/2/issue/*", methods: [GET] }
-          - { id: list_issue_comments, name: List issue comments, host: "{instance}", path: "/rest/api/2/issue/*/comment", methods: [GET] }
-          - { id: get_issue_comment, name: Get an issue comment, host: "{instance}", path: "/rest/api/2/issue/*/comment/*", methods: [GET] }
-          - { id: list_issue_transitions, name: List the transitions available for an issue, host: "{instance}", path: "/rest/api/2/issue/*/transitions", methods: [GET] }
+          - { id: get_myself, description: "Shows the Jira account Aurora is connected as.", name: Get the connected user, host: "{instance}", path: /rest/api/2/myself, methods: [GET] }
+          - { id: list_projects, description: "Lists or searches the Jira projects you can see.", name: List projects, host: "{instance}", path: /rest/api/2/project, methods: [GET] }
+          - { id: get_project, description: "Reads one Jira project.", name: Get a project, host: "{instance}", path: "/rest/api/2/project/*", methods: [GET] }
+          - { id: search_issues, description: "Searches Jira issues with a JQL query.", name: Search issues with JQL, host: "{instance}", path: /rest/api/2/search, methods: [GET] }
+          - { id: get_issue, description: "Reads one Jira issue with its fields.", name: Get an issue, host: "{instance}", path: "/rest/api/2/issue/*", methods: [GET] }
+          - { id: list_issue_comments, description: "Lists the comments on a Jira issue.", name: List issue comments, host: "{instance}", path: "/rest/api/2/issue/*/comment", methods: [GET] }
+          - { id: get_issue_comment, description: "Reads one comment on a Jira issue.", name: Get an issue comment, host: "{instance}", path: "/rest/api/2/issue/*/comment/*", methods: [GET] }
+          - { id: list_issue_transitions, description: "Lists the workflow steps an issue can move to.", name: List the transitions available for an issue, host: "{instance}", path: "/rest/api/2/issue/*/transitions", methods: [GET] }
       write:
         items:
-          - { id: create_issue, name: Create an issue, host: "{instance}", path: /rest/api/2/issue, methods: [POST] }
-          - { id: edit_issue, name: Edit an issue, host: "{instance}", path: "/rest/api/2/issue/*", methods: [PUT] }
-          - { id: add_issue_comment, name: Comment on an issue, host: "{instance}", path: "/rest/api/2/issue/*/comment", methods: [POST] }
-          - { id: transition_issue, name: Move an issue through a workflow transition, host: "{instance}", path: "/rest/api/2/issue/*/transitions", methods: [POST] }
+          - { id: create_issue, description: "Creates a Jira issue.", name: Create an issue, host: "{instance}", path: /rest/api/2/issue, methods: [POST] }
+          - { id: edit_issue, description: "Changes the fields of a Jira issue.", name: Edit an issue, host: "{instance}", path: "/rest/api/2/issue/*", methods: [PUT] }
+          - { id: add_issue_comment, description: "Adds a comment to a Jira issue.", name: Comment on an issue, host: "{instance}", path: "/rest/api/2/issue/*/comment", methods: [POST] }
+          - { id: transition_issue, description: "Moves a Jira issue to another workflow step, such as Done.", name: Move an issue through a workflow transition, host: "{instance}", path: "/rest/api/2/issue/*/transitions", methods: [POST] }
     approvals:
       create_issue:
         title: Create Jira issue
@@ -348,7 +354,7 @@ apps:
       category: productivity
       api_docs: https://developer.atlassian.com/server/confluence/rest/
       connect_note:
-        text: "An administrator registers the Confluence host first (Instances); then choose it when connecting with a personal access token."
+        text: "An administrator registers the Confluence host first (Self-hosted apps); then choose it when connecting with a personal access token."
         url: https://confluence.atlassian.com/enterprise/using-personal-access-tokens-1026032365.html
       label_hint: Confluence display name
     instances:
@@ -361,6 +367,8 @@ apps:
     connect:
       - id: token
         kind: fields
+        label: Personal access token
+        description: "A token you create in your Data Center profile. It can do what your account can, so create it for a limited account and set an expiry date."
         fields:
           - name: access_token
             label: Personal access token
@@ -382,18 +390,18 @@ apps:
     tools:
       read:
         items:
-          - { id: get_current_user, name: Get the connected user, host: "{instance}", path: /rest/api/user/current, methods: [GET] }
-          - { id: list_spaces, name: List spaces, host: "{instance}", path: /rest/api/space, methods: [GET] }
-          - { id: get_space, name: Get a space, host: "{instance}", path: "/rest/api/space/*", methods: [GET] }
-          - { id: list_content, name: List pages and blog posts, host: "{instance}", path: /rest/api/content, methods: [GET] }
-          - { id: search_content_cql, name: Search content with CQL (content results), host: "{instance}", path: /rest/api/content/search, methods: [GET] }
-          - { id: get_content, name: Get a page or blog post, host: "{instance}", path: "/rest/api/content/*", methods: [GET] }
-          - { id: list_content_comments, name: List the comments of a page, host: "{instance}", path: "/rest/api/content/*/child/comment", methods: [GET] }
-          - { id: search, name: Search with CQL, host: "{instance}", path: /rest/api/search, methods: [GET] }
+          - { id: get_current_user, description: "Shows the Confluence account Aurora is connected as.", name: Get the connected user, host: "{instance}", path: /rest/api/user/current, methods: [GET] }
+          - { id: list_spaces, description: "Lists the Confluence spaces you can see.", name: List spaces, host: "{instance}", path: /rest/api/space, methods: [GET] }
+          - { id: get_space, description: "Reads one Confluence space.", name: Get a space, host: "{instance}", path: "/rest/api/space/*", methods: [GET] }
+          - { id: list_content, description: "Lists Confluence pages and blog posts.", name: List pages and blog posts, host: "{instance}", path: /rest/api/content, methods: [GET] }
+          - { id: search_content_cql, description: "Searches Confluence pages and blog posts with a CQL query.", name: Search content with CQL (content results), host: "{instance}", path: /rest/api/content/search, methods: [GET] }
+          - { id: get_content, description: "Reads a Confluence page or blog post.", name: Get a page or blog post, host: "{instance}", path: "/rest/api/content/*", methods: [GET] }
+          - { id: list_content_comments, description: "Lists the comments on a Confluence page.", name: List the comments of a page, host: "{instance}", path: "/rest/api/content/*/child/comment", methods: [GET] }
+          - { id: search, description: "Searches Confluence with a CQL query.", name: Search with CQL, host: "{instance}", path: /rest/api/search, methods: [GET] }
       write:
         items:
-          - { id: create_content, name: Create a page or comment, host: "{instance}", path: /rest/api/content, methods: [POST] }
-          - { id: update_content, name: Update a page, host: "{instance}", path: "/rest/api/content/*", methods: [PUT] }
+          - { id: create_content, description: "Creates a Confluence page or comment.", name: Create a page or comment, host: "{instance}", path: /rest/api/content, methods: [POST] }
+          - { id: update_content, description: "Changes a Confluence page.", name: Update a page, host: "{instance}", path: "/rest/api/content/*", methods: [PUT] }
     approvals:
       create_content:
         title: Create Confluence content

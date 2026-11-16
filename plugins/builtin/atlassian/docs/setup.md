@@ -14,11 +14,13 @@ see a token.
 
 1. In the [Atlassian developer console](https://developer.atlassian.com/console/myapps/) create an
    **OAuth 2.0 (3LO)** app.
-2. Under *Authorization* set the callback URL to `<your Aurora URL>/v1/oauth/callback`.
+2. Under *Authorization* set the callback URL to {{aurora.callback_url}}
 3. Under *Permissions* add the Jira API and the Confluence API and, for each, only the scopes you
    want to offer (see below).
-4. Under *Settings* copy the Client ID and the Secret and enter them in Aurora under *Admin, Apps,
-   Jira Cloud* (or Confluence Cloud). The client is shared: both apps use it.
+4. Under *Settings* copy the Client ID and the Secret and enter them in Aurora under
+   {{aurora.page:oauth_clients}}. A workspace owner can register a client for their own workspace
+   on the app's setup page, {{aurora.app_setup}}, instead. The client is shared: Jira Cloud and
+   Confluence Cloud both use it.
 5. To let people other than you sign in, set the app's distribution to *Sharing* in the console.
 
 ### Permissions (scopes)
@@ -51,8 +53,8 @@ stored as `cloud_id` and `site_url`). Limitations:
 
 ## Data Center (Jira Data Center and Confluence Data Center)
 
-1. An administrator registers the host once: open *Instances* (organization owners and admins for
-   one organization, instance admins for all), choose Jira Data Center or Confluence Data Center and
+1. An administrator registers the host once: open {{aurora.page:self_hosted}} (organization owners and
+   admins for one organization, instance admins for all), choose Jira Data Center or Confluence Data Center and
    enter the host name, for example `jira.example.com` (no `https://`, port or path). Aurora checks
    `/rest/api/2/serverInfo` (Jira) or `/rest/api/server-information` (Confluence) first. Registering
    decides where the credentials may be sent, so only register hosts you trust.

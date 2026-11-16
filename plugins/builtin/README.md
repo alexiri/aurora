@@ -83,8 +83,34 @@ host in the egress list), so a fixture cannot pass with output the host would re
 | refused | (FIX-118) the dangerous untooled requests of `REFUSED` in `scripts/plugins/check_builtin.py` (repository deletion, Drive file deletion, calendar clear, mail deletion) each have a passing case named `refused <what>: ...` whose request selects no tool. |
 | hooks | the archive holds `hooks.wasm` exactly when `permissions.hooks` is non-empty; for every declared point a passing case where the hook succeeds and (except `approval.summarize`) one where it fails; every `permissions.egress` host is reached by a recorded request; one case per egress point shows a host outside the list denied (`egress_override` + `expect: { error: egress-denied }`); a hook case for an undeclared point fails. Hook cases never count as skipped. |
 | token | when the package declares `token`, it has `reauth_codes` (oauth2_refresh) and a fixture shows the injected bearer. Every `oauth2_refresh` app also has replayed token lifecycle cases (`token:` with an `http_cassette`, `docs/09 §12`): at least one with `outcome: refreshed` and one with `outcome: reauth_required`; an instance-bound app has both on its default host and on a registered instance host, and a negative case showing the refresh request is built for the instance host only (SEC-59). Use fake `oauth_client` values. Hook-minted tokens (`token: hook`) are covered by their `token.mint` hook cases. |
+| texts | (P5-UX-13, C-939, C-941, C-949) every tool has a `description` of at most 200 characters, in plain words ("Lists the objects in a bucket."); every `connect` method has a `label` and a `description`; the guide and each `connect_note` contain none of `<your Aurora URL>`, `<external_url>`, `Admin, Apps,` or "Instances" (the page is Self-hosted apps): use the placeholders below. A third-party package gets the linter warning `tool_description_missing` instead. |
 | docs | `aurora plugin docs` renders (md and html) twice with identical output and contains the permissions table. Rendered output is regenerated, not committed. |
 | secrets | `scripts/guards/no-live-tokens.sh` (part of `scripts/guards/run-all.sh`) fails on anything token-shaped under `plugins/builtin/**/tests`. |
+
+## Guide placeholders and approval titles (P5-UX-13, D-334, C-940)
+
+`GET /v1/apps/{app}/guide?workspace_id=|org_id=` fills these `{{aurora.…}}` placeholders for the person
+reading (the raw text stays what `aurora plugin docs` prints). Write the placeholder bare: the value is
+Markdown-escaped, and the callback URL and the external id arrive as code. Any other
+`{{aurora.…}}` token is the package error `guide_unknown_placeholder`.
+
+| Placeholder | Becomes |
+|---|---|
+| `{{aurora.callback_url}}` | the redirect URI to register at the vendor (`<external_url>/v1/oauth/callback`) |
+| `{{aurora.external_id}}` | the organization's external id, for a member of the organization; else "(shown to members of your organization)" |
+| `{{aurora.app_setup}}` | a link to the app's setup page at the reader's level; else who can open it |
+| `{{aurora.page:oauth_clients}}` | a link to the OAuth clients tab at the highest level the reader can open (in a workspace, the app's setup page); else who can |
+| `{{aurora.page:self_hosted}}` | the same, for Self-hosted apps |
+| `{{aurora.page:packages}}` | the same, for Packages (Administration) |
+
+Say where a person registers an OAuth client with `{{aurora.page:oauth_clients}}`, never as "Admin,
+Apps, …", and add that a workspace owner can register a client for their own workspace on
+`{{aurora.app_setup}}`. A connect method that needs a value in the other service declares
+`show_context: [org_external_id]` (it must be in `permissions.context`); the dashboard shows it with
+Copy above the method's fields.
+
+An approval `title` completes the sentence "<Agent> wants to …": "create an issue", "upload a file to a
+bucket", not "Linear mutation". Every write tool has one.
 
 Link checking (`about.api_docs`, `about.api_spec`, `homepage`, `help_url`) needs the network, so it
 is separate: `bash scripts/plugins/check-links.sh` runs in the non-blocking `plugin-links` workflow

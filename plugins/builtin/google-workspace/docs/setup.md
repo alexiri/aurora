@@ -21,8 +21,10 @@ never see a token.
    is in your Google Workspace organization, otherwise *External*) and add only the scopes listed in
    step 3.
 3. Create an OAuth client of type **Web application**. Add the Aurora redirect URI
-   `<external_url>/v1/oauth/callback` as an authorized redirect URI.
-4. Enter the client ID and client secret in Aurora under the `google` OAuth client of this package.
+   {{aurora.callback_url}} as an authorized redirect URI.
+4. Enter the client ID and client secret in Aurora under {{aurora.page:oauth_clients}}. A workspace
+   owner can register a client for their own workspace on the app's setup page,
+   {{aurora.app_setup}}, instead.
 
 Google's web server flow uses a client secret; this package does not send PKCE parameters because
 that page does not document them for web applications.

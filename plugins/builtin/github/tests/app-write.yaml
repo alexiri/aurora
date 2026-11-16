@@ -116,7 +116,7 @@
     body: '{"query":"mutation AddStar { addStar(input: {starrableId: \"R_example\"}) { clientMutationId } }","operationName":"AddStar"}'
   expect:
     tool: graphql_mutation
-    summary: { title: "GraphQL mutation", fields: { Operation: AddStar, Fields: addStar } }
+    summary: { title: "Make a change through GraphQL", fields: { Operation: AddStar, Fields: addStar } }
 - name: "github app: negative graphql_mutation: GET selects no tool"
   connection: { method: github_app, credentials: { access_token: "tok-fixture-1" } }
   request: { method: GET, url: "https://api.github.com/graphql" }

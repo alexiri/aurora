@@ -210,7 +210,7 @@
     tool: prepare_event
     upstream: { headers_absent: [authorization] }
     summary:
-      title: "Prepare event"
+      title: "Prepare an event to create"
       fields: { Title: "Planning meeting", Start: "2026-11-12T14:00:00", Time zone: "Europe/Zurich", Duration: "60", Type: "meeting" }
 - name: "negative prepare_event: GET selects no tool"
   connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }

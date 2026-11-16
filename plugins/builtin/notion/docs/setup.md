@@ -9,12 +9,14 @@ send a different version.
 
 1. In Notion open the Developer portal (*Settings, Connections, Develop or manage integrations*) and
    create a **Public** connection (Notion's "public integration" with OAuth).
-2. Add `<your Aurora URL>/v1/oauth/callback` as the redirect URI.
+2. Add {{aurora.callback_url}} as the redirect URI.
 3. Under *Capabilities* enable only what you will offer: for reading, the content read, comment read
    and user information capabilities; for writing, content insert and update and comment insert.
    Notion has **no OAuth scopes**: the connection's capabilities decide what it may do, and Aurora
    still holds every changing request for approval.
-4. Copy the OAuth client ID and client secret into Aurora under *Admin, Apps, Notion*.
+4. Copy the OAuth client ID and client secret into Aurora under {{aurora.page:oauth_clients}}. A
+   workspace owner can register a client for their own workspace on the app's setup page,
+   {{aurora.app_setup}}, instead.
 
 Aurora uses the authorization code flow and authenticates at the token endpoint with HTTP Basic
 (client ID and secret), as Notion documents. Notion returns an access token and a refresh token;

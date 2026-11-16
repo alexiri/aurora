@@ -1,6 +1,6 @@
 package:
   id: github
-  version: 2.2.1
+  version: 2.2.2
   contract: 1
   min_core: 0.1.0
   publisher: aurora
@@ -215,33 +215,33 @@ apps:
         items:
           # Acting as a user: an installation token has no user, so these two exist only for the
           # OAuth and personal-token methods; `list_installation_repos` only for the GitHub App.
-          - { id: get_authenticated_user, name: Get the connected user, host: api.github.com, path: /user, methods: [GET], connect_methods: [token, oauth, oauth_app] }
-          - { id: list_user_repos, name: List your repositories, host: api.github.com, path: /user/repos, methods: [GET], connect_methods: [token, oauth, oauth_app] }
-          - { id: list_installation_repos, name: List repositories of the installation, host: api.github.com, path: /installation/repositories, methods: [GET], connect_methods: [github_app] }
-          - { id: get_repo, name: Get a repository, host: api.github.com, path: "/repos/*/*", methods: [GET] }
-          - { id: list_issues, name: List issues, host: api.github.com, path: "/repos/*/*/issues", methods: [GET] }
-          - { id: get_issue, name: Get an issue, host: api.github.com, path: "/repos/*/*/issues/*", methods: [GET] }
-          - { id: list_issue_comments, name: List issue and pull request comments, host: api.github.com, path: "/repos/*/*/issues/*/comments", methods: [GET] }
-          - { id: list_pulls, name: List pull requests, host: api.github.com, path: "/repos/*/*/pulls", methods: [GET] }
-          - { id: get_pull, name: Get a pull request, host: api.github.com, path: "/repos/*/*/pulls/*", methods: [GET] }
-          - { id: list_pull_files, name: List pull request files, host: api.github.com, path: "/repos/*/*/pulls/*/files", methods: [GET] }
-          - { id: get_contents, name: Get repository contents, host: api.github.com, path: "/repos/*/*/contents/**", methods: [GET] }
-          - { id: list_commits, name: List commits, host: api.github.com, path: "/repos/*/*/commits", methods: [GET] }
-          - { id: search_issues, name: Search issues and pull requests, host: api.github.com, path: /search/issues, methods: [GET] }
-          - { id: search_code, name: Search code, host: api.github.com, path: /search/code, methods: [GET] }
-          - { id: graphql_query, name: GraphQL query, host: api.github.com, path: /graphql, methods: [POST], graphql: query }
-          - { id: git_fetch, name: Clone and fetch over HTTPS, host: github.com, path: "/*/*/**", methods: [GET, POST], git: fetch }
+          - { id: get_authenticated_user, description: "Shows the GitHub account Aurora is connected as.", name: Get the connected user, host: api.github.com, path: /user, methods: [GET], connect_methods: [token, oauth, oauth_app] }
+          - { id: list_user_repos, description: "Lists your repositories.", name: List your repositories, host: api.github.com, path: /user/repos, methods: [GET], connect_methods: [token, oauth, oauth_app] }
+          - { id: list_installation_repos, description: "Lists the repositories the GitHub App is installed on.", name: List repositories of the installation, host: api.github.com, path: /installation/repositories, methods: [GET], connect_methods: [github_app] }
+          - { id: get_repo, description: "Reads one repository's details.", name: Get a repository, host: api.github.com, path: "/repos/*/*", methods: [GET] }
+          - { id: list_issues, description: "Lists the issues of a repository.", name: List issues, host: api.github.com, path: "/repos/*/*/issues", methods: [GET] }
+          - { id: get_issue, description: "Reads one issue.", name: Get an issue, host: api.github.com, path: "/repos/*/*/issues/*", methods: [GET] }
+          - { id: list_issue_comments, description: "Lists the comments on an issue or pull request.", name: List issue and pull request comments, host: api.github.com, path: "/repos/*/*/issues/*/comments", methods: [GET] }
+          - { id: list_pulls, description: "Lists the pull requests of a repository.", name: List pull requests, host: api.github.com, path: "/repos/*/*/pulls", methods: [GET] }
+          - { id: get_pull, description: "Reads one pull request.", name: Get a pull request, host: api.github.com, path: "/repos/*/*/pulls/*", methods: [GET] }
+          - { id: list_pull_files, description: "Lists the files a pull request changes.", name: List pull request files, host: api.github.com, path: "/repos/*/*/pulls/*/files", methods: [GET] }
+          - { id: get_contents, description: "Reads a file or folder of a repository.", name: Get repository contents, host: api.github.com, path: "/repos/*/*/contents/**", methods: [GET] }
+          - { id: list_commits, description: "Lists the commits of a repository.", name: List commits, host: api.github.com, path: "/repos/*/*/commits", methods: [GET] }
+          - { id: search_issues, description: "Searches issues and pull requests.", name: Search issues and pull requests, host: api.github.com, path: /search/issues, methods: [GET] }
+          - { id: search_code, description: "Searches the code of repositories.", name: Search code, host: api.github.com, path: /search/code, methods: [GET] }
+          - { id: graphql_query, description: "Runs a read-only GraphQL query against GitHub.", name: GraphQL query, host: api.github.com, path: /graphql, methods: [POST], graphql: query }
+          - { id: git_fetch, description: "Clones or fetches a repository over HTTPS.", name: Clone and fetch over HTTPS, host: github.com, path: "/*/*/**", methods: [GET, POST], git: fetch }
       write:
         items:
-          - { id: create_issue, name: Create an issue, host: api.github.com, path: "/repos/*/*/issues", methods: [POST] }
-          - { id: update_issue, name: Update or close an issue, host: api.github.com, path: "/repos/*/*/issues/*", methods: [PATCH] }
-          - { id: create_issue_comment, name: Comment on an issue or pull request, host: api.github.com, path: "/repos/*/*/issues/*/comments", methods: [POST] }
-          - { id: create_pull, name: Create a pull request, host: api.github.com, path: "/repos/*/*/pulls", methods: [POST] }
-          - { id: merge_pull, name: Merge a pull request, host: api.github.com, path: "/repos/*/*/pulls/*/merge", methods: [PUT] }
-          - { id: write_contents, name: "Create, change or delete a repository file", host: api.github.com, path: "/repos/*/*/contents/**", methods: [PUT, DELETE] }
-          - { id: create_ref, name: Create a branch or tag, host: api.github.com, path: "/repos/*/*/git/refs", methods: [POST] }
-          - { id: graphql_mutation, name: GraphQL mutation, host: api.github.com, path: /graphql, methods: [POST], graphql: mutation }
-          - { id: git_push, name: Push code over HTTPS, host: github.com, path: "/*/*/**", methods: [GET, POST], git: push }
+          - { id: create_issue, description: "Opens a new issue.", name: Create an issue, host: api.github.com, path: "/repos/*/*/issues", methods: [POST] }
+          - { id: update_issue, description: "Edits or closes an issue.", name: Update or close an issue, host: api.github.com, path: "/repos/*/*/issues/*", methods: [PATCH] }
+          - { id: create_issue_comment, description: "Adds a comment to an issue or pull request.", name: Comment on an issue or pull request, host: api.github.com, path: "/repos/*/*/issues/*/comments", methods: [POST] }
+          - { id: create_pull, description: "Opens a pull request.", name: Create a pull request, host: api.github.com, path: "/repos/*/*/pulls", methods: [POST] }
+          - { id: merge_pull, description: "Merges a pull request.", name: Merge a pull request, host: api.github.com, path: "/repos/*/*/pulls/*/merge", methods: [PUT] }
+          - { id: write_contents, description: "Creates, changes or deletes a file in a repository.", name: "Create, change or delete a repository file", host: api.github.com, path: "/repos/*/*/contents/**", methods: [PUT, DELETE] }
+          - { id: create_ref, description: "Creates a branch or tag.", name: Create a branch or tag, host: api.github.com, path: "/repos/*/*/git/refs", methods: [POST] }
+          - { id: graphql_mutation, description: "Runs a GraphQL mutation, a change made through GitHub's GraphQL API.", name: GraphQL mutation, host: api.github.com, path: /graphql, methods: [POST], graphql: mutation }
+          - { id: git_push, description: "Pushes commits to a repository over HTTPS.", name: Push code over HTTPS, host: github.com, path: "/*/*/**", methods: [GET, POST], git: push }
     approvals:
       create_issue:
         title: Create issue
@@ -303,7 +303,7 @@ apps:
           - { label: Ref, source: body, steps: [ { json: /ref } ] }
           - { label: From, source: body, steps: [ { json: /sha } ] }
       graphql_mutation:
-        title: GraphQL mutation
+        title: Make a change through GraphQL
         fields:
           - { label: Operation, source: body, steps: [ { graphql: operation_name } ] }
           - { label: Fields, source: body, steps: [ { graphql: field_names } ] }
@@ -332,7 +332,7 @@ apps:
       category: development
       api_docs: https://docs.github.com/en/enterprise-server@latest/rest
       connect_note:
-        text: "An administrator registers the GitHub Enterprise Server host first (Instances); then choose it when connecting. For a GitHub App installation enter the same host name again as the server host, together with the app id, installation id and the private key."
+        text: "An administrator registers the GitHub Enterprise Server host first (Self-hosted apps); then choose it when connecting. For a GitHub App installation enter the same host name again as the server host, together with the app id, installation id and the private key."
         url: https://docs.github.com/en/enterprise-server@latest/rest
       label_hint: GitHub username or installation
     instances:
@@ -475,33 +475,33 @@ apps:
     tools:
       read:
         items:
-          - { id: get_authenticated_user, name: Get the connected user, host: "{instance}", path: /api/v3/user, methods: [GET], connect_methods: [token, oauth, oauth_app] }
-          - { id: list_user_repos, name: List your repositories, host: "{instance}", path: /api/v3/user/repos, methods: [GET], connect_methods: [token, oauth, oauth_app] }
-          - { id: list_installation_repos, name: List repositories of the installation, host: "{instance}", path: /api/v3/installation/repositories, methods: [GET], connect_methods: [github_app] }
-          - { id: get_repo, name: Get a repository, host: "{instance}", path: "/api/v3/repos/*/*", methods: [GET] }
-          - { id: list_issues, name: List issues, host: "{instance}", path: "/api/v3/repos/*/*/issues", methods: [GET] }
-          - { id: get_issue, name: Get an issue, host: "{instance}", path: "/api/v3/repos/*/*/issues/*", methods: [GET] }
-          - { id: list_issue_comments, name: List issue and pull request comments, host: "{instance}", path: "/api/v3/repos/*/*/issues/*/comments", methods: [GET] }
-          - { id: list_pulls, name: List pull requests, host: "{instance}", path: "/api/v3/repos/*/*/pulls", methods: [GET] }
-          - { id: get_pull, name: Get a pull request, host: "{instance}", path: "/api/v3/repos/*/*/pulls/*", methods: [GET] }
-          - { id: list_pull_files, name: List pull request files, host: "{instance}", path: "/api/v3/repos/*/*/pulls/*/files", methods: [GET] }
-          - { id: get_contents, name: Get repository contents, host: "{instance}", path: "/api/v3/repos/*/*/contents/**", methods: [GET] }
-          - { id: list_commits, name: List commits, host: "{instance}", path: "/api/v3/repos/*/*/commits", methods: [GET] }
-          - { id: search_issues, name: Search issues and pull requests, host: "{instance}", path: /api/v3/search/issues, methods: [GET] }
-          - { id: search_code, name: Search code, host: "{instance}", path: /api/v3/search/code, methods: [GET] }
-          - { id: graphql_query, name: GraphQL query, host: "{instance}", path: /api/graphql, methods: [POST], graphql: query }
-          - { id: git_fetch, name: Clone and fetch over HTTPS, host: "{instance}", path: "/*/*/**", methods: [GET, POST], git: fetch }
+          - { id: get_authenticated_user, description: "Shows the GitHub account Aurora is connected as.", name: Get the connected user, host: "{instance}", path: /api/v3/user, methods: [GET], connect_methods: [token, oauth, oauth_app] }
+          - { id: list_user_repos, description: "Lists your repositories.", name: List your repositories, host: "{instance}", path: /api/v3/user/repos, methods: [GET], connect_methods: [token, oauth, oauth_app] }
+          - { id: list_installation_repos, description: "Lists the repositories the GitHub App is installed on.", name: List repositories of the installation, host: "{instance}", path: /api/v3/installation/repositories, methods: [GET], connect_methods: [github_app] }
+          - { id: get_repo, description: "Reads one repository's details.", name: Get a repository, host: "{instance}", path: "/api/v3/repos/*/*", methods: [GET] }
+          - { id: list_issues, description: "Lists the issues of a repository.", name: List issues, host: "{instance}", path: "/api/v3/repos/*/*/issues", methods: [GET] }
+          - { id: get_issue, description: "Reads one issue.", name: Get an issue, host: "{instance}", path: "/api/v3/repos/*/*/issues/*", methods: [GET] }
+          - { id: list_issue_comments, description: "Lists the comments on an issue or pull request.", name: List issue and pull request comments, host: "{instance}", path: "/api/v3/repos/*/*/issues/*/comments", methods: [GET] }
+          - { id: list_pulls, description: "Lists the pull requests of a repository.", name: List pull requests, host: "{instance}", path: "/api/v3/repos/*/*/pulls", methods: [GET] }
+          - { id: get_pull, description: "Reads one pull request.", name: Get a pull request, host: "{instance}", path: "/api/v3/repos/*/*/pulls/*", methods: [GET] }
+          - { id: list_pull_files, description: "Lists the files a pull request changes.", name: List pull request files, host: "{instance}", path: "/api/v3/repos/*/*/pulls/*/files", methods: [GET] }
+          - { id: get_contents, description: "Reads a file or folder of a repository.", name: Get repository contents, host: "{instance}", path: "/api/v3/repos/*/*/contents/**", methods: [GET] }
+          - { id: list_commits, description: "Lists the commits of a repository.", name: List commits, host: "{instance}", path: "/api/v3/repos/*/*/commits", methods: [GET] }
+          - { id: search_issues, description: "Searches issues and pull requests.", name: Search issues and pull requests, host: "{instance}", path: /api/v3/search/issues, methods: [GET] }
+          - { id: search_code, description: "Searches the code of repositories.", name: Search code, host: "{instance}", path: /api/v3/search/code, methods: [GET] }
+          - { id: graphql_query, description: "Runs a read-only GraphQL query against GitHub.", name: GraphQL query, host: "{instance}", path: /api/graphql, methods: [POST], graphql: query }
+          - { id: git_fetch, description: "Clones or fetches a repository over HTTPS.", name: Clone and fetch over HTTPS, host: "{instance}", path: "/*/*/**", methods: [GET, POST], git: fetch }
       write:
         items:
-          - { id: create_issue, name: Create an issue, host: "{instance}", path: "/api/v3/repos/*/*/issues", methods: [POST] }
-          - { id: update_issue, name: Update or close an issue, host: "{instance}", path: "/api/v3/repos/*/*/issues/*", methods: [PATCH] }
-          - { id: create_issue_comment, name: Comment on an issue or pull request, host: "{instance}", path: "/api/v3/repos/*/*/issues/*/comments", methods: [POST] }
-          - { id: create_pull, name: Create a pull request, host: "{instance}", path: "/api/v3/repos/*/*/pulls", methods: [POST] }
-          - { id: merge_pull, name: Merge a pull request, host: "{instance}", path: "/api/v3/repos/*/*/pulls/*/merge", methods: [PUT] }
-          - { id: write_contents, name: "Create, change or delete a repository file", host: "{instance}", path: "/api/v3/repos/*/*/contents/**", methods: [PUT, DELETE] }
-          - { id: create_ref, name: Create a branch or tag, host: "{instance}", path: "/api/v3/repos/*/*/git/refs", methods: [POST] }
-          - { id: graphql_mutation, name: GraphQL mutation, host: "{instance}", path: /api/graphql, methods: [POST], graphql: mutation }
-          - { id: git_push, name: Push code over HTTPS, host: "{instance}", path: "/*/*/**", methods: [GET, POST], git: push }
+          - { id: create_issue, description: "Opens a new issue.", name: Create an issue, host: "{instance}", path: "/api/v3/repos/*/*/issues", methods: [POST] }
+          - { id: update_issue, description: "Edits or closes an issue.", name: Update or close an issue, host: "{instance}", path: "/api/v3/repos/*/*/issues/*", methods: [PATCH] }
+          - { id: create_issue_comment, description: "Adds a comment to an issue or pull request.", name: Comment on an issue or pull request, host: "{instance}", path: "/api/v3/repos/*/*/issues/*/comments", methods: [POST] }
+          - { id: create_pull, description: "Opens a pull request.", name: Create a pull request, host: "{instance}", path: "/api/v3/repos/*/*/pulls", methods: [POST] }
+          - { id: merge_pull, description: "Merges a pull request.", name: Merge a pull request, host: "{instance}", path: "/api/v3/repos/*/*/pulls/*/merge", methods: [PUT] }
+          - { id: write_contents, description: "Creates, changes or deletes a file in a repository.", name: "Create, change or delete a repository file", host: "{instance}", path: "/api/v3/repos/*/*/contents/**", methods: [PUT, DELETE] }
+          - { id: create_ref, description: "Creates a branch or tag.", name: Create a branch or tag, host: "{instance}", path: "/api/v3/repos/*/*/git/refs", methods: [POST] }
+          - { id: graphql_mutation, description: "Runs a GraphQL mutation, a change made through GitHub's GraphQL API.", name: GraphQL mutation, host: "{instance}", path: /api/graphql, methods: [POST], graphql: mutation }
+          - { id: git_push, description: "Pushes commits to a repository over HTTPS.", name: Push code over HTTPS, host: "{instance}", path: "/*/*/**", methods: [GET, POST], git: push }
     approvals:
       create_issue:
         title: Create issue
@@ -563,7 +563,7 @@ apps:
           - { label: Ref, source: body, steps: [ { json: /ref } ] }
           - { label: From, source: body, steps: [ { json: /sha } ] }
       graphql_mutation:
-        title: GraphQL mutation
+        title: Make a change through GraphQL
         fields:
           - { label: Operation, source: body, steps: [ { graphql: operation_name } ] }
           - { label: Fields, source: body, steps: [ { graphql: field_names } ] }

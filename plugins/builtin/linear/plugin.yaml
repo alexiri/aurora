@@ -1,6 +1,6 @@
 package:
   id: linear
-  version: 1.0.3
+  version: 1.0.4
   contract: 1
   min_core: 0.1.0
   publisher: aurora
@@ -39,6 +39,8 @@ apps:
     connect:
       - id: oauth
         kind: oauth2
+        label: Sign in with Linear
+        description: "You sign in to Linear and Aurora gets a token that renews itself. Needs an OAuth application registered in Linear first."
         client: linear
         scopes:
           - { scope: read, name: "Read your issues, projects, teams, comments and profile", access: read }
@@ -69,13 +71,13 @@ apps:
     tools:
       read:
         items:
-          - { id: graphql_query, name: GraphQL query, host: api.linear.app, path: /graphql, methods: [POST], graphql: query }
+          - { id: graphql_query, description: "Runs a read-only GraphQL query: issues, projects, teams and comments.", name: GraphQL query, host: api.linear.app, path: /graphql, methods: [POST], graphql: query }
       write:
         items:
-          - { id: graphql_mutation, name: "GraphQL mutation (create or update an issue, comment, ...)", host: api.linear.app, path: /graphql, methods: [POST], graphql: mutation }
+          - { id: graphql_mutation, description: "Runs a GraphQL mutation: creates or updates an issue, adds a comment, and similar changes.", name: "GraphQL mutation (create or update an issue, comment, ...)", host: api.linear.app, path: /graphql, methods: [POST], graphql: mutation }
     approvals:
       graphql_mutation:
-        title: Linear mutation
+        title: Make a change in Linear
         fields:
           - { label: Operation, source: body, steps: [ { graphql: operation_name } ] }
           - { label: Fields, source: body, steps: [ { graphql: field_names } ] }
