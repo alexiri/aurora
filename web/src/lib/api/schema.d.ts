@@ -11093,6 +11093,8 @@ export interface components {
         };
         SettingWarning: {
             code: string;
+            /** @description The keyed-list entry the warning is about (C-813 `endpoint_resolves_private`). */
+            entry_id?: string | null;
             key?: string | null;
             message: string;
         };

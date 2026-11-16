@@ -148,6 +148,27 @@ impl PrivateAllow {
         a
     }
 
+    /// Does an entry name `host` (a host entry, a `*.suffix` entry, or the address when `host` is
+    /// an IP literal that [`Self::permits`] accepts)? Used to ask whether an endpoint's own host
+    /// is opened without resolving it (D-262).
+    #[must_use]
+    pub fn covers_host(&self, host: &str) -> bool {
+        let h = host
+            .trim_start_matches('[')
+            .trim_end_matches(']')
+            .trim_end_matches('.')
+            .to_ascii_lowercase();
+        if let Ok(ip) = h.parse::<IpAddr>() {
+            return self.permits(ip, &h);
+        }
+        self.hosts.contains(&h)
+            || self.suffixes.iter().any(|s| {
+                h.len() > s.len()
+                    && h.ends_with(s.as_str())
+                    && h.as_bytes()[h.len() - s.len() - 1] == b'.'
+            })
+    }
+
     /// May a flow dial `ip` for the name `host`?
     #[must_use]
     pub fn permits(&self, ip: IpAddr, host: &str) -> bool {

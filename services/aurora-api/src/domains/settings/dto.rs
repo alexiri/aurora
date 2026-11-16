@@ -205,6 +205,9 @@ pub struct AffectedOrg {
 pub struct SettingWarning {
     pub code: String,
     pub key: Option<String>,
+    /// The keyed-list entry the warning is about (C-813 `endpoint_resolves_private`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub entry_id: Option<String>,
     pub message: String,
 }
 

@@ -173,7 +173,6 @@ async fn serve(
     let tunnels = aurora_gateway::byo::TunnelRegistry::new(resolver.clone(), &cfg.external_url);
     hub.register(tunnels.clone());
     let llm = Arc::new(aurora_llm::ProviderRegistry::from_config(&cfg.llm)?);
-    let llm_hosts = llm.endpoint_hosts();
     let keys = cfg
         .keyring
         .keys
@@ -347,16 +346,12 @@ async fn serve(
     if let Ok(addrs) = tokio::net::lookup_host((db.get_host(), db.get_port())).await {
         own.extend(addrs);
     }
-    // docs/08 §6 (LLM hosts): operator-configured endpoint hosts pass the destination guard even
-    // when they resolve to private addresses (an in-cluster or compose LiteLLM).
-    let mut allowed_private = cfg.gateway.allowed_private.clone();
-    for h in &llm_hosts {
-        let bare = h.rsplit_once(':').map_or(h.as_str(), |(b, _)| b).to_owned();
-        if !bare.is_empty() && !allowed_private.contains(&bare) {
-            allowed_private.push(bare);
-        }
-    }
-    let guard = Arc::new(Guard::new(&allowed_private, own)?);
+    // docs/08 §6 (LLM hosts, D-262): the Helm-defined endpoints' hosts pass the destination guard
+    // even when they resolve to private addresses (an in-cluster or compose LiteLLM), never a
+    // link-local one; dashboard endpoints are judged by `gateway.allowed_private` alone. The
+    // implicit allowance is installed with the settings (`apply_limits_on_change`), which also
+    // rebuilds it on every `llm` or `limits` reload.
+    let guard = Arc::new(Guard::new(&cfg.gateway.allowed_private, own)?);
     let extra_ca_pem = match &cfg.tls.extra_ca_bundle {
         Some(p) => Some(std::fs::read(p)?),
         None => None,

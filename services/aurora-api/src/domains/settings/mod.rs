@@ -6,6 +6,7 @@ pub mod dto;
 pub mod endpoint_test;
 pub mod handle;
 pub mod live;
+pub mod llm_dest;
 mod routes;
 pub mod rules;
 pub mod sections;

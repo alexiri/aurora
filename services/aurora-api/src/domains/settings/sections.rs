@@ -19,7 +19,11 @@ pub async fn extra(
         // (C-780) How many providers Helm defines and which one the caller signs in with.
         "sign_in" => Some(super::sign_in::extra(state, caller).await),
         // (C-779) The providers this release can enable: the page offers exactly these.
-        "llm" => Some(json!({ "providers": aurora_llm::supported_providers() })),
+        // (C-811) …and, per endpoint id, the enabled harnesses that speak its API.
+        "llm" => Some(json!({
+            "providers": aurora_llm::supported_providers(),
+            "endpoint_harnesses": endpoint_harnesses(state),
+        })),
         // (C-778) Where organizations stand against the instance ceiling.
         "governance" => Some(json!({ "orgs_url": "/v1/admin/settings/governance/orgs" })),
         // (C-782) The runners' sandbox sizes, `max_sandboxes` and harnesses, read-only (D-235(a)).
@@ -30,6 +34,29 @@ pub async fn extra(
         "scim" => Some(json!({ "available": state.ops().scim.available })),
         _ => None,
     })
+}
+
+/// `{ "<endpoint id>": ["claude_code", …] }` for the effective endpoints: the enabled harnesses
+/// whose dialects intersect the endpoint's (D-260(a), as `GET /v1/llm/providers` reports them).
+fn endpoint_harnesses(state: &AppState) -> Value {
+    let snap = state.settings.snapshot();
+    let Ok(registry) = aurora_llm::ProviderRegistry::from_config(&snap.effective.raw.llm) else {
+        return json!({});
+    };
+    let enabled = &state.ops().hosted.enabled_harnesses;
+    let mut out = serde_json::Map::new();
+    for ep in registry.endpoints() {
+        let Some(p) = registry.provider_for(ep) else {
+            continue;
+        };
+        let dialects = p.dialects(ep);
+        let list: Vec<&String> = enabled
+            .iter()
+            .filter(|h| crate::domains::hosted::model::first_shared(h, &dialects).is_some())
+            .collect();
+        out.insert(ep.id.clone(), json!(list));
+    }
+    Value::Object(out)
 }
 
 async fn runners(state: &AppState) -> Result<Vec<Value>, ApiError> {
@@ -114,6 +141,7 @@ fn limits_warnings(before: &Effective, after: &Effective) -> Vec<SettingWarning>
         return Vec::new();
     }
     vec![SettingWarning {
+        entry_id: None,
         code: "opens_private_destinations".into(),
         key: Some("gateway.allowed_private".into()),
         message: format!(
@@ -218,6 +246,7 @@ async fn affected_llm(
     let mut warnings = Vec::new();
     if total > 0 {
         warnings.push(SettingWarning {
+            entry_id: None,
             code: "secrets_become_non_permitted".into(),
             key: Some("llm.endpoints".into()),
             message: format!(
@@ -236,9 +265,35 @@ async fn affected_llm(
         .filter(|w| !known.contains(w))
     {
         warnings.push(SettingWarning {
+            entry_id: None,
             code: "no_default_model".into(),
             key: Some("llm.endpoints".into()),
             message: w,
+        });
+    }
+    // (C-813, D-262) A dashboard endpoint on a private name the guard will refuse: advice at
+    // save time (the guard decides at dial time).
+    let dashboard: Vec<(String, Value)> = after
+        .keys
+        .get("llm.endpoints")
+        .and_then(|k| k.entries.as_ref())
+        .into_iter()
+        .flatten()
+        .filter(|e| e.source == aurora_config::Source::Dashboard)
+        .map(|e| (e.id.clone(), e.value.clone()))
+        .collect();
+    for id in
+        super::llm_dest::needing_allowed_private(&dashboard, &after.raw.gateway.allowed_private)
+            .await
+    {
+        warnings.push(SettingWarning {
+            code: "endpoint_resolves_private".into(),
+            key: Some("llm.endpoints".into()),
+            message: format!(
+                "The host of endpoint `{id}` resolves to a private, loopback or link-local address. \
+                 The gateway refuses it until an operator adds it to the allowed private destinations (Limits)."
+            ),
+            entry_id: Some(id),
         });
     }
     Ok((orgs, total, warnings))
