@@ -13,7 +13,9 @@ import { PageHeader } from "@/components/ui/page-header";
 import { Section } from "@/components/ui/section";
 import { errorMessage } from "@/lib/api/errors";
 import { orgRoutes } from "@/lib/routes";
+import { WhoCan } from "@/components/ui/who-can";
 import { useGroups } from "@/lib/api/groups";
+import { useWhoCan } from "@/lib/api/who-can";
 import {
   describeTarget,
   draftFromGeneration,
@@ -104,6 +106,12 @@ export function PolicyView({ title, scope, canEdit, agents = [], users = [], cur
   const wsSecrets = useSecrets(scope.kind === "workspace" ? { kind: "workspace", id: scope.id } : { kind: "organization", id: orgId });
   const orgSecrets = useSecrets({ kind: "organization", id: orgId });
   const eff = useEffectiveGovernance(orgId);
+  // (C-916) Who adds a rule here, for a viewer who cannot.
+  const who = useWhoCan(
+    scope.kind === "workspace" ? { workspaceId: scope.id } : { orgId },
+    scope.kind === "workspace" ? "workspace_owner" : "org_admin",
+    "add_rule",
+  );
   // (P4-GRP-1) The org's groups for the identity picker; unknown when the caller may not list them.
   const groupsQ = useGroups(orgId);
   const byoEnabled = eff.data?.byo?.posture.value === "enabled";
@@ -198,7 +206,11 @@ export function PolicyView({ title, scope, canEdit, agents = [], users = [], cur
           </Button>
         }
       />
-      {!canEdit ? <Notice role="status">You can view this policy but not change it.</Notice> : null}
+      {!canEdit ? (
+        <Notice role="status">
+          <WhoCan value={{ ...who, action: "change_this" }} lead className="text-inherit" />
+        </Notice>
+      ) : null}
 
       {stale ? (
         <Notice tone="pending" role="alert">
@@ -240,7 +252,7 @@ export function PolicyView({ title, scope, canEdit, agents = [], users = [], cur
           <EmptyState
             title="No rules yet"
             when="Add one when a request keeps being blocked, or when you want a say before something risky. Until then requests follow the default rule."
-            ask={canEdit ? undefined : "Ask a workspace owner to add one."}
+            ask={{ whoCan: who, canAct: canEdit }}
           >
             A rule says what agents may do on the internet: allow it, block it or ask you first.
           </EmptyState>

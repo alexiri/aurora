@@ -24,15 +24,14 @@ enum Allow {
 
 #[derive(Debug)]
 pub struct Guard {
-    /// What is allowed now: the operator's `gateway.allowed_private` plus the derived hosts
-    /// (LLM endpoints). Replaced live (SET-5); every judgement loads it once.
+    /// What the operator's `gateway.allowed_private` allows now. Replaced live (SET-5); every
+    /// judgement loads it once.
     allow: arc_swap::ArcSwap<Vec<Allow>>,
-    /// The parts of `allow`, kept so either can be replaced alone.
-    operator: arc_swap::ArcSwap<Vec<String>>,
-    derived: arc_swap::ArcSwap<Vec<String>>,
-    /// Serialises the list updates: each reads the other half, computes and stores `allow`, so
-    /// two concurrent ones could lose an update. Judgements never take it (they load `allow`).
-    update: std::sync::Mutex<()>,
+    /// (D-262) The implicit allowance of LLM endpoints the deployment (Helm) defines: their hosts
+    /// pass by name or literal address, but never a link-local or metadata address, whatever the
+    /// name resolves to. Replaced live and independently of `allow` (a dashboard endpoint is
+    /// judged by `allow` alone).
+    derived: arc_swap::ArcSwap<Vec<Allow>>,
     /// Gateway listeners and database (address, port); an unspecified address
     /// means every loopback, unspecified and local interface address.
     own: Vec<(IpAddr, u16)>,
@@ -121,6 +120,29 @@ fn canon(ip: IpAddr) -> IpAddr {
     }
 }
 
+fn name_in(list: &[Allow], host: &str) -> bool {
+    list.iter().any(|a| match a {
+        Allow::Host(h) => h == host,
+        Allow::Suffix(s) => {
+            host.len() > s.len()
+                && host.ends_with(s.as_str())
+                && host.as_bytes()[host.len() - s.len() - 1] == b'.'
+        }
+        _ => false,
+    })
+}
+
+/// Link-local: `169.254.0.0/16` and `fe80::/10`, also as the IPv4 an IPv6 form embeds.
+fn is_link_local(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => v4.is_link_local(),
+        IpAddr::V6(v6) => {
+            (v6.segments()[0] & 0xffc0) == 0xfe80
+                || aurora_core::ranges::embedded_ipv4(v6).is_some_and(|v4| v4.is_link_local())
+        }
+    }
+}
+
 fn cidr_contains(net: IpAddr, bits: u8, ip: IpAddr) -> bool {
     match (net, ip) {
         (IpAddr::V4(n), IpAddr::V4(i)) => {
@@ -166,9 +188,7 @@ impl Guard {
         let local = local.into_iter().map(canon).collect();
         Ok(Self {
             allow: arc_swap::ArcSwap::from_pointee(allow),
-            operator: arc_swap::ArcSwap::from_pointee(allowed.to_vec()),
             derived: arc_swap::ArcSwap::from_pointee(Vec::new()),
-            update: std::sync::Mutex::new(()),
             own,
             local,
         })
@@ -177,33 +197,14 @@ impl Guard {
     /// Replace the operator's list (`gateway.allowed_private`, SET-5): applies to the next
     /// judgement. A list that does not parse changes nothing.
     pub fn set_allowed_private(&self, entries: &[String]) -> Result<(), String> {
-        // A poisoned lock guards nothing that can be half-written (the guard holds no data).
-        let _serial = self.update.lock().unwrap_or_else(|e| e.into_inner());
-        let all: Vec<String> = entries
-            .iter()
-            .chain(self.derived.load().iter())
-            .cloned()
-            .collect();
-        let allow = parse_allow(&all)?;
-        self.operator.store(Arc::new(entries.to_vec()));
-        self.allow.store(Arc::new(allow));
+        self.allow.store(Arc::new(parse_allow(entries)?));
         Ok(())
     }
 
-    /// Replace the hosts derived from configuration beyond the operator's list (the LLM
-    /// endpoints' hosts); the operator's list stays.
+    /// (D-262) Replace the hosts of the Helm-defined LLM endpoints; the operator's list stays.
+    /// A host list that does not parse changes nothing.
     pub fn set_derived_hosts(&self, hosts: &[String]) -> Result<(), String> {
-        let _serial = self.update.lock().unwrap_or_else(|e| e.into_inner());
-        let all: Vec<String> = self
-            .operator
-            .load()
-            .iter()
-            .chain(hosts.iter())
-            .cloned()
-            .collect();
-        let allow = parse_allow(&all)?;
-        self.derived.store(Arc::new(hosts.to_vec()));
-        self.allow.store(Arc::new(allow));
+        self.derived.store(Arc::new(parse_allow(hosts)?));
         Ok(())
     }
 
@@ -217,15 +218,19 @@ impl Guard {
     }
 
     fn name_allowed(&self, host: &str) -> bool {
-        self.allow.load().iter().any(|a| match a {
-            Allow::Host(h) => h == host,
-            Allow::Suffix(s) => {
-                host.len() > s.len()
-                    && host.ends_with(s.as_str())
-                    && host.as_bytes()[host.len() - s.len() - 1] == b'.'
-            }
-            _ => false,
-        })
+        name_in(&self.allow.load(), host)
+    }
+
+    /// (D-262) The implicit allowance of Helm LLM endpoints: the endpoint's host name or literal
+    /// address, never a link-local address (the metadata address is refused earlier).
+    fn derived_allows(&self, ip: IpAddr, host: &str) -> bool {
+        !is_link_local(ip)
+            && (name_in(&self.derived.load(), host)
+                || self
+                    .derived
+                    .load()
+                    .iter()
+                    .any(|a| matches!(a, Allow::Ip(x) if *x == ip)))
     }
 
     /// Judges one resolved address. `host` is the name the client asked for.
@@ -251,6 +256,7 @@ impl Guard {
             return Ok(());
         }
         let ok = self.name_allowed(&normalize_host(host))
+            || self.derived_allows(ip, &normalize_host(host))
             || self.allow.load().iter().any(|a| match a {
                 Allow::Ip(x) => *x == ip,
                 Allow::Cidr(n, b) => cidr_contains(*n, *b, ip),
@@ -374,6 +380,36 @@ mod tests {
                 "round {round}: the removed derived host is still allowed"
             );
         }
+    }
+
+    /// (D-262) The implicit allowance of a Helm LLM endpoint opens its name (or literal address)
+    /// for private addresses, never a link-local or metadata one, and never any other host.
+    #[test]
+    fn derived_hosts_never_open_link_local_or_metadata() {
+        let g = g(&[]);
+        g.set_derived_hosts(&["llm.internal".to_owned(), "10.0.0.7".to_owned()])
+            .unwrap();
+        assert!(g.check_ip(ip("10.1.2.3"), "llm.internal", 80).is_ok());
+        assert!(g.check_ip(ip("10.0.0.7"), "10.0.0.7", 80).is_ok());
+        assert!(g.check_ip(ip("10.1.2.3"), "other.internal", 80).is_err());
+        for bad in [
+            "169.254.169.254",
+            "169.254.1.1",
+            "fe80::1",
+            "::ffff:169.254.1.1",
+            "fd00:ec2::254",
+        ] {
+            assert!(
+                g.check_ip(ip(bad), "llm.internal", 80).is_err(),
+                "{bad} by name"
+            );
+        }
+        // A derived literal link-local address does not open itself either.
+        g.set_derived_hosts(&["169.254.1.1".to_owned()]).unwrap();
+        assert!(g.check_ip(ip("169.254.1.1"), "169.254.1.1", 80).is_err());
+        // Clearing the derived list revokes the pass.
+        g.set_derived_hosts(&[]).unwrap();
+        assert!(g.check_ip(ip("10.1.2.3"), "llm.internal", 80).is_err());
     }
 
     #[test]

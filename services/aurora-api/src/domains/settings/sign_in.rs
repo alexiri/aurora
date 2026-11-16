@@ -369,6 +369,7 @@ pub async fn warnings(
         let added: Vec<&String> = ga.admin.difference(&gb.admin).collect();
         if !added.is_empty() {
             out.push(SettingWarning {
+                entry_id: None,
                 code: "grants_instance_admin".into(),
                 key: Some(PROVIDERS_KEY.into()),
                 message: format!(
@@ -412,6 +413,7 @@ pub async fn warnings(
             .map_err(ApiError::from)?;
         for (id, n) in counts {
             out.push(SettingWarning {
+                entry_id: None,
                 code: "identities_orphaned".into(),
                 key: Some(PROVIDERS_KEY.into()),
                 message: format!(
@@ -425,6 +427,7 @@ pub async fn warnings(
         let own = caller_providers(state, user).await;
         if strands(&own, before, after) {
             out.push(SettingWarning {
+                entry_id: None,
                 code: "removes_own_provider".into(),
                 key: Some(PROVIDERS_KEY.into()),
                 message: "This removes or re-points the provider you sign in with. You would not be able to sign in again through it; the save is refused unless another provider of yours stays.".into(),

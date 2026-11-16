@@ -165,7 +165,11 @@ export function Tabs({
     variant === "segmented"
       ? "inline-flex max-w-full gap-0.5 rounded-control bg-subtle p-0.5"
       : cn("flex w-full min-w-0 max-w-full gap-1", !useMenu && "border-b border-line"),
-    useMenu ? "overflow-hidden" : variant === "segmented" ? "overflow-x-auto" : "overflow-x-auto overscroll-x-contain",
+    useMenu
+      ? "overflow-hidden"
+      : // (P5-UX-1) The strip still scrolls sideways when it must, but never draws a scrollbar widget: the underline
+        // tab overlaps the strip's border by 1px (`-mb-px`), which also made the strip scroll vertically.
+        cn("overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden", variant === "underline" && "overscroll-x-contain"),
   );
 
   const tablist = (

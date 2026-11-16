@@ -90,8 +90,10 @@ describe("SchedulesTab", () => {
           : json(201, sched);
       },
     });
-    wrap(<SchedulesTab agentId="a1" defaultTimezone="Europe/Zurich" />);
-    fireEvent.click(await screen.findByRole("button", { name: "New schedule" }));
+    // Only a workspace owner creates a schedule (C-961): the button is theirs, a member sees who can instead.
+    wrap(<SchedulesTab agentId="a1" defaultTimezone="Europe/Zurich" canOwn />);
+    // The header's button and the empty list's: either opens the form.
+    fireEvent.click((await screen.findAllByRole("button", { name: "New schedule" }))[0]!);
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Fast" } });
     fireEvent.change(screen.getByLabelText("Prompt"), { target: { value: "go" } });
     fireEvent.change(screen.getByLabelText(/^Cron/), { target: { value: "* * * *" } });

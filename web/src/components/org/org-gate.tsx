@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 
 import { ErrorState, Loading } from "@/components/states";
 import { useOrg, useResolve, type Org } from "@/lib/api/queries";
+import { forbiddenError, orgRoleFor, whoCanFromContacts } from "@/lib/who-can";
 
 /** Resolves the org slug, loads the org and renders children for allowed roles. */
 export function OrgGate({
@@ -21,6 +22,10 @@ export function OrgGate({
   if (resolved.isError) return <ErrorState error={resolved.error} onRetry={() => resolved.refetch()} />;
   if (org.isError) return <ErrorState error={org.error} onRetry={() => org.refetch()} />;
   if (!org.data) return null;
-  if (!allow.includes(org.data.my_role)) return <ErrorState error={{ code: "forbidden" }} />;
+  // (C-915) A refusal names who can open the page, from the organization's contacts; never a bare `{ code }`.
+  if (!allow.includes(org.data.my_role)) {
+    const role = orgRoleFor(allow);
+    return <ErrorState error={forbiddenError(whoCanFromContacts(role, org.data.contacts, "view_this"))} />;
+  }
   return <>{children(org.data)}</>;
 }

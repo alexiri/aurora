@@ -71,7 +71,15 @@ pub async fn run(
         enabled_providers: vec![entry.provider.clone()],
         provider_preference: Vec::new(),
         endpoints: vec![entry],
-        ..LlmSection::default()
+        // (C-812) Tests and development: a provider's fixed origin may be replaced by a loopback mock.
+        dev_upstream_overrides: state
+            .settings
+            .snapshot()
+            .effective
+            .raw
+            .llm
+            .dev_upstream_overrides
+            .clone(),
     };
     let registry = aurora_llm::ProviderRegistry::from_config(&section)
         .map_err(|e| refuse("/endpoint", "invalid_value", &e.to_string()))?;
@@ -79,8 +87,8 @@ pub async fn run(
         .endpoints()
         .first()
         .ok_or_else(|| refuse("/endpoint", "invalid_value", "not an endpoint entry"))?;
-    let path = ep.models_path.as_deref().unwrap_or("/v1/models");
-    let url = reqwest::Url::parse(&format!("{}{path}", ep.base_url.trim_end_matches('/')))
+    let (base, path) = probe_target(&registry, ep);
+    let url = reqwest::Url::parse(&format!("{}{path}", base.trim_end_matches('/')))
         .map_err(|_| refuse("/endpoint/base_url", "base_url_invalid", "not a URL"))?;
     if !matches!(url.scheme(), "http" | "https")
         || !url.username().is_empty()
@@ -133,6 +141,30 @@ pub async fn run(
         error_code: None,
         models: models_of(&body),
     })
+}
+
+/// (C-803) What the probe is a `GET` of, per provider: the provider's own base (its fixed or
+/// regional host, an Azure resource, a Bedrock VPC endpoint, the entry's `base_url`) and a path
+/// that answers without a credential (401 and 403 count as reachable).
+fn probe_target(
+    registry: &aurora_llm::ProviderRegistry,
+    ep: &aurora_llm::Endpoint,
+) -> (String, String) {
+    let base = registry
+        .provider_for(ep)
+        .map_or_else(|| ep.base_url.clone(), |p| p.base_url(ep));
+    let path = match ep.provider.as_str() {
+        "azure_openai" => "/openai/v1/models".to_owned(),
+        "bedrock" => "/".to_owned(),
+        "vertex" => format!(
+            "/v1/projects/{}/locations/{}",
+            ep.project_id.as_deref().unwrap_or_default(),
+            ep.location.as_deref().unwrap_or_default()
+        ),
+        // openai, anthropic: `/v1/models`; litellm and openai_compatible: the entry's models path.
+        _ => ep.models_path.as_deref().unwrap_or("/v1/models").to_owned(),
+    };
+    (base, path)
 }
 
 fn failed(code: &str, status: Option<u16>) -> EndpointTestResult {

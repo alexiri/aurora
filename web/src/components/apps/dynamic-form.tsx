@@ -2,7 +2,7 @@
 
 import type { ReactNode } from "react";
 
-import { Field, inputClass } from "@/components/ui/field";
+import { Field, fieldLabel, inputClass } from "@/components/ui/field";
 import { visibleFields, type FieldValues, type FormField } from "@/lib/api/apps";
 import { safeHref } from "@/components/ui/markdown";
 
@@ -67,11 +67,11 @@ export function FieldControl({ f, value, error, onChange }: { f: FormField; valu
     );
   }
   return (
-    <Field id={id} label={f.label + (f.required || f.type === "generated_secret" ? "" : " (optional)")} error={error} hint={f.type === "select" || f.type === "generated_secret" ? undefined : hint}>
+    <Field id={id} label={fieldLabel(f.label, !(f.required || f.type === "generated_secret"))} error={error} hint={f.type === "select" || f.type === "generated_secret" ? undefined : hint}>
       {control}
       {help ? (
         <a href={help} target="_blank" rel="noopener noreferrer" className="text-xs text-link underline">
-          Where do I find this? ({help})
+          Where do I find this?
         </a>
       ) : null}
     </Field>

@@ -92,7 +92,7 @@ export function WelcomeView() {
 
       <GettingStarted org={org} ws={ws} wsId={workspace.id} orgId={workspace.org_id} isOwner={isOwner} variant="welcome" focus={focus} />
 
-      <OptionalNext org={org} ws={ws} handle={agent?.handle} isOwner={isOwner} />
+      <OptionalNext org={org} ws={ws} handle={agent?.handle} agentName={agent?.name} isOwner={isOwner} />
 
       <div className="flex flex-wrap items-center gap-3 border-t border-line pt-4">
         <Button

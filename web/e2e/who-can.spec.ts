@@ -1,0 +1,75 @@
+import AxeBuilder from "@axe-core/playwright";
+import { expect, test, type Page } from "@playwright/test";
+
+import { id, mockApi, org, ws } from "./support/mock-api";
+import { overflow } from "./support/open";
+
+// P5-UX-1 (C-915, C-916, C-981; docs/14 §Who can fix this): a refused page names who can open it, an empty Accounts
+// list asks someone else only when the viewer cannot act. Both themes at 1280 px and 390 px, no horizontal scroll,
+// axe with nothing disabled.
+
+async function serious(page: Page) {
+  const { violations } = await new AxeBuilder({ page }).analyze();
+  return violations
+    .filter((v) => v.impact === "serious" || v.impact === "critical")
+    .map((v) => `${v.id} (${v.impact}): ${v.nodes.map((n) => n.target.join(" ")).slice(0, 5).join(" | ")}`);
+}
+
+const admins = [{ name: "Ada Lovelace" }, { name: "Alan Turing" }];
+const owners = [{ name: "Bob Builder" }, { name: "Ada Diaz" }];
+
+async function open(page: Page, path: string, scheme: "light" | "dark", role: "owner" | "member") {
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  await mockApi(page);
+  await page.emulateMedia({ colorScheme: scheme });
+  await page.route("**/v1/**", async (route) => {
+    const p = new URL(route.request().url()).pathname;
+    const json = (b: unknown) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(b) });
+    if (p === `/v1/orgs/${id(1)}`) return json({ ...org, my_role: role === "owner" ? "owner" : "member", contacts: { owners: [{ name: "Grace Hopper" }], admins } });
+    if (p === `/v1/workspaces/${id(2)}`) return json({ ...ws, my_role: role, contacts: { owners } });
+    if (p === `/v1/workspaces/${id(2)}/secrets`) return json({ items: [], next_cursor: null });
+    return route.fallback();
+  });
+  await page.goto(path);
+  await page.locator("h1, h2, [role='alert']").first().waitFor();
+  await page.waitForLoadState("networkidle");
+  await expect.poll(() => page.locator("html").getAttribute("data-theme"), { timeout: 20_000 }).toBe(scheme);
+  expect(errors, `${path} threw`).toEqual([]);
+}
+
+for (const scheme of ["light", "dark"] as const) {
+  for (const width of [1280, 390]) {
+    test.describe(`${scheme} theme, ${width} px`, () => {
+      test.use({ viewport: { width, height: width === 1280 ? 900 : 844 } });
+
+      test("a member who opens People by its address reads who can open it, not that the network is down", async ({ page }) => {
+        await open(page, "/o/acme/people", scheme, "member");
+        const alert = page.getByRole("alert").filter({ hasText: "Only organization owners and admins can open this page." });
+        await expect(alert).toBeVisible();
+        await expect(alert.getByText("Ask Ada Lovelace or Alan Turing (organization owners and admins).")).toBeVisible();
+        await expect(page.getByText("Could not reach the server")).toHaveCount(0);
+        expect(await overflow(page)).toBeLessThanOrEqual(0);
+        expect(await serious(page)).toEqual([]);
+      });
+
+      test("a workspace owner's empty Accounts list shows its Add action and no Ask line", async ({ page }) => {
+        await open(page, "/o/acme/w/main/apps?tab=accounts&kind=website", scheme, "owner");
+        await expect(page.getByRole("button", { name: "Add a website" })).toBeVisible();
+        await expect(page.getByText("No websites yet")).toBeVisible();
+        await expect(page.getByText(/Ask /)).toHaveCount(0);
+        await expect(page.getByText(/Only workspace owners/)).toHaveCount(0);
+        expect(await overflow(page)).toBeLessThanOrEqual(0);
+        expect(await serious(page)).toEqual([]);
+      });
+
+      test("a workspace member's Accounts says who can add one, and has no button", async ({ page }) => {
+        await open(page, "/o/acme/w/main/apps?tab=accounts", scheme, "member");
+        await expect(page.getByText("Only workspace owners can add an account. Ask Bob Builder or Ada Diaz.")).toBeVisible();
+        await expect(page.getByRole("button", { name: /Add a website|Add an account/ })).toHaveCount(0);
+        expect(await overflow(page)).toBeLessThanOrEqual(0);
+        expect(await serious(page)).toEqual([]);
+      });
+    });
+  }
+}

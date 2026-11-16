@@ -70,7 +70,7 @@ const states: { name: string; fx: Fixture; query: (narrow: boolean) => string; p
       await expect(page.getByRole("menuitem", { name: "Unarchive" })).toBeVisible();
     },
   },
-  { name: "empty-conversation", fx: fixtures.empty, query: () => `?c=${MINE.id}`, prepare: async (page) => { await expect(page.getByText("Start a conversation with Daneel")).toBeVisible(); } },
+  { name: "empty-conversation", fx: fixtures.empty, query: () => `?c=${MINE.id}`, prepare: async (page) => { await expect(page.getByText("Say hello to Daneel")).toBeVisible(); } },
   { name: "owner-read-only", fx: fixtures.owner, query: () => `?c=${ANN_DIRECT.id}`, prepare: async (page) => { await expect(page.getByText(/Read-only view/)).toBeVisible(); } },
   {
     name: "error-block",
@@ -375,3 +375,29 @@ test.describe("layout, 390 px", () => {
     void TEAM;
   });
 });
+
+// P5-UX-1 (docs/14 §Agents, accounts and access §9): the formatting row wraps at any width. At about 1250 px (a window that
+// is wide but not very) and at 390 px every formatting button sits inside the viewport and the page does not scroll sideways.
+for (const width of [1250, 390]) {
+  test.describe(`formatting toolbar, ${width} px`, () => {
+    test.use({ viewport: { width, height: 900 } });
+
+    test("wraps instead of clipping or scrolling", async ({ page }) => {
+      await openChat(page, "light", DEFAULT, `?c=${MINE.id}`);
+      if (width < 768) await page.getByRole("button", { name: "Formatting" }).click();
+      const row = page.getByTestId("formatting-row");
+      await expect(row).toBeVisible();
+      const buttons = row.getByRole("toolbar", { name: "Formatting" }).getByRole("button");
+      expect(await buttons.count()).toBeGreaterThan(6);
+      for (let i = 0; i < (await buttons.count()); i++) {
+        const b = await buttons.nth(i).boundingBox();
+        expect(b, `button ${i}`).not.toBeNull();
+        expect(b!.x, `button ${i} starts inside the viewport`).toBeGreaterThanOrEqual(0);
+        expect(b!.x + b!.width, `button ${i} ends inside the viewport`).toBeLessThanOrEqual(width + 0.5);
+      }
+      const inner = await row.evaluate((el) => ({ scroll: el.scrollWidth, client: el.clientWidth }));
+      expect(inner.scroll, "the row does not scroll sideways").toBeLessThanOrEqual(inner.client + 1);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(0);
+    });
+  });
+}

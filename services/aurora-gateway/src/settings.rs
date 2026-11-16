@@ -78,6 +78,29 @@ pub fn section_changed(old: &Effective, new: &Effective, prefixes: &[&str]) -> b
     keys().any(|k| old.keys.get(k).map(|e| &e.value) != new.keys.get(k).map(|e| &e.value))
 }
 
+/// (D-262) The host names (without port) of the LLM endpoints the deployment (Helm) defines: the
+/// implicit allowance of the destination guard. A dashboard endpoint, however private its name,
+/// is never in it: it is judged by `gateway.allowed_private` alone.
+pub fn helm_endpoint_hosts(e: &Effective) -> Result<Vec<String>, String> {
+    let helm: std::collections::BTreeSet<&str> = e
+        .keys
+        .get("llm.endpoints")
+        .and_then(|k| k.entries.as_ref())
+        .into_iter()
+        .flatten()
+        .filter(|x| x.source == aurora_config::Source::Helm)
+        .map(|x| x.id.as_str())
+        .collect();
+    let registry =
+        aurora_llm::ProviderRegistry::from_config(&e.raw.llm).map_err(|e| e.to_string())?;
+    Ok(registry
+        .endpoint_hosts_where(|id| helm.contains(id))
+        .iter()
+        .map(|h| h.rsplit_once(':').map_or(h.as_str(), |(b, _)| b).to_owned())
+        .filter(|b| !b.is_empty())
+        .collect())
+}
+
 const KEYS_OF_SECRETS: [&str; 2] = ["secrets.stores", "secrets.default_store"];
 
 struct SecretsTarget {
@@ -169,38 +192,45 @@ impl Settings {
         handler: Arc<crate::decide::PolicyHandler>,
         proxy: Arc<crate::proxy::Proxy>,
     ) {
-        let apply = move |e: &Effective, guard_changed: bool| {
-            if guard_changed {
-                if let Err(err) = guard.set_allowed_private(&e.raw.gateway.allowed_private) {
-                    tracing::error!(error = %err, "gateway.allowed_private did not resolve; keeping the previous list");
-                }
-                match aurora_llm::ProviderRegistry::from_config(&e.raw.llm) {
-                    Ok(r) => {
-                        let hosts: Vec<String> = r
-                            .endpoint_hosts()
-                            .iter()
-                            .map(|h| h.rsplit_once(':').map_or(h.as_str(), |(b, _)| b).to_owned())
-                            .filter(|b| !b.is_empty())
-                            .collect();
-                        if let Err(err) = guard.set_derived_hosts(&hosts) {
-                            tracing::error!(error = %err, "LLM endpoint hosts did not resolve for the destination guard");
-                        }
-                    }
-                    Err(err) => {
-                        tracing::error!(error = %err, "llm settings did not resolve; keeping the previous endpoint allowance")
-                    }
-                }
-            }
+        self.apply_guard_on_change(guard);
+        let apply = move |e: &Effective| {
             handler.set_condition_body_limit(e.raw.gateway.condition_body_bytes as usize);
             proxy.set_header_timeout(std::time::Duration::from_secs(
                 e.raw.gateway.upstream_header_timeout_secs,
             ));
         };
-        apply(&self.snapshot().effective, true);
+        apply(&self.snapshot().effective);
         self.on_swap(Arc::new(move |old, new| {
-            let guard_changed = section_changed(old, new, &["gateway.allowed_private", "llm."]);
-            if guard_changed || section_changed(old, new, &["gateway."]) {
-                apply(new, guard_changed);
+            if section_changed(old, new, &["gateway."]) {
+                apply(new);
+            }
+        }));
+    }
+
+    /// (SET-5, D-262) The destination guard follows `gateway.allowed_private` and the endpoint
+    /// table live: the operator's list, and the implicit allowance of the Helm-defined LLM
+    /// endpoints ([`helm_endpoint_hosts`]), rebuilt with the endpoint table on every `llm` or
+    /// `limits` reload. Applied once now and after each swap that changes either.
+    pub fn apply_guard_on_change(&self, guard: Arc<crate::guard::Guard>) {
+        let apply = move |e: &Effective| {
+            if let Err(err) = guard.set_allowed_private(&e.raw.gateway.allowed_private) {
+                tracing::error!(error = %err, "gateway.allowed_private did not resolve; keeping the previous list");
+            }
+            match helm_endpoint_hosts(e) {
+                Ok(hosts) => {
+                    if let Err(err) = guard.set_derived_hosts(&hosts) {
+                        tracing::error!(error = %err, "LLM endpoint hosts did not resolve for the destination guard");
+                    }
+                }
+                Err(err) => {
+                    tracing::error!(error = %err, "llm settings did not resolve; keeping the previous endpoint allowance");
+                }
+            }
+        };
+        apply(&self.snapshot().effective);
+        self.on_swap(Arc::new(move |old, new| {
+            if section_changed(old, new, &["gateway.allowed_private", "llm."]) {
+                apply(new);
             }
         }));
     }

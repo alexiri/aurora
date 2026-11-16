@@ -6,6 +6,7 @@ import { ErrorState, Loading } from "@/components/states";
 import { useAccess } from "@/lib/api/account";
 import { useAgents, useResolve, useSession, useWorkspace } from "@/lib/api/queries";
 import type { Agent } from "@/lib/api/queries";
+import { forbiddenError, whoCanFromContacts } from "@/lib/who-can";
 
 import { PolicyView } from "./policy-view";
 
@@ -39,6 +40,8 @@ export function WorkspacePolicy() {
   if (workspace.isError) return <ErrorState error={workspace.error} onRetry={() => workspace.refetch()} />;
   if (!wsId || !workspace.data) return <ErrorState error={{ code: "not_found" }} />;
   // Workspace policy is `can_own` (I-27); members get the standard forbidden state.
-  if (workspace.data.my_role !== "owner") return <ErrorState error={{ code: "forbidden" }} />;
+  if (workspace.data.my_role !== "owner") {
+    return <ErrorState error={forbiddenError(whoCanFromContacts("workspace_owner", workspace.data.contacts, "view_this"))} />;
+  }
   return <WorkspacePolicyBody wsId={wsId} orgId={workspace.data.org_id} orgSlug={org} agents={agents.data?.items ?? []} />;
 }

@@ -484,6 +484,7 @@ fn normalize(
             if h.source.sets(key) || h.source.secret_env(key).is_some() {
                 if import && matches!(val["$secret"].as_str(), Some("set" | "keep")) {
                     warnings.push(SettingWarning {
+                        entry_id: None,
                         code: "locked_ignored".into(),
                         key: Some(key.clone()),
                         message: format!("`{key}` is configured in Helm and is ignored."),
@@ -554,6 +555,7 @@ fn normalize(
                     }
                     if import {
                         warnings.push(SettingWarning {
+                            entry_id: None,
                             code: "locked_ignored".into(),
                             key: Some(key.clone()),
                             message: format!("`{key}` is configured in Helm; the imported value equals it and is ignored."),
@@ -1108,6 +1110,7 @@ pub async fn apply(
     // once: nothing references them.
     require_session(via)?;
     guard_dashboard_addresses(state, &reqs).await?;
+    super::llm_dest::check_submitted(state, &reqs).await?;
     check_harnesses(state, &reqs).await?;
     check_deployment(state, &reqs)?;
     for r in reqs.iter().filter(|r| r.section == "sign_in") {
@@ -1608,6 +1611,29 @@ fn build_view_as(
     })
 }
 
+/// (C-813, D-262) A dashboard endpoint whose host resolves into a refused range that
+/// `gateway.allowed_private` does not cover is marked `needs_allowed_private`: the gateway will
+/// refuse it. Helm endpoints are never marked (they pass the guard by themselves).
+async fn mark_private_endpoints(view: &mut SettingsSection, allowed_private: &[String]) {
+    let Some(entries) = view
+        .settings
+        .iter_mut()
+        .find(|s| s.key == "llm.endpoints")
+        .and_then(|s| s.entries.as_mut())
+    else {
+        return;
+    };
+    let dashboard: Vec<(String, Value)> = entries
+        .iter()
+        .filter(|e| e.source == "dashboard")
+        .map(|e| (e.id.clone(), e.value.clone()))
+        .collect();
+    let needing = super::llm_dest::needing_allowed_private(&dashboard, allowed_private).await;
+    for e in entries.iter_mut().filter(|e| needing.contains(&e.id)) {
+        e.warnings = Some(vec!["needs_allowed_private".into()]);
+    }
+}
+
 pub async fn section_view(
     state: &AppState,
     section: &str,
@@ -1617,6 +1643,9 @@ pub async fn section_view(
     let snap = state.settings.snapshot();
     let extra = super::sections::extra(state, section, caller).await?;
     let mut view = build_view(&snap.effective, &snap.stored, &snap.meta, section, extra)?;
+    if section == "llm" {
+        mark_private_endpoints(&mut view, &snap.effective.raw.gateway.allowed_private).await;
+    }
     // A secret the environment supplies (`AURORA_SMTP_PASSWORD`) is locked and says so (C-772).
     for s in &mut view.settings {
         if let (Some(secret), Some(var)) =

@@ -183,8 +183,14 @@ impl ProviderRegistry {
 
     /// Every host pattern of every endpoint (deduplicated, in endpoint order).
     pub fn endpoint_hosts(&self) -> Vec<String> {
+        self.endpoint_hosts_where(|_| true)
+    }
+
+    /// [`Self::endpoint_hosts`] of the endpoints whose id `keep` accepts (D-262: the hosts of the
+    /// deployment-defined endpoints only).
+    pub fn endpoint_hosts_where(&self, keep: impl Fn(&str) -> bool) -> Vec<String> {
         let mut out: Vec<String> = Vec::new();
-        for ep in &self.endpoints {
+        for ep in self.endpoints.iter().filter(|e| keep(&e.id)) {
             if let Some(p) = self.provider_for(ep) {
                 for h in p.hosts(ep) {
                     if !out.contains(&h) {

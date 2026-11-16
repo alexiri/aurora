@@ -3,6 +3,15 @@ import { Children, cloneElement, isValidElement, type ReactElement, type ReactNo
 export const inputClass =
   "block w-full min-h-10 rounded-control border border-line-strong bg-surface px-3 py-2 text-sm text-ink placeholder:text-muted aria-[invalid=true]:border-danger-ink disabled:opacity-60 dark:bg-canvas";
 
+/**
+ * (P5-UX-1) The label of a field that may be left empty: "(optional)" exactly once, however the label arrived (a
+ * manifest's own label may already end in it).
+ */
+export function fieldLabel(label: string, optional: boolean): string {
+  const bare = label.replace(/\s*\(optional\)\s*$/i, "").trim();
+  return optional ? `${bare} (optional)` : bare;
+}
+
 /** Label, hint and error text linked to the control with `aria-describedby`; `aria-invalid` marks the error state. */
 export function Field({
   id,

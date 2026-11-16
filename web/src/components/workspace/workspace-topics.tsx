@@ -16,10 +16,12 @@ import { KeysTab } from "@/components/settings/keys-tab";
 import { ErrorState, Loading } from "@/components/states";
 import { TopicPage, type TopicTab } from "@/components/topic-page";
 import { Notice } from "@/components/ui/notice";
+import { WhoCan } from "@/components/ui/who-can";
 import { PageHeader } from "@/components/ui/page-header";
 import { Section } from "@/components/ui/section";
 import { useResolve, useWorkspace, type Workspace } from "@/lib/api/queries";
 import { orgRoutes, type TABS } from "@/lib/routes";
+import { forbiddenError, whoCanFromContacts } from "@/lib/who-can";
 
 type Tabs<K extends keyof typeof TABS> = (typeof TABS)[K][number];
 
@@ -49,7 +51,9 @@ export function WorkspaceAppsPage() {
             content: canOwn ? (
               <AccountsPanel scope={{ kind: "workspace", id: w.id }} orgId={w.org_id} canOwn />
             ) : (
-              <Notice role="status">Workspace owners manage the accounts agents can use here.</Notice>
+              <Notice role="status">
+                <WhoCan lead value={whoCanFromContacts("workspace_owner", w.contacts, "add_account")} className="text-inherit" />
+              </Notice>
             ),
           },
           {
@@ -110,7 +114,7 @@ export function WorkspacePeoplePage() {
             <AccessTab wsId={w.id} orgId={w.org_id} canOwn />
           </div>
         ) : (
-          <ErrorState error={{ code: "forbidden" }} />
+          <ErrorState error={forbiddenError(whoCanFromContacts("workspace_owner", w.contacts, "view_this"))} />
         )
       }
     </WorkspaceGate>
@@ -124,7 +128,7 @@ export function WorkspaceSettingsPage() {
     <WorkspaceGate>
       {(w, org) => {
         const canOwn = w.my_role === "owner";
-        if (!canOwn) return <ErrorState error={{ code: "forbidden" }} />;
+        if (!canOwn) return <ErrorState error={forbiddenError(whoCanFromContacts("workspace_owner", w.contacts, "view_this"))} />;
         return (
           <TopicPage<Tabs<"wsSettings">>
             idBase="ws-settings"

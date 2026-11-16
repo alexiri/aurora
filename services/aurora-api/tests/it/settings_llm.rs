@@ -679,3 +679,267 @@ async fn the_preview_warns_about_a_litellm_endpoint_without_a_default_model() {
     );
     let _ = KeyOrigin::default();
 }
+
+const COMPAT: &str = "openai_compatible";
+
+fn enabled() -> Value {
+    json!(["litellm", "anthropic", COMPAT])
+}
+
+fn compat(id: &str, base_url: &str) -> Value {
+    json!({"id": id, "provider": COMPAT, "base_url": base_url})
+}
+
+impl W {
+    /// Replace `gateway.allowed_private` (the `limits` section) and wait until the API serves it.
+    async fn open_private(&self, entries: &[&str]) {
+        let g = self
+            .call(Method::GET, "/v1/admin/settings/limits", &self.admin, None)
+            .await
+            .1["generation"]
+            .as_i64()
+            .unwrap();
+        let (s, v) = self
+            .call(
+                Method::PUT,
+                "/v1/admin/settings/limits",
+                &self.admin,
+                Some(json!({"generation": g, "values": {"gateway.allowed_private": entries}})),
+            )
+            .await;
+        assert_eq!(s, 200, "{v}");
+        let want: Vec<String> = entries.iter().map(|e| (*e).to_owned()).collect();
+        let deadline = std::time::Instant::now() + Duration::from_secs(20);
+        while self.h.state.ops().gateway_allowed_private != want {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the API never served the new allowed_private"
+            );
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    }
+}
+
+/// (P4-LLM-6, D-262, C-800) Dashboard endpoints only: plain http needs a loopback host or one
+/// `gateway.allowed_private` covers (`http_needs_private_host` on the base URL), a host an
+/// app-instance registration holds is refused (`endpoint_host_claimed` with `app_id`), and a Helm
+/// entry is never judged by these rules — a Helm endpoint on plain http to a public address does
+/// not block an unrelated dashboard save.
+#[tokio::test]
+async fn dashboard_endpoints_need_a_private_host_for_http_and_a_host_nobody_claims() {
+    let legacy = "\n[[llm.endpoints]]\nid = \"legacy\"\nprovider = \"openai_compatible\"\nbase_url = \"http://203.0.113.9:8080\"\n";
+    let w = world(true, &format!("[llm]\nenabled_providers = [\"litellm\", \"anthropic\", \"openai_compatible\"]\n{legacy}")).await;
+    let put = |entries: Value| {
+        w.put(json!({"llm.enabled_providers": enabled(), "llm.endpoints": entries}))
+    };
+
+    // Plain http to a private address nothing opens.
+    let (s, v) = put(json!([compat("x", "http://10.9.9.9:8080")])).await;
+    assert_eq!(s, 422, "{v}");
+    assert!(
+        fields(&v).contains(&(
+            "/llm.endpoints/x/base_url".into(),
+            "http_needs_private_host".into()
+        )),
+        "{v}"
+    );
+    // The Helm entry `legacy` (http to a public address) was not judged: only `x` is named.
+    assert!(!fields(&v).iter().any(|(p, _)| p.contains("legacy")), "{v}");
+    // Plain http to a name that nothing opens is refused too; https is fine.
+    let (s, v) = put(json!([compat("x", "http://llm.nowhere.test")])).await;
+    assert_eq!(s, 422, "{v}");
+    assert!(
+        fields(&v)
+            .iter()
+            .any(|(_, c)| c == "http_needs_private_host"),
+        "{v}"
+    );
+    // Loopback is the mocks' address: allowed (the existing worlds rely on it).
+    let (s, v) = put(json!([compat("x", &w.team.uri())])).await;
+    assert_eq!(s, 200, "{v}");
+    let (s, v) = put(json!([compat("x", "https://llm.nowhere.test")])).await;
+    assert_eq!(s, 200, "{v}");
+    // Opened by `gateway.allowed_private`: a covered private address may use http.
+    w.open_private(&["127.0.0.1", "10.9.9.0/24"]).await;
+    let (s, v) = put(json!([compat("x", "http://10.9.9.9:8080")])).await;
+    assert_eq!(s, 200, "{v}");
+    w.open_private(&["127.0.0.1"]).await;
+
+    // A host an app-instance registration holds.
+    sqlx::query(
+        "INSERT INTO app_instances (id, package_id, app_id, host, label) VALUES ($1, 'pkg', 'jira', 'claimed.llm.test', 'Jira')",
+    )
+    .bind(Uuid::now_v7())
+    .execute(w.h.pool())
+    .await
+    .unwrap();
+    let (s, v) = put(json!([compat("c", "https://claimed.llm.test")])).await;
+    assert_eq!(s, 422, "{v}");
+    let f = v["error"]["details"]["fields"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["code"] == "endpoint_host_claimed")
+        .unwrap_or_else(|| panic!("no endpoint_host_claimed: {v}"));
+    assert_eq!(f["path"], "/llm.endpoints/c/base_url", "{v}");
+    assert_eq!(f["app_id"], "jira", "{v}");
+    // Another host is fine, and the Helm endpoint never needed a pass here.
+    let (s, v) = put(json!([compat("c", "https://free.llm.test")])).await;
+    assert_eq!(s, 200, "{v}");
+}
+
+/// (P4-LLM-6, C-813) A saved dashboard endpoint whose host is a private address nothing opens is
+/// marked `needs_allowed_private` on GET (a Helm one never is) and the preview warns
+/// `endpoint_resolves_private` for it; opening the address clears both.
+#[tokio::test]
+async fn a_dashboard_endpoint_on_a_private_address_is_marked_and_warned_about() {
+    let w = world(true, "").await;
+    let private = compat("lan", "https://10.9.9.9");
+    let values = json!({"llm.enabled_providers": enabled(), "llm.endpoints": [private]});
+    let (s, p) = w.preview(values.clone()).await;
+    assert_eq!(s, 200, "{p}");
+    let warn = p["warnings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|x| x["code"] == "endpoint_resolves_private")
+        .unwrap_or_else(|| panic!("no endpoint_resolves_private: {p}"));
+    assert_eq!(
+        (warn["key"].as_str(), warn["entry_id"].as_str()),
+        (Some("llm.endpoints"), Some("lan"))
+    );
+    // A public name in the same write adds no warning.
+    let (_, p) = w
+        .preview(json!({"llm.enabled_providers": enabled(), "llm.endpoints": [compat("pub", "https://api.example.com")]}))
+        .await;
+    assert!(
+        !p["warnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|x| x["code"] == "endpoint_resolves_private"),
+        "{p}"
+    );
+
+    // Saved with the advice only: the write goes through.
+    let (s, v) = w.put(values).await;
+    assert_eq!(s, 200, "{v}");
+    let marks = |v: &Value| -> Vec<(String, Vec<String>)> {
+        setting(v, "llm.endpoints")["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| {
+                (
+                    e["id"].as_str().unwrap().to_owned(),
+                    e["warnings"]
+                        .as_array()
+                        .map(|a| a.iter().map(|x| x.as_str().unwrap().to_owned()).collect())
+                        .unwrap_or_default(),
+                )
+            })
+            .collect()
+    };
+    let got = marks(&w.section().await);
+    assert!(
+        got.contains(&("lan".into(), vec!["needs_allowed_private".into()])),
+        "{got:?}"
+    );
+    // The Helm endpoint (on a loopback mock) is never marked.
+    assert!(got.contains(&("central".into(), vec![])), "{got:?}");
+
+    // An operator opens the address: the mark goes (the snapshot follows the write).
+    w.open_private(&["127.0.0.1", "10.9.9.0/24"]).await;
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    loop {
+        let got = marks(&w.section().await);
+        if got.contains(&("lan".into(), vec![])) {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the mark never cleared: {got:?}"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+/// (P4-LLM-6, C-803) The test probes each provider's own path (a mock per origin; any status
+/// below 500 is reachable, a 401 included) and an uncovered private dashboard address is refused.
+#[tokio::test]
+async fn the_endpoint_test_probes_each_providers_own_path() {
+    let mock = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(401))
+        .mount(&mock)
+        .await;
+    let origin = mock.uri();
+    let w = world(
+        false,
+        &format!(
+            "[gateway]\ninsecure_loopback_injection = true\n[llm.dev_upstream_overrides]\n\"https://api.openai.com\" = \"{origin}\"\n\"https://aiplatform.googleapis.com\" = \"{origin}\"\n"
+        ),
+    )
+    .await;
+    let url = "/v1/admin/settings/llm/endpoint-test";
+    let probe = |entry: Value| {
+        w.call(
+            Method::POST,
+            url,
+            &w.admin,
+            Some(json!({"endpoint": entry})),
+        )
+    };
+    async fn paths(m: &MockServer) -> Vec<String> {
+        m.received_requests()
+            .await
+            .unwrap()
+            .iter()
+            .map(|r| r.url.path().to_owned())
+            .collect()
+    }
+    let cases = [
+        (json!({"id": "o", "provider": "openai"}), "/v1/models"),
+        (
+            json!({"id": "a", "provider": "azure_openai", "base_url": origin, "models": ["d"], "default_model": "d"}),
+            "/openai/v1/models",
+        ),
+        (
+            json!({"id": "b", "provider": "bedrock", "region": "eu-central-1", "base_url": origin}),
+            "/",
+        ),
+        (
+            json!({"id": "v", "provider": "vertex", "project_id": "my-project-1", "location": "global", "models": ["m"], "default_model": "m"}),
+            "/v1/projects/my-project-1/locations/global",
+        ),
+        (
+            json!({"id": "c", "provider": "openai_compatible", "base_url": origin, "models_path": "/models"}),
+            "/models",
+        ),
+        (
+            json!({"id": "d", "provider": "openai_compatible", "base_url": origin}),
+            "/v1/models",
+        ),
+    ];
+    for (entry, want) in cases {
+        let before = paths(&mock).await.len();
+        let (s, v) = probe(entry.clone()).await;
+        assert_eq!(s, 200, "{entry}: {v}");
+        assert_eq!(
+            (v["reachable"].as_bool(), v["status"].as_u64()),
+            (Some(true), Some(401)),
+            "{entry}: {v}"
+        );
+        let seen = paths(&mock).await;
+        assert_eq!(seen.len(), before + 1, "{entry}");
+        assert_eq!(seen.last().map(String::as_str), Some(want), "{entry}");
+    }
+    // A private address nothing opens is refused for a dashboard entry.
+    let (s, v) = probe(compat("lan", "https://10.9.9.9")).await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(
+        (v["reachable"].as_bool(), v["error_code"].as_str()),
+        (Some(false), Some("destination_refused")),
+        "{v}"
+    );
+}
