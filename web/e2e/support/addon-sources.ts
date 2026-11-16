@@ -79,8 +79,8 @@ export async function openAddonScreen(page: Page, screen: AddonScreen, scheme: S
   page.on("pageerror", (e) => errors.push(e.message));
   await mockAddonSources(page);
   await page.emulateMedia({ colorScheme: scheme });
-  await page.goto("/admin/addon-sources");
-  await page.getByRole("heading", { name: "Addon sources", level: 1 }).waitFor();
+  await page.goto("/admin/apps?tab=advanced#package-sources");
+  await page.getByRole("heading", { name: "Package sources", level: 2 }).waitFor();
   await page.waitForLoadState("networkidle");
   await expect.poll(() => page.locator("html").getAttribute("data-theme"), { timeout: 20_000 }).toBe(scheme);
   if (screen === "add-review") {

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 
+import { SettingsSectionFields } from "@/components/admin/settings/settings-section-fields";
 import { SettingsSectionForm, type SettingsGroup } from "@/components/admin/settings/settings-section-form";
 import { ErrorState, Loading } from "@/components/states";
 import { Badge } from "@/components/ui/badge";
@@ -12,6 +13,7 @@ import { FormSection } from "@/components/ui/form";
 import { Notice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
 import { useGovernanceOrgs, useSettingsSection, type GovernanceOrgRow } from "@/lib/api/settings";
+import { orgRoutes } from "@/lib/routes";
 
 /** The four groups of the page (`08 §11`); every key of the registry's `governance` section appears once. */
 export const GOVERNANCE_GROUPS: SettingsGroup[] = [
@@ -54,6 +56,28 @@ export const GOVERNANCE_GROUPS: SettingsGroup[] = [
     keys: ["governance.agent_tokens.max_age_days"],
   },
 ];
+
+/** The governance section split over its topic pages (C-971): AI models › Rules, Internet access, Agents › BYO. */
+export const GOVERNANCE_PARTS = {
+  rules: GOVERNANCE_GROUPS.filter((g) => g.title === "LLM"),
+  internet: GOVERNANCE_GROUPS.filter((g) => g.title === "Egress"),
+  byo: GOVERNANCE_GROUPS.filter((g) => g.title === "BYO agents" || g.title === "Agent tokens"),
+} as const;
+
+/** One topic's share of the governance section: its own fields, draft, preview and Save (the other keys go back unchanged). */
+export function GovernanceFields({ part }: { part: keyof typeof GOVERNANCE_PARTS }) {
+  return <SettingsSectionFields section="governance" groups={GOVERNANCE_PARTS[part]} />;
+}
+
+/** AI models › Rules: the LLM floor, then where organizations stand. */
+export function GovernanceRulesFields() {
+  return (
+    <div className="space-y-6">
+      <GovernanceFields part="rules" />
+      <OrgsStanding />
+    </div>
+  );
+}
 
 function label(v: string): string {
   return v.replace(/_/g, " ");
@@ -125,7 +149,7 @@ function OrgsStanding() {
                 {q.data.items.map((o: GovernanceOrgRow) => (
                   <tr key={o.org_id}>
                     <Td>
-                      <Link className="font-medium text-ink underline-offset-2 hover:underline" href={`/o/${o.slug}/governance`}>
+                      <Link className="font-medium text-ink underline-offset-2 hover:underline" href={orgRoutes(o.slug).aiModels()}>
                         {o.name}
                       </Link>
                       {o.frozen ? <Badge className="ml-2" tone="pending">frozen</Badge> : null}

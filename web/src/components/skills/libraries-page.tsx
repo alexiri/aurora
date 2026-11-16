@@ -16,6 +16,7 @@ import { StatusDot } from "@/components/ui/status-dot";
 import { ApiError } from "@/lib/api/client";
 import { useApps, useConnections } from "@/lib/api/apps";
 import { errorMessage } from "@/lib/api/errors";
+import { orgRoutes } from "@/lib/routes";
 import {
   shortSha,
   useCheckLibraryNow,
@@ -59,7 +60,7 @@ function Libraries({ slug, orgId }: { slug: string; orgId: string }) {
         actions={
           <>
             <Button asChild variant="outline">
-              <Link href={`/o/${slug}/skills`}>Organization skills</Link>
+              <Link href={orgRoutes(slug).agents("skills")}>Organization skills</Link>
             </Button>
             {disabled ? null : <Button onClick={() => setConnect(true)}>Connect a repository</Button>}
           </>
@@ -124,7 +125,7 @@ function LibraryTable({ orgId, slug, items }: { orgId: string; slug: string; ite
                   {l.last_error ? <p className="mt-1 max-w-xs whitespace-normal text-xs text-danger-ink">{l.last_error}</p> : null}
                   {needsReconnect ? (
                     <p className="mt-1 text-xs">
-                      <Link href={`/o/${slug}/credentials`} className="text-link underline">
+                      <Link href={orgRoutes(slug).accounts()} className="text-link underline">
                         Reconnect
                       </Link>
                     </p>
@@ -223,7 +224,7 @@ function ConnectDialog({ orgId, open, onOpenChange }: { orgId: string; open: boo
       <Notice role="status">Use a read-only token (GitHub: Contents read; GitLab: read_repository). A token that can write is more access than Aurora needs.</Notice>
       {conns.isSuccess && usable.length === 0 ? (
         <Notice tone="pending" role="status">
-          No organization-level connection of an app that can serve a library (GitHub or GitLab) is active. Connect one under Credentials first.
+          No organization-level connection of an app that can serve a library (GitHub or GitLab) is active. Connect one under Apps & accounts first.
         </Notice>
       ) : null}
       <Field id="lib-label" label="Label">

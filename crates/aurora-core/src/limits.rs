@@ -143,6 +143,8 @@ pub const LIBRARY_SKILLS_PER_ORG: usize = 100;
 pub const LIBRARY_FILE_MAX: usize = 64 * KIB;
 pub const LIBRARY_TREE_MAX: usize = 20_000;
 pub const LIBRARY_BROWSE_MAX: usize = 200;
+/// (P5-IA-1, C-987) One-time notice keys a person can have dismissed.
+pub const ONBOARDING_NOTICES_MAX: usize = 50;
 /// Open proposed updates per organization.
 pub const LIBRARY_PENDING_BYTES_PER_ORG: usize = 4 * MIB;
 pub const LIBRARY_REFRESH_INTERVAL: Duration = Duration::from_secs(15 * 60);

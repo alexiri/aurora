@@ -62,7 +62,8 @@ export function ErrorBlock({
   const pathname = usePathname() ?? "";
   const hrefOf = (l: ErrorLink): string | undefined =>
     l.path === "credentials"
-      ? `${base}/credentials${l.tab ? `?tab=${l.tab}` : ""}`
+      ? // The gateway's `credentials` link names the old page; its tab decides the Apps & accounts tab (C-960).
+        `${base}/apps?tab=${l.tab === "apps" || l.tab === "oauth" ? "apps" : "accounts"}${l.tab === "llm" ? "&kind=ai-key" : ""}`
       : l.path === "access" || l.path === "instructions"
         ? `${pathname}?tab=${l.path}`
         : undefined;

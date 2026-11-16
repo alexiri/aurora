@@ -7,10 +7,10 @@ and the example in [docs/15 §Governance example](../15-deployment-operations.md
 The API and the gateway both read this configuration. Each endpoint is an instance
 ceiling: organizations and workspaces can narrow it but cannot widen it.
 
-## Admin › Settings › LLM endpoints (dashboard first)
+## Administration › AI models › Endpoints (dashboard first)
 
-(Phase 5, SET-3, D-236, D-237.) An instance admin sets up providers and endpoints on **Admin › Settings
-› LLM endpoints**; there is no Helm change and no restart. The page has three parts:
+(Phase 5, SET-3, D-236, D-237.) An instance admin sets up providers and endpoints on **Administration › AI
+models › Endpoints**; there is no Helm change and no restart. The page has three parts:
 
 - **Enabled providers** and **Preference order** — which providers this instance offers and the order a
   hosted agent picks a key's provider in. The preference order may only name enabled providers (a list

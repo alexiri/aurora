@@ -1,0 +1,84 @@
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import { TopicPage } from "@/components/topic-page";
+import { EmbeddedPage, PageHeader } from "@/components/ui/page-header";
+
+vi.mock("next/navigation", () => ({
+  useSearchParams: () => new URLSearchParams(window.location.search),
+}));
+
+afterEach(() => {
+  cleanup();
+  window.history.replaceState(null, "", "/");
+});
+
+describe("PageHeader level badge (C-962)", () => {
+  it("shows the level of the page next to its title", () => {
+    render(<PageHeader title="People" level={{ kind: "workspace", label: "Acme › Main" }} />);
+    const badge = screen.getByTestId("level-badge");
+    expect(badge).toHaveTextContent("Acme › Main");
+    expect(badge).toHaveAttribute("data-level", "workspace");
+    expect(screen.getByRole("heading", { level: 1, name: "People" })).toBeInTheDocument();
+  });
+
+  it("labels Administration and an organization", () => {
+    render(<PageHeader title="Data" level={{ kind: "instance", label: "Administration" }} />);
+    expect(screen.getByTestId("level-badge")).toHaveAttribute("data-level", "instance");
+    cleanup();
+    render(<PageHeader title="Data" level={{ kind: "org", label: "Acme" }} />);
+    expect(screen.getByTestId("level-badge")).toHaveTextContent("Acme");
+  });
+
+  it("an embedded header keeps its description and actions but adds no second title or badge", () => {
+    render(
+      <EmbeddedPage>
+        <PageHeader title="Old page title" description="What it does." actions={<button>Act</button>} level={{ kind: "org", label: "Acme" }} />
+      </EmbeddedPage>,
+    );
+    expect(screen.queryByRole("heading")).toBeNull();
+    expect(screen.queryByTestId("level-badge")).toBeNull();
+    expect(screen.getByText("What it does.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Act" })).toBeInTheDocument();
+  });
+});
+
+describe("TopicPage", () => {
+  const tabs = [
+    { id: "one", label: "One", content: <p>first content</p> },
+    { id: "two", label: "Two", content: <p>second content</p> },
+  ] as const;
+
+  it("opens the first tab, shows only the selected tab's content and writes ?tab=", () => {
+    render(<TopicPage idBase="t" title="Topic" tabs={tabs} />);
+    expect(screen.getByRole("heading", { level: 1, name: "Topic" })).toBeInTheDocument();
+    expect(screen.getByText("first content")).toBeInTheDocument();
+    expect(screen.queryByText("second content")).toBeNull();
+    fireEvent.click(screen.getByRole("tab", { name: "Two" }));
+    expect(screen.getByText("second content")).toBeInTheDocument();
+    expect(window.location.search).toBe("?tab=two");
+  });
+
+  it("opens the tab the address names, and falls back on an unknown one", () => {
+    window.history.replaceState(null, "", "/?tab=two");
+    render(<TopicPage idBase="t" title="Topic" tabs={tabs} />);
+    expect(screen.getByText("second content")).toBeInTheDocument();
+    cleanup();
+    window.history.replaceState(null, "", "/?tab=nope");
+    render(<TopicPage idBase="t" title="Topic" tabs={tabs} />);
+    expect(screen.getByText("first content")).toBeInTheDocument();
+  });
+
+  it("drops the dialog parameters of a tab when another tab opens", () => {
+    window.history.replaceState(null, "", "/?tab=one&connect=github");
+    render(<TopicPage idBase="t" title="Topic" tabs={tabs} />);
+    fireEvent.click(screen.getByRole("tab", { name: "Two" }));
+    expect(window.location.search).toBe("?tab=two");
+  });
+
+  it("a topic with one tab has no tab bar", () => {
+    render(<TopicPage idBase="t" title="Topic" tabs={[tabs[0]]} />);
+    expect(screen.queryByRole("tablist")).toBeNull();
+    expect(screen.getByText("first content")).toBeInTheDocument();
+  });
+});

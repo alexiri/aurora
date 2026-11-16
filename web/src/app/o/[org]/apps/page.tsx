@@ -1,15 +1,13 @@
 "use client";
 
-import { useParams } from "next/navigation";
+import { OrgAppsPage } from "@/components/org/org-topics";
+import { LegacyGate } from "@/components/legacy-redirect";
 
-import { AvailabilityView } from "@/components/apps/availability-view";
-import { OrgGate } from "@/components/org/org-gate";
-
+/** `/o/<org>/apps` without a tab is the old catalogue address: it redirects to the Apps tab (C-960). */
 export default function Page() {
-  const { org: slug } = useParams<{ org: string }>();
   return (
-    <OrgGate slug={slug} allow={["owner", "admin"]}>
-      {(org) => <AvailabilityView orgId={org.id} orgSlug={org.slug} canEdit />}
-    </OrgGate>
+    <LegacyGate>
+      <OrgAppsPage />
+    </LegacyGate>
   );
 }

@@ -12,6 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Notice } from "@/components/ui/notice";
 import { errorMessage } from "@/lib/api/errors";
+import { orgRoutes } from "@/lib/routes";
 import {
   appIsCustomOnly,
   appKeys,
@@ -105,7 +106,7 @@ function ConnectionRow({
                 disabled={patch.isPending}
                 onClick={() => patch.mutate({ id: c.id, status: c.status === "active" ? "disabled" : "active" })}
               >
-                {c.status === "active" ? "Disable" : "Enable"}
+                {c.status === "active" ? "Turn off" : "Turn on"}
               </Button>
             ) : null}
             <Button size="sm" variant="danger" onClick={() => setConfirm(true)} aria-label={`Delete ${c.label}`}>Delete</Button>
@@ -220,7 +221,7 @@ export function ConnectionsTab({ scope, canOwn }: { scope: ListScope; canOwn: bo
           scope.kind === "organization" && org ? (
             <>
               You need one when an agent should use that app.{" "}
-              <Link className="font-medium text-link underline" href={`/o/${org}/apps`}>
+              <Link className="font-medium text-link underline" href={orgRoutes(org).apps("apps")}>
                 Connect an app from Apps
               </Link>
               .

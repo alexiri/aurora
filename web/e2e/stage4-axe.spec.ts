@@ -21,7 +21,13 @@ async function serious(page: Page) {
 }
 
 // (FIX-123, FIX-149) the Connect dialog's "How do you want to connect?" chooser is checked at 390 px too.
-const NAMED = ["ws-overview", "ws-approvals", "ws-agent", "org-workspaces", "sign-in", "ws-app-connect"];
+// P5-IA-1: and the topic pages' frames (header, level badge, tab bar) of each level.
+const NAMED = [
+  "ws-overview", "ws-approvals", "ws-agent", "org-workspaces", "sign-in", "ws-app-connect",
+  "ws-apps-accounts", "ws-internet-access", "ws-people", "ws-settings-general",
+  "org-apps-accounts", "org-people-members", "org-ai-models", "org-internet-access", "org-settings-general",
+  "admin-overview", "admin-people-users", "admin-platform-runners", "admin-apps-apps",
+];
 
 for (const scheme of ["light", "dark"] as const) {
   test.describe(`${scheme} theme, 1280 px`, () => {
@@ -71,9 +77,9 @@ for (const scheme of ["light", "dark"] as const) {
   }
 
   // The tabs that show the real built-in package icons (AppIcon), with the icons loaded.
-  test.describe(`${scheme} theme, credentials tabs`, () => {
-    for (const path of ["/o/acme/w/main/credentials", "/o/acme/credentials"]) {
-      for (const tab of ["Secrets", "LLM keys", "Proposals", "Apps", "Connections", "OAuth clients"]) {
+  test.describe(`${scheme} theme, Apps & accounts tabs`, () => {
+    for (const path of ["/o/acme/w/main/apps", "/o/acme/apps?tab=accounts"]) {
+      for (const tab of path.includes("/w/main") ? ["Accounts", "Apps"] : ["Accounts", "Apps", "OAuth clients", "Self-hosted apps"]) {
         test(`${path} › ${tab}`, async ({ page }) => {
           await page.setViewportSize({ width: 1280, height: 900 });
           await openRoute(page, path, scheme);

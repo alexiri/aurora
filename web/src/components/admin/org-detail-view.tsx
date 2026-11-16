@@ -14,6 +14,7 @@ import { MoreNotShown } from "@/components/ui/more-not-shown";
 import { Notice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
 import { Section } from "@/components/ui/section";
+import { adminRoutes } from "@/lib/routes";
 import { useAdminDeleteOrg, useAdminDeleteWorkspace, useAdminOrg, useAdminOrgWorkspaces, type AdminOrgWorkspace } from "@/lib/api/admin-orgs";
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
@@ -67,7 +68,7 @@ export function OrgDetailView({ orgId }: { orgId: string }) {
   return (
     <div className="max-w-page space-y-6">
       <PageHeader
-        breadcrumb={[{ label: "Organizations", href: "/admin/orgs" }, { label: o.name }]}
+        breadcrumb={[{ label: "Organizations", href: adminRoutes.organizations() }, { label: o.name }]}
         title={
           <span className="flex flex-wrap items-center gap-2">
             {o.name}
@@ -135,7 +136,7 @@ export function OrgDetailView({ orgId }: { orgId: string }) {
         slug={o.slug}
         consequences={<OrgDeleteConsequences org={o} />}
         run={(confirm) => del.mutateAsync({ orgId, confirm })}
-        onDone={() => router.push("/admin/orgs")}
+        onDone={() => router.push(adminRoutes.organizations())}
       />
     </div>
   );

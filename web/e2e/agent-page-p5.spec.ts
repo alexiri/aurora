@@ -133,8 +133,8 @@ test.describe("1280×800", () => {
     await rail(page).getByRole("button", { name: "Expand status panel" }).click();
     const needs = rail(page).getByRole("region", { name: /Needs you/ });
     // #42 belongs to the open conversation: no buttons, a link to the card. #43 is elsewhere: Approve and Deny.
-    await expect(needs.getByRole("button", { name: "Approve" })).toHaveCount(1);
-    await needs.getByRole("button", { name: "Approve" }).click();
+    await expect(needs.getByRole("button", { name: "Allow once" })).toHaveCount(1);
+    await needs.getByRole("button", { name: "Allow once" }).click();
     await expect.poll(() => decisions).toEqual([ELSEWHERE.id]);
   });
 

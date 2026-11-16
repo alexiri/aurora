@@ -173,7 +173,7 @@ function IntegrationRow({
           disabled={patch.isPending}
           onClick={() => patch.mutate({ id: integration.id, body: { status: disabled ? "active" : "disabled" } })}
         >
-          {disabled ? "Enable" : "Disable"}
+          {disabled ? "Turn on" : "Turn off"}
         </Button>
         <Button variant="outline" size="sm" aria-expanded={links} onClick={() => setLinks((v) => !v)}>
           {links ? "Hide user links" : "User links"}

@@ -171,18 +171,18 @@ describe("PolicyView", () => {
     expect(putBody!.open_lane_posture).toBe("disabled");
   });
 
-  it("the Default Rule control carries the LLM-hosts note with a Governance link (RFE-023)", async () => {
+  it("the Default Rule control carries the LLM-hosts note with a link to AI models (RFE-023)", async () => {
     base({
       "GET /v1/orgs/o1/policy": () =>
         json(200, { scope: "organization", published: gen({ status: "published", draft_revision: null }), draft: gen() }),
       "GET /v1/orgs/o1/policy/warnings": () => json(200, { items: [] }),
     });
     for (const s of [scope, { kind: "organization", id: "o1" } as const]) {
-      wrap(<PolicyView title="Policy" scope={s} orgId="o1" canEdit />);
+      wrap(<PolicyView title="Policy" scope={s} orgId="o1" orgSlug="acme" canEdit />);
       const note = await screen.findByTestId("default-rule-llm-note");
-      expect(note.textContent).toMatch(/Does not affect LLM endpoints — see Governance/);
+      expect(note.textContent).toMatch(/Does not affect LLM endpoints — see AI models/);
       expect(note.getAttribute("title")).toMatch(/explicit block rule that names an LLM host still applies/);
-      expect(screen.getByRole("link", { name: "Governance" })).toHaveAttribute("href", "/o/o1/governance");
+      expect(screen.getByRole("link", { name: "AI models" })).toHaveAttribute("href", "/o/acme/ai-models");
       expect(screen.getByLabelText("Default rule")).toHaveAttribute("aria-describedby", "default-rule-llm-note");
       cleanup();
     }

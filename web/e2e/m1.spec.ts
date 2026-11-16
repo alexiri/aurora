@@ -65,7 +65,7 @@ test("sign-in (dev IdP) -> workspace -> invite -> accept", async ({ page, browse
   // Org Members -> invite B with the Research binding.
   // (Workspace pages have no link to org Members; go via the org URL.)
   await page.goto(`${orgUrl}/members`);
-  await expect(page).toHaveURL(/\/members$/);
+  await expect(page).toHaveURL(/\/people\?tab=members$/);
   await openDialog(page, "Invite member");
   const dialog = page.getByRole("dialog");
   await dialog.getByLabel("Email", { exact: true }).fill(emailB);

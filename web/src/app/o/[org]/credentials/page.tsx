@@ -1,22 +1,8 @@
 "use client";
 
-import { useParams } from "next/navigation";
+import { LegacyGate } from "@/components/legacy-redirect";
 
-import { CredentialsView } from "@/components/credentials/credentials-view";
-import { OrgGate } from "@/components/org/org-gate";
-
+/** An old address (C-960): the tab decides which topic page took over, so the redirect is made in the browser. */
 export default function Page() {
-  const { org: slug } = useParams<{ org: string }>();
-  return (
-    <OrgGate slug={slug} allow={["owner", "admin"]}>
-      {(org) => (
-        <CredentialsView
-          title="Organization credentials"
-          scope={{ kind: "organization", id: org.id }}
-          orgId={org.id}
-          canOwn
-        />
-      )}
-    </OrgGate>
-  );
+  return <LegacyGate>{null}</LegacyGate>;
 }

@@ -14,6 +14,7 @@ import { DangerZone, Section } from "@/components/ui/section";
 import { errorMessage, fieldErrors } from "@/lib/api/errors";
 import { deleteOrg, usePatchOrg, usePutRetention, useRetention } from "@/lib/api/org";
 import { useInstance } from "@/lib/api/queries";
+import { orgRoutes } from "@/lib/routes";
 import type { Org } from "@/lib/api/queries";
 
 function parseLimit(v: string): number | null | "invalid" {
@@ -24,7 +25,7 @@ function parseLimit(v: string): number | null | "invalid" {
   return n >= 1 ? n : "invalid";
 }
 
-function GeneralForm({ org, isOwner }: { org: Org; isOwner: boolean }) {
+export function GeneralForm({ org, isOwner }: { org: Org; isOwner: boolean }) {
   const router = useRouter();
   const patch = usePatchOrg(org.id);
   const [name, setName] = useState(org.name);
@@ -63,7 +64,7 @@ function GeneralForm({ org, isOwner }: { org: Org; isOwner: boolean }) {
       {
         onSuccess: (updated) => {
           setSaved(true);
-          if (updated.slug !== org.slug) router.replace(`/o/${updated.slug}/settings`);
+          if (updated.slug !== org.slug) router.replace(orgRoutes(updated.slug).settings());
         },
       },
     );
@@ -149,7 +150,7 @@ function GeneralForm({ org, isOwner }: { org: Org; isOwner: boolean }) {
 /** The org's Port previews switch (P4-PRV-1, C-549, docs/14). The card exists only when the
  * instance runs previews; the switch is owners/admins and audited. Turning it off asks for
  * confirmation: existing links stop working until it is turned back on. */
-function PreviewsForm({ org }: { org: Org }) {
+export function PreviewsForm({ org }: { org: Org }) {
   const patch = usePatchOrg(org.id);
   const instance = useInstance();
   const [confirmOff, setConfirmOff] = useState(false);
@@ -208,7 +209,7 @@ function isOwnerAdmin(org: Org): boolean {
 }
 
 /** Conversation retention (RFE-010): a window of 7 to 3650 days, or none; owners and admins. */
-function RetentionForm({ orgId }: { orgId: string }) {
+export function RetentionForm({ orgId }: { orgId: string }) {
   const current = useRetention(orgId);
   const put = usePutRetention(orgId);
   const [days, setDays] = useState<string | null>(null);
@@ -326,6 +327,18 @@ export function OrgDangerZone({
       </FormActions>
     </Form>
     </DangerZone>
+  );
+}
+
+/** Settings › Danger zone (P5-IA-1): freezing and deleting the organization, owners only. */
+export function OrgDangerSections({ org }: { org: Org }) {
+  const router = useRouter();
+  if (org.my_role !== "owner") return <Notice role="status">Only organization owners can freeze or delete the organization.</Notice>;
+  return (
+    <div className="space-y-8">
+      <OrgFreeze orgId={org.id} name={org.name} frozen={org.frozen} />
+      <OrgDangerZone orgId={org.id} slug={org.slug} onDeleted={() => router.replace("/")} />
+    </div>
   );
 }
 

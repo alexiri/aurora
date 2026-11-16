@@ -98,9 +98,9 @@ export function UsersTable({
                     size="sm"
                     disabled={patch.isPending}
                     onClick={() => change(u, { disabled: !disabled })}
-                    aria-label={`${disabled ? "Enable" : "Disable"} ${u.email}`}
+                    aria-label={`${disabled ? "Turn on" : "Turn off"} ${u.email}`}
                   >
-                    {disabled ? "Enable" : "Disable"}
+                    {disabled ? "Turn on" : "Turn off"}
                   </Button>
                 </div>
                 {isSelf ? <p className="text-xs text-muted">This is you.</p> : null}
