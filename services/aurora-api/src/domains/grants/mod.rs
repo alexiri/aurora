@@ -3,6 +3,7 @@
 pub mod compile;
 pub mod dto;
 pub(crate) mod effective;
+pub mod levels;
 mod routes;
 pub mod service;
 

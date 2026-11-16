@@ -160,6 +160,8 @@ fn method(c: &Connect) -> ConnectMethod {
         client_key: None,
         callback: None,
         probe_scopes: Vec::new(),
+        audience: super::setup::audience_of(c),
+        scope_presets: super::setup::presets(c),
     };
     match c {
         // (FIX-136) A `fields` method that declares scopes asks the person which the pasted
@@ -290,6 +292,7 @@ fn oauth_clients(
                 .collect(),
             setup_note: c.setup_note.clone(),
             redirect_uri: redirect_uri.clone(),
+            used_by_methods: super::setup::used_by_methods(a, &c.client_key),
         })
         .collect()
 }

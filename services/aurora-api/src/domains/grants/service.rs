@@ -38,6 +38,9 @@ pub enum Origin {
     /// Credential-side bulk routes: an existing grant is left unmodified and not audited;
     /// created grants are audited with `details.via = "credential"`.
     Credential,
+    /// (P5-UX-2, C-957) The connect journey gave the access together with the new account: the
+    /// grant is new by construction; audited with `details.via = "connect_journey"`.
+    ConnectJourney,
 }
 
 impl Origin {
@@ -56,8 +59,10 @@ pub struct Written<T> {
 }
 
 fn with_via(origin: Origin, mut meta: serde_json::Value) -> serde_json::Value {
-    if origin == Origin::Credential {
-        meta["via"] = json!("credential");
+    match origin {
+        Origin::Credential => meta["via"] = json!("credential"),
+        Origin::ConnectJourney => meta["via"] = json!("connect_journey"),
+        Origin::Agent => {}
     }
     meta
 }
@@ -78,7 +83,6 @@ pub async fn grant_secret_in_tx(
     crate::http::auth::require_own(&auth)?;
     write_secret_grant(
         tx,
-        state,
         &agent,
         secret_id,
         origin,
@@ -94,26 +98,26 @@ pub async fn grant_secret_in_tx(
 /// so the caller's authorization check cannot apply; every other check does).
 pub async fn grant_secret_as_system(
     tx: &mut audit::Tx,
-    state: &AppState,
     agent: &AgentRow,
     secret_id: Uuid,
     actor: AuditActor,
 ) -> Result<Written<SecretGrant>, ApiError> {
-    write_secret_grant(tx, state, agent, secret_id, Origin::Credential, actor, None).await
+    write_secret_grant(tx, agent, secret_id, Origin::Credential, actor, None).await
 }
 
 /// The secret must be active and in the agent's workspace or org (404), then the grant, its
 /// derived rule and the gateway invalidation are written in `tx`.
 async fn write_secret_grant(
     tx: &mut audit::Tx,
-    state: &AppState,
     agent: &AgentRow,
     secret_id: Uuid,
     origin: Origin,
     actor: AuditActor,
     by: Option<Uuid>,
 ) -> Result<Written<SecretGrant>, ApiError> {
-    let secret = secrets::get(&state.pool, secret_id)
+    // Read on the transaction's own connection: a secret created in this very transaction
+    // (P5-UX-2, C-988) is not visible to another one until it commits.
+    let secret = secrets::get(&mut **tx, secret_id)
         .await?
         .filter(|s| {
             s.org_id == agent.org_id
@@ -313,7 +317,7 @@ pub async fn list_connection_grants(
         .collect())
 }
 
-fn bulk_check(agent_ids: &[Uuid]) -> Result<(), ApiError> {
+pub(crate) fn bulk_check(agent_ids: &[Uuid]) -> Result<(), ApiError> {
     use aurora_core::FieldError;
     let bad = |m: &str| {
         ApiError::invalid_request("Invalid request.", vec![FieldError::new("/agent_ids", m)])
@@ -328,7 +332,30 @@ fn bulk_check(agent_ids: &[Uuid]) -> Result<(), ApiError> {
     Ok(())
 }
 
-fn at_agent(e: ApiError, agent_id: Uuid) -> ApiError {
+/// The checks a grant that travels with a **new** account makes before any write or redirect
+/// (C-957, C-988, SEC-130), as the bulk routes make them (C-504): 1 to `GRANT_BULK_MAX` distinct
+/// agents, each visible to the caller, owned by the caller (`can_own`) and in `workspace`. The
+/// first failure is returned with `details.agent_id`.
+pub async fn check_agents_for_new_account(
+    state: &AppState,
+    caller: &Caller,
+    workspace: Uuid,
+    agent_ids: &[Uuid],
+) -> Result<(), ApiError> {
+    bulk_check(agent_ids)?;
+    for &id in agent_ids {
+        let (agent, auth) = visible_agent(caller, state, id)
+            .await
+            .map_err(|e| at_agent(e, id))?;
+        crate::http::auth::require_own(&auth).map_err(|e| at_agent(e, id))?;
+        if agent.workspace_id != workspace {
+            return Err(at_agent(ApiError::not_found("Agent not found."), id));
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn at_agent(e: ApiError, agent_id: Uuid) -> ApiError {
     let mut d = e.details().cloned().unwrap_or_else(|| json!({}));
     if let Some(o) = d.as_object_mut() {
         o.insert("agent_id".into(), json!(agent_id));

@@ -412,11 +412,71 @@ async fn probe_failure_is_422() {
     assert_eq!(s, 422, "{v}");
     assert_eq!(v["error"]["code"], "connect_probe_failed");
     assert_eq!(v["error"]["details"]["upstream_status"], 403);
+    assert_eq!(v["error"]["details"]["cause"], "rejected");
     let n: i64 = sqlx::query_scalar("SELECT count(*) FROM app_connections")
         .fetch_one(w.h.pool())
         .await
         .unwrap();
     assert_eq!(n, 0);
+}
+
+/// (P5-UX-2, C-958) The probe says why: 401 and 403 are `rejected`, a provider 500 is
+/// `unexpected` (the status is kept), and a host nothing answers is `unreachable` with the host.
+#[tokio::test]
+async fn probe_failure_says_why() {
+    let mut w = world(None).await;
+    for (token, cause, status) in [
+        ("nope", "rejected", json!(401)),
+        ("boom", "unexpected", json!(500)),
+    ] {
+        let mut b = w.connect_body("api_key");
+        b["fields"] = json!({ "api_token": token });
+        let (s, _, v) = w
+            .call(&w.owner, Method::POST, "/v1/apps/acme_app/connect", Some(b))
+            .await;
+        assert_eq!(s, 422, "{v}");
+        assert_eq!(v["error"]["code"], "connect_probe_failed");
+        assert_eq!(v["error"]["details"]["cause"], cause, "{v}");
+        assert_eq!(v["error"]["details"]["upstream_status"], status, "{v}");
+    }
+    // Nothing listens on the provider's address: `unreachable`, with the probed host.
+    w.h.state =
+        w.h.state
+            .clone()
+            .with_connect_override("http://127.0.0.1:1");
+    w.h.app = test_router(w.h.state.clone());
+    let mut b = w.connect_body("api_key");
+    b["fields"] = json!({"api_token": "fine"});
+    let (s, _, v) = w
+        .call(&w.owner, Method::POST, "/v1/apps/acme_app/connect", Some(b))
+        .await;
+    assert_eq!(s, 422, "{v}");
+    let d = &v["error"]["details"];
+    assert_eq!(d["cause"], "unreachable", "{v}");
+    assert_eq!(d["host"], "api.acme.example", "{v}");
+    assert!(d["upstream_status"].is_null());
+}
+
+/// (P5-UX-2, C-958) Both client refusals name who can fix it.
+#[tokio::test]
+async fn client_required_refusals_carry_who_can() {
+    let w = world(None).await;
+    let (s, _, v) = w
+        .call(
+            &w.owner,
+            Method::POST,
+            "/v1/apps/acme_app/connect",
+            Some(w.connect_body("oauth")),
+        )
+        .await;
+    assert_eq!(s, 422, "{v}");
+    assert_eq!(v["error"]["code"], "oauth_client_required");
+    let who = &v["error"]["details"]["who_can"];
+    assert_eq!(who["role"], "org_admin", "{v}");
+    assert!(
+        who["people"].is_array() && who.get("scope").is_none(),
+        "{v}"
+    );
 }
 
 #[tokio::test]

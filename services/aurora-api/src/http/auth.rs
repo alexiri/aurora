@@ -8,6 +8,7 @@
 
 use crate::app::AppState;
 use crate::http::client_ip::ClientIp;
+use crate::http::who_can::{WhoCanRole, forbid, forbid_code};
 use aurora_core::ApiError;
 use aurora_core::token::{self, TokenPrefix};
 use aurora_db::authz::{self, OrgRole, WorkspaceAuth};
@@ -150,8 +151,11 @@ impl Caller {
         if a.role.is_admin() || authz::owns_any_workspace(&state.pool, self.user_id, org).await? {
             Ok(a)
         } else {
-            Err(ApiError::forbidden(
+            Err(forbid(
                 "Organization owner/admin or workspace owner role required.",
+                WhoCanRole::OrgAdmin,
+                Some(org),
+                None,
             ))
         }
     }
@@ -172,8 +176,11 @@ impl OrgAuth {
         if self.role.is_admin() {
             Ok(())
         } else {
-            Err(ApiError::forbidden(
+            Err(forbid(
                 "Organization owner or admin role required.",
+                WhoCanRole::OrgAdmin,
+                Some(self.org_id),
+                None,
             ))
         }
     }
@@ -181,17 +188,27 @@ impl OrgAuth {
         if self.role == OrgRole::Owner {
             Ok(())
         } else {
-            Err(ApiError::forbidden("Organization owner role required."))
+            Err(forbid(
+                "Organization owner role required.",
+                WhoCanRole::OrgOwner,
+                Some(self.org_id),
+                None,
+            ))
         }
     }
 }
 
-/// 403 `forbidden` unless the caller can own the workspace (`can_own`).
+/// 403 `forbidden` unless the caller can own the workspace (`can_own`); carries `who_can` (C-981).
 pub fn require_own(a: &WorkspaceAuth) -> Result<(), ApiError> {
     if a.can_own() {
         Ok(())
     } else {
-        Err(ApiError::forbidden("Workspace owner role required."))
+        Err(forbid(
+            "Workspace owner role required.",
+            WhoCanRole::WorkspaceOwner,
+            Some(a.org_id),
+            Some(a.workspace_id),
+        ))
     }
 }
 
@@ -200,15 +217,28 @@ pub fn require_approve(a: &WorkspaceAuth) -> Result<(), ApiError> {
     if a.can_approve() {
         Ok(())
     } else {
-        Err(approver_required())
+        Err(approver_required(Some(a.org_id), Some(a.workspace_id)))
     }
 }
 
-pub fn approver_required() -> ApiError {
-    ApiError::new(
-        StatusCode::FORBIDDEN,
+/// 403 `approver_required`; the scope (when known) lets the answer name the approvers (C-981).
+pub fn approver_required(org: Option<Uuid>, workspace: Option<Uuid>) -> ApiError {
+    forbid_code(
         "approver_required",
         "Workspace approver role required.",
+        WhoCanRole::WorkspaceApprover,
+        org,
+        workspace,
+    )
+}
+
+/// 403 `forbidden` for a route only instance admins may use; names no one (C-981).
+pub fn instance_admin_forbidden() -> ApiError {
+    forbid(
+        "Instance administrator required.",
+        WhoCanRole::InstanceAdmin,
+        None,
+        None,
     )
 }
 
@@ -646,10 +676,12 @@ impl FromRequestParts<AppState> for InstanceAdmin {
         if c.is_instance_admin {
             Ok(Self(c))
         } else {
-            Err(ApiError::new(
-                StatusCode::FORBIDDEN,
+            Err(forbid_code(
                 "instance_admin_required",
                 "Instance administrator access required.",
+                WhoCanRole::InstanceAdmin,
+                None,
+                None,
             ))
         }
     }

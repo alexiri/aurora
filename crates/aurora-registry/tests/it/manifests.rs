@@ -291,3 +291,125 @@ fn connect_method_rules_reject_each_invalid_case() {
         );
     }
 }
+
+// ---- P5-UX-2 (C-956): `audience` and `scope_presets` ----
+
+const TOKEN_FIELD: &str =
+    "          - { name: access_token, label: Token, type: secret, required: true }\n";
+
+fn with_token_scopes(extra: &str) -> String {
+    METHODS.replace(
+        TOKEN_FIELD,
+        &format!(
+            "{TOKEN_FIELD}        scopes:\n          - {{ scope: r, name: R, access: read }}\n          - {{ scope: w, name: W, access: write }}\n{extra}"
+        ),
+    )
+}
+
+#[test]
+fn scope_presets_and_audience_parse_default_and_validate() {
+    use aurora_registry::manifest::{Audience, Connect};
+    // Old packages: no key, `person`, and the derived presets (read = read scopes, write = all).
+    let m = Manifest::parse(&with_token_scopes(""), RUNNING).unwrap();
+    let c = &m.apps[0].connect[0];
+    assert_eq!(c.audience(), Audience::Person);
+    let p = c.effective_scope_presets();
+    assert_eq!(p.read, ["r"]);
+    assert_eq!(p.write, ["r", "w"]);
+    // Declared.
+    let y = with_token_scopes("        scope_presets: { read: [r], write: [w] }\n").replace(
+        "        recommended: true\n",
+        "        recommended: true\n        audience: admin\n",
+    );
+    let v = run(&y);
+    assert!(v.is_empty(), "{v:#?}");
+    let m = Manifest::parse(&y, RUNNING).unwrap();
+    let Connect::Fields(f) = &m.apps[0].connect[0] else {
+        panic!("fields method")
+    };
+    assert_eq!(f.audience, Audience::Admin);
+    let p = m.apps[0].connect[0].effective_scope_presets();
+    assert_eq!((p.read, p.write), (vec!["r".into()], vec!["w".into()]));
+    // An unknown audience is refused.
+    assert!(!run(&y.replace("audience: admin", "audience: robot")).is_empty());
+}
+
+#[test]
+fn scope_presets_must_name_method_scopes_and_read_only_read_ones() {
+    for (what, extra, code) in [
+        (
+            "a write scope in read",
+            "        scope_presets: { read: [w], write: [w] }\n",
+            "scope_preset_write",
+        ),
+        (
+            "not a method scope",
+            "        scope_presets: { read: [r], write: [nope] }\n",
+            "scope_preset_unknown",
+        ),
+    ] {
+        let c = codes(&with_token_scopes(extra));
+        assert!(c.contains(code), "{what}: {c:?}");
+    }
+    // Presets on a method without scopes name nothing.
+    let c = codes(&METHODS.replace(
+        TOKEN_FIELD,
+        &format!("{TOKEN_FIELD}        scope_presets: {{ read: [r] }}\n"),
+    ));
+    assert!(c.contains("scope_preset_unknown"), "{c:?}");
+}
+
+/// Old packages stay valid: every builtin package and every valid fixture parses and lints clean
+/// with the new keys in the model, and the two builtin values the journey needs are set.
+#[test]
+fn every_builtin_and_fixture_validates_and_the_journey_keys_are_set() {
+    use aurora_registry::manifest::{Audience, Connect};
+    let root = format!("{}/../../plugins/builtin", env!("CARGO_MANIFEST_DIR"));
+    let mut files: Vec<String> = std::fs::read_dir(&root)
+        .unwrap()
+        .map(|e| format!("{}/plugin.yaml", e.unwrap().path().display()))
+        .filter(|p| std::path::Path::new(p).exists())
+        .collect();
+    for name in ["valid-full", "minimal"] {
+        files.push(format!(
+            "{}/tests/fixtures/manifests/{name}.yaml",
+            env!("CARGO_MANIFEST_DIR")
+        ));
+    }
+    assert!(files.len() > 10, "{files:?}");
+    for f in &files {
+        let y = std::fs::read_to_string(f).unwrap();
+        let m = Manifest::parse(&y, "9.9.9").unwrap_or_else(|e| panic!("{f}: {e:#?}"));
+        let v = validate::manifest(&m);
+        assert!(v.is_empty(), "{f}: {v:#?}");
+    }
+    let github = Manifest::parse(
+        &std::fs::read_to_string(format!("{root}/github/plugin.yaml")).unwrap(),
+        "9.9.9",
+    )
+    .unwrap();
+    let methods: Vec<(&str, Audience)> = github
+        .apps
+        .iter()
+        .flat_map(|a| a.connect.iter().map(|c| (c.id(), c.audience())))
+        .collect();
+    assert!(
+        methods.contains(&("github_app", Audience::Admin)),
+        "{methods:?}"
+    );
+    assert!(
+        methods
+            .iter()
+            .all(|(id, a)| (*id == "github_app") == (*a == Audience::Admin)),
+        "only the GitHub App methods are admin: {methods:?}"
+    );
+    let linear = Manifest::parse(
+        &std::fs::read_to_string(format!("{root}/linear/plugin.yaml")).unwrap(),
+        "9.9.9",
+    )
+    .unwrap();
+    let Connect::Oauth2(o) = &linear.apps[0].connect[0] else {
+        panic!("linear's first method is oauth2")
+    };
+    assert_eq!(o.scope_presets.as_ref().unwrap().write, ["read", "write"]);
+}

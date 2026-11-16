@@ -153,7 +153,7 @@ async fn writable(
         }
         None => {
             if !(caller.is_instance_admin && caller.is_session()) {
-                return Err(ApiError::forbidden("Instance administrator required."));
+                return Err(crate::http::auth::instance_admin_forbidden());
             }
             AuditActor::instance_admin(caller)
         }

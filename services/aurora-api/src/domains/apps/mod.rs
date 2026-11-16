@@ -3,5 +3,6 @@ mod assets;
 pub mod dto;
 mod routes;
 pub mod service;
+pub mod setup;
 
 pub use routes::router;
