@@ -600,6 +600,76 @@ async fn upstream_header_timeout() {
     assert!(body.contains("upstream_timeout"));
 }
 
+/// (SET-5) `gateway.allowed_private` is a live setting: adding an entry lets a request to that
+/// private address through, removing it refuses the next new connection again; the LLM
+/// endpoints' derived hosts are kept apart from the operator's list.
+#[tokio::test]
+async fn allowed_private_changes_apply_to_the_next_request() {
+    let env = start(&[], Duration::from_secs(10)).await;
+    let refused = |st: http::StatusCode, body: &str| {
+        assert_eq!(st, 403, "{body}");
+        assert!(body.contains("destination_refused"), "{body}");
+    };
+    let mut c = mitm(&env, env.https, false).await;
+    let (st, _, body) = text(c.send(get(env.https, "/", &[])).await).await;
+    refused(st, &body);
+
+    // Added live: the next request dials and is answered by the upstream.
+    env.handle
+        .guard()
+        .set_allowed_private(&["127.0.0.0/8".to_owned()])
+        .unwrap();
+    let mut c = mitm(&env, env.https, false).await;
+    let (st, _, body) = text(c.send(get(env.https, "/", &[])).await).await;
+    assert_eq!(st, 200, "{body}");
+
+    // Removed again: an address not dialled before is refused once more.
+    env.handle.guard().set_allowed_private(&[]).unwrap();
+    let mut c = mitm(&env, env.http, false).await;
+    let (st, _, body) = text(c.send(get(env.http, "/", &[])).await).await;
+    refused(st, &body);
+
+    // A derived host (an LLM endpoint) opens only its own name, and the operator's list survives
+    // a change of the derived ones.
+    env.handle
+        .guard()
+        .set_allowed_private(&["127.0.0.0/8".to_owned()])
+        .unwrap();
+    env.handle
+        .guard()
+        .set_derived_hosts(&["litellm.internal".to_owned()])
+        .unwrap();
+    let mut c = mitm(&env, env.http, false).await;
+    let (st, _, body) = text(c.send(get(env.http, "/", &[])).await).await;
+    // Past the guard: the dial then fails because the tunnel speaks TLS to a plaintext upstream.
+    assert_eq!(st, 502, "{body}");
+    assert!(!body.contains("destination_refused"), "{body}");
+    // A list that does not parse is refused and changes nothing.
+    assert!(
+        env.handle
+            .guard()
+            .set_allowed_private(&[String::new()])
+            .is_err()
+    );
+    assert!(
+        env.handle
+            .guard()
+            .set_allowed_private(&["10.0.0.0/99".to_owned()])
+            .is_err()
+    );
+}
+
+/// (SET-5) The upstream header timeout is read per request: lowering it applies to the next one.
+#[tokio::test]
+async fn the_header_timeout_follows_a_live_change() {
+    let env = start(&["127.0.0.0/8"], Duration::from_secs(30)).await;
+    let mut c = mitm(&env, env.https, false).await;
+    env.handle.set_header_timeout(Duration::from_millis(300));
+    let (st, _, body) = text(c.send(get(env.https, "/slow", &[])).await).await;
+    assert_eq!(st, 504, "{body}");
+    assert!(body.contains("upstream_timeout"));
+}
+
 #[tokio::test]
 async fn connect_failure_is_bad_gateway() {
     let env = start(&["127.0.0.0/8"], Duration::from_secs(5)).await;

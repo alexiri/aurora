@@ -437,8 +437,8 @@ impl AppState {
         if let Ok(c) = self.settings.snapshot().effective.raw.api_config() {
             self.auth_live
                 .store(Arc::new(domains::settings::live::LiveAuth::from_config(&c)));
-            self.api_limiter
-                .set_limits(web::apilimit::Limits::from_config(&c.ratelimit.api));
+            // (The limiter keeps the parameters it was built with: they follow the settings when
+            // a `ratelimit.*` key changes.)
             self.ops_live.store(Arc::new(c));
         }
         // The merged view (the configuration's stores, nothing stored yet) is the first registry.

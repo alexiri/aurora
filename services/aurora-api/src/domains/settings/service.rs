@@ -440,7 +440,7 @@ fn helm_entry_ids(h: &SettingsHandle, d: &SettingDef) -> Vec<String> {
     };
     h.source
         .helm_value(d.key)
-        .and_then(Value::as_array)
+        .map(|v| aurora_config::list_entries(d, v))
         .into_iter()
         .flatten()
         .filter_map(|e| e.get(f).and_then(Value::as_str).map(str::to_string))
