@@ -178,6 +178,7 @@ owner cannot be demoted or removed).
 | welcome_seen | boolean not null default false | the Welcome page was opened (or skipped); people who existed when the migration ran start at `true` (they are not newcomers) |
 | guide_dismissed | uuid[] not null default `{}` | workspaces whose getting-started guide the person dismissed (≤ 200) |
 | tour_completed_at | timestamptz null | when the navigation tour was finished or skipped; `null` = not yet |
+| notices_seen | text[] not null default `{renames-2026-11}` CHECK ≤ 50 | (phase 5, P5-IA-1, C-987) keys of one-time notices the person has dismissed, at most `ONBOARDING_NOTICES_MAX` (50). The migration gave every existing person a row with `{}` and then set the default, so only people who used the dashboard before see "Pages have new names"; a person without a row is answered as having seen it |
 
 ### `workspace_access`
 | Column | Type | Notes |
@@ -1644,11 +1645,6 @@ The gateway role gains `UPDATE (last_check_at, last_check_result)` on both table
 | created_at, resolved_at | timestamptz | `resolved_by uuid null FK → users` beside them | 5 (P5-UX-17) |
 
 UNIQUE (agent_id, app_id) WHERE status = `open` and kind = `app`; UNIQUE (agent_id, secret_id) WHERE status = `open` and kind = `website`. Open rows expire after `ACCESS_REQUEST_TTL` (14 days). The gateway role gets nothing on this table.
-
-#### `user_onboarding` (one-time notices; phase 5, P5-IA-1, C-987)
-| Planned column | Type | Notes | Phase |
-|---|---|---|---|
-| notices_seen | text[] not null default `{}` | keys of one-time notices the person has dismissed, at most `ONBOARDING_NOTICES_MAX` (50). The migration leaves existing rows empty and marks `renames-2026-11` as seen for accounts created after it, so only people who used the dashboard before see "Pages have new names" | 5 (P5-IA-1) |
 
 #### `approvals` (park and resume; phase 5, D-138)
 | Planned column | Type | Notes | Phase |

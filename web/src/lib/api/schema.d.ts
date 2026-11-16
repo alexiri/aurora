@@ -7678,6 +7678,11 @@ export interface components {
             /** @description Workspaces whose getting-started guide the person dismissed. */
             guide_dismissed: string[];
             /**
+             * @description (P5-IA-1, C-987) Keys of the one-time notices the person dismissed, at most 50. A person
+             *     created after the 2026-11 release has `renames-2026-11` from the start.
+             */
+            notices_seen: string[];
+            /**
              * Format: date-time
              * @description When the navigation tour was finished or skipped; `null` = not yet.
              */
@@ -9343,6 +9348,8 @@ export interface components {
         PatchOnboarding: {
             /** @description The whole list (at most 200 workspaces). `[]` shows every guide again. */
             guide_dismissed?: string[] | null;
+            /** @description (C-987) Append one notice key (1–64 characters: lowercase letters, digits, `-`). */
+            notice_seen?: string | null;
             /** @description `true` records now; `false` clears it so the tour is offered again. */
             tour_completed?: boolean | null;
             welcome_seen?: boolean | null;

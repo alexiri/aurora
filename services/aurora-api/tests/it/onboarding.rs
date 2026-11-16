@@ -105,6 +105,98 @@ async fn onboarding_rejects_unknown_fields_and_too_many_guides() {
 }
 
 #[tokio::test]
+async fn notices_default_for_new_accounts_append_once_and_are_limited() {
+    let h = Harness::new().await;
+    // A new account (no row, or a row from a first PATCH) has the 2026-11 renames seen already.
+    let new = h.user("n@x.io", false).await;
+    let (_, tok) = h.good_session(new).await;
+    let (_, v) = call(&h, &tok, Method::GET, "/v1/me/onboarding", None).await;
+    assert_eq!(v["notices_seen"], json!(["renames-2026-11"]), "{v}");
+    let (s, v) = call(
+        &h,
+        &tok,
+        Method::PATCH,
+        "/v1/me/onboarding",
+        Some(json!({"welcome_seen": true})),
+    )
+    .await;
+    assert_eq!(
+        (s, &v["notices_seen"]),
+        (200, &json!(["renames-2026-11"])),
+        "{v}"
+    );
+
+    // An account that existed before the release has an empty list (the migration's row).
+    let old = h.user("o@x.io", false).await;
+    sqlx::query("INSERT INTO user_onboarding (user_id, notices_seen) VALUES ($1, '{}')")
+        .bind(old)
+        .execute(h.pool())
+        .await
+        .unwrap();
+    let (_, otok) = h.good_session(old).await;
+    let (_, v) = call(&h, &otok, Method::GET, "/v1/me/onboarding", None).await;
+    assert_eq!(v["notices_seen"], json!([]), "{v}");
+    // PATCH appends, once; other fields stay.
+    for _ in 0..2 {
+        let (s, v) = call(
+            &h,
+            &otok,
+            Method::PATCH,
+            "/v1/me/onboarding",
+            Some(json!({"notice_seen": "renames-2026-11"})),
+        )
+        .await;
+        assert_eq!(
+            (s, &v["notices_seen"]),
+            (200, &json!(["renames-2026-11"])),
+            "{v}"
+        );
+    }
+    // The key's shape and the list's size are bounded.
+    for bad in ["", "Has Space", &"a".repeat(65)] {
+        let (s, v) = call(
+            &h,
+            &otok,
+            Method::PATCH,
+            "/v1/me/onboarding",
+            Some(json!({"notice_seen": bad})),
+        )
+        .await;
+        assert_eq!(s, 400, "{bad}: {v}");
+    }
+    for i in 0..49 {
+        let (s, v) = call(
+            &h,
+            &otok,
+            Method::PATCH,
+            "/v1/me/onboarding",
+            Some(json!({"notice_seen": format!("n-{i}")})),
+        )
+        .await;
+        assert_eq!(s, 200, "{i}: {v}");
+    }
+    let (s, v) = call(
+        &h,
+        &otok,
+        Method::PATCH,
+        "/v1/me/onboarding",
+        Some(json!({"notice_seen": "one-too-many"})),
+    )
+    .await;
+    assert_eq!(s, 400, "{v}");
+    // Re-sending a known key at the limit is still fine.
+    let (s, _) = call(
+        &h,
+        &otok,
+        Method::PATCH,
+        "/v1/me/onboarding",
+        Some(json!({"notice_seen": "n-3"})),
+    )
+    .await;
+    assert_eq!(s, 200);
+}
+
+#[tokio::test]
 async fn setup_status_is_for_instance_admins_and_has_reason_codes() {
     let h = Harness::new().await;
     let member = h.user("m@x.io", false).await;

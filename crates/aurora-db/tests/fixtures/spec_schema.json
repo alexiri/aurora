@@ -1164,6 +1164,7 @@
     ],
     "user_onboarding": [
       "guide_dismissed",
+      "notices_seen",
       "tour_completed_at",
       "user_id",
       "welcome_seen"
@@ -2406,6 +2407,7 @@
     },
     "user_onboarding": {
       "guide_dismissed": "uuid[] not null",
+      "notices_seen": "text[] not null",
       "tour_completed_at": "timestamptz null",
       "user_id": "uuid not null",
       "welcome_seen": "boolean not null"
