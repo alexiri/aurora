@@ -1456,6 +1456,66 @@ fn schema_of(ty: &SettingType) -> SettingSchema {
     s
 }
 
+/// Sections whose keys are not editable in the dashboard yet: they answer `editable: false` and
+/// their running values (C-973). Empty since SET-4/5 registered every section; a section with no
+/// registered key is read-only too.
+const READ_ONLY_SECTIONS: &[&str] = &[];
+
+fn section_read_only(section: &str) -> bool {
+    READ_ONLY_SECTIONS.contains(&section) || registry().section(section).next().is_none()
+}
+
+/// A field in words as C-972.
+pub fn field_info(m: &aurora_config::FieldMeta) -> FieldInfo {
+    FieldInfo {
+        key: m.key.into(),
+        label: m.label.into(),
+        help: m.help.into(),
+        kind: m.kind.as_str().into(),
+        choices: (!m.choices.is_empty()).then(|| {
+            m.choices
+                .iter()
+                .map(|c| FieldChoice {
+                    value: c.value.into(),
+                    label: c.label.into(),
+                    description: c.description.into(),
+                })
+                .collect()
+        }),
+        default_display: m.default_display.into(),
+        unit: m.unit.map(str::to_string),
+        doc: m.doc.map(|d| FieldDoc {
+            title: d.title.into(),
+            path: d.path.into(),
+        }),
+    }
+}
+
+/// The running values of a section in words, read-only (C-973). A secret key reads only "Set" or
+/// "Not set": its value is never looked at.
+fn current_values(eff: &Effective, stored: &Stored, section: &str) -> Vec<CurrentValue> {
+    let mut out = Vec::new();
+    for d in registry().section(section) {
+        let (Some(m), Some(k)) = (aurora_config::field(d.key), eff.keys.get(d.key)) else {
+            continue;
+        };
+        let set = d.secret && stored.get(section, d.key).is_some_and(is_stored_secret);
+        let value = if d.secret { &Value::Null } else { &k.value };
+        out.push(CurrentValue {
+            key: d.key.into(),
+            label: m.label.into(),
+            value_display: aurora_config::value_words(m, value, set),
+            source: if k.source == Source::Helm {
+                "helm"
+            } else {
+                "default"
+            }
+            .into(),
+        });
+    }
+    out
+}
+
 /// A section as C-772 from an effective view and the stored values.
 pub fn build_view(
     eff: &Effective,
@@ -1463,6 +1523,24 @@ pub fn build_view(
     meta: &BTreeMap<String, RowMeta>,
     section: &str,
     extra: Option<Value>,
+) -> Result<SettingsSection, ApiError> {
+    build_view_as(
+        eff,
+        stored,
+        meta,
+        section,
+        extra,
+        section_read_only(section),
+    )
+}
+
+fn build_view_as(
+    eff: &Effective,
+    stored: &Stored,
+    meta: &BTreeMap<String, RowMeta>,
+    section: &str,
+    extra: Option<Value>,
+    read_only: bool,
 ) -> Result<SettingsSection, ApiError> {
     let def = section_def(section)?;
     let m = meta.get(section);
@@ -1519,6 +1597,12 @@ pub fn build_view(
         generation: m.map_or(0, |m| m.generation),
         updated_at: m.map(|m| m.updated_at),
         updated_by_label: m.and_then(|m| m.updated_by_label.clone()),
+        fields: aurora_config::section_fields(section)
+            .into_iter()
+            .map(field_info)
+            .collect(),
+        editable: !read_only,
+        current: read_only.then(|| current_values(eff, stored, section)),
         settings,
         extra,
     })
@@ -1542,6 +1626,14 @@ pub async fn section_view(
             secret.set = true;
             s.locked = true;
             s.source = "helm".into();
+            if let Some(row) = view
+                .current
+                .as_mut()
+                .and_then(|c| c.iter_mut().find(|r| r.key == s.key))
+            {
+                row.value_display = "Set".into();
+                row.source = "helm".into();
+            }
         }
     }
     Ok(view)
@@ -1577,6 +1669,10 @@ pub fn index(state: &AppState) -> SettingsIndex {
             keys_total: total,
             keys_locked: lockedn,
             keys_dashboard: dash,
+            fields: aurora_config::section_fields(s.id)
+                .into_iter()
+                .map(field_info)
+                .collect(),
         });
     }
     let locked = super::handle::locked_keys(&state.settings)
@@ -1956,4 +2052,42 @@ pub async fn reset(
         .iter()
         .map(|(s, g)| json!({ "section": s, "generation": g }))
         .collect())
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+    use super::*;
+    use aurora_config::ConfigSource;
+
+    /// C-972, C-973: a section that is not editable answers its running values in words, and a
+    /// secret key reads only "Set" or "Not set".
+    #[test]
+    fn a_read_only_section_lists_current_values_in_words_and_never_echoes_a_secret() {
+        let eff = ConfigSource::empty().effective(&Stored::default()).unwrap();
+        let mut stored = Stored::default();
+        stored.sections.entry("email".into()).or_default().insert(
+            "email.smtp_password".into(),
+            json!({ "$secret": { "ref": "inline:abc", "plaintext": "hunter2" } }),
+        );
+        let view = build_view_as(&eff, &stored, &BTreeMap::new(), "email", None, true).unwrap();
+        assert!(!view.editable);
+        let current = view
+            .current
+            .expect("read-only sections carry current values");
+        let by = |k: &str| current.iter().find(|c| c.key == k).unwrap();
+        assert_eq!(by("email.smtp_password").value_display, "Set");
+        assert_eq!(by("email.smtp_url").value_display, "Not set");
+        assert_eq!(by("email.from").source, "default");
+        assert!(!serde_json::to_string(&current).unwrap().contains("hunter2"));
+        // An editable section carries `fields` for every setting and no `current`.
+        let editable =
+            build_view_as(&eff, &stored, &BTreeMap::new(), "approvals", None, false).unwrap();
+        assert!(editable.editable && editable.current.is_none());
+        assert_eq!(editable.fields.len(), editable.settings.len());
+        assert_eq!(
+            editable.fields[0].label,
+            "How long a question waits for an answer"
+        );
+    }
 }
