@@ -1,6 +1,6 @@
 # Implementation progress
 
-Last updated: 2026-11-15, master after `35606a00` (P4-LLM-3 merged). **Phase 5 is running**: wave 1 is merged; wave 2 runs in the same three lanes (`p5-apps`: SET-2 + SET-3 at batch gate → SET-4 → SET-5 → P4-LLM-6 → P5-MODELS-3; `p5-agent`: P4-LLM-4 → P4-LLM-5 → P5-MODELS-1 → P5-MODELS-2; `p5-platform`: FIX-146 Parts C–E → P5-FILES-1..4 (owner D-316) → P4-SSH-1/2); the wave-3 queue follows (§Execution order). Phase 6 stays closed until the owner's all-clear (D-278). Phases 0–4 are closed; their record is in `docs/history/`. **Phase 6 is proposed only** (P6-ORGTREE, P6-LIMITS; owner answers so far: D-276; P6-MODELS moved to phase 5 as P5-MODELS, D-302) and starts on the owner's word. **P5-WEBHOOK (outgoing webhook app)** specified 2026-11-15 after the owner's answers (D-320): briefs P5-WEBHOOK-1..4 ready, waiting for lane placement by the Orchestrator.
+Last updated: 2026-11-16, master after `41133ec3`. **Phase 5 is running, lanes paused**: on 2026-11-16 all three lane workers stopped on the account's usage limit (resets 2026-11-20 04:00 Europe/Zurich, or when the owner raises it); their work is committed on the lane branches, nothing uncommitted. Wave 1 is merged; wave 2 merged so far: SET-1..SET-4, FIX-124, P4-LLM-1..3, FIX-146, FIX-153/154. Paused mid-lane: `p5-apps` SET-5 (started; owner's nav hold) → P4-LLM-6 → P5-MODELS-3; `p5-agent` P4-LLM-4 + P4-LLM-5 (all gates green except `llm.sh`/`hosted.sh` s25/s26, then merge together) → P5-MODELS-1 → 2; `p5-platform` P5-FILES-1..4 (committed; a large-upload bug the journey found is being fixed, then the batch gate) → FIX-156 → FIX-155 → P4-SSH-1/2; the wave-3 queue follows (§Execution order). Phase 6 stays closed until the owner's all-clear (D-278). Phases 0–4 are closed; their record is in `docs/history/`. **Phase 6 is proposed only** (P6-ORGTREE, P6-LIMITS; owner answers so far: D-276; P6-MODELS moved to phase 5 as P5-MODELS, D-302) and starts on the owner's word. **P5-WEBHOOK (outgoing webhook app)** specified 2026-11-15 after the owner's answers (D-320): briefs P5-WEBHOOK-1..4 ready, waiting for lane placement by the Orchestrator.
 
 ## How this file is kept
 
@@ -21,9 +21,9 @@ One row per task id, counted from the task tables (closed phases: from their his
 | 2 | 52 | 51 | 1 (FIX-017: the owner's real-cluster install) | 0 | 0 | 0 | `docs/history/phase-1-2.md` (closed 2026-11-09, AUDIT-002) |
 | 3 | 15 | 15 | 0 | 0 | 0 | 0 | `docs/history/phase-3.md` (closed 2026-11-10, AUDIT-003) |
 | 4 | 124 | 123 | 0 | 0 | 0 | 1 (FIX-131 closed without a build, D-195) | `docs/history/phase-4.md` (closed 2026-11-14, AUDIT-004) |
-| 5 | 99 | 51 | 4 (P4-LLM-4, P4-LLM-5, SET-4, P5-FILES-1) | 40 (incl. P5-WEBHOOK-1..4, D-320) | 0 (every phase-5 item has a brief) | 4 (OPS-022 cancelled, D-318; FIX-049 moved to phase 4; P5-SLACK moved to phase 6, D-285; P4-S3 moved to phase 6, D-318) | §Phase 5 tasks (TEST-021 and FIX-057, done, are counted here but their rows are in `docs/history/phase-0.md`'s task graph) |
+| 5 | 99 | 52 | 7 (P4-LLM-4, P4-LLM-5, P5-FILES-1, P5-FILES-2, P5-FILES-3, P5-FILES-4, SET-5) | 36 (incl. P5-WEBHOOK-1..4, D-320) | 0 (every phase-5 item has a brief) | 4 (OPS-022 cancelled, D-318; FIX-049 moved to phase 4; P5-SLACK moved to phase 6, D-285; P4-S3 moved to phase 6, D-318) | §Phase 5 tasks (TEST-021 and FIX-057, done, are counted here but their rows are in `docs/history/phase-0.md`'s task graph) |
 | 6 (proposed) | 4 | 0 | 0 | 1 (P4-S3: specified and briefed, moved from phase 5, D-318) | 3 (P6-ORGTREE, P6-LIMITS: proposals awaiting the owner; P6-SLACK, moved from phase 5, D-285) | 0 | §Phase 6 tasks (proposed) |
-| **All** | **421** | **361** | **6** | **41** | **3** | **10** | (column sums; P5-SLACK/P6-SLACK and P4-S3 are counted in both phases) |
+| **All** | **421** | **363** | **8** | **37** | **3** | **10** | (column sums; P5-SLACK/P6-SLACK and P4-S3 are counted in both phases) |
 
 ## Environment
 
@@ -93,16 +93,16 @@ Lane order, waves and number blocks: `docs/tasks/PHASE5-PLAN.md`. Lanes `p5-apps
 | P4-011B-5 | Park-and-resume and Web Push end to end, operator pages | D-133, D-134, D-269(d) | M | tests/ops | P4-011B-1..4 | `P4-011B-5.md` | ready (wave 3: queued in lane p5-platform) |
 | P5-FILES-1 | Files backend: `exec.*` leg 2 + supervisor `sftp` exec, `auf_` legs, API SFTP pool and `/files*` routes | D-316, C-898..C-903, C-906, SEC-125/126 | L | Rust | — | `P5-FILES-1.md` | in-progress (lane p5-platform; Parts A–C committed (69fb3f31, cfa1df92, 56ea8b87) on alexiri/p5-platform, not merged; batch gate with P5-FILES-2..4) |
 | P5-FILES-2 | Files page: browse, upload (files, folders, drag and drop), download, rename, delete | D-316, C-904 | M | Next.js | P5-FILES-1 | `P5-FILES-2.md` | in-progress (lane p5-platform; committed cdc060bf, not merged) |
-| P5-FILES-3 | Files viewer: CodeMirror editor with conflict dialog, raster image preview | D-316, C-905, SEC-126 | M | Next.js | P5-FILES-2 | `P5-FILES-3.md` | in-progress (lane p5-platform; started) |
-| P5-FILES-4 | Files end to end: `scripts/e2e/files.sh` + Playwright journey | D-316, C-907 | S–M | tests | P5-FILES-1..3 | `P5-FILES-4.md` | ready (queued in lane p5-platform) |
+| P5-FILES-3 | Files viewer: CodeMirror editor with conflict dialog, raster image preview | D-316, C-905, SEC-126 | M | Next.js | P5-FILES-2 | `P5-FILES-3.md` | in-progress (lane p5-platform; committed 423da9ce (CodeMirror editor + viewer), not merged) |
+| P5-FILES-4 | Files end to end: `scripts/e2e/files.sh` + Playwright journey | D-316, C-907 | S–M | tests | P5-FILES-1..3 | `P5-FILES-4.md` | in-progress (lane p5-platform; committed 2691c870 (files.sh, kind journey, Playwright journey); the journey found a P5-FILES-1 bug: 1 MiB / 20 MiB saves intermittently fail 422 — being fixed before the batch gate) |
 | P4-SSH-1 | User SSH keys, SSH CA, certificate mint, `aurora ssh` | D-239, SEC-93 | M | both | — | `P4-SSH-1.md` | ready (queued in lane p5-platform after P5-FILES-4) |
 | P4-SSH-2 | `aurora-terminator` (certificate-only SSH into the sandbox; no port forwarding) | D-239, D-268(a)(b), SEC-92/94..96 | L | Rust/ops | P4-SSH-1, P5-FILES-1 | `P4-SSH-2.md` | ready (queued in lane p5-platform) |
 | SPEC-SETTINGS | Instance settings move from Helm into the app (Helm-set values locked) — spec batch | D-195, D-236..D-238, SEC-89/90 | L | docs | — | `SPEC-SETTINGS.md` | done (merged 76bb566a) |
 | SET-1 | Settings framework: registry, Helm locks, storage, live reload, audit, export/import, CLI, Admin › Settings | D-236 | L | both | — | `SET-1.md` | done (merged 602b90db; security review fixed: D-307) |
 | SET-2 | Governance and BYO floors as live settings | D-237 | M | both | SET-1, FIX-124 | `SET-2.md` | done (merged 2c55c538) |
 | SET-3 | LLM endpoints as live settings | D-237 | M | both | SET-2 | `SET-3.md` | done (merged 2c55c538; D-308, C-749) |
-| SET-4 | Sign-in, OIDC providers and Email editable | D-235(b), D-237 | M–L | both | SET-1 | `SET-4.md` | in-progress (lane p5-apps; complete on alexiri/p5-apps (a31d244b, c7d1ce0d) with its batch gate green; held for a coordinator-review fix: the e-mail test route can send a stored or Helm-set SMTP password to an unsaved host; D-309) |
-| SET-5 | Agents, approvals, retention, skills, SCIM, previews, terminal and limits as settings | D-235(a), D-237 | L | both | SET-1 | `SET-5.md` | ready (queued in lane p5-apps) |
+| SET-4 | Sign-in, OIDC providers and Email editable | D-235(b), D-237 | M–L | both | SET-1 | `SET-4.md` | done (merged 204cdc4a; D-309, D-310; review fix: SMTP password never re-targeted) |
+| SET-5 | Agents, approvals, retention, skills, SCIM, previews, terminal and limits as settings | D-235(a), D-237 | L | both | SET-1 | `SET-5.md` | in-progress (lane p5-apps; started; owner's nav hold applies) |
 | FIX-124 | Admin › Secret stores editable (unless set in Helm), value migration job | D-195 | M–L | both | SET-1 | `FIX-124.md` | done (merged 602b90db; D-244, D-307) |
 | FIX-133 | Read-only connections; GitHub App tokens narrowed; fine-grained GitHub auth | D-240, C-740 | M–L | both | FIX-123, FIX-107 | `FIX-133.md` | done (merged 787d5c02) |
 | FIX-134 | One Sentry app with preset region instances | D-93, D-195(a) | M | both | FIX-123, FIX-132 | `FIX-134.md` | done (merged ada98f25) |
@@ -179,7 +179,7 @@ Proposed order (Q-P6-LIM-8): the limits framework (P6-LIM-1) together with the s
 
 ## Number allocation
 
-**Next free: FIX-160, D-338, C-960, SEC-131, migration `20261201000244`.** (Reserved by the unmerged branch `alexiri/p5-ux`: FIX-159, D-320..D-336, C-909..C-954, SEC-127..SEC-129 — they collide with P5-WEBHOOK's D-320, C-909..C-913, SEC-127 on master, so at merge the branch's D-320 → **D-337**, C-909..C-913 → **C-955..C-959**, SEC-127 → **SEC-130**; those are held for that.) Edit this line in place when you take a number (check `git log -3`, `ls docs/tasks`, and this line right before committing; several sessions write briefs). Task briefs are `docs/tasks/<ID>.md`, named after the task id (`P<phase>-<NAME>` for phase features, `FIX-nnn` for fixes).
+**Next free: FIX-160, D-354, C-1000, SEC-133, migration `20261201000244`.** (Reserved by the unmerged spec branch `alexiri/p5-ux`, reworked 2026-11-16 to start after P5-WEBHOOK's numbers: FIX-159, D-321..D-353, C-914..C-990 (spare C-928, C-929, C-950..C-954 and up to C-999), SEC-128..SEC-132; its own next-free line is the one above. No renumbering is needed at its merge.) Edit this line in place when you take a number (check `git log -3`, `ls docs/tasks`, and this line right before committing; several sessions write briefs). Task briefs are `docs/tasks/<ID>.md`, named after the task id (`P<phase>-<NAME>` for phase features, `FIX-nnn` for fixes).
 
 Live reservations (numbers inside a block that a lane has already used are recorded in its commits; unused blocks are released when the lane or task closes):
 
