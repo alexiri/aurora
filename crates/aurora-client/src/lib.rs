@@ -230,6 +230,28 @@ impl Client {
         .await
     }
 
+    /// (P4-SSH-1, C-792) The public SSH address and the host keys; 404 `ssh_disabled` while SSH is off.
+    pub async fn ssh_facts(&self) -> Result<SshFacts> {
+        self.send(self.req(Method::GET, "/v1/ssh")).await
+    }
+
+    /// (P4-SSH-1, C-791) Mint a short-lived SSH user certificate for `agent_id` certifying `public_key` (one
+    /// `ssh-ed25519 …` line, registered under Account › SSH keys).
+    pub async fn mint_ssh_certificate(
+        &self,
+        agent_id: &str,
+        public_key: &str,
+    ) -> Result<SshCertificate> {
+        self.send(
+            self.req(
+                Method::POST,
+                &format!("/v1/agents/{agent_id}/ssh-certificate"),
+            )
+            .json(&json!({ "public_key": public_key })),
+        )
+        .await
+    }
+
     /// Long-poll pending approvals decidable by the caller (`wait` ≤ 30).
     pub async fn pending_approvals(&self, wait_secs: u64) -> Result<Vec<Approval>> {
         let wait = wait_secs.min(30);
