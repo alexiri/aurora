@@ -206,6 +206,19 @@ pub struct CreateSecretRequest {
     /// Managed value (exactly one of `value` / `reference`).
     pub value: Option<String>,
     pub reference: Option<SecretReference>,
+    /// (P5-UX-2, C-988, SEC-130) Give these agents access in the same request: checked like the
+    /// bulk grant (C-504) before anything is written and written in the secret's transaction.
+    /// Workspace secrets only.
+    pub grant: Option<SecretGrantRequest>,
+}
+
+/// The agents a new website or AI key is given to (C-988). Access to such an account has no
+/// level: it is `use`.
+#[derive(Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SecretGrantRequest {
+    /// 1 to `GRANT_BULK_MAX` distinct agents of the workspace; the caller must own it.
+    pub agent_ids: Vec<Uuid>,
 }
 
 fn double_option<'de, D, T>(d: D) -> Result<Option<Option<T>>, D::Error>

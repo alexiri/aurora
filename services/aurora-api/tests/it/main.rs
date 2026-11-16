@@ -33,6 +33,7 @@ mod chat_search;
 mod cli;
 mod common;
 mod connect;
+mod connect_access;
 mod connector_ops;
 mod connectors;
 mod connectors_host_tokens;

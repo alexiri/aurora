@@ -6111,6 +6111,13 @@ export interface components {
         ConfirmRequest: {
             confirm: string;
         };
+        /** @description The access a connect gives (C-957): the agents and one level for all of them. */
+        ConnectGrant: {
+            /** @description 1 to `GRANT_BULK_MAX` distinct agents of the workspace; the caller must own the workspace. */
+            agent_ids: string[];
+            /** @description Expanded on the server from the app's tools (C-980); never client-supplied tool lists. */
+            level: components["schemas"]["Level"];
+        };
         ConnectMethod: {
             access_levels: components["schemas"]["AccessLevel"][];
             /** @description (P5-UX-2, C-956) Who the method is for; an `admin` method is never suggested. */
@@ -6164,6 +6171,7 @@ export interface components {
             fields?: {
                 [key: string]: string;
             };
+            grant?: components["schemas"]["ConnectGrant"] | null;
             /**
              * Format: uuid
              * @description A registered self-hosted instance of an instance-bound app (C-243). Absent = the app's
@@ -6198,6 +6206,8 @@ export interface components {
             url: string;
         } | {
             connection: components["schemas"]["Connection"];
+            /** @description The access written with the connection (empty without a `grant`). */
+            grants: components["schemas"]["ConnectionGrant"][];
             /** @enum {string} */
             kind: "connected";
             missing_scopes: string[];
@@ -6688,6 +6698,7 @@ export interface components {
             timezone?: string | null;
         };
         CreateSecretRequest: {
+            grant?: components["schemas"]["SecretGrantRequest"] | null;
             host_pattern?: string | null;
             injection?: components["schemas"]["InjectionRecipe"] | null;
             /** @description `generic` | `llm`. */
@@ -7661,6 +7672,11 @@ export interface components {
             secret_id: string;
             usable: boolean;
         };
+        /**
+         * @description What one agent may do with one account.
+         * @enum {string}
+         */
+        Level: "read" | "ask" | "act";
         LibraryCatalogue: {
             /** @description The commit the listing was read at: quote it when adding. */
             commit_sha: string;
@@ -10915,6 +10931,14 @@ export interface components {
             id: string;
             /** Format: uuid */
             secret_id: string;
+        };
+        /**
+         * @description The agents a new website or AI key is given to (C-988). Access to such an account has no
+         *     level: it is `use`.
+         */
+        SecretGrantRequest: {
+            /** @description 1 to `GRANT_BULK_MAX` distinct agents of the workspace; the caller must own it. */
+            agent_ids: string[];
         };
         /** @description A secret grant seen from the secret (FIX-020, C-503). */
         SecretGrantView: components["schemas"]["SecretGrant"] & {

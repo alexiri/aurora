@@ -35741,6 +35741,29 @@
           }
         }
       },
+      "ConnectGrant": {
+        "type": "object",
+        "description": "The access a connect gives (C-957): the agents and one level for all of them.",
+        "required": [
+          "agent_ids",
+          "level"
+        ],
+        "properties": {
+          "agent_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "1 to `GRANT_BULK_MAX` distinct agents of the workspace; the caller must own the workspace."
+          },
+          "level": {
+            "$ref": "#/components/schemas/Level",
+            "description": "Expanded on the server from the app's tools (C-980); never client-supplied tool lists."
+          }
+        },
+        "additionalProperties": false
+      },
       "ConnectMethod": {
         "type": "object",
         "required": [
@@ -35920,6 +35943,17 @@
               "type": "string"
             }
           },
+          "grant": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ConnectGrant",
+                "description": "(P5-UX-2, C-957, SEC-130) Give these agents access in the same request: the account and\nthe access are written in one transaction (or, across an OAuth sign-in, at the callback).\nWorkspace scope, new connections only."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "instance_id": {
             "type": [
               "string",
@@ -36002,11 +36036,19 @@
             "required": [
               "connection",
               "missing_scopes",
+              "grants",
               "kind"
             ],
             "properties": {
               "connection": {
                 "$ref": "#/components/schemas/Connection"
+              },
+              "grants": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/ConnectionGrant"
+                },
+                "description": "The access written with the connection (empty without a `grant`)."
               },
               "kind": {
                 "type": "string",
@@ -37580,6 +37622,17 @@
           "kind"
         ],
         "properties": {
+          "grant": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SecretGrantRequest",
+                "description": "(P5-UX-2, C-988, SEC-130) Give these agents access in the same request: checked like the\nbulk grant (C-504) before anything is written and written in the secret's transaction.\nWorkspace secrets only."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "host_pattern": {
             "type": [
               "string",
@@ -40819,6 +40872,15 @@
             "type": "boolean"
           }
         }
+      },
+      "Level": {
+        "type": "string",
+        "description": "What one agent may do with one account.",
+        "enum": [
+          "read",
+          "ask",
+          "act"
+        ]
       },
       "LibraryCatalogue": {
         "type": "object",
@@ -51430,6 +51492,24 @@
             "format": "uuid"
           }
         }
+      },
+      "SecretGrantRequest": {
+        "type": "object",
+        "description": "The agents a new website or AI key is given to (C-988). Access to such an account has no\nlevel: it is `use`.",
+        "required": [
+          "agent_ids"
+        ],
+        "properties": {
+          "agent_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "1 to `GRANT_BULK_MAX` distinct agents of the workspace; the caller must own it."
+          }
+        },
+        "additionalProperties": false
       },
       "SecretGrantView": {
         "allOf": [

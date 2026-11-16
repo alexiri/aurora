@@ -1,4 +1,6 @@
 use crate::domains::connections::dto::Connection;
+use crate::domains::grants::dto::ConnectionGrant;
+use crate::domains::grants::levels::Level;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use utoipa::ToSchema;
@@ -29,6 +31,20 @@ pub struct ConnectRequest {
     /// A registered self-hosted instance of an instance-bound app (C-243). Absent = the app's
     /// `default_host`.
     pub instance_id: Option<Uuid>,
+    /// (P5-UX-2, C-957, SEC-130) Give these agents access in the same request: the account and
+    /// the access are written in one transaction (or, across an OAuth sign-in, at the callback).
+    /// Workspace scope, new connections only.
+    pub grant: Option<ConnectGrant>,
+}
+
+/// The access a connect gives (C-957): the agents and one level for all of them.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ConnectGrant {
+    /// 1 to `GRANT_BULK_MAX` distinct agents of the workspace; the caller must own the workspace.
+    pub agent_ids: Vec<Uuid>,
+    /// Expanded on the server from the app's tools (C-980); never client-supplied tool lists.
+    pub level: Level,
 }
 
 /// `redirect` (navigate the popup) or `connected`.
@@ -41,5 +57,7 @@ pub enum ConnectResponse {
     Connected {
         connection: Box<Connection>,
         missing_scopes: Vec<String>,
+        /// The access written with the connection (empty without a `grant`).
+        grants: Vec<ConnectionGrant>,
     },
 }
