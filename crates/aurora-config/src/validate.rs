@@ -161,6 +161,18 @@ pub struct ScimConfig {
     pub token_max_days: u32,
 }
 
+/// (P4-SSH-1, D-239) the validated `[ssh]` section.
+#[derive(Debug, Clone)]
+pub struct SshConfig {
+    pub enabled: bool,
+    /// `ssh.public_host`, defaulting to the host of `server.external_url`.
+    pub public_host: String,
+    pub public_port: u16,
+    pub cert_ttl_secs: u64,
+    /// OpenSSH public-key lines of retired CA keys (each parsed as ed25519 at startup).
+    pub previous_public_keys: Vec<String>,
+}
+
 #[derive(Debug, Clone)]
 pub struct ApiConfig {
     pub server: ServerSection,
@@ -182,6 +194,10 @@ pub struct ApiConfig {
     pub bootstrap_connector_host_tokens: Vec<(String, Redacted<String>, Vec<String>)>,
     /// (P4-PRV-2, D-146) `aul_…`: the relay's anchor token, upserted at start.
     pub bootstrap_relay_token: Option<Redacted<String>>,
+    /// (P4-SSH-1, D-239) validated `[ssh]`; `public_host` resolved.
+    pub ssh: SshConfig,
+    /// (P4-SSH-1) `AURORA_SSH_CA_KEY` (api only); checked parsable when `ssh.enabled`.
+    pub ssh_ca_key: Option<Redacted<String>>,
     pub auth: AuthSection,
     pub signup_mode: SignupMode,
     pub org_creation: OrgCreation,
@@ -546,6 +562,7 @@ impl RawConfig {
         }
         check_dev_switches(&mut c, self);
 
+        let ssh = check_ssh(&mut c, &self.ssh, s, external_url.as_deref());
         let previews = check_previews(&mut c, &self.previews, self, &external_url);
         // (P4-TERM, C-623) the terminal's operator-tunable clocks; the limits live in
         // `aurora_core::limits`.
@@ -660,6 +677,8 @@ impl RawConfig {
             bootstrap_connector_host_token: s.bootstrap_connector_host_token.clone(),
             bootstrap_connector_host_tokens,
             bootstrap_relay_token: s.bootstrap_relay_token.clone(),
+            ssh,
+            ssh_ca_key: s.ssh_ca_key.clone(),
             auth,
             signup_mode: signup_mode.unwrap_or(SignupMode::InviteOnly),
             org_creation: org_creation.unwrap_or(OrgCreation::InstanceAdmins),
@@ -1863,6 +1882,73 @@ fn check_no_userinfo(c: &mut Ctx, key: &str, v: &str, hint: &str) {
             key,
             format!("must not embed credentials (userinfo); {hint}"),
         );
+    }
+}
+
+/// (P4-SSH-1, D-239, C-797) `[ssh]`: the public address, the certificate lifetime, the retired CA
+/// keys, and — only when enabled — a parsable `AURORA_SSH_CA_KEY`, named in the refusal. The key
+/// itself never appears in an error.
+fn check_ssh(
+    c: &mut Ctx,
+    ssh: &SshSection,
+    s: &EnvSecrets,
+    external_url: Option<&str>,
+) -> SshConfig {
+    let default_host = external_url
+        .and_then(|u| parse_url(u, &["http", "https"]).ok())
+        .map(|p| p.host)
+        .unwrap_or_default();
+    let public_host = match ssh.public_host.as_deref().map(str::trim) {
+        None | Some("") => default_host,
+        Some(h) => {
+            let ok = !h.is_empty()
+                && h.len() <= 253
+                && h.chars()
+                    .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '-' | ':' | '_'));
+            if !ok {
+                c.err(
+                    "ssh.public_host",
+                    "must be a host name or IP address (no scheme, port, path or spaces)",
+                );
+            }
+            h.to_owned()
+        }
+    };
+    if ssh.public_port == 0 {
+        c.err("ssh.public_port", "must be between 1 and 65535");
+    }
+    if !(60..=86_400).contains(&ssh.cert_ttl_secs) {
+        c.err("ssh.cert_ttl_secs", "must be between 60 and 86400 seconds");
+    }
+    for (i, line) in ssh.ca.previous_public_keys.iter().enumerate() {
+        if let Err(m) = crate::ssh::parse_ssh_ed25519_public_key(line) {
+            c.err(format!("ssh.ca.previous_public_keys[{i}]"), m);
+        }
+    }
+    if ssh.enabled {
+        match &s.ssh_ca_key {
+            None => c.err(
+                "AURORA_SSH_CA_KEY",
+                "required when ssh.enabled is true (ed25519:<base64 32-byte seed> or an unencrypted OpenSSH ed25519 private key)",
+            ),
+            Some(k) => {
+                if let Err(m) = crate::ssh::parse_ssh_ed25519_private_key(k.expose()) {
+                    c.err("AURORA_SSH_CA_KEY", m);
+                }
+            }
+        }
+    }
+    SshConfig {
+        enabled: ssh.enabled,
+        public_host,
+        public_port: ssh.public_port,
+        cert_ttl_secs: ssh.cert_ttl_secs,
+        previous_public_keys: ssh
+            .ca
+            .previous_public_keys
+            .iter()
+            .map(|l| l.trim().to_owned())
+            .collect(),
     }
 }
 

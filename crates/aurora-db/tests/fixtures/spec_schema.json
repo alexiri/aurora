@@ -1052,6 +1052,21 @@
       "space_label",
       "space_ref"
     ],
+    "ssh_keys": [
+      "algorithm",
+      "fingerprint",
+      "id",
+      "last_used_at",
+      "name",
+      "public_key",
+      "user_id"
+    ],
+    "ssh_mint_counters": [
+      "agent_id",
+      "count",
+      "user_id",
+      "window_start"
+    ],
     "storage_snapshots": [
       "computed_at",
       "payload",
@@ -2306,6 +2321,21 @@
       "listen": "text",
       "space_label": "text not null",
       "space_ref": "text not null"
+    },
+    "ssh_keys": {
+      "algorithm": "text not null",
+      "fingerprint": "text not null",
+      "id": "uuid not null",
+      "last_used_at": "timestamptz null",
+      "name": "text not null",
+      "public_key": "text not null",
+      "user_id": "uuid not null"
+    },
+    "ssh_mint_counters": {
+      "agent_id": "uuid not null",
+      "count": "int not null",
+      "user_id": "uuid not null",
+      "window_start": "timestamptz not null"
     },
     "storage_snapshots": {
       "computed_at": "timestamptz not null",

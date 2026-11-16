@@ -356,6 +356,64 @@ pub async fn can_use<'e, E: PgExecutor<'e>>(
     Ok(workspace_access(exec, user, ws).await?.is_some())
 }
 
+/// The outcome of [`can_ssh`] (docs/04 §SSH access, D-239(a)): who may SSH into which sandbox is
+/// the web terminal's rule. `Denied` collapses "agent unknown", "person disabled" and "no
+/// `can_use`" so a caller cannot probe which one it was (the API answers 404).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SshAccess {
+    /// `ssh.enabled`, the person is active, `can_use` holds, the agent is hosted and not frozen.
+    Allowed { workspace_id: Uuid, org_id: Uuid },
+    /// `ssh.enabled` is off.
+    Disabled,
+    /// The agent does not exist, the person is disabled or has no `can_use` of its workspace.
+    Denied,
+    /// A BYO agent: it has no sandbox to reach (422 `ssh_not_supported`).
+    NotHosted,
+    /// A freeze applies to the agent, its workspace or its org (423 `frozen`; the level).
+    Frozen(crate::repo::freeze::Scope),
+}
+
+/// `can_ssh(user, agent)` (docs/04 §SSH access): `ssh_enabled` **and** the user is not disabled
+/// **and** `can_use` of the agent's workspace **and** the agent is hosted **and** no freeze
+/// applies. Implemented once here and evaluated at the certificate mint, the session open, every
+/// channel open and every heartbeat. The order of the refusals is the terminal's (`Denied`
+/// before `NotHosted` before `Frozen`), so a person without access learns nothing.
+pub async fn can_ssh(
+    conn: &mut sqlx::PgConnection,
+    ssh_enabled: bool,
+    user: Uuid,
+    agent: Uuid,
+) -> Result<SshAccess, DbError> {
+    if !ssh_enabled {
+        return Ok(SshAccess::Disabled);
+    }
+    let row: Option<(Uuid, Uuid, String, bool)> = sqlx::query_as(
+        "SELECT a.workspace_id, a.org_id, a.kind,
+                EXISTS (SELECT 1 FROM users u WHERE u.id = $2 AND u.disabled_at IS NULL)
+         FROM agents a WHERE a.id = $1",
+    )
+    .bind(agent)
+    .bind(user)
+    .fetch_optional(&mut *conn)
+    .await?;
+    let Some((workspace_id, org_id, kind, user_active)) = row else {
+        return Ok(SshAccess::Denied);
+    };
+    if !user_active || !can_use(&mut *conn, user, workspace_id).await? {
+        return Ok(SshAccess::Denied);
+    }
+    if kind != "hosted" {
+        return Ok(SshAccess::NotHosted);
+    }
+    if let Some(e) = crate::repo::freeze::effective_of_agent(conn, agent).await? {
+        return Ok(SshAccess::Frozen(e.level));
+    }
+    Ok(SshAccess::Allowed {
+        workspace_id,
+        org_id,
+    })
+}
+
 pub async fn can_own<'e, E: PgExecutor<'e>>(
     exec: E,
     user: Uuid,

@@ -48,6 +48,9 @@ pub struct EnvSecrets {
     pub bootstrap_connector_host_tokens: Option<Redacted<String>>,
     /// (P4-PRV-2) `aul_…`: the relay's anchor token, upserted at start.
     pub bootstrap_relay_token: Option<Redacted<String>>,
+    /// (P4-SSH-1, D-239(d)) `AURORA_SSH_CA_KEY`: the SSH user-certificate CA private key
+    /// (`ed25519:<base64 seed>` or unencrypted OpenSSH ed25519); the API only.
+    pub ssh_ca_key: Option<Redacted<String>>,
     /// (P4-PRV-2) `aul_…`: the relay's own credential (`aurora-relay` only).
     pub relay_token: Option<Redacted<String>>,
     /// OIDC client secrets keyed by provider id (from each `client_secret_env`).
@@ -98,6 +101,9 @@ pub struct RawConfig {
     pub relay: RelaySection,
     /// (phase 4, P4-TERM, D-161) the dashboard's web terminal: master switch and clocks.
     pub terminal: TerminalSection,
+    /// (phase 5, P4-SSH-1, D-239) SSH access to sandboxes: master switch, the public address
+    /// people connect to, the certificate lifetime and the retired CA public keys.
+    pub ssh: SshSection,
     pub telemetry: TelemetrySection,
     #[serde(skip)]
     pub env_secrets: EnvSecrets,
@@ -759,6 +765,45 @@ impl Default for TerminalSection {
             wake_wait_secs: 45,
         }
     }
+}
+
+/// `[ssh]` (phase 5, P4-SSH-1, D-239; docs/15 §SSH access): SSH access to hosted agents'
+/// sandboxes. The limits live in `aurora_core::limits`; the CA private key is the secret
+/// `AURORA_SSH_CA_KEY` (never in the file). P4-SSH-2 adds the session caps and clocks.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct SshSection {
+    /// Master switch (default off, independent of `terminal.enabled`): off means every SSH
+    /// route answers 404 `ssh_disabled`. Startup refuses `true` without a parsable
+    /// `AURORA_SSH_CA_KEY`.
+    pub enabled: bool,
+    /// The name people connect to; default: the host of `server.external_url`.
+    pub public_host: Option<String>,
+    /// The port people connect to (shown, returned, used in `known_hosts` lines).
+    pub public_port: u16,
+    /// `SSH_CERT_TTL` in seconds, 60 … 86 400.
+    pub cert_ttl_secs: u64,
+    pub ca: SshCaSection,
+}
+impl Default for SshSection {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            public_host: None,
+            public_port: 22,
+            cert_ttl_secs: 900,
+            ca: SshCaSection::default(),
+        }
+    }
+}
+
+/// `[ssh.ca]`: CA rotation overlap.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct SshCaSection {
+    /// OpenSSH public-key lines of retired CA keys the terminators still accept (at least
+    /// `ssh.cert_ttl_secs` of overlap); the API never signs with them.
+    pub previous_public_keys: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

@@ -264,6 +264,7 @@ fn read_env_secrets(
             errors,
         ),
         bootstrap_relay_token: read_secret(env, "AURORA_BOOTSTRAP_RELAY_TOKEN", errors),
+        ssh_ca_key: read_secret(env, "AURORA_SSH_CA_KEY", errors),
         relay_token: read_secret(env, "AURORA_RELAY_TOKEN", errors),
         oidc_client_secrets: BTreeMap::new(),
         redis_username: None,

@@ -21,6 +21,9 @@ pub struct Features {
     /// (phase 4, P4-TERM, C-622) The web terminal is enabled on this instance; the Terminal
     /// tab exists only when this is true.
     pub terminal: bool,
+    /// (phase 5, P4-SSH-1, C-791) SSH access to sandboxes is enabled on this instance; the
+    /// Account › SSH keys page and the agent page's SSH page exist only when this is true.
+    pub ssh: bool,
 }
 
 /// (phase 4, P4-PRV-1) The instance's preview configuration; the domain is public in DNS, so it
@@ -85,6 +88,7 @@ pub fn instance_info(
             channels: false,
             previews: cfg.previews.enabled,
             terminal: cfg.terminal.enabled,
+            ssh: cfg.ssh.enabled,
         },
         previews: PreviewsInfo {
             enabled: cfg.previews.enabled,

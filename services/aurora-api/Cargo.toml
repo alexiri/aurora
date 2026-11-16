@@ -50,6 +50,7 @@ lettre = { workspace = true }
 async-trait = { workspace = true }
 thiserror = { workspace = true }
 aws-lc-rs = { workspace = true }
+ssh-key = { workspace = true }
 aurora-secrets = { workspace = true }
 aurora-llm = { workspace = true }
 aurora-policy = { workspace = true }

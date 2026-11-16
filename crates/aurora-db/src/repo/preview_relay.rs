@@ -335,7 +335,9 @@ pub async fn prune_preview_expiries<'e, E: PgExecutor<'e> + Copy>(exec: E) -> Re
     .rows_affected();
     let t = crate::repo::terminal_grants::prune_terminal_grants(exec).await?;
     let f = crate::repo::file_grants::prune_file_grants(exec).await?;
-    Ok(g + s + dead + t + f)
+    // (P4-SSH-1) the SSH mint ledger's rows older than 24 h ride the same sweep.
+    let m = crate::repo::ssh::prune_mint_counters(exec).await?;
+    Ok(g + s + dead + t + f + m)
 }
 
 // ------------------------------------------------------------ accounting

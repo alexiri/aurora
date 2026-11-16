@@ -4,5 +4,6 @@ mod counters_build;
 mod db;
 mod deletion;
 mod gateway_grants;
+mod migration_order;
 mod schema_6_11;
 mod schema_matches_spec;

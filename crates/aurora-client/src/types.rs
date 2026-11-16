@@ -162,6 +162,30 @@ pub struct ContextCredential {
     pub proxy_url: String,
 }
 
+/// (phase 5, P4-SSH-1, C-792) `GET /v1/ssh`: where to connect and the terminators' host keys.
+#[derive(Debug, Clone, Deserialize)]
+pub struct SshFacts {
+    pub host: String,
+    pub port: u16,
+    #[serde(default)]
+    pub terminators_live: u32,
+    /// `known_hosts` lines (`<host> <key>` or `[<host>]:<port> <key>`); empty until a terminator registers.
+    #[serde(default)]
+    pub known_hosts: Vec<String>,
+}
+
+/// (phase 5, P4-SSH-1, C-791) `POST /v1/agents/{agent}/ssh-certificate` response (the fields the CLI uses).
+#[derive(Debug, Clone, Deserialize)]
+pub struct SshCertificate {
+    /// The `ssh-ed25519-cert-v01@openssh.com` line.
+    pub certificate: String,
+    pub username: String,
+    pub host: String,
+    pub port: u16,
+    #[serde(default)]
+    pub known_hosts: Vec<String>,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct AgentToken {
     pub token: String,

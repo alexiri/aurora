@@ -147,6 +147,9 @@ aws-lc-rs = "1.18"
 ed25519-dalek = { version = "3.0", features = ["rand_core", "zeroize"] }
 lettre = { version = "0.11", default-features = false, features = ["tokio1-rustls-tls", "builder", "smtp-transport", "tokio1", "aws-lc-rs", "hostname"] }
 zeroize = { version = "1.8", features = ["derive"] }
+# (phase 5, P4-SSH-1, D-239) OpenSSH public keys, `SHA256:` fingerprints and user certificates
+# (RustCrypto, Apache-2.0/MIT). The 0.7 line shares this workspace's ed25519-dalek 3 / sha2 0.11.
+ssh-key = { version = "=0.7.0-rc.12", default-features = false, features = ["ed25519", "std", "alloc", "rand_core"] }
 base64 = "0.23"
 crc32fast = "1"
 hex = "0.4"
