@@ -81,7 +81,7 @@ function SettingsForm({ orgId, initial }: { orgId: string; initial: ScimSettings
     <Form onSubmit={submit} noValidate className="max-w-xl" aria-label="Directory sync settings">
       <CheckboxField
         id="scim-enabled"
-        label="Enable directory sync (SCIM 2.0)"
+        label="Turn on directory sync (SCIM 2.0)"
         hint="Your identity provider provisions and deprovisions members of this organization through /scim/v2. People who already have an account show as “Waiting for first sign-in” until they next sign in."
         checked={enabled}
         onChange={setEnabled}
@@ -250,7 +250,7 @@ function TokenSection({ orgId, enabled }: { orgId: string; enabled: boolean }) {
         <p className="text-muted text-sm">
           {enabled
             ? "No tokens yet. Create one and paste it into your identity provider's provisioning settings."
-            : "Enable directory sync to create a token."}
+            : "Turn on directory sync to create a token."}
         </p>
       )}
     </div>

@@ -207,7 +207,7 @@ function ScheduleRow({ agentId, s, defaultTimezone, wsId, canOwn }: { agentId: s
           </Button>
         ) : null}
         <Button size="sm" variant="outline" disabled={upd.isPending} onClick={() => upd.mutate({ id: s.id, body: { enabled: !s.enabled } })}>
-          {s.enabled ? "Disable" : "Enable"}
+          {s.enabled ? "Turn off" : "Turn on"}
         </Button>
         <Button size="sm" variant="outline" aria-expanded={showRuns} onClick={() => setShowRuns((v) => !v)}>
           {showRuns ? "Hide runs" : "Runs"}

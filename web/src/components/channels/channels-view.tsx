@@ -146,7 +146,7 @@ function IntegrationRow({
           "none"
         )}
       </p>
-      <p className="text-xs text-muted">Credentials: stored</p>
+      <p className="text-xs text-muted">Access details: stored</p>
       {connector && hasCapability(connector, "email_verified") ? (
         <AutolinkSwitch
           integration={integration}

@@ -230,7 +230,7 @@ function ConnectDialog({ orgId, open, onOpenChange }: { orgId: string; open: boo
       <Field id="lib-label" label="Label">
         <input id="lib-label" className={inputClass} value={label} maxLength={80} onChange={(e) => setLabel(e.target.value)} />
       </Field>
-      <Field id="lib-conn" label="Connection">
+      <Field id="lib-conn" label="Account">
         <select id="lib-conn" className={inputClass} value={chosen} onChange={(e) => setConnection(e.target.value)}>
           {usable.map((c) => (
             <option key={c.id} value={c.id}>

@@ -21,9 +21,9 @@ for (const scheme of ["light", "dark"] as const) {
       test("the settings index lists the sections and the locked key", async ({ page }) => {
         await openRoute(page, "/admin/settings", scheme);
         await expect(page.getByRole("heading", { name: "All settings", level: 1 })).toBeVisible();
-        await expect(page.getByRole("link", { name: "Governance", exact: true })).toBeVisible();
+        await expect(page.getByRole("link", { name: "Instance rules", exact: true })).toBeVisible();
         await page.getByRole("searchbox", { name: "Search settings" }).fill("no such setting");
-        await expect(page.getByRole("link", { name: "Governance", exact: true })).toHaveCount(0);
+        await expect(page.getByRole("link", { name: "Instance rules", exact: true })).toHaveCount(0);
         await page.getByRole("searchbox", { name: "Search settings" }).fill("");
         await expect(page.getByText(/1 setting is configured in Helm and cannot be changed here/)).toBeVisible();
         expect(await overflow(page)).toBeLessThanOrEqual(0);
@@ -43,7 +43,8 @@ for (const scheme of ["light", "dark"] as const) {
         // Administration › Internet access holds the egress keys: the Helm-locked one reads as text.
         await openRoute(page, "/admin/internet-access", scheme);
         await expect(page.getByRole("heading", { name: "Internet access", level: 1 })).toBeVisible();
-        await expect(page.getByTestId("governance.egress.minimum_posture-locked-value")).toHaveText("restricted");
+        // The locked value reads in words, never the stored id (D-341).
+        await expect(page.getByTestId("governance.egress.minimum_posture-locked-value")).toHaveText("Approved websites only");
         await expect(page.getByText("config.governance.egress.minimum_posture").first()).toBeVisible();
         await expect(page.locator("[id='governance.egress.minimum_posture-c']")).toHaveCount(0);
         expect(await overflow(page)).toBeLessThanOrEqual(0);
@@ -51,6 +52,29 @@ for (const scheme of ["light", "dark"] as const) {
         // Administration › Agents › BYO holds the BYO agents and agent tokens groups.
         await openRoute(page, "/admin/agents?tab=byo", scheme);
         await expect(page.getByRole("group", { name: "Agent tokens" })).toBeVisible();
+        expect(await overflow(page)).toBeLessThanOrEqual(0);
+        expect(await axeClean(page)).toEqual([]);
+      });
+
+      // P5-IA-5 (C-972): the BYO choice reads in words, as choice cards with a sentence each, never `owners_only`.
+      test("the BYO choice reads in words", async ({ page }) => {
+        await openRoute(page, "/admin/agents?tab=byo", scheme);
+        const group = page.getByRole("radiogroup", { name: "Who may connect their own agent" });
+        await expect(group.getByRole("radio")).toHaveCount(3);
+        await expect(group.getByText("Only workspace owners may connect their own agent.")).toBeVisible();
+        await expect(group.getByRole("radio", { name: /Workspace owners only/ })).toBeChecked();
+        await expect(page.getByText("Default: Workspace owners only")).toBeVisible();
+        await expect(page.getByText("owners_only")).toHaveCount(0);
+        expect(await overflow(page)).toBeLessThanOrEqual(0);
+        expect(await axeClean(page)).toEqual([]);
+      });
+
+      // P5-IA-5 (C-973): a section that is not editable yet shows its current values read-only, never an empty form.
+      test("a section that is not editable shows its current values read-only", async ({ page }) => {
+        await openRoute(page, "/admin/data?tab=retention", scheme);
+        await expect(page.getByTestId("retention.request_log_days-current")).toHaveText("30 days");
+        await expect(page.getByText("Change them in your Helm values")).toBeVisible();
+        await expect(page.getByText("No settings in this section yet")).toHaveCount(0);
         expect(await overflow(page)).toBeLessThanOrEqual(0);
         expect(await axeClean(page)).toEqual([]);
       });

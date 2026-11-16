@@ -160,7 +160,7 @@ describe("Add connector flow", () => {
   it("says the connector host is not running and keeps the self-hosted path", async () => {
     await openAdd({ "GET /v1/admin/connector-types": () => json(200, types([], false)) });
     expect(await screen.findByText("The connector host is not running")).toBeInTheDocument();
-    expect(screen.getByText(/docs\/operator\/plugins-and-connectors\.md/)).toBeInTheDocument();
+    expect(screen.getByText(/“Plugins and connectors” in the operator guide/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Self-hosted connector (advanced)" })).toBeInTheDocument();
   });
 

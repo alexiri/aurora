@@ -2,6 +2,8 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Page } from "@playwright/test";
 
+import { withWords } from "./settings-words";
+
 // Shared API mock for the stage-4 enforcement specs. No backend is needed. The data uses the REAL
 // built-in packages (names from plugins/builtin/*/plugin.yaml, icons from their assets/): never
 // generic stand-ins.
@@ -176,7 +178,9 @@ export async function mockApi(
   await page.route("**/v1/**", async (route) => {
     const url = new URL(route.request().url());
     const p = url.pathname;
-    const json = (b: unknown, status = 200) => route.fulfill({ status, contentType: "application/json", body: JSON.stringify(b) });
+    // (P5-IA-5) The settings sections come with their words (`fields`), as the API's field registry writes them.
+    const json = (b: unknown, status = 200) =>
+      route.fulfill({ status, contentType: "application/json", body: JSON.stringify(/^\/v1\/admin\/settings\/[a-z_]+$/.test(p) ? withWords(b) : b) });
     if (p.includes("/stream")) return route.abort();
     const hit = exact.get(p) ?? patterns.find(([re]) => re.test(p))?.[1];
     if (hit !== undefined) {
@@ -274,7 +278,7 @@ export async function mockApi(
     // (phase 5, SET-1) Admin › Settings: the index with a Helm-locked key, and one generic section.
     if (p === "/v1/admin/settings") {
       const titles: [string, string, string][] = [
-        ["governance", "Governance", "Instance floors for LLM keys, egress and bring-your-own agents."],
+        ["governance", "Instance rules", "What organizations may not go below: AI keys, Internet access and agents people run themselves."],
         ["llm", "LLM endpoints", "Providers and endpoints agents may reach."],
         ["sign_in", "Sign-in", "Sign-up, sessions and identity providers."],
       ];
@@ -303,12 +307,13 @@ export async function mockApi(
     if (p === "/v1/admin/settings/governance") {
       const sch = (kind: string, extra: Record<string, unknown> = {}) => ({ kind, min: null, max: null, max_len: null, options: null, item_kind: null, ...extra });
       return json({
-        section: "governance", title: "Governance", description: "Instance floors for LLM keys, egress and bring-your-own agents.", generation: 1,
+        section: "governance", title: "Instance rules", description: "What organizations may not go below: AI keys, Internet access and agents people run themselves.", generation: 1,
         updated_at: now, updated_by_label: "root@example.test", extra: null,
         settings: [
           { key: "governance.egress.minimum_posture", value: "restricted", source: "helm", locked: true, helm_key: "config.governance.egress.minimum_posture", default: "open", schema: sch("enum", { options: ["open", "restricted", "strict"] }), list: null, id_field: null, entries: null, secret: null },
           { key: "governance.llm.require_key_origin", value: true, source: "dashboard", locked: false, helm_key: "config.governance.llm.require_key_origin", default: false, schema: sch("bool"), list: null, id_field: null, entries: null, secret: null },
           { key: "governance.agent_tokens.max_age_days", value: 90, source: "default", locked: false, helm_key: "config.governance.agent_tokens.max_age_days", default: 90, schema: sch("int", { min: 1, max: 3650 }), list: null, id_field: null, entries: null, secret: null },
+          { key: "byo.minimum_posture", value: "owners_only", source: "default", locked: false, helm_key: "config.byo.minimum_posture", default: "owners_only", schema: sch("enum", { options: ["enabled", "owners_only", "disabled"] }), list: null, id_field: null, entries: null, secret: null },
           { key: "byo.default_source_cidrs", value: ["10.0.0.0/8"], source: "dashboard", locked: false, helm_key: "config.byo.default_source_cidrs", default: [], schema: sch("list", { item_kind: "string", max: 50 }), list: "whole", id_field: null, entries: null, secret: null },
           { key: "governance.example.token", value: null, source: "dashboard", locked: false, helm_key: "config.governance.example.token", default: null, schema: sch("string"), list: null, id_field: null, entries: null, secret: { set: true, updated_at: now, from_env: null } },
           { key: "governance.example.items", value: [{ id: "managed" }], source: "default", locked: false, helm_key: "config.governance.example.items", default: [], schema: sch("list", { item_kind: "object" }), list: "keyed", id_field: "id", entries: [{ id: "managed", value: { id: "managed" }, source: "helm", locked: true, warnings: null }], secret: null },
@@ -487,6 +492,15 @@ export async function mockApi(
     // would otherwise be taken for a workspace's approvals list.
     const section = p.match(/^\/v1\/admin\/settings\/([a-z_]+)$/)?.[1];
     if (section && section !== "export" && section !== "import") {
+      // (P5-IA-5, C-973) The retention section stands for one that is not editable yet: its current values, read-only.
+      if (section === "retention") {
+        return json({
+          section, title: "Retention & storage", description: "How long data is kept and storage quotas.", generation: 1, updated_at: now, updated_by_label: null, extra: null,
+          settings: [], editable: false,
+          fields: [{ key: "retention.request_log_days", label: "Keep the activity of requests for", help: "How long the record of what agents asked for is kept.", kind: "int", choices: null, default_display: "30 days", unit: "days", doc: { title: "Retention and attachment quota", path: "docs/operator/retention-and-quota.md" } }],
+          current: [{ key: "retention.request_log_days", label: "Keep the activity of requests for", value_display: "30 days", source: "helm" }],
+        });
+      }
       return json({ section, title: section, description: "", generation: 1, updated_at: now, updated_by_label: null, extra: null, settings: [] });
     }
     if (p.endsWith("/approvals")) return json({ items: url.searchParams.get("status") === "pending" ? [approval] : [], next_cursor: null });

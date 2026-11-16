@@ -100,7 +100,6 @@ describe("Settings in words (C-972, D-341)", () => {
   });
 
   it("saves a duration back in seconds and a chosen option by its stored id", async () => {
-    let put: { values: Record<string, unknown> } | null = null;
     mockFetch({
       "GET /v1/admin/settings/agents": () => json(200, agents()),
       "POST /v1/admin/settings/agents/preview": () => json(200, { generation: 1, diff: [], loosening: [], affected_orgs: [], affected_orgs_total: 0, warnings: [] }),
@@ -114,9 +113,9 @@ describe("Settings in words (C-972, D-341)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await vi.waitFor(() => expect(fetchSpy.mock.calls.some(([r]) => (r as Request).method === "PUT")).toBe(true));
     const req = fetchSpy.mock.calls.map(([r]) => r as Request).find((r) => r.method === "PUT")!;
-    put = (await req.clone().json()) as typeof put;
-    expect(put?.values["approvals.timeout_secs"]).toBe(1200);
-    expect(put?.values["byo.minimum_posture"]).toBe("disabled");
+    const put = (await req.clone().json()) as { values: Record<string, unknown> };
+    expect(put.values["approvals.timeout_secs"]).toBe(1200);
+    expect(put.values["byo.minimum_posture"]).toBe("disabled");
   });
 
   it("shows a section that is not editable read-only: current values in words, a source chip, no Save", () => {

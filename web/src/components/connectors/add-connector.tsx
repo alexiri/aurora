@@ -80,7 +80,7 @@ function NoHost() {
   return (
     <EmptyState title="The connector host is not running">
       No connector host has reported in the last 90 seconds, so there are no connector types to add. Start the host and
-      reload; see <code className="font-mono">docs/operator/plugins-and-connectors.md</code>.
+      reload; see “Plugins and connectors” in the operator guide.
     </EmptyState>
   );
 }

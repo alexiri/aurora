@@ -200,7 +200,7 @@ function WebhookRow({ agentId, w, onSecret, wsId, canOwn }: { agentId: string; w
           </Button>
         ) : null}
         <Button size="sm" variant="outline" disabled={upd.isPending} onClick={() => upd.mutate({ id: w.id, body: { enabled: !w.enabled } })}>
-          {w.enabled ? "Disable" : "Enable"}
+          {w.enabled ? "Turn off" : "Turn on"}
         </Button>
         {confirm === "rotate" ? (
           <Button

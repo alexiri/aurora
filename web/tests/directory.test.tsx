@@ -182,7 +182,7 @@ describe("Directory sync page", () => {
       "GET /v1/instance": () => json(200, { oidc_providers: [] }),
     });
     wrap(<OrgDirectoryView org={{ id: ORG, slug: "acme" }} isOwner />);
-    expect(await screen.findByText("Enable directory sync to create a token.")).toBeInTheDocument();
+    expect(await screen.findByText("Turn on directory sync to create a token.")).toBeInTheDocument();
     expect(screen.queryByLabelText("New token name")).not.toBeInTheDocument();
   });
 
