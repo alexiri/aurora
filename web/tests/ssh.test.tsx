@@ -3,6 +3,8 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { ProfileView } from "@/components/account/profile-view";
+import { accountRoutes } from "@/lib/routes";
 import { SshKeysView } from "@/components/account/ssh-keys-view";
 import { SshPage } from "@/components/agents/ssh-page";
 import { availableSections, isPageAvailable, resolvePage } from "@/components/agents/sections";
@@ -296,6 +298,29 @@ describe("SshPage", () => {
     await screen.findByText(/frozen/);
     expect(screen.queryByRole("button", { name: "Get a certificate" })).not.toBeInTheDocument();
     expect(fn).not.toHaveBeenCalled();
+  });
+});
+
+describe("Your account links to the SSH keys page", () => {
+  const me = {
+    approval_email: true,
+    groups: [],
+    memberships: [],
+    user: { id: "u1", email: "a@b.c", display_name: "Ann", created_at: "2026-01-01T00:00:00Z" },
+  };
+  it("shows the link through accountRoutes.ssh only while features.ssh is on", async () => {
+    mockFetch({ "GET /v1/me": () => json(200, me), "GET /v1/instance": () => json(200, instance(true)) });
+    wrap(<ProfileView />);
+    const link = await screen.findByRole("link", { name: "Manage your SSH keys" });
+    expect(link).toHaveAttribute("href", accountRoutes.ssh);
+    expect(accountRoutes.ssh).toBe("/account/ssh");
+  });
+
+  it("has no link with features.ssh off", async () => {
+    mockFetch({ "GET /v1/me": () => json(200, me), "GET /v1/instance": () => json(200, instance(false)) });
+    wrap(<ProfileView />);
+    await screen.findByText("Appearance");
+    expect(screen.queryByRole("link", { name: "Manage your SSH keys" })).not.toBeInTheDocument();
   });
 });
 

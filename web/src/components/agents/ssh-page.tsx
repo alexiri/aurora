@@ -14,6 +14,7 @@ import { Notice } from "@/components/ui/notice";
 import { Section } from "@/components/ui/section";
 import { ApiError } from "@/lib/api/client";
 import { errorMessage } from "@/lib/api/errors";
+import { accountRoutes } from "@/lib/routes";
 import { nextHourAt, sshErrorText, useMintSshCertificate, useSshFacts, useSshKeys, type SshCertificate } from "@/lib/api/ssh";
 
 /** The certificate as a download named like the file OpenSSH looks for next to `id_ed25519`. */
@@ -86,7 +87,7 @@ function SshContent({ agentId }: { agentId: string }) {
               <li className="space-y-2">
                 <p>
                   <span className="font-medium text-ink">1. Add your key</span> on{" "}
-                  <Link href="/account/ssh" className="text-accent-ink underline">
+                  <Link href={accountRoutes.ssh} className="text-accent-ink underline">
                     Account › SSH keys
                   </Link>
                   .
@@ -94,7 +95,7 @@ function SshContent({ agentId }: { agentId: string }) {
                 {myKeys.length === 0 ? (
                   <Notice tone="pending" role="status">
                     You have no SSH key yet.{" "}
-                    <Link href="/account/ssh" className="font-medium underline">
+                    <Link href={accountRoutes.ssh} className="font-medium underline">
                       Add one under Account › SSH keys
                     </Link>{" "}
                     to get a certificate.
