@@ -42,7 +42,9 @@ async fn world_with(helm_provider: bool, extra_env: &[(&str, &str)], extra: &str
     let text = if helm_provider {
         helm_toml(&helm, extra)
     } else {
-        format!("[gateway]\nallowed_private = [\"127.0.0.1\"]\n[auth]\ninstance_admins = [\"root@x.io\", \"new@x.io\"]\n{extra}\n")
+        format!(
+            "[gateway]\nallowed_private = [\"127.0.0.1\"]\n[auth]\ninstance_admins = [\"root@x.io\", \"new@x.io\"]\n{extra}\n"
+        )
     };
     let mut env = vec![("HELM_SECRET", CLIENT_SECRET)];
     env.extend_from_slice(extra_env);
