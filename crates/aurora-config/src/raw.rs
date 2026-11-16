@@ -56,6 +56,13 @@ pub struct EnvSecrets {
     pub bootstrap_terminator_token: Option<Redacted<String>>,
     /// (P4-PRV-2) `aul_…`: the relay's own credential (`aurora-relay` only).
     pub relay_token: Option<Redacted<String>>,
+    /// (P4-SSH-2, D-239) `AURORA_TERMINATOR_TOKEN`, `aut_…`: the terminator's own credential
+    /// (`aurora-terminator` only; the API reads the same value as
+    /// `AURORA_BOOTSTRAP_TERMINATOR_TOKEN`).
+    pub terminator_token: Option<Redacted<String>>,
+    /// (P4-SSH-2, SEC-96) `AURORA_SSH_HOST_KEY`: the SSH host key, same two formats as the CA
+    /// key; terminator pods only, the same value on every replica.
+    pub ssh_host_key: Option<Redacted<String>>,
     /// OIDC client secrets keyed by provider id (from each `client_secret_env`).
     pub oidc_client_secrets: BTreeMap<String, Redacted<String>>,
     /// (phase 4, P4-CNT) values of `ratelimit.counters.redis.username_env` / `password_env`.
@@ -102,6 +109,8 @@ pub struct RawConfig {
     pub previews: PreviewsSection,
     /// (phase 4, P4-PRV-2) the `aurora-relay` service.
     pub relay: RelaySection,
+    /// (phase 5, P4-SSH-2) the `aurora-terminator` service.
+    pub terminator: TerminatorSection,
     /// (phase 4, P4-TERM, D-161) the dashboard's web terminal: master switch and clocks.
     pub terminal: TerminalSection,
     /// (phase 5, P4-SSH-1, D-239) SSH access to sandboxes: master switch, the public address
@@ -731,6 +740,41 @@ impl Default for RelaySection {
             request_body_max_bytes: 100 * 1024 * 1024,
             previews_domain: None,
             trusted_proxies: vec![],
+        }
+    }
+}
+
+/// `[terminator]` (phase 5, P4-SSH-2, D-239; docs/15 §SSH access): the `aurora-terminator`
+/// service. The protocol limits live in `aurora_core::limits`; these are the per-replica
+/// pre-auth ceilings an operator behind a load balancer that hides client addresses must be
+/// able to raise.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct TerminatorSection {
+    /// The API the terminator registers with (default the local dev API).
+    pub api_url: String,
+    /// SSH listen address (published as `terminator.service.port` → 2222).
+    pub listen: String,
+    /// Health and metrics listener (4194).
+    pub ops_port: u16,
+    /// `SSH_PREAUTH_MAX` / `SSH_PREAUTH_PER_IP`: unauthenticated connections in total and per
+    /// client address.
+    pub max_preauth: u32,
+    pub max_preauth_per_ip: u32,
+    /// `SSH_CONNECT_RATE`: new connections per client address per minute, and the burst.
+    pub connect_rate_per_min: u32,
+    pub connect_burst: u32,
+}
+impl Default for TerminatorSection {
+    fn default() -> Self {
+        Self {
+            api_url: "http://127.0.0.1:4101".into(),
+            listen: "0.0.0.0:2222".into(),
+            ops_port: 4194,
+            max_preauth: aurora_core::limits::SSH_PREAUTH_MAX,
+            max_preauth_per_ip: aurora_core::limits::SSH_PREAUTH_PER_IP,
+            connect_rate_per_min: aurora_core::limits::SSH_CONNECT_RATE,
+            connect_burst: aurora_core::limits::SSH_CONNECT_BURST,
         }
     }
 }

@@ -267,6 +267,8 @@ fn read_env_secrets(
         ssh_ca_key: read_secret(env, "AURORA_SSH_CA_KEY", errors),
         bootstrap_terminator_token: read_secret(env, "AURORA_BOOTSTRAP_TERMINATOR_TOKEN", errors),
         relay_token: read_secret(env, "AURORA_RELAY_TOKEN", errors),
+        terminator_token: read_secret(env, "AURORA_TERMINATOR_TOKEN", errors),
+        ssh_host_key: read_secret(env, "AURORA_SSH_HOST_KEY", errors),
         oidc_client_secrets: BTreeMap::new(),
         redis_username: None,
         redis_password: None,

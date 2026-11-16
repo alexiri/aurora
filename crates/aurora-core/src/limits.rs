@@ -515,6 +515,21 @@ pub const SSH_WAKE_WAIT: Duration = Duration::from_secs(90);
 pub const SSH_CHANNEL_POLL_MAX: Duration = Duration::from_secs(45);
 /// (C-794) terminator-plane requests per second per replica, burst `2 ×` it.
 pub const SSH_API_RATE: u32 = 50;
+/// (phase 5, P4-SSH-2, 16 §W20, D-356) the terminator's authentication limits: real attempts per
+/// connection before it ends (the `none` probe is not one; russh's own backstop is one more),
+/// the delay of every refusal, and the time from accept to authenticated.
+pub const SSH_AUTH_ATTEMPTS: usize = 6;
+pub const SSH_AUTH_FAILURE_DELAY: Duration = Duration::from_secs(1);
+pub const SSH_AUTH_TIMEOUT: Duration = Duration::from_secs(20);
+/// (16 §W20) per replica: unauthenticated connections in total / per client address, and the
+/// per-address token bucket (connections per minute, burst); `[terminator]` may raise them.
+pub const SSH_PREAUTH_MAX: u32 = 256;
+pub const SSH_PREAUTH_PER_IP: u32 = 8;
+pub const SSH_CONNECT_RATE: u32 = 30;
+pub const SSH_CONNECT_BURST: u32 = 10;
+/// (16 §W20) consecutive failed heartbeats after which the terminator closes every session and
+/// refuses new authentications until one succeeds.
+pub const SSH_HEARTBEAT_FAILURES: u32 = 3;
 /// (03 §ssh_sessions) closed session rows are kept this long; grants are pruned after 24 h.
 pub const SSH_SESSION_RETENTION: Duration = Duration::from_secs(30 * 24 * 3600);
 

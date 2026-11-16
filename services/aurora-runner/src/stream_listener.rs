@@ -1793,6 +1793,11 @@ async fn serve_exec_leg(
         framed.extend_from_slice(&b);
         ws_send(sink, Message::binary(framed)).await.is_ok()
     }
+    // (P4-SSH-2) An SSH channel is a bulk path (`scp`, `sftp` uploads): a chunk that does not fit
+    // the supervisor's remaining credit is held, the leg stops reading the socket meanwhile (TCP
+    // backpressure to the terminator, `16 §W18`) and the chunk is sent when credit returns. The
+    // files leg keeps its strict rule: over-window data is a violation.
+    let mut held: Option<Vec<u8>> = None;
     let reason = loop {
         tokio::select! {
             _ = resize_flush.tick(), if pending_resize.is_some() => {
@@ -1808,14 +1813,21 @@ async fn serve_exec_leg(
                     break CLOSE_CHANNEL_LOST;
                 }
             }
-            msg = stream.next() => match msg {
+            msg = stream.next(), if held.is_none() => match msg {
                 Some(Ok(Message::Binary(b))) => {
                     idle.as_mut().reset(tokio::time::Instant::now() + idle_limit);
                     // `[0x02][payload ≤ 16 KiB]` only; any other tag is a violation.
                     let Some((&0x02, payload)) = b.split_first() else {
                         break CLOSE_REFUSED;
                     };
-                    if payload.len() > TERMINAL_CHUNK || to_sup_credit < payload.len() {
+                    if payload.len() > TERMINAL_CHUNK {
+                        break CLOSE_REFUSED;
+                    }
+                    if to_sup_credit < payload.len() {
+                        if ssh {
+                            held = Some(payload.to_vec());
+                            continue;
+                        }
                         break CLOSE_REFUSED;
                     }
                     if payload.is_empty() {
@@ -1896,6 +1908,16 @@ async fn serve_exec_leg(
                 }
                 Some(LegIn::Credit(c)) => {
                     to_sup_credit = (to_sup_credit + c as usize).min(window);
+                    if let Some(h) = held.take_if(|h| h.len() <= to_sup_credit) {
+                        to_sup_credit -= h.len();
+                        bytes_in += h.len() as u64;
+                        if state.send_data(&r, 0x02, id, &h).await.is_err() {
+                            break CLOSE_CHANNEL_LOST;
+                        }
+                        if ssh {
+                            state.stamp_awake(sandbox, true).await;
+                        }
+                    }
                 }
                 Some(LegIn::Opened { .. }) => {}
                 // The route was removed: the supervisor's `pty.close` already queued the code.

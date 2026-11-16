@@ -1322,6 +1322,65 @@ fn connector_host_config_defaults_token_and_overrides() {
     assert!(!format!("{c:?}").contains("auh_abc123"));
 }
 
+/// (P4-SSH-2) The terminator's slice: `aut_` token and host key (both formats) required, defaults
+/// from `aurora_core::limits`, positive ceilings, the key never quoted in an error.
+#[test]
+fn terminator_config_requires_token_and_host_key_in_either_format() {
+    use base64::Engine as _;
+    let seed = base64::engine::general_purpose::STANDARD.encode([9u8; 32]);
+    let key = format!("ed25519:{seed}");
+    let env = [
+        ("AURORA_TERMINATOR_TOKEN", "aut_abc123"),
+        ("AURORA_SSH_HOST_KEY", key.as_str()),
+    ];
+    let c = load_with(BASE, &env).unwrap().terminator_config().unwrap();
+    assert_eq!(c.api_url, "http://127.0.0.1:4101");
+    assert_eq!(c.listen, "0.0.0.0:2222");
+    assert_eq!(c.ops_port, 4194);
+    assert_eq!(c.max_preauth, aurora_core::limits::SSH_PREAUTH_MAX);
+    assert_eq!(
+        c.max_preauth_per_ip,
+        aurora_core::limits::SSH_PREAUTH_PER_IP
+    );
+    assert_eq!(c.token.expose(), "aut_abc123");
+    // Overrides (an operator behind a balancer that hides client addresses raises them).
+    let c = load_with(
+        &format!(
+            "{BASE}\n[terminator]\napi_url = \"http://aurora-api:4101/\"\nmax_preauth_per_ip = 64\n"
+        ),
+        &env,
+    )
+    .unwrap()
+    .terminator_config()
+    .unwrap();
+    assert_eq!(c.api_url, "http://aurora-api:4101");
+    assert_eq!(c.max_preauth_per_ip, 64);
+    // Missing or malformed secrets are named; the key itself never appears.
+    let e = load_with(BASE, &[])
+        .unwrap()
+        .terminator_config()
+        .unwrap_err();
+    assert!(
+        e.has_key("AURORA_TERMINATOR_TOKEN") && e.has_key("AURORA_SSH_HOST_KEY"),
+        "{e}"
+    );
+    let e = load_with(
+        BASE,
+        &[
+            ("AURORA_TERMINATOR_TOKEN", "abc"),
+            ("AURORA_SSH_HOST_KEY", "ed25519:not-base64!!"),
+        ],
+    )
+    .unwrap()
+    .terminator_config()
+    .unwrap_err();
+    assert!(
+        e.has_key("AURORA_TERMINATOR_TOKEN") && e.has_key("AURORA_SSH_HOST_KEY"),
+        "{e}"
+    );
+    assert!(!e.to_string().contains("not-base64"), "{e}");
+}
+
 /// `relay.trusted_proxies` (FIX-090): empty by default, strict CIDRs, `/0` refused.
 #[test]
 fn relay_trusted_proxies_default_empty_and_validated() {

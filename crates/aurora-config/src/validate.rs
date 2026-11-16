@@ -45,6 +45,7 @@ pub enum Service {
     Runner,
     Connector,
     Relay,
+    Terminator,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -405,6 +406,23 @@ pub struct RelayConfig {
     pub telemetry: TelemetrySection,
 }
 
+/// The SSH terminator (`aurora-terminator`, P4-SSH-2, D-239).
+#[derive(Debug, Clone)]
+pub struct TerminatorConfig {
+    /// `aut_…`: the terminator's credential (the API anchors the same value).
+    pub token: Redacted<String>,
+    /// `AURORA_SSH_HOST_KEY` as given (validated: parsable ed25519, either format).
+    pub host_key: Redacted<String>,
+    pub api_url: String,
+    pub listen: String,
+    pub ops_port: u16,
+    pub max_preauth: u32,
+    pub max_preauth_per_ip: u32,
+    pub connect_rate_per_min: u32,
+    pub connect_burst: u32,
+    pub telemetry: TelemetrySection,
+}
+
 #[derive(Debug, Clone)]
 pub enum ServiceConfig {
     Api(Box<ApiConfig>),
@@ -413,6 +431,7 @@ pub enum ServiceConfig {
     Runner(Box<RunnerConfig>),
     Connector(Box<ConnectorConfig>),
     Relay(Box<RelayConfig>),
+    Terminator(Box<TerminatorConfig>),
 }
 
 impl RawConfig {
@@ -425,6 +444,7 @@ impl RawConfig {
             Service::Runner => ServiceConfig::Runner(Box::new(self.runner_config()?)),
             Service::Connector => ServiceConfig::Connector(Box::new(self.connector_config()?)),
             Service::Relay => ServiceConfig::Relay(Box::new(self.relay_config()?)),
+            Service::Terminator => ServiceConfig::Terminator(Box::new(self.terminator_config()?)),
         })
     }
 
@@ -1162,6 +1182,72 @@ impl RawConfig {
             request_body_max_bytes: r.request_body_max_bytes,
             trusted_proxies: r.trusted_proxies.clone(),
             tls: self.tls.clone(),
+            telemetry: self.telemetry.clone(),
+        })
+    }
+
+    /// (P4-SSH-2, D-239) The terminator validates its own slice: its `aut_` credential, a
+    /// parsable ed25519 host key (either format; the error never quotes the key), the API URL
+    /// and the listen addresses. The pre-auth ceilings are operator-tunable (a balancer that
+    /// hides client addresses needs them raised, `15 §SSH access`), only required positive.
+    pub fn terminator_config(&self) -> Result<TerminatorConfig> {
+        let mut c = Ctx::default();
+        let token = match &self.env_secrets.terminator_token {
+            Some(t) => {
+                token_prefix(&mut c, "AURORA_TERMINATOR_TOKEN", t, "aut_");
+                Some(t.clone())
+            }
+            None => {
+                c.err("AURORA_TERMINATOR_TOKEN", "required");
+                None
+            }
+        };
+        let host_key = match &self.env_secrets.ssh_host_key {
+            Some(k) => {
+                if let Err(e) = crate::ssh::parse_ssh_ed25519_private_key(k.expose()) {
+                    c.err("AURORA_SSH_HOST_KEY", e);
+                }
+                Some(k.clone())
+            }
+            None => {
+                c.err("AURORA_SSH_HOST_KEY", "required");
+                None
+            }
+        };
+        let t = &self.terminator;
+        if !(t.api_url.starts_with("http://") || t.api_url.starts_with("https://")) {
+            c.err("terminator.api_url", "must be an http(s) URL");
+        }
+        if t.listen
+            .rsplit_once(':')
+            .is_none_or(|(_, p)| p.parse::<u16>().is_err())
+        {
+            c.err("terminator.listen", "must be host:port");
+        }
+        check_pos(&mut c, "terminator.max_preauth", Some(t.max_preauth));
+        check_pos(
+            &mut c,
+            "terminator.max_preauth_per_ip",
+            Some(t.max_preauth_per_ip),
+        );
+        check_pos(
+            &mut c,
+            "terminator.connect_rate_per_min",
+            Some(t.connect_rate_per_min),
+        );
+        check_pos(&mut c, "terminator.connect_burst", Some(t.connect_burst));
+        check_common(&mut c, &self.tls, &self.telemetry);
+        c.finish()?;
+        Ok(TerminatorConfig {
+            token: token.unwrap_or_default(),
+            host_key: host_key.unwrap_or_default(),
+            api_url: t.api_url.trim_end_matches('/').to_owned(),
+            listen: t.listen.clone(),
+            ops_port: t.ops_port,
+            max_preauth: t.max_preauth,
+            max_preauth_per_ip: t.max_preauth_per_ip,
+            connect_rate_per_min: t.connect_rate_per_min,
+            connect_burst: t.connect_burst,
             telemetry: self.telemetry.clone(),
         })
     }

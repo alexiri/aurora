@@ -23,6 +23,7 @@ members = [
   "services/aurora-gateway",
   "services/aurora-hookhost",
   "services/aurora-relay",
+  "services/aurora-terminator",
   "services/aurora-runner",
   "services/aurora-supervisor",
   "services/aurora-cli",
@@ -99,6 +100,10 @@ tokio-tungstenite = { version = "0.30", default-features = false, features = ["c
 # (P5-FILES-1, D-316) the SFTP v3 client of the Files page (Apache-2.0; the raw session over any
 # AsyncRead + AsyncWrite, `extended()` for `posix-rename@openssh.com`; no SSH stack).
 russh-sftp = { version = "3.0.1", default-features = false }
+# (P4-SSH-2, D-239) the terminator's SSH server (Apache-2.0). Default features off: no RSA, no
+# compression; `aws-lc-rs` is the crypto backend already in the tree. `russh-sftp` is a dev-dependency
+# of russh only (the terminator never speaks SFTP), so the tree has one `ssh-key` and one `russh-sftp`.
+russh = { version = "0.65.2", default-features = false, features = ["aws-lc-rs"] }
 lru = "0.19"
 # No `reqwest` feature: openidconnect 4 is built for reqwest 0.12; aurora-api's OidcHttp adapts the
 # workspace reqwest instead (domains/oidc/client.rs).
