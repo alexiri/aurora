@@ -50479,7 +50479,7 @@
           },
           "kind": {
             "type": "string",
-            "description": "`bool`, `int`, `duration_secs`, `string`, `enum`, `list`, `object`."
+            "description": "`bool`, `int`, `float`, `duration_secs`, `string`, `enum`, `list`, `object`."
           },
           "max": {
             "type": [

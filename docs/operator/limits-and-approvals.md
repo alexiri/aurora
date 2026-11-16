@@ -3,6 +3,16 @@
 (Phase 2, RFE-017 and RFE-011a; streaming fan-out is phase 1, RFE-016.) The normative text is [docs/05 §Conventions](../05-control-plane-api.md#conventions) (rate limiting) and
 [docs/07 §Approval deadlines](../07-policy-approvals.md) (approvals). In Helm, put the keys under `config.ratelimit`, `config.approvals` and `config.email`.
 
+**Where to change them (phase 5, SET-5).** Everything on this page is an instance setting, edited live: the API rate limits
+(`ratelimit.api.multiplier`, `org_per_minute` and the per-class overrides) and the gateway's `allowed_private`, condition body
+cap and upstream header timeout on **Admin › Settings › Limits**, and the approval timeouts and notification e-mail on **Admin ›
+Settings › Approvals**. A change applies without a restart: the API limiter takes the new bucket parameters at the next request
+and keeps every caller's remaining budget; the gateway applies the new list and caps to the next request; holds recorded after
+a change use the new timeouts. Setting a key under `config.*` in Helm locks it (the page shows "Configured in Helm"); a rate
+class you define in Helm is locked alone, the other classes stay editable. The `allowed_private` list opens private addresses to
+agents and apps: the confirmation dialog flags every added entry. (`ratelimit.api.enabled` and the counter backends stay
+configuration.) The Helm form below remains the locked alternative.
+
 **Agent-token maximum age.** `governance.agent_tokens.max_age_days` (the longest life of a BYO agent token, `08 §7`) is
 edited on **Admin › Settings › Governance** (phase 5, SET-2) and takes effect live; setting it in Helm locks it. Lowering
 or introducing it shortens live tokens (keeping at least seven days), raising or removing it never extends one; organizations

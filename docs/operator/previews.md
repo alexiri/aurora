@@ -11,6 +11,10 @@ is the operator's path through it. Chart keys are listed in
 
 ## What you need
 
+(Phase 5, SET-5.) Whether previews exist (`relay.enabled`) and their domain stay in Helm. Their limits — session lifetime and
+idle time, the awake cap, shares per agent and organization, bytes per share per day — are instance settings on **Admin ›
+Settings › Previews**, read each time a preview is used; setting one under `config.previews.*` locks it.
+
 1. **A preview domain** you control and that is **not** the dashboard's host or a parent of it, for example
    `aurora-previews.example.org` next to `aurora.example.org`. Startup refuses a domain that contains, is or sits
    under `server.external_url`, an `auth.trusted_origins` entry or the gateway's advertised proxy host, a single

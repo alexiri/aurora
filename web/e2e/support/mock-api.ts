@@ -376,6 +376,38 @@ export async function mockApi(
         ],
       });
     }
+    // (phase 5, SET-5) The operational pages: agents with the runners' sizes, a terminal the deployment does not
+    // provide, and limits with a Helm rate class and the allowed-private list.
+    if (p === "/v1/admin/settings/agents" || p === "/v1/admin/settings/terminal" || p === "/v1/admin/settings/limits") {
+      const sch = (kind: string, o: Record<string, unknown> = {}) => ({ kind, min: null, max: null, max_len: null, options: null, item_kind: null, ...o });
+      const k = { locked: false, helm_key: "config.x", list: null, id_field: null, entries: null, source: "default", default: null, secret: null };
+      const sec = (section: string, title: string, settings: unknown[], extra: unknown) => json({
+        section, title, description: `${title} settings.`, generation: 2, updated_at: now, updated_by_label: "root@example.test", extra, settings,
+      });
+      if (p.endsWith("/agents")) {
+        return sec("agents", "Agents & sandboxes", [
+          { ...k, key: "agents.default_name", value: "Daneel", default: "Daneel", schema: sch("string", { max_len: 100 }) },
+          { ...k, key: "hosted.enabled_harnesses", value: ["claude-code"], default: ["claude-code"], schema: sch("list", { item_kind: "string" }) },
+          { ...k, key: "hosted.idle_stop_secs", value: 1800, source: "helm", locked: true, helm_key: "config.hosted.idle_stop_secs", default: 1800, schema: sch("int") },
+          { ...k, key: "hosted.turn_ceiling_secs", value: 21600, default: 21600, schema: sch("int") },
+        ], { runners: [{ id: id(40), name: "main", sandbox_memory_mib: 4096, sandbox_cpus: 2, sandbox_pids: 512, home_gib: 5, max_sandboxes: 7, harnesses: ["claude-code"] }] });
+      }
+      if (p.endsWith("/terminal")) {
+        return sec("terminal", "Terminal", [
+          { ...k, key: "terminal.enabled", value: false, default: false, schema: sch("bool") },
+          { ...k, key: "terminal.awake_cap_secs", value: 14400, default: 14400, schema: sch("int") },
+        ], { available: false });
+      }
+      return sec("limits", "Limits", [
+        { ...k, key: "ratelimit.api.multiplier", value: 1, default: 1, schema: sch("float", { min: 0, max: 100 }) },
+        {
+          ...k, key: "ratelimit.api.classes", value: [{ class: "write", per_minute: 600, burst: 100 }], source: "helm", list: "keyed", id_field: "class", default: [],
+          schema: sch("list", { item_kind: "object", max: 16 }),
+          entries: [{ id: "write", source: "helm", locked: true, value: { class: "write", per_minute: 600, burst: 100 }, warnings: null }],
+        },
+        { ...k, key: "gateway.allowed_private", value: ["10.1.0.0/16"], source: "dashboard", default: [], schema: sch("list", { item_kind: "string" }) },
+      ], null);
+    }
     if (p === "/v1/admin/placement/preview") return json({ name: "bobj", slug: "bobj", used: 0, unresolved: [] });
     if (p === "/v1/admin/placement/choices") {
       return json({ workspaces: [{ id: id(2), slug: "main", name: "Main workspace" }], secrets: [{ id: id(300), name: "org-llm-key", kind: "llm" }], connections: [] });
@@ -504,6 +536,9 @@ export const ROUTES: { name: string; path: string; admin?: boolean }[] = [
   { name: "admin-settings-llm", path: "/admin/settings/llm" },
   { name: "admin-settings-sign-in", path: "/admin/settings/sign-in" },
   { name: "admin-settings-email", path: "/admin/settings/email" },
+  { name: "admin-settings-agents", path: "/admin/settings/agents" },
+  { name: "admin-settings-terminal", path: "/admin/settings/terminal" },
+  { name: "admin-settings-limits", path: "/admin/settings/limits" },
   { name: "admin-secret-stores", path: "/admin/secret-stores" },
   { name: "admin-plugins", path: "/admin/plugins" },
   { name: "admin-plugin-detail", path: "/admin/plugins/github" },
