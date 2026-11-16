@@ -1017,6 +1017,34 @@ fn method_rules(cx: &mut Ctx<'_>) {
             }
         }
     }
+    // (P5-UX-2, C-956) `scope_presets`: each entry is a scope the method declares, and `read`
+    // holds only read scopes (so "Read only" can never request a write scope).
+    for (i, c) in app.connect.iter().enumerate() {
+        let presets = match c {
+            Connect::Oauth2(o) => o.scope_presets.as_ref(),
+            Connect::Fields(f) => f.scope_presets.as_ref(),
+            Connect::Hook(_) => None,
+        };
+        let Some(presets) = presets else { continue };
+        for (key, list) in [("read", &presets.read), ("write", &presets.write)] {
+            for (j, s) in list.iter().enumerate() {
+                let pp = format!("/connect/{i}/scope_presets/{key}/{j}");
+                match c.declared_scopes().iter().find(|d| &d.scope == s) {
+                    None => cx.v(
+                        "scope_preset_unknown",
+                        &pp,
+                        format!("`scope_presets.{key}` names scope `{s}`, which the method does not declare"),
+                    ),
+                    Some(d) if key == "read" && d.access != Access::Read => cx.v(
+                        "scope_preset_write",
+                        &pp,
+                        format!("scope `{s}` is a write scope: `scope_presets.read` may hold only read scopes"),
+                    ),
+                    Some(_) => {}
+                }
+            }
+        }
+    }
     // (FIX-136) `fields` method scope declarations and their read probes.
     for (i, c) in app.connect.iter().enumerate() {
         let Connect::Fields(f) = c else { continue };
