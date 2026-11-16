@@ -128,6 +128,9 @@ apps:
           - bearer: "{credentials.access_token}"
 "#;
 
+/// The AWS-like package's guide: every placeholder, and one that must stay literal.
+const GUIDE: &str = "# Set up\n\nCallback: {{aurora.callback_url}}\n\nExternal id: {{aurora.external_id}}\n\nSetup: {{aurora.app_setup}}\n\nClients: {{aurora.page:oauth_clients}}\n\nHosted: {{aurora.page:self_hosted}}\n\nPackages: {{aurora.page:packages}}\n";
+
 struct W {
     h: Harness,
     org: Uuid,
@@ -139,8 +142,42 @@ struct W {
 }
 
 async fn install(h: &Harness, admin: &str, key: &SigningKey, yaml: &str) {
+    install_with_guide(h, admin, key, yaml, None).await;
+}
+
+async fn install_with_guide(
+    h: &Harness,
+    admin: &str,
+    key: &SigningKey,
+    yaml: &str,
+    guide: Option<&[u8]>,
+) {
     let hd = [("cookie", admin), ("origin", ORIGIN)];
+    let (_, v) = upload(h, admin, key, yaml, guide).await;
+    assert_eq!(v["status"], "pending_approval", "{}", v["violations"]);
+    let (s, _, v) = h
+        .send(
+            Method::POST,
+            &format!("/v1/admin/plugins/{}/approve", v["id"].as_str().unwrap()),
+            &hd,
+            Some(json!({})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+}
+
+/// Upload a signed package; the status and body of the answer.
+async fn upload(
+    h: &Harness,
+    admin: &str,
+    key: &SigningKey,
+    yaml: &str,
+    guide: Option<&[u8]>,
+) -> (u16, Value) {
     let mut b = PackageBuilder::new(yaml);
+    if let Some(g) = guide {
+        b.set_file("docs/setup.md", g);
+    }
     b.sign(key, &PackageBuilder::key_id(key));
     let boundary = "XB";
     let mut body = format!(
@@ -161,18 +198,10 @@ async fn install(h: &Harness, admin: &str, key: &SigningKey, yaml: &str) {
         .body(Body::from(body))
         .unwrap();
     let res = h.app.clone().oneshot(req).await.unwrap();
+    let status = res.status().as_u16();
     let v: Value =
         serde_json::from_slice(&res.into_body().collect().await.unwrap().to_bytes()).unwrap();
-    assert_eq!(v["status"], "pending_approval", "{}", v["violations"]);
-    let (s, _, v) = h
-        .send(
-            Method::POST,
-            &format!("/v1/admin/plugins/{}/approve", v["id"].as_str().unwrap()),
-            &hd,
-            Some(json!({})),
-        )
-        .await;
-    assert_eq!(s, 200, "{v}");
+    (status, v)
 }
 
 async fn named(h: &Harness, email: &str, name: &str, admin: bool) -> Uuid {
@@ -202,7 +231,7 @@ async fn world() -> W {
         .await;
     assert_eq!(s, 201, "{v}");
     install(&h, &root_ck, &key, MULTI).await;
-    install(&h, &root_ck, &key, AWS).await;
+    install_with_guide(&h, &root_ck, &key, AWS, Some(GUIDE.as_bytes())).await;
     let org = h.org().await;
     let ws = h.workspace(org).await;
     let adam = named(&h, "adam@x.io", "Adam Admin", false).await;
@@ -474,4 +503,208 @@ async fn who_may_ask_for_a_setup_status() {
     // Unknown app: 404.
     let (s, _) = w.setup(&w.org_admin, "nope", &w.org_q()).await;
     assert_eq!(s, 404);
+}
+
+// ---- P5-UX-13 (D-334, C-940): the guide, filled in for the viewer ----
+
+async fn guide(w: &W, who: &str, app: &str, q: &str) -> (u16, String) {
+    let req = Request::builder()
+        .uri(format!("/v1/apps/{app}/guide?{q}"))
+        .header("cookie", who)
+        .header("origin", ORIGIN)
+        .body(Body::empty())
+        .unwrap();
+    let res = w.h.app.clone().oneshot(req).await.unwrap();
+    let s = res.status().as_u16();
+    let b = res.into_body().collect().await.unwrap().to_bytes();
+    (s, String::from_utf8_lossy(&b).into_owned())
+}
+
+async fn ws_slug(w: &W) -> String {
+    sqlx::query_scalar("SELECT slug FROM workspaces WHERE id = $1")
+        .bind(w.ws)
+        .fetch_one(w.h.pool())
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn the_guide_is_filled_in_for_a_workspace_owner() {
+    let w = world().await;
+    let (s, g) = guide(&w, &w.ws_owner, "awsk", &w.ws_q()).await;
+    assert_eq!(s, 200, "{g}");
+    let (o, ws) = (org_slug(&w).await, ws_slug(&w).await);
+    let b = external(&g);
+    assert!(!g.contains("{{aurora."), "{g}");
+    assert!(
+        g.contains("Callback: `") && g.contains("/v1/oauth/callback`"),
+        "{g}"
+    );
+    // A member of the organization sees its external id (the test org's equals its slug).
+    assert!(g.contains(&format!("External id: `{o}`")), "{g}");
+    // The workspace owner's setup page; a workspace has no OAuth clients tab, so it is the
+    // same page. The tabs they cannot open name who can.
+    let setup = format!("[AWS Keys setup]({b}/o/{o}/w/{ws}/apps/awsk)");
+    assert!(g.contains(&format!("Setup: {setup}")), "{g}");
+    assert!(g.contains(&format!("Clients: {setup}")), "{g}");
+    assert!(
+        g.contains("Hosted: Self-hosted apps (ask an organization admin: Adam Admin)"),
+        "{g}"
+    );
+    assert!(
+        g.contains("Packages: Packages (ask an administrator of this Aurora instance)"),
+        "{g}"
+    );
+}
+
+/// The deployment's external URL, read back from the callback URL the guide printed.
+fn external(g: &str) -> String {
+    let i = g.find("Callback: `").unwrap() + "Callback: `".len();
+    let j = g.find("/v1/oauth/callback`").unwrap();
+    g[i..j].to_owned()
+}
+
+#[tokio::test]
+async fn the_guide_links_an_org_admin_to_the_organizations_tabs() {
+    let w = world().await;
+    let o = org_slug(&w).await;
+    for q in [w.org_q(), w.ws_q()] {
+        let (s, g) = guide(&w, &w.org_admin, "awsk", &q).await;
+        assert_eq!(s, 200, "{g}");
+        let b = external(&g);
+        assert!(
+            g.contains(&format!(
+                "Clients: [OAuth clients]({b}/o/{o}/apps?tab=oauth-clients)"
+            )),
+            "{g}"
+        );
+        assert!(
+            g.contains(&format!(
+                "Hosted: [Self-hosted apps]({b}/o/{o}/apps?tab=self-hosted)"
+            )),
+            "{g}"
+        );
+        assert!(
+            g.contains("Packages: Packages (ask an administrator of this Aurora instance)"),
+            "{g}"
+        );
+    }
+    let (_, g) = guide(&w, &w.org_admin, "awsk", &w.org_q()).await;
+    assert!(
+        g.contains(&format!(
+            "Setup: [AWS Keys setup]({}/o/{o}/apps/awsk)",
+            external(&g)
+        )),
+        "{g}"
+    );
+}
+
+#[tokio::test]
+async fn the_guide_sends_an_instance_admin_to_administration_and_hides_the_external_id() {
+    let w = world().await;
+    // No level named (and not a member of any organization): the callback URL is real, the
+    // organization's id is not shown, every tab is the Administration one.
+    let (s, g) = guide(&w, &w.root, "awsk", "").await;
+    assert_eq!(s, 200, "{g}");
+    let b = external(&g);
+    assert!(
+        g.contains("External id: (shown to members of your organization)"),
+        "{g}"
+    );
+    assert!(
+        g.contains(&format!(
+            "Clients: [OAuth clients]({b}/admin/apps?tab=oauth-clients)"
+        )),
+        "{g}"
+    );
+    assert!(
+        g.contains(&format!(
+            "Hosted: [Self-hosted apps]({b}/admin/apps?tab=self-hosted)"
+        )),
+        "{g}"
+    );
+    assert!(
+        g.contains(&format!(
+            "Packages: [Packages]({b}/admin/apps?tab=packages)"
+        )),
+        "{g}"
+    );
+    assert!(
+        g.contains("Setup: the app's setup page (ask an organization admin)"),
+        "{g}"
+    );
+}
+
+#[tokio::test]
+async fn a_plain_member_sees_the_external_id_and_who_to_ask() {
+    let w = world().await;
+    let o = org_slug(&w).await;
+    let (s, g) = guide(&w, &w.member, "awsk", &w.ws_q()).await;
+    assert_eq!(s, 200, "{g}");
+    assert!(g.contains(&format!("External id: `{o}`")), "{g}");
+    assert!(
+        g.contains("Setup: the app's setup page (ask a workspace owner: Adam Admin, Wendy Owner)"),
+        "{g}"
+    );
+    assert!(
+        g.contains("Clients: OAuth clients (ask an organization admin: Adam Admin)"),
+        "{g}"
+    );
+    // Someone outside the organization learns nothing about it: not found, no id.
+    let stranger = named(&w.h, "out@x.io", "Out Sider", false).await;
+    let (_, t) = w.h.good_session(stranger).await;
+    for q in [w.ws_q(), w.org_q()] {
+        let (s, g) = guide(&w, &cookie(&t), "awsk", &q).await;
+        assert_eq!(s, 404, "{g}");
+        assert!(!g.contains(&o), "{g}");
+    }
+}
+
+#[tokio::test]
+async fn guide_values_are_escaped_and_never_substituted_twice() {
+    let w = world().await;
+    sqlx::query("UPDATE organizations SET external_id = $2 WHERE id = $1")
+        .bind(w.org)
+        .bind("a`*_[x](y){{aurora.page:packages}}")
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+    let (s, g) = guide(&w, &w.ws_owner, "awsk", &w.ws_q()).await;
+    assert_eq!(s, 200, "{g}");
+    // A code span with a longer fence than any backtick run in the value, text kept as is.
+    assert!(
+        g.contains("External id: ``a`*_[x](y){{aurora.page:packages}}``"),
+        "{g}"
+    );
+    // The value's placeholder was not filled in a second pass.
+    assert_eq!(g.matches("{{aurora.").count(), 1, "{g}");
+}
+
+#[tokio::test]
+async fn an_unknown_placeholder_is_refused_when_the_package_is_uploaded() {
+    let w = world().await;
+    let key = generate_signing_key().unwrap();
+    let (s, v) = w
+        .call(
+            &w.root,
+            Method::POST,
+            "/v1/admin/trusted-keys",
+            Some(json!({"publisher": "acme", "name": "k2", "public_key": PackageBuilder::key_id(&key)})),
+        )
+        .await;
+    assert_eq!(s, 201, "{v}");
+    let (status, v) = upload(
+        &w.h,
+        &w.root,
+        &key,
+        &AWS.replace("id: awspkg", "id: awspkg2")
+            .replace("id: awsk", "id: awsk2"),
+        Some(b"Open {{aurora.page:admin_apps}}.\n"),
+    )
+    .await;
+    assert!(
+        v.to_string().contains("guide_unknown_placeholder"),
+        "{status} {v}"
+    );
+    assert_ne!(v["status"], "pending_approval", "{v}");
 }

@@ -401,6 +401,15 @@ impl Connect {
         }
     }
 
+    /// (P5-UX-13, C-942) Context values the person must copy into the other service.
+    pub fn show_context(&self) -> &[String] {
+        match self {
+            Self::Oauth2(c) => &c.show_context,
+            Self::Fields(c) => &c.show_context,
+            Self::Hook(c) => &c.show_context,
+        }
+    }
+
     /// (P5-UX-2, C-956) The scopes of the journey's choices: the declared `scope_presets`, else
     /// `read` = the method's read scopes and `write` = all of its scopes.
     pub fn effective_scope_presets(&self) -> ScopePresets {
@@ -558,6 +567,9 @@ pub struct Oauth2Connect {
     pub scope_presets: Option<ScopePresets>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub token: Option<Token>,
+    /// (P5-UX-13, C-942) Values the person copies into the other service.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub show_context: Vec<String>,
     pub client: String,
     #[serde(default)]
     pub scopes: Vec<ScopeDecl>,
@@ -596,6 +608,9 @@ pub struct FieldsConnect {
     pub scope_presets: Option<ScopePresets>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub token: Option<Token>,
+    /// (P5-UX-13, C-942) Values the person copies into the other service.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub show_context: Vec<String>,
     pub fields: Vec<FormField>,
     pub probe: Option<Probe>,
     /// (FIX-136, D-241) The scopes a pasted token may carry, which the connect form asks the
@@ -625,6 +640,9 @@ pub struct HookConnect {
     pub audience: Audience,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub token: Option<Token>,
+    /// (P5-UX-13, C-942) Values the person copies into the other service.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub show_context: Vec<String>,
     #[serde(default)]
     pub authorize: bool,
     #[serde(default)]

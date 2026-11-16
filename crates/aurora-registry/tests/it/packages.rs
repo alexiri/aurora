@@ -223,6 +223,20 @@ fn guide_rules() {
     let mut b = PackageBuilder::new(&y);
     b.set_file("docs/setup.md", &vec![b'a'; 70 * 1024]);
     assert_eq!(read_codes(&b), ["guide_too_large"]);
+    // (P5-UX-13, C-941) Only the known `{{aurora.…}}` placeholders; an unknown or unclosed one
+    // is an error, a known one is not.
+    let mut b = PackageBuilder::new(&y);
+    b.set_file(
+        "docs/setup.md",
+        b"Open {{aurora.callback_url}} and {{aurora.page:packages}}.\n",
+    );
+    assert_eq!(read_codes(&b), Vec::<&str>::new());
+    let mut b = PackageBuilder::new(&y);
+    b.set_file(
+        "docs/setup.md",
+        b"{{aurora.callback_uri}} and {{aurora.page:admin}} and {{aurora.external_id\n",
+    );
+    assert_eq!(read_codes(&b), ["guide_unknown_placeholder"; 3]);
 }
 
 fn unsigned_codes(y: &str) -> Vec<&'static str> {

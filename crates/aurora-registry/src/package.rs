@@ -294,6 +294,13 @@ pub fn check_guide(b: &[u8], max: usize, out: &mut Vec<Violation>) {
         out.push(v("guide_not_utf8", GUIDE, "guide is not UTF-8"));
         return;
     };
+    for name in crate::guide::unknown(text) {
+        out.push(v(
+            "guide_unknown_placeholder",
+            GUIDE,
+            format!("`{name}` is not a guide placeholder (or is not closed with }}}})"),
+        ));
+    }
     use pulldown_cmark::{Event, Parser};
     if Parser::new(text).any(|e| matches!(e, Event::Html(_) | Event::InlineHtml(_))) {
         out.push(v(

@@ -2230,7 +2230,12 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Setup guide (`text/markdown`). */
+        /**
+         * Setup guide (`text/markdown`), filled in for the caller (C-940): the callback URL, the
+         *     organization's external id (members only) and links to the app's setup page and to the tabs
+         *     the guide names, at the highest level the caller can open, else who can. Name the level with
+         *     `workspace_id` or `org_id`; without either only the callback URL is a real value.
+         */
         get: operations["getAppGuide"];
         put?: never;
         post?: never;
@@ -6220,6 +6225,11 @@ export interface components {
             /** @description (P5-UX-2, C-956) The scopes of "Read only" and "Read and change", already defaulted. */
             scope_presets: components["schemas"]["MethodScopePresets"];
             scopes: components["schemas"]["ScopeInfo"][];
+            /**
+             * @description (P5-UX-13, C-942) Values the person copies into the other service, shown with Copy above
+             *     the method's fields: `org_external_id` (the AWS role's trust policy).
+             */
+            show_context: string[];
         };
         ConnectNote: {
             text: string;
@@ -21869,7 +21879,12 @@ export interface operations {
     };
     getAppGuide: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description A workspace view (needs workspace owner). */
+                workspace_id?: string;
+                /** @description An organization view when `workspace_id` is absent (needs organization owner or admin). */
+                org_id?: string;
+            };
             header?: never;
             path: {
                 /** @description App id */
@@ -21888,6 +21903,14 @@ export interface operations {
                     "text/markdown": string;
                 };
             };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Unauthenticated: no credential, or an invalid or expired one */
             401: {
                 headers: {
@@ -21897,7 +21920,6 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Not found */
             404: {
                 headers: {
                     [name: string]: unknown;
