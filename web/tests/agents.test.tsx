@@ -118,25 +118,25 @@ describe("regenerate token", () => {
   });
 });
 
-describe("workspace nav", () => {
-  const org = (role: string) => ({ id: "o1", slug: "acme", name: "Acme", my_role: role });
+describe("workspace nav (C-961)", () => {
   function navWith(role: string) {
     mockFetch({
-      "GET /v1/resolve": () => json(200, { org: { id: "o1", slug: "acme", name: "Acme" } }),
-      "GET /v1/orgs/o1": () => json(200, org(role)),
+      "GET /v1/workspaces/w1": () => json(200, { id: "w1", org_id: "o1", my_role: role }),
     });
-    wrap(<WorkspaceNav base="/o/acme/w/main" wsId={undefined} pathname="/o/acme/w/main" />);
+    wrap(<WorkspaceNav base="/o/acme/w/main" wsId="w1" pathname="/o/acme/w/main" />);
   }
-  it("has no Members item — workspace people live in Settings › Access (FIX-027)", async () => {
-    navWith("admin");
-    await screen.findByRole("link", { name: "Settings" });
+  const names = () => screen.getAllByRole("link").map((a) => a.textContent);
+  it("lists Approvals, People and Settings for an owner, with the new names and no Members item (FIX-027)", async () => {
+    navWith("owner");
+    await screen.findByRole("link", { name: "People" });
+    expect(names()).toEqual(["Overview", "Agents", "Skills", "Apps & accounts", "Internet access", "Approvals", "Activity", "People", "Settings"]);
     expect(screen.queryByRole("link", { name: "Members" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /Credentials|Policy/ })).not.toBeInTheDocument();
   });
-  it("has no Members item for plain members either", async () => {
+  it("lists neither Approvals, People nor Settings for a plain member", async () => {
     navWith("member");
     await screen.findByRole("link", { name: "Agents" });
     await new Promise((r) => setTimeout(r, 50));
-    expect(screen.queryByRole("link", { name: "Members" })).not.toBeInTheDocument();
-    expect(screen.queryByText(/Members/)).not.toBeInTheDocument();
+    expect(names()).toEqual(["Overview", "Agents", "Skills", "Apps & accounts", "Internet access", "Activity"]);
   });
 });

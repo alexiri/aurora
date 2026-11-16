@@ -122,7 +122,7 @@ describe("instances admin section", () => {
     expect(within(table).getByText("Instance-wide")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Delete https://desk.acme.example" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Delete https://desk.wide.example" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Disable https://desk.wide.example" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Turn off https://desk.wide.example" })).toBeNull();
   });
 
   it("a package's built-in instance is badged and read-only, even for an admin (FIX-134)", async () => {
@@ -135,7 +135,7 @@ describe("instances admin section", () => {
     const table = await screen.findByRole("table", { name: "Registered self-hosted apps" });
     expect(within(table).getByText("https://us.desk.example")).toBeInTheDocument();
     expect(within(table).getByText("Built in")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /Delete|Disable|Enable|instance-wide/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Delete|Turn off|Turn on|instance-wide/ })).toBeNull();
   });
 
   it("registers an instance (label defaults to the host) and shows the server's refusal", async () => {
@@ -380,7 +380,7 @@ describe("instance on connections and OAuth clients", () => {
     expect(await screen.findByText("https://desk.acme.example/jira")).toBeInTheDocument();
     expect(screen.getByText(/self-hosted app of this connection was deleted/)).toBeInTheDocument();
     // k1 can be disabled, k2 (instance deleted) cannot be re-enabled
-    expect(screen.getAllByRole("button", { name: /^(Disable|Enable)$/ })).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: /^(Turn off|Turn on)$/ })).toHaveLength(1);
   });
 
   it("an OAuth client row names its instance, and the create form binds a client to one", async () => {

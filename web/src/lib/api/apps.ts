@@ -3,6 +3,7 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 
+import { wsRoutes } from "@/lib/routes";
 import { traceAction } from "@/lib/telemetry";
 
 import { api, ApiError } from "./client";
@@ -418,10 +419,7 @@ export function defaultValues(fields: FormField[]): FieldValues {
 
 /** The connect deep link (I-29, C-842): the Apps tab with the Connect dialog open, or the Connections tab with Reconnect open. */
 export function connectDeepLink(org: string, ws: string, app: string, reconnectId?: string | null): string {
-  const base = `/o/${org}/w/${ws}/credentials`;
-  return reconnectId
-    ? `${base}?tab=connections&reconnect=${encodeURIComponent(reconnectId)}`
-    : `${base}?tab=apps&connect=${encodeURIComponent(app)}`;
+  return wsRoutes(org, ws).connect(app, reconnectId);
 }
 
 /** Toggle an allow-list entry (app, workspace-or-null). */

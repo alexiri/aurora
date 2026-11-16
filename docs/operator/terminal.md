@@ -13,7 +13,7 @@ terminal:
 ```
 
 (Phase 5, SET-5, D-237(d).) This chart value says the deployment **provides** the terminal; whether the terminal is **on** is an
-instance setting on **Admin › Settings › Terminal** that follows `available` until an admin sets it. An admin can turn it off
+instance setting on **Administration › Agents › Computers** that follows `available` until an admin sets it. An admin can turn it off
 there (new opens answer 404 `terminal_disabled` at once; sessions already open end at their next wake check) and on again, but not
 on while the deployment does not provide it (the page says so; 422 `setting_requires_deployment`). The clocks below are settings
 of the same page. Set only this chart value: the chart refuses a render where `config.terminal.enabled=true` stands alone; a

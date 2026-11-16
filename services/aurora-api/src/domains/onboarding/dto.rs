@@ -13,6 +13,9 @@ pub struct MeOnboarding {
     pub guide_dismissed: Vec<Uuid>,
     /// When the navigation tour was finished or skipped; `null` = not yet.
     pub tour_completed_at: Option<DateTime<Utc>>,
+    /// (P5-IA-1, C-987) Keys of the one-time notices the person dismissed, at most 50. A person
+    /// created after the 2026-11 release has `renames-2026-11` from the start.
+    pub notices_seen: Vec<String>,
 }
 
 #[derive(Deserialize, ToSchema, Debug)]
@@ -23,6 +26,8 @@ pub struct PatchOnboarding {
     pub guide_dismissed: Option<Vec<Uuid>>,
     /// `true` records now; `false` clears it so the tour is offered again.
     pub tour_completed: Option<bool>,
+    /// (C-987) Append one notice key (1–64 characters: lowercase letters, digits, `-`).
+    pub notice_seen: Option<String>,
 }
 
 /// Status of one setup step or check.

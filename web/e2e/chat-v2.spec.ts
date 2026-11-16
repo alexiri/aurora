@@ -78,7 +78,7 @@ const states: { name: string; fx: Fixture; query: (narrow: boolean) => string; p
     query: () => `?c=${MINE.id}`,
     prepare: async (page) => {
       // FIX-021: the link opens the LLM keys tab, owners also get "Agent access", the reason counts show under the copy.
-      await expect(page.getByRole("link", { name: "Open LLM keys" })).toHaveAttribute("href", /\/credentials\?tab=llm$/);
+      await expect(page.getByRole("link", { name: "Open LLM keys" })).toHaveAttribute("href", /\/apps\?tab=accounts&kind=ai-key$/);
       await expect(page.getByRole("link", { name: "Agent access" })).toHaveAttribute("href", /\?tab=access$/);
       await expect(page.getByText("1 granted key not usable (origin_unverified)")).toBeVisible();
     },
@@ -367,8 +367,8 @@ test.describe("layout, 390 px", () => {
 
   test("inline approval buttons are a two-column grid of 44 px buttons", async ({ page }) => {
     await openChat(page, "light", fixtures.running, `?c=${MINE.id}`);
-    const approve = await page.getByRole("button", { name: "Approve" }).boundingBox();
-    const deny = await page.getByRole("button", { name: "Deny" }).boundingBox();
+    const approve = await page.getByRole("button", { name: "Allow once" }).boundingBox();
+    const deny = await page.getByRole("button", { name: "Block" }).boundingBox();
     expect(approve!.height).toBeGreaterThanOrEqual(43.5);
     expect(deny!.height).toBeGreaterThanOrEqual(43.5);
     expect(Math.abs(approve!.y - deny!.y)).toBeLessThanOrEqual(1);

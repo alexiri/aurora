@@ -14,6 +14,7 @@ import { Segmented } from "@/components/ui/segmented";
 import { Section } from "@/components/ui/section";
 import { errorMessage, fieldErrors } from "@/lib/api/errors";
 import { useAdminOrgs } from "@/lib/api/freeze";
+import { adminRoutes } from "@/lib/routes";
 import {
   usePlacement,
   usePlacementChoices,
@@ -163,7 +164,7 @@ function PlacementForm({ saved, embedded, onSaved }: { saved: Placement; embedde
           title="Where new users land"
           description={
             <>
-              Sign-up is <strong>{saved.signup_mode.replace("_", "-")}</strong> (change it in <Link className="underline underline-offset-2" href="/admin/settings/sign-in">Admin › Sign-in</Link>). Placement applies to
+              Sign-up is <strong>{saved.signup_mode.replace("_", "-")}</strong> (change it in <Link className="underline underline-offset-2" href={adminRoutes.signIn()}>Administration › People › Sign-in</Link>). Placement applies to
               everyone who is admitted, however they were admitted.
             </>
           }

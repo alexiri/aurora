@@ -191,6 +191,12 @@ async fn the_instance_ceiling_bounds_the_org_setting() {
         v["error"]["code"],
         "attachment_quota_above_instance_maximum"
     );
+    // C-783: the refusal names the instance setting that decides.
+    assert_eq!(
+        v["error"]["details"]["instance_setting"],
+        json!({"section": "retention", "key": "attachments.org_quota_mib_max"}),
+        "{v}"
+    );
     // `0` (unlimited) is above any ceiling too.
     assert_eq!(set_quota(&f, json!(0)).await.0, 422);
     assert_eq!(set_quota(&f, json!(-1)).await.0, 422);
@@ -221,10 +227,25 @@ async fn retention_settings_are_validated_audited_and_keep_other_keys() {
         (s, v["error"]["code"].as_str()),
         (422, Some("retention_above_instance_maximum"))
     );
+    // C-783: the refusal names the instance setting that decides.
+    assert_eq!(
+        v["error"]["details"]["instance_setting"],
+        json!({"section": "retention", "key": "attachments.days_max"}),
+        "{v}"
+    );
     let (s, v) = put(json!({"conversations_days": 30, "attachments_days": 60})).await;
     assert_eq!(s, 200, "{v}");
     assert_eq!(v["attachments_days"], 60);
     assert_eq!(v["attachments_days_max"], 90);
+    // C-783 on the response: configured ceilings are named; an unset one has no entry.
+    assert_eq!(
+        v["instance_settings"]["attachments_days_max"],
+        json!({"section": "retention", "key": "attachments.days_max"})
+    );
+    assert!(
+        v["instance_settings"]["conversations_days_max"].is_null(),
+        "{v}"
+    );
     assert_eq!(v["conversations_days"], 30);
     // Absent keys are unchanged; null clears just that key.
     let (_, v) = put(json!({"attachments_days": Value::Null})).await;

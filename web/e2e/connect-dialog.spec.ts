@@ -6,7 +6,7 @@ import { openRoute, overflow } from "./support/open";
 // (not a dashboard page in a small browser window), and every dialog has a close icon. Both themes; at 390 px the dialog
 // has no horizontal scroll and the close icon stays reachable while the dialog body scrolls.
 
-const APPS = "/o/acme/w/main/credentials?tab=apps";
+const APPS = "/o/acme/w/main/apps?tab=apps";
 
 for (const scheme of ["light", "dark"] as const) {
   for (const width of [1280, 390]) {
@@ -23,7 +23,7 @@ for (const scheme of ["light", "dark"] as const) {
         await expect(dialog).toBeVisible();
         await expect(dialog.getByRole("radiogroup", { name: "How do you want to connect?" })).toBeVisible();
         // The dialog sits on the page itself: the dashboard is still behind it, in this window.
-        expect(page.url()).toContain("/credentials");
+        expect(page.url()).toContain("/apps?tab=apps");
         expect(opened).toEqual([]);
         expect(await overflow(page), "horizontal page scroll").toBeLessThanOrEqual(0);
         expect(await dialog.evaluate((el) => el.scrollWidth - el.clientWidth), "horizontal dialog scroll").toBeLessThanOrEqual(0);
@@ -60,7 +60,7 @@ for (const scheme of ["light", "dark"] as const) {
       test("the old connect route redirects to the dialog", async ({ page }) => {
         await openRoute(page, "/o/acme/w/main/apps/github/connect", scheme);
         await expect(page.getByRole("dialog", { name: "Connect GitHub" })).toBeVisible();
-        expect(new URL(page.url()).pathname).toBe("/o/acme/w/main/credentials");
+        expect(new URL(page.url()).pathname).toBe("/o/acme/w/main/apps");
       });
     });
   }

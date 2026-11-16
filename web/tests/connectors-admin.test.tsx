@@ -430,12 +430,12 @@ describe("Managed connector detail", () => {
         return json(200, current);
       },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Disable" }));
-    expect(await screen.findByRole("button", { name: "Enable" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Turn off" }));
+    expect(await screen.findByRole("button", { name: "Turn on" })).toBeInTheDocument();
     expect(patches(calls)[0].body).toEqual({ enabled: false });
     expect(screen.getAllByText("Disabled").length).toBeGreaterThan(0);
-    fireEvent.click(screen.getByRole("button", { name: "Enable" }));
-    expect(await screen.findByRole("button", { name: "Disable" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Turn on" }));
+    expect(await screen.findByRole("button", { name: "Turn off" })).toBeInTheDocument();
     expect(patches(calls)[1].body).toEqual({ enabled: true });
   });
 

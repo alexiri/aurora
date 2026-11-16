@@ -117,7 +117,7 @@ describe("Channels: blocked states name the next actor", () => {
   it("other states, as an instance admin: a link to Admin › Connectors, no names to ask", async () => {
     base({}, { availability: avail("disabled"), admin: true });
     wrap(<ChannelsView orgId="o1" />);
-    expect(await screen.findByRole("link", { name: /Admin › Connectors/ })).toHaveAttribute("href", "/admin/connectors");
+    expect(await screen.findByRole("link", { name: /Admin › Connectors/ })).toHaveAttribute("href", "/admin/chat-platforms");
     expect(screen.getByTestId("blocked-mattermost").textContent).not.toContain("Ask:");
   });
 
@@ -246,7 +246,7 @@ describe("Admin › Setup: connector callout", () => {
     const calls = mockFetch({ "GET /v1/admin/connector-types": () => json(200, { host_running: true, items: [type(false)] }) });
     wrap(<ConnectorAvailableCallout />);
     expect(await screen.findByText("Mattermost is available — add it.")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Add Mattermost" })).toHaveAttribute("href", "/admin/connectors");
+    expect(screen.getByRole("link", { name: "Add Mattermost" })).toHaveAttribute("href", "/admin/chat-platforms");
     expect(calls.every((c) => c.key.startsWith("GET"))).toBe(true);
   });
   it.each([["added", type(true)], ["unsigned", type(false, false)]])("renders nothing for a type that is %s", async (_n, t) => {

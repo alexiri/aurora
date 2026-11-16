@@ -88,37 +88,43 @@ describe("organization selector", () => {
     expect((await item("No other org")).getAttribute("href")).toBe("/o/other");
   });
 
-  it("offers All organizations (to /admin) to instance admins only", async () => {
+  it("lists organizations only: no All organizations entry, for an instance admin either (C-962)", async () => {
     world("/o/acme/w/main/agents", { org: "acme", ws: "main" });
-    await open("org-selector");
-    expect((await item("All organizations")).getAttribute("href")).toBe("/admin");
-
-    cleanup();
-    vi.unstubAllGlobals();
-    world("/o/acme/w/main/agents", { org: "acme", ws: "main" }, false);
     await open("org-selector");
     await item("Acme Labs");
     expect(screen.queryByRole("menuitem", { name: "All organizations" })).toBeNull();
+    expect(screen.queryByRole("menuitem", { name: "Administration" })).toBeNull();
   });
 
   it("selecting an organization navigates to the org's workspace list — from /admin too", async () => {
-    world("/admin/users", {});
+    world("/admin/people", {});
     await open("org-selector");
     expect((await item("Acme Labs")).getAttribute("href")).toBe("/o/acme");
   });
 
-  it("reads All organizations while in /admin, highlights the menu entry there, and drops the workspace selector", async () => {
-    world("/admin/users", {});
-    // The admin nav list still shows below the selectors (assert before the menu opens:
-    // while it is open the modal menu hides the rest of the page).
+  it("reads the placeholder in /admin, lists the Administration topics, and drops the workspace selector", async () => {
+    world("/admin/people", {});
+    // The admin nav list still shows below the selectors.
     // (FIX-099) The nav appears once `/v1/me` says this is an instance admin.
-    expect((await screen.findByRole("link", { name: "Users" })).getAttribute("aria-current")).toBe("page");
-    expect(within(screen.getByTestId("org-selector")).getByText("All organizations")).toBeInTheDocument();
+    expect((await screen.findByRole("link", { name: "People" })).getAttribute("aria-current")).toBe("page");
+    expect(within(screen.getByTestId("org-selector")).getByText("Select organization")).toBeInTheDocument();
     expect(screen.queryByTestId("workspace-selector")).toBeNull();
-    await open("org-selector");
-    const all = await item("All organizations");
-    semibold(all);
-    expect(all.getAttribute("data-active")).toBe("true");
+    const nav = within(screen.getByRole("navigation", { name: "Administration" }));
+    expect(nav.getAllByRole("link").map((a) => a.textContent)).toEqual([
+      "Overview", "Agents", "Apps & accounts", "AI models", "Internet access", "People", "Chat platforms", "Data", "Platform", "Settings",
+    ]);
+  });
+
+  it("carries Administration as a labelled link at the foot of the sidebar, for instance admins only (C-962)", async () => {
+    world("/o/acme/w/main/agents", { org: "acme", ws: "main" });
+    const shell = screen.getByRole("complementary", { name: "Sidebar" });
+    expect((await within(shell).findByRole("link", { name: "Administration" })).getAttribute("href")).toBe("/admin");
+
+    cleanup();
+    vi.unstubAllGlobals();
+    world("/o/acme/w/main/agents", { org: "acme", ws: "main" }, false);
+    await screen.findByRole("button", { name: /Alex/ });
+    expect(screen.queryByRole("link", { name: "Administration" })).toBeNull();
   });
 
   it("shows the placeholder outside /admin when no org is active (account pages)", async () => {
@@ -169,13 +175,13 @@ describe("workspace selector", () => {
 
 // FIX-099 (WEBA-11): the admin navigation is for instance admins; a member on an /admin path gets none.
 describe("admin navigation", () => {
-  it("is rendered for an instance admin on /admin/setup", async () => {
-    world("/admin/setup", {}, true);
+  it("is rendered for an instance admin on /admin", async () => {
+    world("/admin", {}, true);
     expect(await screen.findByRole("navigation", { name: "Administration" })).toBeTruthy();
   });
 
-  it("is not rendered for a signed-in member on /admin/setup", async () => {
-    world("/admin/setup", {}, false);
+  it("is not rendered for a signed-in member on /admin", async () => {
+    world("/admin", {}, false);
     await screen.findByRole("button", { name: /Alex/ });
     expect(screen.queryByRole("navigation", { name: "Administration" })).toBeNull();
   });

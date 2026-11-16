@@ -10,6 +10,7 @@ use super::zip::{self, ZipWriter};
 use crate::app::AppState;
 use crate::audit::{self, AuditActor, AuditEvent, Outcome};
 use crate::domains::attachments::{blob, quota};
+use crate::domains::governance::dto::InstanceSetting;
 use crate::http::auth::Caller;
 use aurora_core::limits::{
     EXPORT_MAX_BYTES, EXPORT_MAX_EVENTS, RETENTION_MAX_DAYS, RETENTION_MIN_DAYS,
@@ -292,7 +293,32 @@ async fn retention_view(
 ) -> Result<Retention, ApiError> {
     let (quota, days) = aurora_db::repo::attachments::org_limits(&mut *conn, org).await?;
     let a = &state.ops().attachments;
+    let mut instance_settings = Map::new();
+    let mut name = |field: &str, set: bool, key: &str| {
+        if set {
+            instance_settings.insert(
+                field.to_owned(),
+                json!({ "section": "retention", "key": key }),
+            );
+        }
+    };
+    name(
+        "conversations_days_max",
+        state.ops().retention.conversation_days_max.is_some(),
+        "retention.conversation_days_max",
+    );
+    name(
+        "attachments_days_max",
+        a.days_max.is_some(),
+        "attachments.days_max",
+    );
+    name(
+        "attachment_quota_mib_max",
+        a.org_quota_mib_max > 0,
+        "attachments.org_quota_mib_max",
+    );
     Ok(Retention {
+        instance_settings,
         conversations_days: lifecycle::org_conversations_days(&mut *conn, org).await?,
         conversations_days_max: state.ops().retention.conversation_days_max.map(i64::from),
         attachments_days: days,
@@ -315,7 +341,7 @@ pub async fn get_retention(state: &AppState, c: &Caller, org: Uuid) -> Result<Re
 }
 
 /// Validate a window in days against the bounds and the instance ceiling.
-fn check_days(d: i64, ceiling: Option<i64>) -> Result<i64, ApiError> {
+fn check_days(d: i64, ceiling: Option<i64>, ceiling_key: &str) -> Result<i64, ApiError> {
     if !(RETENTION_MIN_DAYS..=RETENTION_MAX_DAYS).contains(&d) {
         return Err(ApiError::unprocessable(
             "retention_invalid",
@@ -326,7 +352,8 @@ fn check_days(d: i64, ceiling: Option<i64>) -> Result<i64, ApiError> {
         return Err(ApiError::unprocessable(
             "retention_above_instance_maximum",
             "The retention window exceeds the maximum set by the instance.",
-        ));
+        )
+        .with_details(InstanceSetting::details("retention", ceiling_key)));
     }
     Ok(d)
 }
@@ -343,7 +370,11 @@ fn check_quota(v: i64, ceiling_mib: i64) -> Result<i64, ApiError> {
         return Err(ApiError::unprocessable(
             "attachment_quota_above_instance_maximum",
             "The attachment quota exceeds the maximum set by the instance.",
-        ));
+        )
+        .with_details(InstanceSetting::details(
+            "retention",
+            "attachments.org_quota_mib_max",
+        )));
     }
     Ok(v)
 }
@@ -364,12 +395,12 @@ pub async fn put_retention(
     let new = match req.conversations_days {
         None => old,
         Some(None) => None,
-        Some(Some(d)) => Some(check_days(d, ceiling)?),
+        Some(Some(d)) => Some(check_days(d, ceiling, "retention.conversation_days_max")?),
     };
     let new_att_days = match req.attachments_days {
         None => old_att_days,
         Some(None) => None,
-        Some(Some(d)) => Some(check_days(d, att_ceiling)?),
+        Some(Some(d)) => Some(check_days(d, att_ceiling, "attachments.days_max")?),
     };
     let new_quota = match req.attachment_quota_mib {
         None => old_quota,

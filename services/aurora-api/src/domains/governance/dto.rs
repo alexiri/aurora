@@ -37,6 +37,21 @@ pub struct InstanceSetting {
 }
 
 impl InstanceSetting {
+    /// Any section's setting (`retention`, `scim`, … — C-783).
+    #[must_use]
+    pub fn new(section: &str, key: &str) -> Self {
+        Self {
+            section: section.to_owned(),
+            key: key.to_owned(),
+        }
+    }
+
+    /// The `{ "instance_setting": { section, key } }` details of a refusal.
+    #[must_use]
+    pub fn details(section: &str, key: &str) -> serde_json::Value {
+        serde_json::json!({ "instance_setting": { "section": section, "key": key } })
+    }
+
     #[must_use]
     pub fn governance(key: &str) -> Self {
         Self {

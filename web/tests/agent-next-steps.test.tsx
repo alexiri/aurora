@@ -224,7 +224,7 @@ describe("attach empty states", () => {
     wrap(<AgentChannelsTab agentId="a1" orgId="o1" canOwn />);
     const box = await screen.findByTestId("no-integration");
     expect(box.textContent).toContain("no chat integration yet");
-    expect(await screen.findByRole("link", { name: "Connect a chat platform" })).toHaveAttribute("href", "/o/acme/channels");
+    expect(await screen.findByRole("link", { name: "Connect a chat platform" })).toHaveAttribute("href", "/o/acme/chat-platforms");
   });
 
   it("no integration: a plain member only learns who can create one", async () => {

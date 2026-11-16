@@ -109,7 +109,7 @@ describe("Admin › Organizations (P5-ADMDEL)", () => {
     wrap(<AdminOrgsView />);
     await openMenu("Actions for Acme");
     expect(await screen.findByRole("menuitem", { name: "Freeze…" })).toBeInTheDocument();
-    expect(screen.getByRole("menuitem", { name: "Workspaces" })).toHaveAttribute("href", `/admin/orgs/${ORG}`);
+    expect(screen.getByRole("menuitem", { name: "Workspaces" })).toHaveAttribute("href", `/admin/people/organizations/${ORG}`);
     expect(screen.getByRole("menuitem", { name: "Delete organization…" })).toBeInTheDocument();
     fireEvent.keyDown(screen.getByRole("menu"), { key: "Escape" });
     await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
@@ -256,6 +256,6 @@ describe("Admin › one organization (P5-ADMDEL)", () => {
     const dialog = await screen.findByRole("dialog");
     type("Type acme to confirm", "acme");
     fireEvent.click(within(dialog).getByRole("button", { name: "Delete organization" }));
-    await waitFor(() => expect(push).toHaveBeenCalledWith("/admin/orgs"));
+    await waitFor(() => expect(push).toHaveBeenCalledWith("/admin/people?tab=organizations"));
   });
 });

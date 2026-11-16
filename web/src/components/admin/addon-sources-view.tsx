@@ -383,7 +383,7 @@ export function AddonSourcesView() {
   return (
     <div className="max-w-page space-y-6">
       <PageHeader
-        title="Addon sources"
+        title="Package sources"
         description="Third-party repositories of app packages. Each is trusted through its own signing key; every package still waits for your approval."
         className="mb-2"
         actions={<Button onClick={() => setAdding(true)}>Add source</Button>}

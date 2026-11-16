@@ -289,6 +289,11 @@ pub struct Retention {
     pub attachment_quota_mib_effective: Option<i64>,
     /// The instance ceiling of the quota in MiB (`attachments.org_quota_mib_max`); null = none.
     pub attachment_quota_mib_max: Option<i64>,
+    /// (SET-5, C-783) The instance setting behind each configured ceiling, for the dashboard
+    /// link (instance admins only): `conversations_days_max`, `attachments_days_max`,
+    /// `attachment_quota_mib_max`. A ceiling that is not set has no entry.
+    #[schema(value_type = Object)]
+    pub instance_settings: serde_json::Map<String, serde_json::Value>,
 }
 
 fn double_option<'de, D, T>(d: D) -> Result<Option<Option<T>>, D::Error>

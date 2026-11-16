@@ -120,7 +120,7 @@ describe("Admin › Settings index (SET-1)", () => {
     const notice = screen.getByText(/1 setting is configured in Helm and cannot be changed here/);
     expect(notice.textContent).toContain("it keeps its current value");
     expect(screen.getByText("config.governance.llm.minimum_posture")).toBeTruthy();
-    expect(screen.getByRole("link", { name: "Open Sign-in" }).getAttribute("href")).toBe("/admin/settings/sign-in");
+    expect(screen.getByRole("link", { name: "Open Sign-in" }).getAttribute("href")).toBe("/admin/people?tab=sign-in");
     fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
     expect(screen.queryByText(/configured in Helm and cannot be changed here/)).toBeNull();
     expect(screen.getByRole("link", { name: "Export YAML" }).getAttribute("href")).toBe("/v1/admin/settings/export?format=yaml");

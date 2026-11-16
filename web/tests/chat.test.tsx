@@ -112,7 +112,7 @@ describe("ApprovalCard", () => {
         <ApprovalCard ev={pending} state={state} wsId="w1" />
       </QueryClientProvider>,
     );
-    fireEvent.click(await screen.findByRole("button", { name: "Approve" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Allow once" }));
     await waitFor(() => expect(fn.mock.calls.some((c) => c[0].url.includes("/decision"))).toBe(true));
     const req = fn.mock.calls.find((c) => c[0].url.includes("/decision")) as unknown as [Request];
     expect(req[0].url).toContain("/v1/approvals/ap1/decision");
@@ -131,7 +131,7 @@ describe("ApprovalCard", () => {
       </QueryClientProvider>,
     );
     expect(await screen.findByText("Waiting for an approver")).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Approve" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Allow once" })).toBeNull();
   });
   it("shows the decided state without buttons", () => {
     const pending = ev(1, "approval.pending", { approval_id: "ap1", summary: "s" });
@@ -141,7 +141,7 @@ describe("ApprovalCard", () => {
         <ApprovalCard ev={pending} state={state} wsId="w1" />
       </QueryClientProvider>,
     );
-    expect(screen.queryByRole("button", { name: "Approve" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Allow once" })).toBeNull();
     expect(screen.getByText(/Denied by Ann/)).toBeTruthy();
   });
 });
