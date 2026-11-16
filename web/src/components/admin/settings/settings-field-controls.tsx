@@ -215,10 +215,10 @@ export function CurrentValues({ title, current, fields }: { title: string; curre
           const f = byKey.get(c.key);
           return (
             <div key={c.key} id={c.key} className="min-w-0 scroll-mt-24 space-y-1 border-b border-line pb-3 last:border-b-0 last:pb-0">
-              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                <dt className="text-sm font-medium text-ink">{f?.label ?? c.label}</dt>
+              <dt className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm font-medium text-ink">
+                {f?.label ?? c.label}
                 <Badge tone={c.source === "helm" ? "pending" : "neutral"}>{c.source === "helm" ? "Helm" : "Default"}</Badge>
-              </div>
+              </dt>
               <dd className="break-words text-sm text-ink" data-testid={`${c.key}-current`}>
                 {c.value_display}
               </dd>

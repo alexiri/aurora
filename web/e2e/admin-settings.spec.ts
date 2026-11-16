@@ -120,7 +120,7 @@ for (const scheme of ["light", "dark"] as const) {
         await openRoute(page, "/admin/settings/agents", scheme);
         await expect(page).toHaveURL(/\/admin\/agents\?tab=defaults$/);
         await expect(page.getByRole("heading", { name: "Agents", level: 1 })).toBeVisible();
-        await expect(page.getByTestId("hosted.idle_stop_secs-locked-value")).toHaveText("1800");
+        await expect(page.getByTestId("hosted.idle_stop_secs-locked-value")).toHaveText("30 minutes");
         await expect(page.getByRole("region", { name: "Runners and sandbox sizes" })).toContainText("4096");
         expect(await overflow(page)).toBeLessThanOrEqual(0);
         expect(await axeClean(page)).toEqual([]);
