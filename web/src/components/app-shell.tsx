@@ -10,11 +10,13 @@ import { clearDrafts } from "@/components/chat/composer/drafts";
 import { logout, useMe, useOrg, useOrgs, useResolve, useWorkspace, useWorkspaces } from "@/lib/api/queries";
 import { visibleTopics } from "@/lib/api/roles";
 import { loginUrl, useUnauthorizedRedirect } from "@/lib/auth/use-unauthorized-redirect";
+import { showWhatMoved } from "@/lib/moved";
 import { accountRoutes, adminRoutes, TOPIC_LABEL, topicHref, orgRoutes, wsRoutes } from "@/lib/routes";
 import { cn } from "@/lib/utils";
 
 import { ApprovalNotifier } from "./approvals/approval-notifier";
 import { FrozenEntityBanner } from "./freeze/frozen-entity-banner";
+import { RenamesNotice } from "./onboarding/renames-notice";
 import { Tour } from "./onboarding/tour";
 import { startTour } from "./onboarding/tour-events";
 import { ThemeSwitch } from "./theme/theme-switch";
@@ -271,6 +273,7 @@ function UserMenu() {
           </MenuItem>
         ) : null}
         <MenuItem onSelect={onTour}>Show me around</MenuItem>
+        <MenuItem onSelect={showWhatMoved}>What moved</MenuItem>
         <MenuItem onSelect={() => void onLogout()}>Sign out</MenuItem>
       </MenuContent>
     </Menu>
@@ -540,6 +543,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         <main className="w-full min-w-0 space-y-4 px-4 py-6 md:px-8 md:py-8">
           <ApprovalNotifier />
           <FrozenEntityBanner />
+          <RenamesNotice />
           <PageLevelProvider value={level}>{children}</PageLevelProvider>
         </main>
         <Tour setNavOpen={tourNavOpen} />

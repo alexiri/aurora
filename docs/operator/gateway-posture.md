@@ -10,7 +10,7 @@ section below names a dedicated chart value.
 
 **The instance governance ceiling is edited in the dashboard (phase 5, SET-2, D-236/D-237).** The keys under
 `governance.*` and `byo.*` (the LLM, egress, BYO and agent-token floors; not the configuration-only
-`governance.llm.known_llm_hosts`) are edited on **Admin › Settings › Governance** by an instance
+`governance.llm.known_llm_hosts`) are edited on **Administration › AI models › Rules** by an instance
 administrator and apply to the API and every gateway within seconds, **without a restart**, including the
 `byo.enabled` master switch. Setting a key in Helm instead **locks** it: the page shows it read-only as
 "Managed by Helm" and the API refuses a write (409 `setting_locked`). Saving a change re-evaluates every

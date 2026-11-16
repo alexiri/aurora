@@ -16,16 +16,25 @@ export interface TourStop {
 }
 
 /** The coach marks (`14 §Onboarding` 3): one or two sentences each, on what lives there and when you need it. */
+/**
+ * One stop per workspace topic (C-975, P5-IA-1 scope 9), in navigation order. A stop is shown only when its link is on
+ * screen, so the tour follows `visibleTopics`: a member gets no Approvals, People or Settings. `**x**` is bold.
+ */
 export const TOUR_STOPS: readonly TourStop[] = [
-  { target: "overview", title: "Overview", text: "Your agents, what they asked for and what they did. Start here each day." },
-  { target: "agents", title: "Agents and Chat", text: "Your agents live here. Open one to chat with it, give it instructions or see its computer." },
-  { target: "credentials", title: "Credentials", text: "The keys and logins your agents use, such as the LLM key. Come here when an agent needs to reach a service." },
-  { target: "policy", title: "Policy", text: "The rules for what agents may do on the internet. Come here to allow or block something for good." },
-  { target: "approvals", title: "Approvals", text: "When an agent wants to do something risky, it asks here. Look when a number appears." },
-  { target: "activity", title: "Activity", text: "Every request your agents made, and what was decided." },
-  { target: "members", title: "Members", text: "Who can use this organization. Come here to invite people." },
-  { target: "settings", title: "Settings", text: "The workspace's name, time zone and limits." },
+  { target: "overview", title: "Overview", text: "What your agents are doing, and what needs you." },
+  { target: "agents", title: "Agents", text: "Chat with an agent here. Open an agent, then **Access** › **Give <Agent> an app** to let it use GitHub, Linear and more." },
+  { target: "apps", title: "Apps & accounts", text: "The accounts your agents can use, and the apps you can connect." },
+  { target: "internet-access", title: "Internet access", text: "Which websites agents can reach, and the rules that ask or block." },
+  { target: "approvals", title: "Approvals", text: "When an agent asks before a change, you answer here." },
+  { target: "activity", title: "Activity", text: "Everything agents did, with what was allowed, asked and blocked." },
+  { target: "people", title: "People", text: "Who can use this workspace." },
+  { target: "settings", title: "Settings", text: "The workspace's name, API keys and audit log." },
 ];
+
+/** A stop's sentence with its `**bold**` parts as <strong>. */
+function stopText(text: string) {
+  return text.split(/\*\*(.+?)\*\*/g).map((part, i) => (i % 2 === 1 ? <strong key={i}>{part}</strong> : part));
+}
 
 const NARROW = "(max-width: 767px)";
 
@@ -181,7 +190,7 @@ export function Tour({ setNavOpen }: { setNavOpen: (open: boolean) => void }) {
         {stop.title}
       </h2>
       <p id="tour-text" className="mt-1 text-sm text-ink-2">
-        {stop.text}
+        {stopText(stop.text)}
       </p>
       <div className="mt-3 flex flex-wrap items-center gap-2">
         <Button size="sm" variant="outline" disabled={index === 0} onClick={() => setIndex(index - 1)}>

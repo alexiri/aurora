@@ -18,7 +18,7 @@ its own Vault role.
 
 ## 0. Where to configure it (phase 5)
 
-**Dashboard first.** Sign in as an instance admin and open **Admin › Secret stores**: add a
+**Dashboard first.** Sign in as an instance admin and open **Administration › Platform › Secret stores**: add a
 Vault store (address, KV mount, managed prefix, AppRole authentication, an optional
 CA certificate as PEM text), press **Test connection** (it signs in and writes, reads and removes a
 probe value under the managed prefix), save, choose it as the **default store** and, when you want

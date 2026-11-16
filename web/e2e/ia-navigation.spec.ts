@@ -75,6 +75,41 @@ for (const scheme of ["light", "dark"] as const) {
   });
 }
 
+// C-987: "Pages have new names" appears once for an account that used the dashboard before, never for a new one, and
+// What moved in the account menu replays it.
+test.describe("Pages have new names (C-987)", () => {
+  const onboarding = (notices_seen: string[]) => ({ welcome_seen: true, guide_dismissed: [], notices_seen, tour_completed_at: null });
+
+  test("the notice shows once for an existing account and dismissing it is stored", async ({ page }) => {
+    await mockApi(page, { "/v1/me/onboarding": onboarding([]) });
+    const patched: unknown[] = [];
+    await page.route("**/v1/me/onboarding", async (route) => {
+      if (route.request().method() === "PATCH") {
+        patched.push(route.request().postDataJSON());
+        return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(onboarding(["renames-2026-11"])) });
+      }
+      return route.fallback();
+    });
+    await page.goto("/o/acme/w/main/agents");
+    const notice = page.getByTestId("renames-notice");
+    await expect(notice).toBeVisible();
+    await expect(notice.getByRole("link", { name: "Credentials → Apps & accounts" })).toHaveAttribute("href", "/o/acme/w/main/apps?tab=accounts");
+    await notice.getByRole("button", { name: "Got it" }).click();
+    await expect(notice).toHaveCount(0);
+    expect(patched).toEqual([{ notice_seen: "renames-2026-11" }]);
+  });
+
+  test("a new account never sees it, and What moved replays it", async ({ page }) => {
+    await mockApi(page, { "/v1/me/onboarding": onboarding(["renames-2026-11"]) });
+    await page.goto("/o/acme/w/main/agents");
+    await expect(page.getByRole("navigation", { name: "Workspace" })).toBeVisible();
+    await expect(page.getByTestId("renames-notice")).toHaveCount(0);
+    await page.getByRole("button", { name: /Ada Lovelace/ }).click();
+    await page.getByRole("menuitem", { name: "What moved" }).click();
+    await expect(page.getByTestId("renames-notice")).toBeVisible();
+  });
+});
+
 // One parametrised test: every old route lands on its new topic page and tab (C-960).
 const MOVED: [string, RegExp][] = [
   ["/admin/setup", /\/admin$/],

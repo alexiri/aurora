@@ -111,7 +111,7 @@ You need instance-administrator rights and a running **connector host**
 (`connectorHost.enabled`, on by default in the chart; [install-helm.md](install-helm.md#connector-host)).
 Design: [docs/13 §3.1](../13-channels-connectors.md#31-managed-connectors-phase-4-p4-mcon-d-128).
 
-1. Open **Admin → Connectors → Add**. The page lists the connector types the connector host
+1. Open **Administration › Chat platforms › Add**. The page lists the connector types the connector host
    announced. A type that is already added is marked. If the page says the connector host is not
    running, no host has registered for 90 seconds: check
    `kubectl -n <namespace> get pods -l app.kubernetes.io/component=connector-host` and its logs.
@@ -213,11 +213,11 @@ network needs `AURORA_MM_ALLOW_PRIVATE_NETWORKS` on the connector host
 (`extraCaBundle`, which the chart also hands to the connector host as `AURORA_TLS_EXTRA_CA_BUNDLE`,
 [install-helm.md](install-helm.md#connector-host)).
 
-1. **Instance administrator: add the connector.** *Admin → Connectors → Add connector → Add
+1. **Instance administrator: add the connector.** *Administration › Chat platforms › Add connector → Add
    Mattermost.* Nothing needs typing: every Mattermost setting is optional or generated, and
    the *Advanced* section holds the two you almost never change (the address Mattermost uses
-   to reach Aurora, left empty for this Aurora's own address, and two tuning numbers). *Admin →
-   Setup* shows a callout "Mattermost is available — add it" until you do. Adding is explicit, not
+   to reach Aurora, left empty for this Aurora's own address, and two tuning numbers). *Administration ›
+   Overview* shows a callout "Mattermost is available — add it" until you do. Adding is explicit, not
    automatic: it exposes the connector's public callback endpoints and approves its manifest.
    Next: tell an organization owner or admin. They see your name on *Channels* until it is added.
 2. **Organization owner or admin: connect the server.** *Organization → Channels → Connect

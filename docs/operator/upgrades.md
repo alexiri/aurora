@@ -40,7 +40,7 @@ notes where the shipped artifacts do not follow them yet.
    The GitHub App and the assumed IAM role are now connect methods of `github` / `github-ghes` and
    `aws-keys` (the packages `github-app` and `aws-role` are no longer shipped). The new versions (2.0.0)
    add hooks and egress hosts the old packages already used, which is a permission widening: after the
-   upgrade each waits in *Admin, Plugins* for one instance-administrator approval (until then the old
+   upgrade each waits in *Administration › Apps & accounts* for one instance-administrator approval (until then the old
    packages keep working). Approving moves every connection of the old apps to the new app in the same
    transaction (connection ids, stored credentials, grants and history are kept; GitHub Enterprise Server
    instances, skill libraries and app availability follow), deletes the host-claim decisions between the
@@ -156,17 +156,17 @@ revision (`expect_revision`): custom API clients that call `…/policy/rollback`
 
 ## Instance settings: locked keys and break-glass (phase 5, SET-1, D-236..D-238)
 
-Instance-wide settings are edited in the dashboard (Admin › Settings) and applied live. A value
+Instance-wide settings are edited in the dashboard (Administration › Settings) and applied live. A value
 your Helm values set is **locked**: the dashboard shows it read-only and the API refuses to change
 it. Upgrading to a release with instance settings changes nothing for an existing install: every key
 your values file sets stays locked, and every other key keeps its application default until an
 administrator edits it. The first start of the new API mirrors the locked values into the database
-(`instance_settings.helm_sync` in Admin › Audit), so **removing a key from your values file later
+(`instance_settings.helm_sync` in Administration › Data › Audit), so **removing a key from your values file later
 hands it to the dashboard with the value it had**, never with the default.
 
-*Release-note text:* "N settings in your Helm values are now shown in Admin › Settings as
+*Release-note text:* "N settings in your Helm values are now shown in Administration › Settings as
 'Configured in Helm'. To manage one in the dashboard, remove it from your values file and run
-`helm upgrade`; it keeps its current value. Admin › Settings lists them under 'Which settings'."
+`helm upgrade`; it keeps its current value. Administration › Settings lists them under 'Which settings'."
 
 **Break-glass.** Recovery never depends on a stored setting:
 
