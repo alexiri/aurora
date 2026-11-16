@@ -92,7 +92,7 @@ describe("approvals", () => {
     routes["GET /v1/workspaces/w1/approvals"] = () => json(200, { items: [mk("a1")], next_cursor: null });
     routes["POST /v1/approvals/a1/decision"] = () => json(409, { error: { code: "already_decided", message: "x" } });
     show();
-    fireEvent.click(await screen.findByRole("button", { name: "Approve" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Allow once" }));
     expect(await screen.findByText(/already decided by someone else/i)).toBeInTheDocument();
   });
 
@@ -102,7 +102,7 @@ describe("approvals", () => {
       json(200, { items: [mk("a1", { batch }), mk("a22", { batch })], next_cursor: null });
     routes["POST /v1/approvals/batches/b1/decision"] = () => json(200, { decided: 2 });
     show();
-    fireEvent.click(await screen.findByRole("button", { name: "Approve all 2" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Allow all 2 once" }));
     await waitFor(() =>
       expect(calls.find((c) => c.key === "POST /v1/approvals/batches/b1/decision")?.body).toEqual({
         agent_id: "ag1",

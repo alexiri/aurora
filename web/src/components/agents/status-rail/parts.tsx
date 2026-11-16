@@ -81,10 +81,10 @@ function NeedsRow({
       ) : (
         <div className="flex gap-2">
           <Button type="button" variant="approve" size="sm" disabled={decide.isPending} onClick={() => send("approve")}>
-            Approve
+            Allow once
           </Button>
           <Button type="button" variant="outline" size="sm" disabled={decide.isPending} onClick={() => send("deny")}>
-            Deny
+            Block
           </Button>
         </div>
       )}

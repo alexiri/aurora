@@ -59,6 +59,12 @@ export const adminRoutes = {
   platform: (tab?: TabOf<"adminPlatform">, hash?: string) => url("/admin/platform", { tab }, hash),
   /** All settings (the index of every section). */
   settings: (hash?: string) => url("/admin/settings", undefined, hash),
+  /** The page of one `governance` key: AI key rules, egress and BYO/agent tokens each live in their own topic. */
+  governanceSetting: (key: string) => {
+    if (key.startsWith("governance.egress.")) return url("/admin/internet-access", { tab: "limits" }, key);
+    if (key.startsWith("byo.") || key.startsWith("governance.agent_tokens.")) return url("/admin/agents", { tab: "byo" }, key);
+    return url("/admin/ai-models", { tab: "rules" }, key);
+  },
   /** The topic page and tab that holds a settings section (C-971); All settings when the section has no topic yet. */
   sectionPage: (section: string, hash?: string) => {
     const target = SETTINGS_SECTION_PAGE[section.replace(/-/g, "_")];
@@ -83,6 +89,28 @@ const SETTINGS_SECTION_PAGE: Record<string, { path: string; tab?: string }> = {
   limits: { path: "/admin/platform", tab: "limits" },
   outgoing_webhooks: { path: "/admin/apps", tab: "advanced" },
 };
+
+/** Where else a section's keys are shown (`governance` splits three ways): the topic and the page of each part. */
+const SETTINGS_SECTION_ALSO: Record<string, { topic: string; label: string; href: string }[]> = {
+  governance: [
+    { topic: "Internet access", label: "Internet access", href: "/admin/internet-access?tab=limits" },
+    { topic: "Agents", label: "Agents › BYO", href: "/admin/agents?tab=byo" },
+  ],
+};
+
+/** The topic a settings section is grouped under in All settings, with its topic tab (C-971). */
+export function sectionTopic(section: string): { topic: string; label: string } {
+  const key = section.replace(/-/g, "_");
+  const path = SETTINGS_SECTION_PAGE[key]?.path ?? "";
+  const topic = Object.entries(TOPIC_LABEL).find(([id]) => path === `/admin/${id}`);
+  return { topic: topic?.[1] ?? "Other", label: topic?.[1] ?? "Other" };
+}
+
+/** Every page that shows part of a section: the main one first (All settings lists them all). */
+export function sectionHomes(section: string): { topic: string; label: string; href: string }[] {
+  const main = sectionTopic(section);
+  return [{ topic: main.topic, label: main.label, href: adminRoutes.sectionPage(section) }, ...(SETTINGS_SECTION_ALSO[section.replace(/-/g, "_")] ?? [])];
+}
 
 /** An organization (`/o/<org>/…`). */
 export function orgRoutes(org: string) {

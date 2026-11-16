@@ -334,7 +334,7 @@ describe("expanded rail", () => {
     mock();
     const many = Array.from({ length: 7 }, (_, i) => gw(`g${i}`, `2099-01-01T00:0${i}:00Z`, { conversation_id: "c5" }));
     wrap(<Harness start ctx={ctxOf({}, { needs: needs(...many) })} />);
-    expect(screen.getAllByRole("button", { name: "Approve" })).toHaveLength(5);
+    expect(screen.getAllByRole("button", { name: "Allow once" })).toHaveLength(5);
     expect(screen.getByRole("link", { name: "2 more on Approvals" }).getAttribute("href")).toBe("/o/x/w/y/approvals");
   });
 });
@@ -349,7 +349,7 @@ describe("approving from the rail", () => {
     document.body.appendChild(card);
     wrap(<Harness start ctx={ctxOf({}, { needs: needs(gw("g1", FAR), gw("g2", FAR, { conversation_id: "c5" })) })} />);
     // g1 belongs to the open conversation c1; g2 does not.
-    expect(screen.getAllByRole("button", { name: "Approve" })).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: "Allow once" })).toHaveLength(1);
     fireEvent.click(screen.getByRole("button", { name: "Show in conversation" }));
     expect(card.scrollIntoView).toHaveBeenCalled();
     expect(document.activeElement).toBe(card);
@@ -358,7 +358,7 @@ describe("approving from the rail", () => {
   it("Approve and Deny of another conversation's hold post the decision", async () => {
     const calls = mock({ "POST /v1/approvals/g2/decision": () => json(200, { id: "g2", status: "approved" }) });
     wrap(<Harness start ctx={ctxOf({}, { needs: needs(gw("g2", FAR, { conversation_id: "c5" })) })} />);
-    fireEvent.click(screen.getByRole("button", { name: "Approve" }));
+    fireEvent.click(screen.getByRole("button", { name: "Allow once" }));
     await waitFor(() => expect(calls.some((c) => c.method === "POST" && c.path === "/v1/approvals/g2/decision")).toBe(true));
     expect(calls.find((c) => c.method === "POST")!.body).toEqual({ decision: "approve" });
   });
@@ -366,14 +366,14 @@ describe("approving from the rail", () => {
     const calls = mock({ "POST /v1/action-approvals/x1/decision": () => json(200, { id: "x1", status: "rejected" }) });
     const items = mergeNeeds([], [act1("x1", FAR)], () => null);
     wrap(<Harness start ctx={ctxOf({}, { needs: items })} />);
-    fireEvent.click(screen.getByRole("button", { name: "Deny" }));
+    fireEvent.click(screen.getByRole("button", { name: "Block" }));
     await waitFor(() => expect(calls.some((c) => c.path === "/v1/action-approvals/x1/decision")).toBe(true));
     expect(calls.find((c) => c.method === "POST")!.body).toEqual({ decision: "deny" });
   });
   it("409 shows Already decided.", async () => {
     mock({ "POST /v1/approvals/g2/decision": () => json(409, { error: { code: "already_decided", message: "already decided" } }) });
     wrap(<Harness start ctx={ctxOf({}, { needs: needs(gw("g2", FAR, { conversation_id: "c5" })) })} />);
-    fireEvent.click(screen.getByRole("button", { name: "Approve" }));
+    fireEvent.click(screen.getByRole("button", { name: "Allow once" }));
     expect(await screen.findByText("Already decided.")).toBeInTheDocument();
   });
 });
@@ -408,6 +408,6 @@ describe("phone sheet", () => {
     wrap(<StatusSheet ctx={ctxOf({}, { needs: needs(gw("g1", FAR, { conversation_id: "c5" })) })} open onOpenChange={() => undefined} />);
     const sheet = screen.getByRole("dialog", { name: "Status" });
     expect(within(sheet).getAllByRole("heading", { level: 3 }).map((h) => h.textContent)).toEqual(["Needs you1", "Doing now", "Recent tool calls", "Computer", "About"]);
-    expect(within(sheet).getByRole("button", { name: "Approve" })).toBeInTheDocument();
+    expect(within(sheet).getByRole("button", { name: "Allow once" })).toBeInTheDocument();
   });
 });

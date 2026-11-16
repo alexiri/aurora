@@ -20,8 +20,11 @@ for (const scheme of ["light", "dark"] as const) {
 
       test("the settings index lists the sections and the locked key", async ({ page }) => {
         await openRoute(page, "/admin/settings", scheme);
-        await expect(page.getByRole("heading", { name: "Settings", level: 1 })).toBeVisible();
+        await expect(page.getByRole("heading", { name: "All settings", level: 1 })).toBeVisible();
         await expect(page.getByRole("link", { name: "Governance", exact: true })).toBeVisible();
+        await page.getByRole("searchbox", { name: "Search settings" }).fill("no such setting");
+        await expect(page.getByRole("link", { name: "Governance", exact: true })).toHaveCount(0);
+        await page.getByRole("searchbox", { name: "Search settings" }).fill("");
         await expect(page.getByText(/1 setting is configured in Helm and cannot be changed here/)).toBeVisible();
         expect(await overflow(page)).toBeLessThanOrEqual(0);
         expect(await axeClean(page)).toEqual([]);
@@ -32,12 +35,21 @@ for (const scheme of ["light", "dark"] as const) {
         await openRoute(page, "/admin/settings/governance", scheme);
         await expect(page).toHaveURL(/\/admin\/ai-models\?tab=rules$/);
         await expect(page.getByRole("heading", { name: "AI models", level: 1 })).toBeVisible();
+        await expect(page.locator("[id='governance.llm.require_key_origin-c']")).toBeChecked();
+        // The egress and BYO keys of the same section are not on this page (C-971: three topics).
+        await expect(page.locator("[id='governance.egress.minimum_posture-c']")).toHaveCount(0);
+        expect(await overflow(page)).toBeLessThanOrEqual(0);
+        expect(await axeClean(page)).toEqual([]);
+        // Administration › Internet access holds the egress keys: the Helm-locked one reads as text.
+        await openRoute(page, "/admin/internet-access", scheme);
+        await expect(page.getByRole("heading", { name: "Internet access", level: 1 })).toBeVisible();
         await expect(page.getByTestId("governance.egress.minimum_posture-locked-value")).toHaveText("restricted");
         await expect(page.getByText("config.governance.egress.minimum_posture").first()).toBeVisible();
         await expect(page.locator("[id='governance.egress.minimum_posture-c']")).toHaveCount(0);
-        await expect(page.locator("[id='governance.llm.require_key_origin-c']")).toBeChecked();
-        // SET-2: the page lays the registry's keys out in four sections; the keyed-list "Managed by Helm"
-        // marker is covered on the LLM endpoints page below.
+        expect(await overflow(page)).toBeLessThanOrEqual(0);
+        expect(await axeClean(page)).toEqual([]);
+        // Administration › Agents › BYO holds the BYO agents and agent tokens groups.
+        await openRoute(page, "/admin/agents?tab=byo", scheme);
         await expect(page.getByRole("group", { name: "Agent tokens" })).toBeVisible();
         expect(await overflow(page)).toBeLessThanOrEqual(0);
         expect(await axeClean(page)).toEqual([]);

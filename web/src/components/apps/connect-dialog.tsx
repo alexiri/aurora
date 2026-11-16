@@ -443,7 +443,7 @@ function ConnectForm({
       {needsInstanceClient ? (
         <Notice tone="pending" role="status">
           No OAuth application is registered for this self-hosted server yet. Ask an organization admin to add one under
-          Credentials, OAuth clients, or connect with an access token instead.
+          Apps & accounts › OAuth clients, or connect with an access token instead.
         </Notice>
       ) : null}
       {app.connect.length > 1 ? (

@@ -106,7 +106,7 @@ function ConnectionRow({
                 disabled={patch.isPending}
                 onClick={() => patch.mutate({ id: c.id, status: c.status === "active" ? "disabled" : "active" })}
               >
-                {c.status === "active" ? "Disable" : "Enable"}
+                {c.status === "active" ? "Turn off" : "Turn on"}
               </Button>
             ) : null}
             <Button size="sm" variant="danger" onClick={() => setConfirm(true)} aria-label={`Delete ${c.label}`}>Delete</Button>

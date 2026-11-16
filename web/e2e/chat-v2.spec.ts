@@ -367,8 +367,8 @@ test.describe("layout, 390 px", () => {
 
   test("inline approval buttons are a two-column grid of 44 px buttons", async ({ page }) => {
     await openChat(page, "light", fixtures.running, `?c=${MINE.id}`);
-    const approve = await page.getByRole("button", { name: "Approve" }).boundingBox();
-    const deny = await page.getByRole("button", { name: "Deny" }).boundingBox();
+    const approve = await page.getByRole("button", { name: "Allow once" }).boundingBox();
+    const deny = await page.getByRole("button", { name: "Block" }).boundingBox();
     expect(approve!.height).toBeGreaterThanOrEqual(43.5);
     expect(deny!.height).toBeGreaterThanOrEqual(43.5);
     expect(Math.abs(approve!.y - deny!.y)).toBeLessThanOrEqual(1);

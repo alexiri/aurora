@@ -329,8 +329,8 @@ describe("inline approval (RFE-012)", () => {
     expect(screen.getByText(/Expires in 2:0\d/)).toBeTruthy();
     expect(screen.getByText("api.github.com/repos/acme/web/pulls/42/merge")).toBeTruthy();
     expect(screen.getByText(/Ask before merging/)).toBeTruthy();
-    expect(await screen.findByRole("button", { name: "Approve" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Deny" })).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "Allow once" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Block" })).toBeTruthy();
   });
 
   it("shows a plain member 'Waiting for an approver' and no buttons", async () => {
@@ -338,7 +338,7 @@ describe("inline approval (RFE-012)", () => {
     mock(routes("member"));
     pane();
     expect(await screen.findByText("Waiting for an approver")).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Approve" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Allow once" })).toBeNull();
   });
 
   it("collapses to one line with the decision chip once decided", () => {
@@ -346,7 +346,7 @@ describe("inline approval (RFE-012)", () => {
     mock(routes("approver"));
     pane();
     expect(screen.getByText("Approved by Ann")).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Approve" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Allow once" })).toBeNull();
   });
 });
 

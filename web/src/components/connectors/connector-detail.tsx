@@ -288,7 +288,7 @@ export function ConnectorDetail({ c, onBack }: { c: ConnectorAdmin; onBack: () =
               disabled={toggle.isPending}
               onClick={() => toggle.mutate({ id: c.id, body: { enabled: disabled } })}
             >
-              {disabled ? "Enable" : "Disable"}
+              {disabled ? "Turn on" : "Turn off"}
             </Button>
           </>
         }

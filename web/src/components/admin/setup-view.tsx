@@ -53,7 +53,7 @@ const FIX: Record<string, string> = {
   no_runner: "Install a runner and register it. See docs/operator/runners.md.",
   runner_offline: "Check that the runner is running and can reach the API. See docs/operator/runners.md.",
   no_gateway: "Start the gateway. Without it agents cannot reach the internet or the LLM.",
-  plugins_pending: "Review them under Plugins.",
+  plugins_pending: "Review them under Apps & accounts › Apps.",
 };
 
 /** The checks whose fix is made on Admin › Settings › LLM endpoints (SET-3): the step links there. */

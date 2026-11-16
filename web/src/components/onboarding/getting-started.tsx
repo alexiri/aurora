@@ -299,7 +299,7 @@ function KeyStep({ step, wsId, orgId, agent, base, keysCount }: { step: GuideSte
             An LLM key is the password to the AI service that does {agent.name}&apos;s thinking. Get one from your AI provider or
             from whoever runs it for your team. Aurora stores it sealed and never shows it again.
           </p>
-          {keysCount === 0 ? null : <p>Keys you already have are listed under Credentials.</p>}
+          {keysCount === 0 ? null : <p>Keys you already have are listed under Apps & accounts.</p>}
           <LlmKeyForm scope={{ kind: "workspace", id: wsId }} orgId={orgId} preselect={[agent.id]} />
         </>
       )}

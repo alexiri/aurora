@@ -224,7 +224,7 @@ function ConnectDialog({ orgId, open, onOpenChange }: { orgId: string; open: boo
       <Notice role="status">Use a read-only token (GitHub: Contents read; GitLab: read_repository). A token that can write is more access than Aurora needs.</Notice>
       {conns.isSuccess && usable.length === 0 ? (
         <Notice tone="pending" role="status">
-          No organization-level connection of an app that can serve a library (GitHub or GitLab) is active. Connect one under Credentials first.
+          No organization-level connection of an app that can serve a library (GitHub or GitLab) is active. Connect one under Apps & accounts first.
         </Notice>
       ) : null}
       <Field id="lib-label" label="Label">

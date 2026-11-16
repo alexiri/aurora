@@ -348,12 +348,12 @@ export function PluginReview({ plugin }: { plugin: PluginPackage }) {
         ) : null}
         {plugin.status === "active" ? (
           <Button variant="outline" disabled={act.isPending} onClick={() => act.mutate({ action: "disable" })}>
-            Disable
+            Turn off
           </Button>
         ) : null}
         {plugin.status === "disabled" ? (
           <Button variant="outline" disabled={act.isPending} onClick={() => act.mutate({ action: "enable" })}>
-            Enable
+            Turn on
           </Button>
         ) : null}
         <Button variant="danger" disabled={uninstall.isPending} onClick={() => doUninstall(false)}>
@@ -369,7 +369,7 @@ export function PluginReview({ plugin }: { plugin: PluginPackage }) {
             <>
               {" "}
               <Link href={adminRoutes.advanced("host-conflicts")} className="font-medium underline">
-                Host claims
+                Host conflicts
               </Link>
             </>
           ) : null}

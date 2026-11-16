@@ -341,10 +341,10 @@ function InstanceRow({
               size="sm"
               variant="outline"
               disabled={patch.isPending}
-              aria-label={`${active ? "Disable" : "Enable"} ${inst.base_url}`}
+              aria-label={`${active ? "Turn off" : "Turn on"} ${inst.base_url}`}
               onClick={() => patch.mutate({ id: inst.id, status: active ? "disabled" : "active" })}
             >
-              {active ? "Disable" : "Enable"}
+              {active ? "Turn off" : "Turn on"}
             </Button>
             <Button size="sm" variant="danger" aria-label={`Delete ${inst.base_url}`} onClick={() => setConfirm(true)}>
               Delete

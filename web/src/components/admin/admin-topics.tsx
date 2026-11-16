@@ -1,8 +1,5 @@
 "use client";
 
-import Link from "next/link";
-import type { ReactNode } from "react";
-
 import { AdminStorageView } from "@/components/account/admin-storage-view";
 import { AdminUsersView } from "@/components/account/admin-users-view";
 import { AdminGuard } from "@/components/admin/admin-guard";
@@ -13,6 +10,7 @@ import { AdminOrgsView } from "@/components/admin/orgs-view";
 import { PlacementView } from "@/components/admin/placement-view";
 import { PluginsView } from "@/components/admin/plugins-view";
 import { AdminRunnersView } from "@/components/admin/runners-view";
+import { GovernanceFields, GovernanceRulesFields } from "@/components/admin/settings/governance-settings-view";
 import { SettingsIndexView } from "@/components/admin/settings/settings-index-view";
 import { SettingsSectionView } from "@/components/admin/settings/settings-section-view";
 import { SetupView } from "@/components/admin/setup-view";
@@ -21,22 +19,12 @@ import { InstancesView } from "@/components/apps/instances-view";
 import { OAuthClientsPanel } from "@/components/apps/oauth-clients-panel";
 import { ConnectorsAdminView } from "@/components/connectors/connectors-admin-view";
 import { TopicPage } from "@/components/topic-page";
-import { Notice } from "@/components/ui/notice";
 import { EmbeddedPage, PageHeader } from "@/components/ui/page-header";
-import { adminRoutes, type TABS } from "@/lib/routes";
+import type { TABS } from "@/lib/routes";
 
 type Tabs<K extends keyof typeof TABS> = (typeof TABS)[K][number];
 
 const section = (slug: string) => <SettingsSectionView slug={slug} />;
-
-/** A settings section whose keys are split over several topics: the part that is not here yet points at its tab. */
-function MovedNotice({ children }: { children: ReactNode }) {
-  return (
-    <Notice tone="neutral" role="status">
-      {children}
-    </Notice>
-  );
-}
 
 /** Administration › Overview: the setup checklist (health follows with the Overview rebuild). */
 export function AdminOverviewPage() {
@@ -72,11 +60,7 @@ export function AdminAgentsPage() {
           {
             id: "byo",
             label: "BYO",
-            content: (
-              <MovedNotice>
-                The rules for bring-your-own agents are set under <Link href={adminRoutes.aiModels("rules")} className="font-medium underline">AI models › Rules</Link> for now.
-              </MovedNotice>
-            ),
+            content: <GovernanceFields part="byo" />,
           },
           {
             id: "computers",
@@ -146,7 +130,7 @@ export function AdminAiModelsPage() {
         description="The AI providers and endpoints, and the rules for which models agents may use."
         tabs={[
           { id: "endpoints", label: "Endpoints", content: section("llm") },
-          { id: "rules", label: "Rules", content: section("governance") },
+          { id: "rules", label: "Rules", content: <GovernanceRulesFields /> },
         ]}
       />
     </AdminGuard>
@@ -164,11 +148,7 @@ export function AdminInternetAccessPage() {
           {
             id: "limits",
             label: "Limits",
-            content: (
-              <MovedNotice>
-                The instance-wide internet limits are set under <Link href={adminRoutes.aiModels("rules")} className="font-medium underline">AI models › Rules</Link> for now.
-              </MovedNotice>
-            ),
+            content: <GovernanceFields part="internet" />,
           },
         ]}
       />

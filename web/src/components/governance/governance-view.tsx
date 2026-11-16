@@ -61,7 +61,7 @@ export function Locked({ setting }: { setting?: string }) {
   );
   if (!setting || me.data?.user.is_instance_admin !== true) return badge;
   return (
-    <Link href={adminRoutes.sectionPage("governance", setting)} className="no-underline" aria-label={`Enforced by instance: open the ${setting} setting`}>
+    <Link href={adminRoutes.governanceSetting(setting)} className="no-underline" aria-label={`Enforced by instance: open the ${setting} setting`}>
       {badge}
     </Link>
   );

@@ -70,7 +70,7 @@ export function ModelReadinessSection({ agentId, base }: { agentId: string; base
       {readiness.data ? (
         <div className="space-y-3">
           {readiness.data.keys.length === 0 ? (
-            <Notice role="status">No LLM key is granted to this agent. Grant one below, or add a key under Credentials.</Notice>
+            <Notice role="status">No LLM key is granted to this agent. Grant one below, or add a key under Apps & accounts.</Notice>
           ) : (
             <ItemList aria-label="Granted LLM keys">
               {readiness.data.keys.map((k) => (

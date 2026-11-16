@@ -7,11 +7,12 @@ import { ImportDialog } from "@/components/admin/settings/import-dialog";
 import { ErrorState, Loading } from "@/components/states";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { inputClass } from "@/components/ui/field";
 import { Notice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
 import { ItemList, ListRow } from "@/components/ui/section";
 import { exportUrl, useSettingsIndex } from "@/lib/api/settings";
-import { adminRoutes } from "@/lib/routes";
+import { sectionHomes } from "@/lib/routes";
 
 const DISMISS_KEY = "aurora.settings.locked-notice.dismissed";
 
@@ -35,14 +36,37 @@ function when(iso: string | null | undefined): string {
   return new Date(iso).toLocaleString();
 }
 
-/** Admin › Settings (`/admin/settings`, SET-1, `14 §Instance administration`): the sections, the locked keys, Export and Import. */
+type SectionRow = NonNullable<ReturnType<typeof useSettingsIndex>["data"]>["sections"][number];
+
+/** The order the topics appear in the sidebar (`14` topics per level); sections without a topic come last. */
+const TOPIC_ORDER = ["Agents", "Apps & accounts", "AI models", "Internet access", "People", "Data", "Platform", "Other"];
+
+/** Sections grouped by topic, in sidebar order, those matching `search` (name, description or topic; case-insensitive). */
+export function groupSections(sections: SectionRow[], search: string): { topic: string; sections: SectionRow[] }[] {
+  const needle = search.trim().toLowerCase();
+  const byTopic = new Map<string, SectionRow[]>();
+  for (const s of sections) {
+    const homes = sectionHomes(s.section);
+    const hay = `${s.title} ${s.description} ${homes.map((h) => h.label).join(" ")}`.toLowerCase();
+    if (needle && !hay.includes(needle)) continue;
+    const topic = homes[0]!.topic;
+    byTopic.set(topic, [...(byTopic.get(topic) ?? []), s]);
+  }
+  return [...byTopic.entries()]
+    .sort(([a], [b]) => (TOPIC_ORDER.indexOf(a) + 1 || 99) - (TOPIC_ORDER.indexOf(b) + 1 || 99))
+    .map(([topic, list]) => ({ topic, sections: list }));
+}
+
+/** All settings (`/admin/settings`, SET-1, C-971): every section under its topic, with search, the locked keys, Export and Import. */
 export function SettingsIndexView() {
   const q = useSettingsIndex();
   const [importing, setImporting] = useState(false);
   const [dismissed, setDismissed] = useState<string | null>(() => (typeof window === "undefined" ? null : readDismissed()));
+  const [search, setSearch] = useState("");
   if (q.isPending) return <Loading />;
   if (q.isError) return <ErrorState error={q.error} onRetry={() => q.refetch()} />;
   const { sections, locked } = q.data;
+  const groups = groupSections(sections, search);
   // Dismissed per viewer for this set of locked keys: a new locked key brings the notice back.
   const fingerprint = locked.map((l) => `${l.key}:${l.entry_id ?? ""}`).join("|");
   const showNotice = locked.length > 0 && dismissed !== fingerprint;
@@ -50,8 +74,8 @@ export function SettingsIndexView() {
   return (
     <div className="max-w-page space-y-6">
       <PageHeader
-        title="Settings"
-        description="Instance-wide settings, applied live. A setting configured in Helm is shown read-only."
+        title="All settings"
+        description="Every instance-wide setting, grouped by the topic where you change it, applied live. A setting configured in Helm is shown read-only."
         actions={
           <div className="flex flex-wrap gap-2">
             <Button asChild variant="outline" size="sm">
@@ -101,34 +125,75 @@ export function SettingsIndexView() {
         </Notice>
       ) : null}
 
-      <ItemList aria-label="Settings sections">
-        {sections.map((s) => (
-          <ListRow
-            key={s.section}
-            actions={
-              <Button asChild variant="outline" size="sm">
-                <Link href={adminRoutes.sectionPage(s.section)} aria-label={`Open ${s.title}`}>
-                  Open
-                </Link>
-              </Button>
-            }
-          >
-            <div className="min-w-0 space-y-1">
-              <Link href={adminRoutes.sectionPage(s.section)} className="font-medium text-ink hover:underline">
-                {s.title}
-              </Link>
-              <p className="text-sm text-ink-2">{s.description}</p>
-              <p className="text-xs text-muted">
-                {s.keys_total} setting{s.keys_total === 1 ? "" : "s"}
-                {s.keys_locked > 0 ? <> · <Badge tone="pending">{s.keys_locked} in Helm</Badge></> : null}
-                {s.keys_dashboard > 0 ? <> · <Badge tone="accent">{s.keys_dashboard} in the dashboard</Badge></> : null}
-                {" · "}Last change: {s.updated_by_label ? `${s.updated_by_label}, ` : ""}
-                {when(s.updated_at)}
-              </p>
-            </div>
-          </ListRow>
-        ))}
-      </ItemList>
+      <div className="max-w-md">
+        <label htmlFor="settings-search" className="sr-only">
+          Search settings
+        </label>
+        <input
+          id="settings-search"
+          type="search"
+          className={inputClass}
+          placeholder="Search settings by name or description"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+        />
+      </div>
+      {groups.length === 0 ? (
+        <p className="text-sm text-ink-2" role="status">
+          No settings match “{search.trim()}”.
+        </p>
+      ) : null}
+      {groups.map((g) => (
+        <section key={g.topic} aria-labelledby={`settings-topic-${g.topic}`} className="space-y-2">
+          <h2 id={`settings-topic-${g.topic}`} className="text-base font-semibold text-ink">
+            {g.topic}
+          </h2>
+          <ItemList aria-label={`${g.topic} settings`}>
+            {g.sections.map((s) => {
+              const homes = sectionHomes(s.section);
+              return (
+                <ListRow
+                  key={s.section}
+                  actions={
+                    <Button asChild variant="outline" size="sm">
+                      <Link href={homes[0]!.href} aria-label={`Open ${s.title}`}>
+                        Open
+                      </Link>
+                    </Button>
+                  }
+                >
+                  <div className="min-w-0 space-y-1">
+                    <Link href={homes[0]!.href} className="font-medium text-ink hover:underline">
+                      {s.title}
+                    </Link>
+                    <p className="text-sm text-ink-2">{s.description}</p>
+                    {homes.length > 1 ? (
+                      <p className="text-xs text-ink-2">
+                        Also on:{" "}
+                        {homes.slice(1).map((h, i) => (
+                          <span key={h.href}>
+                            {i > 0 ? ", " : ""}
+                            <Link href={h.href} className="underline">
+                              {h.label}
+                            </Link>
+                          </span>
+                        ))}
+                      </p>
+                    ) : null}
+                    <p className="text-xs text-muted">
+                      {s.keys_total} setting{s.keys_total === 1 ? "" : "s"}
+                      {s.keys_locked > 0 ? <> · <Badge tone="pending">{s.keys_locked} in Helm</Badge></> : null}
+                      {s.keys_dashboard > 0 ? <> · <Badge tone="accent">{s.keys_dashboard} in the dashboard</Badge></> : null}
+                      {" · "}Last change: {s.updated_by_label ? `${s.updated_by_label}, ` : ""}
+                      {when(s.updated_at)}
+                    </p>
+                  </div>
+                </ListRow>
+              );
+            })}
+          </ItemList>
+        </section>
+      ))}
       <ImportDialog open={importing} onOpenChange={setImporting} />
     </div>
   );
