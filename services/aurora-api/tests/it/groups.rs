@@ -144,7 +144,7 @@ impl Fx {
     }
 
     async fn n(&self, sql: &str) -> i64 {
-        sqlx::query_scalar(sql)
+        sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
             .fetch_one(self.h.pool())
             .await
             .unwrap()

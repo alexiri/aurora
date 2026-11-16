@@ -46,10 +46,12 @@ const SELECT: &str =
     FROM channel_presences p JOIN channel_integrations i ON i.id = p.integration_id";
 
 pub async fn get<'e, E: PgExecutor<'e>>(exec: E, id: Uuid) -> Result<Option<PresenceRow>, DbError> {
-    Ok(sqlx::query_as(&format!("{SELECT} WHERE p.id=$1"))
-        .bind(id)
-        .fetch_optional(exec)
-        .await?)
+    Ok(
+        sqlx::query_as(sqlx::AssertSqlSafe(format!("{SELECT} WHERE p.id=$1")))
+            .bind(id)
+            .fetch_optional(exec)
+            .await?,
+    )
 }
 
 /// `FOR UPDATE OF p` variant for read-modify-write.
@@ -57,21 +59,21 @@ pub async fn get_for_update(
     conn: &mut PgConnection,
     id: Uuid,
 ) -> Result<Option<PresenceRow>, DbError> {
-    Ok(
-        sqlx::query_as(&format!("{SELECT} WHERE p.id=$1 FOR UPDATE OF p"))
-            .bind(id)
-            .fetch_optional(conn)
-            .await?,
-    )
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "{SELECT} WHERE p.id=$1 FOR UPDATE OF p"
+    )))
+    .bind(id)
+    .fetch_optional(conn)
+    .await?)
 }
 
 pub async fn list_for_agent<'e, E: PgExecutor<'e>>(
     exec: E,
     agent: Uuid,
 ) -> Result<Vec<PresenceRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "{SELECT} WHERE p.agent_id=$1 ORDER BY p.created_at, p.id"
-    ))
+    )))
     .bind(agent)
     .fetch_all(exec)
     .await?)
@@ -81,9 +83,9 @@ pub async fn list_for_integration<'e, E: PgExecutor<'e>>(
     exec: E,
     integration: Uuid,
 ) -> Result<Vec<PresenceRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "{SELECT} WHERE p.integration_id=$1 ORDER BY p.created_at, p.id"
-    ))
+    )))
     .bind(integration)
     .fetch_all(exec)
     .await?)
@@ -178,9 +180,9 @@ pub async fn active_shared<'e, E: PgExecutor<'e>>(
     agent: Uuid,
     integration: Uuid,
 ) -> Result<Option<PresenceRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "{SELECT} WHERE p.agent_id=$1 AND p.integration_id=$2 AND p.mode='shared' AND p.status='active'"
-    ))
+    )))
     .bind(agent)
     .bind(integration)
     .fetch_optional(exec)
@@ -217,12 +219,12 @@ pub async fn dedicated_for_agent<'e, E: PgExecutor<'e>>(
     exec: E,
     agent: Uuid,
 ) -> Result<Vec<DeprovisionTarget>, DbError> {
-    Ok(
-        sqlx::query_as(&format!("{TARGETS} AND p.agent_id=$1 ORDER BY p.id"))
-            .bind(agent)
-            .fetch_all(exec)
-            .await?,
-    )
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "{TARGETS} AND p.agent_id=$1 ORDER BY p.id"
+    )))
+    .bind(agent)
+    .fetch_all(exec)
+    .await?)
 }
 
 /// Active dedicated presences of an agent (avatar sync).
@@ -230,9 +232,9 @@ pub async fn active_dedicated_for_agent<'e, E: PgExecutor<'e>>(
     exec: E,
     agent: Uuid,
 ) -> Result<Vec<DeprovisionTarget>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "{TARGETS} AND p.agent_id=$1 AND p.status='active' ORDER BY p.id"
-    ))
+    )))
     .bind(agent)
     .fetch_all(exec)
     .await?)
@@ -242,12 +244,12 @@ pub async fn dedicated_for_workspace<'e, E: PgExecutor<'e>>(
     exec: E,
     workspace: Uuid,
 ) -> Result<Vec<DeprovisionTarget>, DbError> {
-    Ok(
-        sqlx::query_as(&format!("{TARGETS} AND a.workspace_id=$1 ORDER BY p.id"))
-            .bind(workspace)
-            .fetch_all(exec)
-            .await?,
-    )
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "{TARGETS} AND a.workspace_id=$1 ORDER BY p.id"
+    )))
+    .bind(workspace)
+    .fetch_all(exec)
+    .await?)
 }
 
 /// Every dedicated presence of the integrations of `org`.
@@ -255,12 +257,12 @@ pub async fn dedicated_for_org<'e, E: PgExecutor<'e>>(
     exec: E,
     org: Uuid,
 ) -> Result<Vec<DeprovisionTarget>, DbError> {
-    Ok(
-        sqlx::query_as(&format!("{TARGETS} AND i.org_id=$1 ORDER BY p.id"))
-            .bind(org)
-            .fetch_all(exec)
-            .await?,
-    )
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "{TARGETS} AND i.org_id=$1 ORDER BY p.id"
+    )))
+    .bind(org)
+    .fetch_all(exec)
+    .await?)
 }
 
 /// The presence as a deprovision target when it is dedicated (else empty).
@@ -268,22 +270,24 @@ pub async fn dedicated_for_presence<'e, E: PgExecutor<'e>>(
     exec: E,
     presence: Uuid,
 ) -> Result<Vec<DeprovisionTarget>, DbError> {
-    Ok(sqlx::query_as(&format!("{TARGETS} AND p.id=$1"))
-        .bind(presence)
-        .fetch_all(exec)
-        .await?)
+    Ok(
+        sqlx::query_as(sqlx::AssertSqlSafe(format!("{TARGETS} AND p.id=$1")))
+            .bind(presence)
+            .fetch_all(exec)
+            .await?,
+    )
 }
 
 pub async fn dedicated_for_integration<'e, E: PgExecutor<'e>>(
     exec: E,
     integration: Uuid,
 ) -> Result<Vec<DeprovisionTarget>, DbError> {
-    Ok(
-        sqlx::query_as(&format!("{TARGETS} AND p.integration_id=$1 ORDER BY p.id"))
-            .bind(integration)
-            .fetch_all(exec)
-            .await?,
-    )
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "{TARGETS} AND p.integration_id=$1 ORDER BY p.id"
+    )))
+    .bind(integration)
+    .fetch_all(exec)
+    .await?)
 }
 
 /// Bump the home sync generation of every agent with a presence on `integration`.

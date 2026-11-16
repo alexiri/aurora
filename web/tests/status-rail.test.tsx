@@ -299,6 +299,7 @@ describe("expanded rail", () => {
     expect(screen.getByText("Sandbox stopped")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Open computer" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Terminal" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Files" })).toBeInTheDocument();
     expect(screen.getByText("Default")).toBeInTheDocument();
     expect(screen.getByText("Triage pull requests.")).toBeInTheDocument();
   });
@@ -307,6 +308,8 @@ describe("expanded rail", () => {
     wrap(<Harness start ctx={ctxOf({ terminalAvailable: false })} />);
     expect(screen.getByText("Idle")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Terminal" })).toBeNull();
+    // (P5-FILES-2) Files follows the Terminal's availability.
+    expect(screen.queryByRole("button", { name: "Files" })).toBeNull();
     expect(screen.getByText("Nothing is waiting for you.")).toBeInTheDocument();
   });
   it("navigates: Open computer, Terminal and Edit instructions, and selects a working conversation", () => {
@@ -316,9 +319,11 @@ describe("expanded rail", () => {
     fireEvent.click(screen.getByRole("button", { name: "Open computer" }));
     fireEvent.click(screen.getByRole("button", { name: "Terminal" }));
     fireEvent.click(screen.getByRole("button", { name: "Edit instructions" }));
+    fireEvent.click(screen.getByRole("button", { name: "Files" }));
     expect(ctx.onNavigate).toHaveBeenNthCalledWith(1, "computer");
     expect(ctx.onNavigate).toHaveBeenNthCalledWith(2, "terminal");
     expect(ctx.onNavigate).toHaveBeenNthCalledWith(3, "instructions");
+    expect(ctx.onNavigate).toHaveBeenNthCalledWith(4, "files");
     fireEvent.click(screen.getByRole("button", { name: /Nightly report · working/ }));
     expect(ctx.onSelectConversation).toHaveBeenCalledWith("c9");
   });

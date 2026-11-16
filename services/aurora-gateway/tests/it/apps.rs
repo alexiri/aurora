@@ -941,10 +941,10 @@ async fn registry_token_challenge_anonymous() {
 // ---- snapshot store (database) ----
 
 async fn put_snapshot(db: &aurora_db::PgPool, hash: &str, at: &str, body: &Value) {
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "INSERT INTO registry_snapshots (id, contract, content_hash, snapshot, compiled_by, activated_at) \
          VALUES ($1, 1, $2, $3, 'test', {at})"
-    ))
+    )))
     .bind(Uuid::now_v7())
     .bind(hash)
     .bind(body)

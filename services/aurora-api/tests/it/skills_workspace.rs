@@ -372,15 +372,23 @@ async fn workspace_skill_authorization_matrix() {
     assert_eq!(r.call(&org_admin, Method::DELETE, &item, None).await.0, 204);
     assert_eq!(r.call(&owner, Method::GET, &item, None).await.0, 404);
 
-    // Audit rows carry the skill's workspace id and the tier.
-    let n: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM audit_log WHERE action = 'skill.create' AND workspace_id = $1
-           AND metadata->>'scope' = 'workspace'",
-    )
-    .bind(r.ws)
-    .fetch_one(r.h.pool())
-    .await
-    .unwrap();
+    // Audit rows carry the skill's workspace id and the tier (best-effort class: written by a
+    // spawned task, so poll).
+    let mut n: i64 = 0;
+    for _ in 0..100 {
+        n = sqlx::query_scalar(
+            "SELECT count(*) FROM audit_log WHERE action = 'skill.create' AND workspace_id = $1
+               AND metadata->>'scope' = 'workspace'",
+        )
+        .bind(r.ws)
+        .fetch_one(r.h.pool())
+        .await
+        .unwrap();
+        if n > 0 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
     assert!(n >= 1, "workspace skill.create audit rows: {n}");
     // Org and agent tiers keep their rules: member cannot create org skills; ws member can
     // create agent skills (can_use).

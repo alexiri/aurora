@@ -29,10 +29,10 @@ pub async fn thread_link<'e, E: PgExecutor<'e>>(
     space_ref: &str,
     thread_ref: &str,
 ) -> Result<Option<ThreadLinkRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {COLS} FROM thread_links
           WHERE integration_id=$1 AND agent_id=$2 AND space_ref=$3 AND thread_ref=$4"
-    ))
+    )))
     .bind(integration)
     .bind(agent)
     .bind(space_ref)
@@ -45,9 +45,9 @@ pub async fn for_conversation<'e, E: PgExecutor<'e>>(
     exec: E,
     conversation: Uuid,
 ) -> Result<Option<ThreadLinkRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {COLS} FROM thread_links WHERE conversation_id=$1 ORDER BY created_at LIMIT 1"
-    ))
+    )))
     .bind(conversation)
     .fetch_optional(exec)
     .await?)
@@ -69,14 +69,14 @@ pub async fn upsert_thread_link<'e, E: PgExecutor<'e>>(
     exec: E,
     n: &UpsertThreadLink<'_>,
 ) -> Result<ThreadLinkRow, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "INSERT INTO thread_links (id, integration_id, agent_id, conversation_id, kind, space_ref,
              thread_ref, sender)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
          ON CONFLICT (integration_id, agent_id, space_ref, thread_ref)
          DO UPDATE SET updated_at = thread_links.updated_at
          RETURNING {COLS}"
-    ))
+    )))
     .bind(Uuid::now_v7())
     .bind(n.integration_id)
     .bind(n.agent_id)
@@ -107,12 +107,12 @@ pub async fn get<'e, E: PgExecutor<'e>>(
     exec: E,
     id: Uuid,
 ) -> Result<Option<ThreadLinkRow>, DbError> {
-    Ok(
-        sqlx::query_as(&format!("SELECT {COLS} FROM thread_links WHERE id=$1"))
-            .bind(id)
-            .fetch_optional(exec)
-            .await?,
-    )
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT {COLS} FROM thread_links WHERE id=$1"
+    )))
+    .bind(id)
+    .fetch_optional(exec)
+    .await?)
 }
 
 /// The most recently used link of a platform thread across agents (BE-072 target routing).
@@ -122,11 +122,11 @@ pub async fn latest_for_thread<'e, E: PgExecutor<'e>>(
     space_ref: &str,
     thread_ref: &str,
 ) -> Result<Option<ThreadLinkRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {COLS} FROM thread_links
           WHERE integration_id=$1 AND space_ref=$2 AND thread_ref=$3
           ORDER BY updated_at DESC, id DESC LIMIT 1"
-    ))
+    )))
     .bind(integration)
     .bind(space_ref)
     .bind(thread_ref)
@@ -139,10 +139,10 @@ pub async fn latest_for_conversation<'e, E: PgExecutor<'e>>(
     exec: E,
     conversation: Uuid,
 ) -> Result<Option<ThreadLinkRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {COLS} FROM thread_links WHERE conversation_id=$1
           ORDER BY updated_at DESC, id DESC LIMIT 1"
-    ))
+    )))
     .bind(conversation)
     .fetch_optional(exec)
     .await?)

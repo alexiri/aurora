@@ -263,6 +263,12 @@ async fn run(
                                 .terminal_data(session.sandbox_id, session.boot_id, pty_id, payload)
                                 .await;
                         }
+                        // (P5-FILES-1, W20) `[0x03][pty_id BE][payload]`: an exec's stderr.
+                        Ok(DataFrame::Stderr(pty_id, payload)) => {
+                            shared
+                                .stderr_data(session.sandbox_id, session.boot_id, pty_id, payload)
+                                .await;
+                        }
                         Err(why) => {
                             // Not a stream frame (or broken): a 1003 close would end the whole
                             // control channel for one bad preview frame; drop and keep going.
@@ -330,13 +336,15 @@ struct Raw {
 enum DataFrame {
     Stream(u32, Vec<u8>),
     Terminal(u32, Vec<u8>),
+    /// (P5-FILES-1, W20) tag `0x03`: an exec's stderr (supervisor → runner only).
+    Stderr(u32, Vec<u8>),
 }
 
 fn decode_stream_data(b: &[u8]) -> Result<DataFrame, &'static str> {
     let Some((&tag, rest)) = b.split_first() else {
         return Err("empty binary message");
     };
-    if tag != 0x01 && tag != 0x02 {
+    if tag != 0x01 && tag != 0x02 && tag != 0x03 {
         return Err("unknown binary tag");
     }
     if rest.len() < 4 {
@@ -352,11 +360,15 @@ fn decode_stream_data(b: &[u8]) -> Result<DataFrame, &'static str> {
             }
             Ok(DataFrame::Stream(id, payload))
         }
-        _ => {
+        tag => {
             if payload.len() > aurora_core::limits::TERMINAL_CHUNK {
                 return Err("terminal data payload too large");
             }
-            Ok(DataFrame::Terminal(id, payload))
+            if tag == 0x03 {
+                Ok(DataFrame::Stderr(id, payload))
+            } else {
+                Ok(DataFrame::Terminal(id, payload))
+            }
         }
     }
 }
@@ -367,7 +379,11 @@ async fn on_text(shared: &Arc<Shared>, session: &Arc<Session>, text: &str) -> Re
     // (P4-PRV-2, W18; P4-TERM, W19) Unsequenced `stream.*`/`pty.*` frames bypass the seq/ack
     // lineage entirely: they are never acked, never replayed, and routed straight to the
     // stream listener (which owns both the preview and the terminal legs).
-    if raw.seq == 0 && (raw.kind.starts_with("stream.") || raw.kind.starts_with("pty.")) {
+    if raw.seq == 0
+        && (raw.kind.starts_with("stream.")
+            || raw.kind.starts_with("pty.")
+            || raw.kind.starts_with("exec."))
+    {
         match serde_json::from_str::<WireFrame<SupervisorToRunner>>(text) {
             Ok(f) => match f.validate() {
                 Ok(()) => {

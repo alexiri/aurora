@@ -1960,7 +1960,10 @@ async fn s11_database_lane_psql_service_read_allowed_write_needs_approval() {
         format!("CREATE ROLE e2e_login LOGIN PASSWORD '{DB_PASSWORD}'"),
         "GRANT ALL ON e2e_t TO e2e_login".to_owned(),
     ] {
-        sqlx::query(&q).execute(&tdb).await.unwrap();
+        sqlx::query(sqlx::AssertSqlSafe(&*q))
+            .execute(&tdb)
+            .await
+            .unwrap();
     }
     let (st, api) = fx(Opts::default()).await;
     let conn = database_connection(&st, &api, (&dbhost, dbport), "Orders DB").await;

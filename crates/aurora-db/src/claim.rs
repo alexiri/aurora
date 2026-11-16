@@ -59,7 +59,7 @@ pub async fn claim<'e, E: PgExecutor<'e>>(
     limit: i64,
     lease_secs: f64,
 ) -> Result<Vec<PgRow>, DbError> {
-    Ok(sqlx::query(&spec.sql())
+    Ok(sqlx::query(sqlx::AssertSqlSafe(&*spec.sql()))
         .bind(limit)
         .bind(lease_secs)
         .fetch_all(executor)

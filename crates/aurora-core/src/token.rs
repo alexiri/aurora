@@ -49,10 +49,12 @@ pub enum TokenPrefix {
     PreviewStream,
     /// Web-terminal stream grant (P4-TERM, C-618).
     TerminalStream,
+    /// Files stream grant (P5-FILES-1, C-901): opens only an `sftp` exec.
+    FilesStream,
 }
 
 impl TokenPrefix {
-    pub const ALL: [TokenPrefix; 18] = [
+    pub const ALL: [TokenPrefix; 19] = [
         Self::Gateway,
         Self::Boot,
         Self::Context,
@@ -71,6 +73,7 @@ impl TokenPrefix {
         Self::PreviewSession,
         Self::PreviewStream,
         Self::TerminalStream,
+        Self::FilesStream,
     ];
 
     pub const fn as_str(self) -> &'static str {
@@ -93,6 +96,7 @@ impl TokenPrefix {
             Self::PreviewSession => "auv_",
             Self::PreviewStream => "aux_",
             Self::TerminalStream => "auy_",
+            Self::FilesStream => "auf_",
         }
     }
 }

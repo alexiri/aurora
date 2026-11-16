@@ -2,9 +2,12 @@
 # `codex` in the web terminal (FIX-138 item 1b, docs/12 §Terminal); see `claude` beside it. Codex
 # takes its model provider from its config, so the wrapper gives it the gateway endpoint as `-c`
 # overrides (the same values `codex::config::render_config` writes for a turn) and keeps its state
-# in /workspace/.aurora/terminal/codex (never the agent harness's CODEX_HOME).
+# in /workspace/.aurora/terminal/codex (never the agent harness's CODEX_HOME). Like `claude`, it
+# reads /run/aurora/harness.env as data, never as shell (FIX-155), and runs its helpers by
+# absolute path.
 bin=/opt/aurora/harness/codex/codex
 envfile=/run/aurora/harness.env
+readonly bin envfile
 refuse() {
     echo "codex: not enabled on this instance" >&2
     exit 127
@@ -14,10 +17,63 @@ if [ ! -r "$envfile" ]; then
     echo "codex: the sandbox's gateway settings ($envfile) are missing" >&2
     exit 1
 fi
-set -a
-# shellcheck disable=SC1090
-. "$envfile"
-set +a
+bad() {
+    echo "codex: $envfile is not in the expected format" >&2
+    exit 1
+}
+# Read the file once, then parse that copy twice (check, then export), so a file with any bad line
+# applies nothing. Accepted lines: blank, `# ...`, and NAME='VALUE' (NAME matches
+# [A-Za-z_][A-Za-z0-9_]*; VALUE is one single-quoted word, an embedded quote written as the four
+# characters '\'' ; nothing after the closing quote).
+_w_all=
+while IFS= read -r _w_line || [ -n "$_w_line" ]; do
+    _w_all="$_w_all$_w_line
+"
+done <"$envfile"
+_w_sq="'"
+_w_esc="\\$_w_sq$_w_sq"
+load_env() {
+    while IFS= read -r _w_line; do
+        case $_w_line in
+        "" | "#"*) continue ;;
+        *=*) ;;
+        *) bad ;;
+        esac
+        _w_name=${_w_line%%=*}
+        case $_w_name in
+        "" | [0-9]* | *[!A-Za-z0-9_]*) bad ;;
+        esac
+        _w_rest=${_w_line#*=}
+        case $_w_rest in
+        "$_w_sq"*) _w_rest=${_w_rest#"$_w_sq"} ;;
+        *) bad ;;
+        esac
+        _w_val=
+        while :; do
+            case $_w_rest in
+            *"$_w_sq"*) ;;
+            *) bad ;;
+            esac
+            _w_val=$_w_val${_w_rest%%"$_w_sq"*}
+            _w_rest=${_w_rest#*"$_w_sq"}
+            case $_w_rest in
+            "") break ;;
+            "$_w_esc"*)
+                _w_val=$_w_val$_w_sq
+                _w_rest=${_w_rest#"$_w_esc"}
+                ;;
+            *) bad ;;
+            esac
+        done
+        if [ "$1" = apply ]; then
+            export "$_w_name=$_w_val"
+        fi
+    done <<EOF
+$_w_all
+EOF
+}
+load_env check
+load_env apply
 case " ${HARNESSES_ENABLED:-} " in
 *" codex "*) ;;
 *) refuse ;;
@@ -29,7 +85,7 @@ if [ -n "${AURORA_CODEX_UNAVAILABLE:-}" ]; then
 fi
 CODEX_HOME=/workspace/.aurora/terminal/codex
 export CODEX_HOME
-mkdir -p "$CODEX_HOME" 2>/dev/null
+/usr/bin/mkdir -p "$CODEX_HOME" 2>/dev/null
 model="${AURORA_CODEX_MODEL:-}"
 base="${AURORA_CODEX_BASE_URL:-}"
 # Codex uses none of the Claude Code variables.

@@ -52,10 +52,10 @@ pub async fn insert_default<'e, E: PgExecutor<'e>>(
     exec: E,
     a: &NewDefaultAgent<'_>,
 ) -> Result<AgentRow, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "INSERT INTO agents (id, org_id, workspace_id, handle, name, kind, is_default, harness, effort, brief, created_by)
          VALUES ($1,$2,$3,$4,$5,$6,true,$7,'medium',$8,$9) RETURNING {COLS}"
-    ))
+    )))
     .bind(a.id)
     .bind(a.org_id)
     .bind(a.workspace_id)
@@ -70,12 +70,12 @@ pub async fn insert_default<'e, E: PgExecutor<'e>>(
 }
 
 pub async fn get<'e, E: PgExecutor<'e>>(exec: E, id: Uuid) -> Result<Option<AgentRow>, DbError> {
-    Ok(
-        sqlx::query_as(&format!("SELECT {COLS} FROM agents WHERE id = $1"))
-            .bind(id)
-            .fetch_optional(exec)
-            .await?,
-    )
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT {COLS} FROM agents WHERE id = $1"
+    )))
+    .bind(id)
+    .fetch_optional(exec)
+    .await?)
 }
 
 pub async fn list_for_workspace<'e, E: PgExecutor<'e>>(
@@ -85,11 +85,11 @@ pub async fn list_for_workspace<'e, E: PgExecutor<'e>>(
     fetch: i64,
 ) -> Result<Vec<AgentRow>, DbError> {
     let (t, id) = split(after);
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {COLS} FROM agents WHERE workspace_id = $1
          AND ($2::timestamptz IS NULL OR (created_at, id) < ($2, $3))
          ORDER BY created_at DESC, id DESC LIMIT $4"
-    ))
+    )))
     .bind(ws)
     .bind(t)
     .bind(id)
@@ -120,11 +120,11 @@ pub struct NewAgent<'a> {
 pub const HANDLE_CONSTRAINT: &str = "agents_workspace_id_handle_key";
 
 pub async fn insert<'e, E: PgExecutor<'e>>(exec: E, a: &NewAgent<'_>) -> Result<AgentRow, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "INSERT INTO agents (id, org_id, workspace_id, handle, name, kind, harness, model_endpoint_id,
             model_id, effort, proactive_messaging, brief, created_by, model_provider)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING {COLS}"
-    ))
+    )))
     .bind(a.id)
     .bind(a.org_id)
     .bind(a.workspace_id)
@@ -198,7 +198,7 @@ pub async fn update<'e, E: PgExecutor<'e>>(
     id: Uuid,
     p: &AgentPatch<'_>,
 ) -> Result<AgentRow, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "UPDATE agents SET name = COALESCE($2, name), brief = COALESCE($3, brief),
             harness = COALESCE($4, harness), model_endpoint_id = COALESCE($5, model_endpoint_id),
             model_id = COALESCE($6, model_id), effort = COALESCE($7, effort),
@@ -206,7 +206,7 @@ pub async fn update<'e, E: PgExecutor<'e>>(
             resource_overrides = COALESCE($9, resource_overrides),
             model_provider = COALESCE($10, model_provider), updated_at = now()
          WHERE id = $1 RETURNING {COLS}"
-    ))
+    )))
     .bind(id)
     .bind(p.name)
     .bind(p.brief)
@@ -272,10 +272,10 @@ pub async fn set_byo_settings<'e, E: PgExecutor<'e>>(
     source_cidrs: Option<&[String]>,
     require_context: bool,
 ) -> Result<Option<AgentRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "UPDATE agents SET byo_source_cidrs = $2, byo_require_context = $3, updated_at = now()
          WHERE id = $1 AND kind = 'byo' RETURNING {COLS}"
-    ))
+    )))
     .bind(id)
     .bind(source_cidrs)
     .bind(require_context)

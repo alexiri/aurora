@@ -73,12 +73,12 @@ pub async fn batch_undecidable(
     agent: Uuid,
     batch_id: &str,
 ) -> Result<bool, DbError> {
-    Ok(sqlx::query_scalar(&format!(
+    Ok(sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT EXISTS (SELECT 1 FROM approvals a WHERE a.batch_id = $5 AND a.agent_id = $4 \
          AND {MEMBER_ONLY} AND ($2::uuid IS NULL OR a.org_id = $2) \
          AND ($3::uuid IS NULL OR a.workspace_id = $3) AND NOT {})",
         crate::authz::hidden_direct_conversation_sql("a.conversation_id", "$1", "a.workspace_id")
-    ))
+    )))
     .bind(user)
     .bind(org)
     .bind(ws)
@@ -96,13 +96,13 @@ pub async fn list_pending_undecidable_for(
     user: Uuid,
     limit: i64,
 ) -> Result<Vec<ApprovalRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "{SELECT} WHERE a.status = 'pending' \
          AND {MEMBER_ONLY} \
          AND NOT {} \
          ORDER BY a.created_at ASC, a.id ASC LIMIT $2",
         crate::authz::hidden_direct_conversation_sql("a.conversation_id", "$1", "a.workspace_id")
-    ))
+    )))
     .bind(user)
     .bind(limit)
     .fetch_all(pool)
@@ -118,12 +118,12 @@ pub async fn list_pending_by_code(
     code_prefix: &[u8],
     limit: i64,
 ) -> Result<Vec<ApprovalRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "{SELECT} WHERE a.status = 'pending' AND {} \
          AND substring(sha256(uuid_send(a.id)) from 1 for 5) = $2 \
          ORDER BY a.created_at ASC, a.id ASC LIMIT $3",
         may_decide()
-    ))
+    )))
     .bind(user)
     .bind(code_prefix)
     .bind(limit)
@@ -138,14 +138,14 @@ pub async fn list_pending_undecidable_by_code(
     code_prefix: &[u8],
     limit: i64,
 ) -> Result<Vec<ApprovalRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "{SELECT} WHERE a.status = 'pending' \
          AND {MEMBER_ONLY} \
          AND NOT {} \
          AND substring(sha256(uuid_send(a.id)) from 1 for 5) = $2 \
          ORDER BY a.created_at ASC, a.id ASC LIMIT $3",
         crate::authz::hidden_direct_conversation_sql("a.conversation_id", "$1", "a.workspace_id")
-    ))
+    )))
     .bind(user)
     .bind(code_prefix)
     .bind(limit)
@@ -171,10 +171,10 @@ pub async fn conversation_visible(
 ) -> Result<bool, DbError> {
     match conversation_id {
         None => Ok(true),
-        Some(c) => Ok(sqlx::query_scalar(&format!(
+        Some(c) => Ok(sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             "SELECT NOT {}",
             crate::authz::hidden_direct_conversation_sql("$2::uuid", "$1", "$3::uuid")
-        ))
+        )))
         .bind(user)
         .bind(c)
         .bind(workspace_id)
@@ -187,10 +187,12 @@ pub async fn get<'e, E: sqlx::PgExecutor<'e>>(
     pool: E,
     id: Uuid,
 ) -> Result<Option<ApprovalRow>, DbError> {
-    Ok(sqlx::query_as(&format!("{SELECT} WHERE a.id = $1"))
-        .bind(id)
-        .fetch_optional(pool)
-        .await?)
+    Ok(
+        sqlx::query_as(sqlx::AssertSqlSafe(format!("{SELECT} WHERE a.id = $1")))
+            .bind(id)
+            .fetch_optional(pool)
+            .await?,
+    )
 }
 
 /// Workspace history, newest first, optional status filter.
@@ -204,14 +206,14 @@ pub async fn list_workspace(
     fetch: i64,
 ) -> Result<Vec<ApprovalRow>, DbError> {
     let (t, id) = split(after);
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "{SELECT} WHERE a.workspace_id = $6 AND ($2::text IS NULL OR a.status = $2) \
          AND ($7::uuid IS NULL OR a.agent_id = $7) \
          AND ($3::timestamptz IS NULL OR (a.created_at, a.id) < ($3, $4)) \
          AND NOT {} \
          ORDER BY a.created_at DESC, a.id DESC LIMIT $5",
         crate::authz::hidden_direct_conversation_sql("a.conversation_id", "$1", "a.workspace_id")
-    ))
+    )))
     .bind(viewer)
     .bind(status)
     .bind(t)
@@ -232,12 +234,12 @@ pub async fn list_pending_for(
     ws: Option<Uuid>,
     limit: i64,
 ) -> Result<Vec<ApprovalRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "{SELECT} WHERE a.status = 'pending' AND {} \
          AND ($2::uuid IS NULL OR a.org_id = $2) AND ($3::uuid IS NULL OR a.workspace_id = $3) \
          ORDER BY a.created_at ASC, a.id ASC LIMIT $4",
         may_decide()
-    ))
+    )))
     .bind(user)
     .bind(org)
     .bind(ws)
@@ -291,7 +293,7 @@ pub async fn expire_overdue_of_batch(
     agent: Uuid,
     batch_id: &str,
 ) -> Result<usize, DbError> {
-    let rows: Vec<(Uuid, Uuid)> = sqlx::query_as(&format!(
+    let rows: Vec<(Uuid, Uuid)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "UPDATE approvals a SET status = 'expired', decided_at = now(), resolved_at = now(), \
          updated_at = now() \
          WHERE a.status = 'pending' AND a.deadline <= now() AND a.batch_id = $5 \
@@ -299,7 +301,7 @@ pub async fn expire_overdue_of_batch(
          AND ($3::uuid IS NULL OR a.workspace_id = $3) \
          RETURNING a.id, a.workspace_id",
         may_decide()
-    ))
+    )))
     .bind(user)
     .bind(org)
     .bind(ws)
@@ -355,12 +357,12 @@ pub async fn batch_visible(
     agent: Uuid,
     batch_id: &str,
 ) -> Result<bool, DbError> {
-    Ok(sqlx::query_scalar(&format!(
+    Ok(sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT EXISTS (SELECT 1 FROM approvals a WHERE a.batch_id = $5 AND a.agent_id = $4 \
          AND {} AND ($2::uuid IS NULL OR a.org_id = $2) \
          AND ($3::uuid IS NULL OR a.workspace_id = $3))",
         may_decide()
-    ))
+    )))
     .bind(user)
     .bind(org)
     .bind(ws)
@@ -383,7 +385,7 @@ pub async fn decide_batch(
     approve: bool,
     via: &str,
 ) -> Result<Vec<(Uuid, Uuid, Uuid)>, DbError> {
-    let rows: Vec<(Uuid, Uuid, Uuid)> = sqlx::query_as(&format!(
+    let rows: Vec<(Uuid, Uuid, Uuid)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "UPDATE approvals a SET status = $6, decided_by_user_id = $1, decided_via = $7, \
          decided_at = now(), resolved_at = now(), updated_at = now() \
          WHERE a.status = 'pending' AND a.deadline > now() AND a.batch_id = $5 AND a.agent_id = $4 \
@@ -391,7 +393,7 @@ pub async fn decide_batch(
          AND ($2::uuid IS NULL OR a.org_id = $2) AND ($3::uuid IS NULL OR a.workspace_id = $3) \
          RETURNING a.id, a.workspace_id, a.org_id",
         may_decide()
-    ))
+    )))
     .bind(user)
     .bind(org)
     .bind(ws)
@@ -438,28 +440,28 @@ pub async fn abandon_pending_depending_on(
             connection_id,
             agent_id,
         } => {
-            sqlx::query_as(&format!(
+            sqlx::query_as(sqlx::AssertSqlSafe(format!(
                 "{set} connection_id = $1 AND ($2::uuid IS NULL OR agent_id = $2) \
                  RETURNING id, workspace_id"
-            ))
+            )))
             .bind(connection_id)
             .bind(agent_id)
             .fetch_all(&mut *tx)
             .await?
         }
         Dependency::AgentSecrets { agent_id } => {
-            sqlx::query_as(&format!(
+            sqlx::query_as(sqlx::AssertSqlSafe(format!(
                 "{set} agent_id = $1 AND connection_id IS NULL RETURNING id, workspace_id"
-            ))
+            )))
             .bind(agent_id)
             .fetch_all(&mut *tx)
             .await?
         }
         Dependency::App { app_id } => {
-            sqlx::query_as(&format!(
+            sqlx::query_as(sqlx::AssertSqlSafe(format!(
                 "{set} connection_id IN (SELECT id FROM app_connections WHERE app_id = $1) \
                  RETURNING id, workspace_id"
-            ))
+            )))
             .bind(app_id)
             .fetch_all(&mut *tx)
             .await?

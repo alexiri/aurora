@@ -55,13 +55,13 @@ pub async fn insert(
     exec: impl PgExecutor<'_>,
     n: &NewAttachment<'_>,
 ) -> Result<AttachmentRow, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "INSERT INTO attachments (id, workspace_id, conversation_id, turn_id, direction, status,
             filename, content_type, size_bytes, sha256, blob_backend, blob_key, caption,
             created_by_user_id)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
          RETURNING {COLS}"
-    ))
+    )))
     .bind(n.id)
     .bind(n.workspace_id)
     .bind(n.conversation_id)
@@ -81,12 +81,12 @@ pub async fn insert(
 }
 
 pub async fn get(exec: impl PgExecutor<'_>, id: Uuid) -> Result<Option<AttachmentRow>, DbError> {
-    Ok(
-        sqlx::query_as(&format!("SELECT {COLS} FROM attachments WHERE id = $1"))
-            .bind(id)
-            .fetch_optional(exec)
-            .await?,
-    )
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT {COLS} FROM attachments WHERE id = $1"
+    )))
+    .bind(id)
+    .fetch_optional(exec)
+    .await?)
 }
 
 /// Inbound attachment readable by `runner`: `bound` to a turn that is in flight (`dispatched` /
@@ -189,10 +189,10 @@ pub async fn out_for_turn(
     exec: impl PgExecutor<'_>,
     turn_id: Uuid,
 ) -> Result<Vec<AttachmentRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {COLS} FROM attachments
           WHERE turn_id=$1 AND direction='out' AND status='bound' ORDER BY created_at, id"
-    ))
+    )))
     .bind(turn_id)
     .fetch_all(exec)
     .await?)

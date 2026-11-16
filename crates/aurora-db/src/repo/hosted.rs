@@ -98,7 +98,7 @@ pub async fn overdue_turns(
     online_secs: f64,
     limit: i64,
 ) -> Result<Vec<OverdueTurn>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT t.id AS turn_id, t.conversation_id, t.agent_id,
             s.id AS sandbox_id, s.state, s.boot_id, r.name AS runner_name,
             EXISTS (SELECT 1 FROM runner_replicas rr WHERE rr.runner_id = s.runner_id
@@ -121,7 +121,7 @@ pub async fn overdue_turns(
            AND NOT {frozen}
          ORDER BY t.created_at LIMIT $3",
         frozen = super::freeze::frozen_agent_sql("t.agent_id"),
-    ))
+    )))
     .bind(secs)
     .bind(online_secs)
     .bind(limit)
@@ -147,7 +147,7 @@ pub async fn claim_home_syncs(
     lease_secs: f64,
     limit: i64,
 ) -> Result<Vec<HomeSyncClaim>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "WITH cand AS (
            SELECT s.id FROM sandboxes s JOIN agents a ON a.id = s.agent_id
              JOIN workspaces w ON w.id = a.workspace_id
@@ -162,7 +162,7 @@ pub async fn claim_home_syncs(
          WHERE s.id = cand.id AND a.id = s.agent_id AND w.id = a.workspace_id
          RETURNING s.id AS sandbox_id, s.boot_id AS boot_id, s.agent_id, {DESIRED} AS generation,
              s.resource_profile->'harness'->>'id' AS harness_id"
-    ))
+    )))
     .bind(runner)
     .bind(replica)
     .bind(lease_secs)
@@ -199,7 +199,7 @@ pub async fn dispatch_candidates(
     replica: Uuid,
     limit: i64,
 ) -> Result<Vec<DispatchCand>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT t.id AS turn_id, t.conversation_id, t.agent_id, s.id AS sandbox_id, s.boot_id
          FROM turns t JOIN agents a ON a.id = t.agent_id JOIN workspaces w ON w.id = a.workspace_id
            JOIN sandboxes s ON s.agent_id = t.agent_id
@@ -210,7 +210,7 @@ pub async fn dispatch_candidates(
          ORDER BY t.created_at LIMIT $3",
         // (phase 2, RFE-006) Due-work arm 6 skips effectively frozen agents.
         frozen = super::freeze::frozen_agent_sql("t.agent_id"),
-    ))
+    )))
     .bind(runner)
     .bind(replica)
     .bind(limit)
@@ -476,14 +476,14 @@ pub async fn claim_aborts(
     lease_secs: f64,
     limit: i64,
 ) -> Result<Vec<TurnSignal>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "WITH cand AS (SELECT t.id {SIGNAL_JOIN} AND t.abort_requested_at IS NOT NULL
              AND (t.dispatch_lease_until IS NULL OR t.dispatch_lease_until < now())
              ORDER BY t.created_at LIMIT $4 FOR UPDATE OF t SKIP LOCKED)
          UPDATE turns t SET dispatch_lease_until = now() + make_interval(secs => $3)
          FROM cand, sandboxes s WHERE t.id = cand.id AND s.agent_id = t.agent_id
          RETURNING t.id AS turn_id, t.conversation_id, s.id AS sandbox_id, s.boot_id"
-    ))
+    )))
     .bind(runner)
     .bind(replica)
     .bind(lease_secs)
@@ -500,14 +500,14 @@ pub async fn claim_send_nows(
     replica: Uuid,
     limit: i64,
 ) -> Result<Vec<TurnSignal>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "WITH cand AS (SELECT t.id {SIGNAL_JOIN} AND t.send_now_requested_at IS NOT NULL
              AND t.steer_delivered_at IS NULL AND t.abort_requested_at IS NULL
              ORDER BY t.created_at LIMIT $3 FOR UPDATE OF t SKIP LOCKED)
          UPDATE turns t SET steer_delivered_at = now()
          FROM cand, sandboxes s WHERE t.id = cand.id AND s.agent_id = t.agent_id
          RETURNING t.id AS turn_id, t.conversation_id, s.id AS sandbox_id, s.boot_id"
-    ))
+    )))
     .bind(runner)
     .bind(replica)
     .bind(limit)
@@ -537,7 +537,7 @@ pub async fn steer_candidates(
     replica: Uuid,
     limit: i64,
 ) -> Result<Vec<SteerCand>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT f.id AS followup_id, t.id AS turn_id, t.conversation_id, f.text, f.speaker_label,
                 f.reply_to_seq,
                 (SELECT count(*) FROM attachments a WHERE a.turn_id = f.id
@@ -553,7 +553,7 @@ pub async fn steer_candidates(
          ORDER BY f.created_at LIMIT $3",
         // (phase 2, RFE-006) Due-work arm 7 skips effectively frozen agents.
         frozen = super::freeze::frozen_agent_sql("t.agent_id"),
-    ))
+    )))
     .bind(runner)
     .bind(replica)
     .bind(limit)
@@ -618,7 +618,7 @@ pub async fn stale_turns(
             "t.status = 'running' AND t.ceiling_warned_at IS NULL AND t.dispatched_at < now() - make_interval(secs => $3)"
         }
     };
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT t.id AS turn_id, t.conversation_id, t.revived_at IS NOT NULL AS revived,
             NOT (s.state = 'running' AND s.boot_id IS NOT DISTINCT FROM t.boot_id) AS sandbox_dead,
             s.id AS sandbox_id, s.boot_id,
@@ -626,7 +626,7 @@ pub async fn stale_turns(
          FROM turns t JOIN sandboxes s ON s.agent_id = t.agent_id
          WHERE t.role = 'turn' AND s.runner_id = $1 AND {cond}
          ORDER BY t.created_at LIMIT $4"
-    ))
+    )))
     .bind(runner)
     .bind(replica)
     .bind(secs)
@@ -757,6 +757,8 @@ pub struct SandboxViewRow {
     pub preview_in_use: bool,
     /// (P4-TERM, C-621) Keep-awake reason `terminal` is live right now ("Terminal in use").
     pub terminal_in_use: bool,
+    /// (P5-FILES-1, C-900) keep-awake reason `files` is live now.
+    pub files_in_use: bool,
     /// (P4-PRV-1) Ports of the current boot that carry an active preview share.
     pub shared_ports: Vec<i32>,
     /// (P4-PRV-1) Share ids for `shared_ports` (same order; empty when none).
@@ -848,6 +850,8 @@ pub async fn sandbox_view(
             coalesce(s.preview_active_until > now(), false) AS preview_in_use,
             -- (P4-TERM, C-621) keep-awake reason `terminal` is live now (NULL when never awake).
             coalesce(s.terminal_active_until > now(), false) AS terminal_in_use,
+            -- (P5-FILES-1, C-900) keep-awake reason `files` is live now.
+            coalesce(s.files_active_until > now(), false) AS files_in_use,
             -- ports of the current boot with an active share (parallel arrays for the API view)
             coalesce((SELECT array_agg(x.port ORDER BY x.port) FROM preview_shares x
                 WHERE x.agent_id = s.agent_id AND x.state = 'active'

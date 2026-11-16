@@ -25,7 +25,7 @@ backlog stops growing instead of burying CI.
 | Item | Why | How it is updated instead |
 |---|---|---|
 | `wasmtime`, `wasmtime-wasi` (majors only) | The hook host's component-model API, epoch interruption and limits change between majors (HOOK-001/002). Minor and patch releases still arrive. | By hand, with `aurora-hookhost`'s tests and the plugin hook conformance cases. |
-| `wasmparser`, `wit-bindgen` (majors and minors; root workspace and hook crates) | The component-model tooling of the same wasmtime line: the registry validates hook components with `wasmparser` before wasmtime loads them, and the guests are built with `wit-bindgen`. As 0.x crates they break their API on minors (PR #13). Patch releases still arrive. | By hand, together with a wasmtime bump: `aurora-registry` and `aurora-hookhost` tests, the hook crates rebuilt and re-signed, the plugin hook conformance cases. |
+| `wasmparser`, `wit-bindgen` (majors and minors; root workspace and hook crates) | The component-model tooling of the same wasmtime line: the registry validates hook components with `wasmparser` before wasmtime loads them, and the guests are built with `wit-bindgen`. As 0.x crates they break their API on minors (PR #13). Patch releases still arrive. | By hand, together with a wasmtime bump: `aurora-registry` and `aurora-hookhost` tests, the hook crates rebuilt and re-signed, the plugin hook conformance cases. The rule (FIX-160): `wasmparser` = the version wasmtime itself parses with (`cargo tree -i wasmparser`), `wit-bindgen` = the newest release whose `wit-component` is not ahead of it. Today: wasmtime 50, wasmparser 0.261, wit-bindgen 0.62 (wasm-tools 0.259). |
 | `@types/node` (majors only) | The web runtime is Node 22 (web image, CI) with a documented dev floor of 20.9; the types must track the runtime major, not run ahead of it (26.x was proposed). Minor and patch releases still arrive. | By hand, together with the Node runtime (web `engines`, `web.Containerfile`, CI `setup-node`, README). |
 | `jsdom` (majors only) | jsdom 31 needs Node `^22.22.2 \|\| ^24.15.0 \|\| >=26`, above the 20.9 floor in `web/package.json`. | By hand, together with raising the Node floor (engines, README) and a full vitest run. |
 | `@anthropic-ai/claude-code` | The version must equal `PINNED_VERSION` in `services/aurora-supervisor/src/adapters/claude_code/mod.rs` (FIX-103). | By hand, together with the supervisor constant and the claude-code conformance run. |
@@ -85,8 +85,47 @@ notes, and run `bash scripts/guards/run-all.sh` plus an image build. This is a k
   `digest` major, so `dependabot.yml` groups them (`rustcrypto`); a lone `sha2` 0.11 bump failed to build
   against `hmac` 0.12 (PR #23). Moving to 0.11/0.13 also drops `LowerHex` on digest output (use
   `hex::encode`) and needs `hmac::KeyInit` for `new_from_slice`.
-- **`kube` 5 needs Rust 1.95**: the kube group's bump (PR #22) raised the workspace `rust-version` from 1.88
-  (I-21) to 1.95; CI and `rust-toolchain.toml` use stable, so only the declared MSRV changed.
+- **The workspace MSRV follows the locked crates**: `kube` 5 raised it to 1.95 (PR #22, D-315); FIX-160
+  raised it to 1.98 because wasmtime 50 declares 1.97 and mail-parser 1.0 declares 1.98 (D-355). CI and
+  `rust-toolchain.toml` use stable, so only the declared MSRV changes. Keep it truthful: the resolver is
+  MSRV-aware (`resolver = "3"`) and holds back updates whose `rust-version` is above it, which
+  `cargo update --dry-run --verbose` lists as "requires Rust".
+
+## Bulk updates (FIX-160)
+
+When many updates are pending, Dependabot's `open-pull-requests-limit` feeds them in five at a time and
+each PR costs a full CI run. Do them in one hand-made change instead, under a task id, in a worktree:
+
+1. List direct dependencies and their newest releases (`cargo metadata --no-deps` plus the crates.io
+   sparse index), then `cargo update` for everything semver-compatible and bump each major in the
+   manifest. Hand-pinned rows above follow their own rule.
+2. Read each major's changelog / migration guide; compile, fix, then the full gates of the review
+   policy (fmt, clippy `-D warnings`, `cargo deny` for the root and the hook crates, the it-suites of
+   the touched areas, the built-in plugin checks for hook crates).
+3. After the merge, close the Dependabot PRs it supersedes with a comment naming the merge commit.
+
+Migration notes from FIX-160 (the 2026-11-16 bulk update):
+
+- **sqlx 0.9** accepts only `&'static str` SQL; every dynamic string goes through
+  `sqlx::AssertSqlSafe(..)`. Production code builds statements with `format!` over column-list and
+  clause constants, quoted and validated identifiers (`grants.rs`) and values the code itself generates
+  from integers (request-log partition names and bounds); request input always goes in bind parameters.
+  A new `AssertSqlSafe` must keep to that; tests also interpolate fixture UUIDs. The `_sqlx_migrations` table and SHA-384 checksums are unchanged, so a
+  database migrated by 0.8 (and sqlx-cli 0.8.6) stays valid.
+- **reqwest 0.13**: the `rustls` feature verifies with `rustls-platform-verifier` (the OS trust store,
+  present in every image) instead of the bundled webpki roots of 0.12's `rustls-tls`; `query` and `form`
+  are opt-in features; `tls_built_in_root_certs(false)` is gone (use `tls_certs_only`, and
+  `tls_certs_merge` to add). openidconnect 4 / oauth2 5 are still built for reqwest 0.12, so their
+  `reqwest` feature is off and `aurora-api`'s `OidcHttp` implements `AsyncHttpClient` over the workspace
+  reqwest (`domains/oidc/client.rs`); drop the adapter when openidconnect moves to 0.13.
+- **croner 4** rejects the step shorthand `5/5` that 3.x accepted; `schedules/cron.rs` parses with
+  `sloppy_ranges(true)` so schedules saved earlier keep evaluating.
+- **rsa 0.10** (GitHub hook) is constant-time (crypto-bigint) and not affected by RUSTSEC-2023-0071; the
+  hook's waiver was removed. `PrivateKey` replaces `RsaPrivateKey`, PKCS#1 v1.5 needs the `pkcs1v15`
+  feature, PEM decoding the `pem` features of `pkcs1`/`pkcs8`. The guest builds without `getrandom`, so
+  signing uses no RNG, as before.
+- **wasmparser 0.261** splits component extern names into `name` plus options (`implements`, a version
+  suffix, an external id); the registry matches only option-free names and rejects the rest.
 - **Docker dependency names drop the registry**: Dependabot reports `ghcr.io/berriai/litellm` as
   `berriai/litellm`, so an `ignore` entry lists both spellings (PR #3 slipped past the first one).
 

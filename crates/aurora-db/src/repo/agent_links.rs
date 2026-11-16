@@ -54,12 +54,12 @@ pub async fn get<'e, E: PgExecutor<'e>>(
     exec: E,
     id: Uuid,
 ) -> Result<Option<AgentLinkRow>, DbError> {
-    Ok(
-        sqlx::query_as(&format!("SELECT {COLS} FROM agent_links WHERE id = $1"))
-            .bind(id)
-            .fetch_optional(exec)
-            .await?,
-    )
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT {COLS} FROM agent_links WHERE id = $1"
+    )))
+    .bind(id)
+    .fetch_optional(exec)
+    .await?)
 }
 
 /// Row-locked read (transaction required): the per-pair serialization point.
@@ -67,9 +67,9 @@ pub async fn get_for_update(
     conn: &mut PgConnection,
     id: Uuid,
 ) -> Result<Option<AgentLinkRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {COLS} FROM agent_links WHERE id = $1 FOR UPDATE"
-    ))
+    )))
     .bind(id)
     .fetch_optional(conn)
     .await?)
@@ -94,9 +94,9 @@ pub async fn get_or_create(
     .bind(initial)
     .execute(&mut *conn)
     .await?;
-    let row = sqlx::query_as(&format!(
+    let row = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {COLS} FROM agent_links WHERE agent_a_id = $1 AND agent_b_id = $2"
-    ))
+    )))
     .bind(a)
     .bind(b)
     .fetch_one(conn)
@@ -109,10 +109,10 @@ pub async fn list_for_agent<'e, E: PgExecutor<'e>>(
     exec: E,
     agent: Uuid,
 ) -> Result<Vec<AgentLinkRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {COLS} FROM agent_links WHERE agent_a_id = $1 OR agent_b_id = $1
          ORDER BY created_at, id"
-    ))
+    )))
     .bind(agent)
     .fetch_all(exec)
     .await?)
@@ -127,7 +127,7 @@ pub async fn set_policy(
     policy: &str,
     expected: Option<i64>,
 ) -> Result<Option<AgentLinkRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "UPDATE agent_links SET
             policy_a = CASE WHEN agent_a_id = $2 THEN $3 ELSE policy_a END,
             policy_b = CASE WHEN agent_b_id = $2 THEN $3 ELSE policy_b END,
@@ -135,7 +135,7 @@ pub async fn set_policy(
          WHERE id = $1 AND (agent_a_id = $2 OR agent_b_id = $2)
            AND ($4::bigint IS NULL OR revision = $4)
          RETURNING {COLS}"
-    ))
+    )))
     .bind(id)
     .bind(agent)
     .bind(policy)

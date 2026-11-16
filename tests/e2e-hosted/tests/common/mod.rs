@@ -622,6 +622,34 @@ impl Api {
         self.call(Method::DELETE, p, None).await
     }
 
+    /// A request with the session cookie, extra headers and a byte body (the Files routes, P5-FILES-4): returns the
+    /// status, the response headers and the response bytes. Long timeout: a 20 MiB body goes through it.
+    pub async fn bytes(
+        &self,
+        m: Method,
+        path: &str,
+        headers: &[(&str, &str)],
+        body: Option<Vec<u8>>,
+    ) -> (u16, reqwest::header::HeaderMap, Vec<u8>) {
+        let mut r = self
+            .http
+            .request(m, format!("{}{path}", self.base))
+            .header("cookie", &self.cookie)
+            .header("origin", &request_origin())
+            .timeout(Duration::from_secs(180));
+        for (k, v) in headers {
+            r = r.header(*k, *v);
+        }
+        if let Some(b) = body {
+            r = r.header("content-type", "application/octet-stream").body(b);
+        }
+        let resp = r.send().await.unwrap();
+        let s = resp.status().as_u16();
+        let h = resp.headers().clone();
+        let b = resp.bytes().await.unwrap().to_vec();
+        (s, h, b)
+    }
+
     /// Raw request with the session cookie (for SSE).
     pub fn raw(&self, p: &str) -> reqwest::RequestBuilder {
         self.http

@@ -40,6 +40,7 @@ mod conversation_lifecycle;
 mod conversations;
 mod counters;
 mod direct_visibility;
+mod files;
 mod fix_029;
 mod foundation;
 mod freeze;

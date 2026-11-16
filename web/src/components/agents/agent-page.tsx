@@ -29,6 +29,7 @@ import { PeersTab } from "@/components/peers/peers-tab";
 import { SchedulesTab } from "@/components/schedules/schedules-tab";
 import { WebhooksTab } from "@/components/webhooks/webhooks-tab";
 
+import { FilesTab } from "./files-tab";
 import { InstructionsTab } from "./instructions-tab";
 import { PreviewsTab } from "./previews-tab";
 import { AGENT_PAGE_IDS, availableSections, resolvePage, SECTION_OF, type AgentPageId, type SectionId } from "./sections";
@@ -72,7 +73,8 @@ export function AgentPage() {
   // agent's default page (Chat for a hosted agent, Instructions for a BYO one, D-200).
   const [requestedTab, setTab] = useTabParam<AgentPageId>(AGENT_PAGE_IDS, "chat", {
     initial: (p) => (p.has("c") ? "chat" : null),
-    drop: (t) => (t === "chat" ? [] : ["c"]),
+    // `c` belongs to Chat and `path` to Files (P5-FILES-2): leaving a page takes its own parameter along.
+    drop: (t) => [...(t === "chat" ? [] : ["c"]), ...(t === "files" ? [] : ["path"])],
   });
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [statusOpen, setStatusOpen] = useState(false);
@@ -251,6 +253,7 @@ export function AgentPage() {
             <ComputerTab agentId={agent.id} frozen={agent.frozen !== null} terminal={terminalEnabled} />
           ) : null}
           {tab === "terminal" && !byo && terminalEnabled ? <TerminalTab agentId={agent.id} frozen={agent.frozen !== null} /> : null}
+          {tab === "files" && !byo && terminalEnabled ? <FilesTab agentId={agent.id} frozen={agent.frozen !== null} /> : null}
           {tab === "previews" && !byo ? <PreviewsTab agentId={agent.id} frozen={agent.frozen !== null} /> : null}
           {tab === "instructions" ? <InstructionsTab key={agent.updated_at} agent={agent} wsId={wsId!} /> : null}
           {tab === "access" && workspace.data ? (

@@ -59,12 +59,12 @@ pub async fn insert_library(
     conn: &mut PgConnection,
     n: &NewLibrary<'_>,
 ) -> Result<LibraryRow, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "INSERT INTO skill_libraries (id, org_id, label, connection_id, app_id, repo, ref, path,
             last_head_sha, last_refresh_at, next_refresh_at, created_by_user_id)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9, now(), now() + make_interval(secs => $10), $11)
          RETURNING {LIB_COLS}"
-    ))
+    )))
     .bind(Uuid::now_v7())
     .bind(n.org_id)
     .bind(n.label)
@@ -81,9 +81,9 @@ pub async fn insert_library(
 }
 
 pub async fn get_library(conn: &mut PgConnection, id: Uuid) -> Result<Option<LibraryRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {LIB_COLS} FROM skill_libraries WHERE id = $1"
-    ))
+    )))
     .bind(id)
     .fetch_optional(conn)
     .await?)
@@ -93,9 +93,9 @@ pub async fn get_library_for_update(
     conn: &mut PgConnection,
     id: Uuid,
 ) -> Result<Option<LibraryRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {LIB_COLS} FROM skill_libraries WHERE id = $1 FOR UPDATE"
-    ))
+    )))
     .bind(id)
     .fetch_optional(conn)
     .await?)
@@ -105,9 +105,9 @@ pub async fn list_libraries(
     conn: &mut PgConnection,
     org: Uuid,
 ) -> Result<Vec<LibraryRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {LIB_COLS} FROM skill_libraries WHERE org_id = $1 ORDER BY label, id"
-    ))
+    )))
     .bind(org)
     .fetch_all(conn)
     .await?)
@@ -143,7 +143,7 @@ pub async fn patch_library(
         Some(v) => (true, v),
         None => (false, None),
     };
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "UPDATE skill_libraries SET
             label = COALESCE($2, label),
             status = COALESCE($3, status),
@@ -158,7 +158,7 @@ pub async fn patch_library(
                                    ELSE next_refresh_at END,
             updated_at = now()
          WHERE id = $1 RETURNING {LIB_COLS}"
-    ))
+    )))
     .bind(id)
     .bind(p.label)
     .bind(p.status)
@@ -252,9 +252,9 @@ pub async fn library_skills(
     conn: &mut PgConnection,
     library: Uuid,
 ) -> Result<Vec<SkillRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {SKILL_COLS} FROM skills WHERE library_id = $1 ORDER BY name, id"
-    ))
+    )))
     .bind(library)
     .fetch_all(conn)
     .await?)
@@ -266,11 +266,11 @@ pub async fn tier_library_skills(
     org: Uuid,
     owner: Owner,
 ) -> Result<Vec<SkillRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {SKILL_COLS} FROM skills WHERE org_id = $1 AND library_id IS NOT NULL
            AND agent_id IS NOT DISTINCT FROM $2 AND workspace_id IS NOT DISTINCT FROM $3
          ORDER BY name, id"
-    ))
+    )))
     .bind(org)
     .bind(owner.agent)
     .bind(owner.workspace)
@@ -301,14 +301,14 @@ pub async fn insert_library_skill(
     body: &str,
     src: &Source<'_>,
 ) -> Result<SkillRow, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "INSERT INTO skills (id, org_id, agent_id, workspace_id, name, description, body, enabled,
             created_by_kind, library_id, library_label, library_repo, library_path,
             library_commit_sha, library_blobs, library_content_sha256, library_pinned_at,
             library_pinned_by_user_id)
          VALUES ($1,$2,$3,$4,$5,$6,$7,true,'user',$8,$9,$10,$11,$12,$13,$14,now(),$15)
          RETURNING {SKILL_COLS}"
-    ))
+    )))
     .bind(Uuid::now_v7())
     .bind(org)
     .bind(owner.agent)
@@ -340,12 +340,12 @@ pub async fn apply_library_content(
     content_sha256: &[u8],
     pinned_by: Uuid,
 ) -> Result<SkillRow, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "UPDATE skills SET description = $2, body = $3, library_commit_sha = $4,
             library_blobs = $5, library_content_sha256 = $6, library_pinned_at = now(),
             library_pinned_by_user_id = $7, updated_at = now()
          WHERE id = $1 AND library_id IS NOT NULL RETURNING {SKILL_COLS}"
-    ))
+    )))
     .bind(skill)
     .bind(description)
     .bind(body)
@@ -460,11 +460,11 @@ pub async fn insert_update(
     .bind(n.skill_id)
     .execute(&mut *conn)
     .await?;
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "INSERT INTO skill_library_updates (id, skill_id, library_id, kind, status, commit_sha,
             proposed, content_sha256, reason, bytes)
          VALUES ($1,$2,$3,$4,'pending',$5,$6,$7,$8,$9) RETURNING {UPD_COLS}"
-    ))
+    )))
     .bind(Uuid::now_v7())
     .bind(n.skill_id)
     .bind(n.library_id)
@@ -479,9 +479,9 @@ pub async fn insert_update(
 }
 
 pub async fn get_update(conn: &mut PgConnection, id: Uuid) -> Result<Option<UpdateRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {UPD_COLS} FROM skill_library_updates WHERE id = $1"
-    ))
+    )))
     .bind(id)
     .fetch_optional(conn)
     .await?)
@@ -491,9 +491,9 @@ pub async fn get_update_for_update(
     conn: &mut PgConnection,
     id: Uuid,
 ) -> Result<Option<UpdateRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {UPD_COLS} FROM skill_library_updates WHERE id = $1 FOR UPDATE"
-    ))
+    )))
     .bind(id)
     .fetch_optional(conn)
     .await?)
@@ -503,9 +503,9 @@ pub async fn pending_update(
     conn: &mut PgConnection,
     skill: Uuid,
 ) -> Result<Option<UpdateRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {UPD_COLS} FROM skill_library_updates WHERE skill_id = $1 AND status = 'pending'"
-    ))
+    )))
     .bind(skill)
     .fetch_optional(conn)
     .await?)
@@ -516,10 +516,10 @@ pub async fn pending_updates_of(
     conn: &mut PgConnection,
     skills: &[Uuid],
 ) -> Result<Vec<UpdateRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {UPD_COLS} FROM skill_library_updates
          WHERE skill_id = ANY($1) AND status = 'pending'"
-    ))
+    )))
     .bind(skills)
     .fetch_all(conn)
     .await?)
@@ -678,9 +678,9 @@ pub async fn pending_for_org(
     conn: &mut PgConnection,
     org: Uuid,
 ) -> Result<Vec<PendingRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "{PENDING_SELECT} AND s.org_id = $1 ORDER BY u.created_at, u.id"
-    ))
+    )))
     .bind(org)
     .fetch_all(conn)
     .await?)
@@ -690,9 +690,9 @@ pub async fn pending_for_workspace(
     conn: &mut PgConnection,
     workspace: Uuid,
 ) -> Result<Vec<PendingRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "{PENDING_SELECT} AND s.workspace_id = $1 ORDER BY u.created_at, u.id"
-    ))
+    )))
     .bind(workspace)
     .fetch_all(conn)
     .await?)
@@ -702,9 +702,9 @@ pub async fn pending_for_agent(
     conn: &mut PgConnection,
     agent: Uuid,
 ) -> Result<Vec<PendingRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "{PENDING_SELECT} AND s.agent_id = $1 ORDER BY u.created_at, u.id"
-    ))
+    )))
     .bind(agent)
     .fetch_all(conn)
     .await?)
@@ -720,7 +720,7 @@ pub async fn claim_due(
     limit: i64,
     lease_secs: f64,
 ) -> Result<Vec<LibraryRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "UPDATE skill_libraries SET refresh_lease_until = now() + make_interval(secs => $3),
             lease_owner = $1
          WHERE id IN (
@@ -730,7 +730,7 @@ pub async fn claim_due(
               AND EXISTS (SELECT 1 FROM skills s WHERE s.library_id = l.id)
             ORDER BY l.next_refresh_at LIMIT $2 FOR UPDATE SKIP LOCKED)
          RETURNING {LIB_COLS}"
-    ))
+    )))
     .bind(owner)
     .bind(limit)
     .bind(lease_secs)

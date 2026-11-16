@@ -44,7 +44,7 @@ pub async fn list_with_scim<'e, E: PgExecutor<'e>>(
     status: Option<&str>,
 ) -> Result<Vec<MemberWithScimRow>, DbError> {
     let (after_ts, after_id) = super::split(after);
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {SEL}, {SCIM_SEL} FROM org_members m \
          JOIN users u ON u.id = m.user_id \
          LEFT JOIN scim_users s ON s.org_id = m.org_id AND s.user_id = m.user_id \
@@ -52,7 +52,7 @@ pub async fn list_with_scim<'e, E: PgExecutor<'e>>(
            AND ($2::text IS NULL OR m.status = $2) \
            AND ($3::timestamptz IS NULL OR (m.created_at, m.user_id) < ($3, $4)) \
          ORDER BY m.created_at DESC, m.user_id DESC LIMIT $5"
-    ))
+    )))
     .bind(org)
     .bind(status)
     .bind(after_ts)
@@ -170,9 +170,9 @@ pub async fn get<'e, E: PgExecutor<'e>>(
     org: Uuid,
     user: Uuid,
 ) -> Result<Option<MemberRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {SEL} FROM org_members m JOIN users u ON u.id = m.user_id WHERE m.org_id = $1 AND m.user_id = $2"
-    ))
+    )))
     .bind(org)
     .bind(user)
     .fetch_optional(exec)
@@ -187,12 +187,12 @@ pub async fn list<'e, E: PgExecutor<'e>>(
     fetch: i64,
 ) -> Result<Vec<MemberRow>, DbError> {
     let (t, id) = split(after);
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {SEL} FROM org_members m JOIN users u ON u.id = m.user_id
          WHERE m.org_id = $1 AND ($2::text IS NULL OR m.status = $2)
          AND ($3::timestamptz IS NULL OR (m.created_at, m.user_id) < ($3, $4))
          ORDER BY m.created_at DESC, m.user_id DESC LIMIT $5"
-    ))
+    )))
     .bind(org)
     .bind(status)
     .bind(t)

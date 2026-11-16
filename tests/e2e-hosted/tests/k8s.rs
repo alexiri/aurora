@@ -1276,3 +1276,511 @@ async fn k7_cern_addons_source_to_phonebook_search_and_route() {
         "uncatalogued ArcGIS path was served: {t}"
     );
 }
+
+// ---------------------------------------------------------------------------------------------- P5-FILES-4
+
+fn sha_hex(b: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(b)
+        .iter()
+        .map(|x| format!("{x:02x}"))
+        .collect()
+}
+
+/// `n` deterministic pseudo-random bytes (xorshift): incompressible enough that a truncated or reordered transfer
+/// cannot match the digest by accident.
+fn noise(n: usize, seed: u64) -> Vec<u8> {
+    let mut x = seed | 1;
+    let mut v = Vec::with_capacity(n);
+    while v.len() < n {
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        v.extend_from_slice(&x.to_le_bytes());
+    }
+    v.truncate(n);
+    v
+}
+
+/// One Files request. A parked or restarting sandbox answers 503 (`sandbox_waking`, `files_unavailable`) with
+/// `retry-after`; unless `once`, the call retries for up to 120 s like the dashboard does.
+async fn fx(
+    api: &Api,
+    once: bool,
+    m: Method,
+    path: &str,
+    headers: &[(&str, &str)],
+    body: Option<Vec<u8>>,
+) -> (u16, reqwest::header::HeaderMap, Vec<u8>) {
+    let end = Instant::now() + Duration::from_secs(120);
+    loop {
+        let r = api.bytes(m.clone(), path, headers, body.clone()).await;
+        let waking = r.0 == 503
+            && serde_json::from_slice::<Value>(&r.2).is_ok_and(|v| {
+                matches!(
+                    v["error"]["code"].as_str(),
+                    Some("sandbox_waking" | "files_unavailable")
+                )
+            });
+        if once || !waking {
+            return r;
+        }
+        assert!(Instant::now() < end, "files route still waking: {path}");
+        tokio::time::sleep(Duration::from_secs(2)).await;
+    }
+}
+
+fn code_of(b: &[u8]) -> String {
+    serde_json::from_slice::<Value>(b)
+        .ok()
+        .and_then(|v| v["error"]["code"].as_str().map(str::to_owned))
+        .unwrap_or_else(|| format!("(no error code: {})", String::from_utf8_lossy(b)))
+}
+
+/// SQL to a value: the first column of the first row (`psql -t -A`).
+fn psql_value(sql: &str) -> String {
+    let pod = std::env::var("AURORA_KIND_PG_POD")
+        .unwrap_or_else(|_| format!("{}-postgres-0", env("AURORA_KIND_FULL")));
+    let (rc, out) = kubectl(&[
+        "-n",
+        &env("AURORA_KIND_NS"),
+        "exec",
+        &pod,
+        "--",
+        "psql",
+        "-U",
+        "aurora",
+        "-d",
+        "aurora",
+        "-t",
+        "-A",
+        "-v",
+        "ON_ERROR_STOP=1",
+        "-c",
+        sql,
+    ]);
+    assert_eq!(rc, 0, "psql failed: {out}");
+    out.trim().to_owned()
+}
+
+/// P5-FILES-4 (D-316, C-907, SEC-125/126): the Files feature end to end on a real cluster — the API's SFTP client
+/// over the runner and supervisor into the sandbox Pod, with the instance's `terminal.enabled` on
+/// (`AURORA_E2E_TERMINAL=1`, which `scripts/e2e/files.sh` sets). With it off the routes answer 404
+/// `terminal_disabled` and the scenario prints `SKIPPED:` and passes.
+#[tokio::test]
+async fn k8_files_journey() {
+    if !enabled() {
+        return;
+    }
+    let api = connect().await;
+    let agent = api.daneel.clone();
+    let files = format!("/v1/agents/{agent}/files");
+    let content = |p: &str| format!("{files}/content?path={p}");
+    let text = |p: &str| format!("{files}/text?path={p}");
+    let ops = format!("{files}/ops");
+    let json_body = |v: Value| Some(serde_json::to_vec(&v).unwrap());
+    let jhdr = [("content-type", "application/json")];
+
+    // The agent's sandbox must be running for a hosted agent's files: one turn boots it.
+    let conv = api.direct().await;
+    say_and_finish(&api, &conv, "[[say: files journey]]").await;
+    let (s, _, b) = fx(
+        &api,
+        false,
+        Method::GET,
+        &format!("{files}?path=/workspace"),
+        &[],
+        None,
+    )
+    .await;
+    if s == 404 && code_of(&b) == "terminal_disabled" {
+        eprintln!(
+            "SKIPPED: terminal.enabled is off in this cluster (the Files routes answer 404 terminal_disabled); run scripts/e2e/files.sh, which turns it on"
+        );
+        return;
+    }
+    assert_eq!(s, 200, "{}", String::from_utf8_lossy(&b));
+
+    // 1. A folder of three files: mkdir with parents, then each file with If-None-Match: *.
+    let (s, _, b) = fx(
+        &api,
+        false,
+        Method::POST,
+        &ops,
+        &jhdr,
+        json_body(json!({"op":"mkdir","path":"/workspace/journey/src","parents":true})),
+    )
+    .await;
+    assert!(
+        s == 200 || s == 201,
+        "mkdir: {s} {}",
+        String::from_utf8_lossy(&b)
+    );
+    let canary = format!("AURORA-CANARY-{}", uuid::Uuid::now_v7().simple());
+    let blob = noise(4096, 7);
+    let a_text = b"alpha\n".to_vec();
+    let c_text = format!("config = \"{canary}\"\n").into_bytes();
+    for (name, bytes) in [("a.txt", &a_text), ("b.bin", &blob), ("c.txt", &c_text)] {
+        let (s, _, b) = fx(
+            &api,
+            false,
+            Method::PUT,
+            &content(&format!("/workspace/journey/{name}")),
+            &[("if-none-match", "*")],
+            Some(bytes.clone()),
+        )
+        .await;
+        assert_eq!(s, 201, "upload {name}: {}", String::from_utf8_lossy(&b));
+    }
+    // A second create of an existing name is refused (never a silent overwrite).
+    let (s, _, b) = fx(
+        &api,
+        false,
+        Method::PUT,
+        &content("/workspace/journey/a.txt"),
+        &[("if-none-match", "*")],
+        Some(b"x".to_vec()),
+    )
+    .await;
+    assert_eq!((s, code_of(&b).as_str()), (409, "file_exists"));
+
+    // 2. List it.
+    let (s, _, b) = fx(
+        &api,
+        false,
+        Method::GET,
+        &format!("{files}?path=/workspace/journey"),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(s, 200);
+    let list: Value = serde_json::from_slice(&b).unwrap();
+    let names: Vec<&str> = list["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["src", "a.txt", "b.bin", "c.txt"], "{list}");
+    let size_of = |n: &str| {
+        list["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e["name"] == n)
+            .unwrap()["size"]
+            .as_u64()
+            .unwrap()
+    };
+    assert_eq!(size_of("b.bin"), 4096);
+
+    // 3. Download one: the bytes match, and the safety headers of C-903 are there.
+    let (s, h, b) = fx(
+        &api,
+        false,
+        Method::GET,
+        &content("/workspace/journey/b.bin"),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(s, 200);
+    assert_eq!(sha_hex(&b), sha_hex(&blob), "downloaded bytes differ");
+    let hv = |k: &str| {
+        h.get(k)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_owned()
+    };
+    assert_eq!(hv("content-type"), "application/octet-stream");
+    assert!(
+        hv("content-disposition").starts_with("attachment;"),
+        "{h:?}"
+    );
+    assert_eq!(hv("x-content-type-options"), "nosniff");
+
+    // 4. Text read, save with If-Match, then a stale If-Match is a 409 file_changed with the current etag.
+    let (s, _, b) = fx(
+        &api,
+        false,
+        Method::GET,
+        &text("/workspace/journey/a.txt"),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(s, 200);
+    let t: Value = serde_json::from_slice(&b).unwrap();
+    assert_eq!(t["content"], "alpha\n");
+    let etag1 = t["etag"].as_str().unwrap().to_owned();
+    assert_eq!(etag1, format!("sha256:{}", sha_hex(&a_text)));
+    let (s, _, b) = fx(
+        &api,
+        false,
+        Method::PUT,
+        &content("/workspace/journey/a.txt"),
+        &[("if-match", &format!("\"{etag1}\""))],
+        Some(b"alpha\nbravo\n".to_vec()),
+    )
+    .await;
+    assert_eq!(s, 200, "{}", String::from_utf8_lossy(&b));
+    let saved: Value = serde_json::from_slice(&b).unwrap();
+    let etag2 = saved["etag"].as_str().unwrap().to_owned();
+    assert_eq!(etag2, format!("sha256:{}", sha_hex(b"alpha\nbravo\n")));
+    // The "terminal" changes the file behind the editor: a write with the old etag is refused and says what it is now.
+    let (s, _, b) = fx(
+        &api,
+        false,
+        Method::PUT,
+        &content("/workspace/journey/a.txt"),
+        &[("if-match", &format!("\"{etag1}\""))],
+        Some(b"mine\n".to_vec()),
+    )
+    .await;
+    assert_eq!((s, code_of(&b).as_str()), (409, "file_changed"));
+    let v: Value = serde_json::from_slice(&b).unwrap();
+    assert_eq!(v["error"]["details"]["current_etag"], etag2.as_str());
+    // Overwrite (no precondition) works.
+    let (s, _, _) = fx(
+        &api,
+        false,
+        Method::PUT,
+        &content("/workspace/journey/a.txt"),
+        &[],
+        Some(b"mine\n".to_vec()),
+    )
+    .await;
+    assert_eq!(s, 200);
+
+    // 5. Rename (and an existing target is refused).
+    let (s, _, b) = fx(&api, false, Method::POST, &ops, &jhdr, json_body(json!({"op":"rename","path":"/workspace/journey/a.txt","to":"/workspace/journey/a2.txt"}))).await;
+    assert_eq!(s, 200, "{}", String::from_utf8_lossy(&b));
+    let (s, _, b) = fx(&api, false, Method::POST, &ops, &jhdr, json_body(json!({"op":"rename","path":"/workspace/journey/a2.txt","to":"/workspace/journey/b.bin"}))).await;
+    assert_eq!((s, code_of(&b).as_str()), (409, "file_exists"));
+
+    // 6. `.aurora` is read-only (C-899).
+    let (s, _, b) = fx(
+        &api,
+        false,
+        Method::PUT,
+        &content("/workspace/.aurora/journey.txt"),
+        &[],
+        Some(b"x".to_vec()),
+    )
+    .await;
+    assert_eq!((s, code_of(&b).as_str()), (403, "path_read_only"));
+
+    // 7. A symlink to /etc, made inside the sandbox, is refused: the resolved path leaves /workspace.
+    let (_, pod) = wait_boot_pod(&api, 60).await;
+    let (rc, out) = exec_in(&pod, "ln -s /etc /workspace/journey/etclink");
+    assert_eq!(rc, 0, "{out}");
+    let (s, _, b) = fx(
+        &api,
+        false,
+        Method::GET,
+        &content("/workspace/journey/etclink/hostname"),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!((s, code_of(&b).as_str()), (403, "path_outside_workspace"));
+    let (s, _, b) = fx(
+        &api,
+        false,
+        Method::GET,
+        &format!("{files}?path=/workspace/journey/etclink"),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!((s, code_of(&b).as_str()), (403, "path_outside_workspace"));
+    // The link itself is listed (as a link whose target is outside), and can be removed as a link.
+    let (_, _, b) = fx(
+        &api,
+        false,
+        Method::GET,
+        &format!("{files}?path=/workspace/journey"),
+        &[],
+        None,
+    )
+    .await;
+    let list: Value = serde_json::from_slice(&b).unwrap();
+    let link = list["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["name"] == "etclink")
+        .unwrap_or_else(|| panic!("{list}"));
+    assert_eq!(
+        (
+            link["kind"].as_str(),
+            link["target"]["outside_workspace"].as_bool()
+        ),
+        (Some("symlink"), Some(true))
+    );
+
+    // 8. 20 MiB up and down with matching digests.
+    let big = noise(20 * 1024 * 1024, 42);
+    let (s, _, b) = fx(
+        &api,
+        false,
+        Method::PUT,
+        &content("/workspace/journey/big.bin"),
+        &[("if-none-match", "*")],
+        Some(big.clone()),
+    )
+    .await;
+    assert_eq!(s, 201, "{}", String::from_utf8_lossy(&b));
+    let (s, _, b) = fx(
+        &api,
+        false,
+        Method::GET,
+        &content("/workspace/journey/big.bin"),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(s, 200);
+    assert_eq!(b.len(), big.len(), "downloaded length");
+    assert_eq!(sha_hex(&b), sha_hex(&big), "20 MiB round trip differs");
+
+    // 9. Recursive delete; the folder is gone and the link target is untouched.
+    let (s, _, b) = fx(
+        &api,
+        false,
+        Method::POST,
+        &ops,
+        &jhdr,
+        json_body(json!({"op":"delete","path":"/workspace/journey","recursive":false})),
+    )
+    .await;
+    assert_eq!((s, code_of(&b).as_str()), (409, "directory_not_empty"));
+    let (s, _, b) = fx(
+        &api,
+        false,
+        Method::POST,
+        &ops,
+        &jhdr,
+        json_body(json!({"op":"delete","path":"/workspace/journey","recursive":true})),
+    )
+    .await;
+    assert_eq!(s, 200, "{}", String::from_utf8_lossy(&b));
+    let (s, _, b) = fx(
+        &api,
+        false,
+        Method::GET,
+        &format!("{files}?path=/workspace/journey"),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!((s, code_of(&b).as_str()), (404, "path_not_found"));
+    let (rc, out) = exec_in(&pod, "test -d /etc && echo etc-intact");
+    assert_eq!((rc, out.trim()), (0, "etc-intact"));
+
+    // 10. Frozen → 423 `frozen` on every files route; unfrozen → they work again.
+    let (s, v) = api
+        .post(
+            &format!("/v1/agents/{agent}/freeze"),
+            json!({"reason": "files journey"}),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let (s, _, b) = fx(
+        &api,
+        true,
+        Method::GET,
+        &format!("{files}?path=/workspace"),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!((s, code_of(&b).as_str()), (423, "frozen"));
+    let (s, _, b) = fx(
+        &api,
+        true,
+        Method::PUT,
+        &content("/workspace/frozen.txt"),
+        &[],
+        Some(b"x".to_vec()),
+    )
+    .await;
+    assert_eq!((s, code_of(&b).as_str()), (423, "frozen"));
+    let (s, v) = api
+        .post(&format!("/v1/agents/{agent}/unfreeze"), json!({}))
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let (s, _, b) = fx(
+        &api,
+        false,
+        Method::GET,
+        &format!("{files}?path=/workspace"),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(s, 200, "{}", String::from_utf8_lossy(&b));
+
+    // 11. A parked sandbox: the next request answers 503 `sandbox_waking` (with retry-after) at once, and succeeds once
+    // the sandbox is back. (The files keep-awake grace is 120 s, then idle_stop_secs applies: values-e2e.yaml.)
+    api.wait_sandbox_state("stopped", 420).await;
+    let (s, h, b) = fx(
+        &api,
+        true,
+        Method::GET,
+        &format!("{files}?path=/workspace"),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!((s, code_of(&b).as_str()), (503, "sandbox_waking"), "{h:?}");
+    assert!(h.contains_key("retry-after"), "{h:?}");
+    let (s, _, b) = fx(
+        &api,
+        false,
+        Method::GET,
+        &format!("{files}?path=/workspace"),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(s, 200, "{}", String::from_utf8_lossy(&b));
+
+    // 12. The secret-grep (SEC-125/126): the canary, uploaded inside a file, appears in no API, runner or sandbox-side
+    // log, in no audit row and in no request-log row. (Contents are never logged, stored or audited: C-906.)
+    let mut hits = vec![];
+    for ns in [env("AURORA_KIND_NS"), sbx_ns()] {
+        let (_, pods) = kubectl(&["-n", &ns, "get", "pods", "-o", "name"]);
+        for p in pods.lines().filter(|l| l.starts_with("pod/")) {
+            let (_, logs) = kubectl(&["-n", &ns, "logs", p, "--all-containers", "--tail=-1"]);
+            if logs.contains(&canary) {
+                hits.push(format!("{ns}/{p}"));
+            }
+        }
+    }
+    assert!(
+        hits.is_empty(),
+        "the canary appeared in the logs of: {hits:?}"
+    );
+    assert_eq!(
+        psql_value(&format!(
+            "SELECT count(*) FROM audit_log WHERE audit_log::text LIKE '%{canary}%'"
+        )),
+        "0",
+        "the canary is in audit_log"
+    );
+    assert_eq!(
+        psql_value(&format!(
+            "SELECT count(*) FROM request_log WHERE request_log::text LIKE '%{canary}%'"
+        )),
+        "0",
+        "the canary is in request_log"
+    );
+    // ...while the audit rows themselves exist (the feature is audited, without the contents).
+    let audited = psql_value("SELECT count(*) FROM audit_log WHERE action LIKE 'agent.files.%'");
+    assert!(
+        audited.parse::<u64>().unwrap() > 0,
+        "no agent.files.* audit rows: {audited}"
+    );
+}

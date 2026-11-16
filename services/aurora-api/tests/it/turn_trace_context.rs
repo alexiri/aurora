@@ -24,9 +24,9 @@ async fn turn_context_reaches_work_items_and_the_context_credential() {
             "00-4BF92F3577B34DA6A3CE929D0E0E4736-00f067aa0ba902b7-01",
             "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01 ",
         ] {
-            let res = sqlx::query(&format!(
+            let res = sqlx::query(sqlx::AssertSqlSafe(format!(
                 "UPDATE {table} SET trace_context = $1 WHERE id = (SELECT id FROM {table} LIMIT 1)"
-            ))
+            )))
             .bind(bad)
             .execute(r.h.pool())
             .await;
