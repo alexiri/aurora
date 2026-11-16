@@ -167,6 +167,6 @@ Worker 13 (lane `p5-agent`), 2026-11-16. The task is split into parts, each its 
 | Part | Scope items | Content | Status |
 |---|---|---|---|
 | (a) | 1 | Manifest keys `connect[].audience` and `scope_presets` (model, snapshot, linter, golden test), the two builtin packages, the shared table of dashboard paths in `aurora-core` | done (commit below) |
-| (b) | 2, 4 | `WhoCan` type and builder, role helpers put it in every 403, `contacts` on workspace and org, the level expansion in `domains/grants` | open |
+| (b) | 2, 4 | `WhoCan` type and builder, role helpers put it in every 403, `contacts` on workspace and org, the level expansion in `domains/grants` | done: `http/who_can.rs` (type, builder `WhoCan::build`, `forbid`/`forbid_code` stubs that the helpers raise, a response layer `who_can::middleware` fills the names and drops the scope), `aurora-db repo/contacts.rs`, `WorkspaceAuth.workspace_id`, `grants/levels.rs` (`expand`, `access_for_levels`, `access_for_grant`); tests `it/who_can.rs`, lib `levels::`. `approver_required` from `decide_batch` has no workspace in reach, so it names a role and no people (known gap). `action` is `view_this`/`change_this` unless a route sets it. |
 | (c) | 3, 7 (probe part) | `setup_status` in `domains/apps/setup.rs`, `/setup` and `/connect-plan`, `used_by_methods`, probe `cause` and `host`, `who_can` on the two client refusals | open |
 | (d) | 5, 6, 8 | Connect with access (fields and OAuth, SEC-130), secrets with `grant`, OpenAPI and web types, `permission_matrix`, `security-coverage.md` | open |
