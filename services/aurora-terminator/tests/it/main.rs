@@ -15,4 +15,5 @@
 
 mod common;
 mod matrix;
+mod openssh;
 mod session;
