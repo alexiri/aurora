@@ -164,7 +164,7 @@ impl TestDb {
             template::clone_from_template(&mut admin, template, &name).await?;
             true
         } else {
-            sqlx::query(&format!("CREATE DATABASE \"{name}\""))
+            sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE \"{name}\"")))
                 .execute(&mut admin)
                 .await
                 .context("creating test database")?;
@@ -203,9 +203,9 @@ impl TestDb {
         let mut admin = connect_admin(&self.server_url)
             .await
             .context("connecting to test server")?;
-        sqlx::query(&format!(
+        sqlx::query(sqlx::AssertSqlSafe(format!(
             "CREATE ROLE \"{role}\" LOGIN PASSWORD '{password}' NOSUPERUSER NOCREATEDB NOCREATEROLE"
-        ))
+        )))
         .execute(&mut admin)
         .await
         .context("creating gateway test role")?;
@@ -289,10 +289,12 @@ async fn drop_database(server_url: &str, name: &str) -> anyhow::Result<()> {
     let mut admin = connect_admin(server_url)
         .await
         .context("connecting to test server for DROP")?;
-    sqlx::query(&format!("DROP DATABASE IF EXISTS \"{name}\" WITH (FORCE)"))
-        .execute(&mut admin)
-        .await
-        .context("dropping test database")?;
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "DROP DATABASE IF EXISTS \"{name}\" WITH (FORCE)"
+    )))
+    .execute(&mut admin)
+    .await
+    .context("dropping test database")?;
     admin.close().await.ok();
     Ok(())
 }
@@ -302,10 +304,12 @@ async fn drop_role(server_url: &str, role: &str) -> anyhow::Result<()> {
     let mut admin = connect_admin(server_url)
         .await
         .context("connecting to test server for DROP ROLE")?;
-    sqlx::query(&format!("DROP ROLE IF EXISTS \"{role}\""))
-        .execute(&mut admin)
-        .await
-        .context("dropping gateway test role")?;
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "DROP ROLE IF EXISTS \"{role}\""
+    )))
+    .execute(&mut admin)
+    .await
+    .context("dropping gateway test role")?;
     admin.close().await.ok();
     Ok(())
 }

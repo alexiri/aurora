@@ -80,10 +80,10 @@ pub async fn insert<'e, E: PgExecutor<'e>>(
     token_hash: &[u8],
     fingerprint: &str,
 ) -> Result<RunnerRow, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "INSERT INTO runners (id, name, token_hash, installation_fingerprint)
          VALUES ($1,$2,$3,$4) RETURNING {COLS}"
-    ))
+    )))
     .bind(id)
     .bind(name)
     .bind(token_hash)
@@ -165,28 +165,28 @@ pub async fn find_by_token_hash<'e, E: PgExecutor<'e>>(
     hash: &[u8],
 ) -> Result<Option<RunnerRow>, DbError> {
     // The current token, or the one a rotation replaced while its grace lasts (FIX-121).
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {COLS} FROM runners WHERE token_hash=$1
             OR (previous_token_hash=$1 AND previous_token_expires_at > now())"
-    ))
+    )))
     .bind(hash)
     .fetch_optional(exec)
     .await?)
 }
 
 pub async fn get<'e, E: PgExecutor<'e>>(exec: E, id: Uuid) -> Result<Option<RunnerRow>, DbError> {
-    Ok(
-        sqlx::query_as(&format!("SELECT {COLS} FROM runners WHERE id=$1"))
-            .bind(id)
-            .fetch_optional(exec)
-            .await?,
-    )
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT {COLS} FROM runners WHERE id=$1"
+    )))
+    .bind(id)
+    .fetch_optional(exec)
+    .await?)
 }
 
 pub async fn list<'e, E: PgExecutor<'e>>(exec: E) -> Result<Vec<RunnerRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {COLS} FROM runners ORDER BY created_at, id"
-    ))
+    )))
     .fetch_all(exec)
     .await?)
 }

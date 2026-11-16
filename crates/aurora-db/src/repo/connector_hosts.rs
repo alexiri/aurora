@@ -132,9 +132,9 @@ const TOKEN_SEL: &str = "id, name, prefix, type_ids, created_at, last_used_at, r
 
 /// Every token, newest first (the shared bootstrap token has `type_ids = None`).
 pub async fn list_tokens<'e, E: PgExecutor<'e>>(exec: E) -> Result<Vec<TokenRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {TOKEN_SEL} FROM connector_host_tokens ORDER BY created_at DESC, id"
-    ))
+    )))
     .fetch_all(exec)
     .await?)
 }
@@ -149,10 +149,10 @@ pub async fn insert_bound_token<'e, E: PgExecutor<'e>>(
     type_ids: &[String],
     created_by: Option<Uuid>,
 ) -> Result<TokenRow, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "INSERT INTO connector_host_tokens (id, token_hash, prefix, name, type_ids, created_by)
          VALUES ($1,$2,$3,$4,$5,$6) RETURNING {TOKEN_SEL}"
-    ))
+    )))
     .bind(id)
     .bind(token_hash)
     .bind(prefix)
@@ -168,10 +168,10 @@ pub async fn revoke_token<'e, E: PgExecutor<'e>>(
     exec: E,
     id: Uuid,
 ) -> Result<Option<TokenRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "UPDATE connector_host_tokens SET revoked_at = COALESCE(revoked_at, now())
          WHERE id = $1 RETURNING {TOKEN_SEL}"
-    ))
+    )))
     .bind(id)
     .fetch_optional(exec)
     .await?)

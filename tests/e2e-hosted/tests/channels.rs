@@ -149,7 +149,7 @@ impl W {
     }
 
     async fn count(&self, sql: &str) -> i64 {
-        sqlx::query_scalar(sql)
+        sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
             .bind(&self.integ)
             .fetch_one(self.st.pool())
             .await

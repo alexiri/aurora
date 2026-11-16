@@ -100,14 +100,14 @@ pub struct NewKey<'a> {
 
 /// Insert a `user`-kind key and return it.
 pub async fn insert<'e, E: PgExecutor<'e>>(exec: E, k: &NewKey<'_>) -> Result<ApiKeyRow, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "WITH k AS (
              INSERT INTO api_keys (id, org_id, workspace_id, user_id, kind, name, token_hash,
                                    display_prefix, expires_at)
              VALUES ($1,$2,$3,$4,'user',$5,$6,$7,$8)
              RETURNING *)
          SELECT {SEL} FROM k JOIN users u ON u.id = k.user_id"
-    ))
+    )))
     .bind(k.id)
     .bind(k.org_id)
     .bind(k.workspace_id)
@@ -121,9 +121,9 @@ pub async fn insert<'e, E: PgExecutor<'e>>(exec: E, k: &NewKey<'_>) -> Result<Ap
 }
 
 pub async fn get<'e, E: PgExecutor<'e>>(exec: E, id: Uuid) -> Result<Option<ApiKeyRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {SEL} FROM api_keys k JOIN users u ON u.id = k.user_id WHERE k.id = $1"
-    ))
+    )))
     .bind(id)
     .fetch_optional(exec)
     .await?)
@@ -137,12 +137,12 @@ pub async fn list_org<'e, E: PgExecutor<'e>>(
     fetch: i64,
 ) -> Result<Vec<ApiKeyRow>, DbError> {
     let (t, id) = super::split(after);
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {SEL} FROM api_keys k JOIN users u ON u.id = k.user_id
          WHERE k.org_id = $1 AND k.workspace_id IS NULL AND k.kind = 'user'
            AND ($2::timestamptz IS NULL OR (k.created_at, k.id) < ($2, $3))
          ORDER BY k.created_at DESC, k.id DESC LIMIT $4"
-    ))
+    )))
     .bind(org)
     .bind(t)
     .bind(id)
@@ -159,12 +159,12 @@ pub async fn list_workspace<'e, E: PgExecutor<'e>>(
     fetch: i64,
 ) -> Result<Vec<ApiKeyRow>, DbError> {
     let (t, id) = super::split(after);
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {SEL} FROM api_keys k JOIN users u ON u.id = k.user_id
          WHERE k.workspace_id = $1 AND k.kind = 'user'
            AND ($2::timestamptz IS NULL OR (k.created_at, k.id) < ($2, $3))
          ORDER BY k.created_at DESC, k.id DESC LIMIT $4"
-    ))
+    )))
     .bind(ws)
     .bind(t)
     .bind(id)
@@ -181,12 +181,12 @@ pub async fn list_for_user<'e, E: PgExecutor<'e>>(
     fetch: i64,
 ) -> Result<Vec<ApiKeyRow>, DbError> {
     let (t, id) = super::split(after);
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {SEL} FROM api_keys k JOIN users u ON u.id = k.user_id
          WHERE k.user_id = $1 AND k.kind = 'user'
            AND ($2::timestamptz IS NULL OR (k.created_at, k.id) < ($2, $3))
          ORDER BY k.created_at DESC, k.id DESC LIMIT $4"
-    ))
+    )))
     .bind(user)
     .bind(t)
     .bind(id)

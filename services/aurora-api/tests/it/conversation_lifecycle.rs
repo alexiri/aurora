@@ -113,7 +113,7 @@ impl Fx {
     }
 
     pub async fn count(&self, sql: &str, id: Uuid) -> i64 {
-        sqlx::query_scalar(sql)
+        sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
             .bind(id)
             .fetch_one(self.h.pool())
             .await
@@ -1347,9 +1347,9 @@ async fn retention_sweep_skips_frozen_scopes_and_resumes_at_unfreeze() {
         ("agents", f.agent),
         ("organizations", f.org),
     ] {
-        sqlx::query(&format!(
+        sqlx::query(sqlx::AssertSqlSafe(format!(
             "UPDATE {table} SET frozen_at = now(), frozen_reason = 'x', frozen_authority = 'org_admin' WHERE id = $1"
-        ))
+        )))
         .bind(id)
         .execute(f.h.pool())
         .await
@@ -1361,9 +1361,9 @@ async fn retention_sweep_skips_frozen_scopes_and_resumes_at_unfreeze() {
             1,
             "frozen {table}"
         );
-        sqlx::query(&format!(
+        sqlx::query(sqlx::AssertSqlSafe(format!(
             "UPDATE {table} SET frozen_at = NULL, frozen_reason = NULL, frozen_authority = NULL WHERE id = $1"
-        ))
+        )))
         .bind(id)
         .execute(f.h.pool())
         .await

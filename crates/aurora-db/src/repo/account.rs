@@ -171,7 +171,7 @@ pub async fn sole_member_personal_workspaces<'e, E: PgExecutor<'e>>(
     user: Uuid,
     lock: bool,
 ) -> Result<Vec<(Uuid, Uuid, String)>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT w.id, w.org_id, w.slug FROM workspaces w
           WHERE w.personal_owner_user_id = $1
             AND NOT EXISTS (SELECT 1 FROM workspace_access a
@@ -179,7 +179,7 @@ pub async fn sole_member_personal_workspaces<'e, E: PgExecutor<'e>>(
             AND NOT EXISTS (SELECT 1 FROM group_workspace_access g WHERE g.workspace_id = w.id)
           ORDER BY w.id{}",
         if lock { " FOR UPDATE OF w" } else { "" }
-    ))
+    )))
     .bind(user)
     .fetch_all(exec)
     .await?)
@@ -236,12 +236,12 @@ pub async fn list_users<'e, E: PgExecutor<'e>>(
 ) -> Result<Vec<AdminUserRow>, DbError> {
     let (t, id) = split(after);
     let pat = q.map(like_escape);
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {ADMIN_COLS} FROM users
          WHERE ($1::text IS NULL OR email::text ILIKE $1 OR display_name ILIKE $1)
          AND ($2::timestamptz IS NULL OR (created_at, id) < ($2, $3))
          ORDER BY created_at DESC, id DESC LIMIT $4"
-    ))
+    )))
     .bind(pat)
     .bind(t)
     .bind(id)
@@ -254,12 +254,12 @@ pub async fn get_user<'e, E: PgExecutor<'e>>(
     exec: E,
     id: Uuid,
 ) -> Result<Option<AdminUserRow>, DbError> {
-    Ok(
-        sqlx::query_as(&format!("SELECT {ADMIN_COLS} FROM users WHERE id = $1"))
-            .bind(id)
-            .fetch_optional(exec)
-            .await?,
-    )
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT {ADMIN_COLS} FROM users WHERE id = $1"
+    )))
+    .bind(id)
+    .fetch_optional(exec)
+    .await?)
 }
 
 /// Apply admin flags; `disabled`: `Some(true)` sets `disabled_at` (keeping an existing
@@ -270,14 +270,14 @@ pub async fn update_admin_flags<'e, E: PgExecutor<'e>>(
     is_instance_admin: Option<bool>,
     disabled: Option<bool>,
 ) -> Result<Option<AdminUserRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "UPDATE users SET
             is_instance_admin = COALESCE($2, is_instance_admin),
             disabled_at = CASE WHEN $3::bool IS NULL THEN disabled_at
                                WHEN $3 THEN COALESCE(disabled_at, now()) ELSE NULL END,
             updated_at = now()
          WHERE id = $1 RETURNING {ADMIN_COLS}"
-    ))
+    )))
     .bind(id)
     .bind(is_instance_admin)
     .bind(disabled)

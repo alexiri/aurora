@@ -27,10 +27,12 @@ const SELECT: &str =
     JOIN users u ON u.id = l.user_id";
 
 pub async fn get<'e, E: PgExecutor<'e>>(exec: E, id: Uuid) -> Result<Option<UserLinkRow>, DbError> {
-    Ok(sqlx::query_as(&format!("{SELECT} WHERE l.id=$1"))
-        .bind(id)
-        .fetch_optional(exec)
-        .await?)
+    Ok(
+        sqlx::query_as(sqlx::AssertSqlSafe(format!("{SELECT} WHERE l.id=$1")))
+            .bind(id)
+            .fetch_optional(exec)
+            .await?,
+    )
 }
 
 /// The Aurora user linked to a platform user of an integration (inbox sender resolution).
@@ -39,9 +41,9 @@ pub async fn user_link_for<'e, E: PgExecutor<'e>>(
     integration: Uuid,
     platform_user_ref: &str,
 ) -> Result<Option<UserLinkRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "{SELECT} WHERE l.integration_id=$1 AND l.platform_user_ref=$2"
-    ))
+    )))
     .bind(integration)
     .bind(platform_user_ref)
     .fetch_optional(exec)
@@ -56,11 +58,11 @@ pub async fn page_for_integration<'e, E: PgExecutor<'e>>(
     limit: i64,
 ) -> Result<Vec<UserLinkRow>, DbError> {
     let (t, id) = after.unzip();
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "{SELECT} WHERE l.integration_id=$1
            AND ($2::timestamptz IS NULL OR (l.created_at, l.id) < ($2, $3))
          ORDER BY l.created_at DESC, l.id DESC LIMIT $4"
-    ))
+    )))
     .bind(integration)
     .bind(t)
     .bind(id)
@@ -73,9 +75,9 @@ pub async fn list_for_user<'e, E: PgExecutor<'e>>(
     exec: E,
     user: Uuid,
 ) -> Result<Vec<UserLinkRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "{SELECT} WHERE l.user_id=$1 ORDER BY l.created_at, l.id"
-    ))
+    )))
     .bind(user)
     .fetch_all(exec)
     .await?)
@@ -86,9 +88,9 @@ pub async fn list_for_user_in<'e, E: PgExecutor<'e>>(
     user: Uuid,
     integration: Uuid,
 ) -> Result<Vec<UserLinkRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "{SELECT} WHERE l.user_id=$1 AND l.integration_id=$2 ORDER BY l.created_at, l.id"
-    ))
+    )))
     .bind(user)
     .bind(integration)
     .fetch_all(exec)

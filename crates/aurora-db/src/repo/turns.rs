@@ -115,12 +115,12 @@ pub enum Created {
 }
 
 pub async fn get<'e, E: PgExecutor<'e>>(exec: E, id: Uuid) -> Result<Option<TurnRow>, DbError> {
-    Ok(
-        sqlx::query_as(&format!("SELECT {COLS} FROM turns WHERE id = $1"))
-            .bind(id)
-            .fetch_optional(exec)
-            .await?,
-    )
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT {COLS} FROM turns WHERE id = $1"
+    )))
+    .bind(id)
+    .fetch_optional(exec)
+    .await?)
 }
 
 /// The active `turn` (queued/dispatched/running) of a conversation.
@@ -128,9 +128,9 @@ pub async fn active_turn<'e, E: PgExecutor<'e>>(
     exec: E,
     conversation_id: Uuid,
 ) -> Result<Option<TurnRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {COLS} FROM turns WHERE conversation_id = $1 AND role = 'turn' AND status IN {ACTIVE}"
-    ))
+    )))
     .bind(conversation_id)
     .fetch_optional(exec)
     .await?)
@@ -140,9 +140,9 @@ pub async fn active_turns<'e, E: PgExecutor<'e>>(
     exec: E,
     conversation_ids: &[Uuid],
 ) -> Result<Vec<TurnRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {COLS} FROM turns WHERE conversation_id = ANY($1) AND role = 'turn' AND status IN {ACTIVE}"
-    ))
+    )))
     .bind(conversation_ids)
     .fetch_all(exec)
     .await?)
@@ -200,9 +200,9 @@ pub async fn create(conn: &mut PgConnection, n: &NewTurn<'_>) -> Result<Created,
             Err(e) => return Err(e),
         }
         // Share-lock the live turn so a concurrent finish waits for (and then sees) the follow-up.
-        let parent: Option<Uuid> = sqlx::query_scalar(&format!(
+        let parent: Option<Uuid> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             "SELECT id FROM turns WHERE conversation_id = $1 AND role = 'turn' AND status IN {ACTIVE} FOR SHARE"
-        ))
+        )))
         .bind(n.conversation_id)
         .fetch_optional(&mut *conn)
         .await?;
@@ -253,11 +253,11 @@ pub async fn finish(
             constraint: Some("turns_finish_status".into()),
         });
     }
-    let done = sqlx::query(&format!(
+    let done = sqlx::query(sqlx::AssertSqlSafe(format!(
         "UPDATE turns SET status = $2, error_code = $3, error_message = $4, usage = COALESCE($5, usage),
             finished_at = now(), updated_at = now()
          WHERE id = $1 AND role = 'turn' AND status IN {ACTIVE}"
-    ))
+    )))
     .bind(id)
     .bind(status)
     .bind(error_code)
@@ -273,10 +273,10 @@ pub async fn finish(
 
 /// Mark an active turn abort-requested (idempotent); returns the row or `None` when finished.
 pub async fn request_abort(conn: &mut PgConnection, id: Uuid) -> Result<Option<TurnRow>, DbError> {
-    let done = sqlx::query(&format!(
+    let done = sqlx::query(sqlx::AssertSqlSafe(format!(
         "UPDATE turns SET abort_requested_at = COALESCE(abort_requested_at, now()), updated_at = now()
          WHERE id = $1 AND role = 'turn' AND status IN {ACTIVE}"
-    ))
+    )))
     .bind(id)
     .execute(&mut *conn)
     .await?;
@@ -291,10 +291,10 @@ pub async fn request_send_now(
     conn: &mut PgConnection,
     id: Uuid,
 ) -> Result<Option<TurnRow>, DbError> {
-    let done = sqlx::query(&format!(
+    let done = sqlx::query(sqlx::AssertSqlSafe(format!(
         "UPDATE turns SET send_now_requested_at = COALESCE(send_now_requested_at, now()), updated_at = now()
          WHERE id = $1 AND role = 'turn' AND status IN {ACTIVE}"
-    ))
+    )))
     .bind(id)
     .execute(&mut *conn)
     .await?;
@@ -306,10 +306,10 @@ pub async fn request_send_now(
 
 /// `joining` follow-ups of a turn, oldest first, row-locked.
 pub async fn joining_of(conn: &mut PgConnection, parent: Uuid) -> Result<Vec<TurnRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {COLS} FROM turns WHERE parent_turn_id = $1 AND role = 'followup' AND status = 'joining'
          ORDER BY created_at, id FOR UPDATE"
-    ))
+    )))
     .bind(parent)
     .fetch_all(&mut *conn)
     .await?)
@@ -383,10 +383,10 @@ pub async fn promote_followup(
         }
         Err(e) if is_active_conflict(&e) => {
             sp.rollback().await?;
-            sqlx::query(&format!(
+            sqlx::query(sqlx::AssertSqlSafe(format!(
                 "UPDATE turns SET parent_turn_id = (SELECT id FROM turns WHERE conversation_id = $2
                     AND role = 'turn' AND status IN {ACTIVE}), updated_at = now() WHERE id = $1"
-            ))
+            )))
             .bind(followup_id)
             .bind(f.conversation_id)
             .execute(&mut *conn)
@@ -442,9 +442,9 @@ pub async fn by_source_event(
     conversation_id: Uuid,
     source_event_id: &str,
 ) -> Result<Option<TurnRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {COLS} FROM turns WHERE conversation_id = $1 AND source_event_id = $2"
-    ))
+    )))
     .bind(conversation_id)
     .bind(source_event_id)
     .fetch_optional(conn)

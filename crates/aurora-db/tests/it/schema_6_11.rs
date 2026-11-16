@@ -5,7 +5,7 @@ use aurora_db::{DbError, PgPool};
 use uuid::Uuid;
 
 async fn exec(pool: &PgPool, sql: &str, binds: &[Uuid]) -> Result<(), DbError> {
-    let mut q = sqlx::query(sql);
+    let mut q = sqlx::query(sqlx::AssertSqlSafe(sql));
     for b in binds {
         q = q.bind(*b);
     }
@@ -177,7 +177,7 @@ async fn gateway_grants(pool: PgPool) {
         apply_gateway_grants(&pool, &role).await,
         Err(GrantsError::RoleMissing(_))
     ));
-    sqlx::query(&format!("CREATE ROLE {role} NOLOGIN"))
+    sqlx::query(sqlx::AssertSqlSafe(format!("CREATE ROLE {role} NOLOGIN")))
         .execute(&pool)
         .await
         .unwrap();
@@ -186,7 +186,7 @@ async fn gateway_grants(pool: PgPool) {
     apply_gateway_grants(&pool, &role).await.unwrap();
 
     let mut conn = pool.acquire().await.unwrap();
-    sqlx::query(&format!("SET ROLE {role}"))
+    sqlx::query(sqlx::AssertSqlSafe(format!("SET ROLE {role}")))
         .execute(&mut *conn)
         .await
         .unwrap();
@@ -258,10 +258,12 @@ async fn gateway_grants(pool: PgPool) {
             .unwrap();
         for col in ["expires_at = now()", "revoked_at = now()", "kind = kind"] {
             assert!(
-                sqlx::query(&format!("UPDATE gateway_credentials SET {col}"))
-                    .execute(&mut *conn)
-                    .await
-                    .is_err(),
+                sqlx::query(sqlx::AssertSqlSafe(format!(
+                    "UPDATE gateway_credentials SET {col}"
+                )))
+                .execute(&mut *conn)
+                .await
+                .is_err(),
                 "{col}"
             );
         }
@@ -275,11 +277,11 @@ async fn gateway_grants(pool: PgPool) {
     .await;
     sqlx::query("RESET ROLE").execute(&mut *conn).await.unwrap();
     drop(conn);
-    sqlx::query(&format!("DROP OWNED BY {role}"))
+    sqlx::query(sqlx::AssertSqlSafe(format!("DROP OWNED BY {role}")))
         .execute(&pool)
         .await
         .unwrap();
-    sqlx::query(&format!("DROP ROLE {role}"))
+    sqlx::query(sqlx::AssertSqlSafe(format!("DROP ROLE {role}")))
         .execute(&pool)
         .await
         .unwrap();

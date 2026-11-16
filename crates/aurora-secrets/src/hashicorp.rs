@@ -123,31 +123,19 @@ fn build_client(
     if let Some(g) = guard {
         b = b.dns_resolver(g.resolver());
     }
+    // An explicit bundle replaces the default roots for this store (`tls_certs_only`); without one
+    // the OS trust store applies (reqwest's platform verifier). `tls.extra_ca_bundle` is added to
+    // whichever set is in force.
     if let Some(f) = ca_file {
-        // An explicit bundle replaces the default roots for this store.
-        b = b.tls_built_in_root_certs(false);
-        for c in load_pem(f, "ca_file", store)? {
-            b = b.add_root_certificate(c);
-        }
+        b = b.tls_certs_only(load_pem(f, "ca_file", store)?);
     } else if let Some(p) = ca_pem {
-        b = b.tls_built_in_root_certs(false);
         let certs = crate::tls::parse_pem_text(p).map_err(|e| {
             SecretError::InvalidConfig(format!("secret store '{store}': ca_pem: {}", e.why()))
         })?;
-        for c in certs {
-            b = b.add_root_certificate(c);
-        }
-    } else {
-        for c in rustls_native_certs::load_native_certs().certs {
-            if let Ok(c) = reqwest::Certificate::from_der(c.as_ref()) {
-                b = b.add_root_certificate(c);
-            }
-        }
+        b = b.tls_certs_only(certs);
     }
     if let Some(f) = extra_ca_bundle {
-        for c in load_pem(f, "tls.extra_ca_bundle", store)? {
-            b = b.add_root_certificate(c);
-        }
+        b = b.tls_certs_merge(load_pem(f, "tls.extra_ca_bundle", store)?);
     }
     b.build().map_err(|_| {
         SecretError::InvalidConfig(format!(

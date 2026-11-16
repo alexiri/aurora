@@ -78,7 +78,7 @@ async fn msg(h: &Harness, f: &Fx, conv: Uuid, text: &str) -> (u16, Value) {
 }
 
 async fn count(h: &Harness, sql: &str, id: Uuid) -> i64 {
-    sqlx::query_scalar(sql)
+    sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
         .bind(id)
         .fetch_one(h.pool())
         .await

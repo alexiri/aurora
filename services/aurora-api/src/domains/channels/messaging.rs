@@ -919,9 +919,9 @@ fn own_pattern(conversation: Uuid) -> String {
 }
 
 pub async fn list_my_messages(pool: &PgPool, conversation: Uuid) -> Result<Value, Fail> {
-    let rows: Vec<OwnPost> = sqlx::query_as(&format!(
+    let rows: Vec<OwnPost> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "{OWN_SELECT} ORDER BY o.created_at DESC, o.id DESC LIMIT {LIST_MAX}"
-    ))
+    )))
     .bind(own_pattern(conversation))
     .fetch_all(pool)
     .await?;
@@ -953,11 +953,12 @@ async fn load_own(
     conversation: Uuid,
     message_id: Uuid,
 ) -> Result<Own, Fail> {
-    let row: Option<OwnPost> = sqlx::query_as(&format!("{OWN_SELECT} AND o.id = $2"))
-        .bind(own_pattern(conversation))
-        .bind(message_id)
-        .fetch_optional(&mut *conn)
-        .await?;
+    let row: Option<OwnPost> =
+        sqlx::query_as(sqlx::AssertSqlSafe(format!("{OWN_SELECT} AND o.id = $2")))
+            .bind(own_pattern(conversation))
+            .bind(message_id)
+            .fetch_optional(&mut *conn)
+            .await?;
     let Some(row) = row else {
         return denied("That is not a message you sent in this conversation in the last 24 hours.");
     };

@@ -1461,10 +1461,10 @@ async fn fix064_a_database_error_in_a_starter_grant_is_not_reported_as_unavailab
         .execute(e.h.pool())
         .await
         .unwrap();
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "CREATE FUNCTION fix064_boom() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN \
          IF NEW.connection_id = '{key}' THEN RAISE EXCEPTION 'injected'; END IF; RETURN NEW; END $$"
-    ))
+    )))
     .execute(e.h.pool())
     .await
     .unwrap();
