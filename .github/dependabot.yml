@@ -45,11 +45,6 @@ updates:
         update-types: ["version-update:semver-major", "version-update:semver-minor"]
       - dependency-name: wit-bindgen
         update-types: ["version-update:semver-major", "version-update:semver-minor"]
-      # sqlx 0.9 accepts only &'static str queries (PR #29: 305 E0277 in aurora-db alone) and changes
-      # migration ordering; the move is a by-hand audit of every dynamic SQL string (FIX-160).
-      # Remove this entry in the FIX-160 merge. 0.8 patches still arrive.
-      - dependency-name: sqlx
-        update-types: ["version-update:semver-major", "version-update:semver-minor"]
 
   # --- Rust: standalone hook guests of the built-in plugins (own Cargo.lock and [workspace]) ----
   # Each ships inside a signed built-in package (D-77); one PR per hook crate keeps the review small.
