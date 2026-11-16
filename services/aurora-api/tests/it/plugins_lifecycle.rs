@@ -17,12 +17,6 @@ fn yaml(pkg: &str, version: &str, host: &str) -> String {
     )
 }
 
-pub(crate) fn signed(y: &str, k: &SigningKey) -> Vec<u8> {
-    let mut b = PackageBuilder::new(y);
-    b.sign(k, &PackageBuilder::key_id(k));
-    b.build().unwrap()
-}
-
 pub(crate) struct Admin<'a> {
     pub(crate) h: &'a Harness,
     pub(crate) cookie: String,
@@ -44,12 +38,22 @@ impl Admin<'_> {
     }
 
     pub(crate) async fn upload(&self, y: &str) -> Value {
+        self.upload_with(y, &[]).await
+    }
+
+    /// [`Self::upload`] with extra package files (`tests/*.yaml` fixtures of `params` tools).
+    pub(crate) async fn upload_with(&self, y: &str, files: &[(&str, &[u8])]) -> Value {
         let boundary = "XBOUNDARYX";
         let mut body = format!(
             "--{boundary}\r\nContent-Disposition: form-data; name=\"package\"; filename=\"p.aurora-plugin\"\r\nContent-Type: application/gzip\r\n\r\n"
         )
         .into_bytes();
-        body.extend_from_slice(&signed(y, &self.key));
+        let mut b = PackageBuilder::new(y);
+        for (p, d) in files {
+            b.set_file(p, d);
+        }
+        b.sign(&self.key, &PackageBuilder::key_id(&self.key));
+        body.extend_from_slice(&b.build().unwrap());
         body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
         let req = Request::builder()
             .method(Method::POST)

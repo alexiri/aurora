@@ -1466,6 +1466,108 @@ async fn read_only_connection_blocks_write_and_untooled_even_under_a_full_grant(
     }
 }
 
+/// FIX-159 (D-329, C-930): the gateway's side of the simulate == gateway table. The same app shape,
+/// grant (reads allowed, writes asked, the rest blocked), read-only connection and requests as
+/// `services/aurora-api/tests/it/simulate_apps.rs::simulate_connection_custom_grant_matches_gateway`,
+/// with the verdicts asserted there: the simulator and the gateway run the same identification
+/// (`aurora_registry::identify`) and the same evaluator, and both tables must say the same.
+#[tokio::test]
+async fn read_only_custom_grant_decides_the_simulate_table() {
+    let mut app = app_json(
+        "aws",
+        json!({"read": {"items": [
+            {"id": "s3_list_buckets", "name": "l", "host": "127.0.0.1", "path": "/", "methods": ["GET"]},
+            {"id": "s3_get_object", "name": "g", "host": "127.0.0.1", "path": "/*/*/**", "methods": ["GET", "HEAD"]},
+            {"id": "sts_get_caller_identity", "name": "w", "host": "127.0.0.1", "path": "/", "methods": ["POST"],
+             "params": [{"source": "form", "name": "Action", "match": {"equals": "GetCallerIdentity"}}]}
+        ]}, "write": {"items": [
+            {"id": "s3_put_object", "name": "p", "host": "127.0.0.1", "path": "/*/*/**", "methods": ["PUT"]},
+            {"id": "s3_delete_object", "name": "d", "host": "127.0.0.1", "path": "/*/*/**", "methods": ["DELETE"]}
+        ]}}),
+        false,
+    );
+    app["grants"] = json!({"custom_only": false, "block_untooled": true});
+    let snap = snapshot(
+        vec![app],
+        vec![host_json(
+            "aws",
+            None,
+            json!({"inject": [{"bearer": "{credentials.tok}"}]}),
+        )],
+    );
+    let (env, ..) = start(snap, &[("c1", r#"{"tok":"AWS-KEY"}"#)], |w| {
+        let mut c = conn(w, "aws", "c1", None);
+        c.access = "read".into();
+        let mut r = Rows::default();
+        r.ws.rules.push(allow_conn(
+            &c,
+            Some(vec!["s3_list_buckets", "s3_get_object", "sts_get_caller_identity"]),
+        ));
+        let mut ask = rule(
+            "ask",
+            "allow",
+            json!([{"type": "connection", "id": c.id, "tools": ["s3_put_object", "s3_delete_object"]}]),
+            true,
+        );
+        ask.approval_timeout_secs = None;
+        r.ws.rules.push(ask);
+        r.ws.rules.push(rule(
+            "rest",
+            "block",
+            json!([{"type": "connection", "id": c.id}]),
+            false,
+        ));
+        r.conns.push(c);
+        r
+    })
+    .await;
+    const FORM: &str = "Content-Type: application/x-www-form-urlencoded\r\n";
+    // (what, method, path, headers, body, status, reason of the refusal)
+    #[allow(clippy::type_complexity)]
+    let cases: [(&str, &str, &str, &str, &str, u16, Option<&str>); 4] = [
+        (
+            "PUT on a read-only connection",
+            "PUT",
+            "/bucket/key.txt",
+            "",
+            "",
+            403,
+            Some("read_only_connection"),
+        ),
+        ("list buckets", "GET", "/", "", "", 200, None),
+        (
+            "bare STS POST",
+            "POST",
+            "/",
+            "",
+            "",
+            403,
+            Some("app_untooled_blocked"),
+        ),
+        (
+            "GetCallerIdentity",
+            "POST",
+            "/",
+            FORM,
+            "Action=GetCallerIdentity&Version=2011-06-15",
+            200,
+            None,
+        ),
+    ];
+    for (what, method, path, extra, body, status, reason) in cases {
+        let r = send(&env, method, path, extra, body).await;
+        assert_eq!(r.status, status, "{what}: {}", r.body);
+        if let Some(reason) = reason {
+            let v: Value = serde_json::from_str(&r.body).unwrap();
+            assert_eq!(
+                v["error"]["details"]["reason"], reason,
+                "{what}: {}",
+                r.body
+            );
+        }
+    }
+}
+
 /// Two read tools (`/items` needs `read:a`, `/other` needs `read:b`) and one with no requirement.
 fn scoped(annotated: bool) -> Value {
     let sc = |s: &str| if annotated { json!([s]) } else { json!([]) };

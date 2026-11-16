@@ -11048,6 +11048,12 @@ export interface components {
             equals: string;
             field: string;
         };
+        /** @description (FIX-159, C-930) What the request was recognized as. */
+        SimApp: {
+            app_id: string;
+            /** @description The catalogue tool the request matched; null when none did. */
+            tool_id?: string | null;
+        };
         SimCandidate: {
             /** Format: uuid */
             id: string;
@@ -11083,6 +11089,7 @@ export interface components {
             use_draft?: boolean | null;
         };
         Simulation: {
+            app?: components["schemas"]["SimApp"] | null;
             /**
              * Format: int64
              * @description (phase 2, RFE-011a) Only for `needs_approval`: the hold timeout in seconds the request

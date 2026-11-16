@@ -8,11 +8,10 @@ use crate::snapshot::Loaded;
 use aurora_core::ApiError;
 use aurora_core::limits::CONNECTION_CHOICE_MAX;
 use aurora_db::repo::gateway::AppConnectionRow;
+use aurora_policy::Credential;
 use aurora_policy::facts::{Level, ToolTags};
-use aurora_policy::graphql::{self, GraphqlKind as PolicyGql};
-use aurora_policy::{Credential, PathPattern};
-use aurora_registry::manifest::{GitKind, GraphqlKind, ToolItem};
-use aurora_registry::snapshot::{AppEntry, HostEntry};
+use aurora_registry::manifest::ToolItem;
+use aurora_registry::snapshot::AppEntry;
 use aurora_secrets::SecretRef;
 use http::StatusCode;
 use serde_json::json;
@@ -73,9 +72,7 @@ impl ConnCand {
     /// none of them. Unknown scopes (empty) never refuse: they are trusted only to refuse, never to
     /// widen, and an undeclared token may well have them.
     pub fn lacks_scopes_for(&self, t: &ToolItem) -> bool {
-        !t.scopes.is_empty()
-            && !self.scopes.is_empty()
-            && !t.scopes.iter().any(|s| self.scopes.contains(s))
+        aurora_registry::identify::scope_missing(&t.scopes, &self.scopes)
     }
 
     pub fn from_row(r: AppConnectionRow, org_id: Uuid) -> Result<Self, String> {
@@ -223,18 +220,21 @@ pub fn pick(mut sel: Vec<Cand>, named: Option<&str>) -> Pick {
             )),
         };
     }
-    if sel.iter().any(|c| matches!(c, Cand::App(_))) {
-        sel.retain(|c| matches!(c, Cand::App(_)));
-    }
-    if sel
+    // (FIX-159) The precedence is the shared winner rule, also the simulator's.
+    let ranks: Vec<_> = sel
         .iter()
-        .any(|c| c.secret().is_some_and(|s| s.path.is_some()))
-    {
-        sel.retain(|c| c.secret().is_some_and(|s| s.path.is_some()));
-    }
-    if sel.iter().any(|c| c.scope() == Level::Workspace) {
-        sel.retain(|c| c.scope() == Level::Workspace);
-    }
+        .map(|c| aurora_registry::identify::Rank {
+            is_app: matches!(c, Cand::App(_)),
+            path_limited: c.secret().is_some_and(|s| s.path.is_some()),
+            workspace: c.scope() == Level::Workspace,
+        })
+        .collect();
+    let keep = aurora_registry::identify::narrow(&ranks);
+    let mut i = 0;
+    sel.retain(|_| {
+        i += 1;
+        keep.contains(&(i - 1))
+    });
     match sel.len() {
         0 => Pick::None,
         1 => Pick::One(sel.remove(0)),
@@ -262,170 +262,24 @@ pub fn pick(mut sel: Vec<Cand>, named: Option<&str>) -> Pick {
     }
 }
 
-/// The app serving the request (host entry of the snapshot, longest path prefix).
-pub struct AppMatch<'a> {
-    pub entry: &'a HostEntry,
-    pub app: &'a AppEntry,
-    /// The match comes from a registered app instance (the `{instance}` host entries), not from
-    /// the static host index (D-74).
-    pub instance: bool,
-}
+// (FIX-159, D-329, C-930) App and tool identification is one function in `aurora-registry`, shared
+// with the policy simulator and the effective view.
+pub use aurora_registry::identify::{
+    AppMatch, identify_tool, identify_tool_in, needs_body, tool_tags as registry_tool_tags,
+};
 
 pub fn identify_app<'a>(l: &'a Loaded, host: &str, port: u16, path: &str) -> Option<AppMatch<'a>> {
-    let entry = l.lookup(host, port, path)?;
-    let app = l.snapshot.app(&entry.app_id)?;
-    Some(AppMatch {
-        entry,
-        app,
-        instance: false,
-    })
+    aurora_registry::identify::identify_app(&l.snapshot, host, port, path)
 }
 
 /// The app serving a request whose host exactly equals a registered instance's host: the app's
 /// `{instance}` host entry with the longest matching path prefix (D-74).
 pub fn identify_instance_app<'a>(l: &'a Loaded, app_id: &str, path: &str) -> Option<AppMatch<'a>> {
-    let app = l.snapshot.app(app_id)?;
-    app.instances.as_ref()?;
-    let entry = l
-        .snapshot
-        .instance_entries(app_id)
-        .filter(|e| path.starts_with(e.path_prefix.as_deref().unwrap_or("/")))
-        .max_by_key(|e| e.path_prefix.as_deref().map_or(0, str::len))?;
-    Some(AppMatch {
-        entry,
-        app,
-        instance: true,
-    })
-}
-
-fn tools(app: &AppEntry) -> impl Iterator<Item = &ToolItem> {
-    app.tools
-        .iter()
-        .flat_map(|t| [&t.read, &t.write])
-        .flatten()
-        .flat_map(|g| &g.items)
-}
-
-fn serves(
-    app: &AppEntry,
-    instance: bool,
-    t: &ToolItem,
-    host: &str,
-    port: u16,
-    path: &str,
-    method: &str,
-) -> bool {
-    aurora_registry::index::tool_serves_host(app, t, host, port, instance)
-        && PathPattern::lenient(&t.path).matches(path)
-        && (t.methods.is_empty() || t.methods.iter().any(|m| m.eq_ignore_ascii_case(method)))
-}
-
-/// A GraphQL-tagged tool, or a tool with a `form` parameter condition (Q8, D-124), may match:
-/// the body prefix is needed to classify. Other requests are unaffected.
-pub fn needs_body(m: &AppMatch<'_>, host: &str, port: u16, path: &str, method: &str) -> bool {
-    tools(m.app).any(|t| {
-        (t.graphql.is_some()
-            || t.params
-                .as_deref()
-                .is_some_and(aurora_policy::params::needs_body))
-            && serves(m.app, m.instance, t, host, port, path, method)
-    })
-}
-
-/// The catalogue tool for the request; GraphQL tools match on the fail-closed operation
-/// kind, git tools on the smart-HTTP operation. Unmatched requests have `tool = None`.
-#[allow(clippy::too_many_arguments)]
-pub fn identify_tool<'a>(
-    m: &AppMatch<'a>,
-    host: &str,
-    port: u16,
-    path: &str,
-    query: Option<&str>,
-    method: &str,
-    body_prefix: &[u8],
-    truncated: bool,
-    headers: &[(&str, &str)],
-    connect_method: Option<&str>,
-) -> Option<&'a ToolItem> {
-    identify_tool_in(
-        m.app,
-        m.instance,
-        host,
-        port,
-        path,
-        query,
-        method,
-        body_prefix,
-        truncated,
-        headers,
-        connect_method,
-    )
-}
-
-/// [`identify_tool`] for a known app without a host entry: the database lane resolves the app
-/// from the connection and matches its tools on the synthetic `<id>.db.aurora.internal` host
-/// (`instance` is `false` there: database apps are never instance-bound).
-#[allow(clippy::too_many_arguments)]
-pub fn identify_tool_in<'a>(
-    app: &'a AppEntry,
-    instance: bool,
-    host: &str,
-    port: u16,
-    path: &str,
-    query: Option<&str>,
-    method: &str,
-    body_prefix: &[u8],
-    truncated: bool,
-    headers: &[(&str, &str)],
-    connect_method: Option<&str>,
-) -> Option<&'a ToolItem> {
-    let gql = graphql::classify(body_prefix, truncated);
-    let git = aurora_policy::git::classify(path, query);
-    let params = aurora_policy::ParamInput {
-        query,
-        headers,
-        body: body_prefix,
-        truncated,
-    };
-    tools(app).find(|t| {
-        // (FIX-123, D-214) A tool restricted to other connect methods is not this connection's.
-        t.applies_to(connect_method)
-            && serves(app, instance, t, host, port, path, method)
-            // (P4-GRANTS, Q8, D-124, SEC-68) fail closed: any doubt means "not this tool" and
-            // classification continues down the catalogue.
-            && t.params
-                .as_deref()
-                .is_none_or(|p| aurora_policy::params::matches(p, &params))
-            && t.graphql.is_none_or(|k| {
-                matches!(
-                    (k, gql),
-                    (GraphqlKind::Query, PolicyGql::Query)
-                        | (GraphqlKind::Mutation, PolicyGql::Mutation)
-                )
-            })
-            && t.git.is_none_or(|k| {
-                matches!(
-                    (k, git),
-                    (GitKind::Fetch, Some(aurora_policy::GitOp::Fetch))
-                        | (GitKind::Push, Some(aurora_policy::GitOp::Push))
-                )
-            })
-    })
+    aurora_registry::identify::identify_instance_app(&l.snapshot, app_id, path)
 }
 
 pub fn tool_tags(app: &AppEntry, t: &ToolItem, conn: Option<&ConnCand>) -> ToolTags {
-    ToolTags {
-        // (FIX-136, D-241) The connection's known scopes hold none the tool needs.
-        scope_missing: conn.is_some_and(|c| c.lacks_scopes_for(t)),
-        graphql: t.graphql.is_some(),
-        git: t.git.is_some(),
-        // (FIX-133) The group the catalogue lists the tool in.
-        write: app
-            .tools
-            .as_ref()
-            .and_then(|g| g.write.as_ref())
-            .is_some_and(|g| g.items.iter().any(|i| i.id == t.id)),
-    }
+    registry_tool_tags(app, t, conn.map(|c| c.scopes.as_slice()))
 }
 
 /// Decrypted credentials of one connection plus what templates may reference.
