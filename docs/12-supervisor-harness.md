@@ -639,7 +639,11 @@ file is logged and does not fail the sync. The sandbox image ships the `psql` cl
   wrappers `/opt/aurora/bin/claude` and `/opt/aurora/bin/codex` (image files, `images/sandbox/bin`),
   not the pinned binaries (`/opt/aurora/harness/…`, off `PATH`). At boot, and again with the agent's
   model at every session start, the supervisor writes **`/run/aurora/harness.env`** (mode 0644,
-  shell-sourceable, **no secret**): the harnesses the instance enables (boot document
+  **no secret**; **(FIX-155)** the wrappers *parse* it as data — blank lines, `# …` and
+  `NAME='VALUE'` with `'\''` escaping only; any other line makes them print "… is not in the
+  expected format" and exit 1 with nothing applied; they never source it and call `mkdir` and the
+  pinned binary by absolute path. The terminal is the agent's own environment (`17`, "`/run/aurora`
+  is the agent's"), so this removes one surprise, not a boundary): the harnesses the instance enables (boot document
   `enabled_harnesses`, from `hosted.enabled_harnesses`; absent = only the booted one), the machine
   proxy `http://127.0.0.1:3128` (`HTTPS_PROXY`…: the loopback forwarder adds the boot token, the
   terminal never holds it), the CA bundle (`SSL_CERT_FILE`, `NODE_EXTRA_CA_CERTS`,

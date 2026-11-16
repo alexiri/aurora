@@ -656,9 +656,11 @@ export function TerminalPane({
           Could not read the clipboard — use the right-click menu&apos;s Paste.
         </p>
       ) : null}
-      <p className="text-xs text-muted">
-        The shell runs inside the agent&apos;s sandbox as its own user. Terminal output is never logged. {clipboardHelp(mac)}
+      {/* FIX-155: the trust model, always visible (not a dialog, not dismissed): the terminal is the agent's environment. */}
+      <p data-testid="terminal-sandbox-notice" className="text-xs text-muted">
+        This terminal runs inside the agent&apos;s sandbox: the agent can change what runs here and can see what you type.
       </p>
+      <p className="text-xs text-muted">Terminal output is never logged. {clipboardHelp(mac)}</p>
     </div>
   );
 }

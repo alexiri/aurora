@@ -234,6 +234,18 @@ describe("OSC 52 confirmation", () => {
   });
 });
 
+describe("sandbox notice (FIX-155)", () => {
+  it("always says the terminal runs in the agent's sandbox, who can change it and who can see the input", async () => {
+    await mount();
+    expect(screen.getByTestId("terminal-sandbox-notice")).toHaveTextContent(
+      "This terminal runs inside the agent's sandbox: the agent can change what runs here and can see what you type.",
+    );
+    // Not a dialog and not dismissible.
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.getByTestId("terminal-sandbox-notice").querySelector("button")).toBeNull();
+  });
+});
+
 describe("help text", () => {
   it("names the platform's shortcuts in the pane footer", async () => {
     await mount();

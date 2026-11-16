@@ -345,6 +345,10 @@ test.describe("agent Terminal tab", () => {
           expect(await page.evaluate(() => getComputedStyle(document.body).backgroundColor)).toBe(CANVAS[scheme]);
           expect(await overflow(page)).toBeLessThanOrEqual(0);
           await expect(page.getByRole("group", { name: "Agent terminal" })).toBeVisible();
+          // FIX-155: whose environment this is, fixed under the pane, in both themes, readable at 390 px.
+          const notice = page.getByTestId("terminal-sandbox-notice");
+          await expect(notice).toBeVisible();
+          await expect(notice).toHaveText("This terminal runs inside the agent's sandbox: the agent can change what runs here and can see what you type.");
         });
       });
     }
