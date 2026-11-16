@@ -33,6 +33,10 @@ memory-store = []
 
 [dev-dependencies]
 tokio.workspace = true
+# (FIX-160) TLS trust-anchor tests of the Vault client against a loopback HTTPS server.
+rcgen.workspace = true
+rustls.workspace = true
+tokio-rustls.workspace = true
 toml.workspace = true
 wiremock.workspace = true
 # (FIX-140) the skip policy of the env-gated Vault suites (`require_or_skip`: CI=true fails instead of skipping).

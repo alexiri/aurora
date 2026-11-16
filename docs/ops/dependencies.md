@@ -86,7 +86,7 @@ notes, and run `bash scripts/guards/run-all.sh` plus an image build. This is a k
   against `hmac` 0.12 (PR #23). Moving to 0.11/0.13 also drops `LowerHex` on digest output (use
   `hex::encode`) and needs `hmac::KeyInit` for `new_from_slice`.
 - **The workspace MSRV follows the locked crates**: `kube` 5 raised it to 1.95 (PR #22, D-315); FIX-160
-  raised it to 1.98 because wasmtime 50 declares 1.97 and mail-parser 1.0 declares 1.98 (D-354). CI and
+  raised it to 1.98 because wasmtime 50 declares 1.97 and mail-parser 1.0 declares 1.98 (D-355). CI and
   `rust-toolchain.toml` use stable, so only the declared MSRV changes. Keep it truthful: the resolver is
   MSRV-aware (`resolver = "3"`) and holds back updates whose `rust-version` is above it, which
   `cargo update --dry-run --verbose` lists as "requires Rust".
