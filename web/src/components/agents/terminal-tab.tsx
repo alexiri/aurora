@@ -245,6 +245,7 @@ export function TerminalPane({
   const pasteTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // The right-click menu: where it opened and what was selected then (opening it moves focus away from the pane).
   const [menu, setMenu] = useState<{ x: number; y: number; selected: string } | null>(null);
+  const menuAnchor = useRef<HTMLSpanElement>(null);
   const mac = useMemo(() => isMac(), []);
   useEffect(
     () => () => {
@@ -450,6 +451,12 @@ export function TerminalPane({
     if (tracking && !e.shiftKey) return;
     e.preventDefault();
     e.stopPropagation();
+    // The menu's anchor sits at the pointer: positioned through the CSSOM (the production CSP bans inline style markup).
+    const anchor = menuAnchor.current;
+    if (anchor) {
+      anchor.style.left = `${e.clientX}px`;
+      anchor.style.top = `${e.clientY}px`;
+    }
     setMenu({ x: e.clientX, y: e.clientY, selected: window.getSelection()?.toString() ?? "" });
   };
   const pasteFromMenu = () => {
@@ -622,7 +629,7 @@ export function TerminalPane({
       </div>
       <Menu open={menu !== null} onOpenChange={(open) => !open && setMenu(null)}>
         <MenuTrigger asChild>
-          <span aria-hidden="true" className="pointer-events-none fixed size-0" style={{ left: menu?.x ?? 0, top: menu?.y ?? 0 }} />
+          <span ref={menuAnchor} aria-hidden="true" className="pointer-events-none fixed size-0" />
         </MenuTrigger>
         <MenuContent
           aria-label="Terminal"

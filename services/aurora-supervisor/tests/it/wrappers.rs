@@ -5,24 +5,24 @@
 //! script that records its environment and arguments. Not a security boundary: the terminal is
 //! the agent's own environment (docs/17 residual); these tests pin the behaviour that a tampered
 //! file does not execute as shell when someone runs `claude`.
-// `disallowed_methods`: the supervisor's `spawn::command` scrubs and rewrites the environment; these
-// tests need an exact one (an empty environment and a chosen `PATH`, including a hostile one).
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
     clippy::panic,
-    clippy::indexing_slicing,
-    clippy::disallowed_methods
+    clippy::indexing_slicing
 )]
 
 use std::collections::BTreeMap;
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::Output;
 
 use crate::common::TempDir;
 use aurora_protocol::runner::{ModelChoice, TerminalModel, TerminalModels};
 use aurora_supervisor::harness_env::{HarnessEnvConfig, render};
+// The only way a process is created in this crate (SEC-34, I-23): the scrubbed environment plus
+// the `PATH` a test chooses.
+use aurora_supervisor::spawn::command;
 
 const CLAUDE: &str = include_str!("../../../../images/sandbox/bin/claude");
 const CODEX: &str = include_str!("../../../../images/sandbox/bin/codex");
@@ -97,11 +97,9 @@ impl Rig {
     }
 
     fn run_with_path(&self, path: &str) -> Output {
-        Command::new("sh")
+        command("sh", [("PATH", path)])
             .arg(&self.wrapper)
             .arg("--flag")
-            .env_clear()
-            .env("PATH", path)
             .output()
             .unwrap()
     }
@@ -195,13 +193,11 @@ fn a_golden_harness_env_exports_what_sourcing_it_did() {
         );
         let seen = rig.seen_env().expect("the binary ran");
         // The reference: the file sourced by a shell with `set -a`, as the old wrapper did.
-        let sourced = Command::new("sh")
+        let sourced = command("sh", [("PATH", "/usr/bin:/bin")])
             .arg("-c")
             .arg("set -a; . \"$1\"; set +a; /usr/bin/env")
             .arg("sh")
             .arg(&rig.envfile)
-            .env_clear()
-            .env("PATH", "/usr/bin:/bin")
             .output()
             .unwrap();
         assert!(sourced.status.success());
