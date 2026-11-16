@@ -4,8 +4,10 @@ import { useState, type ReactNode } from "react";
 
 import { ApiError } from "@/lib/api/client";
 import { errorMessage } from "@/lib/api/errors";
+import { onlySentence, whoCanOf, type WhoCanValue } from "@/lib/who-can";
 
 import { Button } from "./ui/button";
+import { WhoCan } from "./ui/who-can";
 
 /**
  * (FIX-146, C-732 (1), docs/14) The failed request's id as a copyable "Reference" for support: the first 8
@@ -48,9 +50,12 @@ export function Loading({ label = "Loading…" }: { label?: string }) {
 }
 
 export function ErrorState({ error, onRetry }: { error: unknown; onRetry?: () => void }) {
+  // (C-915) A refusal that names who can fix it reads "Only <role phrase> can open this page." and then who to ask.
+  const refused = isRefusal(error) ? whoCanOf(error) : null;
   return (
     <div role="alert" className="rounded-card border border-danger-ink/30 bg-danger-soft p-4 text-sm text-danger-ink">
-      <p>{errorMessage(error)}</p>
+      <p>{refused ? onlySentence(refused) : errorMessage(error)}</p>
+      {refused ? <WhoCan value={refused} className="mt-1 text-danger-ink" /> : null}
       <RequestReference error={error} />
       {onRetry ? (
         <Button variant="outline" size="sm" className="mt-2" onClick={onRetry}>
@@ -61,9 +66,16 @@ export function ErrorState({ error, onRetry }: { error: unknown; onRetry?: () =>
   );
 }
 
+/** A 403, or a page gate's `forbidden` (C-915). */
+function isRefusal(error: unknown): boolean {
+  return typeof error === "object" && error !== null && (error as { code?: unknown }).code === "forbidden";
+}
+
 /**
  * An empty list. A *teaching* empty state (D-141) says what the list is (`children`), when you need it (`when`) and the
- * primary action (`action`). A person who cannot act sees `ask` instead: who to ask, never a dead button.
+ * primary action (`action`). A person who cannot act sees who can instead (`ask`, C-916): the sentence is `WhoCan`'s,
+ * shown only when `canAct` is false and never next to the action. `ask` cannot be given without `canAct`, so a caller
+ * cannot ask someone else on behalf of a viewer who can do it.
  */
 export function EmptyState({
   title,
@@ -76,14 +88,18 @@ export function EmptyState({
   children?: ReactNode;
   when?: ReactNode;
   action?: ReactNode;
-  ask?: ReactNode;
+  ask?: { whoCan: WhoCanValue; canAct: boolean };
 }) {
   return (
     <div className="rounded-card border border-dashed border-line-strong bg-surface p-8 text-center">
       <h2 className="font-display text-base font-semibold text-ink">{title}</h2>
       {children ? <div className="mt-2 text-sm text-ink-2">{children}</div> : null}
       {when ? <div className="mt-1 text-sm text-ink-2">{when}</div> : null}
-      {action ? <div className="mt-4 flex flex-wrap justify-center gap-2">{action}</div> : ask ? <div className="mt-3 text-sm text-ink-2">{ask}</div> : null}
+      {ask && !ask.canAct ? (
+        <WhoCan value={ask.whoCan} lead className="mt-3" />
+      ) : action ? (
+        <div className="mt-4 flex flex-wrap justify-center gap-2">{action}</div>
+      ) : null}
     </div>
   );
 }

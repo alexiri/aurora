@@ -6,7 +6,7 @@ import { DynamicForm, FieldControl } from "@/components/apps/dynamic-form";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
-import { Field, inputClass } from "@/components/ui/field";
+import { Field, fieldLabel, inputClass } from "@/components/ui/field";
 import { Notice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
 import { DangerZone, ItemList, ListRow, Section } from "@/components/ui/section";
@@ -83,7 +83,7 @@ function SecretRow({
   return (
     <div role="group" aria-labelledby={labelId} data-testid={`secret-${f.name}`} className="space-y-1.5">
       <p id={labelId} className="text-sm font-medium text-ink">
-        {f.label + (f.required || generated ? "" : " (optional)")}
+        {fieldLabel(f.label, !(f.required || generated))}
       </p>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
         <p className="min-w-0 rounded-control border border-line bg-subtle px-3 py-2 text-sm text-ink-2">{state}</p>

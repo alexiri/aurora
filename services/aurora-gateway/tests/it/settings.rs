@@ -242,6 +242,74 @@ async fn an_llm_swap_rebuilds_the_endpoint_table_and_the_known_hosts() {
     );
 }
 
+/// (P4-LLM-6, D-262) The destination guard's implicit allowance comes from the Helm-defined LLM
+/// endpoints only: a Helm endpoint on a private address passes, the same entry as a dashboard
+/// endpoint is refused until `gateway.allowed_private` covers it (live), a name that resolves to
+/// a link-local or metadata address is refused for both sources, and removing an endpoint revokes
+/// its pass at the next judgement.
+#[test]
+fn only_helm_endpoints_open_their_private_hosts_in_the_guard() {
+    use aurora_config::{ConfigSource, Stored};
+    use aurora_gateway::guard::Guard;
+    use aurora_gateway::settings::helm_endpoint_hosts;
+    let ip = |s: &str| s.parse::<std::net::IpAddr>().unwrap();
+    let helm = |extra: &str| {
+        ConfigSource::from_toml(
+            &format!(
+                "[llm]\nenabled_providers = [\"litellm\", \"openai_compatible\", \"anthropic\"]\n\
+                 [[llm.endpoints]]\nid = \"central\"\nprovider = \"litellm\"\nbase_url = \"http://llm.cluster.internal:4000\"\n{extra}"
+            ),
+            Default::default(),
+        )
+        .unwrap()
+    };
+    let stored = |entries: Value| {
+        let mut s = Stored::default();
+        let llm = s.sections.entry("llm".into()).or_default();
+        llm.insert(
+            "llm.enabled_providers".into(),
+            json!(["litellm", "anthropic", "openai_compatible"]),
+        );
+        llm.insert("llm.endpoints".into(), entries);
+        s
+    };
+    let dash = json!([
+        {"id": "team", "provider": "openai_compatible", "base_url": "http://team-llm.corp:8080"},
+        {"id": "lit", "provider": "openai_compatible", "base_url": "http://169.254.169.254:8080"},
+    ]);
+    let eff = helm("").effective(&stored(dash.clone())).unwrap();
+    let hosts = helm_endpoint_hosts(&eff).unwrap();
+    assert_eq!(hosts, vec!["llm.cluster.internal".to_string()]);
+
+    let g = Guard::new(&[], vec!["0.0.0.0:4102".parse().unwrap()]).unwrap();
+    g.set_derived_hosts(&hosts).unwrap();
+    // Helm endpoint: its name passes for a private address, other names do not.
+    assert!(
+        g.check_ip(ip("10.0.0.7"), "llm.cluster.internal", 4000)
+            .is_ok()
+    );
+    // Dashboard endpoint: refused until `gateway.allowed_private` covers it (live).
+    assert!(g.check_ip(ip("10.0.0.9"), "team-llm.corp", 8080).is_err());
+    g.set_allowed_private(&["10.0.0.0/24".to_owned()]).unwrap();
+    assert!(g.check_ip(ip("10.0.0.9"), "team-llm.corp", 8080).is_ok());
+    g.set_allowed_private(&[]).unwrap();
+    assert!(g.check_ip(ip("10.0.0.9"), "team-llm.corp", 8080).is_err());
+    // Link-local and metadata addresses: refused for both sources, by name or literal.
+    for bad in ["169.254.169.254", "169.254.7.7", "fe80::1"] {
+        for host in ["llm.cluster.internal", "team-llm.corp", bad] {
+            assert!(g.check_ip(ip(bad), host, 80).is_err(), "{bad} for {host}");
+        }
+    }
+    // Removing the Helm endpoint (a new deployment) revokes its pass on the next rebuild.
+    let none = ConfigSource::empty().effective(&stored(dash)).unwrap();
+    g.set_derived_hosts(&helm_endpoint_hosts(&none).unwrap())
+        .unwrap();
+    assert!(
+        g.check_ip(ip("10.0.0.7"), "llm.cluster.internal", 4000)
+            .is_err()
+    );
+}
+
 #[tokio::test]
 async fn an_invalid_generation_keeps_the_previous_snapshot_and_counts() {
     let db = TestDb::new().await;

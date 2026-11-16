@@ -4,8 +4,10 @@ import { useParams } from "next/navigation";
 
 import { AgentsList } from "@/components/agents-list";
 import { ErrorState, Loading } from "@/components/states";
+import { MainAction } from "@/components/ui/main-action";
 import { PageHeader } from "@/components/ui/page-header";
 import { useAgents, useResolve, useWorkspace } from "@/lib/api/queries";
+import { whoCanFromContacts } from "@/lib/who-can";
 
 import { CreateAgentDialog } from "./create-agent-dialog";
 
@@ -24,7 +26,13 @@ export function AgentsView() {
       <PageHeader
         title="Agents"
         description="The agents in this workspace."
-        actions={<CreateAgentDialog wsId={wsId} />}
+        actions={
+          workspace.data ? (
+            <MainAction canAct={workspace.data.my_role === "owner"} whoCan={whoCanFromContacts("workspace_owner", workspace.data.contacts, "add_agent")}>
+              <CreateAgentDialog wsId={wsId} />
+            </MainAction>
+          ) : null
+        }
         className="mb-2"
       />
       {agents.isPending ? <Loading /> : null}

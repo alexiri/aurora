@@ -95,6 +95,15 @@ export function sandboxLook(sb: Pick<SandboxView, "state" | "failure_message" | 
   return { tone, label: s === "starting" ? "Sandbox starting" : `Sandbox ${s}`, title };
 }
 
+/** (P5-UX-1) The computer's state in one word, as the agent header says it: Off, Starting, On, Stopping, Failed. */
+export function computerWord(state: string): "Off" | "Starting" | "On" | "Stopping" | "Failed" {
+  if (state === "running") return "On";
+  if (state === "starting") return "Starting";
+  if (state === "stopping") return "Stopping";
+  if (state === "failed") return "Failed";
+  return "Off";
+}
+
 /** The open conversation's live state, reported by its thread (the stream is read once, in the thread). */
 export interface OpenTurn {
   active: boolean;

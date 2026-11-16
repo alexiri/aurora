@@ -33,7 +33,7 @@ import { FilesTab } from "./files-tab";
 import { InstructionsTab } from "./instructions-tab";
 import { PreviewsTab } from "./previews-tab";
 import { AGENT_PAGE_IDS, availableSections, resolvePage, SECTION_OF, type AgentPageId, type SectionId } from "./sections";
-import { sandboxLook } from "./status-rail/status-data";
+import { computerWord, sandboxLook } from "./status-rail/status-data";
 import { SshPage } from "./ssh-page";
 import { TerminalTab } from "./terminal-tab";
 import { useInstance, useOrg } from "@/lib/api/queries";
@@ -41,14 +41,29 @@ import { useInstance, useOrg } from "@/lib/api/queries";
 /** Sandbox state of a hosted agent (existing sandbox endpoint); hidden while unknown or on error. */
 function SandboxPill({ agentId }: { agentId: string }) {
   const q = useSandbox(agentId);
+  const [showReason, setShowReason] = useState(false);
   if (!q.data) return null;
   // (FIX-025, D-158) A failed start is never shown as "starting" forever: the pill says failed and
   // carries the reason as the title (tooltip); the Computer tab holds the full detail.
   const look = sandboxLook(q.data);
-  return (
+  const dot = (
     <StatusDot tone={look.tone} title={look.title}>
-      {look.label}
+      Computer: {computerWord(q.data.state)}
     </StatusDot>
+  );
+  // (P5-UX-1) The state in words; a reason (a failed start) shows on hover and, for a touch screen, on tap.
+  if (!look.title) return dot;
+  return (
+    <span className="inline-flex flex-col gap-1">
+      <button type="button" aria-expanded={showReason} onClick={() => setShowReason((v) => !v)} className="inline-flex rounded-control text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent">
+        {dot}
+      </button>
+      {showReason ? (
+        <span role="status" className="max-w-sm text-xs text-ink-2">
+          {look.title}
+        </span>
+      ) : null}
+    </span>
   );
 }
 
@@ -234,7 +249,7 @@ export function AgentPage() {
               wsId={wsId!}
               base={base}
               orgId={workspace.data?.org_id}
-              agent={{ id: agent.id, name: agent.name, avatarUrl: agent.avatar_url, brief: agent.brief, frozen: agent.frozen !== null }}
+              agent={{ id: agent.id, name: agent.name, handle: agent.handle, avatarUrl: agent.avatar_url, brief: agent.brief, frozen: agent.frozen !== null }}
               agentKind={agent.kind}
               isDefault={agent.is_default}
               terminalAvailable={terminalEnabled}

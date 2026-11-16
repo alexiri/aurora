@@ -488,7 +488,8 @@ export function Composer({
           ) : null}
         </div>
         <div className={fmtPref === null ? "hidden md:block" : fmtOn ? "block" : "hidden"} data-testid="formatting-row">
-          <div className="mt-1 flex items-center gap-1 border-t border-line pt-1 max-md:overflow-x-auto">
+          {/* (P5-UX-1) The row and the toolbar wrap at any width: no clipped button at about 1250 px, none behind a sideways scroll at 390 px. */}
+          <div className="mt-1 flex flex-wrap items-center gap-1 border-t border-line pt-1">
             <Tabs
               label="Message view"
               idBase={ids}
@@ -504,7 +505,7 @@ export function Composer({
               tabClassName="min-h-11 md:min-h-8"
               className="shrink-0"
             />
-            <Toolbar label="Formatting" className="shrink-0">
+            <Toolbar label="Formatting" className="min-w-0 flex-wrap">
               {ACTIONS.map((a, i) => (
                 <span key={a.action} className="contents">
                   {i > 0 && ACTIONS[i - 1].group !== a.group ? <ToolbarSeparator /> : null}

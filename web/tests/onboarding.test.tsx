@@ -76,10 +76,14 @@ interface World {
   replied?: boolean;
   dismissed?: boolean;
   access?: unknown;
+  /** `contacts` of the workspace (C-981). */
+  contacts?: unknown;
 }
 
 function world(w: World = {}) {
   routes["GET /v1/workspaces/w1/agents"] = () => json(200, { items: [AGENT], next_cursor: null });
+  routes["GET /v1/workspaces/w1"] = () =>
+    json(200, { id: "w1", org_id: "o1", slug: "ops", name: "Ops", my_role: "member", ...(w.contacts ? { contacts: w.contacts } : {}) });
   routes["GET /v1/me/onboarding"] = () => json(200, { welcome_seen: true, guide_dismissed: w.dismissed ? ["w1"] : [], tour_completed_at: null });
   routes["GET /v1/agents/a1/model-readiness"] = () => json(200, w.readiness ?? readiness([]));
   routes["GET /v1/workspaces/w1/secrets"] = () => json(200, { items: w.wsKeys ?? [] });
@@ -161,19 +165,21 @@ describe("getting-started guide: every state", () => {
   });
 
   it("member: sees who can do the key and access steps, never a form, and does not read readiness", async () => {
-    world({ access: [{ user_id: "u1", display_name: "Ada Lovelace", email: "ada@example.org", role: "owner", implicit: false }, { user_id: "u2", display_name: "Bob", email: "b@example.org", role: "member", implicit: false }] });
+    // The owners come from the workspace's `contacts` (C-981): a member can read them, no access list is needed.
+    world({ contacts: { owners: [{ name: "Ada Lovelace" }] } });
     guide({ isOwner: false });
-    expect(await screen.findByText("Ask a workspace owner (Ada Lovelace) to add an LLM key.")).toBeInTheDocument();
-    expect(screen.getByText("Ask a workspace owner (Ada Lovelace) to give Daneel access to it.")).toBeInTheDocument();
+    expect(await screen.findByText("Only workspace owners can add an account. Ask Ada Lovelace.")).toBeInTheDocument();
+    expect(screen.getByText("Only workspace owners can give agents access. Ask Ada Lovelace.")).toBeInTheDocument();
+    expect(calls.some((c) => c.key === "GET /v1/workspaces/w1/access")).toBe(false);
     expect(screen.queryByLabelText("New LLM key")).not.toBeInTheDocument();
     expect(calls.some((c) => c.key === "GET /v1/agents/a1/model-readiness")).toBe(false);
     expect(screen.getAllByText("Needs an owner")).toHaveLength(2);
   });
 
-  it("member who cannot read the owner list still gets a sentence, not a dead button", async () => {
+  it("member of a workspace whose contacts are not known still gets a sentence, not a dead button", async () => {
     world({});
     guide({ isOwner: false });
-    expect(await screen.findByText("Ask a workspace owner to add an LLM key.")).toBeInTheDocument();
+    expect(await screen.findByText("Only workspace owners can add an account.")).toBeInTheDocument();
   });
 
   it("Overview: one line once complete, and expandable", async () => {
@@ -562,25 +568,28 @@ describe("tour (D-141)", () => {
 // Teaching empty states
 // ---------------------------------------------------------------------------------------------------------------------
 describe("teaching empty states (D-141)", () => {
+  const owners = { action: "add_schedule", role: "workspace_owner" as const, people: [{ name: "Bob Builder" }], you_can: false };
+
   it("say what it is, when you need it, and the primary action", () => {
     render(
-      <EmptyState title="No schedules" when="Use one for recurring work." action={<button type="button">New schedule</button>} ask="Ask a workspace owner to set one up.">
+      <EmptyState title="No schedules" when="Use one for recurring work." action={<button type="button">New schedule</button>} ask={{ whoCan: owners, canAct: true }}>
         A schedule wakes the agent with a prompt at set times.
       </EmptyState>,
     );
     expect(screen.getByText("A schedule wakes the agent with a prompt at set times.")).toBeInTheDocument();
     expect(screen.getByText("Use one for recurring work.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "New schedule" })).toBeInTheDocument();
-    expect(screen.queryByText("Ask a workspace owner to set one up.")).not.toBeInTheDocument();
+    // (C-916) A viewer who can act is never told to ask someone else.
+    expect(screen.queryByText(/Ask Bob Builder/)).not.toBeInTheDocument();
   });
 
-  it("a person who cannot act sees who to ask instead of a dead button", () => {
+  it("a person who cannot act sees who can instead of a dead button", () => {
     render(
-      <EmptyState title="No schedules" when="Use one for recurring work." ask="Ask a workspace owner to set one up.">
+      <EmptyState title="No schedules" when="Use one for recurring work." ask={{ whoCan: owners, canAct: false }}>
         A schedule wakes the agent with a prompt at set times.
       </EmptyState>,
     );
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
-    expect(screen.getByText("Ask a workspace owner to set one up.")).toBeInTheDocument();
+    expect(screen.getByText("Only workspace owners can set up a schedule. Ask Bob Builder.")).toBeInTheDocument();
   });
 });

@@ -52645,6 +52645,13 @@
           "code": {
             "type": "string"
           },
+          "entry_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The keyed-list entry the warning is about (C-813 `endpoint_resolves_private`)."
+          },
           "key": {
             "type": [
               "string",

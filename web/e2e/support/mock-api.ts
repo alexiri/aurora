@@ -328,7 +328,7 @@ export async function mockApi(
       const team = { id: "team", provider: "openai_compatible", base_url: "https://team-llm.example.test/v1", auth_header: "api-key" };
       return json({
         section: "llm", title: "LLM endpoints", description: "Providers and endpoints agents may reach.", generation: 2,
-        updated_at: now, updated_by_label: "root@example.test", extra: { providers: ["litellm", "anthropic", "openai", "openai_compatible", "vertex"] },
+        updated_at: now, updated_by_label: "root@example.test", extra: { providers: ["litellm", "anthropic", "openai", "openai_compatible", "vertex"], endpoint_harnesses: { central: ["claude_code", "codex"], team: [] } },
         settings: [
           { key: "llm.enabled_providers", value: ["litellm", "anthropic", "openai_compatible"], source: "dashboard", locked: false, helm_key: "config.llm.enabled_providers", default: ["litellm", "anthropic"], schema: sch("list", { item_kind: "string" }), list: "whole", id_field: null, entries: null, secret: null },
           { key: "llm.provider_preference", value: ["litellm", "anthropic"], source: "helm", locked: true, helm_key: "config.llm.provider_preference", default: ["litellm", "anthropic"], schema: sch("list", { item_kind: "string" }), list: "whole", id_field: null, entries: null, secret: null },
@@ -336,7 +336,7 @@ export async function mockApi(
             key: "llm.endpoints", value: [central, team], source: "helm", locked: false, helm_key: "config.llm.endpoints", default: [], schema: sch("list", { item_kind: "object" }), list: "keyed", id_field: "id", secret: null,
             entries: [
               { id: "central", value: central, source: "helm", locked: true, warnings: null },
-              { id: "team", value: team, source: "dashboard", locked: false, warnings: null },
+              { id: "team", value: team, source: "dashboard", locked: false, warnings: ["needs_allowed_private"] },
             ],
           },
         ],

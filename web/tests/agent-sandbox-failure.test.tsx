@@ -70,9 +70,9 @@ function renderPage(routes: Record<string, Handler>) {
 // FIX-025 (D-158): the header never shows an endless "Sandbox starting": a failed start names the
 // reason in the pill's tooltip, and the Computer tab shows the last start attempt.
 describe("agent header sandbox pill (FIX-025)", () => {
-  it("shows 'Sandbox starting' while starting and the failure reason on failed", async () => {
+  it("shows the computer's state in words while starting and the failure reason on failed", async () => {
     renderPage(routes({ state: "starting" }));
-    expect(await screen.findByText("Sandbox starting")).toBeTruthy();
+    expect(await screen.findByText("Computer: Starting")).toBeTruthy();
     cleanup();
     renderPage(
       routes({
@@ -82,7 +82,7 @@ describe("agent header sandbox pill (FIX-025)", () => {
           "The agent's computer started, but its supervisor could not reach the runner at aurora-runner.aurora (10.0.0.9):4105 within 60 s.",
       }),
     );
-    const pill = await screen.findByText("Sandbox failed");
+    const pill = await screen.findByText("Computer: Failed");
     expect(pill.getAttribute("title")).toContain("aurora-runner.aurora (10.0.0.9):4105");
     expect(pill.getAttribute("title")).toContain("supervisor_unreachable");
   });

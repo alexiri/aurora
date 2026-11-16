@@ -51,6 +51,9 @@ export default function Home() {
   let body;
   if (orgs.isPending) body = <Loading />;
   else if (orgs.isError) body = <ErrorState error={orgs.error} onRetry={() => orgs.refetch()} />;
+  // An administrator of a fresh instance has no organization yet and is on the way to Administration: say nothing about
+  // organizations until what decides the destination (the session, the placement) has answered, or the move is under way.
+  else if (orgs.data.items.length === 0 && (!decided || target)) body = <Loading />;
   else if (orgs.data.items.length === 0) {
     body = (
       <EmptyState title="You are not in an organization yet">

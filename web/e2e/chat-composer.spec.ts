@@ -180,7 +180,7 @@ for (const scheme of ["light", "dark"] as const) {
   test.describe(`${scheme}, 390 px`, () => {
     test.use({ viewport: { width: 390, height: 844 } });
 
-    test("two rows, 44 px controls, the formatting strip scrolls inside itself, no page scroll, axe clean", async ({ page }) => {
+    test("two rows, 44 px controls, the formatting strip wraps, no page scroll, axe clean", async ({ page }) => {
       const box = await openComposer(page, scheme);
       await expect(box).toBeVisible();
       const sizes = await page.evaluate(() =>
@@ -194,8 +194,9 @@ for (const scheme of ["light", "dark"] as const) {
         expect(w).toBeGreaterThanOrEqual(44);
         expect(h).toBeGreaterThanOrEqual(44);
       }
+      // (P5-UX-1) The formatting row wraps instead of scrolling sideways: nothing is hidden behind a scroll.
       const strip = page.getByTestId("formatting-row").locator("> div");
-      expect(await strip.evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(true);
+      expect(await strip.evaluate((el) => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
       expect(await overflow(page)).toBeFalsy();
       await box.fill("a :tad");
       await box.press("End");

@@ -30,14 +30,25 @@ export const LLM_GROUPS: SettingsGroup[] = [
   },
 ];
 
+/** `extra.endpoint_harnesses`: endpoint id → harness ids; anything else is "not known". */
+function harnessMap(v: unknown): Record<string, string[]> | undefined {
+  if (typeof v !== "object" || v === null || Array.isArray(v)) return undefined;
+  const out: Record<string, string[]> = {};
+  for (const [id, list] of Object.entries(v)) {
+    if (Array.isArray(list)) out[id] = list.filter((h): h is string => typeof h === "string");
+  }
+  return out;
+}
+
 /** Admin › Settings › LLM endpoints (SET-3, C-779): providers, preference order and endpoints with a connection test. */
 export function LlmSettingsView() {
   const q = useSettingsSection("llm");
   if (q.isPending) return <Loading />;
   if (q.isError) return <ErrorState error={q.error} onRetry={() => q.refetch()} />;
   const section = q.data;
-  const extra = (section.extra ?? {}) as { providers?: unknown };
+  const extra = (section.extra ?? {}) as { providers?: unknown; endpoint_harnesses?: unknown };
   const available = Array.isArray(extra.providers) ? extra.providers.filter((p): p is string => typeof p === "string") : [];
+  const harnesses = harnessMap(extra.endpoint_harnesses);
   const byKey = (k: string) => section.settings.find((s) => s.key === k);
   const enabledEffective = byKey(ENABLED)?.value;
   const pref = byKey(PREFERENCE);
@@ -62,7 +73,9 @@ export function LlmSettingsView() {
             <ProvidersControl ctx={ctx} available={available} preference={{ value: pref?.value, locked: Boolean(pref?.locked) }} />
           ),
           [PREFERENCE]: (ctx) => <PreferenceControl ctx={ctx} enabledEffective={enabledEffective} />,
-          [ENDPOINTS]: (ctx) => <EndpointsControl ctx={ctx} available={available} enabledEffective={enabledEffective} />,
+          [ENDPOINTS]: (ctx) => (
+            <EndpointsControl ctx={ctx} available={available} enabledEffective={enabledEffective} harnesses={harnesses} />
+          ),
         }}
       />
     </div>

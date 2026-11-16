@@ -13,6 +13,8 @@ import { Notice } from "@/components/ui/notice";
 import { ItemList, Section } from "@/components/ui/section";
 import { AnchorSwitch, OwnerLabel, ReassignPanel } from "@/components/automations/owner-controls";
 import { errorMessage, fieldErrors } from "@/lib/api/errors";
+import { MainAction } from "@/components/ui/main-action";
+import { useWhoCan } from "@/lib/api/who-can";
 import {
   cronFieldCount,
   useCreateSchedule,
@@ -230,6 +232,8 @@ function ScheduleRow({ agentId, s, defaultTimezone, wsId, canOwn }: { agentId: s
 export function SchedulesTab({ agentId, defaultTimezone, wsId, canOwn }: { agentId: string; defaultTimezone?: string; wsId?: string; canOwn?: boolean }) {
   const q = useSchedules(agentId);
   const [creating, setCreating] = useState(false);
+  // (C-916) Who sets up a schedule, for a viewer who cannot.
+  const who = useWhoCan({ workspaceId: wsId }, "workspace_owner", "add_schedule");
   if (q.isPending) return <Loading />;
   if (q.isError) return <ErrorState error={q.error} onRetry={() => void q.refetch()} />;
   return (
@@ -239,9 +243,11 @@ export function SchedulesTab({ agentId, defaultTimezone, wsId, canOwn }: { agent
       description="Wake the agent with a prompt on a cron."
       actions={
         !creating ? (
-          <Button size="sm" onClick={() => setCreating(true)}>
-            New schedule
-          </Button>
+          <MainAction canAct={Boolean(canOwn)} whoCan={{ ...who, action: "add_schedule" }}>
+            <Button size="sm" onClick={() => setCreating(true)}>
+              New schedule
+            </Button>
+          </MainAction>
         ) : null
       }
     >
@@ -257,7 +263,7 @@ export function SchedulesTab({ agentId, defaultTimezone, wsId, canOwn }: { agent
               </Button>
             ) : undefined
           }
-          ask="Ask a workspace owner to set one up."
+          ask={{ whoCan: who, canAct: Boolean(canOwn) }}
         >
           A schedule wakes the agent with a prompt at set times, such as every day at 9.
         </EmptyState>
