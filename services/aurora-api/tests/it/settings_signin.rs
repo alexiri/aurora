@@ -27,20 +27,22 @@ struct W {
 
 fn helm_toml(idp: &MockIdp, extra: &str) -> String {
     format!(
-        "[auth]\ninstance_admins = [\"root@x.io\", \"new@x.io\"]\n{extra}\n[[auth.oidc_providers]]\nid = \"helm\"\ndisplay_name = \"Helm SSO\"\nissuer = \"{}\"\nclient_id = \"{CLIENT_ID}\"\nclient_secret_env = \"HELM_SECRET\"\n",
+        "[gateway]\nallowed_private = [\"127.0.0.1\"]\n[auth]\ninstance_admins = [\"root@x.io\", \"new@x.io\"]\n{extra}\n[[auth.oidc_providers]]\nid = \"helm\"\ndisplay_name = \"Helm SSO\"\nissuer = \"{}\"\nclient_id = \"{CLIENT_ID}\"\nclient_secret_env = \"HELM_SECRET\"\n",
         idp.issuer()
     )
 }
 
 /// An instance whose deployment configuration defines the provider `helm` (when `helm_provider`)
-/// and nothing else about sign-in. `127.0.0.1` is opened for the mock issuers.
+/// and nothing else about sign-in. `127.0.0.1` is opened for the mock issuers through
+/// `gateway.allowed_private` in the configuration (a live setting since SET-5: the guard reads the
+/// merged view, not the test's `ApiConfig`).
 async fn world_with(helm_provider: bool, extra_env: &[(&str, &str)], extra: &str) -> W {
     let helm = MockIdp::start().await;
     let corp = MockIdp::start().await;
     let text = if helm_provider {
         helm_toml(&helm, extra)
     } else {
-        format!("[auth]\ninstance_admins = [\"root@x.io\", \"new@x.io\"]\n{extra}\n")
+        format!("[gateway]\nallowed_private = [\"127.0.0.1\"]\n[auth]\ninstance_admins = [\"root@x.io\", \"new@x.io\"]\n{extra}\n")
     };
     let mut env = vec![("HELM_SECRET", CLIENT_SECRET)];
     env.extend_from_slice(extra_env);
