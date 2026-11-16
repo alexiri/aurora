@@ -62,21 +62,21 @@ pub struct NewWebhook<'a> {
 }
 
 pub async fn get<'e, E: PgExecutor<'e>>(exec: E, id: Uuid) -> Result<Option<WebhookRow>, DbError> {
-    Ok(
-        sqlx::query_as(&format!("SELECT {COLS} FROM webhooks w WHERE w.id = $1"))
-            .bind(id)
-            .fetch_optional(exec)
-            .await?,
-    )
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT {COLS} FROM webhooks w WHERE w.id = $1"
+    )))
+    .bind(id)
+    .fetch_optional(exec)
+    .await?)
 }
 
 pub async fn get_by_token_hash<'e, E: PgExecutor<'e>>(
     exec: E,
     hash: &[u8],
 ) -> Result<Option<WebhookRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {COLS} FROM webhooks w WHERE w.token_hash = $1"
-    ))
+    )))
     .bind(hash)
     .fetch_optional(exec)
     .await?)
@@ -99,9 +99,9 @@ pub async fn list_for_agent<'e, E: PgExecutor<'e>>(
     exec: E,
     agent: Uuid,
 ) -> Result<Vec<WebhookRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {COLS} FROM webhooks w WHERE w.agent_id = $1 ORDER BY w.created_at, w.id LIMIT 500"
-    ))
+    )))
     .bind(agent)
     .fetch_all(exec)
     .await?)
@@ -180,9 +180,9 @@ pub async fn lock_by_creator(
     .bind(ids)
     .fetch_all(&mut *conn)
     .await?;
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {COLS} FROM webhooks w WHERE w.id = ANY($1) ORDER BY w.id"
-    ))
+    )))
     .bind(&locked)
     .fetch_all(conn)
     .await?)
@@ -194,9 +194,9 @@ pub async fn get_for_update(
     conn: &mut PgConnection,
     id: Uuid,
 ) -> Result<Option<WebhookRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {COLS} FROM webhooks w WHERE w.id = $1 FOR UPDATE OF w"
-    ))
+    )))
     .bind(id)
     .fetch_optional(conn)
     .await?)

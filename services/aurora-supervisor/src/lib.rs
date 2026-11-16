@@ -9,6 +9,7 @@
 pub mod adapters;
 pub mod boot;
 pub mod channel;
+pub mod exec;
 pub mod fake;
 pub mod harness;
 pub mod harness_env;

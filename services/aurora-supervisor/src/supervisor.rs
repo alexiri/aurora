@@ -432,6 +432,9 @@ impl Supervisor {
             RunnerToSupervisor::PtyClose(c) => {
                 let _ = self.ptys.pty_closed(c.pty_id).await;
             }
+            // (P5-FILES-1) `exec.*` frames travel only on the unsequenced side-channel
+            // (`channel.rs` routes them to the pump); a sequenced one is ignored.
+            RunnerToSupervisor::ExecOpen(_) | RunnerToSupervisor::ExecEof(_) => {}
             RunnerToSupervisor::MemoryWriteResult(r) => {
                 if !r.ok
                     && let Ok(mut h) = self.home.lock()

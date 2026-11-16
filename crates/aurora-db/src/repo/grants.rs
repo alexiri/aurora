@@ -152,12 +152,12 @@ pub async fn insert_connection_grant_if_absent<'e, E: PgExecutor<'e>>(
     ask_timeout_secs: Option<i32>,
     created_by: Option<Uuid>,
 ) -> Result<Option<ConnectionGrantRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "INSERT INTO grants (id, workspace_id, agent_id, connection_id, mode, allow_tools, ask_tools, \
          created_by, ask_timeout_secs) \
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT (agent_id, connection_id) DO NOTHING \
          RETURNING {CONN_COLS}"
-    ))
+    )))
     .bind(Uuid::now_v7())
     .bind(workspace_id)
     .bind(agent_id)
@@ -177,9 +177,9 @@ pub async fn get_connection_grant<'e, E: PgExecutor<'e>>(
     agent_id: Uuid,
     connection_id: Uuid,
 ) -> Result<Option<ConnectionGrantRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {CONN_COLS} FROM grants WHERE agent_id = $1 AND connection_id = $2"
-    ))
+    )))
     .bind(agent_id)
     .bind(connection_id)
     .fetch_optional(exec)
@@ -247,7 +247,7 @@ pub async fn upsert_connection_grant<'e, E: PgExecutor<'e>>(
     ask_timeout_secs: Option<i32>,
     created_by: Option<Uuid>,
 ) -> Result<ConnectionGrantRow, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "INSERT INTO grants (id, workspace_id, agent_id, connection_id, mode, allow_tools, ask_tools, \
          created_by, ask_timeout_secs) \
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) \
@@ -255,7 +255,7 @@ pub async fn upsert_connection_grant<'e, E: PgExecutor<'e>>(
          allow_tools = EXCLUDED.allow_tools, ask_tools = EXCLUDED.ask_tools, \
          ask_timeout_secs = EXCLUDED.ask_timeout_secs, updated_at = now() \
          RETURNING {CONN_COLS}"
-    ))
+    )))
     .bind(Uuid::now_v7())
     .bind(workspace_id)
     .bind(agent_id)
@@ -274,10 +274,10 @@ pub async fn list_connection_grants<'e, E: PgExecutor<'e>>(
     exec: E,
     agent_id: Uuid,
 ) -> Result<Vec<ConnectionGrantRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {CONN_COLS} FROM grants WHERE agent_id = $1 AND connection_id IS NOT NULL \
          ORDER BY created_at, id"
-    ))
+    )))
     .bind(agent_id)
     .fetch_all(exec)
     .await?)
@@ -288,9 +288,9 @@ pub async fn list_for_connection<'e, E: PgExecutor<'e>>(
     exec: E,
     connection_id: Uuid,
 ) -> Result<Vec<ConnectionGrantRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {CONN_COLS} FROM grants WHERE connection_id = $1 ORDER BY created_at, id"
-    ))
+    )))
     .bind(connection_id)
     .fetch_all(exec)
     .await?)

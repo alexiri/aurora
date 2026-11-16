@@ -211,16 +211,21 @@ async fn start_with(
         // agent receives can prove the database password never reaches it.
         let u = format!("dbl_{}", Uuid::now_v7().simple());
         pw = format!("pw-{}", Uuid::now_v7().simple());
-        sqlx::query(&format!("CREATE ROLE {u} LOGIN PASSWORD '{pw}'"))
-            .execute(db.pool())
-            .await
-            .unwrap();
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "CREATE ROLE {u} LOGIN PASSWORD '{pw}'"
+        )))
+        .execute(db.pool())
+        .await
+        .unwrap();
         for g in [
             format!("GRANT CONNECT ON DATABASE \"{dbname}\" TO {u}"),
             format!("GRANT USAGE ON SCHEMA public TO {u}"),
             format!("GRANT ALL ON ALL TABLES IN SCHEMA public TO {u}"),
         ] {
-            sqlx::query(&g).execute(db.pool()).await.unwrap();
+            sqlx::query(sqlx::AssertSqlSafe(&*g))
+                .execute(db.pool())
+                .await
+                .unwrap();
         }
         user = u;
     }
@@ -636,11 +641,11 @@ async fn login_read_allowed_and_no_password_leaks() {
     // remove the test role from the shared cluster
     drop(pg);
     tokio::time::sleep(Duration::from_millis(300)).await;
-    sqlx::query(&format!("DROP OWNED BY {}", env.role))
+    sqlx::query(sqlx::AssertSqlSafe(format!("DROP OWNED BY {}", env.role)))
         .execute(env.db.pool())
         .await
         .unwrap();
-    sqlx::query(&format!("DROP ROLE {}", env.role))
+    sqlx::query(sqlx::AssertSqlSafe(format!("DROP ROLE {}", env.role)))
         .execute(env.db.pool())
         .await
         .unwrap();
@@ -684,10 +689,10 @@ async fn login_refusals() {
 async fn a_database_login_failure_returns_a_fixed_message_without_the_servers_text() {
     let env = start_with(|_, _| {}, true, true, true).await;
     // The stored password no longer matches the role.
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "ALTER ROLE {} PASSWORD 'rotated-behind-the-back'",
         env.role
-    ))
+    )))
     .execute(env.db.pool())
     .await
     .unwrap();
@@ -703,11 +708,11 @@ async fn a_database_login_failure_returns_a_fixed_message_without_the_servers_te
     for leaked in [env.role.as_str(), "authentication failed", "127.0.0.1"] {
         assert!(!msg.contains(leaked), "{leaked:?} reached the agent: {msg}");
     }
-    sqlx::query(&format!("DROP OWNED BY {}", env.role))
+    sqlx::query(sqlx::AssertSqlSafe(format!("DROP OWNED BY {}", env.role)))
         .execute(env.db.pool())
         .await
         .unwrap();
-    sqlx::query(&format!("DROP ROLE {}", env.role))
+    sqlx::query(sqlx::AssertSqlSafe(format!("DROP ROLE {}", env.role)))
         .execute(env.db.pool())
         .await
         .unwrap();

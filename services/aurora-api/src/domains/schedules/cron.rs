@@ -5,7 +5,7 @@ use aurora_core::{ApiError, FieldError};
 use chrono::{DateTime, Duration, Utc};
 use chrono_tz::Tz;
 use croner::Cron;
-use std::str::FromStr;
+use croner::parser::CronParser;
 
 /// Minimum interval between occurrences.
 pub const MIN_INTERVAL: Duration = Duration::minutes(5);
@@ -26,7 +26,13 @@ fn parse(expr: &str) -> Result<Cron, ApiError> {
             "must have exactly 5 fields: minute hour day-of-month month day-of-week",
         ));
     }
-    Cron::from_str(expr).map_err(|e| bad("/cron", &format!("invalid cron expression: {e}")))
+    // croner 4 rejects the step shorthand `5/5` (= `5-59/5`) that 3.x accepted; schedules saved
+    // with it must keep evaluating, so the 3.x acceptance is kept.
+    CronParser::builder()
+        .sloppy_ranges(true)
+        .build()
+        .parse(expr)
+        .map_err(|e| bad("/cron", &format!("invalid cron expression: {e}")))
 }
 
 /// First occurrence strictly after `after`, as an instant.
@@ -115,5 +121,21 @@ mod tests {
         // Strictly after.
         let c = next_after("0 9 * * *", tz, at("2026-03-08T13:00:00Z")).unwrap();
         assert_eq!(c, at("2026-03-09T13:00:00Z"));
+    }
+
+    #[test]
+    fn a_job_before_the_dst_gap_does_not_also_fire_after_it() {
+        // croner#67 (fixed in 4.0.3): 00:00 GMT on the spring-forward day, then 00:00 BST the next
+        // day, not 02:00 BST right after the 01:00 gap.
+        let next = next_after("0 0 * * *", "Europe/London", at("2026-03-29T00:00:00Z")).unwrap();
+        assert_eq!(next, at("2026-03-29T23:00:00Z"));
+    }
+
+    #[test]
+    fn the_step_shorthand_saved_under_croner_3_still_parses() {
+        // `5/5` = `5-59/5`; croner 4 rejects it unless sloppy ranges are on.
+        let next = next_after("5/5 * * * *", "UTC", at("2026-03-02T12:00:30Z")).unwrap();
+        assert_eq!(next, at("2026-03-02T12:05:00Z"));
+        assert!(validate("5/5 * * * *", "UTC", at("2026-03-02T12:00:30Z")).is_ok());
     }
 }

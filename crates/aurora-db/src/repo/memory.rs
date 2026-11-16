@@ -59,9 +59,9 @@ pub async fn get(
     agent: Uuid,
     key: &str,
 ) -> Result<Option<MemoryRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {COLS} FROM memories WHERE agent_id = $1 AND key = $2"
-    ))
+    )))
     .bind(agent)
     .bind(key)
     .fetch_optional(conn)
@@ -69,9 +69,9 @@ pub async fn get(
 }
 
 pub async fn list(conn: &mut PgConnection, agent: Uuid) -> Result<Vec<MemoryRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {COLS} FROM memories WHERE agent_id = $1 ORDER BY key"
-    ))
+    )))
     .bind(agent)
     .fetch_all(conn)
     .await?)
@@ -94,10 +94,10 @@ pub async fn insert(
     description: Option<&str>,
     content: &str,
 ) -> Result<MemoryRow, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "INSERT INTO memories (id, agent_id, key, title, description, content, revision)
          VALUES ($1, $2, $3, $4, $5, $6, 1) RETURNING {COLS}"
-    ))
+    )))
     .bind(Uuid::now_v7())
     .bind(agent)
     .bind(key)
@@ -115,11 +115,11 @@ pub async fn update(
     description: Option<&str>,
     content: &str,
 ) -> Result<MemoryRow, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "UPDATE memories SET title = $2, description = $3, content = $4,
                 revision = revision + 1, updated_at = now()
          WHERE id = $1 RETURNING {COLS}"
-    ))
+    )))
     .bind(id)
     .bind(title)
     .bind(description)
@@ -189,9 +189,9 @@ const REV_COLS: &str = "revision, op, author_kind, author_user_id, author_label,
 
 /// Newest first.
 pub async fn revisions(conn: &mut PgConnection, memory: Uuid) -> Result<Vec<RevisionRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {REV_COLS} FROM memory_revisions WHERE memory_id = $1 ORDER BY revision DESC"
-    ))
+    )))
     .bind(memory)
     .fetch_all(conn)
     .await?)
@@ -202,9 +202,9 @@ pub async fn revision(
     memory: Uuid,
     revision: i32,
 ) -> Result<Option<RevisionRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {REV_COLS} FROM memory_revisions WHERE memory_id = $1 AND revision = $2"
-    ))
+    )))
     .bind(memory)
     .bind(revision)
     .fetch_optional(conn)
@@ -295,7 +295,7 @@ pub async fn search(
          ) s WHERE score > 0 AND score >= $5
          ORDER BY score DESC, key LIMIT $6"
     );
-    Ok(sqlx::query_as(&sql)
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(&*sql))
         .bind(agent)
         .bind(lang)
         .bind(q)

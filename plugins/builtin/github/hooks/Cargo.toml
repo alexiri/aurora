@@ -11,9 +11,17 @@ crate-type = ["cdylib"]
 aurora-plugin-sdk = { path = "../../../../crates/aurora-plugin-sdk" }
 # RS256 app JWT: RustCrypto's pure-Rust RSA (PKCS#1 v1.5, deterministic, no RNG at signing time)
 # with SHA-256. No WASI imports beyond what the hook host allows.
-rsa = { version = "0.9", default-features = false, features = ["std", "pem", "sha2"] }
-sha2 = { version = "0.10", default-features = false }
+# rsa 0.10 (constant-time crypto-bigint) without its `getrandom` default; PEM decoding comes from
+# the pkcs1/pkcs8 `pem` features.
+rsa = { version = "0.10", default-features = false, features = ["std", "encoding", "pkcs1v15"] }
+pkcs1 = { version = "0.8", default-features = false, features = ["pem"] }
+pkcs8 = { version = "0.11", default-features = false, features = ["pem"] }
+sha2 = { version = "0.11", default-features = false }
 serde_json = "1"
+
+[dev-dependencies]
+# Key generation in the host-target unit tests only.
+getrandom = { version = "0.4", features = ["sys_rng"] }
 
 # Standalone project, not a member of the Aurora workspace: `aurora plugin build` compiles it for
 # wasm32-wasip2 (docs/09 §12) and ships the component as hooks.wasm.

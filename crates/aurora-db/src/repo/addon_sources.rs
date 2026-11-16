@@ -56,14 +56,14 @@ pub struct NewSource<'a> {
 }
 
 pub async fn insert(conn: &mut PgConnection, s: &NewSource<'_>) -> Result<AddonSourceRow, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "INSERT INTO addon_sources (id, name, url, homepage, contact, publisher, signing_key,
             key_fingerprint, manifest_digest, manifest, update_interval, next_check_at,
             last_checked_at, created_by)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,
             now() + make_interval(secs => COALESCE($12, 31536000)), now(), $13)
          RETURNING {SEL}"
-    ))
+    )))
     .bind(s.id)
     .bind(s.name)
     .bind(s.url)
@@ -85,30 +85,30 @@ pub async fn get<'e, E: PgExecutor<'e>>(
     exec: E,
     id: Uuid,
 ) -> Result<Option<AddonSourceRow>, DbError> {
-    Ok(
-        sqlx::query_as(&format!("SELECT {SEL} FROM addon_sources WHERE id = $1"))
-            .bind(id)
-            .fetch_optional(exec)
-            .await?,
-    )
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT {SEL} FROM addon_sources WHERE id = $1"
+    )))
+    .bind(id)
+    .fetch_optional(exec)
+    .await?)
 }
 
 pub async fn get_by_url<'e, E: PgExecutor<'e>>(
     exec: E,
     url: &str,
 ) -> Result<Option<AddonSourceRow>, DbError> {
-    Ok(
-        sqlx::query_as(&format!("SELECT {SEL} FROM addon_sources WHERE url = $1"))
-            .bind(url)
-            .fetch_optional(exec)
-            .await?,
-    )
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT {SEL} FROM addon_sources WHERE url = $1"
+    )))
+    .bind(url)
+    .fetch_optional(exec)
+    .await?)
 }
 
 pub async fn list<'e, E: PgExecutor<'e>>(exec: E) -> Result<Vec<AddonSourceRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {SEL} FROM addon_sources ORDER BY created_at, id"
-    ))
+    )))
     .fetch_all(exec)
     .await?)
 }
@@ -121,7 +121,7 @@ pub async fn claim_due(
     limit: i64,
     lease_secs: f64,
 ) -> Result<Vec<AddonSourceRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "UPDATE addon_sources s SET check_lease_until = now() + make_interval(secs => $3),
             lease_owner = $1, updated_at = now()
          WHERE s.id IN (
@@ -131,7 +131,7 @@ pub async fn claim_due(
               AND status <> 'signing_key_changed'
             ORDER BY next_check_at LIMIT $2 FOR UPDATE SKIP LOCKED)
          RETURNING {SEL}"
-    ))
+    )))
     .bind(owner)
     .bind(limit)
     .bind(lease_secs)
@@ -146,12 +146,12 @@ pub async fn claim_one(
     owner: Uuid,
     lease_secs: f64,
 ) -> Result<Option<AddonSourceRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "UPDATE addon_sources s SET check_lease_until = now() + make_interval(secs => $3),
             lease_owner = $1, updated_at = now()
          WHERE s.id = $2 AND (check_lease_until IS NULL OR check_lease_until < now())
          RETURNING {SEL}"
-    ))
+    )))
     .bind(owner)
     .bind(id)
     .bind(lease_secs)

@@ -8,6 +8,75 @@
       "description": "An empty JSON object body (`{}`).",
       "type": "object"
     },
+    "ExecExit": {
+      "description": "The child ended (`status` or `signal`, the signal's name without `SIG`); exactly one,\nbefore `pty.close { reason: \"eof\" }`.",
+      "properties": {
+        "pty_id": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "signal": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "format": "int32",
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "pty_id"
+      ],
+      "type": "object"
+    },
+    "ExecOpened": {
+      "description": "The supervisor accepted an exec; `window` is its own credit window.",
+      "properties": {
+        "pty_id": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "window": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "pty_id",
+        "window"
+      ],
+      "type": "object"
+    },
+    "ExecRefuseReason": {
+      "maxLength": 64,
+      "type": "string"
+    },
+    "ExecRefused": {
+      "description": "The supervisor refused an exec.",
+      "properties": {
+        "pty_id": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "reason": {
+          "$ref": "#/$defs/ExecRefuseReason"
+        }
+      },
+      "required": [
+        "pty_id",
+        "reason"
+      ],
+      "type": "object"
+    },
     "FileCommit": {
       "properties": {
         "caption": {
@@ -1113,6 +1182,48 @@
         },
         "kind": {
           "const": "pty.close"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "body": {
+          "$ref": "#/$defs/ExecOpened"
+        },
+        "kind": {
+          "const": "exec.opened"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "body": {
+          "$ref": "#/$defs/ExecRefused"
+        },
+        "kind": {
+          "const": "exec.refused"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "body": {
+          "$ref": "#/$defs/ExecExit"
+        },
+        "kind": {
+          "const": "exec.exit"
         }
       },
       "required": [

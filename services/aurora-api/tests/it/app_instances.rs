@@ -1811,7 +1811,7 @@ async fn deleting_an_instance_disables_its_connections_and_removes_its_clients()
         .unwrap();
     assert_eq!(st, "active");
     for t in ["app_instances", "app_oauth_clients"] {
-        let n: i64 = sqlx::query_scalar(&format!("SELECT count(*) FROM {t}"))
+        let n: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT count(*) FROM {t}")))
             .fetch_one(w.h.pool())
             .await
             .unwrap();

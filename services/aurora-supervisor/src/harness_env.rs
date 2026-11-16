@@ -2,7 +2,11 @@
 //! reach the LLM **through the gateway** exactly as an agent turn does (FIX-138 item 1b,
 //! `docs/12 §Terminal`).
 //!
-//! The file is shell-sourced by the wrappers in `/opt/aurora/bin` and holds **no secret**: the
+//! The wrappers in `/opt/aurora/bin` **parse** the file as data (blank lines, `# …` and
+//! `NAME='VALUE'` only, [`q`]'s escaping; any other line makes them refuse to start, FIX-155) — they
+//! never source it. The directory is writable by agent code (same uid), so the file is not a
+//! trust anchor: the terminal is the agent's own environment (`17` residual, "`/run/aurora` is the
+//! agent's"). It holds **no secret**: the
 //! machine proxy's address (`127.0.0.1:3128`, which adds the boot token itself; the terminal
 //! never has it), the CA bundle path, the placeholder credential the gateway replaces, the
 //! harnesses the instance enables and one section per harness with the agent's model and
@@ -22,7 +26,8 @@ use aurora_protocol::runner::{
 
 use crate::adapters::claude_code::config::PLACEHOLDER;
 
-/// Where the file lives (tmpfs `/run/aurora`, owned by the supervisor, read-only to the agent).
+/// Where the file lives (tmpfs `/run/aurora`; agent-writable at one uid, so agent code can rewrite it — the
+/// wrappers parse it as data and the terminal is the agent's environment, see `17`).
 pub const DEFAULT_PATH: &str = "/run/aurora/harness.env";
 
 /// The fixed inputs of the file (from the boot document and the supervisor's own listeners).
@@ -124,7 +129,7 @@ pub fn unavailable_sentence(harness_name: &str, why: TerminalModelUnavailable) -
 pub fn render(cfg: &HarnessEnvConfig, models: &TerminalModels) -> String {
     let mut out = String::from(
         "# Written by aurora-supervisor. No secret: the gateway adds the agent's real LLM key.\n\
-         # Sourced by /opt/aurora/bin/claude and /opt/aurora/bin/codex (docs/12 §Terminal).\n",
+         # Parsed (never sourced) by /opt/aurora/bin/claude and /opt/aurora/bin/codex (docs/12 §Terminal).\n",
     );
     let mut set = |k: &str, v: &str| out.push_str(&format!("{k}={}\n", q(v)));
     set("HARNESSES_ENABLED", &cfg.enabled.join(" "));

@@ -124,9 +124,9 @@ impl Rig {
         table: &str,
         id: &str,
     ) -> (Option<Uuid>, String, bool, Option<String>) {
-        sqlx::query_as(&format!(
+        sqlx::query_as(sqlx::AssertSqlSafe(format!(
             "SELECT creator_user_id, anchor, enabled, disabled_reason FROM {table} WHERE id = $1::uuid"
-        ))
+        )))
         .bind(id)
         .fetch_one(self.h.pool())
         .await

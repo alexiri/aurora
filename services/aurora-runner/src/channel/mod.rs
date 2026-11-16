@@ -385,6 +385,19 @@ impl Shared {
         }
     }
 
+    /// (P5-FILES-1, W20) Routes one exec stderr message (tag `0x03`) to the stream listener.
+    pub(crate) async fn stderr_data(
+        &self,
+        sandbox: Uuid,
+        boot: Uuid,
+        pty_id: u32,
+        payload: Vec<u8>,
+    ) {
+        if let Some(l) = self.streams.get() {
+            l.supervisor_stderr(sandbox, boot, pty_id, payload).await;
+        }
+    }
+
     /// Session for `(sandbox, boot)`. A different boot of the same sandbox replaces the old
     /// state when `replace` is set; otherwise `None` (boot currency cannot be established).
     pub(crate) fn session_for(

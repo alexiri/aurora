@@ -66,6 +66,10 @@
           ],
           "description": "(FIX-011, D-90) The runner's configured sandbox defaults (`runner.sandbox_cpus`,\n`sandbox_memory_mib`, `sandbox_pids`, `home_gib`): the API uses them when neither the\nagent nor the org overrides a resource axis. Absent from older runners."
         },
+        "files": {
+          "description": "(phase 5, P5-FILES-1, D-316) The runner redeems `kind: \"files\"` grants (`auf_`) and speaks\nthe W20 `exec.*` frames in mode `sftp` (`16 §W21`); the API serves no Files route against a\nrunner without it (`files_not_supported`, reason `runner`). Absent (false) from older\nrunners, which refuse the unknown grant kind.",
+          "type": "boolean"
+        },
         "harnesses": {
           "items": {
             "$ref": "#/$defs/HarnessId"

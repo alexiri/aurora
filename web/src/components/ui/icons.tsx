@@ -85,3 +85,8 @@ export const ListNumberedIcon = make(<><path d="M10 6h10M10 12h10M10 18h10M4 5l1
 export const TaskListIcon = make(<><rect x="3.5" y="4.5" width="5" height="5" rx="1"/><path d="M12 7h8M12 17h8"/><path d="M4 16.5l1.5 1.5 3-3.5"/></>);
 export const TableIcon = make(<><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M3 15h18M10 4v16"/></>);
 export const SmileIcon = make(<><circle cx="12" cy="12" r="9"/><path d="M8.5 14a4 4 0 007 0M9 9.5h.01M15 9.5h.01"/></>);
+// (P5-FILES-2) The Files page's listing icons and its upload action.
+export const FolderIcon = make(<><path d="M3 6.5A1.5 1.5 0 014.5 5H10l2 2.5h7.5A1.5 1.5 0 0121 9v9.5a1.5 1.5 0 01-1.5 1.5h-15A1.5 1.5 0 013 18.5z"/></>);
+export const FileTextIcon = make(<><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4M9 12h6M9 16h6"/></>);
+export const ImageIcon = make(<><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="1.5"/><path d="M21 16l-5-5-8 8"/></>);
+export const UploadIcon = make(<><path d="M12 16V5M7 9l5-5 5 5M5 20h14"/></>);

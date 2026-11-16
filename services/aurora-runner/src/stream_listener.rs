@@ -27,9 +27,9 @@ use aurora_core::limits::{
 };
 use aurora_protocol::common::SecretString;
 use aurora_protocol::runner::{
-    ChannelRef, PreviewStreamClosedRequest, PreviewStreamOpenRequest, PreviewStreamOpenResponse,
-    PtyClose, PtyCloseReason, PtyCredit, PtyOpen, PtyRefuseReason, PtyResize, StreamCloseReason,
-    StreamCredit, StreamOpen, StreamRefuseReason,
+    ChannelRef, ExecRefuseReason, PreviewStreamClosedRequest, PreviewStreamOpenRequest,
+    PreviewStreamOpenResponse, PtyClose, PtyCloseReason, PtyCredit, PtyOpen, PtyRefuseReason,
+    PtyResize, StreamCloseReason, StreamCredit, StreamOpen, StreamRefuseReason,
 };
 use aurora_protocol::supervisor::{RunnerToSupervisor, SupervisorToRunner};
 use futures::{SinkExt, StreamExt};
@@ -88,9 +88,15 @@ async fn ws_send(sink: &mut WsSink, msg: Message) -> Result<(), ()> {
 /// never arrive here: the listener removes the route and answers the leg's `close_rx`
 /// directly.
 enum LegIn {
-    Opened { window: u32 },
+    Opened {
+        window: u32,
+    },
     Credit(u32),
     Data(Vec<u8>),
+    /// (P5-FILES-1, `16 §W20`) The exec's stderr (tag `0x03`); files legs only.
+    Stderr(Vec<u8>),
+    /// (P5-FILES-1) `exec.exit`: the child ended; files legs only. The `pty.close` follows.
+    Exit(aurora_protocol::runner::ExecExit),
 }
 
 /// One live leg: how the pump reaches it.
@@ -104,6 +110,9 @@ struct RouteEnd {
     /// (P4-TERM, C-620) Set on a terminal leg: bytes in either direction stamp this
     /// sandbox's `terminal_active_until` (keep-awake reason `terminal`).
     terminal: bool,
+    /// (P5-FILES-1, D-316) Set on an `auf_` files leg: an exec leg of `16 §W21` (never stamps
+    /// keep-awake; the supervisor side is `exec.*` + `pty.credit`/`pty.close`).
+    files: bool,
     /// Sandbox → browser bytes the supervisor has sent and the runner has not yet credited
     /// back (FIX-060: its own counter, separate from the browser → sandbox window). The pump
     /// raises it on arrival, the leg lowers it when it returns credit after writing onward.
@@ -116,6 +125,7 @@ struct RouteEnd {
 struct Target {
     to_leg: mpsc::Sender<LegIn>,
     terminal: bool,
+    files: bool,
     from_sandbox: Arc<AtomicUsize>,
     recv_window: usize,
 }
@@ -148,6 +158,8 @@ pub struct Bounds {
     pub max_streams: usize,
     /// Live PTYs per sandbox on this runner.
     pub max_ptys: usize,
+    /// (P5-FILES-1) Live `auf_` files legs per sandbox (`FILE_SESSIONS_PER_SANDBOX`, 4409).
+    pub max_files: usize,
     /// `pty.resize` from the browser is coalesced to the latest size and sent at most this
     /// often.
     pub resize_flush: Duration,
@@ -160,6 +172,7 @@ impl Default for Bounds {
             head_deadline: Duration::from_secs(10),
             max_streams: 64,
             max_ptys: 2,
+            max_files: aurora_core::limits::FILE_SESSIONS_PER_SANDBOX as usize,
             resize_flush: Duration::from_millis(50),
         }
     }
@@ -285,6 +298,25 @@ impl StreamListener {
                     let _ = end.close_tx.send(code);
                 }
             }
+            // (P5-FILES-1, `16 §W20` leg 2) The exec answers, same shape as the PTY ones; they
+            // reach only `auf_` legs (an exec id is allocated by a files leg's route).
+            M::ExecOpened(o) => {
+                self.deliver(o.pty_id, sandbox, boot, LegIn::Opened { window: o.window })
+                    .await;
+            }
+            M::ExecRefused(r) => {
+                if let Some(end) = self.take_owned(r.pty_id, sandbox, boot).await {
+                    let code = match r.reason {
+                        ExecRefuseReason::Limit => CLOSE_LIMIT,
+                        _ => CLOSE_REFUSED,
+                    };
+                    let _ = end.close_tx.send(code);
+                }
+            }
+            M::ExecExit(x) => {
+                let id = x.pty_id;
+                self.deliver(id, sandbox, boot, LegIn::Exit(x)).await;
+            }
             // Not stream/pty traffic (the conn pump dispatches the rest); ignore.
             _ => {}
         }
@@ -322,6 +354,19 @@ impl StreamListener {
             // hammer the API; at most one per grace per sandbox (the grace outlives the gap).
             self.stamp_awake(sandbox).await;
         }
+    }
+
+    /// (P5-FILES-1, `16 §W20`) An exec's stderr from a supervisor `[0x03][pty_id BE][payload]`:
+    /// routed like the other data (same window), never a keep-awake stamp.
+    pub(crate) async fn supervisor_stderr(
+        &self,
+        sandbox: Uuid,
+        boot: Uuid,
+        pty_id: u32,
+        payload: Vec<u8>,
+    ) {
+        self.deliver(pty_id, sandbox, boot, LegIn::Stderr(payload))
+            .await;
     }
 
     /// (P4-TERM, C-620) Best-effort keep-awake stamp, rate-limited to one per
@@ -384,6 +429,7 @@ impl StreamListener {
             .map(|end| Target {
                 to_leg: end.to_leg.clone(),
                 terminal: end.terminal,
+                files: end.files,
                 from_sandbox: end.from_sandbox.clone(),
                 recv_window: end.recv_window,
             })
@@ -426,14 +472,16 @@ impl StreamListener {
     async fn deliver(&self, id: u32, sandbox: Uuid, boot: Uuid, msg: LegIn) -> Option<bool> {
         let t = self.owned_target(id, sandbox, boot).await?;
         let terminal = t.terminal;
-        if let LegIn::Data(b) = &msg {
+        // A files leg's close frames are the PTY's (`pty.close`), without any stamping.
+        let pty_like = t.terminal || t.files;
+        if let LegIn::Data(b) | LegIn::Stderr(b) = &msg {
             let after = t.from_sandbox.fetch_add(b.len(), Ordering::AcqRel) + b.len();
             if after > t.recv_window {
                 tracing::warn!(
                     id,
                     "stream data beyond the announced window; closing the leg"
                 );
-                self.overflow(id, sandbox, boot, terminal).await;
+                self.overflow(id, sandbox, boot, pty_like).await;
                 return None;
             }
         }
@@ -443,7 +491,7 @@ impl StreamListener {
             Err(mpsc::error::TrySendError::Closed(_)) => None,
             Err(mpsc::error::TrySendError::Full(_)) => {
                 tracing::warn!(id, "stream leg queue full; closing the leg");
-                self.overflow(id, sandbox, boot, terminal).await;
+                self.overflow(id, sandbox, boot, pty_like).await;
                 None
             }
         }
@@ -494,19 +542,25 @@ impl StreamListener {
         id: u32,
         binding: &PreviewStreamOpenResponse,
         terminal: bool,
+        files: bool,
         to_leg: mpsc::Sender<LegIn>,
         from_sandbox: Arc<AtomicUsize>,
     ) -> Option<oneshot::Receiver<u16>> {
         let (close_tx, close_rx) = oneshot::channel();
         let mut routes = self.routes.lock().await;
         // Per-sandbox live-leg cap (FIX-092): the supervisor's own limits, enforced here too so
-        // the runner's memory is bounded however the supervisor behaves.
+        // the runner's memory is bounded however the supervisor behaves. Each kind (port,
+        // terminal, files) counts and is capped on its own.
         let live = routes
             .legs
             .values()
-            .filter(|e| e.sandbox == binding.sandbox_id && e.terminal == terminal)
+            .filter(|e| {
+                e.sandbox == binding.sandbox_id && e.terminal == terminal && e.files == files
+            })
             .count();
-        let cap = if terminal {
+        let cap = if files {
+            self.bounds.max_files
+        } else if terminal {
             self.bounds.max_ptys
         } else {
             self.bounds.max_streams
@@ -522,8 +576,9 @@ impl StreamListener {
                 sandbox: binding.sandbox_id,
                 boot: binding.boot_id,
                 terminal,
+                files,
                 from_sandbox,
-                recv_window: if terminal {
+                recv_window: if terminal || files {
                     TERMINAL_STREAM_WINDOW
                 } else {
                     PREVIEW_STREAM_WINDOW
@@ -744,6 +799,9 @@ async fn handle(
     // decides.
     let kind = if grant.starts_with("auy_") {
         Some("terminal")
+    } else if grant.starts_with("auf_") {
+        // (P5-FILES-1, D-316, `16 §W21`) a files grant: an `sftp` exec, never a PTY or a port.
+        Some("files")
     } else {
         None
     };
@@ -845,6 +903,20 @@ async fn open_and_serve(
     // ---- 3. ask the supervisor to open the byte stream (5 s round trip), or for a terminal
     // grant the PTY (`P4-TERM`, C-617); then complete the handshake and copy.
     let terminal = binding.port.is_none();
+    if kind == Some("files") {
+        // (P5-FILES-1, `16 §W21`) The exec is opened *after* the 101: the API's first message
+        // names it. A files grant that comes back with a port is a relay/API fault: refuse.
+        if binding.port.is_some() {
+            http_close(&mut tcp, CLOSE_NOT_ALLOWED).await;
+            return;
+        }
+        let Some(ws) = complete_handshake(tcp, &request, &state, None, false, &binding).await
+        else {
+            return;
+        };
+        serve_files_leg(state, binding, ws).await;
+        return;
+    }
     if let Some(port) = binding.port {
         let (stream_id, leg_rx, close_rx, from_sandbox) =
             match open_supervisor_stream(&state, &binding, port, &r).await {
@@ -855,7 +927,7 @@ async fn open_and_serve(
                 }
             };
         let Some(ws) =
-            complete_handshake(tcp, &request, &state, stream_id, terminal, &binding).await
+            complete_handshake(tcp, &request, &state, Some(stream_id), terminal, &binding).await
         else {
             return;
         };
@@ -882,7 +954,8 @@ async fn open_and_serve(
                     return;
                 }
             };
-        let Some(ws) = complete_handshake(tcp, &request, &state, pty_id, terminal, &binding).await
+        let Some(ws) =
+            complete_handshake(tcp, &request, &state, Some(pty_id), terminal, &binding).await
         else {
             return;
         };
@@ -920,10 +993,26 @@ async fn complete_handshake(
     mut tcp: TcpStream,
     request: &http::Request<()>,
     state: &Arc<StreamListener>,
-    id: u32,
+    id: Option<u32>,
     terminal: bool,
     binding: &PreviewStreamOpenResponse,
 ) -> Option<Ws> {
+    // `id: None` is an `auf_` files leg (P5-FILES-1): it has no route yet (the exec is opened by
+    // its first message) and its binary messages carry a tag byte (`[0x02][≤ 16 KiB]`).
+    let release = |state: &Arc<StreamListener>| {
+        let state = state.clone();
+        let (sandbox, boot) = (binding.sandbox_id, binding.boot_id);
+        async move {
+            if let Some(id) = id {
+                if terminal {
+                    state.release_pty(id, sandbox, boot).await;
+                } else {
+                    state.release_stream(id, sandbox, boot).await;
+                }
+            }
+        }
+    };
+    let max_message = PREVIEW_CHUNK + usize::from(id.is_none());
     let ws_key = request
         .headers()
         .get("sec-websocket-key")
@@ -931,7 +1020,7 @@ async fn complete_handshake(
         .map(str::to_owned);
     let Some(ws_key) = ws_key else {
         // Not a WebSocket upgrade (no key): a plain HTTP error is all that remains.
-        release_route(state, id, binding, terminal).await;
+        release(state).await;
         http_close(&mut tcp, CLOSE_NOT_ALLOWED).await;
         return None;
     };
@@ -940,12 +1029,12 @@ async fn complete_handshake(
         "HTTP/1.1 101 Switching Protocols\r\nupgrade: websocket\r\nconnection: Upgrade\r\nsec-websocket-accept: {accept}\r\n\r\n"
     );
     if tcp.write_all(answer.as_bytes()).await.is_err() {
-        release_route(state, id, binding, terminal).await;
+        release(state).await;
         return None;
     }
     let cfg = tokio_tungstenite::tungstenite::protocol::WebSocketConfig::default()
-        .max_message_size(Some(PREVIEW_CHUNK))
-        .max_frame_size(Some(PREVIEW_CHUNK));
+        .max_message_size(Some(max_message))
+        .max_frame_size(Some(max_message));
     let ws = tokio_tungstenite::WebSocketStream::from_raw_socket(
         tcp,
         tokio_tungstenite::tungstenite::protocol::Role::Server,
@@ -953,25 +1042,6 @@ async fn complete_handshake(
     )
     .await;
     Some(ws)
-}
-
-/// Releases a route after the handshake failed (the supervisor already accepted the open):
-/// the right release for the leg's kind, so the supervisor learns the PTY/stream is gone.
-async fn release_route(
-    state: &Arc<StreamListener>,
-    id: u32,
-    binding: &PreviewStreamOpenResponse,
-    terminal: bool,
-) {
-    if terminal {
-        state
-            .release_pty(id, binding.sandbox_id, binding.boot_id)
-            .await;
-    } else {
-        state
-            .release_stream(id, binding.sandbox_id, binding.boot_id)
-            .await;
-    }
 }
 
 /// Pre-handshake failure form: a plain HTTP status (the close-code table applies after 101).
@@ -1016,7 +1086,7 @@ async fn open_supervisor_stream(
     let from_sandbox = Arc::new(AtomicUsize::new(0));
     // Register the route before sending `stream.open` so the answer cannot race us.
     let Some(close_rx) = state
-        .register_route(id, binding, false, leg_tx, from_sandbox.clone())
+        .register_route(id, binding, false, false, leg_tx, from_sandbox.clone())
         .await
     else {
         return Err(CLOSE_LIMIT);
@@ -1081,7 +1151,7 @@ async fn open_supervisor_pty(
     // Register the route before sending `pty.open` so the answer cannot race us; the leg is
     // stamped terminal so its bytes drive the keep-awake (`C-620`).
     let Some(close_rx) = state
-        .register_route(id, binding, true, leg_tx, from_sandbox.clone())
+        .register_route(id, binding, true, false, leg_tx, from_sandbox.clone())
         .await
     else {
         return Err(CLOSE_LIMIT);
@@ -1263,6 +1333,8 @@ async fn serve_terminal_leg(
                             }
                         }
                     }
+                    // Exec-only traffic never belongs on a port or terminal leg.
+                    Some(LegIn::Stderr(_) | LegIn::Exit(_)) => {}
                     Some(LegIn::Credit(c)) => {
                         to_pty_credit = (to_pty_credit + c as usize).min(window);
                     }
@@ -1296,6 +1368,7 @@ async fn serve_terminal_leg(
                                 break;
                             }
                         }
+                        LegIn::Stderr(_) | LegIn::Exit(_) => {}
                         LegIn::Credit(c) => {
                             to_pty_credit = (to_pty_credit + c as usize).min(window);
                         }
@@ -1360,6 +1433,288 @@ async fn serve_terminal_leg(
             bytes_from_pty,
             bytes_to_pty,
         )
+        .await;
+}
+
+/// The one message an `auf_` leg may open with (`16 §W21`): exactly `{"kind":"exec.open",
+/// "mode":"sftp"}` (an empty `env` and null `command`/`tty` are tolerated; anything else is not).
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FilesOpen {
+    kind: String,
+    mode: String,
+    #[serde(default)]
+    command: Option<serde_json::Value>,
+    #[serde(default)]
+    tty: Option<serde_json::Value>,
+    #[serde(default)]
+    env: serde_json::Map<String, serde_json::Value>,
+}
+
+/// Whether `text` is the bare `sftp` `exec.open` an `auf_` leg must start with.
+fn is_bare_sftp_open(text: &str) -> bool {
+    serde_json::from_str::<FilesOpen>(text).is_ok_and(|o| {
+        o.kind == "exec.open"
+            && o.mode == "sftp"
+            && o.command.is_none()
+            && o.tty.is_none()
+            && o.env.is_empty()
+    })
+}
+
+/// The WebSocket closing handshake of every leg exit: our Close frame, then up to 2 s for the
+/// peer's.
+async fn close_ws(sink: &mut WsSink, stream: &mut futures::stream::SplitStream<Ws>, code: u16) {
+    if ws_send(
+        sink,
+        Message::Close(Some(CloseFrame {
+            code: CloseCode::from(code),
+            reason: "".into(),
+        })),
+    )
+    .await
+    .is_ok()
+    {
+        let _ = sink.flush().await;
+        let _ = tokio::time::timeout(Duration::from_secs(2), async {
+            while let Some(Ok(m)) = stream.next().await {
+                if matches!(m, Message::Close(_)) {
+                    break;
+                }
+            }
+        })
+        .await;
+    }
+}
+
+/// (P5-FILES-1, D-316, `16 §W21`) An `auf_` files leg after the 101: the API's first message
+/// (within 5 s) must be the bare `sftp` `exec.open`; the runner then allocates the `pty_id`,
+/// sends leg 2's `exec.open` and answers `{"kind":"exec.opened"}`, or closes 4502 (refused,
+/// unsupported, timeout) / 4409 (a cap). Then binary messages are `[0x02][≤ 16 KiB]` both ways
+/// (the SFTP stream) and `[0x03][…]` runner → API (the server's stderr), text is `exec.eof`
+/// (API → runner) and `exec.exit` (runner → API, then 1000). Any other frame closes the leg
+/// 4502 without being forwarded. No keep-awake stamp, ever: the API stamps its own.
+async fn serve_files_leg(state: Arc<StreamListener>, binding: PreviewStreamOpenResponse, ws: Ws) {
+    use aurora_protocol::runner::{ExecEof, ExecMode, ExecOpen};
+    let (mut sink, mut stream) = ws.split();
+    let (sandbox, boot) = (binding.sandbox_id, binding.boot_id);
+    let r = ChannelRef {
+        sandbox_id: sandbox,
+        boot_id: boot,
+    };
+    // ---- 1. the first message, within 5 s
+    let first = tokio::time::timeout(PTY_OPEN_WAIT, stream.next()).await;
+    let bad = match first {
+        Err(_) => Some(CLOSE_TIMEOUT),
+        Ok(Some(Ok(Message::Text(t)))) if t.len() <= 12 * 1024 && is_bare_sftp_open(&t) => None,
+        Ok(Some(Ok(Message::Close(_))) | Some(Err(_)) | None) => Some(CLOSE_NORMAL),
+        Ok(_) => Some(CLOSE_REFUSED),
+    };
+    if let Some(code) = bad {
+        close_ws(&mut sink, &mut stream, code).await;
+        return;
+    }
+    // ---- 2. register the route (the cap) and ask the supervisor for the exec
+    let id = state.alloc_id().await;
+    let (leg_tx, mut leg_rx) = mpsc::channel(DATA_Q);
+    let from_sandbox = Arc::new(AtomicUsize::new(0));
+    let Some(mut close_rx) = state
+        .register_route(id, &binding, false, true, leg_tx, from_sandbox.clone())
+        .await
+    else {
+        close_ws(&mut sink, &mut stream, CLOSE_LIMIT).await;
+        return;
+    };
+    let open = ExecOpen {
+        pty_id: id,
+        window: TERMINAL_STREAM_WINDOW as u32,
+        mode: ExecMode::Sftp,
+        command: None,
+        tty: None,
+        env: std::collections::BTreeMap::new(),
+    };
+    if state
+        .send_to_supervisor(&r, RunnerToSupervisor::ExecOpen(open))
+        .await
+        .is_err()
+    {
+        state.release_pty(id, sandbox, boot).await;
+        close_ws(&mut sink, &mut stream, CLOSE_REFUSED).await;
+        return;
+    }
+    // `exec.refused` never reaches the queue: the listener removes the route and answers
+    // `close_rx` (4502 / 4409), which ends this wait with `None`.
+    let opened = tokio::time::timeout(PTY_OPEN_WAIT, async {
+        loop {
+            match leg_rx.recv().await {
+                Some(LegIn::Opened { .. }) => return true,
+                None => return false,
+                Some(_) => continue,
+            }
+        }
+    })
+    .await;
+    match opened {
+        Ok(true) => {}
+        Ok(false) => {
+            let code = close_rx.try_recv().unwrap_or(CLOSE_REFUSED);
+            close_ws(&mut sink, &mut stream, code).await;
+            return;
+        }
+        Err(_) => {
+            // An older supervisor ignores `exec.*`: the open times out (4502).
+            state.release_pty(id, sandbox, boot).await;
+            close_ws(&mut sink, &mut stream, CLOSE_REFUSED).await;
+            return;
+        }
+    }
+    if ws_send(&mut sink, Message::text(r#"{"kind":"exec.opened"}"#))
+        .await
+        .is_err()
+    {
+        state.release_pty(id, sandbox, boot).await;
+        return;
+    }
+    // ---- 3. the copy loop: one credit window per direction, exactly the terminal's
+    let window = TERMINAL_STREAM_WINDOW;
+    let mut to_sup_credit: usize = window;
+    let mut from_sup_unacked: usize = 0;
+    let mut bytes_in: u64 = 0;
+    let mut bytes_out: u64 = 0;
+    tokio::pin! {
+        let idle = tokio::time::sleep(state.idle);
+        let lifetime = tokio::time::sleep(state.lifetime);
+    }
+    let mut ping = tokio::time::interval(PING_INTERVAL);
+    ping.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    // Forwards one supervisor → API message; `false` when the socket failed.
+    async fn forward(sink: &mut WsSink, msg: LegIn, unacked: &mut usize, out: &mut u64) -> bool {
+        let (tag, b) = match msg {
+            LegIn::Data(b) => (0x02u8, b),
+            LegIn::Stderr(b) => (0x03u8, b),
+            LegIn::Exit(x) => {
+                let mut v = serde_json::json!({"kind": "exec.exit"});
+                if let Some(s) = x.status {
+                    v["status"] = s.into();
+                }
+                if let Some(s) = x.signal {
+                    v["signal"] = s.into();
+                }
+                return ws_send(sink, Message::text(v.to_string())).await.is_ok();
+            }
+            _ => return true,
+        };
+        *unacked += b.len();
+        *out += b.len() as u64;
+        let mut framed = Vec::with_capacity(b.len() + 1);
+        framed.push(tag);
+        framed.extend_from_slice(&b);
+        ws_send(sink, Message::binary(framed)).await.is_ok()
+    }
+    let reason = loop {
+        tokio::select! {
+            msg = stream.next() => match msg {
+                Some(Ok(Message::Binary(b))) => {
+                    idle.as_mut().reset(tokio::time::Instant::now() + state.idle);
+                    // `[0x02][payload ≤ 16 KiB]` only; any other tag is a violation.
+                    let Some((&0x02, payload)) = b.split_first() else {
+                        break CLOSE_REFUSED;
+                    };
+                    if payload.len() > TERMINAL_CHUNK || to_sup_credit < payload.len() {
+                        break CLOSE_REFUSED;
+                    }
+                    if payload.is_empty() {
+                        continue;
+                    }
+                    to_sup_credit -= payload.len();
+                    bytes_in += payload.len() as u64;
+                    if state.send_data(&r, 0x02, id, payload).await.is_err() {
+                        break CLOSE_CHANNEL_LOST;
+                    }
+                }
+                Some(Ok(Message::Text(t))) => {
+                    idle.as_mut().reset(tokio::time::Instant::now() + state.idle);
+                    let eof = t.len() <= 256
+                        && serde_json::from_str::<serde_json::Value>(&t).is_ok_and(|v| {
+                            v.as_object().is_some_and(|o| {
+                                o.len() == 1 && o.get("kind").and_then(|k| k.as_str()) == Some("exec.eof")
+                            })
+                        });
+                    if !eof {
+                        break CLOSE_REFUSED;
+                    }
+                    if state
+                        .send_to_supervisor(&r, RunnerToSupervisor::ExecEof(ExecEof { pty_id: id }))
+                        .await
+                        .is_err()
+                    {
+                        break CLOSE_CHANNEL_LOST;
+                    }
+                }
+                Some(Ok(Message::Pong(_) | Message::Ping(_))) => {
+                    idle.as_mut().reset(tokio::time::Instant::now() + state.idle);
+                }
+                Some(Ok(Message::Frame(_))) => {}
+                Some(Ok(Message::Close(_))) | Some(Err(_)) | None => break CLOSE_NORMAL,
+            },
+            chunk = leg_rx.recv() => match chunk {
+                Some(m @ (LegIn::Data(_) | LegIn::Stderr(_) | LegIn::Exit(_))) => {
+                    idle.as_mut().reset(tokio::time::Instant::now() + state.idle);
+                    if !forward(&mut sink, m, &mut from_sup_unacked, &mut bytes_out).await {
+                        break CLOSE_NORMAL;
+                    }
+                    // Return credit after writing onward, at least every `window / 4`.
+                    if from_sup_unacked >= window / 4 {
+                        let n = from_sup_unacked as u32;
+                        from_sup_unacked = 0;
+                        from_sandbox.fetch_sub(n as usize, Ordering::AcqRel);
+                        let credit = RunnerToSupervisor::PtyCredit(PtyCredit { pty_id: id, bytes: n });
+                        if state.send_to_supervisor(&r, credit).await.is_err() {
+                            break CLOSE_CHANNEL_LOST;
+                        }
+                    }
+                }
+                Some(LegIn::Credit(c)) => {
+                    to_sup_credit = (to_sup_credit + c as usize).min(window);
+                }
+                Some(LegIn::Opened { .. }) => {}
+                // The route was removed: the supervisor's `pty.close` already queued the code.
+                None => match close_rx.try_recv() {
+                    Ok(code) => break code,
+                    Err(_) => break CLOSE_REFUSED,
+                },
+            },
+            code = &mut close_rx => {
+                let code = code.unwrap_or(CLOSE_CHANNEL_LOST);
+                // Output the supervisor sent before ending the exec is already queued; the
+                // close follows it (a status read must not be truncated).
+                while let Ok(m) = leg_rx.try_recv() {
+                    if !forward(&mut sink, m, &mut from_sup_unacked, &mut bytes_out).await {
+                        break;
+                    }
+                }
+                break code;
+            }
+            _ = &mut idle => break CLOSE_TIMEOUT,
+            _ = &mut lifetime => break CLOSE_TIMEOUT,
+            _ = ping.tick() => {
+                if ws_send(&mut sink, Message::Ping(Vec::new().into())).await.is_err() {
+                    break CLOSE_NORMAL;
+                }
+            }
+        }
+    };
+    close_ws(&mut sink, &mut stream, reason).await;
+    // Tell the supervisor the exec ended (or release the route if it ended it first). Byte
+    // totals are informational and never logged.
+    let close_reason = match reason {
+        CLOSE_NORMAL => PtyCloseReason::Eof,
+        CLOSE_CHANNEL_LOST => PtyCloseReason::ChannelLost,
+        CLOSE_TIMEOUT => PtyCloseReason::Idle,
+        _ => PtyCloseReason::Error,
+    };
+    state
+        .release_pty_as(id, sandbox, boot, close_reason, bytes_in, bytes_out)
         .await;
 }
 
@@ -1462,6 +1817,8 @@ async fn serve_leg(
                             }
                         }
                     }
+                    // Exec-only traffic never belongs on a port or terminal leg.
+                    Some(LegIn::Stderr(_) | LegIn::Exit(_)) => {}
                     Some(LegIn::Credit(c)) => {
                         to_app_credit = (to_app_credit + c as usize).min(window);
                     }
@@ -1496,6 +1853,7 @@ async fn serve_leg(
                                 break;
                             }
                         }
+                        LegIn::Stderr(_) | LegIn::Exit(_) => {}
                         LegIn::Credit(c) => {
                             to_app_credit = (to_app_credit + c as usize).min(window);
                         }
@@ -1605,6 +1963,7 @@ mod tests {
                 sandbox,
                 boot,
                 terminal: true,
+                files: false,
                 from_sandbox: Arc::new(AtomicUsize::new(0)),
                 recv_window: TERMINAL_STREAM_WINDOW,
             },

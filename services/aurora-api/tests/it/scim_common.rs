@@ -255,7 +255,7 @@ pub fn assert_scim_error(status: u16, v: &Value) {
 
 /// Count rows of a table matching one org.
 pub async fn count(h: &Harness, sql: &str, id: Uuid) -> i64 {
-    sqlx::query_scalar(sql)
+    sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
         .bind(id)
         .fetch_one(h.pool())
         .await

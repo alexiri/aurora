@@ -25,6 +25,10 @@ dev: migrate
 
 # --- containerized dev stack: kind + Helm (OPS-017; docs/operator/install-kind-dev.md) ---
 
+# The Files journey on a kind cluster with the terminal on (P5-FILES-4, C-907): `AURORA_E2E_CLUSTER=aurora-e2e-<lane>` keeps it off the dev cluster. kind.sh flags pass through (--skip-build, --keep, --fresh).
+e2e-files *flags:
+    bash scripts/e2e/files.sh {{flags}}
+
 # Create the kind cluster `aurora-dev`, build + load the images, helm install. Flags: --llm-mock --connector-fake --no-sandbox --tracing (dev Jaeger: `kubectl -n aurora port-forward svc/jaeger 16686`). One URL: http://localhost:4000.
 kind-up *flags:
     bash deploy/dev/kind-dev.sh up {{flags}}

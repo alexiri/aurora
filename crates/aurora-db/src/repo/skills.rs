@@ -48,12 +48,12 @@ pub struct FileRow {
 }
 
 pub async fn get(conn: &mut PgConnection, id: Uuid) -> Result<Option<SkillRow>, DbError> {
-    Ok(
-        sqlx::query_as(&format!("SELECT {COLS} FROM skills WHERE id = $1"))
-            .bind(id)
-            .fetch_optional(conn)
-            .await?,
-    )
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT {COLS} FROM skills WHERE id = $1"
+    )))
+    .bind(id)
+    .fetch_optional(conn)
+    .await?)
 }
 
 /// Row lock: serializes concurrent edits (and file uploads) of one skill.
@@ -61,9 +61,9 @@ pub async fn get_for_update(
     conn: &mut PgConnection,
     id: Uuid,
 ) -> Result<Option<SkillRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {COLS} FROM skills WHERE id = $1 FOR UPDATE"
-    ))
+    )))
     .bind(id)
     .fetch_optional(conn)
     .await?)
@@ -74,9 +74,9 @@ pub async fn get_agent_named(
     agent: Uuid,
     name: &str,
 ) -> Result<Option<SkillRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {COLS} FROM skills WHERE agent_id = $1 AND name = $2"
-    ))
+    )))
     .bind(agent)
     .bind(name)
     .fetch_optional(conn)
@@ -88,10 +88,10 @@ pub async fn get_org_named(
     org: Uuid,
     name: &str,
 ) -> Result<Option<SkillRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {COLS} FROM skills WHERE org_id = $1 AND agent_id IS NULL
          AND workspace_id IS NULL AND name = $2"
-    ))
+    )))
     .bind(org)
     .bind(name)
     .fetch_optional(conn)
@@ -103,9 +103,9 @@ pub async fn get_workspace_named(
     workspace: Uuid,
     name: &str,
 ) -> Result<Option<SkillRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {COLS} FROM skills WHERE workspace_id = $1 AND name = $2"
-    ))
+    )))
     .bind(workspace)
     .bind(name)
     .fetch_optional(conn)
@@ -116,9 +116,9 @@ pub async fn list_workspace(
     conn: &mut PgConnection,
     workspace: Uuid,
 ) -> Result<Vec<SkillRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {COLS} FROM skills WHERE workspace_id = $1 ORDER BY name"
-    ))
+    )))
     .bind(workspace)
     .fetch_all(conn)
     .await?)
@@ -132,11 +132,11 @@ pub async fn list_reaching(
     workspace: Uuid,
     agent: Uuid,
 ) -> Result<Vec<SkillRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {COLS} FROM skills WHERE org_id = $1
          AND (agent_id = $3 OR workspace_id = $2 OR (agent_id IS NULL AND workspace_id IS NULL))
          ORDER BY name"
-    ))
+    )))
     .bind(org)
     .bind(workspace)
     .bind(agent)
@@ -161,19 +161,19 @@ pub async fn agent_overrides(
 }
 
 pub async fn list_agent(conn: &mut PgConnection, agent: Uuid) -> Result<Vec<SkillRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {COLS} FROM skills WHERE agent_id = $1 ORDER BY name"
-    ))
+    )))
     .bind(agent)
     .fetch_all(conn)
     .await?)
 }
 
 pub async fn list_org(conn: &mut PgConnection, org: Uuid) -> Result<Vec<SkillRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {COLS} FROM skills WHERE org_id = $1 AND agent_id IS NULL
          AND workspace_id IS NULL ORDER BY name"
-    ))
+    )))
     .bind(org)
     .fetch_all(conn)
     .await?)
@@ -219,11 +219,11 @@ pub async fn insert(
     enabled: bool,
     created_by_kind: &str,
 ) -> Result<SkillRow, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "INSERT INTO skills (id, org_id, agent_id, workspace_id, name, description, body, enabled,
             created_by_kind)
          VALUES ($1,$2,$3,$9,$4,$5,$6,$7,$8) RETURNING {COLS}"
-    ))
+    )))
     .bind(Uuid::now_v7())
     .bind(org)
     .bind(owner.agent)
@@ -244,10 +244,10 @@ pub async fn update(
     body: &str,
     enabled: bool,
 ) -> Result<SkillRow, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "UPDATE skills SET description = $2, body = $3, enabled = $4, updated_at = now()
          WHERE id = $1 RETURNING {COLS}"
-    ))
+    )))
     .bind(id)
     .bind(description)
     .bind(body)

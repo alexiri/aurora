@@ -40,12 +40,12 @@ pub async fn get<'e, E: PgExecutor<'e>>(
     exec: E,
     id: Uuid,
 ) -> Result<Option<ConversationRow>, DbError> {
-    Ok(
-        sqlx::query_as(&format!("SELECT {COLS} FROM conversations WHERE id = $1"))
-            .bind(id)
-            .fetch_optional(exec)
-            .await?,
-    )
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT {COLS} FROM conversations WHERE id = $1"
+    )))
+    .bind(id)
+    .fetch_optional(exec)
+    .await?)
 }
 
 /// Get-or-create by `(agent, kind, external_ref)`; idempotent under concurrency (`ON CONFLICT
@@ -70,9 +70,9 @@ pub async fn get_or_create(
     .bind(n.origin_conversation_id)
     .execute(&mut *conn)
     .await?;
-    let row = sqlx::query_as(&format!(
+    let row = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {COLS} FROM conversations WHERE agent_id = $1 AND kind = $2 AND external_ref = $3"
-    ))
+    )))
     .bind(n.agent_id)
     .bind(n.kind)
     .bind(n.external_ref)
@@ -106,14 +106,14 @@ pub async fn list_for_agent<'e, E: PgExecutor<'e>>(
         archived,
     } = *f;
     let (t, id) = split(after);
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {COLS} FROM conversations
          WHERE agent_id = $1 AND ($2::text IS NULL OR kind = $2)
            AND (kind <> 'direct' OR direct_user_id = $3 OR $7)
            AND ((archived_at IS NOT NULL) = $8)
            AND ($4::timestamptz IS NULL OR (last_activity_at, id) < ($4, $5))
          ORDER BY last_activity_at DESC, id DESC LIMIT $6"
-    ))
+    )))
     .bind(agent_id)
     .bind(kind)
     .bind(viewer)

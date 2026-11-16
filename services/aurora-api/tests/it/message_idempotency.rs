@@ -87,7 +87,7 @@ impl Fx {
     }
 
     async fn count(&self, sql: &str, id: Uuid) -> i64 {
-        sqlx::query_scalar(sql)
+        sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
             .bind(id)
             .fetch_one(self.h.pool())
             .await

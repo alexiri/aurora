@@ -28,7 +28,7 @@ async fn call(h: &Harness, who: &Who, m: Method, uri: &str, body: Option<Value>)
 }
 
 async fn count(h: &Harness, sql: &str, id: Uuid) -> i64 {
-    sqlx::query_scalar(sql)
+    sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
         .bind(id)
         .fetch_one(h.pool())
         .await
@@ -775,11 +775,13 @@ async fn org_delete_with_groups_and_scim_rows_discards_managed_values_and_invali
         "app_connections",
         "app_oauth_clients",
     ] {
-        let n: i64 = sqlx::query_scalar(&format!("SELECT count(*) FROM {t} WHERE org_id = $1"))
-            .bind(org)
-            .fetch_one(h.pool())
-            .await
-            .unwrap();
+        let n: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "SELECT count(*) FROM {t} WHERE org_id = $1"
+        )))
+        .bind(org)
+        .fetch_one(h.pool())
+        .await
+        .unwrap();
         assert_eq!(n, 0, "{t}");
     }
     assert_eq!(

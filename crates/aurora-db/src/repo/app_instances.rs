@@ -180,10 +180,12 @@ pub async fn preset_id<'e, E: PgExecutor<'e>>(
 }
 
 pub async fn get<'e, E: PgExecutor<'e>>(exec: E, id: Uuid) -> Result<Option<InstanceRow>, DbError> {
-    Ok(sqlx::query_as(&format!("{SELECT} WHERE i.id = $1"))
-        .bind(id)
-        .fetch_optional(exec)
-        .await?)
+    Ok(
+        sqlx::query_as(sqlx::AssertSqlSafe(format!("{SELECT} WHERE i.id = $1")))
+            .bind(id)
+            .fetch_optional(exec)
+            .await?,
+    )
 }
 
 /// Instances usable in `org` (instance-wide and the org's own), optionally of one app.
@@ -195,11 +197,11 @@ pub async fn list_for_org<'e, E: PgExecutor<'e>>(
     fetch: i64,
 ) -> Result<Vec<InstanceRow>, DbError> {
     let (t, id) = split(after);
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "{SELECT} WHERE (i.org_id IS NULL OR i.org_id = $1) AND ($2::text IS NULL OR i.app_id = $2) \
          AND ($3::timestamptz IS NULL OR (i.created_at, i.id) < ($3, $4)) \
          ORDER BY i.created_at DESC, i.id DESC LIMIT $5"
-    ))
+    )))
     .bind(org)
     .bind(app_id)
     .bind(t)
@@ -217,11 +219,11 @@ pub async fn list_instance_wide<'e, E: PgExecutor<'e>>(
     fetch: i64,
 ) -> Result<Vec<InstanceRow>, DbError> {
     let (t, id) = split(after);
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "{SELECT} WHERE i.org_id IS NULL AND ($1::text IS NULL OR i.app_id = $1) \
          AND ($2::timestamptz IS NULL OR (i.created_at, i.id) < ($2, $3)) \
          ORDER BY i.created_at DESC, i.id DESC LIMIT $4"
-    ))
+    )))
     .bind(app_id)
     .bind(t)
     .bind(id)
@@ -239,11 +241,11 @@ pub async fn list_all<'e, E: PgExecutor<'e>>(
     fetch: i64,
 ) -> Result<Vec<InstanceRow>, DbError> {
     let (t, id) = split(after);
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "{SELECT} WHERE ($1::uuid IS NULL OR i.org_id = $1) AND ($2::text IS NULL OR i.app_id = $2) \
          AND ($3::timestamptz IS NULL OR (i.created_at, i.id) < ($3, $4)) \
          ORDER BY i.created_at DESC, i.id DESC LIMIT $5"
-    ))
+    )))
     .bind(org)
     .bind(app_id)
     .bind(t)

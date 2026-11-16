@@ -30,6 +30,99 @@
       "description": "An empty JSON object body (`{}`).",
       "type": "object"
     },
+    "ExecEof": {
+      "description": "The client sent EOF: close the child's stdin.",
+      "properties": {
+        "pty_id": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "pty_id"
+      ],
+      "type": "object"
+    },
+    "ExecMode": {
+      "maxLength": 64,
+      "type": "string"
+    },
+    "ExecOpen": {
+      "description": "The runner asks its supervisor to start an exec (`16 §W20` leg 2). Outside the seq/ack\nlineage (`seq: 0`); the `pty_id` space is shared with `pty.open`.",
+      "properties": {
+        "command": {
+          "description": "`exec` mode only (≤ 8 KiB, no NUL); never logged.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "env": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {},
+          "description": "Only `LANG` and `LC_*` names are ever honoured.",
+          "type": "object"
+        },
+        "mode": {
+          "$ref": "#/$defs/ExecMode"
+        },
+        "pty_id": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "tty": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ExecTty"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "window": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "pty_id",
+        "window",
+        "mode"
+      ],
+      "type": "object"
+    },
+    "ExecTty": {
+      "description": "The PTY a `tty` exec runs under.",
+      "properties": {
+        "cols": {
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "rows": {
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "term": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "term",
+        "cols",
+        "rows"
+      ],
+      "type": "object"
+    },
     "FileIn": {
       "description": "One chunk of an inbound attachment (decision S-11). Frames of one `(turn_id, attachment_id)` are\nsent in `index` order, `last` on the final one; `size` and `sha256` describe the whole file and\nrepeat on every frame. `filename` is untrusted (the supervisor sanitizes it).",
       "properties": {
@@ -1190,6 +1283,34 @@
         },
         "kind": {
           "const": "pty.close"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "body": {
+          "$ref": "#/$defs/ExecOpen"
+        },
+        "kind": {
+          "const": "exec.open"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "body": {
+          "$ref": "#/$defs/ExecEof"
+        },
+        "kind": {
+          "const": "exec.eof"
         }
       },
       "required": [

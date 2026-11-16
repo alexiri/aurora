@@ -740,8 +740,10 @@ both get exactly the same process (`12 §SSH channels`).
 **API side.** One SFTP session per (person, agent) per API replica, multiplexing that person's
 requests by SFTP request id; idle `FILES_SESSION_IDLE` 60 s, lifetime `FILES_SESSION_LIFETIME` 1 h
 (the next request opens a new one); any leg close drops it and fails in-flight requests 503
-`files_unavailable`. Writes are pipelined at most 4 × 32 KiB outstanding per transfer, so a transfer
-holds a bounded buffer; the leg's credit window bounds the rest. Only these SFTP requests are ever
+`files_unavailable`. Writes are pipelined at most 4 requests of 32 KiB less 512 B of data outstanding per
+transfer (so four whole requests, headers included, stay inside the leg's 128 KiB credit window: the
+runner closes the leg 4502 when the API sends more than the window unreplied, found on kind with
+1 MiB uploads, P5-FILES-1), so a transfer holds a bounded buffer; the leg's credit window bounds the rest. Only these SFTP requests are ever
 sent: `INIT`, `REALPATH`, `STAT`, `LSTAT`, `FSTAT`, `OPENDIR`, `READDIR`, `CLOSE`, `OPEN`, `READ`,
 `WRITE`, `FSETSTAT` (mode only), `MKDIR`, `RMDIR`, `REMOVE`, `READLINK` and the extension
 `posix-rename@openssh.com` (checked in the server's `VERSION` extensions; without it the session is

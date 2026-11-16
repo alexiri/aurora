@@ -28,6 +28,7 @@ describe("agent sections", () => {
       peers: "triggers",
       computer: "computer",
       terminal: "computer",
+      files: "computer",
       previews: "computer",
       connect: "computer",
       access: "access",
@@ -42,7 +43,12 @@ describe("agent sections", () => {
     expect(s.find((x) => x.id === "triggers")!.pages.map((p) => p.label)).toEqual(["Schedules", "Webhooks", "Channels", "Peers"]);
     expect(s.find((x) => x.id === "computer")!.pages.map((p) => p.label)).toEqual(["Computer"]);
     const all = availableSections({ byo: false, previews: true, terminal: true });
-    expect(all.find((x) => x.id === "computer")!.pages.map((p) => p.label)).toEqual(["Computer", "Terminal", "Previews"]);
+    expect(all.find((x) => x.id === "computer")!.pages.map((p) => p.label)).toEqual(["Computer", "Terminal", "Files", "Previews"]);
+    // (P5-FILES-2, D-316(b)) Files follows the Terminal's switch exactly and has no gate of its own.
+    const noTerminal = availableSections({ byo: false, previews: true, terminal: false });
+    expect(noTerminal.find((x) => x.id === "computer")!.pages.map((p) => p.label)).toEqual(["Computer", "Previews"]);
+    expect(isPageAvailable("files", { byo: true, previews: true, terminal: true })).toBe(false);
+    expect(resolvePage("files", { byo: false, previews: false, terminal: false })).toBe("chat");
   });
 
   it("gives a BYO agent Behaviour (Instructions), Computer (Computer: Connect) and Access only", () => {

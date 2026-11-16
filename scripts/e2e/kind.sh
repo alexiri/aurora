@@ -69,6 +69,11 @@ PREVIEWS_DOMAIN="${AURORA_E2E_PREVIEWS_DOMAIN:-}"
 if [ -n "$PREVIEWS_DOMAIN" ]; then
   HELM_OVERRIDES+=(--set relay.enabled=true --set "relay.domain=$PREVIEWS_DOMAIN" --set config.previews.enabled=true)
 fi
+# (P5-FILES-4) AURORA_E2E_TERMINAL=1: install with `terminal.enabled=true` (the web terminal and, with it, the Files
+# routes, D-316(b)); scripts/e2e/files.sh sets it. Default (unset/0): off, as in the shipped chart.
+if [ "${AURORA_E2E_TERMINAL:-0}" = "1" ]; then
+  HELM_OVERRIDES+=(--set terminal.enabled=true)
+fi
 # (P5-CERN-ADDONS) AURORA_E2E_EXTRA_CA_FILE=<PEM file>: trust extra root(s) in every workload (the chart's
 # extraCaBundle, from a ConfigMap kind.sh creates), e.g. the CERN Root CA that signs xldap.cern.ch.
 # AURORA_E2E_CERN_ADDONS=1 additionally runs k7 (registers github.com/alexiri/aurora-addons-cern, needs internet).

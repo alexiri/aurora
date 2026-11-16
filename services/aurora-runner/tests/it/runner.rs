@@ -671,6 +671,48 @@ async fn registration_carries_the_configured_image_harnesses() {
     task.await.unwrap().unwrap();
 }
 
+/// (P5-FILES-1, D-316) A runner with the terminal enabled registers the `files` capability
+/// beside `terminal`; with it off neither is sent (an older API ignores both).
+#[tokio::test]
+async fn registration_carries_the_files_capability_with_the_terminal() {
+    for terminal in [true, false] {
+        let server = MockServer::start().await;
+        mount_basics(&server, Uuid::new_v4(), ReportStatus::Applied, vec![]).await;
+        let (tx, rx) = watch::channel(false);
+        let mut st = settings(&server.uri());
+        st.terminal = terminal;
+        let task = tokio::spawn(
+            Runner::new(
+                st,
+                Arc::new(FakeBackend::new(4)),
+                Arc::new(StubHub::default()),
+            )
+            .run(rx),
+        );
+        let reqs = loop {
+            let r = server.received_requests().await.unwrap();
+            if r.iter().any(|q| q.url.path().ends_with("/register")) {
+                break r;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        };
+        let register = reqs
+            .iter()
+            .find(|r| r.url.path().ends_with("/register"))
+            .unwrap();
+        let reg: Value = serde_json::from_slice(&register.body).unwrap();
+        let caps = &reg["capabilities"];
+        assert_eq!(caps["files"].as_bool().unwrap_or(false), terminal, "{caps}");
+        assert_eq!(
+            caps["terminal"].as_bool().unwrap_or(false),
+            terminal,
+            "{caps}"
+        );
+        tx.send(true).unwrap();
+        task.await.unwrap().unwrap();
+    }
+}
+
 #[tokio::test]
 async fn executor_serializes_per_sandbox_and_forwards_socket_work() {
     let server = MockServer::start().await;

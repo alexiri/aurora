@@ -81,12 +81,12 @@ pub async fn insert(
 }
 
 pub async fn get<'e, E: PgExecutor<'e>>(exec: E, id: Uuid) -> Result<Option<OpRow>, DbError> {
-    Ok(
-        sqlx::query_as(&format!("SELECT {COLS} FROM channel_ops WHERE id=$1"))
-            .bind(id)
-            .fetch_optional(exec)
-            .await?,
-    )
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT {COLS} FROM channel_ops WHERE id=$1"
+    )))
+    .bind(id)
+    .fetch_optional(exec)
+    .await?)
 }
 
 /// An op as handed to a connector.
@@ -259,9 +259,9 @@ pub async fn lock(
     id: Uuid,
     connector_id: &str,
 ) -> Result<Option<OpRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {COLS} FROM channel_ops WHERE id=$1 AND connector_id=$2 FOR UPDATE"
-    ))
+    )))
     .bind(id)
     .bind(connector_id)
     .fetch_optional(conn)
@@ -433,9 +433,9 @@ pub async fn by_dedupe_key<'e, E: PgExecutor<'e>>(
     exec: E,
     key: &str,
 ) -> Result<Option<OpRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {COLS} FROM channel_ops WHERE dedupe_key=$1"
-    ))
+    )))
     .bind(key)
     .fetch_optional(exec)
     .await?)
