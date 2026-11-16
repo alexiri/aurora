@@ -57,6 +57,31 @@ for (const scheme of ["light", "dark"] as const) {
         expect(await overflow(page)).toBeLessThanOrEqual(0);
         expect(await axeClean(page)).toEqual([]);
       });
+
+      // SET-4: the Helm provider beside a dashboard provider, the provider dialog and the Email page.
+      test("the sign-in page lists providers and opens the provider dialog", async ({ page }) => {
+        await openRoute(page, "/admin/settings/sign-in", scheme);
+        await expect(page.getByRole("heading", { name: "Sign-in", level: 1 })).toBeVisible();
+        await expect(page.getByText("Managed by Helm")).toBeVisible();
+        await expect(page.getByRole("button", { name: "Edit corp" })).toBeVisible();
+        await expect(page.getByRole("button", { name: "Edit helm" })).toHaveCount(0);
+        expect(await overflow(page)).toBeLessThanOrEqual(0);
+        expect(await axeClean(page)).toEqual([]);
+        await page.getByRole("button", { name: "Edit corp" }).click();
+        const dialog = page.getByRole("dialog");
+        await expect(dialog.getByRole("button", { name: "Test discovery" })).toBeVisible();
+        await expect(dialog.getByLabel("Issuer")).toHaveValue("https://corp.example.test/realms/main");
+        expect(await overflow(page)).toBeLessThanOrEqual(0);
+        expect(await axeClean(page)).toEqual([]);
+      });
+
+      test("the email page offers a test e-mail", async ({ page }) => {
+        await openRoute(page, "/admin/settings/email", scheme);
+        await expect(page.getByRole("heading", { name: "Email", level: 1 })).toBeVisible();
+        await expect(page.getByRole("button", { name: "Send test e-mail" })).toBeVisible();
+        expect(await overflow(page)).toBeLessThanOrEqual(0);
+        expect(await axeClean(page)).toEqual([]);
+      });
     });
   }
 }

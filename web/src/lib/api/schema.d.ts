@@ -373,23 +373,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/admin/identity": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** The Helm-configured role mapping per OIDC provider, read-only (D-139, C-511). */
-        get: operations["adminIdentity"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/v1/admin/oauth-clients": {
         parameters: {
             query?: never;
@@ -935,6 +918,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/admin/settings/email/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Send one test message to the caller's own address with the proposed or effective e-mail
+         *     settings (C-781). Nothing is saved; the password is never logged or returned.
+         */
+        post: operations["adminTestEmail"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/admin/settings/export": {
         parameters: {
             query?: never;
@@ -1006,6 +1009,26 @@ export interface paths {
          *     destination guard, 10 s. Nothing is saved; no re-authentication (nothing changes).
          */
         post: operations["adminTestLlmEndpoint"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/settings/sign_in/provider-test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Discover an OIDC issuer without saving anything (C-780): the discovery document through the
+         *     destination guard, 10 s. No secret is needed or used.
+         */
+        post: operations["adminTestOidcProvider"];
         delete?: never;
         options?: never;
         head?: never;
@@ -5204,10 +5227,6 @@ export interface components {
             update_available: boolean;
             version: string;
         };
-        /** @description `GET /v1/admin/identity` (C-511): the Helm-configured role mapping, read-only, no secrets. */
-        AdminIdentity: {
-            providers: components["schemas"]["IdentityProvider"][];
-        };
         /** @description One organization in the instance-admin list (operator view: no org data). */
         AdminOrg: {
             /** Format: int64 */
@@ -6814,6 +6833,19 @@ export interface components {
          * @enum {string}
          */
         EgressPosture: "open" | "credentialed_only";
+        /** @description `POST /v1/admin/settings/email/test` body (C-781). */
+        EmailTestRequest: {
+            /**
+             * @description The section's values as in a save; absent = the settings in force. A secret written as
+             *     `{ "$secret": "<plaintext>" }` is used for this test only and never stored.
+             */
+            values?: Record<string, never> | null;
+        };
+        EmailTestResult: {
+            /** @description `connect`, `tls`, `auth`, `rejected`, `timeout` or `log_only`. */
+            error_code?: string | null;
+            sent: boolean;
+        };
         /** @description Request body (C-779). */
         EndpointTestRequest: {
             /** @description One endpoint entry, as in `llm.endpoints` (TOML shape as JSON). */
@@ -7154,23 +7186,6 @@ export interface components {
             id: string;
             /** @enum {string} */
             kind: "group";
-        };
-        IdentityMapping: {
-            instance_admin: boolean;
-            org?: components["schemas"]["IdpOrgGrant"] | null;
-            value: string;
-            workspaces: components["schemas"]["IdpWorkspaceGrant"][];
-        };
-        IdentityProvider: {
-            display_name?: string | null;
-            id: string;
-            issuer: string;
-            require_role: boolean;
-            /** @description Dot path of the role claim; `null` when the provider reads no roles. */
-            role_claim?: string | null;
-            /** @description `id_token` | `userinfo`. */
-            role_claim_source: string;
-            role_mappings: components["schemas"]["IdentityMapping"][];
         };
         /** @description What one claim value granted (a `role_mappings[]` entry that matched). */
         IdpGrant: {
@@ -9881,6 +9896,24 @@ export interface components {
             };
             tenant_label?: string | null;
             warnings: string[];
+        };
+        /** @description `POST /v1/admin/settings/sign_in/provider-test` body (C-780). */
+        ProviderTestRequest: {
+            /** @description One provider entry, as in `auth.oidc_providers` (the secret is not needed). */
+            provider: Record<string, never>;
+        };
+        /** @description What discovery found. */
+        ProviderTestResult: {
+            authorization_endpoint?: string | null;
+            /**
+             * @description `issuer_invalid`, `issuer_not_https`, `destination_refused`, `issuer_mismatch`,
+             *     `not_oidc`, `http_error` or `unreachable`.
+             */
+            error_code?: string | null;
+            issuer?: string | null;
+            jwks_uri?: string | null;
+            ok: boolean;
+            token_endpoint?: string | null;
         };
         PublishRequest: {
             /** Format: int64 */
@@ -13258,51 +13291,6 @@ export interface operations {
             };
         };
     };
-    adminIdentity: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AdminIdentity"];
-                };
-            };
-            /** @description Unauthenticated: no credential, or an invalid or expired one */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            /** @description Too many requests: the per-principal rate limit */
-            429: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-        };
-    };
     listInstanceOauthClients: {
         parameters: {
             query?: {
@@ -15552,6 +15540,71 @@ export interface operations {
             };
         };
     };
+    adminTestEmail: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EmailTestRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EmailTestResult"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     adminExportSettings: {
         parameters: {
             query?: {
@@ -15785,6 +15838,71 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["EndpointTestResult"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminTestOidcProvider: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProviderTestRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProviderTestResult"];
                 };
             };
             400: {

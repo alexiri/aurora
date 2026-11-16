@@ -120,7 +120,45 @@ pub fn config_source(extra: &str) -> aurora_config::ConfigSource {
     aurora_config::ConfigSource::from_toml(&text, env).unwrap()
 }
 
+/// A deployment configuration written out in full (no test fixture, so no development IdP) and
+/// extra environment variables: SET-4's sign-in tests need a configuration whose providers are
+/// exactly the ones the text defines.
+pub fn config_source_custom(text: &str, extra_env: &[(&str, &str)]) -> aurora_config::ConfigSource {
+    let k = base64::engine::general_purpose::STANDARD.encode([b'a'; 32]);
+    let mut env: std::collections::BTreeMap<String, String> = [
+        (
+            "AURORA_DATABASE_URL",
+            "postgres://x:x@127.0.0.1:1/x".to_owned(),
+        ),
+        ("AURORA_ENCRYPTION_KEYS", format!("k1:{k}")),
+        ("AURORA_ENCRYPTION_ACTIVE_KEY", "k1".to_owned()),
+        ("AURORA_SIGNING_KEY", k.clone()),
+        ("AURORA_INTERNAL_SECRET", k.clone()),
+        ("AURORA_RUNNER_SESSION_KEY", k),
+        ("AURORA_RUNNER_TOKEN", "aur_devtoken".to_owned()),
+        ("AURORA_CONNECTOR_TOKEN", "aun_devtoken".to_owned()),
+    ]
+    .into_iter()
+    .map(|(a, b)| (a.to_owned(), b))
+    .collect();
+    for (a, b) in extra_env {
+        env.insert((*a).to_owned(), (*b).to_owned());
+    }
+    let text = format!(
+        "[server]\nexternal_url = \"http://localhost:4100\"\nbind = \"127.0.0.1\"\n[runner]\nbackend = \"fake\"\napi_url = \"http://localhost:4101\"\n{text}\n"
+    );
+    aurora_config::ConfigSource::from_toml(&text, env).unwrap()
+}
+
 impl Harness {
+    /// Attach a configuration source built by [`config_source_custom`].
+    #[must_use]
+    pub fn with_source(mut self, source: aurora_config::ConfigSource) -> Self {
+        self.state = self.state.clone().with_config_source(source);
+        self.app = test_router(self.state.clone());
+        self
+    }
+
     pub async fn new() -> Self {
         Self::with_config(|_| {}).await
     }

@@ -21,5 +21,5 @@ pub fn router() -> OpenApiRouter<AppState> {
     )
 )]
 async fn get_instance(State(state): State<AppState>) -> Json<InstanceInfo> {
-    Json(instance_info(&state.config))
+    Json(instance_info(&state.config, &state.auth()))
 }

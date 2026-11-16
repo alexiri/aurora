@@ -95,7 +95,7 @@ async fn create_org(
     State(s): State<AppState>,
     Json(req): Json<CreateOrgRequest>,
 ) -> Result<(StatusCode, Json<CreateOrgResponse>), ApiError> {
-    if s.config.org_creation == OrgCreation::InstanceAdmins && !c.is_instance_admin {
+    if s.auth().org_creation == OrgCreation::InstanceAdmins && !c.is_instance_admin {
         return Err(ApiError::new(
             StatusCode::FORBIDDEN,
             "org_creation_forbidden",

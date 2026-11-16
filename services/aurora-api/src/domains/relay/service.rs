@@ -650,7 +650,14 @@ pub async fn redeem(
         return Err(grant_invalid());
     }
     // The dashboard session must still be live and the user must still pass the access law.
-    let live = sessions::is_live(&s.pool, g.session_id, s.config.auth.session_idle_secs).await?;
+    let lifetimes = s.auth();
+    let live = sessions::is_live(
+        &s.pool,
+        g.session_id,
+        lifetimes.auth.session_idle_secs,
+        lifetimes.auth.session_absolute_secs,
+    )
+    .await?;
     if !live {
         return Err(grant_invalid());
     }

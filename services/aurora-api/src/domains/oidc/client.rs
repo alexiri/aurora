@@ -68,9 +68,32 @@ impl OidcClients {
         })
     }
 
+    /// One uncached discovery of `issuer` (SET-4: the provider test and the check on a save). The
+    /// error is a short reason code, never the response body.
+    pub async fn discover(&self, issuer: &str) -> Result<CoreProviderMetadata, &'static str> {
+        let issuer = IssuerUrl::new(issuer.to_owned()).map_err(|_| "issuer_invalid")?;
+        CoreProviderMetadata::discover_async(issuer, &self.http)
+            .await
+            .map_err(|e| {
+                let m = e.to_string().to_ascii_lowercase();
+                if m.contains("mismatch") || m.contains("issuer") {
+                    "issuer_mismatch"
+                } else if m.contains("parse") || m.contains("deserial") {
+                    "not_oidc"
+                } else if m.contains("status") || m.contains("http") {
+                    "http_error"
+                } else {
+                    "unreachable"
+                }
+            })
+    }
+
     /// Discovery document + JWKS, cached for ten minutes.
     pub(super) async fn metadata(&self, p: &OidcProvider) -> Result<CoreProviderMetadata, String> {
-        if let Some((at, m)) = self.cache.lock().await.get(&p.id)
+        // Keyed by id and issuer: a provider whose issuer the dashboard changed is discovered
+        // again at once (SET-4).
+        let key = format!("{}\n{}", p.id, p.issuer);
+        if let Some((at, m)) = self.cache.lock().await.get(&key)
             && at.elapsed() < METADATA_TTL
         {
             return Ok(m.clone());
@@ -82,7 +105,7 @@ impl OidcClients {
         self.cache
             .lock()
             .await
-            .insert(p.id.clone(), (Instant::now(), m.clone()));
+            .insert(key, (Instant::now(), m.clone()));
         Ok(m)
     }
 
@@ -118,6 +141,10 @@ impl OidcClients {
 
     /// Drop cached metadata (e.g. after a signature failure, to pick up rotated keys).
     pub(super) async fn forget(&self, id: &str) {
-        self.cache.lock().await.remove(id);
+        let prefix = format!("{id}\n");
+        self.cache
+            .lock()
+            .await
+            .retain(|k, _| !k.starts_with(&prefix));
     }
 }
