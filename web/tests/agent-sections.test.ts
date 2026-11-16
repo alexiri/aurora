@@ -30,6 +30,7 @@ describe("agent sections", () => {
       terminal: "computer",
       files: "computer",
       previews: "computer",
+      ssh: "computer",
       connect: "computer",
       access: "access",
     });

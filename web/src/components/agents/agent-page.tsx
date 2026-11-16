@@ -34,6 +34,7 @@ import { InstructionsTab } from "./instructions-tab";
 import { PreviewsTab } from "./previews-tab";
 import { AGENT_PAGE_IDS, availableSections, resolvePage, SECTION_OF, type AgentPageId, type SectionId } from "./sections";
 import { sandboxLook } from "./status-rail/status-data";
+import { SshPage } from "./ssh-page";
 import { TerminalTab } from "./terminal-tab";
 import { useInstance, useOrg } from "@/lib/api/queries";
 
@@ -68,6 +69,8 @@ export function AgentPage() {
   // `terminal.enabled` is on. `can_use` is the tab's own authority (the API re-checks it on
   // every open; a caller without it gets 403/404 there and this tab's notices say so).
   const terminalEnabled = instance.data?.features.terminal === true;
+  // (P4-SSH-1, C-795) The SSH page: hosted agents while `ssh.enabled` is on (independent of the terminal).
+  const sshEnabled = instance.data?.features.ssh === true;
   // A deep link to a conversation (`?c=<id>`, D-102) opens the Chat page. `?tab=` selects a page by its id (C-506: the
   // chat error links use `?tab=access` and `?tab=instructions`); an unknown or unavailable value falls back to the
   // agent's default page (Chat for a hosted agent, Instructions for a BYO one, D-200).
@@ -97,7 +100,7 @@ export function AgentPage() {
   if (!agent) return <ErrorState error={{ code: "not_found" }} />;
 
   const byo = agent.kind === "byo";
-  const availability = { byo, previews: previewsEnabled, terminal: terminalEnabled };
+  const availability = { byo, previews: previewsEnabled, terminal: terminalEnabled, ssh: sshEnabled };
   const sections = availableSections(availability);
   const tab = resolvePage(requestedTab, availability);
   const sectionId = SECTION_OF[tab];
@@ -255,6 +258,7 @@ export function AgentPage() {
           {tab === "terminal" && !byo && terminalEnabled ? <TerminalTab agentId={agent.id} frozen={agent.frozen !== null} /> : null}
           {tab === "files" && !byo && terminalEnabled ? <FilesTab agentId={agent.id} frozen={agent.frozen !== null} /> : null}
           {tab === "previews" && !byo ? <PreviewsTab agentId={agent.id} frozen={agent.frozen !== null} /> : null}
+          {tab === "ssh" && !byo && sshEnabled ? <SshPage agentId={agent.id} frozen={agent.frozen !== null} /> : null}
           {tab === "instructions" ? <InstructionsTab key={agent.updated_at} agent={agent} wsId={wsId!} /> : null}
           {tab === "access" && workspace.data ? (
             <AccessTab agentId={agent.id} wsId={wsId!} orgId={workspace.data.org_id} canOwn={canOwn} hosted={!byo} base={base} />

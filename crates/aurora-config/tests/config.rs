@@ -2536,3 +2536,56 @@ fn previews_limits_and_awake_cap() {
     // At the boundaries: accepted.
     with("shares_per_agent = 1\nshares_per_org = 200\nawake_cap_secs = 43200\n").unwrap();
 }
+
+/// P4-SSH-1 (D-239(d), C-797): `[ssh]` defaults, the resolved public host, the bounds, and the
+/// startup refusal that names `AURORA_SSH_CA_KEY` (never echoing it).
+#[test]
+fn ssh_section_defaults_bounds_and_ca_key_refusal() {
+    let seed = "ed25519:BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc="; // 32 bytes of 0x07
+    let api = |extra: &str, env: &[(&str, &str)]| {
+        load_with(&format!("{BASE}{extra}"), env)
+            .unwrap()
+            .api_config()
+    };
+    // Off by default: no key needed; the host defaults to the external URL's host, port 22.
+    let c = api("", &[]).unwrap();
+    assert!(!c.ssh.enabled);
+    assert_eq!(c.ssh.public_host, "aurora.example.org");
+    assert_eq!((c.ssh.public_port, c.ssh.cert_ttl_secs), (22, 900));
+    assert!(c.ssh_ca_key.is_none());
+    // Enabled without the key, or with a garbled one: refused, naming the variable only.
+    let e = api("[ssh]\nenabled = true\n", &[]).unwrap_err();
+    assert!(e.has_key("AURORA_SSH_CA_KEY"), "{e}");
+    let e = api(
+        "[ssh]\nenabled = true\n",
+        &[("AURORA_SSH_CA_KEY", "super-secret-garbage")],
+    )
+    .unwrap_err();
+    assert!(e.has_key("AURORA_SSH_CA_KEY"), "{e}");
+    assert!(!e.to_string().contains("super-secret-garbage"), "{e}");
+    // Enabled with a good key; the key is redacted in Debug output.
+    let c = api(
+        "[ssh]\nenabled = true\npublic_host = \"ssh.example.org\"\npublic_port = 2222\ncert_ttl_secs = 60\n",
+        &[("AURORA_SSH_CA_KEY", seed)],
+    )
+    .unwrap();
+    assert!(c.ssh.enabled);
+    assert_eq!(c.ssh.public_host, "ssh.example.org");
+    assert_eq!(c.ssh.public_port, 2222);
+    assert!(!format!("{c:?}").contains("BwcHBwcH"));
+    // Bounds and shapes.
+    for (extra, key) in [
+        ("cert_ttl_secs = 59\n", "ssh.cert_ttl_secs"),
+        ("cert_ttl_secs = 86401\n", "ssh.cert_ttl_secs"),
+        ("public_port = 0\n", "ssh.public_port"),
+        ("public_host = \"ssh://x\"\n", "ssh.public_host"),
+        (
+            "[ssh.ca]\nprevious_public_keys = [\"ssh-rsa AAAA\"]\n",
+            "ssh.ca.previous_public_keys[0]",
+        ),
+    ] {
+        let e = api(&format!("[ssh]\n{extra}"), &[]).unwrap_err();
+        assert!(e.has_key(key), "{extra}: {e}");
+    }
+    api("[ssh]\ncert_ttl_secs = 86400\n", &[]).unwrap();
+}

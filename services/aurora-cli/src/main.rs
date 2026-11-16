@@ -5,6 +5,7 @@ mod approvals;
 mod forward;
 mod plugin;
 mod run;
+mod ssh;
 mod token;
 
 use std::io::{IsTerminal, Write};
@@ -74,6 +75,8 @@ enum Cmd {
         #[command(subcommand)]
         cmd: ApprovalsCmd,
     },
+    /// SSH into a hosted agent's sandbox (a short-lived certificate for your registered key).
+    Ssh(ssh::SshCmd),
 }
 
 #[derive(Subcommand)]
@@ -135,6 +138,7 @@ async fn main() {
 async fn real_main() -> Result<i32> {
     match Cli::parse().cmd {
         Cmd::Plugin { cmd } => plugin::run(cmd),
+        Cmd::Ssh(cmd) => ssh::run(cmd).await,
         Cmd::Login { url, hostname } => {
             let path = config::default_path()?;
             let url = match url {

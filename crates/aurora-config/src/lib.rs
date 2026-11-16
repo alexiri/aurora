@@ -13,6 +13,7 @@ mod load;
 mod raw;
 mod redacted;
 mod settings;
+mod ssh;
 mod urlcheck;
 mod validate;
 mod vault_store;
@@ -35,5 +36,6 @@ pub use settings::{
     SECTION_IDS, SectionDef, SettingDef, SettingType, Source, Stored, TEST_SECTION, TEST_SECTION_B,
     dashboard_store_kind_allowed, list_entries, registry, sections,
 };
+pub use ssh::{parse_ssh_ed25519_private_key, parse_ssh_ed25519_public_key};
 pub use validate::*;
 pub use vault_store::dashboard_store_violations;

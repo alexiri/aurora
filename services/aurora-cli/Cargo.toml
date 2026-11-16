@@ -22,6 +22,8 @@ aurora-hookhost = { workspace = true }
 aurora-policy = { workspace = true }
 aurora-registry = { workspace = true }
 ed25519-dalek = { workspace = true }
+# (P4-SSH-1, C-798) reads a certificate's validity and key to decide whether to reuse it
+ssh-key = { workspace = true }
 pulldown-cmark = { workspace = true, features = ["html"] }
 serde = { workspace = true }
 serde_yaml = { workspace = true }

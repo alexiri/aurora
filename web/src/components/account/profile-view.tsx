@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 
@@ -15,7 +16,8 @@ import { Section } from "@/components/ui/section";
 import { useUpdateMe } from "@/lib/api/account";
 import { errorMessage, fieldErrors } from "@/lib/api/errors";
 import { usePatchOnboarding } from "@/lib/api/onboarding";
-import { useSession, type Me } from "@/lib/api/queries";
+import { useInstance, useSession, type Me } from "@/lib/api/queries";
+import { accountRoutes } from "@/lib/routes";
 
 function ProfileForm({ me }: { me: Me }) {
   const update = useUpdateMe();
@@ -97,6 +99,7 @@ function ProfileForm({ me }: { me: Me }) {
 
 export function ProfileView() {
   const me = useSession();
+  const sshEnabled = useInstance().data?.features?.ssh === true;
   if (me.isPending) return <Loading />;
   if (me.isError) return <ErrorState error={me.error} onRetry={() => me.refetch()} />;
   return (
@@ -144,6 +147,18 @@ export function ProfileView() {
       >
         <ApprovalNotifications me={me.data} />
       </Section>
+      {sshEnabled ? (
+        <Section
+          id="ssh-keys"
+          title="SSH keys"
+          description="Register the public keys you connect with, to open a shell in a hosted agent's sandbox."
+          card
+        >
+          <Link href={accountRoutes.ssh} className="font-medium text-accent-ink underline">
+            Manage your SSH keys
+          </Link>
+        </Section>
+      ) : null}
       <Section id="getting-started" title="Getting started" description="Replay the introduction to Aurora." card>
         <GettingStartedControls />
       </Section>

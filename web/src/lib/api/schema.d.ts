@@ -1960,6 +1960,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/agents/{agent}/ssh-certificate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Mint a short-lived SSH user certificate for an agent (session or the caller's own API key). */
+        post: operations["mintSshCertificate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/agents/{agent}/start-failures": {
         parameters: {
             query?: never;
@@ -3160,6 +3177,45 @@ export interface paths {
         head?: never;
         /** Change the caller's onboarding progress; only the fields sent change. */
         patch: operations["patchMeOnboarding"];
+        trace?: never;
+    };
+    "/v1/me/ssh-keys": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The caller's registered SSH public keys, newest first. */
+        get: operations["listSshKeys"];
+        put?: never;
+        /** Register an `ssh-ed25519` public key (session only). */
+        post: operations["createSshKey"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/me/ssh-keys/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete one of the caller's keys (session only); sessions certified by it end at the next
+         *     heartbeat.
+         */
+        delete: operations["deleteSshKey"];
+        options?: never;
+        head?: never;
+        /** Rename one of the caller's keys (session only). */
+        patch: operations["renameSshKey"];
         trace?: never;
     };
     "/v1/oauth-clients/{id}": {
@@ -4452,6 +4508,23 @@ export interface paths {
         head?: never;
         /** Edit a binding (`can_own`). */
         patch: operations["patchSpaceBinding"];
+        trace?: never;
+    };
+    "/v1/ssh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Connection facts: the address, the certificate lifetime and the terminators' host keys. */
+        get: operations["getSshFacts"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/v1/telemetry/traces": {
@@ -6655,6 +6728,12 @@ export interface components {
              */
             name?: string | null;
         };
+        CreateSshKeyRequest: {
+            /** @description At most 80 characters; default: the key's comment, else "SSH key". */
+            name?: string | null;
+            /** @description One `ssh-ed25519 <base64> [comment]` line, at most 4096 bytes. */
+            public_key: string;
+        };
         CreateToken: {
             /** Format: int32 */
             expires_in_days?: number | null;
@@ -6972,6 +7051,11 @@ export interface components {
             /** @description (phase 4, P4-PRV-1) Port previews are configured on this instance. */
             previews: boolean;
             /**
+             * @description (phase 5, P4-SSH-1, C-791) SSH access to sandboxes is enabled on this instance; the
+             *     Account › SSH keys page and the agent page's SSH page exist only when this is true.
+             */
+            ssh: boolean;
+            /**
              * @description (phase 4, P4-TERM, C-622) The web terminal is enabled on this instance; the Terminal
              *     tab exists only when this is true.
              */
@@ -7273,6 +7357,10 @@ export interface components {
             claim_status: string;
             host: string;
             path_prefix?: string | null;
+        };
+        HostKey: {
+            fingerprint: string;
+            public_key: string;
         };
         /** @enum {string} */
         HostState: "running" | "error";
@@ -7940,6 +8028,13 @@ export interface components {
             /** @description `none`, `running`, `succeeded`, `failed` or `dry_run`. */
             state: string;
             target?: string | null;
+        };
+        MintCertificateRequest: {
+            /**
+             * @description The registered key the certificate certifies (its fingerprint must be one of the
+             *     caller's `ssh_keys`).
+             */
+            public_key: string;
         };
         ModelItem: {
             display_name?: string | null;
@@ -10291,6 +10386,9 @@ export interface components {
             package_id: string;
             version: string;
         };
+        RenameSshKeyRequest: {
+            name: string;
+        };
         Replica: {
             advertised_host: string;
             /** Format: uuid */
@@ -11274,6 +11372,62 @@ export interface components {
             /** Format: uuid */
             id: string;
             name: string;
+        };
+        /** @description A minted SSH user certificate (C-791). */
+        SshCertificate: {
+            /** @description The `ssh-ed25519-cert-v01@openssh.com` line, ready for `id_ed25519-cert.pub`. */
+            certificate: string;
+            host: string;
+            key_id: string;
+            /** @description `known_hosts` lines for the terminators' host keys (empty until one registers). */
+            known_hosts: string[];
+            /** Format: int32 */
+            port: number;
+            /** @description The agent id (the certificate's only principal). */
+            principal: string;
+            /** @description The serial as a decimal string (a u64). */
+            serial: string;
+            /** @description The SSH user name to connect as: the agent id. */
+            username: string;
+            /** Format: date-time */
+            valid_after: string;
+            /** Format: date-time */
+            valid_before: string;
+        };
+        /** @description Connection facts (C-792). */
+        SshFacts: {
+            /** Format: int64 */
+            cert_ttl_secs: number;
+            host: string;
+            host_keys: components["schemas"]["HostKey"][];
+            known_hosts: string[];
+            /** Format: int32 */
+            port: number;
+            /**
+             * Format: int32
+             * @description SSH terminator replicas seen in the last 90 s (`0` until P4-SSH-2's terminators exist).
+             */
+            terminators_live: number;
+        };
+        /** @description A person's registered SSH public key (C-790). */
+        SshKey: {
+            /** @description Always `ssh-ed25519`. */
+            algorithm: string;
+            /** Format: date-time */
+            created_at: string;
+            /** @description `SHA256:` + unpadded base64 of the key blob; equals `ssh-keygen -lf`. */
+            fingerprint: string;
+            /** Format: uuid */
+            id: string;
+            /** Format: date-time */
+            last_used_at?: string | null;
+            name: string;
+            /** @description Canonical OpenSSH form `ssh-ed25519 <base64>` (no comment). */
+            public_key: string;
+        };
+        SshKeyList: {
+            /** @description Newest first. */
+            keys: components["schemas"]["SshKey"][];
         };
         /** @description (FIX-029, C-611) One entry of the boot's start log (`sandboxes.start_log`, C-612). */
         StartLogEntry: {
@@ -20479,6 +20633,81 @@ export interface operations {
             };
         };
     };
+    mintSshCertificate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent id */
+                agent: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MintCertificateRequest"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SshCertificate"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            423: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     agentStartFailures: {
         parameters: {
             query?: never;
@@ -25149,6 +25378,245 @@ export interface operations {
                 };
             };
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    listSshKeys: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SshKeyList"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    createSshKey: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateSshKeyRequest"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SshKey"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    deleteSshKey: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description SSH key id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    renameSshKey: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description SSH key id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RenameSshKeyRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SshKey"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -31769,6 +32237,50 @@ export interface operations {
                 };
             };
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    getSshFacts: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SshFacts"];
+                };
+            };
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };

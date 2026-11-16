@@ -214,6 +214,28 @@ const EXEMPT: &[(&str, &str, &str)] = &[
         "P5-FILES-1: see GET /files",
     ),
     (
+        "GET",
+        "/v1/me/ssh-keys",
+        "P4-SSH-1 (C-790): 404 `ssh_disabled` for everyone, before authentication, while `ssh.enabled` is off (this harness leaves it off); the auth matrix (session, own keys, service key, anonymous, session-only writes) is it/ssh.rs",
+    ),
+    ("POST", "/v1/me/ssh-keys", "P4-SSH-1: see GET /me/ssh-keys"),
+    (
+        "PATCH",
+        "/v1/me/ssh-keys/{id}",
+        "P4-SSH-1: see GET /me/ssh-keys",
+    ),
+    (
+        "DELETE",
+        "/v1/me/ssh-keys/{id}",
+        "P4-SSH-1: see GET /me/ssh-keys",
+    ),
+    (
+        "POST",
+        "/v1/agents/{agent}/ssh-certificate",
+        "P4-SSH-1 (C-791, SEC-93): see GET /me/ssh-keys; the mint's own matrix (session, auk inside/outside its workspace, auo, service key, agent token, anonymous, non-can_use, BYO, frozen, unregistered key) is it/ssh.rs ssh_cert_auth_matrix",
+    ),
+    ("GET", "/v1/ssh", "P4-SSH-1 (C-792): see GET /me/ssh-keys"),
+    (
         "POST",
         "/v1/telemetry/traces",
         "FIX-146 D (C-732): any session may post browser spans, but the route is 404 for everyone \
