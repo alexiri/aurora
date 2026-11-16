@@ -71,7 +71,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=secret,id=actions_runtime_token \
     with-sccache cargo chef cook --release --locked --recipe-path recipe.json \
       -p aurora-api -p aurora-gateway -p aurora-hookhost \
-      -p aurora-runner -p aurora-relay -p aurora-connector-fake \
+      -p aurora-runner -p aurora-relay -p aurora-terminator -p aurora-connector-fake \
       -p aurora-connector-mattermost -p aurora-connector-host
 COPY . .
 # The repo pins a toolchain + wasm target via rust-toolchain.toml; the image's own stable toolchain
@@ -84,10 +84,10 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=secret,id=actions_runtime_token \
     with-sccache cargo build --release --locked \
       -p aurora-api -p aurora-gateway -p aurora-hookhost \
-      -p aurora-runner -p aurora-relay -p aurora-connector-fake \
+      -p aurora-runner -p aurora-relay -p aurora-terminator -p aurora-connector-fake \
       -p aurora-connector-mattermost -p aurora-connector-host \
     && mkdir /out \
-    && for b in aurora-api aurora-gateway aurora-hookhost aurora-runner aurora-relay \
+    && for b in aurora-api aurora-gateway aurora-hookhost aurora-runner aurora-relay aurora-terminator \
                  aurora-connector-fake aurora-connector-mattermost aurora-connector-host; do \
          cp target/release/$b /out/; done
 
@@ -177,6 +177,15 @@ FROM ${DISTROLESS_IMAGE} AS relay
 COPY --from=builder /out/aurora-relay /usr/local/bin/aurora-relay
 EXPOSE 4112 4193
 ENTRYPOINT ["/usr/local/bin/aurora-relay"]
+CMD ["serve"]
+
+# The SSH terminator (P4-SSH-2, docs/15 §SSH access): the certificate-only SSH server on 2222,
+# health and metrics on 4194. Holds no signing key, database or cluster credential.
+#   podman build -f images/services/Containerfile --target terminator -t aurora-terminator .
+FROM ${DISTROLESS_IMAGE} AS terminator
+COPY --from=builder /out/aurora-terminator /usr/local/bin/aurora-terminator
+EXPOSE 2222 4194
+ENTRYPOINT ["/usr/local/bin/aurora-terminator"]
 CMD ["serve"]
 
 FROM ${DISTROLESS_IMAGE} AS connector-fake

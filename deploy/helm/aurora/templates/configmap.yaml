@@ -60,7 +60,7 @@
       `stream_tls: false` (the default): the API hands the relay/leg-1 dialer
       `ws://<advertised_host>:4108` (`16 §W18`/`W19`). */ -}}
 {{- $terminal := .Values.terminal.enabled | default false -}}
-{{- if or .Values.relay.enabled $terminal }}{{- $_ := set $cfg.runner "stream_bind" "0.0.0.0" -}}{{- $_ := set $cfg.runner "advertised_host" (printf "%s-runner" $full) -}}{{- end -}}
+{{- if or .Values.relay.enabled $terminal .Values.ssh.enabled }}{{- $_ := set $cfg.runner "stream_bind" "0.0.0.0" -}}{{- $_ := set $cfg.runner "advertised_host" (printf "%s-runner" $full) -}}{{- end -}}
 {{- $_ := set $cfg "connector_host" (merge (dict "api_url" (printf "http://%s-api:4101" $full) "test_types" (.Values.connectorHost.testTypes | default false)) (default (dict) $cfg.connector_host)) -}}
 {{- /* (P4-GRP-2; phase 5, SET-5, D-237(d)) SCIM: `scim.enabled` (top-level) says the deployment
       routes /scim/v2 to the API, so it renders `scim.available` — `scim.enabled` is an
@@ -86,6 +86,25 @@
 {{- $_ := set $cfg "previews" $pv -}}
 {{- $rl := dict "api_url" (printf "http://%s-api:4101" $full) "listen" "0.0.0.0:4112" "ops_port" 4193 "previews_domain" .Values.relay.domain "max_streams" (int .Values.relay.max_streams) "max_streams_per_user" (int .Values.relay.max_streams_per_user) "request_body_max_bytes" (int .Values.relay.request_body_max_bytes) "trusted_proxies" (default (list) .Values.relay.trusted_proxies) -}}
 {{- $_ := set $cfg "relay" (merge $rl (default (dict) $cfg.relay)) -}}
+{{- end -}}
+{{- /* (P4-SSH-2, D-239, C-797) SSH access: `ssh.enabled` (top-level) is the single switch and MIRRORS
+      `config.ssh.enabled`, like `relay.enabled`/`config.previews.enabled`: it renders the terminator
+      workload, its Services, the NetworkPolicy posture and the runner's :4108 (above), so
+      `config.ssh.enabled=true` alone is refused (it would enable the API's routes with no terminator
+      behind them) and so is a disagreement. SSH sessions run on the web terminal's wiring: the
+      supervisor serves no exec unless the boot document carries `terminal`, i.e. the deployment
+      provides the terminal (`terminal.enabled`). The terminator's own tables ride [terminator]. */ -}}
+{{- $ss := default (dict) $cfg.ssh -}}
+{{- if and (not .Values.ssh.enabled) (get $ss "enabled") }}{{ fail "config.ssh.enabled=true alone does not turn SSH on: set the top-level ssh.enabled — config alone leaves the chart's terminator Deployment, its LoadBalancer and the NetworkPolicy wiring off" }}{{ end -}}
+{{- if .Values.ssh.enabled }}
+{{- if and (hasKey $ss "enabled") (not (get $ss "enabled")) }}{{ fail "ssh.enabled (top-level) mirrors config.ssh.enabled and they disagree; set only ssh.enabled, or make both equal" }}{{ end -}}
+{{- if not .Values.runner.enabled }}{{ fail "ssh.enabled needs the runner (SSH channels terminate there): set runner.enabled=true, or turn SSH off" }}{{ end -}}
+{{- if not .Values.terminal.enabled }}{{ fail "ssh.enabled needs the terminal's wiring: set terminal.enabled=true (SSH sessions run on the same runner/supervisor exec path, and the supervisor serves none unless the deployment provides the terminal; lock the web terminal off with config.terminal.enabled=false only if the exec path still works for you)" }}{{ end -}}
+{{- if and .Values.networkPolicy.enabled (not .Values.networkPolicy.sshFrom) }}{{ fail "networkPolicy.sshFrom is required when ssh.enabled: who may reach the terminator's port 2222 (raw NetworkPolicy `from` entries). To admit everyone, say so: [{ipBlock: {cidr: 0.0.0.0/0}}, {ipBlock: {cidr: \"::/0\"}}]" }}{{ end -}}
+{{- $_ := set $ss "enabled" true -}}
+{{- $_ := set $cfg "ssh" $ss -}}
+{{- $tm2 := dict "api_url" (printf "http://%s-api:4101" $full) "listen" "0.0.0.0:2222" "ops_port" 4194 "max_preauth" (int .Values.terminator.max_preauth) "max_preauth_per_ip" (int .Values.terminator.max_preauth_per_ip) -}}
+{{- $_ := set $cfg "terminator" (merge $tm2 (default (dict) $cfg.terminator)) -}}
 {{- end -}}
 {{- /* (P4-GSL, D-154) the API reaches the gateway's internal port (library fetch) by this release's Service name */ -}}
 {{- $_ := set $cfg "api" (merge (dict "gateway_internal_url" (printf "http://%s-gateway:4103" $full)) (default (dict) $cfg.api)) -}}

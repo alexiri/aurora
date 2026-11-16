@@ -74,6 +74,15 @@ fi
 if [ "${AURORA_E2E_TERMINAL:-0}" = "1" ]; then
   HELM_OVERRIDES+=(--set terminal.enabled=true)
 fi
+# (P4-SSH-2) AURORA_E2E_SSH=1: install with the SSH profile (deploy/kind/values-ssh.yaml: ssh.enabled, terminal.enabled,
+# the terminator as a NodePort, sshFrom open), build/load the terminator image and port-forward its Service to
+# 127.0.0.1:$AURORA_E2E_SSH_PORT (default 12222), which the API also publishes as `ssh.public_host:public_port`
+# (so `aurora ssh` and the downloaded known_hosts lines name the forwarded port). scripts/e2e/ssh.sh sets it.
+SSH_E2E="${AURORA_E2E_SSH:-0}"
+SSH_PORT="${AURORA_E2E_SSH_PORT:-12222}"
+if [ "$SSH_E2E" = "1" ]; then
+  HELM_OVERRIDES+=(-f deploy/kind/values-ssh.yaml --set config.ssh.public_host=127.0.0.1 --set "config.ssh.public_port=$SSH_PORT")
+fi
 # (P5-CERN-ADDONS) AURORA_E2E_EXTRA_CA_FILE=<PEM file>: trust extra root(s) in every workload (the chart's
 # extraCaBundle, from a ConfigMap kind.sh creates), e.g. the CERN Root CA that signs xldap.cern.ch.
 # AURORA_E2E_CERN_ADDONS=1 additionally runs k7 (registers github.com/alexiri/aurora-addons-cern, needs internet).
@@ -122,6 +131,7 @@ cleanup() {
   [ -n "$PF_PID" ] && kill "$PF_PID" >/dev/null 2>&1
   [ -n "${IDP_PF_PID:-}" ] && kill "$IDP_PF_PID" >/dev/null 2>&1
   [ -n "${RELAY_PF_PID:-}" ] && kill "$RELAY_PF_PID" >/dev/null 2>&1
+  [ -n "${SSH_PF_PID:-}" ] && kill "$SSH_PF_PID" >/dev/null 2>&1
   if [ "$STATUS" -ne 0 ] && kind get clusters 2>/dev/null | grep -qx "$CLUSTER"; then collect_logs; fi
   if [ "$KEEP" -eq 0 ]; then
     log "tearing down cluster $CLUSTER (use --keep to skip)"
@@ -203,6 +213,8 @@ dev_rust_images() (
   build_rust || exit 1
   THINS=(api gateway hookhost runner connector-host)
   [ -n "${PREVIEWS_DOMAIN:-}" ] && THINS+=(relay)
+  # (P4-SSH-2) the terminator is always among kind-dev.sh's RUST_SVCS (one package set); it gets an image only when SSH is on.
+  [ "${SSH_E2E:-0}" = "1" ] && THINS+=(terminator)
   for s in "${THINS[@]}"; do
     thin_image "$s" || exit 1
     [ -f "$WORK/bin/$s.sha.pending" ] && mv -f "$WORK/bin/$s.sha.pending" "$WORK/bin/$s.sha"
@@ -213,10 +225,13 @@ dev_rust_images() (
 IMAGES=(aurora-api aurora-gateway aurora-hookhost aurora-runner aurora-connector-host aurora-web aurora-sandbox aurora-dev-idp)
 # (P4-PRV-2) the relay image only exists when the release installs one (previews on).
 [ -n "$PREVIEWS_DOMAIN" ] && IMAGES+=(aurora-relay)
+# (P4-SSH-2) likewise the terminator image (SSH on).
+[ "$SSH_E2E" = "1" ] && IMAGES+=(aurora-terminator)
 if [ "$SKIP_BUILD" != "1" ]; then
   if [ "$RELEASE_IMAGES" = "1" ]; then
     TARGETS=(api gateway hookhost runner connector-host)
     [ -n "$PREVIEWS_DOMAIN" ] && TARGETS+=(relay)
+    [ "$SSH_E2E" = "1" ] && TARGETS+=(terminator)
     for t in "${TARGETS[@]}"; do
       log "building aurora-$t (release Containerfile)"
       podman build -q -f images/services/Containerfile --target "$t" -t "$REGISTRY/aurora-$t:$TAG" . >/dev/null || exit 1
@@ -330,6 +345,22 @@ if [ -n "$PREVIEWS_DOMAIN" ]; then
     sleep 1
   done
   curl -s -m 3 -o /dev/null -H "Host: x.$PREVIEWS_DOMAIN" "http://127.0.0.1:$RELAY_PORT/" || { echo "relay not reachable via port-forward" >&2; exit 1; }
+fi
+
+# (P4-SSH-2) SSH on: forward the terminator's published Service (port 22 -> 2222) to the host. A listening port that
+# speaks SSH answers with its identification string, so wait for that.
+if [ "$SSH_E2E" = "1" ]; then
+  log "port-forward svc/$FULL-terminator-ssh -> 127.0.0.1:$SSH_PORT"
+  k -n "$NS" port-forward "svc/$FULL-terminator-ssh" "$SSH_PORT:22" >"$WORK/port-forward-ssh.log" 2>&1 &
+  SSH_PF_PID=$!
+  ssh_banner() { timeout 5 bash -c "exec 3<>/dev/tcp/127.0.0.1/$SSH_PORT && head -c 8 <&3" 2>/dev/null; }
+  for _ in $(seq 60); do
+    [ "$(ssh_banner)" = "SSH-2.0-" ] && break
+    kill -0 "$SSH_PF_PID" 2>/dev/null || { cat "$WORK/port-forward-ssh.log" >&2; exit 1; }
+    sleep 1
+  done
+  [ "$(ssh_banner)" = "SSH-2.0-" ] || { echo "the terminator does not answer with an SSH banner via the port-forward" >&2; exit 1; }
+  export AURORA_KIND_SSH="127.0.0.1:$SSH_PORT"
 fi
 
 log "running tests/e2e-hosted/tests/k8s.rs"

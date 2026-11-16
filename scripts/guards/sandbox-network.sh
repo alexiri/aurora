@@ -71,6 +71,9 @@ check "previews on" --set relay.enabled=true --set relay.domain=previews.guard.i
 # api (control plane) and serves the PTY inside the sandbox — no new sandbox egress.
 check "terminal on" --set terminal.enabled=true --set config.terminal.enabled=true
 check "terminal+previews on" --set terminal.enabled=true --set config.terminal.enabled=true --set relay.enabled=true --set relay.domain=previews.guard.invalid
+# (P4-SSH-2) SSH adds a pod in the core namespace that dials the runner's :4108 and the api; the sandboxes
+# namespace must gain nothing.
+check "ssh on" --set ssh.enabled=true --set terminal.enabled=true --set 'networkPolicy.sshFrom[0].ipBlock.cidr=203.0.113.0/24'
 
 # (FIX-102) Mutation self-test: opening one more port (the api's 4101) from the sandboxes namespace in the
 # gateway policy must fail the guard.

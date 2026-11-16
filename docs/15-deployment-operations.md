@@ -1215,8 +1215,11 @@ deployment that does not set `ssh.enabled` has no terminator, no LoadBalancer, n
 NetworkPolicy; nothing else changes.
 
 **Turn it on** (Helm, one switch plus one required list): `ssh.enabled: true` and
-`networkPolicy.sshFrom` (who may reach the SSH port; the render fails while it is empty — to admit
-everyone, say so: `[{ipBlock: {cidr: 0.0.0.0/0}}, {ipBlock: {cidr: ::/0}}]`). Then point a DNS name at
+`networkPolicy.sshFrom` (who may reach the SSH port; the render fails while it is empty and
+`networkPolicy.enabled` — to admit everyone, say so: `[{ipBlock: {cidr: 0.0.0.0/0}}, {ipBlock: {cidr: ::/0}}]`).
+SSH sessions run on the web terminal's runner/supervisor exec path, so the deployment must also
+provide the terminal's wiring (`terminal.enabled`, `15 §Web terminal operations`; the render fails
+without it, and the runner must be enabled). Then point a DNS name at
 the Service's external address and set `config.ssh.public_host` to it (and `public_port` if the
 Service port is not 22). Wait for Admin › Overview's **SSH** line to show a replica.
 
@@ -1276,8 +1279,10 @@ or SSH is enabled.
 `connections_total{outcome="rate_limited"}` (scanning or a forged-certificate attempt). Logs carry
 session ids, agent ids, coarse addresses and reasons; never certificates, commands or bytes.
 
-**kind dev**: `deploy/kind` maps the terminator Service as a NodePort on host port 2222
-(`ssh -p 2222 <agent id>@localhost`); `scripts/e2e/ssh.sh` is the end-to-end suite (`18 §SSH access`).
+**kind dev**: `deploy/dev/kind-dev.sh up --ssh` layers `deploy/kind/values-ssh.yaml` (the terminator as a
+NodePort 32222, one replica, `sshFrom` open) and, on a new cluster, maps it to host port 2222
+(`AURORA_DEV_SSH_PORT`; `ssh -p 2222 <agent id>@localhost`); `scripts/e2e/ssh.sh` is the end-to-end suite
+(`18 §SSH access`) and reaches the same Service through a port-forward.
 
 **Upgrade and rollback.** All SSH state is additive (new tables and two `sandboxes` columns). An
 older runner reports no `ssh` capability (channels fail, nothing else); an older supervisor ignores

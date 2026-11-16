@@ -1,0 +1,29 @@
+# SSH access profile (P4-SSH-2, D-239, docs/15 §SSH access; docs/23 §SSH access (terminator)).
+# Layer it on values-dev.yaml / values-e2e.yaml (`deploy/dev/kind-dev.sh up --ssh`, scripts/e2e/ssh.sh).
+# Evaluation settings only, never for production: the whole Internet may reach the terminator's port
+# (the dev cluster publishes it on 127.0.0.1 only), one replica, a fixed NodePort.
+#
+# The terminal's wiring is required too: SSH sessions run on the same runner/supervisor exec path, and the
+# supervisor serves no exec unless the deployment provides the terminal (the chart refuses ssh.enabled
+# without terminal.enabled).
+ssh:
+  enabled: true
+
+terminal:
+  enabled: true
+
+terminator:
+  replicas: 1
+  service:
+    type: NodePort
+    nodePort: 32222       # kind-dev.sh maps it to 127.0.0.1:2222 (`ssh -p 2222 <agent id>@localhost`)
+
+networkPolicy:
+  sshFrom:
+    - ipBlock: {cidr: 0.0.0.0/0}
+    - ipBlock: {cidr: "::/0"}
+
+config:
+  ssh:
+    public_host: localhost
+    public_port: 2222

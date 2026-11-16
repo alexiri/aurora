@@ -308,6 +308,40 @@ relay:
   # X-Forwarded-For sent to the app); empty means the socket peer is the visitor (FIX-090).
   trusted_proxies: []
 
+# SSH access (phase 5, P4-SSH-1/2, D-239, docs/15 §SSH access): `ssh <agent id>@<host>` with a
+# short-lived certificate (Account › SSH keys, `aurora ssh`) into a hosted agent's sandbox. The
+# single switch: renders the terminator Deployment, its LoadBalancer and ops Services,
+# PodDisruptionBudget and NetworkPolicies, makes the `secrets` hook generate
+# AURORA_TERMINATOR_TOKEN, AURORA_SSH_CA_KEY and AURORA_SSH_HOST_KEY when absent (the CA key is
+# mounted into the api pods only, the host key into the terminator pods only), and opens the
+# runner's :4108. It mirrors config.ssh.enabled (both set and unequal, or the config key alone,
+# fails the render). Needs `runner.enabled` and `networkPolicy.sshFrom` (below). The SSH
+# sessions run on the web terminal's wiring: set `terminal.enabled` (or `config.terminal.available`)
+# too, or the supervisor refuses every exec.
+ssh:
+  enabled: false
+
+# The SSH terminator (P4-SSH-2; rendered only with ssh.enabled). No database, Vault or Kubernetes
+# credential: it talks to the api (register, sessions, heartbeats) and to the runner (:4108).
+terminator:
+  replicas: 2             # so a node loss does not cut SSH; a PodDisruptionBudget renders from two
+  resources: {requests: {cpu: 100m, memory: 128Mi}, limits: {memory: 512Mi}}
+  nodeSelector: {}
+  tolerations: []
+  extraEnv: []
+  service:
+    type: LoadBalancer    # LoadBalancer | NodePort (NodePort on kind: deploy/kind)
+    port: 22              # the published SSH port (container port 2222); set config.ssh.public_port to it when not 22
+    nodePort: null        # with type NodePort: the fixed node port (kind maps 2222)
+    annotations: {}       # cloud load-balancer annotations
+    loadBalancerSourceRanges: []
+    externalTrafficPolicy: Local   # Local | Cluster: Local keeps the client address for the per-address limits
+  # [terminator] limits (SSH_PREAUTH_MAX / SSH_PREAUTH_PER_IP): unauthenticated connections in total
+  # and per client address. Behind a load balancer that hides the client address every client
+  # shares one address: raise max_preauth_per_ip accordingly.
+  max_preauth: 256
+  max_preauth_per_ip: 8
+
 # Web terminal (P4-TERM, D-161, docs/15 §Web terminal operations): the dashboard's Terminal
 # tab — a wterm pane over the API's same-origin WebSocket (`/v1/agents/{agent}/terminal`),
 # bridged to a PTY in the sandbox through the runner's stream listener :4108 (C-616..C-619).
@@ -459,6 +493,13 @@ networkPolicy:
   #   - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: monitoring}}
   # Empty (default): nothing opens them (FIX-102).
   monitoringFrom: []
+  # Who may reach the SSH terminator's port 2222 (P4-SSH-2, docs/15 §SSH access): raw NetworkPolicy
+  # `from` entries. REQUIRED when ssh.enabled — the render fails while it is empty, so admitting the
+  # whole Internet is an explicit choice:
+  #   - ipBlock: {cidr: 0.0.0.0/0}
+  #   - ipBlock: {cidr: "::/0"}
+  # The terminator's ops port 4194 is opened to scrapers by monitoringFrom only.
+  sshFrom: []
   # Tracing export (FIX-146, D-232): where the OTLP collector named by config.telemetry.otlp_endpoint
   # lives, as raw NetworkPolicy `to` entries (the default-deny policies block it otherwise), e.g.
   #   - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: observability}}
