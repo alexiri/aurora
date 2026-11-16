@@ -180,10 +180,10 @@ mod tests {
     fn paths_follow_the_information_architecture_table() {
         assert_eq!(admin_oauth_clients(), "/admin/apps?tab=oauth-clients");
         assert_eq!(org_oauth_clients("acme"), "/o/acme/apps?tab=oauth-clients");
-        assert_eq!(org_app_setup("acme", "linear"), "/o/acme/apps/linear");
+        assert_eq!(org_app_setup("acme", "app1"), "/o/acme/apps/app1");
         assert_eq!(
-            ws_app_setup("acme", "main", "linear"),
-            "/o/acme/w/main/apps/linear"
+            ws_app_setup("acme", "main", "app1"),
+            "/o/acme/w/main/apps/app1"
         );
         assert_eq!(
             ws_accounts("acme", "main"),
@@ -191,12 +191,12 @@ mod tests {
         );
         assert_eq!(ws_people("acme", "main"), "/o/acme/w/main/people");
         assert_eq!(
-            ws_agent_connect("acme", "main", "a1", "github"),
-            "/o/acme/w/main/agents/a1?tab=access&connect=github"
+            ws_agent_connect("acme", "main", "a1", "app1"),
+            "/o/acme/w/main/agents/a1?tab=access&connect=app1"
         );
         assert_eq!(
-            ws_connect("acme", "main", "github"),
-            "/o/acme/w/main/apps?tab=apps&connect=github"
+            ws_connect("acme", "main", "app1"),
+            "/o/acme/w/main/apps?tab=apps&connect=app1"
         );
         assert_eq!(
             ws_approvals("acme", "main", Some("r1")),
