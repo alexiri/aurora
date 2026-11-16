@@ -34,6 +34,25 @@ Owner, 2026-11-14: phase 5 starts when AUDIT-004 is merged; same working mode as
 
 **Ordering constraint:** P5-GUIDE-7 must not run beside a lane editing `services/aurora-api/src/domains/tools/` (FIX-150, P4-UTOK and P4-EVAL-2 do), so `p5-apps` holds P5-GUIDE-7 until those three are merged. If one lane finishes much earlier, the coordinator moves the head of another lane's queue to it. **FIX-150** (S–M, `channels/messaging.rs` + `tools/messaging.rs` only, disjoint from the wave-2 hot files) may be inserted at any lane's next batch gate; not concurrent with P4-UTOK/P4-NARR.
 
+### P5-UX / P5-IA placement (placed 2026-11-16, after the owner merged the spec, 07dd2822)
+
+The twenty briefs run in four fixed waves (D-352, D-353; PROGRESS §Execution order). A brief starts only when everything in its "Depends on" cell is merged. They go **ahead of** the wave-3 queue above, except where a lane would otherwise wait. Design reference for every web brief: the canvas https://claude.ai/artifact/3UwmUgrhh6MLCsfqdhTFmQ (D-354); where a board and the spec disagree, the spec wins and the lane reports the board.
+
+| Lane | Order (batch gates at `‖`) | Why here |
+|---|---|---|
+| `p5-agent` → Rust lane | P4-LLM-4 + P4-LLM-5 merge ‖ **FIX-159** (high priority, ships alone) ‖ **P5-UX-2** ‖ **P5-UX-13** ‖ P5-MODELS-1 → P5-MODELS-2 ‖ its wave-3 queue | the three `crates/aurora-registry` tasks in one lane, one after the other (FIX-159 → P5-UX-2 → P5-UX-13); P5-MODELS moves behind them |
+| `p5-apps` → web lane | SET-5 ‖ **P5-IA-1** (wave 0; first web task; migration `20261201000244`) ‖ **P5-UX-1** (when P5-UX-2 is merged) ‖ **P5-IA-2** ‖ wave 2: P5-UX-3 → P5-UX-9 → P5-IA-3, P5-IA-4, P5-IA-5 (placed when wave 1 ends) ‖ P4-LLM-6 → P5-MODELS-3 ‖ its wave-3 queue | IA-1 refactors the settings form SET-4/5 built, so it follows SET-5 in the same lane; UX-1 and IA-2 are the web chain of wave 1 |
+| `p5-platform` | P5-FILES gate ‖ FIX-156 → FIX-155 ‖ **P5-UX-4** (wave 1; jumps ahead as soon as P5-UX-2, P5-IA-1 and P5-UX-1 are merged) ‖ P4-SSH-1 → P4-SSH-2 ‖ wave-2/3 UX work placed as lanes free ‖ its wave-3 queue | UX-4 runs beside P5-IA-2 and P5-UX-13 (disjoint by brief); the lane is the only one free of the registry and the settings form |
+
+**Rules for this work:**
+- **Release gate (D-352):** after FIX-159, master is not deployed between the first other wave-0 merge (P5-UX-2 or P5-IA-1) and the end of wave 1 (P5-UX-1, P5-IA-2, P5-UX-4, P5-UX-13 merged). PROGRESS's header says when the window is open.
+- **Registry:** FIX-159 → P5-UX-2 → P5-UX-13, then P5-GUIDE-1/3 and P5-ICS (still in `p5-apps`' wave-3 queue, so after the UX web chain anyway).
+- **Settings form:** SET-5 → P5-IA-1; P5-IA-4 and P5-IA-5 after SET-4 (merged). SET-4/5 add no sidebar entries (D-340); P5-IA-1 owns all navigation.
+- **Approvals:** P5-UX-16 and P4-011B-1..5 never run at the same time; whichever starts first finishes first.
+- **P5-WEBHOOK-1..4:** 1–3 are placed when a lane frees; P5-WEBHOOK-4 builds inside the new structure (its connect steps are the journey's sign-in step, its card an account row), so after P5-UX-3 and P5-UX-4.
+- **Migrations:** P5-IA-1 has `20261201000244`; P5-UX-5, P5-UX-11, P5-UX-14 and P5-UX-17 take the next free number when they start.
+- **End check:** when wave 3 is done, the vocabulary test's exempt-file list (P5-IA-5, C-974) is empty.
+
 ## Coordinator (Opus) work, in order
 1. **Spec step 0** for FIX-142, FIX-145, FIX-146 (unblocks wave 1/2 lanes).
 2. **SPEC-SETTINGS** spec batch → SET-1..SET-5 briefs (owner answers its open classification questions).
