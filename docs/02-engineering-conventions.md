@@ -385,6 +385,9 @@ overridden by the named configuration key (`15`).
 | `FILES_SESSION_IDLE` / `FILES_SESSION_LIFETIME` | (phase 5, P5-FILES-1) 60 s without a request / 1 h, then the API's pooled SFTP session for a (person, agent) closes; the next request opens another | — | 16 |
 | `FILES_LIST_MAX` / `FILES_DELETE_MAX` | (phase 5, P5-FILES-1, D-316(e)) 5,000 entries per listing (`truncated` beyond) / 10,000 entries per recursive delete (422 `too_many_entries`, nothing deleted) | — | 05 |
 | `FILES_UPLOAD_MAX` / `FILES_EDIT_MAX` | (phase 5, P5-FILES-1, D-316(e)) 512 MiB per uploaded file (413 `file_too_large`) / 1 MiB of UTF-8 text opened in the editor (422 `file_not_editable`) | — | 05 |
+| `PENDING_ACCESS_TTL` / `PENDING_ACCESS_MAX` | (phase 5, P5-UX-5, D-325) 30 days before an unused pending workspace access row expires / 50 pending rows per workspace (422 `pending_access_limit`) | — | 04, 05 |
+| `ACCESS_REQUEST_TTL` | (phase 5, P5-UX-17, D-348) 14 days before an agent's open request for access expires | — | 03, 14 |
+| `ONBOARDING_NOTICES_MAX` | (phase 5, P5-IA-1, C-987) 50 one-time notice keys remembered per person | — | 03 |
 | `FILES_PATH_MAX` | (phase 5, P5-FILES-1) 4,096 bytes per path, 255 per component (400 `invalid_path`) | — | 05 |
 | `FILE_TRANSFERS_PER_USER` / `FILES_TRANSFER_IDLE` | (phase 5, P5-FILES-1) 4 concurrent content transfers per person per API replica (429 `too_many_transfers`) / 60 s without progress aborts a transfer | — | 05 |
 | `FILES_AWAKE_GRACE` / `FILES_AWAKE_CAP` | (phase 5, P5-FILES-1) 120 s after the last Files request / 4 h per boot of Files-held wakefulness (keep-awake reason `files`) | — | 11 |

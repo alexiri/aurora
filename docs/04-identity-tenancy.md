@@ -95,8 +95,8 @@ interface"); stored in the database, audited):
 | **Default organization** | an existing org, or "create *Users*" with a name the admin types; new users join it as `member` (or `admin`, chosen) |
 | **Shared workspaces** | zero or more workspaces of the default org that every new user joins, each with a role (`member` / `approver`) |
 | **Personal workspace** | on/off. When on, each user gets **their own workspace** in the default org, created at their first sign-in, with the default agent in it and the user as its `owner` (role selectable: `owner` / `approver` / `member`) |
-| **Workspace name template** | e.g. `{sub}`, `{preferred_username}`, `{name}`, `{email_local}`, `{given_name} {family_name}`, `{claim:cern_upn}`; a fallback chain written with `\|` (`{sub}\|{email_local}`, the default) when a value is missing (D-151, D-162). `{sub}` is the provider's unique, never-reassigned subject, so two providers may recycle the same `preferred_username` without colliding; a name collision still gets a numbered slug (SEC-79). Preview shows the result for a typed sample or the admin's own profile — the sample never stands for `{sub}` or `{claim:…}` (Aurora stores no tokens, D-151); exact syntax in `API_CONTRACTS` C-523 |
-| **Starter grants** | org-scope credentials (LLM keys, secrets, connections with full access) granted automatically to the default agent of every new personal workspace, so "bobj signs in → bobj workspace → Daneel can already answer" works with no further step. Each grant goes through the same grant path as any other (D-137, SEC-77), with the system as actor |
+| **Workspace name template** | e.g. `{sub}`, `{preferred_username}`, `{name}`, `{email_local}`, `{given_name} {family_name}`, `{claim:cern_upn}`; a fallback chain written with `\|` (`{sub}\|{email_local}`, the default) when a value is missing (D-151, D-162). `{sub}` is the provider's unique, never-reassigned subject, so two providers may recycle the same `preferred_username` without colliding; a name collision still gets a numbered slug (SEC-79). Preview shows the result for a typed sample or the admin's own profile — the sample never stands for `{sub}` or `{claim:…}` (Aurora stores no tokens, D-151); exact syntax in `API_CONTRACTS` C-523. (Phase 5, P5-UX-6, D-326, D-353, C-923) This template sets the workspace's **slug** (the form labels it "Workspace address"). The workspace's **name** is the person's own: the given name, else the full name, else the local part of the e-mail. That is a fixed rule with no setting, so a personal workspace reads "Bob" while its URL keeps the `{sub}` slug |
+| **Starter grants** | org-scope credentials (LLM keys, secrets, connections with full access) granted automatically to the default agent of every new personal workspace, so "bobj signs in → bobj workspace → Daneel can already answer" works with no further step. Each grant goes through the same grant path as any other (D-137, SEC-77), with the system as actor. (Phase 5, P5-UX-6, D-326, C-922) An org LLM key added in the setup wizard is a starter grant by default, and an instance admin can backfill starter grants into existing personal workspaces (`POST /v1/admin/placement/starter-grants/backfill`) |
 
 **Behaviour.**
 - Applied once per user at the first sign-in that creates the user, **after** invitation,
@@ -125,7 +125,8 @@ interface"); stored in the database, audited):
   `jit` org; others get `signup_closed`. Starter grants whose credential has gone away are
   skipped and audited; they never fail a sign-in (D-151, `API_CONTRACTS` C-524..C-527).
 - A personal workspace is an ordinary workspace of the default org afterwards: org
-  owners/admins have their usual implicit access, the user can invite others into it,
+  owners/admins have their usual implicit access, the user can add others to it (phase 5:
+  by e-mail, `§Workspace access by e-mail`; before P5-UX-5 only org admins could),
   and leaving the org follows `§Deletion semantics` and the offboarding views (RFE-021).
 - Defaults: until an instance admin saves a placement, an instance behaves as today
   (`personal_org` under `open`, so nothing changes on upgrade), and the admin page
@@ -1247,6 +1248,32 @@ record and authority).
   the token.
 - Seat cap: if `organizations.settings.max_members` is set, active members +
   pending invitations must stay ≤ cap (422 `member_limit_reached`).
+
+## Workspace access by e-mail (phase 5, P5-UX-5, D-325, SEC-128)
+
+A workspace owner (`can_own`) can give a person access by e-mail without being an org admin
+(`POST /v1/workspaces/{ws}/access/by-email`, C-919):
+
+- **An active member of the org** whose verified e-mail equals the address gets the
+  `workspace_access` row at once (role `member`, `approver` or `owner`).
+- **Anyone else** gets a **pending access** row (`workspace_pending_access`, C-920; role `member`
+  or `approver`, never `owner`). It is applied at that person's sign-in once they are an active
+  member of the org and hold that verified e-mail. The same rule as invitations: the e-mail must be
+  verified and equal, compared case-insensitively. The row is then deleted. Unused rows expire after
+  `PENDING_ACCESS_TTL` (30 days); at most `PENDING_ACCESS_MAX` (50) per workspace.
+- **A pending row never makes anyone an org member.** Entering the org stays with placement (open
+  sign-up into the default org) and org invitations by owners/admins. A workspace owner who is not
+  an org owner/admin can never let a non-member into the organization (owner, D-328: Q-UX-1 "no",
+  with no org setting to allow it).
+- One exact address per request, rate-limited (`invite` class) and audited; there is no member
+  search for workspace owners. The answer says whether that one address was added or is pending
+  (owner, D-328: Q-UX-2 "yes").
+- The API accepts the roles above. The dashboard's **Add people** offers **Member** and **Owner**
+  (Owner only for someone already in the organization), and **Approver** only in a workspace that
+  already has an approver (D-352; `14 §Agents, accounts and access` §10).
+
+This replaces the sentence of §Personal workspaces that the user "can invite others into it":
+personal-workspace owners add people this way.
 
 ## Deletion semantics
 
