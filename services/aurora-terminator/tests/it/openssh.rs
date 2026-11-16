@@ -51,8 +51,10 @@ async fn run_ssh(port: u16, user: String, dir: &Path, with_cert: bool) -> (i32, 
                 "ConnectTimeout=10",
             ]);
         if with_cert {
-            c.arg("-o")
-                .arg(format!("CertificateFile={}", dir.join("id-cert.pub").display()));
+            c.arg("-o").arg(format!(
+                "CertificateFile={}",
+                dir.join("id-cert.pub").display()
+            ));
         }
         let out = c
             .arg(format!("{user}@127.0.0.1"))
@@ -73,7 +75,11 @@ fn write_identity(r: &Rig, cert: Option<&russh::keys::ssh_key::Certificate>) -> 
     let dir = std::env::temp_dir().join(format!("aurora-term-openssh-{}", Uuid::new_v4()));
     std::fs::create_dir_all(&dir).unwrap();
     let key = dir.join("id");
-    std::fs::write(&key, r.user_key.to_openssh(LineEnding::LF).unwrap().as_bytes()).unwrap();
+    std::fs::write(
+        &key,
+        r.user_key.to_openssh(LineEnding::LF).unwrap().as_bytes(),
+    )
+    .unwrap();
     {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&key, std::fs::Permissions::from_mode(0o600)).unwrap();
@@ -131,8 +137,16 @@ async fn openssh_plain_key_and_bad_certificate_get_the_same_refusal() {
         assert!(e.contains("Permission denied (publickey)"), "stderr: {e}");
     }
     let norm = |s: &str| s.lines().last().unwrap_or("").to_owned();
-    assert_eq!(norm(&e1), norm(&e2), "the client must not learn which rule failed");
+    assert_eq!(
+        norm(&e1),
+        norm(&e2),
+        "the client must not learn which rule failed"
+    );
     assert_eq!(norm(&e1), norm(&e3));
-    assert_eq!(r.stub.count("sessions"), 0, "a refusal by the law never reaches the API");
+    assert_eq!(
+        r.stub.count("sessions"),
+        0,
+        "a refusal by the law never reaches the API"
+    );
     assert!(r.runner.opens.lock().unwrap().is_empty());
 }

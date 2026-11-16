@@ -1877,7 +1877,8 @@ async fn run_client(mut c: Command, input: &[u8], secs: u64) -> (i32, String, St
 /// Registers a fresh ed25519 key for the signed-in person and mints a certificate for `agent`; writes `id`, `id.pub`,
 /// `id-cert.pub` and the strict `known_hosts` (the host key the API publishes) into a new directory.
 async fn ssh_identity(api: &Api, agent: &str, port: u16, host_key: &str) -> SshId {
-    let dir = std::env::temp_dir().join(format!("aurora-e2e-ssh-{}", uuid::Uuid::now_v7().simple()));
+    let dir =
+        std::env::temp_dir().join(format!("aurora-e2e-ssh-{}", uuid::Uuid::now_v7().simple()));
     std::fs::create_dir_all(&dir).unwrap();
     let st = Command::new("ssh-keygen")
         .args(["-q", "-t", "ed25519", "-N", "", "-C", "aurora-e2e", "-f"])
@@ -1986,7 +1987,10 @@ async fn k9_ssh_journey() {
         (s == 200 && v["terminators_live"].as_u64().unwrap_or(0) > 0).then_some(v)
     })
     .await;
-    let host_key = facts["host_keys"][0]["public_key"].as_str().unwrap().to_owned();
+    let host_key = facts["host_keys"][0]["public_key"]
+        .as_str()
+        .unwrap()
+        .to_owned();
 
     // The agent's sandbox is running (one turn boots it); the person has a key and a certificate.
     let conv = api.direct().await;
@@ -2004,7 +2008,10 @@ async fn k9_ssh_journey() {
     .await;
     assert_eq!(rc, 7, "exit status: {err}");
     assert_eq!(out.trim(), "to-out");
-    assert!(err.contains("to-err") && !out.contains("to-err"), "{out} / {err}");
+    assert!(
+        err.contains("to-err") && !out.contains("to-err"),
+        "{out} / {err}"
+    );
 
     // 2. A shell (no tty and with one): the canary typed into it; a command carrying it.
     let (rc, out, err) = run_client(
@@ -2029,7 +2036,11 @@ async fn k9_ssh_journey() {
         60,
     )
     .await;
-    assert_eq!((rc, out.trim()), (0, format!("cmd-{canary}").as_str()), "{err}");
+    assert_eq!(
+        (rc, out.trim()),
+        (0, format!("cmd-{canary}").as_str()),
+        "{err}"
+    );
 
     // 3. sftp put/get and scp (SFTP mode and `-O`) of a 5 MiB file: the digests match.
     let blob = noise(5 * 1024 * 1024, 99);
@@ -2045,7 +2056,10 @@ async fn k9_ssh_journey() {
     )
     .unwrap();
     let mut c = Command::new("sftp");
-    c.args(id.opts()).arg("-b").arg(id.path("batch")).arg(id.dest());
+    c.args(id.opts())
+        .arg("-b")
+        .arg(id.path("batch"))
+        .arg(id.dest());
     let (rc, out, err) = run_client(c, b"", 180).await;
     assert_eq!(rc, 0, "sftp: {out} {err}");
     assert_eq!(
@@ -2060,7 +2074,8 @@ async fn k9_ssh_journey() {
         if let Some(f) = flag {
             up.arg(f);
         }
-        up.arg(id.path("up.bin")).arg(format!("{}:{remote}", id.dest()));
+        up.arg(id.path("up.bin"))
+            .arg(format!("{}:{remote}", id.dest()));
         let (rc, out, err) = run_client(up, b"", 180).await;
         assert_eq!(rc, 0, "{name} up: {out} {err}");
         let mut down = Command::new("scp");
@@ -2123,7 +2138,10 @@ async fn k9_ssh_journey() {
         String::from_utf8_lossy(&o.stdout).into_owned(),
         String::from_utf8_lossy(&o.stderr).into_owned(),
     );
-    assert!(lout.contains("l-done"), "the shell must keep working: {lout} {lerr}");
+    assert!(
+        lout.contains("l-done"),
+        "the shell must keep working: {lout} {lerr}"
+    );
     assert!(
         lerr.contains("open failed") || lerr.contains("administratively prohibited"),
         "-L must be refused: {lerr}"
@@ -2169,7 +2187,10 @@ async fn k9_ssh_journey() {
     let (rc, _, err) = run_client(
         id.command(
             "ssh",
-            &["-o", &format!("UserKnownHostsFile={}", id.path("known_hosts-wrong"))],
+            &[
+                "-o",
+                &format!("UserKnownHostsFile={}", id.path("known_hosts-wrong")),
+            ],
             &["echo not-here"],
         ),
         b"",
@@ -2185,7 +2206,12 @@ async fn k9_ssh_journey() {
     let (rc, out, err) = run_client(
         id.command(
             "ssh",
-            &["-o", "CertificateFile=/nonexistent", "-o", "PreferredAuthentications=publickey"],
+            &[
+                "-o",
+                "CertificateFile=/nonexistent",
+                "-o",
+                "PreferredAuthentications=publickey",
+            ],
             &["echo not-here"],
         ),
         b"",
@@ -2309,7 +2335,10 @@ async fn k9_ssh_journey() {
             }
         }
     }
-    assert!(hits.is_empty(), "the canary appeared in the logs of: {hits:?}");
+    assert!(
+        hits.is_empty(),
+        "the canary appeared in the logs of: {hits:?}"
+    );
     for t in ["audit_log", "request_log"] {
         assert_eq!(
             psql_value(&format!(
@@ -2320,7 +2349,9 @@ async fn k9_ssh_journey() {
         );
     }
     for a in ["agent.ssh.open", "agent.ssh.close"] {
-        let n = psql_value(&format!("SELECT count(*) FROM audit_log WHERE action = '{a}'"));
+        let n = psql_value(&format!(
+            "SELECT count(*) FROM audit_log WHERE action = '{a}'"
+        ));
         assert!(n.parse::<u64>().unwrap() > 0, "no {a} audit rows");
     }
     let _ = std::fs::remove_dir_all(&id.dir);
