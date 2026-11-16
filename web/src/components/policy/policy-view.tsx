@@ -12,6 +12,7 @@ import { Notice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
 import { Section } from "@/components/ui/section";
 import { errorMessage } from "@/lib/api/errors";
+import { orgRoutes } from "@/lib/routes";
 import { useGroups } from "@/lib/api/groups";
 import {
   describeTarget,
@@ -93,9 +94,11 @@ export interface PolicyViewProps {
   currentUserId?: string;
   /** Org id used to list org-scope secrets in the target picker. */
   orgId: string;
+  /** The organization's slug, for the link to its AI models page. */
+  orgSlug?: string;
 }
 
-export function PolicyView({ title, scope, canEdit, agents = [], users = [], currentUserId, orgId }: PolicyViewProps) {
+export function PolicyView({ title, scope, canEdit, agents = [], users = [], currentUserId, orgId, orgSlug }: PolicyViewProps) {
   const policy = usePolicy(scope);
   const warnings = usePolicyWarnings(scope);
   const wsSecrets = useSecrets(scope.kind === "workspace" ? { kind: "workspace", id: scope.id } : { kind: "organization", id: orgId });
@@ -322,8 +325,8 @@ export function PolicyView({ title, scope, canEdit, agents = [], users = [], cur
             title="Agents call their model with an Aurora-injected key on every turn, so a default of Block would stop every agent. LLM traffic is controlled by Governance instead. An explicit block rule that names an LLM host still applies."
           >
             Does not affect LLM endpoints — see{" "}
-            <Link href={`/o/${orgId}/governance`} className="font-medium text-link underline">
-              Governance
+            <Link href={orgSlug ? orgRoutes(orgSlug).aiModels() : "#"} className="font-medium text-link underline">
+              AI models
             </Link>
             . An explicit block rule that names an LLM host still applies.
           </span>

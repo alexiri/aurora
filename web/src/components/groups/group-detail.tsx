@@ -33,6 +33,7 @@ import {
   type Group,
   type WorkspaceRole,
 } from "@/lib/api/groups";
+import { orgRoutes } from "@/lib/routes";
 import { useWorkspaces } from "@/lib/api/queries";
 
 import { ImpactSummary } from "./impact-summary";
@@ -465,7 +466,7 @@ function DeleteGroup({ g, orgId, orgSlug }: { g: Group; orgId: string; orgSlug: 
           confirmLabel="Delete group"
           danger
           busy={del.isPending}
-          onConfirm={() => del.mutate(undefined, { onSuccess: () => router.push(`/o/${orgSlug}/groups`) })}
+          onConfirm={() => del.mutate(undefined, { onSuccess: () => router.push(orgRoutes(orgSlug).people("groups")) })}
         >
           <div className="space-y-3">
             <ImpactSummary query={impact} />
@@ -489,7 +490,7 @@ export function GroupDetail({ orgId, orgSlug, id }: { orgId: string; orgSlug: st
   return (
     <div className="max-w-page space-y-8">
       <PageHeader
-        breadcrumb={[{ label: "Groups", href: `/o/${orgSlug}/groups` }, { label: g.name }]}
+        breadcrumb={[{ label: "People", href: orgRoutes(orgSlug).people("groups") },{ label: g.name }]}
         title={
           <span className="flex flex-wrap items-center gap-3">
             {g.name}

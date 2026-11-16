@@ -5,15 +5,18 @@ import Link from "next/link";
 import { useParams, usePathname, useRouter } from "next/navigation";
 import { useCallback, useId, useState, type ComponentType, type ReactNode, type SVGProps } from "react";
 
-import { useCanApprove, usePendingApprovals } from "@/lib/api/approvals";
-import { useScimSettings } from "@/lib/api/scim";
+import { usePendingApprovals } from "@/lib/api/approvals";
 import { clearDrafts } from "@/components/chat/composer/drafts";
-import { logout, useMe, useOrg, useOrgs, useResolve, useWorkspaces } from "@/lib/api/queries";
+import { logout, useMe, useOrg, useOrgs, useResolve, useWorkspace, useWorkspaces } from "@/lib/api/queries";
+import { visibleTopics } from "@/lib/api/roles";
 import { loginUrl, useUnauthorizedRedirect } from "@/lib/auth/use-unauthorized-redirect";
+import { showWhatMoved } from "@/lib/moved";
+import { accountRoutes, adminRoutes, TOPIC_LABEL, topicHref, orgRoutes, wsRoutes } from "@/lib/routes";
 import { cn } from "@/lib/utils";
 
 import { ApprovalNotifier } from "./approvals/approval-notifier";
 import { FrozenEntityBanner } from "./freeze/frozen-entity-banner";
+import { RenamesNotice } from "./onboarding/renames-notice";
 import { Tour } from "./onboarding/tour";
 import { startTour } from "./onboarding/tour-events";
 import { ThemeSwitch } from "./theme/theme-switch";
@@ -43,7 +46,8 @@ import {
   UsersIcon,
   XIcon,
 } from "./ui/icons";
-import { Menu, MenuContent, MenuItem, MenuLabel, MenuSeparator, MenuTrigger } from "./ui/menu";
+import { Menu, MenuContent, MenuItem, MenuLabel, MenuTrigger } from "./ui/menu";
+import { PageLevelProvider, type PageLevel } from "./ui/page-header";
 
 type IconType = ComponentType<SVGProps<SVGSVGElement>>;
 
@@ -53,19 +57,22 @@ function NavItem({
   active,
   icon: Icon,
   badge,
+  tour,
 }: {
   href: string;
   label: string;
   active: boolean;
   icon: IconType;
   badge?: ReactNode;
+  /** `data-tour` of the link (a topic id); the tour points at it. */
+  tour?: string;
 }) {
   return (
     <li>
       <Link
         href={href}
         aria-current={active ? "page" : undefined}
-        data-tour={label.toLowerCase().replace(/\s+/g, "-")}
+        data-tour={tour ?? label.toLowerCase().replace(/\s+/g, "-")}
         className={cn(
           "flex min-h-9 items-center gap-2.5 rounded-control px-2.5 py-1.5 text-sm",
           active ? "bg-subtle font-semibold text-ink" : "text-ink-2 hover:bg-subtle hover:text-ink",
@@ -153,20 +160,17 @@ function SidebarSelect({
   );
 }
 
-/** FIX-027: organizations on every page; instance admins reach the admin area only from here. */
-function OrgSelector({ orgSlug, pathname }: { orgSlug?: string; pathname: string }) {
-  const me = useMe();
+/** FIX-027: organizations on every page. It lists organizations only (C-962): Administration has its own entry. */
+function OrgSelector({ orgSlug }: { orgSlug?: string }) {
   const orgs = useOrgs();
   const resolved = useResolve(orgSlug);
-  const isAdmin = me.data?.user.is_instance_admin === true;
-  const inAdmin = pathname.startsWith("/admin");
   const org = orgs.data?.items.find((o) => o.slug === orgSlug);
   // /v1/resolve also names an org the person has no membership row for (an admin visiting it).
   const orgName = org?.name ?? resolved.data?.org.name ?? orgSlug;
   return (
     <SidebarSelect
       caption="Organization"
-      placeholder={inAdmin ? "All organizations" : "Select organization"}
+      placeholder="Select organization"
       value={orgName}
       avatar={{ name: orgName ?? "?", tintKey: orgSlug }}
       testId="org-selector"
@@ -176,22 +180,11 @@ function OrgSelector({ orgSlug, pathname }: { orgSlug?: string; pathname: string
       {orgs.isError ? <MenuItem disabled>Could not load organizations</MenuItem> : null}
       {orgs.data?.items.map((o) => (
         <MenuItem key={o.id} asChild>
-          <Link href={`/o/${o.slug}`} className={cn(o.slug === orgSlug && "font-semibold")}>
+          <Link href={orgRoutes(o.slug).home()} className={cn(o.slug === orgSlug && "font-semibold")}>
             {o.name}
           </Link>
         </MenuItem>
       ))}
-      {isAdmin ? (
-        <>
-          <MenuSeparator />
-          <MenuItem asChild>
-            <Link href="/admin" data-active={inAdmin ? "true" : undefined} className={cn(inAdmin && "font-semibold")}>
-              <ShieldIcon className="mr-2 inline size-4 text-muted" />
-              All organizations
-            </Link>
-          </MenuItem>
-        </>
-      ) : null}
     </SidebarSelect>
   );
 }
@@ -201,7 +194,7 @@ function WorkspaceSelector({ orgSlug, wsSlug, pathname }: { orgSlug: string; wsS
   const resolved = useResolve(orgSlug);
   const workspaces = useWorkspaces(resolved.data?.org.id);
   const ws = workspaces.data?.items.find((w) => w.slug === wsSlug);
-  const atRoot = !pathname.startsWith(`/o/${orgSlug}/w/`);
+  const atRoot = !pathname.startsWith(`${orgRoutes(orgSlug).base}/w/`);
   return (
     <SidebarSelect
       caption="Workspace"
@@ -215,14 +208,14 @@ function WorkspaceSelector({ orgSlug, wsSlug, pathname }: { orgSlug: string; wsS
       {workspaces.data?.items.length === 0 ? <MenuItem disabled>No workspaces</MenuItem> : null}
       {workspaces.data?.items.map((w) => (
         <MenuItem key={w.id} asChild>
-          <Link href={`/o/${orgSlug}/w/${w.slug}`} className={cn(w.slug === wsSlug && "font-semibold")}>
+          <Link href={wsRoutes(orgSlug, w.slug).home()} className={cn(w.slug === wsSlug && "font-semibold")}>
             {w.name}
           </Link>
         </MenuItem>
       ))}
       <MenuItem asChild>
         <Link
-          href={`/o/${orgSlug}`}
+          href={orgRoutes(orgSlug).home()}
           data-active={atRoot ? "true" : undefined}
           className={cn(atRoot && "font-semibold")}
         >
@@ -271,52 +264,58 @@ function UserMenu() {
       <MenuContent align="start" side="top" className="w-[var(--radix-dropdown-menu-trigger-width)] min-w-56">
         {me.data ? <MenuLabel>{me.data.user.email}</MenuLabel> : null}
         <MenuItem asChild>
-          <Link href="/account">Account</Link>
+          <Link href={accountRoutes.profile}>Your account</Link>
         </MenuItem>
-        {/* FIX-027: no Admin item here — instance admins use the sidebar's organization selector ("All organizations"). */}
+        {/* C-962: Administration is a labelled entry, here and at the foot of the sidebar, for instance admins. */}
+        {me.data?.user.is_instance_admin === true ? (
+          <MenuItem asChild>
+            <Link href={adminRoutes.home()}>Administration</Link>
+          </MenuItem>
+        ) : null}
         <MenuItem onSelect={onTour}>Show me around</MenuItem>
+        <MenuItem onSelect={showWhatMoved}>What moved</MenuItem>
         <MenuItem onSelect={() => void onLogout()}>Sign out</MenuItem>
       </MenuContent>
     </Menu>
   );
 }
 
-const ORG_LINKS: { path: string; label: string; icon: IconType }[] = [
-  { path: "policy", label: "Policy", icon: ShieldIcon },
-  { path: "skills", label: "Skills", icon: BookIcon },
-  { path: "members", label: "Members", icon: UsersIcon },
-  { path: "groups", label: "Groups", icon: UsersIcon },
-  // (P4-GRP-2) Owners only: the SCIM directory sync page lives under /settings/directory.
-  { path: "settings/directory", label: "Directory sync", icon: KeyIcon },
-  { path: "channels", label: "Channels", icon: MessageIcon },
-  { path: "instances", label: "Self-hosted apps", icon: ServerIcon },
-  { path: "api-keys", label: "API keys", icon: KeyIcon },
-  { path: "audit", label: "Audit log", icon: ScrollIcon },
-  { path: "storage", label: "Storage", icon: ServerIcon },
-  { path: "settings", label: "Settings", icon: SettingsIcon },
-];
+const TOPIC_ICON: Record<string, IconType> = {
+  overview: HomeIcon,
+  workspaces: BuildingIcon,
+  agents: BotIcon,
+  skills: BookIcon,
+  apps: PlugIcon,
+  "ai-models": ScaleIcon,
+  "internet-access": ShieldIcon,
+  approvals: CheckCircleIcon,
+  activity: ActivityIcon,
+  people: UsersIcon,
+  "chat-platforms": MessageIcon,
+  data: ScrollIcon,
+  platform: ServerIcon,
+  settings: SettingsIcon,
+};
+
+/** Overview and Workspaces are the level's own address; every other topic owns the paths below its folder. */
+function topicActive(pathname: string, href: string, topic: string): boolean {
+  const path = href.split("?")[0]!;
+  return topic === "overview" || topic === "workspaces" ? pathname === path : pathname === path || pathname.startsWith(`${path}/`);
+}
 
 function OrgNav({ orgSlug, pathname }: { orgSlug: string; pathname: string }) {
   const resolved = useResolve(orgSlug);
   const org = useOrg(resolved.data?.org.id);
-  const role = org.data?.my_role;
-  const admin = role === "owner" || role === "admin";
-  const isOwner = role === "owner";
-  // Directory sync (docs/14): owners only, and only where the instance has `scim.enabled`.
-  const scim = useScimSettings(isOwner ? resolved.data?.org.id : undefined);
-  const directory = isOwner && scim.data?.available === true;
-  const base = `/o/${orgSlug}`;
-  const item = (href: string, label: string, icon: IconType, active: boolean) => (
-    <NavItem key={href} href={href} label={label} icon={icon} active={active} />
-  );
+  const instanceAdmin = useMe().data?.user.is_instance_admin === true;
+  // While the role loads, list what every member sees; the pages refuse nothing they list.
+  const topics = visibleTopics("org", { instanceAdmin, org: org.data?.my_role ?? (instanceAdmin ? undefined : "member") });
   return (
     <nav aria-label="Organization">
       <ul className="space-y-0.5">
-        {item(base, "Workspaces", BuildingIcon, pathname === base)}
-        {item(`${base}/credentials`, "Credentials", KeyIcon, pathname.startsWith(`${base}/credentials`))}
-        {item(`${base}/apps`, "Apps", PlugIcon, pathname.startsWith(`${base}/apps`))}
-        {item(`${base}/governance`, "Governance", ScaleIcon, pathname.startsWith(`${base}/governance`))}
-        {admin ? ORG_LINKS.filter((l) => l.path !== "settings/directory" || directory).map((l) => item(`${base}/${l.path}`, l.label, l.icon, pathname.startsWith(`${base}/${l.path}`))) : null}
+        {topics.map((t) => {
+          const href = topicHref("org", t, orgSlug);
+          return <NavItem key={t} tour={t} href={href} label={TOPIC_LABEL[t]} icon={TOPIC_ICON[t]!} active={topicActive(pathname, href, t)} />;
+        })}
       </ul>
     </nav>
   );
@@ -343,36 +342,39 @@ export function WorkspaceNav({
   wsId: string | undefined;
   pathname: string;
 }) {
-  // Phase 2, RFE-012: the approvals page exists only for `can_approve` users.
-  const canApprove = useCanApprove(wsId);
-  const item = (href: string, label: string, icon: IconType, active: boolean, badge?: ReactNode) => (
-    <NavItem key={href} href={href} label={label} icon={icon} active={active} badge={badge} />
-  );
+  const instanceAdmin = useMe().data?.user.is_instance_admin === true;
+  const role = useWorkspace(wsId).data?.my_role;
+  // While the role loads, list what every member sees (Approvals, People and Settings wait for the role).
+  const topics = visibleTopics("workspace", { instanceAdmin, workspace: role ?? (instanceAdmin ? undefined : "member") });
   return (
     <nav aria-label="Workspace">
       <ul className="space-y-0.5">
-        {item(base, "Overview", HomeIcon, pathname === base)}
-        {item(`${base}/agents`, "Agents", BotIcon, pathname.startsWith(`${base}/agents`))}
-        {item(`${base}/credentials`, "Credentials", KeyIcon, pathname.startsWith(`${base}/credentials`))}
-        {item(`${base}/policy`, "Policy", ShieldIcon, pathname.startsWith(`${base}/policy`))}
-        {item(`${base}/skills`, "Skills", BookIcon, pathname.startsWith(`${base}/skills`))}
-        {canApprove && wsId
-          ? item(`${base}/approvals`, "Approvals", CheckCircleIcon, pathname.startsWith(`${base}/approvals`), <PendingPill wsId={wsId} />)
-          : null}
-        {item(`${base}/activity`, "Activity", ActivityIcon, pathname.startsWith(`${base}/activity`))}
-        {/* FIX-027: no Members item — it jumped to the org's members view. Workspace people live in Settings › Access. */}
-        {item(`${base}/settings`, "Settings", SettingsIcon, pathname.startsWith(`${base}/settings`))}
+        {topics.map((t) => {
+          // `base` is `/o/<org>/w/<ws>`: the topic's folder under it.
+          const href = t === "overview" ? base : `${base}/${t}`;
+          return (
+            <NavItem
+              key={t}
+              tour={t}
+              href={href}
+              label={TOPIC_LABEL[t]}
+              icon={TOPIC_ICON[t]!}
+              active={topicActive(pathname, href, t)}
+              badge={t === "approvals" && wsId ? <PendingPill wsId={wsId} /> : undefined}
+            />
+          );
+        })}
       </ul>
     </nav>
   );
 }
 
 const ACCOUNT_LINKS: { href: string; label: string; icon: IconType }[] = [
-  { href: "/account", label: "Profile", icon: UserIcon },
-  { href: "/account/security", label: "Security", icon: LockIcon },
-  { href: "/account/api-keys", label: "API keys", icon: KeyIcon },
-  { href: "/account/channels", label: "Channels", icon: LinkIcon },
-  { href: "/account/delete", label: "Delete account", icon: TrashIcon },
+  { href: accountRoutes.profile, label: "Profile", icon: UserIcon },
+  { href: accountRoutes.security, label: "Security", icon: LockIcon },
+  { href: accountRoutes.apiKeys, label: "API keys", icon: KeyIcon },
+  { href: accountRoutes.chatPlatforms, label: "Chat platforms", icon: LinkIcon },
+  { href: accountRoutes.delete, label: "Delete account", icon: TrashIcon },
 ];
 
 function AccountNavList({ pathname }: { pathname: string }) {
@@ -387,34 +389,15 @@ function AccountNavList({ pathname }: { pathname: string }) {
   );
 }
 
-const ADMIN_LINKS: { href: string; label: string; icon: IconType }[] = [
-  { href: "/admin/setup", label: "Setup", icon: CheckCircleIcon },
-  { href: "/admin/users", label: "Users", icon: UsersIcon },
-  { href: "/admin/orgs", label: "Organizations", icon: BuildingIcon },
-  { href: "/admin/placement", label: "Sign-up & placement", icon: UsersIcon },
-  // (phase 5, SET-1) Instance settings: the index now, a link per section as SET-2..SET-5 land.
-  { href: "/admin/settings", label: "Settings", icon: SettingsIcon },
-  // (phase 5, FIX-124) Where secret values are kept: the built-in store or Vault.
-  { href: "/admin/secret-stores", label: "Secret stores", icon: KeyIcon },
-  { href: "/admin/plugins", label: "Plugins", icon: PlugIcon },
-  { href: "/admin/addon-sources", label: "Addon sources", icon: BookIcon },
-  { href: "/admin/connectors", label: "Connectors", icon: LinkIcon },
-  { href: "/admin/runners", label: "Runners", icon: ServerIcon },
-  { href: "/admin/storage", label: "Storage", icon: ServerIcon },
-  { href: "/admin/host-claims", label: "Host claims", icon: ServerIcon },
-  { href: "/admin/instances", label: "Self-hosted apps", icon: ServerIcon },
-  { href: "/admin/oauth-clients", label: "OAuth clients", icon: KeyIcon },
-  { href: "/admin/trusted-keys", label: "Trusted keys", icon: ShieldIcon },
-  { href: "/admin/audit", label: "Audit", icon: ShieldIcon },
-];
-
 function AdminNavList({ pathname }: { pathname: string }) {
+  const instanceAdmin = useMe().data?.user.is_instance_admin === true;
   return (
     <nav aria-label="Administration">
       <ul className="space-y-0.5">
-        {ADMIN_LINKS.map((l) => (
-          <NavItem key={l.href} href={l.href} label={l.label} icon={l.icon} active={pathname.startsWith(l.href)} />
-        ))}
+        {visibleTopics("admin", { instanceAdmin }).map((t) => {
+          const href = topicHref("admin", t);
+          return <NavItem key={t} tour={t} href={href} label={TOPIC_LABEL[t]} icon={TOPIC_ICON[t]!} active={topicActive(pathname, href, t)} />;
+        })}
       </ul>
     </nav>
   );
@@ -431,7 +414,8 @@ function SidebarContent({
   wsId?: string;
   pathname: string;
 }) {
-  const base = orgSlug && wsSlug ? `/o/${orgSlug}/w/${wsSlug}` : null;
+  const base = orgSlug && wsSlug ? wsRoutes(orgSlug, wsSlug).base : null;
+  const inAdmin = pathname.startsWith("/admin");
   // The admin navigation is for instance admins only (the page guard already refuses everyone else; the nav must not
   // advertise it to a signed-in member who typed an /admin path, WEBA-11).
   const isInstanceAdmin = useMe().data?.user.is_instance_admin === true;
@@ -441,22 +425,32 @@ function SidebarContent({
         <AuroraLogo className="h-9.5 w-auto" />
       </Link>
       {/* FIX-027: two stacked selects on every page — organization, then (only with an active
-          organization) its workspaces. "All organizations" in the first one is the single path
-          to the admin area; the account menu and the FIX-026 sidebar link are gone. */}
-      <OrgSelector orgSlug={orgSlug} pathname={pathname} />
+          organization) its workspaces. Administration is its own entry in the footer (C-962). */}
+      <OrgSelector orgSlug={orgSlug} />
       {orgSlug ? <WorkspaceSelector orgSlug={orgSlug} wsSlug={wsSlug} pathname={pathname} /> : null}
       <div className="min-h-0 flex-1 overflow-y-auto">
         {base ? (
           <WorkspaceNav base={base} wsId={wsId} pathname={pathname} />
         ) : orgSlug ? (
           <OrgNav orgSlug={orgSlug} pathname={pathname} />
-        ) : pathname.startsWith("/admin") && isInstanceAdmin ? (
+        ) : inAdmin && isInstanceAdmin ? (
           <AdminNavList pathname={pathname} />
         ) : pathname.startsWith("/account") ? (
           <AccountNavList pathname={pathname} />
         ) : null}
       </div>
       <div className="space-y-2 border-t border-line pt-3">
+        {isInstanceAdmin ? (
+          <ul>
+            <NavItem
+              href={adminRoutes.home()}
+              label="Administration"
+              icon={ShieldIcon}
+              active={inAdmin}
+              tour="administration"
+            />
+          </ul>
+        ) : null}
         <ThemeSwitch />
         <UserMenu />
       </div>
@@ -477,8 +471,18 @@ export function AppShell({ children }: { children: ReactNode }) {
   }, []);
   const orgSlug = params.org;
   const wsSlug = params.ws;
-  const wsId = useResolve(orgSlug, wsSlug).data?.workspace?.id;
+  const resolved = useResolve(orgSlug, wsSlug).data;
+  const wsId = resolved?.workspace?.id;
   const side = { orgSlug, wsSlug, wsId, pathname };
+  // C-962: the level badge every page header carries (Administration, <org> or <org> › <workspace>).
+  const orgName = resolved?.org.name ?? orgSlug;
+  const level: PageLevel | null = pathname.startsWith("/admin")
+    ? { kind: "instance", label: "Administration" }
+    : orgSlug && wsSlug
+      ? { kind: "workspace", label: `${orgName} › ${resolved?.workspace?.name ?? wsSlug}` }
+      : orgSlug
+        ? { kind: "org", label: orgName ?? orgSlug }
+        : null;
 
   // (FIX-138) The standalone terminal window has no app chrome: it is a pane that fills the browser window.
   if (/^\/o\/[^/]+\/w\/[^/]+\/agents\/[^/]+\/terminal\/?$/.test(pathname)) return <>{children}</>;
@@ -539,7 +543,8 @@ export function AppShell({ children }: { children: ReactNode }) {
         <main className="w-full min-w-0 space-y-4 px-4 py-6 md:px-8 md:py-8">
           <ApprovalNotifier />
           <FrozenEntityBanner />
-          {children}
+          <RenamesNotice />
+          <PageLevelProvider value={level}>{children}</PageLevelProvider>
         </main>
         <Tour setNavOpen={tourNavOpen} />
       </div>

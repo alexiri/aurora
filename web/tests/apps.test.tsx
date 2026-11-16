@@ -121,20 +121,20 @@ describe("availability editor", () => {
     const puts: unknown[] = [];
     availabilityFetch({ posture: "restricted", allow: [] }, puts);
     wrap(<AvailabilityEditor orgId="o1" orgSlug="acme" initial={{ posture: "restricted", allow: [] }} apps={[{ app_id: "gh", name: "GitHub" }]} canEdit />);
-    // the posture is not set here any more (FIX-130): no radio, a link to Governance
+    // the posture is not set here any more (FIX-130): no radio, a link to the posture panel on Apps & accounts › Apps
     expect(screen.queryByLabelText(/Restricted/)).toBeNull();
-    expect(screen.getByRole("link", { name: "Governance" })).toHaveAttribute("href", "/o/acme/governance");
+    expect(screen.getByRole("link", { name: "Apps & accounts › Apps" })).toHaveAttribute("href", "/o/acme/apps?tab=apps");
     fireEvent.click(screen.getByLabelText("GitHub"));
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(puts).toEqual([{ posture: "restricted", allow: [{ app_id: "gh" }] }]));
     await screen.findByText("Saved.");
   });
 
-  it("while the posture is open it says so and links to Governance, with no toggles", () => {
+  it("while the posture is open it says so and links to the posture, with no toggles", () => {
     availabilityFetch({ posture: "open", allow: [] }, []);
     wrap(<AvailabilityEditor orgId="o1" orgSlug="acme" initial={{ posture: "open", allow: [] }} apps={[{ app_id: "gh", name: "GitHub" }]} canEdit />);
     expect(screen.getByText(/Every app is available/)).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Governance" })).toHaveAttribute("href", "/o/acme/governance");
+    expect(screen.getByRole("link", { name: "Apps & accounts › Apps" })).toHaveAttribute("href", "/o/acme/apps?tab=apps");
     expect(screen.queryByLabelText("GitHub")).toBeNull();
     expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
   });

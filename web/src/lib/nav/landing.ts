@@ -1,3 +1,5 @@
+import { adminRoutes } from "@/lib/routes";
+
 export interface SlugItem {
   slug: string;
 }
@@ -45,7 +47,7 @@ export function homeTarget(args: {
   welcomeSeen: boolean | undefined;
 }): string | null {
   const { landing, me, isInstanceAdmin, placementSaved, welcomeSeen } = args;
-  if (isInstanceAdmin && placementSaved === false) return "/admin/setup";
+  if (isInstanceAdmin && placementSaved === false) return adminRoutes.home();
   if (!landing) return null;
   if (welcomeSeen === false) {
     const personal = personalWorkspacePath(me);

@@ -98,7 +98,7 @@ for (const scheme of ["light", "dark"] as const) {
         await page.screenshot({ path: testInfo.outputPath(`tour-${scheme}-${width}.png`) });
         expect(await serious(page)).toEqual([]);
         await page.getByRole("dialog").getByRole("button", { name: "Next" }).click();
-        await expect(page.getByRole("dialog", { name: "Agents and Chat" })).toBeVisible();
+        await expect(page.getByRole("dialog", { name: "Agents" })).toBeVisible();
         await page.screenshot({ path: testInfo.outputPath(`tour-2-${scheme}-${width}.png`) });
         if (width === 390) expect(await overflow(page)).toBeLessThanOrEqual(0);
       });
@@ -119,7 +119,7 @@ test.describe("tour from the keyboard", () => {
     await expect(first).toBeFocused();
     await expect(first.getByText(/Stop 1 of \d/)).toBeVisible();
     await page.keyboard.press("ArrowRight");
-    await expect(page.getByRole("dialog", { name: "Agents and Chat" })).toBeFocused();
+    await expect(page.getByRole("dialog", { name: "Agents" })).toBeFocused();
     await page.keyboard.press("ArrowLeft");
     await expect(page.getByRole("dialog", { name: "Overview" })).toBeFocused();
     // The highlighted link is the real navigation entry.

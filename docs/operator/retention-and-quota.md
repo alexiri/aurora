@@ -7,7 +7,7 @@ The normative text is [docs/10 §Archive, delete, redaction, retention, export](
 
 ## Instance settings
 
-(Phase 5, SET-5.) These are edited on **Admin › Settings › Retention** and read by the next daily sweep or the next upload; a
+(Phase 5, SET-5.) These are edited on **Administration › Data › Retention** and read by the next daily sweep or the next upload; a
 key set under `config.*` in Helm is locked instead. Lowering a ceiling clamps every organization that chose a higher value: the
 confirmation dialog lists those organizations, their stored value stays, and it applies again if the ceiling is raised.
 Organizations see the instance ceiling beside their own setting.

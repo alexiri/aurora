@@ -25,6 +25,7 @@ import { AvailabilityView } from "@/components/apps/availability-view";
 import { ConnectionsTab } from "@/components/apps/connections-tab";
 import { AGENT_PAGE_IDS } from "@/components/agents/sections";
 import { CREDENTIAL_TAB_IDS } from "@/components/credentials/credentials-view";
+import { legacyTarget } from "@/lib/legacy-routes";
 
 const json = (status: number, body: unknown) =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -72,7 +73,9 @@ describe("the conformance fixture (C-891)", () => {
 
   it("maps every template to an existing route", () => {
     for (const [name, tpl] of Object.entries(fixture.templates)) {
-      expect(existsSync(dir(routeOf(tpl))), `${name}: ${tpl}`).toBe(true);
+      // A page of its own, or an old address the dashboard redirects to its new place (C-960).
+      const redirected = legacyTarget(routeOf(tpl).replace("{org}", "acme").replace("{ws}", "ops")) !== null;
+      expect(existsSync(dir(routeOf(tpl))) || redirected, `${name}: ${tpl}`).toBe(true);
     }
   });
 
@@ -145,7 +148,7 @@ describe("org Apps page (C-894)", () => {
     const ops = within(dlg).getByRole("button", { name: "Connect in OPS" });
     await waitFor(() => expect(ops).toBeEnabled());
     fireEvent.click(ops);
-    expect(router.push).toHaveBeenCalledWith("/o/acme/w/ops/credentials?tab=apps&connect=cern-phonebook");
+    expect(router.push).toHaveBeenCalledWith("/o/acme/w/ops/apps?tab=apps&connect=cern-phonebook");
   });
 
   it("with no owned workspace the dialog says who can connect", async () => {
@@ -171,7 +174,7 @@ describe("Connections empty state", () => {
     mockFetch(empty());
     wrap(<ConnectionsTab scope={{ kind: "organization", id: "o1" }} canOwn />);
     const link = await screen.findByRole("link", { name: "Connect an app from Apps" });
-    expect(link).toHaveAttribute("href", "/o/acme/apps");
+    expect(link).toHaveAttribute("href", "/o/acme/apps?tab=apps");
     expect(screen.queryByText(/Apps tab/)).toBeNull();
   });
 

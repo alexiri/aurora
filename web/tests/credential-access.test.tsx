@@ -200,8 +200,8 @@ describe("model readiness on the Access tab", () => {
     routes["GET /v1/agents/a1/model-readiness"] = () =>
       readiness([key({ usable: false, reason: "origin_unverified" }), key({ name: "Org key", scope: "organization", usable: false, reason: "scope_not_permitted" })], null);
     tab();
-    expect((await screen.findByRole("link", { name: "Re-verify the key." })).getAttribute("href")).toBe("/o/acme/w/ops/credentials?tab=llm");
-    expect(screen.getByRole("link", { name: "An organization admin can change this." }).getAttribute("href")).toBe("/o/acme/governance");
+    expect((await screen.findByRole("link", { name: "Re-verify the key." })).getAttribute("href")).toBe("/o/acme/w/ops/apps?tab=accounts&kind=ai-key");
+    expect(screen.getByRole("link", { name: "An organization admin can change this." }).getAttribute("href")).toBe("/o/acme/ai-models");
   });
 
   it("shows Ready and the model the next turn uses", async () => {

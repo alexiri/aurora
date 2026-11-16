@@ -482,6 +482,13 @@ export async function mockApi(
     if (p.endsWith("/connections")) {
       return json({ items: p.startsWith("/v1/orgs/") ? [] : [connection(40, "github", "acme-bot"), connection(41, "linear", "Product team")] });
     }
+    // (P5-IA-1) The topic pages render several sections at once (approvals, previews, scim, retention, skills …):
+    // any section without its own mock above is an empty form. Before the workspace routes: `…/settings/approvals`
+    // would otherwise be taken for a workspace's approvals list.
+    const section = p.match(/^\/v1\/admin\/settings\/([a-z_]+)$/)?.[1];
+    if (section && section !== "export" && section !== "import") {
+      return json({ section, title: section, description: "", generation: 1, updated_at: now, updated_by_label: null, extra: null, settings: [] });
+    }
     if (p.endsWith("/approvals")) return json({ items: url.searchParams.get("status") === "pending" ? [approval] : [], next_cursor: null });
     if (p.endsWith("/workspaces")) return json({ items: [ws] });
     if (p.endsWith("/agents")) return json({ items: [agent] });
@@ -513,8 +520,10 @@ export async function mockApi(
   });
 }
 
-/** Every dashboard route, with a heading to wait for. Parametrised segments use the mock org, workspace and agent. */
-export const ROUTES: { name: string; path: string; admin?: boolean }[] = [
+type RouteEntry = { name: string; path: string; admin?: boolean };
+
+/** The dashboard's routes before P5-IA-1. The ones that moved are `LEGACY_ROUTES` (each must redirect); see `ROUTES`. */
+const PRE_IA_ROUTES: RouteEntry[] = [
   { name: "root", path: "/" },
   { name: "sign-in", path: "/auth/login" },
   { name: "cli-login", path: "/auth/cli" },
@@ -580,3 +589,48 @@ export const ROUTES: { name: string; path: string; admin?: boolean }[] = [
   { name: "ws-skills", path: "/o/acme/w/main/skills" },
   { name: "ws-settings", path: "/o/acme/w/main/settings" },
 ];
+
+/** Routes that kept their address, and the shared pages, from the list above. */
+const KEPT = new Set([
+  "root", "sign-in", "cli-login", "join", "link-channel", "setup-error", "account", "account-security", "account-api-keys",
+  "account-channels", "account-delete", "admin-settings", "org-workspaces", "org-settings", "ws-overview", "ws-welcome",
+  "ws-activity", "ws-agents", "ws-agent", "ws-approvals", "ws-skills", "ws-settings",
+]);
+
+/** Every old address of a page that moved (C-960): it must still open, on its new page. */
+export const LEGACY_ROUTES: RouteEntry[] = PRE_IA_ROUTES.filter((r) => !KEPT.has(r.name));
+
+/** The topic pages of P5-IA-1, one entry per tab (`14 §Topics per level`). */
+const tab = (base: string, tabs: string[], prefix: string): RouteEntry[] => tabs.map((t) => ({ name: `${prefix}-${t}`, path: `${base}?tab=${t}` }));
+const TOPIC_ROUTES: RouteEntry[] = [
+  { name: "admin-overview", path: "/admin" },
+  ...tab("/admin/agents", ["defaults", "byo", "computers", "skills"], "admin-agents"),
+  ...tab("/admin/apps", ["apps", "oauth-clients", "self-hosted", "advanced"], "admin-apps"),
+  { name: "admin-app-package", path: "/admin/apps/packages/github" },
+  ...tab("/admin/ai-models", ["endpoints", "rules"], "admin-ai-models"),
+  { name: "admin-internet-access", path: "/admin/internet-access" },
+  ...tab("/admin/people", ["users", "organizations", "sign-in", "new-users"], "admin-people"),
+  { name: "admin-organization", path: `/admin/people/organizations/${id(1)}` },
+  { name: "admin-chat-platforms", path: "/admin/chat-platforms" },
+  ...tab("/admin/data", ["retention", "storage", "audit"], "admin-data"),
+  ...tab("/admin/platform", ["runners", "secret-stores", "email", "limits"], "admin-platform"),
+  ...tab("/o/acme/agents", ["byo", "skills", "previews"], "org-agents"),
+  { name: "org-skill-libraries", path: "/o/acme/agents/skills/libraries" },
+  ...tab("/o/acme/apps", ["accounts", "apps", "oauth-clients", "self-hosted"], "org-apps"),
+  { name: "org-ai-models", path: "/o/acme/ai-models" },
+  { name: "org-internet-access", path: "/o/acme/internet-access" },
+  ...tab("/o/acme/people", ["members", "groups"], "org-people"),
+  { name: "org-group-manual", path: `/o/acme/people/groups/${id(401)}` },
+  { name: "org-group-idp", path: `/o/acme/people/groups/${id(402)}` },
+  { name: "org-chat-platforms", path: "/o/acme/chat-platforms" },
+  ...tab("/o/acme/data", ["retention", "storage", "audit"], "org-data"),
+  ...tab("/o/acme/settings", ["general", "api-keys", "danger"], "org-settings"),
+  ...tab("/o/acme/w/main/apps", ["accounts", "apps"], "ws-apps"),
+  { name: "ws-app-connect", path: "/o/acme/w/main/apps?tab=apps&connect=github" },
+  { name: "ws-internet-access", path: "/o/acme/w/main/internet-access" },
+  { name: "ws-people", path: "/o/acme/w/main/people" },
+  ...tab("/o/acme/w/main/settings", ["general", "api-keys", "audit", "danger"], "ws-settings"),
+];
+
+/** Every dashboard route, with a heading to wait for. Parametrised segments use the mock org, workspace and agent. */
+export const ROUTES: RouteEntry[] = [...PRE_IA_ROUTES.filter((r) => KEPT.has(r.name) && !/^ws-settings$|^org-settings$/.test(r.name)), ...TOPIC_ROUTES];

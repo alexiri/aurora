@@ -1,12 +1,5 @@
-"use client";
+import { AdminAllSettingsPage } from "@/components/admin/admin-topics";
 
-import { AdminGuard } from "@/components/admin/admin-guard";
-import { SettingsIndexView } from "@/components/admin/settings/settings-index-view";
-
-export default function AdminSettingsPage() {
-  return (
-    <AdminGuard>
-      <SettingsIndexView />
-    </AdminGuard>
-  );
+export default function Page() {
+  return <AdminAllSettingsPage />;
 }

@@ -189,6 +189,12 @@ pub async fn put_settings(
                     return Err(aurora_core::ApiError::unprocessable(
                         "scim_domain_not_allowed",
                         format!("The domain `{d}` is not allowed on this Aurora instance."),
+                    )
+                    .with_details(
+                        crate::domains::governance::dto::InstanceSetting::details(
+                            "scim",
+                            "scim.allowed_email_domains",
+                        ),
                     ));
                 }
             }

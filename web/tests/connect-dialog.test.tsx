@@ -16,6 +16,7 @@ const replace = vi.fn();
 vi.mock("next/navigation", () => ({
   useParams: () => ({ org: "acme", ws: "main", app: "github" }),
   useSearchParams: () => new URLSearchParams(search),
+  usePathname: () => "/o/acme/w/main/apps/github/connect",
   useRouter: () => ({ replace, push: vi.fn() }),
 }));
 // "Give agents access" has its own tests (credential-access); here it only has to appear and be dismissable.
@@ -340,11 +341,11 @@ describe("deep links", () => {
 
   it("the old apps/<app>/connect route redirects, with and without reconnect", async () => {
     wrap(<RedirectPage />);
-    await waitFor(() => expect(replace).toHaveBeenCalledWith("/o/acme/w/main/credentials?tab=apps&connect=github"));
+    await waitFor(() => expect(replace).toHaveBeenCalledWith("/o/acme/w/main/apps?tab=apps&connect=github"));
     cleanup();
     replace.mockReset();
     search = "reconnect=c1";
     wrap(<RedirectPage />);
-    await waitFor(() => expect(replace).toHaveBeenCalledWith("/o/acme/w/main/credentials?tab=connections&reconnect=c1"));
+    await waitFor(() => expect(replace).toHaveBeenCalledWith("/o/acme/w/main/apps?tab=accounts&reconnect=c1"));
   });
 });

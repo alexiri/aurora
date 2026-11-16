@@ -164,7 +164,7 @@ describe("GovernanceView", () => {
     }));
     wrap(<GovernanceView orgId="o1" orgSlug="acme" canEdit />);
     fireEvent.click(await screen.findByRole("tab", { name: "Apps" }));
-    expect(await screen.findByRole("link", { name: /Choose available apps/ })).toHaveAttribute("href", "/o/acme/apps");
+    expect(await screen.findByRole("link", { name: /Choose available apps/ })).toHaveAttribute("href", "/o/acme/apps?tab=apps");
     // no governance document save on this tab
     expect(screen.queryByRole("button", { name: "Save governance" })).toBeNull();
     const save = screen.getByRole("button", { name: "Save app posture" });
@@ -201,7 +201,7 @@ describe("GovernanceView", () => {
     mockFetch(routes());
     wrap(<GovernanceView orgId="o1" orgSlug="acme" canEdit />);
     fireEvent.click(await screen.findByRole("tab", { name: /Compliance/ }));
-    expect(screen.getByRole("link", { name: "Fix" }).getAttribute("href")).toBe("/o/acme/credentials");
+    expect(screen.getByRole("link", { name: "Fix" }).getAttribute("href")).toBe("/o/acme/apps?tab=accounts&kind=ai-key");
     fireEvent.click(screen.getByRole("tab", { name: "Egress" }));
     await waitFor(() => expect(screen.getByText("blocked.dev")).toBeTruthy());
   });

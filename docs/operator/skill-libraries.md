@@ -14,7 +14,7 @@ Then **Skills › Skill libraries › Connect a repository** (or `POST /v1/orgs/
 
 ## Configuration
 
-(Phase 5, SET-5.) The three keys below are edited on **Admin › Settings › Skill libraries** and read at each refresh and fetch;
+(Phase 5, SET-5.) The three keys below are edited on **Administration › Agents › Skills** and read at each refresh and fetch;
 setting one under `config.skills.library.*` in Helm locks it.
 
 | Key | Default | Meaning |

@@ -62,7 +62,7 @@ describe("action approvals", () => {
     wrap(<ApprovalsView wsId="w" />);
     expect(await screen.findByText("Send <b>mail</b> to bob")).toBeTruthy();
     expect(document.querySelector("b")).toBeNull();
-    fireEvent.click(screen.getAllByRole("button", { name: "Approve" }).at(-1)!);
+    fireEvent.click(screen.getAllByRole("button", { name: "Allow once" }).at(-1)!);
     await waitFor(() => expect(decided).toEqual({ decision: "approve" }));
     await waitFor(() => expect(lists).toBeGreaterThanOrEqual(2));
     expect(await screen.findByText("No pending action approvals")).toBeTruthy();

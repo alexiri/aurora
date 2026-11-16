@@ -12,8 +12,8 @@ false every `/scim/v2` path answers 404 and the dashboard shows no Directory syn
 ## Turn it on
 
 (Phase 5, SET-5, D-237(d).) The Helm value `scim.enabled: true` says the deployment **provides** directory sync: it renders the
-`/scim/v2` edge route and `config.scim.available = true`. Whether SCIM is **on** is an instance setting on **Admin › Settings ›
-Directory sync** that follows `available` until an admin sets it: turn it off there and every `/scim/v2` path answers 404 at the
+`/scim/v2` edge route and `config.scim.available = true`. Whether SCIM is **on** is an instance setting on **Administration › People ›
+Sign-in** that follows `available` until an admin sets it: turn it off there and every `/scim/v2` path answers 404 at the
 next request; turn it on again when you want it back. It cannot be turned on while the deployment does not provide it (the page
 says so; the API answers 422 `setting_requires_deployment`). The domain allow-list, the rate (`scim.ratePerMinute` in Helm locks
 it) and the token lifetime are settings of the same page. The steps below are the Helm path.

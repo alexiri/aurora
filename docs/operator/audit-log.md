@@ -4,7 +4,7 @@
 admins read the rows of their own organization on its audit page. Actions that belong to no organization,
 such as managing connector-host tokens ([plugins-and-connectors.md](plugins-and-connectors.md#connector-host-tokens)),
 trusted keys or instance settings, have `org_id` empty: **instance administrators** read those in the dashboard at
-**Admin → Audit** (`/admin/audit`).
+**Administration › Data › Audit** (`/admin/data?tab=audit`).
 The normative text is `docs/04 §Audit` and the route contract is C-638 in [API_CONTRACTS](../API_CONTRACTS.md);
 the dashboard page is described in `docs/14 §Admin`.
 

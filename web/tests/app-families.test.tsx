@@ -168,6 +168,6 @@ describe("catalogue and connect window", () => {
     });
     wrap(<ConnectDialog appId="github" workspaceId="w1" orgId="o1" onClose={() => {}} />);
     expect(await screen.findByText(/No self-hosted server is registered yet/)).toBeInTheDocument();
-    expect(await screen.findByRole("link", { name: /Register a server/ })).toHaveAttribute("href", "/admin/instances");
+    expect(await screen.findByRole("link", { name: /Register a server/ })).toHaveAttribute("href", "/admin/apps?tab=self-hosted");
   });
 });

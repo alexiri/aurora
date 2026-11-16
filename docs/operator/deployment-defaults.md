@@ -5,7 +5,7 @@ deployment are made in that deployment's own configuration or build. Design sour
 [`docs/15-deployment-operations.md`](../15-deployment-operations.md) §Deployment-specific settings example.
 
 (Phase 5, SET-5.) The default agent name and brief, the default harness and time zone, the hosted-agent deadlines and the
-enabled harnesses are instance settings on **Admin › Settings › Agents & sandboxes**: edit them there (a change applies to agents
+enabled harnesses are instance settings on **Administration › Agents › Defaults**: edit them there (a change applies to agents
 and turns created afterwards), or set the key under `config.*` in Helm to lock it. The page also lists each runner's sandbox sizes
 and `max_sandboxes` read-only — those stay in Helm (`runner.*`).
 
@@ -22,7 +22,7 @@ Every new workspace gets a default agent whose brief is copied from `agents.defa
   brief of an existing agent.
 - `agents.default_name` stays `Daneel` unless you change it.
 - (phase 5, SET-5) Both are instance settings: leave them out of your Helm values
-  and an instance admin edits them on **Admin › Settings › Agents & sandboxes**, with the same
+  and an instance admin edits them on **Administration › Agents › Defaults**, with the same
   limits and the same "new workspaces only" rule. Setting them in Helm (as in the example below)
   locks them: the page then shows them read-only, "Configured in Helm". Removing them from the
   values later keeps the text you had (`docs/23-helm-values.md` §Instance settings and Helm locks).

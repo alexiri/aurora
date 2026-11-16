@@ -71,7 +71,7 @@ export function ConnectionGrants({ agentId, wsId, orgId }: { agentId: string; ws
         </Notice>
       ))}
       {connections.length === 0 && freeApps.length === 0 ? (
-        <EmptyState title="No connections in scope">Connect an app on the Credentials page, then give this agent access here.</EmptyState>
+        <EmptyState title="No connections in scope">Connect an app under Apps & accounts, then give this agent access here.</EmptyState>
       ) : (
         <ItemList aria-label="Connection grants">
           {connections.map((c) => {

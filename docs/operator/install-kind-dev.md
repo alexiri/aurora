@@ -69,7 +69,7 @@ Host-built binaries are not used: the host glibc is newer than the distroless ba
 | `--connector-fake` | `deploy/kind/values-connector-fake.yaml` | the fake connector Deployment (a self-hosted connector); the API upserts connector `fake` from the generated token (still needs manifest approval, [plugins-and-connectors.md](plugins-and-connectors.md#self-hosted-connectors-advanced)) |
 
 The connector host (`aurora-connector-host`) is part of every dev cluster (the chart enables it
-by default), so managed connectors can be added in the dashboard under Admin → Connectors
+by default), so managed connectors can be added in the dashboard under Administration › Chat platforms
 ([plugins-and-connectors.md](plugins-and-connectors.md#add-a-managed-connector-dashboard)). The dev
 images are built without the project signing key: the host announces unsigned manifests. With
 `plugins.allow_unsigned` on (development only; [15](../15-deployment-operations.md)) the API accepts them and the
@@ -116,7 +116,7 @@ instance is being set up — try again shortly"). The dev and e2e values list `p
 `PUT /v1/admin/placement {"mode":"personal_org"}` (once; `web/e2e/support/placement.ts`,
 `ensure_placement` in `tests/e2e-hosted/tests/common/mod.rs`), so the journey itself stays "a new user signs
 in and lands in their own workspace". Use `shared_org` there to try the shared-organization flow. Real
-installs are unchanged: save the placement in Admin › Sign-up & placement before inviting users.
+installs are unchanged: save the placement in Administration › People › New users before inviting users.
 
 `m1.sh --kind` signs two users in through the dev IdP; the API rate-limits OIDC `start`/`callback` per client IP (20/min), so after several runs restart the API
 (`kubectl --context kind-aurora-dev -n aurora rollout restart deploy/aurora-api`). The first `kind-up` is slow (about 24 min:

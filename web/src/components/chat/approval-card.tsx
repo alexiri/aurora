@@ -93,10 +93,10 @@ export function ApprovalCard({ ev, state, wsId }: { ev: TranscriptEvent; state: 
       ) : (
         <div className="grid grid-cols-2 gap-2 sm:flex">
           <Button className="min-h-11 sm:min-h-10" variant="approve" disabled={decide.isPending} onClick={() => decide.mutate({ id, decision: "approve" })}>
-            Approve
+            Allow once
           </Button>
           <Button className="min-h-11 sm:min-h-10" variant="outline" disabled={decide.isPending} onClick={() => decide.mutate({ id, decision: "deny" })}>
-            Deny
+            Block
           </Button>
         </div>
       )}
