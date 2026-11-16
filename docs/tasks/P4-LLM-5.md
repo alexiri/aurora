@@ -102,18 +102,26 @@ but little design.
 ## Completion report
 Commits on `alexiri/p5-agent`: `0bb7fc77` (code, hosted e2e s25/s26, mocks), master merges `0a17730b` and `f1a6874a`, and the
 docs commit carrying this report plus the `12`/`18` notes.
-Gate level: **batch gate, partly run** (after `git merge master` at `4db07895`).
+Gate level: **batch gate, fully run** (after `git merge master` at `4db07895`).
 - **Ran green:** `cargo fmt --all --check`; workspace `clippy --all-targets --all-features -D warnings`; full suites `aurora-llm`
   (34+73), `aurora-core` (74), `aurora-config` (20+68), `aurora-gateway` (75+301), `aurora-testkit` (6+12), `aurora-supervisor`
   (98+2+4+104), `aurora-api` (all targets, `--test-threads=4`, after `scripts/fixtures/build.sh` 57 passed: it-suite 1145 passed,
   0 failed; no known load flake appeared); `scripts/guards/run-all.sh` exit 0; `extract-schema.py --check` up to date;
   `openapi_matches_checked_in` ok; `FRONTDOOR=1 bash scripts/e2e/gateway.sh` (22 and 4 passed, plus the smaller targets, all 0 failed; includes s24_bedrock).
-- **Not run:** `scripts/e2e/llm.sh` and `AURORA_TEST_PODMAN=1 scripts/e2e/hosted.sh` (so **s25/s26 are written but unexecuted**):
-  `df -h /home` showed 47 GB free (< 50 GB stop line of LANE_RULES) and `just clean-stale` could not reclaim (cargo-sweep absent).
-  Needs room, then `bash scripts/e2e/hosted.sh` and `bash scripts/e2e/llm.sh`.
+- **Re-run 2026-11-16 after `git merge master` at `318f115c`** (merge `49658320`; the merge changed `aurora-config`, `aurora-db`,
+  `Cargo.lock` dependency bumps; a stale `sha2` lock line was committed separately). `cargo check --workspace --all-targets --locked`
+  ok; fmt ok; workspace clippy `-D warnings` ok; full suites (every target) `aurora-config`, `aurora-db` (38 it), `aurora-llm`,
+  `aurora-core`, `aurora-gateway`, `aurora-supervisor`, `aurora-testkit` all green; guards exit 0; `extract-schema.py --check` 0.
+  `aurora-api` it-suite: 1161 passed, **1 failed** (`settings_governance::the_reevaluation_job_marks_secrets_and_clears_overrides_once`,
+  "lock free": a master test using a DB-global advisory lock, failed in two full runs under load 20+ with 4 threads; it passes
+  alone and `settings_governance::` is 7/7 green; not touched by this lane).
+- **e2e:** `FRONTDOOR=1 gateway.sh` green on the rerun (a first run failed `hooks::h2_mint_through_real_hookhost…` under load 20+, passed on
+  rerun, all targets 0 failed); `llm.sh` exit 0 (4 passed); `AURORA_TEST_PODMAN=1 hosted.sh` 19 passed (s25/s26 skip without the
+  full image); with `AURORA_E2EH_FULL_IMAGE=1` (own prefix/subnets, because another lane's default-prefix run tore down a first
+  attempt's Postgres) **19 passed, 0 failed, including s25 (codex on Azure OpenAI, both auth modes) and s26 (claude-code on Bedrock,
+  every auth mode)**, with the Azure/Bedrock/mint legs against the repo's mock servers (no live cloud).
 - **What changed:** see the commit message of `0bb7fc77`: claude-code `anthropic_bedrock`/`anthropic_vertex` env (switches only,
   credential variables dropped, unknown dialect → `harness_failed`); shared classification table moved to `aurora-core`; both
   adapters classify through it, rejected mint → `provider_auth`; codex C-809 base-URL test; mocks extended.
 - **Fail-before:** not re-checked in this session (done by the previous worker at commit time; not re-verified here).
-- **Open:** acceptance 4 (hosted e2e, SEC-01 probe) and conformance against the Bedrock/Vertex/OpenAI/Azure mocks (scope 4), live
-  suites (scope 6, env-gated), and scope 7 (`no_shared_dialect` IT) are unverified by a run in this session.
+- **Open:** live suites (scope 6, env-gated) not run; scope 7 (`no_shared_dialect` IT) is covered by the aurora-api it-suite run above.
