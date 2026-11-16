@@ -74,7 +74,9 @@ jobs:
       - &sqlx-install
         name: sqlx-cli (install on cache miss)
         if: steps.sqlx-cache.outputs.cache-hit != 'true'
-        run: cargo install sqlx-cli --version "$SQLX_CLI_VERSION" --no-default-features --features postgres,rustls --locked
+        # --force: rust-cache restores ~/.cargo/bin, which can hold another version's `sqlx`
+        # (FIX-160's 0.8.6 → 0.9.0 move failed with "binary `sqlx` already exists").
+        run: cargo install sqlx-cli --version "$SQLX_CLI_VERSION" --no-default-features --features postgres,rustls --locked --force
         env: { RUSTFLAGS: "" }
       - name: migrate (sqlx macros check online, I-05)
         run: sqlx migrate run --source crates/aurora-db/migrations
