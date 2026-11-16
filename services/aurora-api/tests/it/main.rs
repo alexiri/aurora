@@ -98,6 +98,7 @@ mod secrets_migrate;
 mod settings;
 mod settings_governance;
 mod settings_llm;
+mod settings_ops;
 mod settings_signin;
 mod skill_library;
 mod skills;

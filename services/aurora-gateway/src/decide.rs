@@ -57,8 +57,9 @@ pub struct PolicyHandler {
     governance: Option<Arc<Governance>>,
     tokens: Option<Arc<TokenManager>>,
     summarizer: Option<Arc<dyn crate::summarize_client::Summarizer>>,
-    /// Body prefix buffered for condition evaluation (`gateway.condition_body_bytes`).
-    condition_body_limit: usize,
+    /// Body prefix buffered for condition evaluation (`gateway.condition_body_bytes`); a live
+    /// setting (SET-5), read once per request.
+    condition_body_limit: std::sync::atomic::AtomicUsize,
     /// (RFE-014) Outage state: churn writes are skipped and refresh failures map to
     /// `gateway_degraded` while the database is unreachable.
     health: Option<Arc<crate::health::Health>>,
@@ -467,7 +468,7 @@ impl PolicyHandler {
             governance: None,
             tokens: None,
             summarizer: None,
-            condition_body_limit: CONDITION_BODY_BUFFER,
+            condition_body_limit: std::sync::atomic::AtomicUsize::new(CONDITION_BODY_BUFFER),
             health: None,
             insecure_loopback_injection: false,
             llm_mint: None,
@@ -545,9 +546,17 @@ impl PolicyHandler {
 
     /// Set the condition body buffer (`gateway.condition_body_bytes`). Never below
     /// [`APPROVAL_BODY_PEEK`].
-    pub fn with_condition_body_limit(mut self, bytes: usize) -> Self {
-        self.condition_body_limit = bytes.max(APPROVAL_BODY_PEEK);
+    pub fn with_condition_body_limit(self, bytes: usize) -> Self {
+        self.set_condition_body_limit(bytes);
         self
+    }
+
+    /// Replace the condition body buffer live (SET-5); applies to the next request.
+    pub fn set_condition_body_limit(&self, bytes: usize) {
+        self.condition_body_limit.store(
+            bytes.max(APPROVAL_BODY_PEEK),
+            std::sync::atomic::Ordering::Relaxed,
+        );
     }
 
     /// Enable the `approval.summarize` hook for held requests.
@@ -1052,6 +1061,7 @@ impl PolicyHandler {
         let (body_prefix, truncated, mut body) = if rv.needs_body() || may_hold || llm_body {
             let limit = if rv.needs_body() || llm_body {
                 self.condition_body_limit
+                    .load(std::sync::atomic::Ordering::Relaxed)
             } else {
                 APPROVAL_BODY_PEEK
             };
@@ -2245,7 +2255,9 @@ impl DbSession {
             .registry
             .as_ref()
             .and_then(|l| l.snapshot.app(&self.conn.app_id));
-        let limit = h.condition_body_limit;
+        let limit = h
+            .condition_body_limit
+            .load(std::sync::atomic::Ordering::Relaxed);
         let bytes = statement.as_bytes();
         let body_prefix = bytes[..bytes.len().min(limit)].to_vec();
         let truncated = bytes.len() > limit;

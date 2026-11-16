@@ -22,8 +22,44 @@ pub async fn extra(
         "llm" => Some(json!({ "providers": aurora_llm::supported_providers() })),
         // (C-778) Where organizations stand against the instance ceiling.
         "governance" => Some(json!({ "orgs_url": "/v1/admin/settings/governance/orgs" })),
+        // (C-782) The runners' sandbox sizes, `max_sandboxes` and harnesses, read-only (D-235(a)).
+        "agents" => Some(json!({ "runners": runners(state).await? })),
+        // (C-782, D-237(d)) Whether the deployment provides the wiring; the switch cannot be
+        // turned on without it.
+        "terminal" => Some(json!({ "available": state.ops().terminal.available })),
+        "scim" => Some(json!({ "available": state.ops().scim.available })),
         _ => None,
     })
+}
+
+async fn runners(state: &AppState) -> Result<Vec<Value>, ApiError> {
+    let rows = aurora_db::repo::runners::list(&state.pool)
+        .await
+        .map_err(|_| ApiError::internal("Internal error."))?;
+    Ok(rows
+        .into_iter()
+        .map(|r| {
+            let c = r.capabilities.unwrap_or(Value::Null);
+            let get = |k: &str| c.get(k).cloned().unwrap_or(Value::Null);
+            let d = |k: &str| {
+                c.get("defaults")
+                    .and_then(|d| d.get(k))
+                    .cloned()
+                    .unwrap_or(Value::Null)
+            };
+            // (C-782) Read-only: sandbox sizes and `max_sandboxes` are Helm's (D-235(a)).
+            json!({
+                "id": r.id,
+                "name": r.name,
+                "sandbox_memory_mib": d("memory_mib"),
+                "sandbox_cpus": d("cpu_millis").as_f64().map_or(Value::Null, |m| json!(m / 1000.0)),
+                "sandbox_pids": d("pids"),
+                "home_gib": d("home_gib"),
+                "max_sandboxes": get("max_sandboxes"),
+                "harnesses": get("harnesses"),
+            })
+        })
+        .collect())
 }
 
 /// The organizations whose effective values change, their total, and section warnings.
@@ -43,6 +79,12 @@ pub async fn affected(
         let w = super::sign_in::warnings(state, caller, before, after).await?;
         return Ok((Vec::new(), 0, w));
     }
+    if section == "retention" {
+        return affected_retention(state, before, after).await;
+    }
+    if section == "limits" {
+        return Ok((Vec::new(), 0, limits_warnings(before, after)));
+    }
     if section != "governance" {
         return Ok((Vec::new(), 0, Vec::new()));
     }
@@ -57,6 +99,96 @@ pub async fn affected(
     let (b, a) = (resolve(before)?, resolve(after)?);
     let (orgs, total) =
         standing::affected(&state.pool, &b, &a, limits::SETTINGS_PREVIEW_ORGS_MAX).await?;
+    Ok((orgs, total, Vec::new()))
+}
+
+/// `limits` (C-782): a change that adds a `gateway.allowed_private` entry opens private-address
+/// egress for the gateway and the API's app-instance probes (SEC-06).
+fn limits_warnings(before: &Effective, after: &Effective) -> Vec<SettingWarning> {
+    let (b, a) = (
+        &before.raw.gateway.allowed_private,
+        &after.raw.gateway.allowed_private,
+    );
+    let added: Vec<&String> = a.iter().filter(|e| !b.contains(e)).collect();
+    if added.is_empty() {
+        return Vec::new();
+    }
+    vec![SettingWarning {
+        code: "opens_private_destinations".into(),
+        key: Some("gateway.allowed_private".into()),
+        message: format!(
+            "Adds {} to the private destinations the gateway (and the API's app-instance probes) may reach: {}. Agents and apps can then connect to those addresses.",
+            if added.len() == 1 {
+                "one entry"
+            } else {
+                "entries"
+            },
+            added
+                .iter()
+                .map(|e| e.as_str())
+                .collect::<Vec<_>>()
+                .join(", "),
+        ),
+    }]
+}
+
+/// `retention` (C-783): a lowered ceiling clamps what organizations set above it (the clamp is
+/// applied where the value is read; their stored values stay). The preview lists them.
+async fn affected_retention(
+    state: &AppState,
+    before: &Effective,
+    after: &Effective,
+) -> Result<(Vec<AffectedOrg>, i64, Vec<SettingWarning>), ApiError> {
+    let ceilings = |e: &Effective| {
+        (
+            e.raw.retention.conversation_days_max.map(i64::from),
+            e.raw.attachments.days_max.map(i64::from),
+            i64::try_from(e.raw.attachments.org_quota_mib_max).unwrap_or(0),
+        )
+    };
+    let (b, a) = (ceilings(before), ceilings(after));
+    if a == b {
+        return Ok((Vec::new(), 0, Vec::new()));
+    }
+    let (rows, total) = aurora_db::repo::lifecycle::orgs_over_retention_ceilings(
+        &state.pool,
+        a.0,
+        a.1,
+        a.2,
+        i64::try_from(limits::SETTINGS_PREVIEW_ORGS_MAX).unwrap_or(i64::MAX),
+    )
+    .await
+    .map_err(|_| ApiError::internal("Internal error."))?;
+    let orgs = rows
+        .into_iter()
+        .map(|r| {
+            let mut changes = Vec::new();
+            let mut push = |key: &str, own: Option<i64>, ceiling: Option<i64>| {
+                if let (Some(own), Some(c)) = (own, ceiling)
+                    && (own > c || (key.ends_with("quota_mib") && own == 0))
+                {
+                    changes.push(super::dto::AffectedChange {
+                        key: key.into(),
+                        before: json!(own),
+                        after: json!(c),
+                    });
+                }
+            };
+            push("conversations_days", r.conversations_days, a.0);
+            push("attachments_days", r.attachments_days, a.1);
+            push(
+                "attachment_quota_mib",
+                r.attachment_quota_mib,
+                (a.2 > 0).then_some(a.2),
+            );
+            AffectedOrg {
+                org_id: r.id,
+                slug: r.slug,
+                name: r.name,
+                changes,
+            }
+        })
+        .collect();
     Ok((orgs, total, Vec::new()))
 }
 

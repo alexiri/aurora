@@ -227,7 +227,7 @@ async fn compute_org(pool: &PgPool, org: Uuid) -> Result<OrgFigures, ApiError> {
 /// `GET /admin/storage` (`force = false`) and `POST /admin/storage/refresh` (`force = true`).
 pub async fn admin_storage(state: &AppState, force: bool) -> Result<AdminStorage, ApiError> {
     let pool = state.pool.clone();
-    let cfg = state.config.attachments.clone();
+    let cfg = state.ops().attachments.clone();
     let (mut s, at) = snapshot(&state.pool, INSTANCE_SCOPE, force, || async {
         compute_admin(&pool, &cfg).await
     })
@@ -251,7 +251,7 @@ pub async fn org_storage(
     .await?;
     // The quota figures are live: one row, and exact for the notices.
     let (mib, days) = attachments::org_limits(&state.pool, org).await?;
-    let quota_bytes = quota::effective_quota_bytes(&state.config.attachments, mib);
+    let quota_bytes = quota::effective_quota_bytes(&state.ops().attachments, mib);
     let used = attachments::usage(&state.pool, org).await?;
     Ok(OrgStorage {
         org_id: org,
@@ -261,7 +261,7 @@ pub async fn org_storage(
         files: figures.files,
         purged_files: figures.purged_files,
         attachments_days: days,
-        attachments_days_effective: quota::effective_days(&state.config.attachments, days),
+        attachments_days_effective: quota::effective_days(&state.ops().attachments, days),
         by_workspace: figures.by_workspace,
         computed_at: at,
     })

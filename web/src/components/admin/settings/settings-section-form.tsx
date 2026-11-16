@@ -152,9 +152,12 @@ export function SettingsSectionForm({
   onReload,
   groups,
   controls,
+  hints,
   footer,
 }: {
   section: SettingsSection;
+  /** One line under a key's control, from the owning spec section (SET-5: the operational pages). */
+  hints?: Record<string, string>;
   /** Extra content above Save, given the values a save would send (SET-4: the e-mail page's test button). */
   footer?: (values: SettingValues, dirty: boolean) => ReactNode;
   /** Refetch the section (stale revision / locked key). */
@@ -289,6 +292,7 @@ export function SettingsSectionForm({
                 resetValue={resetValue}
                 setSecret={setSecret}
                 custom={controls?.[s.key]}
+                hint={hints?.[s.key]}
               />
             ))}
           </FormSection>
@@ -363,10 +367,15 @@ function ConfirmDetails({ preview }: { preview: SettingsPreview }) {
           <ul className="list-disc pl-5 text-ink-2">
             {preview.affected_orgs.map((o) => {
               const lost = keysLost(o);
+              // (SET-5, C-783) A lowered retention ceiling: the organization's own value and what applies now.
+              const clamped = o.changes.filter((c) => c.key === "conversations_days" || c.key === "attachments_days" || c.key === "attachment_quota_mib");
               return (
                 <li key={o.org_id}>
                   {o.name}
                   {lost > 0 ? ` — ${lost} LLM key${lost === 1 ? "" : "s"} stop${lost === 1 ? "s" : ""} working` : ""}
+                  {clamped.length > 0
+                    ? ` — ${clamped.map((c) => `${c.key.replace(/_/g, " ")} ${String(c.before)} → ${String(c.after)}`).join(", ")}`
+                    : ""}
                 </li>
               );
             })}
@@ -396,9 +405,12 @@ function SettingRow({
   resetValue,
   setSecret,
   custom,
+  hint,
 }: {
   setting: Setting;
   draft: Draft;
+  /** The key's hint from the owning spec section (a section page's own text). */
+  hint?: string;
   error?: string;
   entryErrors: [string, string][];
   setValue: (key: string, v: unknown) => void;
@@ -503,14 +515,18 @@ function SettingRow({
         ))}
       </select>
     );
-  } else if (kind === "int" || kind === "duration_secs") {
+  } else if (kind === "int" || kind === "duration_secs" || kind === "float") {
+    // A decimal setting (SET-5: the rate multiplier): the schema's bounds are whole numbers, so only the
+    // upper one is offered to the browser; the server names the exact bound.
+    const decimal = kind === "float";
     control = (
       <input
         id={cid}
         type="number"
-        inputMode="numeric"
+        inputMode={decimal ? "decimal" : "numeric"}
+        step={decimal ? "any" : undefined}
         className={`${inputClass} max-w-48`}
-        min={s.schema.min ?? undefined}
+        min={decimal ? undefined : (s.schema.min ?? undefined)}
         max={s.schema.max ?? undefined}
         value={current === null || current === undefined ? "" : String(current)}
         onChange={(e) => (e.target.value === "" ? resetValue(s.key) : setValue(s.key, Number(e.target.value)))}
@@ -552,6 +568,7 @@ function SettingRow({
     <SettingField
       id={s.key}
       label={label}
+      hint={hint}
       source={source}
       helmKey={s.helm_key}
       lockedValue={formatValue(s)}

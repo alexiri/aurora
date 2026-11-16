@@ -238,17 +238,9 @@ async fn ensure_personal_workspace(
             .name
         })
         .unwrap_or_else(|| template::fallback_name(user.id));
-    let (ws, agent) = tenancy::create_workspace_in_tx(
-        tx,
-        &state.config,
-        org_id,
-        user.id,
-        &name,
-        None,
-        None,
-        None,
-    )
-    .await?;
+    let (ws, agent) =
+        tenancy::create_workspace_in_tx(tx, &state.ops(), org_id, user.id, &name, None, None, None)
+            .await?;
     repo::set_personal_owner(&mut **tx, ws.id, user.id).await?;
     if row.personal_role != "owner" {
         workspaces::bind_user(&mut **tx, ws.id, user.id, &row.personal_role).await?;
@@ -526,7 +518,7 @@ pub async fn put(
                 }
                 (None, Some(name)) => {
                     let o =
-                        tenancy::create_organization(&mut tx, &state.config, c.user_id, name, None)
+                        tenancy::create_organization(&mut tx, &state.ops(), c.user_id, name, None)
                             .await?;
                     created_org = Some(o.org.clone());
                     o.org.id

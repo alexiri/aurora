@@ -724,7 +724,7 @@ async fn write_connection_grant(
             }
             if let Some(m) = crate::domains::policy::validate::timeout_range_error(
                 t,
-                state.config.approvals.max_timeout_secs,
+                state.ops().approvals.max_timeout_secs,
             ) {
                 return Err(crate::domains::policy::validate::timeout_out_of_range(
                     vec![aurora_core::FieldError::new("/ask_timeout_secs", m)],

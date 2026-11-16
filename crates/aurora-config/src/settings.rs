@@ -83,6 +83,11 @@ pub enum SettingType {
         min: i64,
         max: i64,
     },
+    /// A decimal number (`ratelimit.api.multiplier`).
+    Float {
+        min: f64,
+        max: f64,
+    },
     /// A number of seconds.
     DurationSecs {
         min: i64,
@@ -143,6 +148,12 @@ pub struct SettingDef {
     pub loosening: Loosening,
     /// A test-only key without a `RawConfig` field.
     pub test_only: bool,
+    /// While neither the configuration nor the store sets it, the value of this other (boolean,
+    /// configuration-only) key: `terminal.enabled` follows `terminal.available` (D-237(d)).
+    pub default_from: Option<&'static str>,
+    /// A keyed list whose configuration form is a table keyed by id (`ratelimit.api.classes`);
+    /// stored and shown as a list of entries carrying their `id`.
+    pub as_table: bool,
 }
 
 impl SettingDef {
@@ -158,7 +169,22 @@ impl SettingDef {
             secret: false,
             loosening: Loosening::None,
             test_only: false,
+            default_from: None,
+            as_table: false,
         }
+    }
+    /// The default follows another configuration-only boolean key (see [`Self::default_from`]).
+    #[must_use]
+    pub fn default_from(mut self, key: &'static str) -> Self {
+        self.default_from = Some(key);
+        self
+    }
+    /// A keyed list whose configuration form is a table keyed by `id_field`'s value.
+    #[must_use]
+    pub fn keyed_table(mut self, id_field: &'static str) -> Self {
+        self.list = Some(ListKind::Keyed { id_field });
+        self.as_table = true;
+        self
     }
     #[must_use]
     pub fn helm(mut self, key: &str) -> Self {
@@ -246,6 +272,11 @@ fn check_type(ty: &SettingType, v: &Value) -> std::result::Result<(), String> {
                 None => Err("must be a whole number".into()),
             }
         }
+        SettingType::Float { min, max } => match v.as_f64() {
+            Some(n) if (*min..=*max).contains(&n) => Ok(()),
+            Some(_) => Err(format!("must be between {min} and {max}")),
+            None => Err("must be a number".into()),
+        },
         SettingType::Str { max_len } => match v.as_str() {
             Some(s) if s.chars().count() <= *max_len => Ok(()),
             Some(_) => Err(format!("at most {max_len} characters")),
@@ -283,6 +314,14 @@ impl Registry {
         defs.extend(llm_defs());
         defs.extend(sign_in_defs());
         defs.extend(email_defs());
+        defs.extend(agents_defs());
+        defs.extend(approvals_defs());
+        defs.extend(retention_defs());
+        defs.extend(skills_defs());
+        defs.extend(previews_defs());
+        defs.extend(scim_defs());
+        defs.extend(terminal_defs());
+        defs.extend(limits_defs());
         #[cfg(any(test, feature = "test-registry"))]
         defs.extend(test_defs());
         Self { defs }
@@ -577,6 +616,269 @@ fn email_defs() -> Vec<SettingDef> {
         )
         .helm("api.extraEnv: AURORA_SMTP_PASSWORD")
         .secret(),
+    ]
+}
+
+/// A number of seconds or a count that loosens when it goes up (deadlines, caps, quotas). The
+/// bounds are wide: the section's own validation (`validate.rs`) names the precise rule.
+fn up(s: &'static str, key: &'static str, max: i64, default: impl Into<Value>) -> SettingDef {
+    SettingDef::new(s, key, SettingType::Int { min: 0, max }, default.into())
+        .loosening(Loosening::Number { up_loosens: true })
+}
+
+/// The `agents` section (SET-5, D-237): agent defaults and the hosted-agent deadlines. Defaults are
+/// those of `raw.rs`; `hosted.allow_fake_harness` is a development switch and stays configuration.
+fn agents_defs() -> Vec<SettingDef> {
+    use serde_json::json;
+    const S: &str = "agents";
+    vec![
+        SettingDef::new(
+            S,
+            "agents.default_name",
+            SettingType::Str { max_len: 100 },
+            json!("Daneel"),
+        ),
+        SettingDef::new(
+            S,
+            "agents.default_brief",
+            SettingType::Str { max_len: 20_000 },
+            json!(crate::raw::DEFAULT_AGENT_BRIEF),
+        ),
+        SettingDef::new(S, "hosted.enabled", SettingType::Bool, json!(true))
+            .loosening(Loosening::Bool { loosens_when: true }),
+        SettingDef::new(
+            S,
+            "hosted.default_harness",
+            SettingType::Str { max_len: 64 },
+            json!("claude-code"),
+        ),
+        SettingDef::new(
+            S,
+            "hosted.enabled_harnesses",
+            SettingType::List {
+                item: Box::new(SettingType::Str { max_len: 64 }),
+                max_items: 16,
+            },
+            json!(["claude-code"]),
+        )
+        .whole_list()
+        .loosening(Loosening::List {
+            superset_loosens: true,
+        }),
+        SettingDef::new(
+            S,
+            "hosted.default_timezone",
+            SettingType::Str { max_len: 64 },
+            json!("UTC"),
+        ),
+        up(S, "hosted.idle_stop_secs", 604_800, 30 * 60),
+        up(S, "hosted.background_cap_secs", 2_592_000, 12 * 3600),
+        up(S, "hosted.turn_ceiling_secs", 2_592_000, 6 * 3600),
+        up(S, "hosted.turn_stall_secs", 604_800, 10 * 60),
+        up(S, "hosted.sandbox_ready_timeout_secs", 86_400, 300),
+    ]
+}
+
+/// The `approvals` section (SET-5, D-237). `approvals.park.*` joins when P4-011B lands.
+fn approvals_defs() -> Vec<SettingDef> {
+    use serde_json::json;
+    const S: &str = "approvals";
+    vec![
+        up(
+            S,
+            "approvals.timeout_secs",
+            2_592_000,
+            aurora_core::limits::APPROVAL_TIMEOUT.as_secs(),
+        ),
+        up(S, "approvals.max_timeout_secs", 2_592_000, 3600),
+        SettingDef::new(
+            S,
+            "approvals.email_notifications",
+            SettingType::Bool,
+            json!(true),
+        ),
+    ]
+}
+
+/// The `retention` section (SET-5): retention windows and attachment ceilings (`0` = no ceiling,
+/// the loosest value; an unset window maximum is unbounded).
+fn retention_defs() -> Vec<SettingDef> {
+    use serde_json::json;
+    const S: &str = "retention";
+    let days = |key: &'static str| {
+        SettingDef::new(
+            S,
+            key,
+            SettingType::Int {
+                min: 1,
+                max: 100_000,
+            },
+            Value::Null,
+        )
+        .loosening(Loosening::Number { up_loosens: true })
+    };
+    let mib = |key: &'static str, default: u64| {
+        SettingDef::new(
+            S,
+            key,
+            SettingType::Int {
+                min: 0,
+                max: 100_000_000,
+            },
+            json!(default),
+        )
+        .loosening(Loosening::NumberZeroIsMax)
+    };
+    vec![
+        up(S, "retention.request_log_days", 100_000, 30),
+        days("retention.conversation_days_max"),
+        mib("attachments.default_org_quota_mib", 10 * 1024),
+        mib("attachments.org_quota_mib_max", 50 * 1024),
+        days("attachments.days_max"),
+    ]
+}
+
+/// The `skills` section (SET-5): the git skill library.
+fn skills_defs() -> Vec<SettingDef> {
+    use serde_json::json;
+    const S: &str = "skills";
+    vec![
+        SettingDef::new(S, "skills.library.enabled", SettingType::Bool, json!(true)),
+        SettingDef::new(
+            S,
+            "skills.library.refresh_interval_secs",
+            SettingType::Int {
+                min: 0,
+                max: 604_800,
+            },
+            json!(900),
+        ),
+        up(
+            S,
+            "skills.library.bytes_per_agent",
+            1_073_741_824,
+            1024 * 1024,
+        ),
+    ]
+}
+
+/// The `previews` section (SET-5); `previews.enabled` and `previews.domain` stay in Helm.
+fn previews_defs() -> Vec<SettingDef> {
+    const S: &str = "previews";
+    vec![
+        up(S, "previews.session_ttl_secs", 2_592_000, 8 * 3600),
+        up(S, "previews.session_idle_secs", 2_592_000, 3600),
+        up(
+            S,
+            "previews.bytes_per_share_day",
+            1_099_511_627_776,
+            5 * 1024 * 1024 * 1024u64,
+        ),
+        up(S, "previews.shares_per_agent", 100_000, 10),
+        up(S, "previews.shares_per_org", 1_000_000, 200),
+        up(S, "previews.awake_cap_secs", 2_592_000, 4 * 3600),
+    ]
+}
+
+/// The `scim` section (SET-5, D-237(d)): `scim.enabled` follows `scim.available` (configuration
+/// only) until set, and cannot be turned on while the deployment does not route `/scim/v2`.
+fn scim_defs() -> Vec<SettingDef> {
+    use serde_json::json;
+    const S: &str = "scim";
+    vec![
+        SettingDef::new(S, "scim.enabled", SettingType::Bool, json!(false))
+            .loosening(Loosening::Bool { loosens_when: true })
+            .default_from("scim.available"),
+        SettingDef::new(
+            S,
+            "scim.allowed_email_domains",
+            SettingType::List {
+                item: Box::new(SettingType::Str { max_len: 253 }),
+                max_items: 256,
+            },
+            json!([]),
+        )
+        .whole_list()
+        .loosening(Loosening::List {
+            superset_loosens: false,
+        }),
+        SettingDef::new(
+            S,
+            "scim.rate_per_minute",
+            SettingType::Int { min: 30, max: 6000 },
+            json!(600),
+        )
+        .loosening(Loosening::Number { up_loosens: true })
+        .helm("scim.ratePerMinute"),
+        up(S, "scim.token_max_days", 730, 730),
+    ]
+}
+
+/// The `terminal` section (SET-5, D-237(d)); `terminal.enabled` follows `terminal.available`.
+fn terminal_defs() -> Vec<SettingDef> {
+    use serde_json::json;
+    const S: &str = "terminal";
+    vec![
+        SettingDef::new(S, "terminal.enabled", SettingType::Bool, json!(false))
+            .loosening(Loosening::Bool { loosens_when: true })
+            .default_from("terminal.available"),
+        up(S, "terminal.awake_cap_secs", 2_592_000, 4 * 3600),
+        up(S, "terminal.wake_window_secs", 3600, 60),
+        up(S, "terminal.wake_wait_secs", 600, 45),
+    ]
+}
+
+/// The `limits` section (SET-5): the API's rate limits and the gateway's address and size limits.
+fn limits_defs() -> Vec<SettingDef> {
+    use serde_json::json;
+    const S: &str = "limits";
+    vec![
+        SettingDef::new(
+            S,
+            "ratelimit.api.multiplier",
+            SettingType::Float {
+                min: 0.1,
+                max: 100.0,
+            },
+            json!(1.0),
+        )
+        .loosening(Loosening::Number { up_loosens: true }),
+        up(S, "ratelimit.api.org_per_minute", 10_000_000, 3000),
+        SettingDef::new(
+            S,
+            "ratelimit.api.classes",
+            SettingType::List {
+                item: Box::new(SettingType::Object),
+                max_items: 16,
+            },
+            json!([]),
+        )
+        .keyed_table("class")
+        .loosening(Loosening::None),
+        SettingDef::new(
+            S,
+            "gateway.allowed_private",
+            SettingType::List {
+                item: Box::new(SettingType::Str { max_len: 64 }),
+                max_items: 256,
+            },
+            json!([]),
+        )
+        .whole_list()
+        .loosening(Loosening::List {
+            superset_loosens: true,
+        }),
+        SettingDef::new(
+            S,
+            "gateway.condition_body_bytes",
+            SettingType::Int {
+                min: 4096,
+                max: 8_388_608,
+            },
+            json!(262_144),
+        )
+        .loosening(Loosening::Number { up_loosens: true }),
+        up(S, "gateway.upstream_header_timeout_secs", 86_400, 300),
     ]
 }
 
@@ -967,10 +1269,10 @@ impl ConfigSource {
             let eff = match d.list {
                 Some(ListKind::Keyed { id_field }) => {
                     let mut entries: Vec<EntryView> = Vec::new();
-                    for e in helm_v.and_then(Value::as_array).into_iter().flatten() {
+                    for e in helm_v.map(|v| list_entries(d, v)).into_iter().flatten() {
                         entries.push(EntryView {
-                            id: entry_id(e, id_field),
-                            value: e.clone(),
+                            id: entry_id(&e, id_field),
+                            value: e,
                             source: Source::Helm,
                         });
                     }
@@ -995,7 +1297,12 @@ impl ConfigSource {
                     };
                     let value = Value::Array(entries.iter().map(|e| e.value.clone()).collect());
                     if !entries.is_empty() && !d.test_only {
-                        put(&mut table, d.key, &value, &mut errors);
+                        let wire = if d.as_table {
+                            entries_to_table(id_field, &entries)
+                        } else {
+                            value.clone()
+                        };
+                        put(&mut table, d.key, &wire, &mut errors);
                     }
                     EffectiveKey {
                         value: if entries.is_empty() {
@@ -1023,11 +1330,22 @@ impl ConfigSource {
                             entries: None,
                         }
                     }
-                    (None, None) => EffectiveKey {
-                        value: d.default.clone(),
-                        source: Source::Default,
-                        entries: None,
-                    },
+                    (None, None) => {
+                        // A default that follows another configuration key (D-237(d)).
+                        let followed = d
+                            .default_from
+                            .and_then(|k| self.helm_value(k))
+                            .and_then(Value::as_bool);
+                        let value = followed.map_or_else(|| d.default.clone(), Value::Bool);
+                        if let Some(b) = followed.filter(|_| !d.test_only) {
+                            put(&mut table, d.key, &Value::Bool(b), &mut errors);
+                        }
+                        EffectiveKey {
+                            value,
+                            source: Source::Default,
+                            entries: None,
+                        }
+                    }
                 },
             };
             keys.insert(d.key.to_string(), eff);
@@ -1046,6 +1364,38 @@ impl ConfigSource {
         }
         Ok(Effective { raw, keys })
     }
+}
+
+/// The entries a configuration value of a keyed list holds: the array itself, or for a table-form
+/// list (`ratelimit.api.classes`) one entry per table key, carrying that key as its id field.
+pub fn list_entries(d: &SettingDef, v: &Value) -> Vec<Value> {
+    let id_field = match d.list {
+        Some(ListKind::Keyed { id_field }) => id_field,
+        _ => "id",
+    };
+    match v {
+        Value::Array(a) => a.clone(),
+        Value::Object(m) if d.as_table => m
+            .iter()
+            .map(|(id, body)| {
+                let mut e = body.as_object().cloned().unwrap_or_default();
+                e.insert(id_field.into(), Value::String(id.clone()));
+                Value::Object(e)
+            })
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// The table form of entries (the inverse of [`list_entries`]): each entry's id is the key.
+fn entries_to_table(id_field: &str, entries: &[EntryView]) -> Value {
+    let mut out = serde_json::Map::new();
+    for e in entries {
+        let mut body = e.value.as_object().cloned().unwrap_or_default();
+        body.remove(id_field);
+        out.insert(e.id.clone(), Value::Object(body));
+    }
+    Value::Object(out)
 }
 
 fn entry_id(e: &Value, id_field: &str) -> String {
@@ -1116,7 +1466,12 @@ fn add_entry_presence(json: &Value, out: &mut BTreeSet<String>) {
         if !found {
             continue;
         }
-        for e in cur.as_array().into_iter().flatten() {
+        let entries = list_entries(d, cur);
+        if d.as_table && !entries.is_empty() {
+            // A table does not count as set on its own (its members are the presence records).
+            out.insert(d.key.to_string());
+        }
+        for e in &entries {
             let id = entry_id(e, id_field);
             if !id.is_empty() {
                 out.insert(format!("{}.{id}", d.key));
@@ -1139,6 +1494,17 @@ mod tests {
         for (k, v) in pairs {
             s.sections
                 .entry(TEST_SECTION.to_string())
+                .or_default()
+                .insert((*k).to_string(), v.clone());
+        }
+        s
+    }
+
+    fn stored_at(section: &str, pairs: &[(&str, Value)]) -> Stored {
+        let mut s = Stored::default();
+        for (k, v) in pairs {
+            s.sections
+                .entry(section.to_string())
                 .or_default()
                 .insert((*k).to_string(), v.clone());
         }
@@ -1222,6 +1588,93 @@ mod tests {
             ("d", Source::Dashboard)
         );
         assert_eq!(k.source, Source::Helm);
+    }
+
+    /// SET-5 (D-237(d)): `terminal.enabled` / `scim.enabled` follow the configuration-only
+    /// `available` key until set, a stored value wins over that default, and `available` is
+    /// never a setting.
+    #[test]
+    fn availability_is_the_default_of_the_terminal_and_scim_switches() {
+        let off = src("").effective(&Stored::default()).unwrap();
+        assert_eq!(off.keys["terminal.enabled"].value, json!(false));
+        assert!(!off.raw.terminal.enabled && !off.raw.scim.enabled);
+
+        let on = src("[terminal]\navailable = true\n[scim]\navailable = true\n")
+            .effective(&Stored::default())
+            .unwrap();
+        assert_eq!(on.keys["terminal.enabled"].value, json!(true));
+        assert_eq!(on.keys["terminal.enabled"].source, Source::Default);
+        assert!(on.raw.terminal.enabled && on.raw.terminal.available);
+        assert!(on.raw.scim.enabled && on.raw.scim.available);
+
+        // A stored `false` turns it off although the deployment provides the wiring.
+        let stored_off = src("[terminal]\navailable = true\n")
+            .effective(&stored_at(
+                "terminal",
+                &[("terminal.enabled", json!(false))],
+            ))
+            .unwrap();
+        assert!(!stored_off.raw.terminal.enabled && stored_off.raw.terminal.available);
+
+        // A configuration that sets the key itself locks it.
+        let helm = src("[terminal]\navailable = true\nenabled = false\n")
+            .effective(&Stored::default())
+            .unwrap();
+        assert_eq!(helm.keys["terminal.enabled"].source, Source::Helm);
+        assert!(!helm.raw.terminal.enabled);
+
+        let r = registry();
+        for k in ["terminal.available", "scim.available"] {
+            assert!(r.get(k).is_none(), "{k} must not be a setting");
+        }
+    }
+
+    /// SET-5 (C-782): `ratelimit.api.classes` is a table in the configuration and a keyed list
+    /// (by `class`) in settings; a configuration class is locked, stored classes sit beside it.
+    #[test]
+    fn rate_classes_are_a_keyed_list_over_a_table() {
+        let s = src("[ratelimit.api.classes.write]\nper_minute = 5\n");
+        assert!(s.sets("ratelimit.api.classes") && s.sets("ratelimit.api.classes.write"));
+        let e = s
+            .effective(&stored_at(
+                "limits",
+                &[(
+                    "ratelimit.api.classes",
+                    json!([{"class": "write", "per_minute": 99}, {"class": "export", "per_hour": 3}]),
+                )],
+            ))
+            .unwrap();
+        let k = &e.keys["ratelimit.api.classes"];
+        let entries = k.entries.as_ref().unwrap();
+        assert_eq!(
+            entries
+                .iter()
+                .map(|x| (x.id.as_str(), x.source))
+                .collect::<Vec<_>>(),
+            [("write", Source::Helm), ("export", Source::Dashboard)]
+        );
+        // The merged configuration has the table form with the Helm class winning.
+        let api = &e.raw.ratelimit.api;
+        assert_eq!(api.classes["write"].per_minute, Some(5));
+        assert_eq!(api.classes["export"].per_hour, Some(3));
+        assert_eq!(api.classes.len(), 2);
+        // Nothing set: no entries, the default (an empty list).
+        let none = src("").effective(&Stored::default()).unwrap();
+        assert_eq!(none.keys["ratelimit.api.classes"].value, json!([]));
+        assert!(none.raw.ratelimit.api.classes.is_empty());
+    }
+
+    #[test]
+    fn a_decimal_setting_checks_its_bounds_and_the_multiplier_loosens_upward() {
+        let d = registry().get("ratelimit.api.multiplier").unwrap();
+        assert!(d.check(&json!(0.5)).is_ok() && d.check(&json!(100)).is_ok());
+        assert!(d.check(&json!(0.05)).is_err() && d.check(&json!(101)).is_err());
+        assert!(d.check(&json!("2")).is_err());
+        assert!(d.is_loosening(&json!(1.0), &json!(2.0)));
+        assert!(!d.is_loosening(&json!(2.0), &json!(1.0)));
+        let p = registry().get("gateway.allowed_private").unwrap();
+        assert!(p.is_loosening(&json!([]), &json!(["10.0.0.0/8"])));
+        assert!(!p.is_loosening(&json!(["10.0.0.0/8"]), &json!([])));
     }
 
     #[test]

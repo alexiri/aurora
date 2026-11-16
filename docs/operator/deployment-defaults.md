@@ -4,6 +4,11 @@ Aurora's built-in defaults are deployment-neutral (RFE-019, D-63). Choices that 
 deployment are made in that deployment's own configuration or build. Design source:
 [`docs/15-deployment-operations.md`](../15-deployment-operations.md) §Deployment-specific settings example.
 
+(Phase 5, SET-5.) The default agent name and brief, the default harness and time zone, the hosted-agent deadlines and the
+enabled harnesses are instance settings on **Admin › Settings › Agents & sandboxes**: edit them there (a change applies to agents
+and turns created afterwards), or set the key under `config.*` in Helm to lock it. The page also lists each runner's sandbox sizes
+and `max_sandboxes` read-only — those stay in Helm (`runner.*`).
+
 ## The default agent brief
 
 Every new workspace gets a default agent whose brief is copied from `agents.default_brief`.
@@ -16,7 +21,7 @@ Every new workspace gets a default agent whose brief is copied from `agents.defa
 - It applies to **new** workspaces only. Changing it, or upgrading from phase 0–2, never alters the
   brief of an existing agent.
 - `agents.default_name` stays `Daneel` unless you change it.
-- (phase 5, SET-5; not built yet) Both are instance settings: leave them out of your Helm values
+- (phase 5, SET-5) Both are instance settings: leave them out of your Helm values
   and an instance admin edits them on **Admin › Settings › Agents & sandboxes**, with the same
   limits and the same "new workspaces only" rule. Setting them in Helm (as in the example below)
   locks them: the page then shows them read-only, "Configured in Helm". Removing them from the

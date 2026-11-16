@@ -9,13 +9,17 @@ on. Design: [docs/15 §Web terminal operations](../15-deployment-operations.md#w
 
 ```yaml
 terminal:
-  enabled: true      # the single switch; it renders config.terminal.enabled
+  enabled: true      # the deployment provides the terminal; it renders config.terminal.available
 ```
 
-Set only this chart value: it mirrors `config.terminal.enabled`, and the chart refuses a render where
-`config.terminal.enabled=true` stands alone or disagrees with it. Turning it on:
+(Phase 5, SET-5, D-237(d).) This chart value says the deployment **provides** the terminal; whether the terminal is **on** is an
+instance setting on **Admin › Settings › Terminal** that follows `available` until an admin sets it. An admin can turn it off
+there (new opens answer 404 `terminal_disabled` at once; sessions already open end at their next wake check) and on again, but not
+on while the deployment does not provide it (the page says so; 422 `setting_requires_deployment`). The clocks below are settings
+of the same page. Set only this chart value: the chart refuses a render where `config.terminal.enabled=true` stands alone; a
+`config.terminal.enabled` you set (either value) locks the switch. Turning the chart value on:
 
-- renders `config.terminal.enabled = true` for the API (while off, every terminal route answers 404 `terminal_disabled`);
+- renders `config.terminal.available = true` for the API (while the setting is off, every terminal route answers 404 `terminal_disabled`);
 - opens the runner's **stream listener on :4108** (the same listener previews use; either switch opens it) and the runner
   registers the `terminal` capability. Runners and sandbox images must be of the same release as the API: an older runner
   closes the socket `4502` (an older supervisor ignores `pty.*`: roll the sandbox image with the runner);

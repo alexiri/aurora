@@ -62,7 +62,7 @@ fn limits_of(state: &AppState, owner: Owner) -> Limits {
     match tier_name(owner) {
         "agent" => Limits {
             bytes: limits::LIBRARY_BYTES_PER_AGENT
-                .min(state.config.skills_library.bytes_per_agent as usize),
+                .min(state.ops().skills_library.bytes_per_agent as usize),
             skills: limits::LIBRARY_SKILLS_PER_AGENT,
         },
         "workspace" => Limits {

@@ -224,7 +224,7 @@ async fn compute_inner(
                             .map(|v| verdict_str(v).into()),
                         approval_timeout_secs: (d.verdict == Verdict::NeedsApproval).then(|| {
                             crate::domains::policy::simulate::effective_timeout_secs(
-                                &state.config.approvals,
+                                &state.ops().approvals,
                                 d.approval_timeout_secs,
                             )
                         }),
