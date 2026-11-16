@@ -52388,6 +52388,25 @@
           }
         }
       },
+      "SimApp": {
+        "type": "object",
+        "description": "(FIX-159, C-930) What the request was recognized as.",
+        "required": [
+          "app_id"
+        ],
+        "properties": {
+          "app_id": {
+            "type": "string"
+          },
+          "tool_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The catalogue tool the request matched; null when none did."
+          }
+        }
+      },
       "SimCandidate": {
         "type": "object",
         "required": [
@@ -52514,6 +52533,17 @@
           "trace"
         ],
         "properties": {
+          "app": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SimApp",
+                "description": "(FIX-159, C-930) The app the request was recognized as (host, port and path against Active\nhost claims), and the catalogue tool when one matched. Absent for a request no app serves."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "approval_timeout_secs": {
             "type": [
               "integer",

@@ -1,7 +1,13 @@
-//! Simulation: builds request facts the way the gateway resolves them (secret candidates,
-//! injection selection, LLM-host handling) and runs the shared `aurora_policy::evaluate`.
-//! Not simulated: LLM governance step 6a, app/tool identification (M3), live rate-limit
-//! counters (always fresh) and approval holds.
+//! Simulation: builds request facts the way the gateway resolves them and runs the shared
+//! `aurora_policy::evaluate`. For `lane: request` that is (FIX-159, C-930): secret candidates,
+//! the app the request is for (Active host claims, registered instances), that app's connections
+//! as candidates, injection selection, the winner rule, the tool (`params`, `connect_methods`),
+//! the tool tags and the connection's `read_only`; identification, binding and the winner rule are
+//! `aurora_registry::identify`, the gateway's own code.
+//! Not simulated: LLM governance step 6a, live rate-limit counters (always fresh), approval holds,
+//! request headers (a body is assumed to be JSON or a urlencoded form; a tool whose `params` read
+//! another header never matches), the LDAP lane's synthetic
+//! hosts, `reauth_required` guidance and the test-only loopback injection switch.
 use super::dto::*;
 use crate::app::AppState;
 use crate::domains::secrets::gov;
@@ -17,7 +23,9 @@ use aurora_policy::{
     Credential, HostPattern, MemoryCounter, PathPattern, RequestFacts, RequestIdentity, Rule,
     evaluate, selected_candidates,
 };
+use aurora_registry::identify;
 use serde_json::json;
+use std::collections::HashMap;
 use std::collections::HashSet;
 use uuid::Uuid;
 
@@ -113,13 +121,13 @@ fn scope_trace(t: &aurora_policy::eval::ScopeTrace, derived: &HashSet<Uuid>) -> 
         Via::UncredentialedAllowlist => {
             Some(("Uncredentialed allowlist", "uncredentialed_allowlist", true))
         }
-        // (P4-GRANTS) Only a connection of a `block_untooled` app can win this way; the simulator
-        // judges generic secrets, so it is never produced here (the trace stays rule-less).
-        Via::Rule
-        | Via::Nothing
-        | Via::AppUntooledBlocked
-        | Via::ReadOnlyBlocked
-        | Via::ToolScopeBlocked => None,
+        // (FIX-159, C-930) The checks a connection winner runs before any rule: read-only,
+        // `block_untooled` and a missing scope. No rule explains them, so they get their own
+        // entry (`pre_rule_entry`).
+        v @ (Via::AppUntooledBlocked | Via::ReadOnlyBlocked | Via::ToolScopeBlocked) => {
+            pre_rule_entry(v).map(|(name, reason)| (name, reason, true))
+        }
+        Via::Rule | Via::Nothing => None,
     };
     if let Some((name, reason, matched)) = default {
         considered.push(TraceEntry {
@@ -136,21 +144,35 @@ fn scope_trace(t: &aurora_policy::eval::ScopeTrace, derived: &HashSet<Uuid>) -> 
     }
 }
 
+/// A credential candidate: a generic secret or an app connection (FIX-159).
 struct Cand {
     id: Uuid,
     name: String,
-    kind: SecretKind,
     scope: Level,
     has_path: bool,
+    cred: Credential,
+    /// An app connection (not a secret).
+    app: bool,
+    connect_method: Option<String>,
+    scopes: Vec<String>,
+    app_id: Option<String>,
 }
 
 impl Cand {
     fn credential(&self) -> Credential {
-        Credential::Secret {
-            id: self.id,
-            kind: self.kind,
-            scope: self.scope,
+        self.cred.clone()
+    }
+}
+
+/// The pre-rule checks the evaluator ran that no rule explains (C-930): shown in the trace.
+fn pre_rule_entry(via: Via) -> Option<(&'static str, &'static str)> {
+    match via {
+        Via::AppUntooledBlocked => Some(("Request not in the app's catalogue", "block_untooled")),
+        Via::ReadOnlyBlocked => Some(("Read-only connection", "read_only_connection")),
+        Via::ToolScopeBlocked => {
+            Some(("Connection lacks a scope the action needs", "scope_missing"))
         }
+        _ => None,
     }
 }
 
@@ -264,21 +286,134 @@ pub async fn run(
         {
             continue;
         }
+        let scope = if r.workspace_id.is_some() {
+            Level::Workspace
+        } else {
+            Level::Organization
+        };
         cands.push(Cand {
             id: r.id,
             name: r.name,
-            kind: if r.kind == "llm" {
-                SecretKind::Llm
-            } else {
-                SecretKind::Generic
-            },
-            scope: if r.workspace_id.is_some() {
-                Level::Workspace
-            } else {
-                Level::Organization
-            },
+            scope,
             has_path: r.path_pattern.is_some(),
+            cred: Credential::Secret {
+                id: r.id,
+                kind: if r.kind == "llm" {
+                    SecretKind::Llm
+                } else {
+                    SecretKind::Generic
+                },
+                scope,
+            },
+            app: false,
+            connect_method: None,
+            scopes: Vec::new(),
+            app_id: None,
         });
+    }
+
+    // (FIX-159, C-930) The app the request is for, and its connections as candidates: the same
+    // identification, binding and winner rule the gateway runs (`aurora_registry::identify`).
+    // Governed LLM hosts and reserved hosts never serve apps (SEC-37).
+    let snap = if is_llm_host {
+        None
+    } else {
+        crate::domains::apps::service::snapshot(state).await?
+    }
+    .filter(|s| {
+        !s.reserved_hosts
+            .iter()
+            .any(|p| HostPattern::lenient(p).matches(&host, port))
+    });
+    let query = url.query().map(str::to_owned);
+    let https = url.scheme() == "https";
+    let mut app_unavailable = false;
+    let mut req_app = None;
+    if let Some(snap) = snap.as_ref() {
+        let entries = identify::entries_for_host(snap, &host, port);
+        let visible = gateway::visible_instances(&state.pool, org).await?;
+        let inst_hosts: HashMap<Uuid, (String, Option<String>)> = visible
+            .iter()
+            .map(|i| (i.id, (i.host.clone(), i.base_path.clone())))
+            .collect();
+        let instances = identify::host_instances(
+            snap,
+            visible,
+            &host,
+            &entries,
+            |i| i.host.as_str(),
+            |i| i.app_id.as_str(),
+        );
+        let reg_read: identify::RegRead<gateway::InstanceHostRow> =
+            |i| (i.app_id.as_str(), i.base_path.as_deref());
+        req_app = identify::identify_request(snap, &instances, reg_read, &host, port, &path);
+        if let Some(r) = &req_app {
+            let m = &r.matched;
+            let mut app_ids: Vec<String> = entries.iter().map(|e| e.app_id.clone()).collect();
+            app_ids.extend(instances.iter().map(|i| i.app_id.clone()));
+            app_ids.sort();
+            app_ids.dedup();
+            let (restricted, available) = gateway::app_availability(&state.pool, org, ws).await?;
+            app_unavailable = restricted && !available.contains(&m.entry.app_id);
+            let mut same = Vec::new();
+            for row in gateway::app_connections(&state.pool, org, ws, &app_ids).await? {
+                if row.app_id != m.entry.app_id
+                    || (restricted && !available.contains(&row.app_id))
+                    || row.status == "disabled"
+                {
+                    continue;
+                }
+                // A connection of a registered instance: only while that instance is active and
+                // visible.
+                if row
+                    .instance_id
+                    .is_some_and(|id| !inst_hosts.contains_key(&id))
+                {
+                    continue;
+                }
+                same.push(row);
+            }
+            let on_instance = r.instance.map(|ix| instances[ix].id);
+            let bound = identify::bind_connections(
+                m,
+                on_instance,
+                &host,
+                same,
+                |c: &gateway::AppConnectionRow| (c.instance_id, c.tenant_host.as_deref()),
+            );
+            // (FIX-104, D-180, SEC-04) A host claim is injected only over TLS to the claimed port.
+            if identify::claim_transport_ok(identify::claim_port(&m.entry.host), https, port) {
+                // (FIX-084, SEC-67) An app absent from the snapshot is `custom_only` and
+                // `block_untooled`.
+                let restrictions = m.app.grants;
+                for c in bound {
+                    let scope = if c.workspace_id.is_some() {
+                        Level::Workspace
+                    } else {
+                        Level::Organization
+                    };
+                    cands.push(Cand {
+                        id: c.id,
+                        name: c.label,
+                        scope,
+                        has_path: false,
+                        cred: Credential::Connection {
+                            id: c.id,
+                            app_id: c.app_id.clone(),
+                            scope,
+                            custom_only: restrictions.custom_only,
+                            block_untooled: restrictions.block_untooled,
+                            // Fail closed: anything but the known `write` reads as read-only.
+                            read_only: c.access != "write",
+                        },
+                        app: true,
+                        connect_method: c.connect_method,
+                        scopes: c.scopes,
+                        app_id: Some(c.app_id),
+                    });
+                }
+            }
+        }
     }
 
     let speaker_group_ids = match speaker {
@@ -300,30 +435,40 @@ pub async fn run(
         &creds,
     );
     let is_sel = |c: &Cand| selected.contains(&c.credential().key());
-    // Winner precedence (06 step 6): path-limited over whole-host, workspace over org.
-    let mut granted: Vec<&Cand> = cands.iter().filter(|c| is_sel(c)).collect();
-    if granted.iter().any(|c| c.has_path) {
-        granted.retain(|c| c.has_path);
-    }
-    if granted.iter().any(|c| c.scope == Level::Workspace) {
-        granted.retain(|c| c.scope == Level::Workspace);
-    }
-    let winner = if granted.len() == 1 {
-        Some(granted[0])
-    } else {
-        None
+    // Winner precedence (06 step 6, the gateway's rule): app connection over generic secret,
+    // path-limited over whole-host, workspace over org.
+    let granted: Vec<&Cand> = cands.iter().filter(|c| is_sel(c)).collect();
+    let ranks: Vec<identify::Rank> = granted
+        .iter()
+        .map(|c| identify::Rank {
+            is_app: c.app,
+            path_limited: c.has_path,
+            workspace: c.scope == Level::Workspace,
+        })
+        .collect();
+    let kept: Vec<&Cand> = identify::narrow(&ranks)
+        .into_iter()
+        .map(|i| granted[i])
+        .collect();
+    let winner = if kept.len() == 1 { Some(kept[0]) } else { None };
+    let kind_of = |c: &Cand| {
+        if c.app {
+            CredentialKind::Connection
+        } else {
+            CredentialKind::Secret
+        }
     };
     let candidates: Vec<SimCandidate> = cands
         .iter()
         .map(|c| SimCandidate {
-            kind: CredentialKind::Secret,
+            kind: kind_of(c),
             id: c.id,
             name: c.name.clone(),
             selected: is_sel(c),
         })
         .collect();
     let winning_credential = winner.map(|c| WinningCredential {
-        kind: CredentialKind::Secret,
+        kind: kind_of(c),
         id: c.id,
         name: c.name.clone(),
     });
@@ -331,17 +476,60 @@ pub async fn run(
     let body = req.body.unwrap_or_default().into_bytes();
     let limit = aurora_core::limits::CONDITION_BODY_BUFFER;
     let truncated = body.len() > limit;
+    let body_prefix: Vec<u8> = body.into_iter().take(limit).collect();
+    // The simulation carries no headers; a body is assumed to be what a client sends with it: JSON
+    // when it looks like JSON, a form otherwise (a `params` form condition reads the content type).
+    let content_type = if body_prefix.is_empty() {
+        None
+    } else if matches!(body_prefix.first(), Some(b'{' | b'[')) {
+        Some("application/json")
+    } else {
+        Some("application/x-www-form-urlencoded")
+    };
+    let param_headers: Vec<(&str, &str)> = content_type
+        .map(|ct| vec![("content-type", ct)])
+        .unwrap_or_default();
+    // The tool follows the winner: a tool restricted to other connect methods is not this
+    // connection's (FIX-123).
+    let tool = req_app.as_ref().and_then(|r| {
+        identify::identify_tool(
+            &r.matched,
+            &host,
+            port,
+            &r.app_path,
+            query.as_deref(),
+            &method,
+            &body_prefix,
+            truncated,
+            &param_headers,
+            winner.and_then(|c| c.connect_method.as_deref()),
+        )
+    });
+    let app_dto = req_app.as_ref().map(|r| SimApp {
+        app_id: r.matched.entry.app_id.clone(),
+        tool_id: tool.map(|t| t.id.clone()),
+    });
+    let tool_tags = tool
+        .zip(req_app.as_ref())
+        .map(|(t, r)| {
+            identify::tool_tags(
+                r.matched.app,
+                t,
+                winner.filter(|c| c.app).map(|c| c.scopes.as_slice()),
+            )
+        })
+        .unwrap_or_default();
     let facts = RequestFacts {
         host,
         port,
         path,
-        query: url.query().map(str::to_owned),
+        query,
         method,
-        body_prefix: body.into_iter().take(limit).collect(),
+        body_prefix,
         truncated,
-        app_id: None,
-        tool_id: None,
-        tool_tags: Default::default(),
+        app_id: app_dto.as_ref().map(|a| a.app_id.clone()),
+        tool_id: tool.map(|t| t.id.clone()),
+        tool_tags,
         winning_credential: winner.map(Cand::credential),
         is_llm_host,
         identity,
@@ -354,14 +542,37 @@ pub async fn run(
         workspace: scope_trace(&d.trace.workspace, &derived),
     };
 
-    if granted.len() > 1 {
+    if kept.len() > 1 {
+        let same_app = kept[0].app_id.is_some() && kept.iter().all(|c| c.app_id == kept[0].app_id);
         return Ok(Simulation {
             approval_timeout_secs: None,
             verdict: SimVerdict::Block,
             reason: None,
-            guidance_code: Some("multiple_providers".into()),
+            guidance_code: Some(
+                if same_app {
+                    "multiple_connections"
+                } else {
+                    "multiple_providers"
+                }
+                .into(),
+            ),
             winning_credential: None,
             candidates,
+            app: app_dto,
+            trace,
+        });
+    }
+    // The gateway refuses a request for an app the organization's app policy withholds from this
+    // workspace when no credential won (`app_unavailable`).
+    if winner.is_none() && app_unavailable {
+        return Ok(Simulation {
+            approval_timeout_secs: None,
+            verdict: SimVerdict::Block,
+            reason: None,
+            guidance_code: Some("app_unavailable".into()),
+            winning_credential: None,
+            candidates,
+            app: app_dto,
             trace,
         });
     }
@@ -397,6 +608,7 @@ pub async fn run(
         guidance_code: guidance.map(str::to_owned),
         winning_credential,
         candidates,
+        app: app_dto,
         trace,
     })
 }
@@ -474,6 +686,7 @@ async fn open_lane(state: &AppState, i: OpenInput<'_>) -> Result<Simulation, Api
         guidance_code: Some(code.to_owned()),
         winning_credential: None,
         candidates: vec![],
+        app: None,
         trace: trace.clone(),
     };
     match i
@@ -530,6 +743,7 @@ async fn open_lane(state: &AppState, i: OpenInput<'_>) -> Result<Simulation, Api
         guidance_code: guidance.map(str::to_owned),
         winning_credential: None,
         candidates: vec![],
+        app: None,
         trace,
     })
 }

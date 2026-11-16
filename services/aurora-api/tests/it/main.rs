@@ -101,6 +101,7 @@ mod settings_governance;
 mod settings_llm;
 mod settings_ops;
 mod settings_signin;
+mod simulate_apps;
 mod skill_library;
 mod skills;
 mod sse_revocation;

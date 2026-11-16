@@ -964,19 +964,26 @@ impl PolicyHandler {
         // decision (host entry `path_prefix`, tool `path`/`params`, `{path.N}`) uses the **app
         // path**, the path below the base path. A path outside every base path matches no
         // instance: nothing is injected.
+        // (FIX-159) One identification function, shared with the simulator.
+        let reg_read: aurora_registry::identify::RegRead<
+            aurora_db::repo::gateway::InstanceHostRow,
+        > = |i| (i.app_id.as_str(), i.base_path.as_deref());
         let inst =
-            aurora_registry::instance::select(&rv.instances, &path, |i| i.base_path.as_deref());
+            aurora_registry::identify::instance_for(&rv.instances, &path, reg_read).map(|(_, i)| i);
         let inst_id = inst.map(|i| i.id);
-        let inst_app_path = inst
-            .map(|i| aurora_registry::instance::app_path(i.base_path.as_deref(), &path).to_owned());
-        let app_match = registry.as_ref().and_then(|l| {
-            inst.zip(inst_app_path.as_deref())
-                .and_then(|(i, ap)| apps::identify_instance_app(l, &i.app_id, ap))
-                .or_else(|| apps::identify_app(l, &host, port, &path))
+        let req_app = registry.as_ref().and_then(|l| {
+            aurora_registry::identify::identify_request(
+                &l.snapshot,
+                &rv.instances,
+                reg_read,
+                &host,
+                port,
+                &path,
+            )
         });
-        let app_path: String = match (&app_match, inst_app_path) {
-            (Some(m), Some(ap)) if m.instance => ap,
-            _ => path.clone(),
+        let (app_match, app_path): (Option<apps::AppMatch<'_>>, String) = match req_app {
+            Some(r) => (Some(r.matched), r.app_path),
+            None => (None, path.clone()),
         };
         // A named connection of a registration on this host, used outside every registered base
         // path: refused like a connection on the wrong host (421 with `expected_base_url`), when
@@ -1021,44 +1028,13 @@ impl PolicyHandler {
             // Tenant-bound entries only offer connections stored for this host; when none
             // does, the mismatching ones stay so that the guard answers 421.
             let on_instance = inst_id.filter(|_| m.instance);
-            let bound: Vec<_> = if let Some(iid) = on_instance {
-                // Instance host: only connections bound to this very instance; connections of
-                // other instances stay so the guard answers 421, default-host ones never ride here.
-                let ok: Vec<_> = same
-                    .iter()
-                    .filter(|c| c.instance_id == Some(iid))
-                    .cloned()
-                    .collect();
-                if ok.is_empty() {
-                    same.into_iter()
-                        .filter(|c| c.instance_id.is_some())
-                        .collect()
-                } else {
-                    ok
-                }
-            } else if m.app.instances.is_some() {
-                // Static (default) host of an instance-bound app: connections without an
-                // instance; instance-bound ones stay only so the guard answers 421.
-                let ok: Vec<_> = same
-                    .iter()
-                    .filter(|c| c.instance_id.is_none())
-                    .cloned()
-                    .collect();
-                if ok.is_empty() { same } else { ok }
-            } else if m.entry.tenant.is_some() {
-                let ok: Vec<_> = same
-                    .iter()
-                    .filter(|c| {
-                        c.tenant_host
-                            .as_deref()
-                            .is_some_and(|t| t.eq_ignore_ascii_case(&host))
-                    })
-                    .cloned()
-                    .collect();
-                if ok.is_empty() { same } else { ok }
-            } else {
-                same
-            };
+            let bound = aurora_registry::identify::bind_connections(
+                m,
+                on_instance,
+                &host,
+                same,
+                |c: &Arc<apps::ConnCand>| (c.instance_id, c.tenant_host.as_deref()),
+            );
             cands.extend(bound.into_iter().map(Cand::App));
         }
         // (FIX-104, D-180, SEC-04) Transport rule: a package's or secret's host claim is injected
