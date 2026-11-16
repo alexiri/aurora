@@ -20,6 +20,7 @@ import { usePlacement, useSavePlacement, type PlacementView as Placement, type P
 import { useSecrets } from "@/lib/api/secrets";
 import { useOrgs, useWorkspaces } from "@/lib/api/queries";
 import { landingPath } from "@/lib/nav/landing";
+import { adminRoutes } from "@/lib/routes";
 import { cn } from "@/lib/utils";
 
 import { OwnerlessBanner } from "./ownerless-banner";
@@ -76,7 +77,7 @@ function CheckRow({ c }: { c: SetupCheck }) {
           {c.reason in LLM_SETTINGS_FIXES ? (
             <>
               {" "}
-              <Link href="/admin/settings/llm" className="font-medium text-ink underline underline-offset-2">
+              <Link href={adminRoutes.aiModels("endpoints")} className="font-medium text-ink underline underline-offset-2">
                 Open LLM endpoints
               </Link>
             </>
@@ -173,7 +174,7 @@ function RolesBody({ setup, step }: { setup: SetupStatus; step: SetupStep }) {
         <p className="text-sm text-ink-2">Your last sign-in did not read a role claim, so there is nothing to show here.</p>
       )}
       <Checks step={step} />
-      <Link href="/admin/settings/sign-in" className={cn(buttonVariants({ variant: "outline", size: "sm" }))}>
+      <Link href={adminRoutes.signIn()} className={cn(buttonVariants({ variant: "outline", size: "sm" }))}>
         Open Sign-in settings
       </Link>
     </div>
@@ -236,8 +237,8 @@ function LlmBody({ step, onChanged }: { step: SetupStep; onChanged: () => void }
         <Notice tone="pending" role="status">
           An endpoint has no default model. Agents on it need a model chosen one by one; until then their turns fail with
           &ldquo;no default model&rdquo;. Set <code className="font-mono">default_model</code> on the endpoint in{" "}
-          <Link href="/admin/settings/llm" className="font-medium underline underline-offset-2">
-            Admin › Settings › LLM endpoints
+          <Link href={adminRoutes.aiModels("endpoints")} className="font-medium underline underline-offset-2">
+            Administration › AI models › Endpoints
           </Link>{" "}
           (or in the Helm values for an endpoint managed there).
         </Notice>
@@ -323,14 +324,14 @@ export function SetupView() {
             <StepCard n={5} id="optional" step={step("optional")}>
               {step("optional") ? <Checks step={step("optional")!} /> : null}
               <div className="flex flex-wrap gap-2">
-                <Link href="/admin/connectors" className={cn(buttonVariants({ variant: "outline", size: "sm" }))}>
-                  Connectors
+                <Link href={adminRoutes.chatPlatforms()} className={cn(buttonVariants({ variant: "outline", size: "sm" }))}>
+                  Chat platforms
                 </Link>
-                <Link href="/admin/oauth-clients" className={cn(buttonVariants({ variant: "outline", size: "sm" }))}>
+                <Link href={adminRoutes.oauthClients()} className={cn(buttonVariants({ variant: "outline", size: "sm" }))}>
                   OAuth clients
                 </Link>
-                <Link href="/admin/plugins" className={cn(buttonVariants({ variant: "outline", size: "sm" }))}>
-                  Plugins
+                <Link href={adminRoutes.apps("apps")} className={cn(buttonVariants({ variant: "outline", size: "sm" }))}>
+                  Apps
                 </Link>
               </div>
             </StepCard>

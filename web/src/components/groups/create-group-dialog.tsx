@@ -9,6 +9,7 @@ import { Field, inputClass } from "@/components/ui/field";
 import { Notice } from "@/components/ui/notice";
 import { errorMessage, fieldErrors } from "@/lib/api/errors";
 import { useCreateGroup, type CreateGroupRequest } from "@/lib/api/groups";
+import { orgRoutes } from "@/lib/routes";
 import { useInstance } from "@/lib/api/queries";
 
 function CreateForm({ orgId, orgSlug, onDone }: { orgId: string; orgSlug: string; onDone: () => void }) {
@@ -43,7 +44,7 @@ function CreateForm({ orgId, orgSlug, onDone }: { orgId: string; orgSlug: string
     create.mutate(body, {
       onSuccess: (g) => {
         onDone();
-        router.push(`/o/${orgSlug}/groups/${g.id}`);
+        router.push(orgRoutes(orgSlug).group(g.id));
       },
     });
   }

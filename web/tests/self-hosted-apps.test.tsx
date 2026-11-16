@@ -217,8 +217,8 @@ describe("Admin › Self-hosted apps (FIX-132)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Register" }));
     const alert = (await screen.findAllByRole("alert")).find((a) => /host|claimed|registered/.test(a.textContent ?? "") && a.querySelector("p, button, a"))!;
     expect(alert.textContent).toMatch(/claimed by the app Plain \(package plainpkg\)/);
-    const link = await within(alert).findByRole("link", { name: "Host claims" });
-    expect(link.getAttribute("href")).toBe("/admin/host-claims");
+    const link = await within(alert).findByRole("link", { name: "Host conflicts" });
+    expect(link.getAttribute("href")).toBe("/admin/apps?tab=advanced#host-conflicts");
   });
 });
 
@@ -227,8 +227,10 @@ describe("the rename is complete", () => {
     const read = (p: string) => readFileSync(`${process.cwd()}/${p}`, "utf8");
     const shell = read("src/components/app-shell.tsx");
     expect(shell).not.toMatch(/label: "Instances"/);
-    expect(shell.match(/label: "Self-hosted apps"/g)).toHaveLength(2);
-    for (const p of ["src/app/admin/instances/page.tsx", "src/app/o/[org]/instances/page.tsx", "src/components/apps/instances-view.tsx"]) {
+    // The feature is a tab of Apps & accounts at both levels (P5-IA-1).
+    expect(read("src/components/admin/admin-topics.tsx").match(/label: "Self-hosted apps"/g)).toHaveLength(1);
+    expect(read("src/components/org/org-topics.tsx").match(/label: "Self-hosted apps"/g)).toHaveLength(1);
+    for (const p of ["src/components/admin/admin-topics.tsx", "src/components/org/org-topics.tsx", "src/components/apps/instances-view.tsx"]) {
       const src = read(p);
       // string literals and JSX text a person can read
       expect(src, p).not.toMatch(/title="Instances"|label: "Instances"|>Instances<|"Register instance"|No instances registered/);

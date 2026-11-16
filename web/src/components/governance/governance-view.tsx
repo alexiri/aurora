@@ -35,9 +35,10 @@ import {
   type GovIssues,
 } from "@/lib/api/governance";
 import { useMe, useWorkspaces } from "@/lib/api/queries";
+import { adminRoutes, orgRoutes, wsRoutes } from "@/lib/routes";
 import { cn } from "@/lib/utils";
 
-type Tab = "models" | "egress" | "apps" | "byo" | "compliance";
+export type Tab = "models" | "egress" | "apps" | "byo" | "compliance";
 const TABS: { id: Tab; label: string }[] = [
   { id: "models", label: "Model access" },
   { id: "egress", label: "Egress" },
@@ -49,7 +50,7 @@ const TABS: { id: Tab; label: string }[] = [
 
 /**
  * "Enforced by instance". With `setting` (the registry key, C-783) instance admins get a link to
- * `/admin/settings/governance#<key>`; everyone else sees plain text.
+ * the section's page (AI models › Rules) at the key; everyone else sees plain text.
  */
 export function Locked({ setting }: { setting?: string }) {
   const me = useMe();
@@ -60,7 +61,7 @@ export function Locked({ setting }: { setting?: string }) {
   );
   if (!setting || me.data?.user.is_instance_admin !== true) return badge;
   return (
-    <Link href={`/admin/settings/governance#${setting}`} className="no-underline" aria-label={`Enforced by instance: open the ${setting} setting`}>
+    <Link href={adminRoutes.sectionPage("governance", setting)} className="no-underline" aria-label={`Enforced by instance: open the ${setting} setting`}>
       {badge}
     </Link>
   );
@@ -77,7 +78,21 @@ function Errors({ messages }: { messages: string[] }) {
   );
 }
 
-export function GovernanceView({ orgId, orgSlug, canEdit }: { orgId: string; orgSlug: string; canEdit: boolean }) {
+/**
+ * With `panels`, the page is the topic page that hosts those panels (P5-IA-1): they are stacked without this
+ * view's own tab bar, share one form and one Save button, and the header keeps no title of its own.
+ */
+export function GovernanceView({
+  orgId,
+  orgSlug,
+  canEdit,
+  panels,
+}: {
+  orgId: string;
+  orgSlug: string;
+  canEdit: boolean;
+  panels?: Tab[];
+}) {
   const eff = useEffectiveGovernance(orgId);
   const doc = useGovernanceDoc(orgId, canEdit);
   const instance = useInstanceGovernance(canEdit);
@@ -93,6 +108,7 @@ export function GovernanceView({ orgId, orgSlug, canEdit }: { orgId: string; org
       revision={doc.data?.revision ?? 0}
       initial={canEdit ? formFromDocument(doc.data?.document, eff.data!, instance.data) : formFromEffective(eff.data!)}
       canEdit={canEdit}
+      panels={panels}
       onReload={() => void Promise.all([doc.refetch(), eff.refetch()])}
     />
   );
@@ -105,6 +121,7 @@ function Body({
   revision,
   initial,
   canEdit,
+  panels,
   onReload,
 }: {
   orgId: string;
@@ -113,6 +130,7 @@ function Body({
   revision: number;
   initial: GovForm;
   canEdit: boolean;
+  panels?: Tab[];
   onReload: () => void;
 }) {
   const [tab, setTab] = useState<Tab>("models");
@@ -128,38 +146,48 @@ function Body({
   const save = () =>
     put.mutate({ document: formToDocument(form), revision }, { onSuccess: () => setSaved(true) });
 
+  // `panels`: the topic page's panels; otherwise the one selected tab.
+  const shown: Tab[] = panels ?? [tab];
+  const has = (t: Tab) => shown.includes(t);
   return (
-    <div className="max-w-page-narrow space-y-4">
-      <PageHeader
-        title="Governance"
-        description={
-          canEdit
-            ? "Model access, egress, app and BYO rules for the whole organization."
-            : "These rules apply to your organization. Only owners and admins can change them."
-        }
-        className="mb-2"
-      />
-      <Tabs
-        items={TABS.filter((t) => t.id !== "apps" || canEdit).map((t) => ({
-          value: t.id,
-          label: `${t.label}${t.id === "compliance" && eff.non_compliant_secrets.length > 0 ? ` (${eff.non_compliant_secrets.length})` : ""}`,
-        }))}
-        value={tab}
-        onValueChange={(v) => setTab(v as Tab)}
-        variant="underline"
-        label="Governance"
-        idBase="gov"
-      />
-      <div role="tabpanel" id={tabPanelId("gov", tab)} aria-labelledby={tabId("gov", tab)} className="space-y-5 pt-2">
-        {tab === "models" ? <ModelsTab form={form} patch={patch} issues={issues} readOnly={!canEdit} /> : null}
-        {tab === "egress" ? (
+    <div className={panels ? "space-y-4" : "max-w-page-narrow space-y-4"}>
+      {panels ? null : (
+        <>
+          <PageHeader
+            title="Governance"
+            description={
+              canEdit
+                ? "Model access, egress, app and BYO rules for the whole organization."
+                : "These rules apply to your organization. Only owners and admins can change them."
+            }
+            className="mb-2"
+          />
+          <Tabs
+            items={TABS.filter((t) => t.id !== "apps" || canEdit).map((t) => ({
+              value: t.id,
+              label: `${t.label}${t.id === "compliance" && eff.non_compliant_secrets.length > 0 ? ` (${eff.non_compliant_secrets.length})` : ""}`,
+            }))}
+            value={tab}
+            onValueChange={(v) => setTab(v as Tab)}
+            variant="underline"
+            label="Governance"
+            idBase="gov"
+          />
+        </>
+      )}
+      <div
+        {...(panels ? {} : { role: "tabpanel", id: tabPanelId("gov", tab), "aria-labelledby": tabId("gov", tab) })}
+        className="space-y-5 pt-2"
+      >
+        {has("models") ? <ModelsTab form={form} patch={patch} issues={issues} readOnly={!canEdit} /> : null}
+        {has("egress") ? (
           <EgressTab form={form} patch={patch} issues={issues} readOnly={!canEdit} eff={eff} orgId={orgId} />
         ) : null}
-        {tab === "apps" && canEdit ? <AppsPosturePanel orgId={orgId} orgSlug={orgSlug} readOnly={!canEdit} /> : null}
-        {tab === "byo" ? <ByoPanel form={form} patch={patch} issues={issues} readOnly={!canEdit} eff={eff} orgId={orgId} /> : null}
-        {tab === "compliance" ? <ComplianceTab eff={eff} orgId={orgId} orgSlug={orgSlug} /> : null}
+        {has("apps") && canEdit ? <AppsPosturePanel orgId={orgId} orgSlug={orgSlug} readOnly={!canEdit} /> : null}
+        {has("byo") ? <ByoPanel form={form} patch={patch} issues={issues} readOnly={!canEdit} eff={eff} orgId={orgId} /> : null}
+        {has("compliance") ? <ComplianceTab eff={eff} orgId={orgId} orgSlug={orgSlug} /> : null}
       </div>
-      {canEdit && tab !== "compliance" && tab !== "apps" ? (
+      {canEdit && shown.some((t) => t === "models" || t === "egress" || t === "byo") ? (
         <div className="space-y-3 border-t border-line pt-4">
           {stale ? (
             <Notice tone="pending" role="alert">
@@ -412,7 +440,11 @@ function ComplianceTab({ eff, orgId, orgSlug }: { eff: EffectiveGovernance; orgI
     <ItemList aria-label="Non-compliant LLM keys">
       {eff.non_compliant_secrets.map((s) => {
         const ws = s.workspace_id ? slugOf.get(s.workspace_id) : null;
-        const href = s.workspace_id ? (ws ? `/o/${orgSlug}/w/${ws}/credentials` : null) : `/o/${orgSlug}/credentials`;
+        const href = s.workspace_id
+          ? ws
+            ? wsRoutes(orgSlug, ws).accounts({ kind: "ai-key" })
+            : null
+          : orgRoutes(orgSlug).accounts({ kind: "ai-key" });
         return (
           <ListRow
             key={s.id}

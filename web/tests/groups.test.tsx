@@ -81,7 +81,7 @@ describe("Groups list", () => {
       "GET /v1/instance": () => json(200, { oidc_providers: [{ id: "corp", display_name: "Corp", groups: true }] }),
     });
     wrap(<GroupsView orgId={ORG} orgSlug="acme" />);
-    expect(await screen.findByRole("link", { name: "Platform team" })).toHaveAttribute("href", `/o/acme/groups/${G1}`);
+    expect(await screen.findByRole("link", { name: "Platform team" })).toHaveAttribute("href", `/o/acme/people/groups/${G1}`);
     expect(screen.getByText("Manual")).toBeInTheDocument();
     expect(screen.getByText("Sign-in")).toBeInTheDocument();
     expect(screen.getByText("admin")).toBeInTheDocument();

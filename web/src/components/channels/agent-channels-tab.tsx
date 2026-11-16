@@ -30,6 +30,7 @@ import {
 } from "@/lib/api/channels";
 import { dedicatedFields, formFields, useConnectors, type ConnectorInfo } from "@/lib/api/connectors";
 import { useOrg } from "@/lib/api/queries";
+import { orgRoutes } from "@/lib/routes";
 import { cn } from "@/lib/utils";
 
 import { isTalkable, NextSteps } from "./agent-next-steps";
@@ -46,7 +47,7 @@ function NoIntegration({ orgId }: { orgId?: string }) {
         Channels.
       </p>
       {admin && org.data ? (
-        <Link href={`/o/${org.data.slug}/channels`} className={cn(buttonVariants({ variant: "outline", size: "sm" }))}>
+        <Link href={orgRoutes(org.data.slug).chatPlatforms()} className={cn(buttonVariants({ variant: "outline", size: "sm" }))}>
           Connect a chat platform
         </Link>
       ) : null}

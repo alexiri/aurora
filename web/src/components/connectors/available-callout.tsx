@@ -5,6 +5,7 @@ import Link from "next/link";
 import { buttonVariants } from "@/components/ui/button";
 import { Notice } from "@/components/ui/notice";
 import { useConnectorTypes } from "@/lib/api/connectors";
+import { adminRoutes } from "@/lib/routes";
 import { cn } from "@/lib/utils";
 
 /**
@@ -24,7 +25,7 @@ export function ConnectorAvailableCallout() {
             <strong className="font-semibold">{t.name} is available — add it.</strong> Organizations can then connect
             their chat to agents. Adding is yours to approve; nothing is added automatically.
           </span>
-          <Link href="/admin/connectors" className={cn(buttonVariants({ size: "sm" }), "text-on-primary!")}>
+          <Link href={adminRoutes.chatPlatforms()} className={cn(buttonVariants({ size: "sm" }), "text-on-primary!")}>
             Add {t.name}
           </Link>
         </Notice>

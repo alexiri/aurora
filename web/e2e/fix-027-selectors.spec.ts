@@ -56,28 +56,25 @@ test.describe("sidebar selectors (FIX-027)", () => {
       await expect(menu.getByRole("menuitem", { name: "Main workspace" })).not.toHaveClass(/font-semibold/);
     });
 
-    test(`admin: organization reads All organizations, no workspace selector, menu entry to /admin highlighted (${scheme})`, async ({ page }) => {
-      await open(page, "/admin/users", scheme);
-      await expect(page.getByTestId("org-selector").getByRole("button", { name: "Organization All organizations" })).toBeVisible();
+    test(`admin: the organization selector asks for an organization, no workspace selector, organizations only (${scheme})`, async ({ page }) => {
+      await open(page, "/admin/people", scheme);
+      await expect(page.getByTestId("org-selector").getByRole("button", { name: "Organization Select organization" })).toBeVisible();
       await expect(page.getByTestId("workspace-selector")).toHaveCount(0);
       await page.getByTestId("org-selector").getByRole("button").click();
-      const all = page.getByRole("menuitem", { name: "All organizations" });
-      await expect(all).toHaveAttribute("href", "/admin");
-      await expect(all).toHaveAttribute("data-active", "true");
-      // Selecting an organization leaves the admin area for the org's workspace list.
+      await expect(page.getByRole("menuitem", { name: "All organizations" })).toHaveCount(0);
+      // Selecting an organization leaves Administration for the org's workspace list.
       await page.getByRole("menuitem", { name: "Acme Labs" }).click();
       await expect(page).toHaveURL(/\/o\/acme$/);
     });
 
-    // FIX-048: "All organizations" links /admin, which had no route and 404'd. It redirects to the
-    // sidebar's first admin entry, Setup (docs/14:758's Overview page is unimplemented).
-    test(`selecting All organizations lands on Admin setup, not a 404 (${scheme})`, async ({ page }) => {
+    // C-962: Administration is a labelled link at the foot of the sidebar (instance admins), and it opens the Overview.
+    test(`the Administration link at the foot of the sidebar opens Administration (${scheme})`, async ({ page }) => {
       await open(page, "/o/acme/w/main/agents", scheme);
-      await page.getByTestId("org-selector").getByRole("button").click();
-      await page.getByRole("menuitem", { name: "All organizations" }).click();
-      await expect(page).toHaveURL(/\/admin\/setup$/);
-      // The Setup page, not the in-app 404 view ("404 · This page could not be found.").
-      await expect(page.getByRole("heading", { name: "Set up Aurora", level: 1 })).toBeVisible();
+      await page.getByRole("complementary", { name: "Sidebar" }).getByRole("link", { name: "Administration" }).click();
+      // The first request of /admin compiles it in `next dev`: allow for that on a loaded host.
+      await expect(page).toHaveURL(/\/admin$/, { timeout: 30_000 });
+      // The Overview (the setup checklist), not the in-app 404 view ("404 · This page could not be found.").
+      await expect(page.getByRole("heading", { name: "Set up Aurora", level: 1 })).toBeVisible({ timeout: 30_000 });
       await expect(page.getByText("This page could not be found.")).toHaveCount(0);
     });
 

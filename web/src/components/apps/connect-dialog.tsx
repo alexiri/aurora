@@ -14,6 +14,7 @@ import { Notice } from "@/components/ui/notice";
 import { appDisplayName } from "@/lib/api/app-name";
 import { errorMessage } from "@/lib/api/errors";
 import { useMe } from "@/lib/api/queries";
+import { adminRoutes } from "@/lib/routes";
 import {
   ackConnect,
   buildConnectFields,
@@ -92,8 +93,8 @@ function DeploymentStep({
         <Notice tone="pending" role="status">
           No self-hosted server is registered yet.{" "}
           {me.data?.user.is_instance_admin ? (
-            <Link href="/admin/instances" className="font-medium underline">
-              Register a server… (Admin › Self-hosted apps)
+            <Link href={adminRoutes.selfHosted()} className="font-medium underline">
+              Register a server… (Administration › Self-hosted apps)
             </Link>
           ) : (
             "Ask an administrator to register one (Self-hosted apps)."
@@ -102,8 +103,8 @@ function DeploymentStep({
       ) : bound.length > 0 && me.data?.user.is_instance_admin ? (
         <p className="text-xs text-muted">
           Another server?{" "}
-          <Link href="/admin/instances" className="font-medium underline">
-            Register a server… (Admin › Self-hosted apps)
+          <Link href={adminRoutes.selfHosted()} className="font-medium underline">
+            Register a server… (Administration › Self-hosted apps)
           </Link>
         </p>
       ) : null}

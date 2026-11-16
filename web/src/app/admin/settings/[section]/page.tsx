@@ -1,15 +1,13 @@
 "use client";
 
-import { useParams } from "next/navigation";
+import { AdminAllSettingsPage } from "@/components/admin/admin-topics";
+import { LegacyGate } from "@/components/legacy-redirect";
 
-import { AdminGuard } from "@/components/admin/admin-guard";
-import { SettingsSectionView } from "@/components/admin/settings/settings-section-view";
-
-export default function AdminSettingsSectionPage() {
-  const { section } = useParams<{ section: string }>();
+/** `/admin/settings/<section>` is storage, not navigation: it redirects to the topic page that holds the section (C-971). */
+export default function Page() {
   return (
-    <AdminGuard>
-      <SettingsSectionView slug={section} />
-    </AdminGuard>
+    <LegacyGate>
+      <AdminAllSettingsPage />
+    </LegacyGate>
   );
 }

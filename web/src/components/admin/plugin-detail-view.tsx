@@ -13,6 +13,7 @@ import { PageHeader } from "@/components/ui/page-header";
 import { ErrorState, Loading } from "@/components/states";
 import { ApiError } from "@/lib/api/client";
 import { errorMessage } from "@/lib/api/errors";
+import { adminRoutes } from "@/lib/routes";
 import {
   usePlugin,
   usePluginAction,
@@ -132,7 +133,7 @@ export function PluginReview({ plugin }: { plugin: PluginPackage }) {
   if (uninstalled) {
     return (
       <Notice tone="accent" role="status" className="max-w-page-narrow">
-        Plugin uninstalled. <Link href="/admin/plugins" className="font-medium underline">Back to plugins</Link>
+        App package uninstalled. <Link href={adminRoutes.apps("apps")} className="font-medium underline">Back to apps</Link>
       </Notice>
     );
   }
@@ -153,7 +154,7 @@ export function PluginReview({ plugin }: { plugin: PluginPackage }) {
             {plugin.package_id} <span className="font-mono text-xl font-normal text-muted">{plugin.version}</span>
           </>
         }
-        breadcrumb={[{ label: "Plugins", href: "/admin/plugins" }, { label: plugin.package_id }]}
+        breadcrumb={[{ label: "Apps", href: adminRoutes.apps("apps") },{ label: plugin.package_id }]}
         className="mb-6"
       />
       <Card>
@@ -367,7 +368,7 @@ export function PluginReview({ plugin }: { plugin: PluginPackage }) {
           {actionError instanceof ApiError && actionError.code === "claim_conflict_unresolved" ? (
             <>
               {" "}
-              <Link href="/admin/host-claims" className="font-medium underline">
+              <Link href={adminRoutes.advanced("host-conflicts")} className="font-medium underline">
                 Host claims
               </Link>
             </>

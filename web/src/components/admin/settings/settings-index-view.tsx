@@ -10,7 +10,8 @@ import { Button } from "@/components/ui/button";
 import { Notice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
 import { ItemList, ListRow } from "@/components/ui/section";
-import { exportUrl, sectionSlug, useSettingsIndex } from "@/lib/api/settings";
+import { exportUrl, useSettingsIndex } from "@/lib/api/settings";
+import { adminRoutes } from "@/lib/routes";
 
 const DISMISS_KEY = "aurora.settings.locked-notice.dismissed";
 
@@ -106,14 +107,14 @@ export function SettingsIndexView() {
             key={s.section}
             actions={
               <Button asChild variant="outline" size="sm">
-                <Link href={`/admin/settings/${sectionSlug(s.section)}`} aria-label={`Open ${s.title}`}>
+                <Link href={adminRoutes.sectionPage(s.section)} aria-label={`Open ${s.title}`}>
                   Open
                 </Link>
               </Button>
             }
           >
             <div className="min-w-0 space-y-1">
-              <Link href={`/admin/settings/${sectionSlug(s.section)}`} className="font-medium text-ink hover:underline">
+              <Link href={adminRoutes.sectionPage(s.section)} className="font-medium text-ink hover:underline">
                 {s.title}
               </Link>
               <p className="text-sm text-ink-2">{s.description}</p>

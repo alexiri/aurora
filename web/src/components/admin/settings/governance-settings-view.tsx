@@ -12,6 +12,7 @@ import { FormSection } from "@/components/ui/form";
 import { Notice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
 import { useGovernanceOrgs, useSettingsSection, type GovernanceOrgRow } from "@/lib/api/settings";
+import { orgRoutes } from "@/lib/routes";
 
 /** The four groups of the page (`08 §11`); every key of the registry's `governance` section appears once. */
 export const GOVERNANCE_GROUPS: SettingsGroup[] = [
@@ -125,7 +126,7 @@ function OrgsStanding() {
                 {q.data.items.map((o: GovernanceOrgRow) => (
                   <tr key={o.org_id}>
                     <Td>
-                      <Link className="font-medium text-ink underline-offset-2 hover:underline" href={`/o/${o.slug}/governance`}>
+                      <Link className="font-medium text-ink underline-offset-2 hover:underline" href={orgRoutes(o.slug).aiModels()}>
                         {o.name}
                       </Link>
                       {o.frozen ? <Badge className="ml-2" tone="pending">frozen</Badge> : null}

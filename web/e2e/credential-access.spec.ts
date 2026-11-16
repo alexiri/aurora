@@ -82,9 +82,10 @@ for (const scheme of ["light", "dark"] as const) {
     test.describe(`${scheme} theme, ${width} px`, () => {
       test.use({ viewport: { width, height: width === 1280 ? 900 : 844 } });
 
-      test("?tab=llm opens the LLM keys tab; creating a key shows the Give agents access step", async ({ page }) => {
+      test("the old ?tab=llm address opens the AI keys; creating a key shows the Give agents access step", async ({ page }) => {
         await open(page, "/o/acme/w/main/credentials?tab=llm", scheme);
-        await expect(page.getByRole("tab", { name: "LLM keys" })).toHaveAttribute("aria-selected", "true");
+        await expect(page).toHaveURL(/\/apps\?tab=accounts&kind=ai-key$/);
+        await expect(page.getByRole("heading", { name: "AI keys", level: 2 })).toBeVisible();
         await page.getByLabel("Name").fill("Team key");
         await page.getByLabel("Provider endpoint").selectOption("aigw");
         await page.getByLabel("API key").fill("sk-not-a-real-key");
@@ -104,7 +105,7 @@ for (const scheme of ["light", "dark"] as const) {
       });
 
       test("the row Access dialog lists, removes and adds", async ({ page }) => {
-        await open(page, "/o/acme/w/main/credentials?tab=llm", scheme);
+        await open(page, "/o/acme/w/main/apps?tab=accounts&kind=ai-key", scheme);
         await page.getByRole("button", { name: "Access to Team key" }).click();
         const dlg = page.getByRole("dialog", { name: "Access to Team key" });
         await expect(dlg.getByRole("button", { name: "Remove access for Daneel" })).toBeVisible();
@@ -112,11 +113,11 @@ for (const scheme of ["light", "dark"] as const) {
         await check(page, "access-dialog", scheme, width);
       });
 
-      test("an unknown ?tab= falls back to Secrets", async ({ page }) => {
-        await open(page, "/o/acme/w/main/credentials?tab=nope", scheme);
-        await expect(page.getByRole("tab", { name: "Secrets" })).toHaveAttribute("aria-selected", "true");
-        await page.getByRole("tab", { name: "Connections" }).click();
-        await expect(page).toHaveURL(/\?tab=connections$/);
+      test("an unknown ?tab= falls back to Accounts", async ({ page }) => {
+        await open(page, "/o/acme/w/main/apps?tab=nope", scheme);
+        await expect(page.getByRole("tab", { name: "Accounts" })).toHaveAttribute("aria-selected", "true");
+        await page.getByRole("tab", { name: "Apps", exact: true }).click();
+        await expect(page).toHaveURL(/\?tab=apps$/);
       });
 
       test("the agent Access tab shows Model readiness, addressed by ?tab=access", async ({ page }) => {

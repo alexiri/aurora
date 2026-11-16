@@ -35,6 +35,7 @@ import {
 } from "@/lib/api/errors";
 import { useAdminOrgs } from "@/lib/api/freeze";
 import { useMe } from "@/lib/api/queries";
+import { adminRoutes } from "@/lib/routes";
 import { unwrap } from "@/lib/api/unwrap";
 import { splitInstanceUrl } from "@/lib/instance-url";
 
@@ -88,12 +89,12 @@ function HostConflictNotice({
       {c.kind === "static_claim" ? (
         isAdmin ? (
           <p>
-            <Link href="/admin/host-claims" className="font-medium underline">
-              Host claims
+            <Link href={adminRoutes.advanced("host-conflicts")} className="font-medium underline">
+              Host conflicts
             </Link>{" "}
             ·{" "}
-            <Link href="/admin/plugins" className="font-medium underline">
-              Plugins
+            <Link href={adminRoutes.apps("apps")} className="font-medium underline">
+              Apps
             </Link>
           </p>
         ) : (
@@ -102,8 +103,8 @@ function HostConflictNotice({
       ) : null}
       {c.kind === "instance" && c.scope === "org" && !c.promotable && isAdmin && scope.kind === "organization" ? (
         <p>
-          <Link href="/admin/instances" className="font-medium underline">
-            Self-hosted apps (admin)
+          <Link href={adminRoutes.selfHosted()} className="font-medium underline">
+            Self-hosted apps (Administration)
           </Link>
         </p>
       ) : null}

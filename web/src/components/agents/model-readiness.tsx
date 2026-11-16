@@ -30,8 +30,8 @@ const SOURCE_COPY: Record<string, string> = {
 
 function KeyRow({ k, base, orgBase }: { k: KeyReadiness; base: string; orgBase: string }) {
   const reason = k.reason ? (REASON_COPY[k.reason] ?? { text: k.reason, fix: "" }) : null;
-  const keysHref = `${k.scope === "organization" ? orgBase : base}/credentials?tab=llm`;
-  const href = reason?.where === "governance" ? `${orgBase}/governance` : reason?.where === "keys" ? keysHref : null;
+  const keysHref = `${k.scope === "organization" ? orgBase : base}/apps?tab=accounts&kind=ai-key`;
+  const href = reason?.where === "governance" ? `${orgBase}/ai-models` : reason?.where === "keys" ? keysHref : null;
   return (
     <ListRow actions={<Badge tone={k.usable ? "accent" : "danger"}>{k.usable ? "Ready" : "Not usable"}</Badge>}>
       <div className="min-w-0 space-y-0.5 text-sm">

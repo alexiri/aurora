@@ -24,6 +24,7 @@ import { useMeOnboarding, usePatchOnboarding } from "@/lib/api/onboarding";
 import { useAgents, type Agent } from "@/lib/api/queries";
 import { HELLO_MESSAGE, type GuideStep, type GuideStepId } from "@/lib/onboarding/guide";
 import { useGuide } from "@/lib/onboarding/use-guide";
+import { orgRoutes } from "@/lib/routes";
 import { cn } from "@/lib/utils";
 
 import { REASON_COPY } from "@/components/agents/model-readiness";
@@ -288,8 +289,8 @@ function KeyStep({ step, wsId, orgId, agent, base, keysCount }: { step: GuideSte
       {reason ? (
         <Notice tone="danger" role="status">
           {agent.name} has a key, but it cannot use it. {reason.text} {reason.fix}{" "}
-          <Link href={`${base}/credentials?tab=llm`} className="font-semibold underline">
-            Open LLM keys
+          <Link href={`${base}/apps?tab=accounts&kind=ai-key`} className="font-semibold underline">
+            Open AI keys
           </Link>
         </Notice>
       ) : (
@@ -354,7 +355,7 @@ export function OptionalNext({ org, ws, handle, isOwner }: { org: string; ws: st
     { href: `${base}/apps`, label: "Connect an app", text: "Let the agent use GitHub, Linear and more, with your approval." },
     handle ? { href: `${base}/agents/${handle}?tab=instructions`, label: "Write instructions for the agent", text: "Tell it what you want it to do and how." } : null,
     handle ? { href: `${base}/agents/${handle}?tab=schedules`, label: "Set up a schedule", text: "Have it do something every morning." } : null,
-    isOwner ? { href: `/o/${org}/members`, label: "Invite a teammate", text: "Share this workspace with people you work with." } : null,
+    isOwner ? { href: orgRoutes(org).people("members"), label: "Invite a teammate", text: "Share this workspace with people you work with." } : null,
   ].filter((x): x is { href: string; label: string; text: string } => x !== null);
   return (
     <Section id="optional" title="Next, when you are ready" description="None of this is needed to start.">

@@ -78,7 +78,7 @@ const states: { name: string; fx: Fixture; query: (narrow: boolean) => string; p
     query: () => `?c=${MINE.id}`,
     prepare: async (page) => {
       // FIX-021: the link opens the LLM keys tab, owners also get "Agent access", the reason counts show under the copy.
-      await expect(page.getByRole("link", { name: "Open LLM keys" })).toHaveAttribute("href", /\/credentials\?tab=llm$/);
+      await expect(page.getByRole("link", { name: "Open LLM keys" })).toHaveAttribute("href", /\/apps\?tab=accounts&kind=ai-key$/);
       await expect(page.getByRole("link", { name: "Agent access" })).toHaveAttribute("href", /\?tab=access$/);
       await expect(page.getByText("1 granted key not usable (origin_unverified)")).toBeVisible();
     },

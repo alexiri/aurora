@@ -285,7 +285,7 @@ describe("plugins list: provenance, update badges and the check-all button (C-60
     });
     wrap(<PluginsView />);
     expect(await screen.findByText("Source")).toBeTruthy();
-    expect(screen.getByRole("link", { name: "CERN addons" }).getAttribute("href")).toBe("/admin/addon-sources#s1");
+    expect(screen.getByRole("link", { name: "CERN addons" }).getAttribute("href")).toBe("/admin/apps?tab=advanced#s1");
     expect(screen.getByText("builtin")).toBeTruthy();
     expect(screen.getAllByText("Update available").length).toBeGreaterThan(0);
     fireEvent.click(await screen.findByRole("button", { name: "Check for updates" }));

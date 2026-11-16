@@ -10,6 +10,7 @@ import { FormActions } from "@/components/ui/form";
 import { Notice } from "@/components/ui/notice";
 import { useAppAvailability, usePutAppAvailability, type AppAvailability } from "@/lib/api/apps";
 import { errorMessage } from "@/lib/api/errors";
+import { orgRoutes } from "@/lib/routes";
 
 /**
  * (FIX-130) The org's **app posture**: which installed apps may be connected at all, next to the LLM and egress
@@ -71,7 +72,7 @@ function PostureForm({
         </label>
       </fieldset>
       <p className="text-sm">
-        <Link className="font-medium text-link underline" href={`/o/${orgSlug}/apps`}>
+        <Link className="font-medium text-link underline" href={orgRoutes(orgSlug).apps("apps")}>
           Choose available apps →
         </Link>
       </p>

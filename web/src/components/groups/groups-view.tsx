@@ -10,6 +10,7 @@ import { inputClass } from "@/components/ui/field";
 import { PageHeader } from "@/components/ui/page-header";
 import { Section } from "@/components/ui/section";
 import { sourceLabel, useGroups, type Group } from "@/lib/api/groups";
+import { orgRoutes } from "@/lib/routes";
 
 import { CreateGroupDialog } from "./create-group-dialog";
 
@@ -63,7 +64,7 @@ export function GroupsView({ orgId, orgSlug }: { orgId: string; orgSlug: string 
                   <tr key={g.id}>
                     <Td>
                       <Link
-                        href={`/o/${orgSlug}/groups/${g.id}`}
+                        href={orgRoutes(orgSlug).group(g.id)}
                         className="font-medium text-accent-ink hover:underline"
                       >
                         {g.name}

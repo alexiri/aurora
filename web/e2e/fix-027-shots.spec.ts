@@ -11,7 +11,7 @@ import { CANVAS, overflow, type Scheme } from "./support/open";
 const SCREENS: { name: string; path: string }[] = [
   { name: "org", path: "/o/acme" },
   { name: "workspace", path: "/o/acme/w/main/agents" },
-  { name: "admin", path: "/admin/users" },
+  { name: "admin", path: "/admin/people" },
   { name: "account", path: "/account" },
 ];
 

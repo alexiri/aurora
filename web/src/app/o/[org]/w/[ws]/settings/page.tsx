@@ -1,10 +1,13 @@
 "use client";
 
-import { useParams } from "next/navigation";
+import { LegacyGate } from "@/components/legacy-redirect";
+import { WorkspaceSettingsPage } from "@/components/workspace/workspace-topics";
 
-import { SettingsView } from "@/components/settings/settings-view";
-
-export default function WorkspaceSettingsPage() {
-  const { org, ws } = useParams<{ org: string; ws: string }>();
-  return <SettingsView org={org} ws={ws} />;
+/** `?tab=access` is the old People address (C-960); every other tab is this page. */
+export default function Page() {
+  return (
+    <LegacyGate>
+      <WorkspaceSettingsPage />
+    </LegacyGate>
+  );
 }

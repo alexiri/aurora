@@ -213,7 +213,7 @@ describe("transcript", () => {
     const alert = screen.getByRole("alert");
     expect(alert.textContent).toContain("no usable LLM key");
     expect(alert.textContent).toContain("1 granted key not usable (origin_unverified)");
-    expect(within(alert).getByRole("link", { name: "Open LLM keys" }).getAttribute("href")).toBe("/o/x/w/y/credentials?tab=llm");
+    expect(within(alert).getByRole("link", { name: "Open LLM keys" }).getAttribute("href")).toBe("/o/x/w/y/apps?tab=accounts&kind=ai-key");
     // Not an owner (the workspace did not load): no "Agent access" link.
     expect(within(alert).queryByRole("link", { name: "Agent access" })).toBeNull();
   });
