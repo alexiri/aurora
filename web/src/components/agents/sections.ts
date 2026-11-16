@@ -17,6 +17,7 @@ export type AgentPageId =
   | "terminal"
   | "files"
   | "previews"
+  | "ssh"
   | "connect"
   | "access";
 
@@ -36,6 +37,7 @@ export const AGENT_PAGE_IDS: readonly AgentPageId[] = [
   "terminal",
   "files",
   "previews",
+  "ssh",
   "connect",
   "access",
 ];
@@ -53,6 +55,7 @@ export const PAGE_LABEL: Record<AgentPageId, string> = {
   terminal: "Terminal",
   files: "Files",
   previews: "Previews",
+  ssh: "SSH",
   connect: "Computer: Connect",
   access: "Access",
 };
@@ -62,7 +65,7 @@ export const SECTIONS: readonly { id: SectionId; label: string; pages: readonly 
   { id: "chat", label: "Chat", pages: ["chat"] },
   { id: "behaviour", label: "Behaviour", pages: ["instructions", "memory", "skills"] },
   { id: "triggers", label: "Triggers", pages: ["schedules", "webhooks", "channels", "peers"] },
-  { id: "computer", label: "Computer", pages: ["computer", "terminal", "files", "previews", "connect"] },
+  { id: "computer", label: "Computer", pages: ["computer", "terminal", "files", "previews", "ssh", "connect"] },
   { id: "access", label: "Access", pages: ["access"] },
 ];
 
@@ -78,6 +81,8 @@ export interface PageAvailability {
   previews: boolean;
   /** The instance's `terminal.enabled` (P4-TERM). */
   terminal: boolean;
+  /** (P4-SSH-1, C-795) The instance's `features.ssh`; absent means off. */
+  ssh?: boolean;
 }
 
 export function isPageAvailable(page: AgentPageId, av: PageAvailability): boolean {
@@ -86,6 +91,8 @@ export function isPageAvailable(page: AgentPageId, av: PageAvailability): boolea
   // (P5-FILES-2, D-316(b)) Files exists exactly where the Terminal does: no gate of its own.
   if (page === "terminal" || page === "files") return av.terminal;
   if (page === "previews") return av.previews;
+  // (P4-SSH-1) SSH: hosted agents on an instance with `ssh.enabled`; independent of the terminal's switch.
+  if (page === "ssh") return av.ssh === true;
   return true;
 }
 

@@ -11861,6 +11861,111 @@
         ]
       }
     },
+    "/v1/agents/{agent}/ssh-certificate": {
+      "post": {
+        "tags": [
+          "ssh"
+        ],
+        "summary": "Mint a short-lived SSH user certificate for an agent (session or the caller's own API key).",
+        "operationId": "mintSshCertificate",
+        "parameters": [
+          {
+            "name": "agent",
+            "in": "path",
+            "description": "Agent id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MintCertificateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SshCertificate"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "423": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
     "/v1/agents/{agent}/start-failures": {
       "get": {
         "tags": [
@@ -18298,6 +18403,310 @@
           },
           {
             "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/me/ssh-keys": {
+      "get": {
+        "tags": [
+          "ssh"
+        ],
+        "summary": "The caller's registered SSH public keys, newest first.",
+        "operationId": "listSshKeys",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SshKeyList"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "ssh"
+        ],
+        "summary": "Register an `ssh-ed25519` public key (session only).",
+        "operationId": "createSshKey",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateSshKeyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SshKey"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/v1/me/ssh-keys/{id}": {
+      "delete": {
+        "tags": [
+          "ssh"
+        ],
+        "summary": "Delete one of the caller's keys (session only); sessions certified by it end at the next\nheartbeat.",
+        "operationId": "deleteSshKey",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "SSH key id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {},
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "ssh"
+        ],
+        "summary": "Rename one of the caller's keys (session only).",
+        "operationId": "renameSshKey",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "SSH key id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RenameSshKeyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SshKey"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
           }
         ]
       }
@@ -27677,6 +28086,62 @@
             }
           },
           "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/ssh": {
+      "get": {
+        "tags": [
+          "ssh"
+        ],
+        "summary": "Connection facts: the address, the certificate lifetime and the terminators' host keys.",
+        "operationId": "getSshFacts",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SshFacts"
+                }
+              }
+            }
+          },
+          "401": {
             "content": {
               "application/json": {
                 "schema": {
@@ -37394,6 +37859,25 @@
           }
         }
       },
+      "CreateSshKeyRequest": {
+        "type": "object",
+        "required": [
+          "public_key"
+        ],
+        "properties": {
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "At most 80 characters; default: the key's comment, else \"SSH key\"."
+          },
+          "public_key": {
+            "type": "string",
+            "description": "One `ssh-ed25519 <base64> [comment]` line, at most 4096 bytes."
+          }
+        }
+      },
       "CreateToken": {
         "type": "object",
         "required": [
@@ -38376,7 +38860,8 @@
           "hosted",
           "channels",
           "previews",
-          "terminal"
+          "terminal",
+          "ssh"
         ],
         "properties": {
           "channels": {
@@ -38388,6 +38873,10 @@
           "previews": {
             "type": "boolean",
             "description": "(phase 4, P4-PRV-1) Port previews are configured on this instance."
+          },
+          "ssh": {
+            "type": "boolean",
+            "description": "(phase 5, P4-SSH-1, C-791) SSH access to sandboxes is enabled on this instance; the\nAccount › SSH keys page and the agent page's SSH page exist only when this is true."
           },
           "terminal": {
             "type": "boolean",
@@ -39353,6 +39842,21 @@
               "string",
               "null"
             ]
+          }
+        }
+      },
+      "HostKey": {
+        "type": "object",
+        "required": [
+          "public_key",
+          "fingerprint"
+        ],
+        "properties": {
+          "fingerprint": {
+            "type": "string"
+          },
+          "public_key": {
+            "type": "string"
           }
         }
       },
@@ -41717,6 +42221,18 @@
               "string",
               "null"
             ]
+          }
+        }
+      },
+      "MintCertificateRequest": {
+        "type": "object",
+        "required": [
+          "public_key"
+        ],
+        "properties": {
+          "public_key": {
+            "type": "string",
+            "description": "The registered key the certificate certifies (its fingerprint must be one of the\ncaller's `ssh_keys`)."
           }
         }
       },
@@ -49418,6 +49934,17 @@
           }
         }
       },
+      "RenameSshKeyRequest": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        }
+      },
       "Replica": {
         "type": "object",
         "required": [
@@ -52634,6 +53161,170 @@
           },
           "name": {
             "type": "string"
+          }
+        }
+      },
+      "SshCertificate": {
+        "type": "object",
+        "description": "A minted SSH user certificate (C-791).",
+        "required": [
+          "certificate",
+          "serial",
+          "principal",
+          "key_id",
+          "valid_after",
+          "valid_before",
+          "username",
+          "host",
+          "port",
+          "known_hosts"
+        ],
+        "properties": {
+          "certificate": {
+            "type": "string",
+            "description": "The `ssh-ed25519-cert-v01@openssh.com` line, ready for `id_ed25519-cert.pub`."
+          },
+          "host": {
+            "type": "string"
+          },
+          "key_id": {
+            "type": "string"
+          },
+          "known_hosts": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "`known_hosts` lines for the terminators' host keys (empty until one registers)."
+          },
+          "port": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "principal": {
+            "type": "string",
+            "description": "The agent id (the certificate's only principal)."
+          },
+          "serial": {
+            "type": "string",
+            "description": "The serial as a decimal string (a u64)."
+          },
+          "username": {
+            "type": "string",
+            "description": "The SSH user name to connect as: the agent id."
+          },
+          "valid_after": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "valid_before": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "SshFacts": {
+        "type": "object",
+        "description": "Connection facts (C-792).",
+        "required": [
+          "host",
+          "port",
+          "cert_ttl_secs",
+          "terminators_live",
+          "host_keys",
+          "known_hosts"
+        ],
+        "properties": {
+          "cert_ttl_secs": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "host": {
+            "type": "string"
+          },
+          "host_keys": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HostKey"
+            }
+          },
+          "known_hosts": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "port": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "terminators_live": {
+            "type": "integer",
+            "format": "int32",
+            "description": "SSH terminator replicas seen in the last 90 s (`0` until P4-SSH-2's terminators exist).",
+            "minimum": 0
+          }
+        }
+      },
+      "SshKey": {
+        "type": "object",
+        "description": "A person's registered SSH public key (C-790).",
+        "required": [
+          "id",
+          "name",
+          "algorithm",
+          "public_key",
+          "fingerprint",
+          "created_at"
+        ],
+        "properties": {
+          "algorithm": {
+            "type": "string",
+            "description": "Always `ssh-ed25519`."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "fingerprint": {
+            "type": "string",
+            "description": "`SHA256:` + unpadded base64 of the key blob; equals `ssh-keygen -lf`."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "last_used_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "name": {
+            "type": "string"
+          },
+          "public_key": {
+            "type": "string",
+            "description": "Canonical OpenSSH form `ssh-ed25519 <base64>` (no comment)."
+          }
+        }
+      },
+      "SshKeyList": {
+        "type": "object",
+        "required": [
+          "keys"
+        ],
+        "properties": {
+          "keys": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SshKey"
+            },
+            "description": "Newest first."
           }
         }
       },
