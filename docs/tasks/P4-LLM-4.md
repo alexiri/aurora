@@ -102,3 +102,34 @@ P4-LLM-1, P4-LLM-2.
 ## Suggested agent/model and reason
 Sonnet (`rust-developer`); Opus review of the signing path and the external-id handling (a
 confused-deputy mistake here crosses tenants).
+
+## Completion report
+Commits on `alexiri/p5-agent`, prefix `P4-LLM-4`: `0bb45042` (code checkpoint) and the finishing commit (tests, e2e, docs).
+Gate level: **per-task gate** (fmt, clippy on `aurora-{llm,config,core,testkit,gateway,api}` and `aurora-e2e-gateway`
+`--all-targets --all-features -D warnings`: clean; guards `run-all.sh` exit 0); the batch gate follows with P4-LLM-5.
+- **What changed (this commit).** Gateway `governance::llm_bedrock::*` (7 tests, file `tests/it/llm_bedrock.rs`, a child module of
+  `governance.rs` so it shares the Vertex/Azure rig; the rig seeds the org row with its `external_id` in a scratch database):
+  each mode reaches the mock with a signature the independent verifier accepts; the session key id signs and the source key never
+  reaches the runtime; `ExternalId` is the seeded org's and differs per organization, an empty one fails closed (502, no STS call);
+  a denied role forwards nothing and a burst makes one STS call; 413 before the secret is opened (store made unreachable) and
+  exactly the limit is signed; guardrail, async-invoke, agent, control-plane routes, unknown ops and the undeclared OpenAI surface
+  → `llm_path_not_permitted` (a dot segment is `ambiguous_path` earlier); event stream byte-identical and the first frame arrives
+  while the rest is gated (`MockBedrock::gate_stream`); an uncredentialed request under egress `credentialed_only` stays blocked
+  while Bedrock works. API `secrets::bedrock_credentials_are_validated_and_attributed` and
+  `bedrock_model_listing_merges_profiles_and_falls_back_to_the_static_list`. e2e `s24_bedrock_assume_role_…` (real binaries,
+  `llm_bedrock` option of the stack; greps logs, request log, API reads and metrics for the source key and secret, the session
+  key/secret/token, the agent's values and the gateway's own signature). Docs: D-312, D-313, C-751..C-754, `06`, `08`, `17`
+  (SEC-97), `18`.
+- **Fail-before.** Gateway `llm_bedrock_external_id_is_the_organizations_own` with the external id replaced by a constant in
+  `decide.rs`: failed (`left: "ext-A"`, `right: "ext-B"`); API `bedrock_credentials_…` with `key_check` replacing the id by
+  `"wrong"`: failed on the external-id assertion. Both reverted.
+- **Deviations.** (1) The 413 follows the policy verdict (the winner is not known earlier); `06` step 6a said "before policy" and is
+  corrected (D-313(d)). (2) "Control-plane host → `llm_path_not_permitted`": the mocks sit on one loopback address, so the
+  control-plane *routes* (`GET /foundation-models`, `/inference-profiles`) are refused on the runtime host; a request to the real
+  `bedrock.<region>…` host is not an injection target at all (`hosts()` is the runtime host only). (3) "S3 under Default Rule
+  `block`" is exercised with egress `credentialed_only` and an uncredentialed loopback host as the S3 stand-in. (4) With a
+  `provider_account` rule the API mints twice per save (validation + origin, D-311(d)).
+- **Not run here.** The full suites (batch gate). The `sha2 0.11`/`hmac 0.13` bump from Dependabot is not on this branch yet:
+  re-run `aurora-llm` after merging it (`sigv4.rs`).
+- **Mid-checkpoint note.** `0bb45042`'s message says python/sed were used for a mechanical rename and a range delete; this
+  commit's edits were all made with the Edit/Write tools.

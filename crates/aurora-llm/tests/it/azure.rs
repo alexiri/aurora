@@ -162,7 +162,7 @@ async fn resource_key_validation_uses_models_with_the_api_key_header() {
     assert!(matches!(
         p.verify_key_origin_as(
             &ep,
-            AuthMode::ApiKey,
+            &KeyCheck::new(AuthMode::ApiKey),
             OriginMethod::ProviderAccount,
             &Secret::new("good-key".into()),
             &http
@@ -184,7 +184,7 @@ async fn entra_validation_mints_then_calls_models_with_the_token() {
         reqwest::Client::new(),
     );
     let value = Secret::new(app().json());
-    p.list_models_strict_as(&ep, AuthMode::AzureEntra, &value, &http)
+    p.list_models_strict_as(&ep, &KeyCheck::new(AuthMode::AzureEntra), &value, &http)
         .await
         .unwrap();
     let r = azure.requests();
@@ -196,7 +196,7 @@ async fn entra_validation_mints_then_calls_models_with_the_token() {
     let o = p
         .verify_key_origin_as(
             &ep,
-            AuthMode::AzureEntra,
+            &KeyCheck::new(AuthMode::AzureEntra),
             OriginMethod::ProviderAccount,
             &value,
             &http,
@@ -208,13 +208,13 @@ async fn entra_validation_mints_then_calls_models_with_the_token() {
     // A refused application is `MintRejected`, an outage is unreachable.
     entra.set_behaviour(Behaviour::InvalidClient);
     assert!(matches!(
-        p.list_models_strict_as(&ep, AuthMode::AzureEntra, &value, &http)
+        p.list_models_strict_as(&ep, &KeyCheck::new(AuthMode::AzureEntra), &value, &http)
             .await,
         Err(LlmError::MintRejected)
     ));
     entra.set_behaviour(Behaviour::Unavailable);
     assert!(matches!(
-        p.list_models_strict_as(&ep, AuthMode::AzureEntra, &value, &http)
+        p.list_models_strict_as(&ep, &KeyCheck::new(AuthMode::AzureEntra), &value, &http)
             .await,
         Err(LlmError::Unreachable(_))
     ));

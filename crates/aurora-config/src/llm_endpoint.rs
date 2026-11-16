@@ -275,8 +275,13 @@ pub fn endpoint_field_errors(e: &LlmEndpoint, source: EntrySource) -> Vec<Endpoi
             _ => err("base_url", "base_url_invalid"),
         },
         "bedrock" => {
+            // An optional VPC endpoint; `https`, or plain `http` to a loopback host as for `azure_openai`.
             if let Some(u) = e.base_url.as_deref()
-                && !bare_origin(u).is_some_and(|(s, _)| s == "https")
+                && !match bare_origin(u) {
+                    Some(("https", _)) => true,
+                    Some(("http", host)) => is_loopback(host),
+                    _ => false,
+                }
             {
                 err("base_url", "base_url_invalid");
             }
@@ -501,6 +506,22 @@ mod tests {
                 ..ep("azure_openai")
             };
             assert!(codes(&e).is_empty(), "{ok}: {:?}", codes(&e));
+        }
+        // (P4-LLM-4) a Bedrock VPC endpoint: `https`, or plain `http` to a loopback host only
+        for (url, ok) in [
+            ("http://127.0.0.1:9", true),
+            (
+                "https://vpce-1.bedrock-runtime.us-east-1.vpce.amazonaws.com",
+                true,
+            ),
+            ("http://bedrock.example.com", false),
+        ] {
+            let e = LlmEndpoint {
+                base_url: s(url),
+                region: s("us-east-1"),
+                ..ep("bedrock")
+            };
+            assert_eq!(codes(&e).is_empty(), ok, "{url}: {:?}", codes(&e));
         }
         assert_eq!(
             codes(&ep("azure_openai")),

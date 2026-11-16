@@ -4,6 +4,7 @@
 //! message, only its error *code*.
 pub mod entra;
 pub mod gcp;
+pub mod sts;
 
 use crate::{AuthMode, Endpoint, KeyOrigin, Overrides};
 use aurora_core::Secret;
@@ -92,6 +93,7 @@ pub fn spec(mode: AuthMode) -> Option<&'static dyn MintSpec> {
     match mode {
         AuthMode::GcpServiceAccount => Some(&gcp::GcpSpec),
         AuthMode::AzureEntra => Some(&entra::EntraSpec),
+        AuthMode::AwsAssumeRole => Some(&sts::StsSpec),
         _ => None,
     }
 }

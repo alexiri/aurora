@@ -183,7 +183,14 @@ async fn steer_refused_and_background_unsupported_and_caps() {
     let caps = a.capabilities();
     assert!(caps.resume && caps.tool_events && caps.thinking_deltas && caps.platform_tools);
     assert!(!caps.steer && !caps.background_tool);
-    assert_eq!(caps.dialects, ["anthropic_messages"]);
+    assert_eq!(
+        caps.dialects,
+        [
+            "anthropic_messages",
+            "anthropic_bedrock",
+            "anthropic_vertex"
+        ]
+    );
     assert_eq!(caps.skills_dir.as_deref(), Some(".claude/skills"));
     assert_eq!(caps.instruction_files, ["CLAUDE.md", "AGENTS.md"]);
     let mut s = a.start_session(opts(None)).await.unwrap();

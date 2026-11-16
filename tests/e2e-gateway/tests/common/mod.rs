@@ -42,6 +42,9 @@ pub struct Opts {
     /// (P4-LLM-3) An `azure_openai` endpoint `az` (deployment `gpt-4o`) on a loopback resource: `(entra authority base,
     /// azure resource base)`; the authority is a target of `llm.dev_upstream_overrides`, the resource is the `base_url`.
     pub llm_azure: Option<(String, String)>,
+    /// (P4-LLM-4) A `bedrock` endpoint `bd` (`us-east-1`) whose runtime is a loopback mock (its `base_url`): `(sts base,
+    /// bedrock base)`; STS is a target of `llm.dev_upstream_overrides`, as is the control plane for the API's listing.
+    pub llm_bedrock: Option<(String, String)>,
     /// Writes `gateway.insecure_loopback_injection = false` (the config the override must refuse).
     pub no_insecure_loopback: bool,
     /// Run the gateway once with this config, expect it to refuse to start (log in `<dir>/refused.log`) and return.
@@ -185,6 +188,11 @@ api_internal_url = "http://{API_IP}:4111"
         if let Some((entra, azure)) = &o.llm_azure {
             toml.push_str(&format!(
                 "\n[llm]\nenabled_providers = [\"azure_openai\"]\nprovider_preference = [\"azure_openai\"]\n\n[llm.dev_upstream_overrides]\n\"https://login.microsoftonline.com\" = \"{entra}\"\n\n[[llm.endpoints]]\nid = \"az\"\nprovider = \"azure_openai\"\nbase_url = \"{azure}\"\nmodels = [\"gpt-4o\"]\ndefault_model = \"gpt-4o\"\n"
+            ));
+        }
+        if let Some((sts, bedrock)) = &o.llm_bedrock {
+            toml.push_str(&format!(
+                "\n[llm]\nenabled_providers = [\"bedrock\"]\nprovider_preference = [\"bedrock\"]\n\n[llm.dev_upstream_overrides]\n\"https://sts.us-east-1.amazonaws.com\" = \"{sts}\"\n\"https://bedrock.us-east-1.amazonaws.com\" = \"{bedrock}\"\n\n[[llm.endpoints]]\nid = \"bd\"\nprovider = \"bedrock\"\nregion = \"us-east-1\"\nbase_url = \"{bedrock}\"\nmodels = [\"anthropic.claude-3-haiku-20240307-v1:0\"]\ndefault_model = \"anthropic.claude-3-haiku-20240307-v1:0\"\n"
             ));
         }
         let mut stack = Stack {
