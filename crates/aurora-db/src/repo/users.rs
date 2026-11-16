@@ -24,12 +24,12 @@ pub async fn find_by_id<'e, E: PgExecutor<'e>>(
     exec: E,
     id: Uuid,
 ) -> Result<Option<UserRow>, DbError> {
-    Ok(
-        sqlx::query_as(&format!("SELECT {COLS} FROM users WHERE id = $1"))
-            .bind(id)
-            .fetch_optional(exec)
-            .await?,
-    )
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT {COLS} FROM users WHERE id = $1"
+    )))
+    .bind(id)
+    .fetch_optional(exec)
+    .await?)
 }
 
 /// Case-insensitive (citext) lookup.
@@ -37,9 +37,9 @@ pub async fn find_by_email<'e, E: PgExecutor<'e>>(
     exec: E,
     email: &str,
 ) -> Result<Option<UserRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {COLS} FROM users WHERE email = $1::citext"
-    ))
+    )))
     .bind(email.trim())
     .fetch_optional(exec)
     .await?)
@@ -74,9 +74,9 @@ pub async fn find_by_email_for_update<'e, E: PgExecutor<'e>>(
     exec: E,
     email: &str,
 ) -> Result<Option<UserRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {COLS} FROM users WHERE email = $1::citext FOR NO KEY UPDATE"
-    ))
+    )))
     .bind(email.trim())
     .fetch_optional(exec)
     .await?)
@@ -90,10 +90,10 @@ pub async fn mark_email_verified<'e, E: PgExecutor<'e>>(
     id: Uuid,
     email: &str,
 ) -> Result<Option<UserRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "UPDATE users SET email_verified_at = COALESCE(email_verified_at, now()), updated_at = now()
          WHERE id = $1 AND email = $2::citext RETURNING {COLS}"
-    ))
+    )))
     .bind(id)
     .bind(email.trim())
     .fetch_optional(exec)
@@ -102,9 +102,9 @@ pub async fn mark_email_verified<'e, E: PgExecutor<'e>>(
 
 /// Stamp `last_login_at` (churn column: `updated_at` untouched); returns the fresh row.
 pub async fn record_login<'e, E: PgExecutor<'e>>(exec: E, id: Uuid) -> Result<UserRow, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "UPDATE users SET last_login_at = now() WHERE id = $1 RETURNING {COLS}"
-    ))
+    )))
     .bind(id)
     .fetch_one(exec)
     .await?)
@@ -130,9 +130,9 @@ pub async fn grant_instance_admin<'e, E: PgExecutor<'e>>(
     exec: E,
     id: Uuid,
 ) -> Result<UserRow, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "UPDATE users SET is_instance_admin = true, updated_at = now() WHERE id = $1 RETURNING {COLS}"
-    ))
+    )))
     .bind(id)
     .fetch_one(exec)
     .await?)

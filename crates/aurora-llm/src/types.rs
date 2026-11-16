@@ -111,6 +111,26 @@ impl OriginMethod {
     }
 }
 
+/// (P4-LLM-4) What a provider needs to know about the secret it validates besides the key: the auth mode and, for
+/// `aws_assume_role`, the organization (`RoleSessionName`) and its own `external_id` (`ExternalId`, D-261).
+#[derive(Debug, Clone)]
+pub struct KeyCheck {
+    pub mode: AuthMode,
+    pub org_id: String,
+    pub org_external_id: Option<String>,
+}
+
+impl KeyCheck {
+    #[must_use]
+    pub fn new(mode: AuthMode) -> Self {
+        Self {
+            mode,
+            org_id: String::new(),
+            org_external_id: None,
+        }
+    }
+}
+
 /// Account identifiers a provider reports for a key; every field optional.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct KeyOrigin {
@@ -254,28 +274,40 @@ pub trait LlmProvider: Send + Sync {
     ) -> Result<Vec<ModelInfo>> {
         self.list_models(ep, key, http).await
     }
-    /// (P4-LLM-3) [`Self::list_models_strict`] for a secret of auth mode `mode` (providers with several value shapes,
-    /// Azure's key and Entra application, override it; the others ignore the mode).
-    async fn list_models_strict_as(
+    /// (P4-LLM-4) [`Self::list_models`] for a secret of the auth mode in `check` (Bedrock signs its listing with the
+    /// secret's credentials, so it needs the mode and, for `aws_assume_role`, the organization's external id).
+    async fn list_models_as(
         &self,
         ep: &Endpoint,
-        mode: AuthMode,
+        check: &KeyCheck,
         key: &Secret<String>,
         http: &reqwest::Client,
     ) -> Result<Vec<ModelInfo>> {
-        let _ = mode;
+        let _ = check;
+        self.list_models(ep, key, http).await
+    }
+    /// (P4-LLM-3, P4-LLM-4) [`Self::list_models_strict`] for a secret of the auth mode in `check` (providers with several
+    /// value shapes, Azure's and Bedrock's, override it; the others ignore it).
+    async fn list_models_strict_as(
+        &self,
+        ep: &Endpoint,
+        check: &KeyCheck,
+        key: &Secret<String>,
+        http: &reqwest::Client,
+    ) -> Result<Vec<ModelInfo>> {
+        let _ = check;
         self.list_models_strict(ep, key, http).await
     }
-    /// (P4-LLM-3) [`Self::verify_key_origin`] for a secret of auth mode `mode`.
+    /// (P4-LLM-3, P4-LLM-4) [`Self::verify_key_origin`] for a secret of the auth mode in `check`.
     async fn verify_key_origin_as(
         &self,
         ep: &Endpoint,
-        mode: AuthMode,
+        check: &KeyCheck,
         method: OriginMethod,
         key: &Secret<String>,
         http: &reqwest::Client,
     ) -> Result<KeyOrigin> {
-        let _ = mode;
+        let _ = check;
         self.verify_key_origin(ep, method, key, http).await
     }
     /// (P4-LLM-2) Whether the key is validated by the origin proof itself (Vertex: the mint that proves the project and

@@ -61,10 +61,12 @@ pub async fn insert<'e, E: PgExecutor<'e>>(exec: E, n: &NewClient<'_>) -> Result
 }
 
 pub async fn get<'e, E: PgExecutor<'e>>(exec: E, id: Uuid) -> Result<Option<ClientRow>, DbError> {
-    Ok(sqlx::query_as(&format!("{SELECT} WHERE c.id = $1"))
-        .bind(id)
-        .fetch_optional(exec)
-        .await?)
+    Ok(
+        sqlx::query_as(sqlx::AssertSqlSafe(format!("{SELECT} WHERE c.id = $1")))
+            .bind(id)
+            .fetch_optional(exec)
+            .await?,
+    )
 }
 
 /// Clients of one scope; `org = None` lists instance clients.
@@ -76,11 +78,11 @@ pub async fn list_scope<'e, E: PgExecutor<'e>>(
     fetch: i64,
 ) -> Result<Vec<ClientRow>, DbError> {
     let (t, id) = split(after);
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "{SELECT} WHERE c.org_id IS NOT DISTINCT FROM $1 AND c.workspace_id IS NOT DISTINCT FROM $2 \
          AND ($3::timestamptz IS NULL OR (c.created_at, c.id) < ($3, $4)) \
          ORDER BY c.created_at DESC, c.id DESC LIMIT $5"
-    ))
+    )))
     .bind(org)
     .bind(workspace)
     .bind(t)

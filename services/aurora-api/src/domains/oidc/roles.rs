@@ -180,7 +180,7 @@ async fn ensure_org(
     }
     let created = crate::domains::tenancy::service::create_organization(
         tx,
-        &state.config,
+        &state.ops(),
         user,
         &title(slug),
         Some(slug),
@@ -204,7 +204,7 @@ async fn ensure_ws(
     }
     let (ws, _) = crate::domains::tenancy::service::create_workspace_in_tx(
         tx,
-        &state.config,
+        &state.ops(),
         org,
         user,
         &title(slug),

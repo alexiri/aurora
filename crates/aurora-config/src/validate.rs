@@ -151,6 +151,8 @@ pub use crate::raw::SkillsLibrarySection;
 pub struct ScimConfig {
     /// Serve `/scim/v2` (404 everywhere while `false`).
     pub enabled: bool,
+    /// The deployment routes `/scim/v2` to the API (SET-5); `enabled` cannot be set without it.
+    pub available: bool,
     /// Instance allow-list of provisionable e-mail domains (lower-case; empty = unrestricted).
     pub allowed_email_domains: Vec<String>,
     /// `SCIM_RATE` per token per minute.
@@ -702,6 +704,7 @@ impl RawConfig {
             skills_library: self.skills.library.clone(),
             scim: ScimConfig {
                 enabled: self.scim.enabled,
+                available: self.scim.available,
                 allowed_email_domains: self
                     .scim
                     .allowed_email_domains
@@ -2457,7 +2460,7 @@ fn check_allowed_paths(c: &mut Ctx, key: &str, provider: &str, paths: &[String])
 }
 
 /// (C-812) The origins `llm.dev_upstream_overrides` may replace (P4-LLM-2: Google's token endpoint and the Vertex
-/// hosts; P4-LLM-3: the Entra authority; the AWS origins join with their provider).
+/// hosts; P4-LLM-3: the Entra authority; P4-LLM-4: the AWS origins `sts.`, `bedrock-runtime.` and `bedrock.<region>.amazonaws.com`).
 fn dev_override_origin_ok(origin: &str) -> bool {
     match origin.strip_prefix("https://") {
         Some(
@@ -2467,13 +2470,21 @@ fn dev_override_origin_ok(origin: &str) -> bool {
             | "login.microsoftonline.com"
             | "aiplatform.googleapis.com",
         ) => true,
-        Some(h) => h
-            .strip_suffix("-aiplatform.googleapis.com")
-            .is_some_and(|l| {
+        Some(h) => {
+            let label = |l: &str| {
                 !l.is_empty()
                     && l.chars()
                         .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
-            }),
+            };
+            // (P4-LLM-4) the AWS origins: STS, the Bedrock runtime and the Bedrock control plane of one region.
+            h.strip_suffix("-aiplatform.googleapis.com")
+                .is_some_and(label)
+                || ["sts.", "bedrock-runtime.", "bedrock."].iter().any(|p| {
+                    h.strip_prefix(p)
+                        .and_then(|r| r.strip_suffix(".amazonaws.com"))
+                        .is_some_and(label)
+                })
+        }
         None => false,
     }
 }
@@ -2499,7 +2510,7 @@ fn check_dev_upstream_overrides(c: &mut Ctx, l: &LlmSection, insecure_loopback: 
             c.err(
                 format!("{key}.{origin}"),
                 "must be a fixed provider or mint origin: https://api.openai.com, https://api.anthropic.com, \
-                 https://oauth2.googleapis.com, https://login.microsoftonline.com, https://aiplatform.googleapis.com or https://<location>-aiplatform.googleapis.com",
+                 https://oauth2.googleapis.com, https://login.microsoftonline.com, https://aiplatform.googleapis.com, https://<location>-aiplatform.googleapis.com, https://sts.<region>.amazonaws.com, https://bedrock-runtime.<region>.amazonaws.com or https://bedrock.<region>.amazonaws.com",
             );
         }
         let loopback = target

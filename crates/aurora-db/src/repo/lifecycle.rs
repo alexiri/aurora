@@ -433,6 +433,56 @@ pub async fn orgs_with_retention(conn: &mut PgConnection) -> Result<Vec<(Uuid, i
     .await?)
 }
 
+/// An organization whose own retention values exceed an instance ceiling (SET-5 preview).
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct RetentionOver {
+    pub id: Uuid,
+    pub slug: String,
+    pub name: String,
+    pub conversations_days: Option<i64>,
+    pub attachments_days: Option<i64>,
+    pub attachment_quota_mib: Option<i64>,
+}
+
+/// Organizations that set a window or an attachment quota above a (lowered) instance ceiling
+/// (`None` / `0` = no ceiling), with their total, first `limit` by slug. A quota of `0`
+/// (unlimited) exceeds any ceiling.
+pub async fn orgs_over_retention_ceilings(
+    pool: &sqlx::PgPool,
+    conversation_days_max: Option<i64>,
+    attachment_days_max: Option<i64>,
+    quota_mib_max: i64,
+    limit: i64,
+) -> Result<(Vec<RetentionOver>, i64), DbError> {
+    const WHERE: &str = "((settings #>> '{retention,conversations_days}')::bigint > $1::bigint)
+          OR ((settings #>> '{retention,attachments_days}')::bigint > $2::bigint)
+          OR ($3::bigint > 0 AND (settings #>> '{retention,attachment_quota_mib}')::bigint IS NOT NULL
+              AND ((settings #>> '{retention,attachment_quota_mib}')::bigint = 0
+                   OR (settings #>> '{retention,attachment_quota_mib}')::bigint > $3::bigint))";
+    let rows: Vec<RetentionOver> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT id, slug, name,
+                (settings #>> '{{retention,conversations_days}}')::bigint AS conversations_days,
+                (settings #>> '{{retention,attachments_days}}')::bigint AS attachments_days,
+                (settings #>> '{{retention,attachment_quota_mib}}')::bigint AS attachment_quota_mib
+           FROM organizations WHERE {WHERE} ORDER BY slug LIMIT $4"
+    )))
+    .bind(conversation_days_max)
+    .bind(attachment_days_max)
+    .bind(quota_mib_max)
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
+    let total: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        "SELECT count(*) FROM organizations WHERE {WHERE}"
+    )))
+    .bind(conversation_days_max)
+    .bind(attachment_days_max)
+    .bind(quota_mib_max)
+    .fetch_one(pool)
+    .await?;
+    Ok((rows, total))
+}
+
 // ------------------------------------------------------------------ org retention setting
 
 pub async fn org_conversations_days(

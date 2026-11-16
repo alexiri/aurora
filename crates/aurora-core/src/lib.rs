@@ -9,6 +9,7 @@ pub mod cidr;
 pub mod error;
 pub mod ids;
 pub mod limits;
+pub mod llm_classify;
 pub mod pgservice;
 pub mod ranges;
 pub mod sanitize;

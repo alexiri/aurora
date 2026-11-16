@@ -16,13 +16,13 @@ that is not in this table does not exist.
 
 **Ask yourself whether turning it on needs something new in the cluster.** If yes, it is a top-level switch. If it only changes how Aurora behaves, it goes under `config:`.
 
-**Features with a top-level switch.** Set only the top-level key, and the chart writes the matching `config` key for you. Don't set the `config` side yourself. For the three on/off switches (`terminal`, `relay`/previews, `scim`), turning it on only in `config`, or giving the two sides different values, fails the render with a message. For the others, your `config` entry is overridden by the chart's (§The config block).
+**Features with a top-level switch.** Set only the top-level key, and the chart writes the matching `config` key for you. Don't set the `config` side yourself. For the three on/off switches (`terminal`, `relay`/previews, `scim`), turning it on only in `config`, or (previews) giving the two sides different values, fails the render with a message. For the others, your `config` entry is overridden by the chart's (§The config block). The terminal and SCIM chart values say the deployment **provides** the feature (wiring and route): they render `config.terminal.available` / `config.scim.available`, and whether the feature is *on* is an instance setting (Admin › Settings › Terminal, Directory sync) that defaults to it.
 
 | Set this (top level) | Not this | Because it also renders |
 |---|---|---|
-| `terminal.enabled` | `config.terminal.enabled` | the runner's stream listener :4108 and the NetworkPolicy flows to it |
+| `terminal.enabled` | `config.terminal.enabled` (an instance setting: set it only to lock it) | the runner's stream listener :4108 and the NetworkPolicy flows to it; `config.terminal.available = true` |
 | `relay.enabled` | `config.previews.enabled` | the preview relay workload, its Service and flows |
-| `scim.enabled` | `config.scim.enabled` | the `/scim/v2` edge route |
+| `scim.enabled` | `config.scim.enabled` (an instance setting: set it only to lock it) | the `/scim/v2` edge route; `config.scim.available = true` |
 | `vault.*` | `config.secrets.stores` (the Vault entry) | service-account tokens and Vault wiring for api and gateway |
 | `counters.*` | `config.ratelimit.counters` | the Redis connection and NetworkPolicy peers |
 | `externalUrl` | `config.server.external_url` | ingress hosts, gateway TLS names, every service's public origin |
@@ -104,7 +104,9 @@ a conflicting `config` entry is merged away or fails the render:
 | `plugins.dir` | `plugins.dir` | do not set it in `config` |
 | `tls.extra_ca_bundle` | `extraCaBundle.*` | set when either `existingConfigMap` or `existingSecret` is set |
 | `auth.dev_idp.*` | `devIdp.*` | only when `devIdp.enabled` |
-| `terminal.enabled` | `terminal.enabled` | mirrored from the top-level value (FIX-053): rendered only when the config side is unset; both set and unequal — or `config.terminal.enabled` alone — fails the render |
+| `config.terminal.available` | `terminal.enabled` | (phase 5, SET-5, D-237(d)) `true` when the top-level value is on, else not rendered; `config.terminal.enabled` is not mirrored any more — `config.terminal.enabled: true` without the top-level value fails the render, and an operator-set `config.terminal.enabled` (either value) locks the setting |
+| `config.scim.available` | `scim.enabled` | (phase 5, SET-5, D-237(d)) `true` when the top-level value is on, else not rendered |
+| `config.scim.rate_per_minute` | `scim.ratePerMinute` | rendered only when the value is set (it then locks the setting) |
 | `previews.enabled` | `relay.enabled` | mirrored from the top-level value (FIX-056): rendered only when the config side is unset; both set and unequal — or `config.previews.enabled` alone — fails the render |
 | `ratelimit.counters` | `counters.*` | rendered only when `backend ≠ memory` |
 | `secrets.stores[]` (Vault) | `vault.*` | api and gateway each get their own store config |
@@ -342,8 +344,8 @@ The generic per-service keys `<svc>.replicas`, `.resources`, `.nodeSelector`, `.
 
 | Value | Type / values | Default | What it does | Set it when / details |
 |---|---|---|---|---|
-| `scim.enabled` | bool | `false` | the instance switch for the SCIM plane (P4-GRP-2, SEC-72): `true` routes `/scim` to the API in the Ingress and the HTTPRoute; `false` renders no `/scim` route and the API answers 404 for the whole surface | directory sync (IdP → Aurora provisioning; [15 §SCIM directory sync](15-deployment-operations.md)). (phase 5, SET-5, D-237(d)) It renders `config.scim.available`; the SCIM switch itself becomes an instance setting defaulting to it |
-| `scim.ratePerMinute` | int | `600` | `[scim] rate_per_minute`: the per-SCIM-token limit (burst is a fifth of it). (phase 5, SET-5) Default becomes unset, and a set value locks the setting (otherwise edit it on Admin › Settings › Directory sync) | an IdP that syncs in large bursts |
+| `scim.enabled` | bool | `false` | the instance switch for the SCIM plane (P4-GRP-2, SEC-72): `true` routes `/scim` to the API in the Ingress and the HTTPRoute; `false` renders no `/scim` route and the API answers 404 for the whole surface | directory sync (IdP → Aurora provisioning; [15 §SCIM directory sync](15-deployment-operations.md)). (phase 5, SET-5, D-237(d)) (phase 5, SET-5, D-237(d)) It renders `config.scim.available = true` (nothing else of `[scim]`); the SCIM switch itself is an instance setting (Admin › Settings › Directory sync) defaulting to it, and a `config.scim.enabled` you set locks it |
+| `scim.ratePerMinute` | int | unset | `[scim] rate_per_minute`: the per-SCIM-token limit (burst is a fifth of it; the application default is 600). (phase 5, SET-5) Unset by default: edit it on Admin › Settings › Directory sync; a set value is rendered and locks the setting | an IdP that syncs in large bursts |
 
 ## Plugin packages
 
@@ -386,7 +388,7 @@ nothing opens the sandboxes to the cluster.
 | `networkPolicy.externalEgress.cidr` / `.except` | CIDR / list | `0.0.0.0/0` / private ranges | external egress (OIDC, SMTP, LLM endpoints, push services) for api/gateway/hookhost/connectors; `except` carves private ranges out (they need explicit rules) | lock egress down |
 | `networkPolicy.gatewayExtraEgress` | raw NP `egress` entries | `[]` | appended to the gateway policy (a private-range LLM endpoint; an endpoint defined under `config.llm.endpoints` passes the gateway's destination guard implicitly, one added in the dashboard must also be in `gateway.allowed_private`, D-262) | private LLM endpoints |
 | `networkPolicy.connectorHostExtraEgress` | raw NP `egress` entries | `[]` | appended to the connector host's policy (a chat platform on a private range) | private Mattermost |
-| `terminal.enabled` | bool | `false` | the web terminal (P4-TERM, C-622): the single switch — it renders `config.terminal.enabled` (mirrored; set `config.terminal.enabled` only when you want it to agree explicitly — both set and unequal fails the render, and `config.terminal.enabled=true` alone fails too, because only the top-level switch renders the chart wiring), opens the runner's stream listener :4108 beside previews (either switch opens it) and the NetworkPolicy flows api → runner:4108 (the terminal's leg 1, C-617) and relay/api → runner:4108. While off the API answers 404 `terminal_disabled` and nothing renders. The limits (`terminal.awake_cap_secs`, …) stay `config.terminal.*` keys. (phase 5, SET-5, D-237(d)) It renders `config.terminal.available` instead of mirroring the feature switch, which becomes an instance setting defaulting to it | the Terminal tab is wanted |
+| `terminal.enabled` | bool | `false` | the web terminal (P4-TERM, C-622): says the deployment provides the terminal — it renders `config.terminal.available = true` (never `config.terminal.enabled`, an instance setting; `config.terminal.enabled=true` without this value fails the render, because only this value renders the chart wiring), opens the runner's stream listener :4108 beside previews (either switch opens it) and the NetworkPolicy flows api → runner:4108 (the terminal's leg 1, C-617) and relay/api → runner:4108. While off the API answers 404 `terminal_disabled` and nothing renders. The limits (`terminal.awake_cap_secs`, …) are instance settings (Admin › Settings › Terminal), locked only by a `config.terminal.*` you set. (phase 5, SET-5, D-237(d)) The feature switch is an instance setting defaulting to `terminal.available` (the dashboard can turn the terminal off or on again live; it cannot turn it on while this value is off) | the Terminal tab is wanted |
 
 ## Development IdP
 
@@ -413,8 +415,8 @@ Many `aurora.toml` keys look like chart values but are **not** — they go in
 - Feature toggles with their own config sections: previews
   (limits `previews.session_ttl_secs`, …; the switch is the chart value
   `relay.enabled`, which mirrors `config.previews.enabled`), the web terminal
-  (limits `terminal.awake_cap_secs`, …; the switch is the chart value
-  `terminal.enabled`, which mirrors `config.terminal.enabled`), SSH access
+  (limits `terminal.awake_cap_secs`, … are instance settings; the chart value
+  `terminal.enabled` renders `config.terminal.available`), SSH access
   (phase 5: `ssh.public_host`, `ssh.cert_ttl_secs`, `ssh.ca.previous_public_keys`, … in
   `config.ssh.*`; the switch will be the chart value `ssh.enabled`), SCIM
   (`scim.enabled`, …), Web Push (`push.*`),
@@ -435,8 +437,8 @@ implemented in the chart — a brief names them so the chart work lands with the
 feature:
 
 - previews: `previews.domain` is a **config** key (set via `config.previews.domain`, `15 §Port previews`); the chart values are `relay.*` ([§Port previews (relay)](#port-previews-relay)). There are no `previews.tls.*` chart values: the wildcard certificate is the operator's own edge configuration (the chart renders no TLS block for `*.<relay.domain>`), and the relay's egress is fixed (api, runners, DNS).
-- web terminal: `terminal.awake_cap_secs`, `terminal.wake_window_secs`, `terminal.wake_wait_secs` (P4-TERM, D-161; `15`, `11 §Web terminal` — note: config keys, set via `config.terminal.*`; the switch itself is the chart value `terminal.enabled`, above — it mirrors `config.terminal.enabled`, so set only the chart value)
-- SCIM: `scim.enabled` and `scim.ratePerMinute` are implemented ([§SCIM](#scim)); the remaining SCIM keys (`scim.allowed_email_domains`, `scim.token_max_days`) are config keys (`config.scim.*`, `15 §SCIM directory sync`)
+- web terminal: `terminal.awake_cap_secs`, `terminal.wake_window_secs`, `terminal.wake_wait_secs` (P4-TERM, D-161; `15`, `11 §Web terminal` — note: instance settings since SET-5, set via `config.terminal.*` only to lock them; the deployment switch is the chart value `terminal.enabled`, above — it renders `config.terminal.available`)
+- SCIM: `scim.enabled` (renders `config.scim.available`) and `scim.ratePerMinute` (rendered only when set) are implemented ([§SCIM](#scim)); the remaining SCIM keys (`scim.allowed_email_domains`, `scim.token_max_days`) are instance settings (`config.scim.*` locks them, `15 §SCIM directory sync`)
 - Web Push (phase 5, D-138; not in the chart yet — P4-011B-3 adds them to `values.yaml` and moves these rows into a new `## Web Push` section; RFE-011b, D-266(a), C-837; `15 §Approval park-and-resume and Web Push`):
   - `push.enabled` — bool, default `false`. The single switch: renders `config.push.enabled` (mirrored like `relay.enabled`: both set and unequal, or `config.push.enabled` alone, fails the render) and the api's egress NetworkPolicy rule to `push.networkPolicy.egressTo`.
   - `push.networkPolicy.egressTo` — list of NetworkPolicy peers, default `[]`; **required** while `push.enabled` (the render fails while empty; the push services are public hosts, so an explicit `0.0.0.0/0` with the private-range `except` is the usual value).
@@ -456,7 +458,7 @@ feature:
   - `terminator.max_preauth` / `terminator.max_preauth_per_ip` — ints, defaults `256` / `8`, rendered into `[terminator]`.
   - `networkPolicy.sshFrom` — list of NetworkPolicy peers, default `[]`; **required** when `ssh.enabled` (the render fails while empty, so admitting the whole Internet is an explicit `0.0.0.0/0` + `::/0`, never a silent default, FIX-102 posture).
 
-- instance settings (phase 5, SET-1, SET-5; [§Instance settings and Helm locks](#instance-settings-and-helm-locks-phase-5-set-1-d-195c-d-236d-238)): `scim.ratePerMinute` default changes to unset; `terminal.enabled` and `scim.enabled` render `config.terminal.available` / `config.scim.available` instead of the feature switch; `values.yaml`'s `config` block loses `hosted.enabled`; a chart guard (`scripts/guards/settings-chart.sh`) checks that the default render contains no movable key. No new chart value.
+- instance settings (phase 5, SET-1, SET-5; [§Instance settings and Helm locks](#instance-settings-and-helm-locks-phase-5-set-1-d-195c-d-236d-238)): `scim.ratePerMinute` defaults to unset; `terminal.enabled` and `scim.enabled` render `config.terminal.available` / `config.scim.available` instead of the feature switch (built in SET-5; `scripts/guards/chart-ops.sh` checks the rendering); `values.yaml`'s `config` block loses `hosted.enabled`; a chart guard (`scripts/guards/settings-chart.sh`) checks that the default render contains no movable key. No new chart value.
 
 Until a feature's chart work merges, set its `config.*` keys directly (the
 chart passes `config` through verbatim).

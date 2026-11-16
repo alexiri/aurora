@@ -38,7 +38,7 @@ members = [
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.95"
+rust-version = "1.98"
 license = "GPL-3.0-or-later"
 publish = false
 
@@ -86,19 +86,23 @@ hyper-util = { version = "0.1", features = ["full"] }
 http = "1"
 http-body-util = "0.1"
 bytes = "1"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+# reqwest 0.13: `rustls` = aws-lc-rs + rustls-platform-verifier (the OS trust store, which every image
+# carries: distroless cc, AlmaLinux); `query`/`form` are opt-in since 0.13.
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "stream", "query", "form"] }
 rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std", "tls12", "logging"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["aws_lc_rs", "tls12", "logging"] }
 rustls-native-certs = "0.8"
 rcgen = "0.14"
 x509-parser = "0.18"
 futures = "0.3"
-tokio-tungstenite = { version = "0.29", default-features = false, features = ["connect", "handshake"] }
+tokio-tungstenite = { version = "0.30", default-features = false, features = ["connect", "handshake"] }
 # (P5-FILES-1, D-316) the SFTP v3 client of the Files page (Apache-2.0; the raw session over any
 # AsyncRead + AsyncWrite, `extended()` for `posix-rename@openssh.com`; no SSH stack).
 russh-sftp = { version = "3.0.1", default-features = false }
 lru = "0.19"
-openidconnect = { version = "4.1", default-features = false, features = ["reqwest", "rustls-tls"] }
+# No `reqwest` feature: openidconnect 4 is built for reqwest 0.12; aurora-api's OidcHttp adapts the
+# workspace reqwest instead (domains/oidc/client.rs).
+openidconnect = { version = "4.1", default-features = false }
 
 # containers (podman API)
 bollard = { version = "0.21", default-features = false, features = ["pipe"] }
@@ -107,7 +111,7 @@ kube = { version = "5.1", default-features = false, features = ["client", "rustl
 k8s-openapi = { version = "0.29", default-features = false, features = ["earliest"] }
 
 # data
-sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "tls-rustls", "postgres", "macros", "migrate", "uuid", "chrono", "json"] }
+sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "tls-rustls", "postgres", "macros", "migrate", "uuid", "chrono", "json"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_path_to_error = "0.1"
@@ -119,7 +123,7 @@ utoipa-axum = "0.3"
 uuid = { version = "1.22", features = ["v7", "serde"] }
 chrono = { version = "0.4", default-features = false, features = ["std", "clock", "serde"] }
 chrono-tz = "0.10"
-croner = "3"
+croner = "4"
 toml = "1.2"
 graphql-parser = "0.4"
 mail-parser = "1.0"
@@ -167,8 +171,10 @@ anyhow = "1"
 clap = { version = "4.6", features = ["derive", "env"] }
 
 # wasm components (HOOK-001; wit-bindgen guest side, wasmtime pinned for the hook host, HOOK-002)
-wit-bindgen = { version = "0.46", default-features = false, features = ["macros", "realloc"] }
-wasmparser = "0.239"
+# wasmparser = the version wasmtime 50 parses with (the registry validates what the host will load);
+# wit-bindgen 0.62 = the newest whose wasm-tools line (0.259) is not ahead of it. Move all three together.
+wit-bindgen = { version = "0.62", default-features = false, features = ["macros", "realloc"] }
+wasmparser = "0.261"
 wasmtime = { version = "50", default-features = false }
 wasmtime-wasi = { version = "50", default-features = false }
 

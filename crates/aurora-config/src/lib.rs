@@ -34,7 +34,7 @@ pub use redacted::Redacted;
 pub use settings::{
     ConfigSource, Effective, EffectiveKey, EntryView, ListKind, Loosening, NOT_SETTINGS, Registry,
     SECTION_IDS, SectionDef, SettingDef, SettingType, Source, Stored, TEST_SECTION, TEST_SECTION_B,
-    dashboard_store_kind_allowed, registry, sections,
+    dashboard_store_kind_allowed, list_entries, registry, sections,
 };
 pub use ssh::{parse_ssh_ed25519_private_key, parse_ssh_ed25519_public_key};
 pub use validate::*;

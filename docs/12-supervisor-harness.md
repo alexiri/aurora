@@ -374,6 +374,10 @@ its `reason` is `mint_rejected` the adapter reports `provider_auth` instead (the
 credential, not the gateway, is at fault), with the gateway code kept in the message.
 Errors inside a 200 stream (an event-stream exception, an SSE `error` event) are classified
 by the adapter from the event's error type with the same table (D-260(d)).
+(P4-LLM-5, implemented) The shared table lives in `aurora-core` (`llm_classify`, re-exported as `aurora_llm::classify`) because the
+supervisor does not depend on `aurora-llm`; both adapters call it through `adapters/provider_error.rs`. The `claude-code` adapter
+drops every `AWS_*` credential variable, `AWS_BEARER_TOKEN_BEDROCK`, `GOOGLE_APPLICATION_CREDENTIALS` and profile variable from
+`client_env` and refuses an unknown dialect with `harness_failed`; the environment is identical for the three Bedrock auth modes.
 (phase 5 (D-138, moved from phase 4), RFE-011b) `approval_parked` is a gateway refusal that is **not a failure**: a turn
 that ends normally after it is `done`. (P4-011B spec batch, D-264(a)(c); corrects the earlier text,
 which had the supervisor turn it into an activity line) The supervisor never sees it: the refusal

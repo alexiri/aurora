@@ -292,6 +292,42 @@ Briefs P5-MODELS-1 (Rust), -2 (Rust), -3 (Next.js and recipe), after P4-LLM-5. O
 instructions`, `§Usage and metering`, `§Evals`; `12 §Harness interface`, `§Adapter claude-code`,
 `§Adapter codex`; `16`; `03`; `05`; `15`; `14`; `02 §Limits`; `17` (SEC-122, SEC-123); `18`;
 `API_CONTRACTS` C-875..C-884.
+
+### Agents, accounts and access; one structure for every level (phase 5, P5-UX and P5-IA, owner 2026-11-15, D-321..D-354) — specified
+
+Owner, after three walkthroughs on the kind cluster (a new user, a team lead setting up apps, the
+instance owner): "the experience of figuring out how to connect their agent to things and how they have
+to configure their workspace is entirely too complicated"; "figuring out how to configure apps is really
+confusing"; "we want a coherent user experience". A design review of the first specs followed, and the
+owner adopted all of it (D-343): "eliminate as much accidental complexity as possible and make Aurora
+simple to understand and to use".
+
+The model, in five sentences: an agent works on its own computer and thinks with an AI model; it can use
+the accounts you connect for it (apps, other websites, an AI key); for each account you choose its access
+(Read only, Ask before changes, Change without asking); everything goes through the gateway, which holds
+the keys and puts anything that needs your say in Approvals; administrators set limits above you, and
+each level below can only tighten them.
+
+- **One list of accounts** for a workspace, an agent and an organization, and **one access choice** per
+  agent and account. Only an organization's account has a limit, with the same three choices.
+- **One journey** to give an agent an app, ending with the account and the access in one request; **one
+  setup page** per app; guides with real values.
+- **Approvals as the everyday experience**: a sentence, and Allow once, Always allow or Block, in the
+  conversation. An agent can **ask for an app in the conversation** and carries on when it gets it.
+- **Health from real use**, and **one summary** of what an agent can do, shown the same way everywhere.
+- **One way to say who can fix something.**
+- **One structure**: the same topics and names at Administration, organization and workspace level,
+  at most four tabs each, every old route redirected, settings inside their topics and in words, a notice
+  when pages move.
+- **Simulate decides like the gateway** (FIX-159; it could show a false allow).
+
+Twenty briefs in four fixed waves (D-352, D-353): FIX-159, P5-IA-1..5, P5-UX-1..7, -9, -10, -11, -13, -14, -16,
+-17. Owning sections: `14 §Information architecture` › "One structure for every level" and
+`14 §Agents, accounts and access`; `04 §Workspace access by e-mail`, `§New-user placement`; `05`;
+`07 §Authoring`; `09 §3.4`, `§6`; `03 §Planned changes`; `02 §Limits`; `15 §Instance settings`;
+`17` (SEC-128..SEC-132); `API_CONTRACTS` "P5-UX and P5-IA". Design reference: the canvas “Aurora —
+agents, accounts and access” (D-354, `14 §Visual design` › “Redesign canvas (phase 5)”). Owner,
+2026-11-16: “the redesign is good to go”; merged to master the same day.
 ## Phase 6 — Proposals (owner, 2026-11-14; not specified, not started)
 
 Also in phase 6, already specified: the **S3-compatible blob store** (P4-S3, D-120; moved from phase 5

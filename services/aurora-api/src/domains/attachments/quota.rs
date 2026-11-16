@@ -49,7 +49,7 @@ pub async fn quota_of(
     org: Uuid,
 ) -> Result<Option<i64>, ApiError> {
     let (mib, _) = attachments::org_limits(exec, org).await?;
-    Ok(effective_quota_bytes(&state.config.attachments, mib))
+    Ok(effective_quota_bytes(&state.ops().attachments, mib))
 }
 
 pub fn exceeded(used: i64, quota: i64) -> ApiError {

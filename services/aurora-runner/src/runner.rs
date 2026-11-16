@@ -86,7 +86,9 @@ impl RunnerSettings {
             retry: RetryPolicy::default(),
             stream_tls: cfg.runner.stream_tls.cert_file.is_some()
                 && cfg.runner.stream_tls.key_file.is_some(),
-            terminal: cfg.terminal.enabled,
+            // (SET-5, D-237(d)) A runner serves the terminal whenever the deployment provides the
+            // wiring or the switch is on; the API's live switch decides who may open one.
+            terminal: cfg.terminal.enabled || cfg.terminal.available,
             executor: ExecutorSettings {
                 max_concurrency: cfg.runner.max_sandboxes.max(1) as usize,
                 image: Some(cfg.runner.image.clone()),

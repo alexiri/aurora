@@ -102,7 +102,7 @@ pub async fn sweep_no_model_key(
         let harness = a
             .harness
             .clone()
-            .unwrap_or_else(|| s.config.hosted.default_harness.clone());
+            .unwrap_or_else(|| s.ops().hosted.default_harness.clone());
         // (P4-HAR, D-122) A harness no live runner replica offers fails the turn before any
         // sandbox start. With no live replica at all the turn waits, as it always did.
         let (any_live, offered) = aurora_db::repo::runners::harness_availability(
@@ -267,7 +267,7 @@ async fn arm6_dispatch(
     items: &mut Vec<WorkItem>,
     after: &mut After,
 ) -> Result<(), ApiError> {
-    let ttl = s.config.hosted.turn_ceiling_secs as f64 + secs(limits::CONTEXT_CREDENTIAL_GRACE);
+    let ttl = s.ops().hosted.turn_ceiling_secs as f64 + secs(limits::CONTEXT_CREDENTIAL_GRACE);
     for cand in hosted::dispatch_candidates(tx, runner, replica, ARM_LIMIT).await? {
         convs::lock(tx, cand.conversation_id).await?;
         let Some(turn) = turns::get(&mut *tx, cand.turn_id)
@@ -282,7 +282,7 @@ async fn arm6_dispatch(
         let harness = agent
             .harness
             .clone()
-            .unwrap_or_else(|| s.config.hosted.default_harness.clone());
+            .unwrap_or_else(|| s.ops().hosted.default_harness.clone());
         let sel =
             model::select(s, tx, agent.id, agent.org_id, agent.workspace_id, &harness).await?;
         if let Some((code, message)) = sel.failure() {
@@ -431,7 +431,7 @@ async fn arm8_stale(
     items: &mut Vec<WorkItem>,
     after: &mut After,
 ) -> Result<(), ApiError> {
-    let h = &s.config.hosted;
+    let h = &s.ops().hosted;
     let abort = |items: &mut Vec<WorkItem>, t: &hosted::StaleTurn| {
         if let (true, Some(sb), Some(b)) = (t.channel_here, t.sandbox_id, t.boot_id) {
             items.push(item(

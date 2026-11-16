@@ -10933,7 +10933,7 @@ export interface components {
         SettingSchema: {
             /** @description The element type of a list (`kind` of its items). */
             item_kind?: string | null;
-            /** @description `bool`, `int`, `duration_secs`, `string`, `enum`, `list`, `object`. */
+            /** @description `bool`, `int`, `float`, `duration_secs`, `string`, `enum`, `list`, `object`. */
             kind: string;
             /** Format: int64 */
             max?: number | null;

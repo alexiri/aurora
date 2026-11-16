@@ -140,7 +140,7 @@ pub async fn list_agent_tokens<'e, E: PgExecutor<'e>>(
     fetch: i64,
 ) -> Result<Vec<AgentTokenRow>, DbError> {
     let (t, id) = super::split(after);
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "{TOKEN_SELECT}
            AND ($3::uuid IS NULL OR a.workspace_id = $3)
            AND ($4::uuid IS NULL OR w.org_id = $4)
@@ -150,7 +150,7 @@ pub async fn list_agent_tokens<'e, E: PgExecutor<'e>>(
                                        AND c.expires_at <= now() + make_interval(days => $6::int)))
            AND ($7::timestamptz IS NULL OR (c.created_at, c.id) < ($7, $8))
          ORDER BY c.created_at DESC, c.id DESC LIMIT $9"
-    ))
+    )))
     .bind(aurora_core::limits::AGENT_TOKEN_STALE_DAYS as i32)
     .bind(aurora_core::limits::AGENT_TOKEN_EXPIRING_DAYS as i32)
     .bind(workspace)
@@ -172,14 +172,14 @@ pub async fn agent_tokens_of<'e, E: PgExecutor<'e>>(
     if agent_ids.is_empty() {
         return Ok(vec![]);
     }
-    Ok(
-        sqlx::query_as(&format!("{TOKEN_SELECT} AND c.agent_id = ANY($3)"))
-            .bind(aurora_core::limits::AGENT_TOKEN_STALE_DAYS as i32)
-            .bind(aurora_core::limits::AGENT_TOKEN_EXPIRING_DAYS as i32)
-            .bind(agent_ids)
-            .fetch_all(exec)
-            .await?,
-    )
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "{TOKEN_SELECT} AND c.agent_id = ANY($3)"
+    )))
+    .bind(aurora_core::limits::AGENT_TOKEN_STALE_DAYS as i32)
+    .bind(aurora_core::limits::AGENT_TOKEN_EXPIRING_DAYS as i32)
+    .bind(agent_ids)
+    .fetch_all(exec)
+    .await?)
 }
 
 /// (RFE-013, C-316) The API's own use record on the agent-token routes: at most once a minute.

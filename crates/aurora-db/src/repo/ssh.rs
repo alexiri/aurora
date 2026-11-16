@@ -7,8 +7,13 @@ use uuid::Uuid;
 
 use crate::DbError;
 
-const COLS: &str =
-    "id, user_id, name, algorithm, public_key, fingerprint, last_used_at, created_at, updated_at";
+/// The column list as a macro so every statement stays one static literal (sqlx 0.9 refuses
+/// runtime-built SQL without an audit marker).
+macro_rules! cols {
+    () => {
+        "id, user_id, name, algorithm, public_key, fingerprint, last_used_at, created_at, updated_at"
+    };
+}
 
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct SshKeyRow {
@@ -28,8 +33,10 @@ pub async fn list_keys<'e, E: PgExecutor<'e>>(
     exec: E,
     user: Uuid,
 ) -> Result<Vec<SshKeyRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
-        "SELECT {COLS} FROM ssh_keys WHERE user_id = $1 ORDER BY created_at DESC, id DESC"
+    Ok(sqlx::query_as(concat!(
+        "SELECT ",
+        cols!(),
+        " FROM ssh_keys WHERE user_id = $1 ORDER BY created_at DESC, id DESC"
     ))
     .bind(user)
     .fetch_all(exec)
@@ -42,8 +49,10 @@ pub async fn get_key<'e, E: PgExecutor<'e>>(
     user: Uuid,
     id: Uuid,
 ) -> Result<Option<SshKeyRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
-        "SELECT {COLS} FROM ssh_keys WHERE user_id = $1 AND id = $2"
+    Ok(sqlx::query_as(concat!(
+        "SELECT ",
+        cols!(),
+        " FROM ssh_keys WHERE user_id = $1 AND id = $2"
     ))
     .bind(user)
     .bind(id)
@@ -57,8 +66,10 @@ pub async fn find_key_by_fingerprint<'e, E: PgExecutor<'e>>(
     user: Uuid,
     fingerprint: &str,
 ) -> Result<Option<SshKeyRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
-        "SELECT {COLS} FROM ssh_keys WHERE user_id = $1 AND fingerprint = $2"
+    Ok(sqlx::query_as(concat!(
+        "SELECT ",
+        cols!(),
+        " FROM ssh_keys WHERE user_id = $1 AND fingerprint = $2"
     ))
     .bind(user)
     .bind(fingerprint)
@@ -90,9 +101,10 @@ pub async fn insert_key<'e, E: PgExecutor<'e>>(
     public_key: &str,
     fingerprint: &str,
 ) -> Result<SshKeyRow, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(concat!(
         "INSERT INTO ssh_keys (id, user_id, name, algorithm, public_key, fingerprint)
-         VALUES ($1, $2, $3, 'ssh-ed25519', $4, $5) RETURNING {COLS}"
+         VALUES ($1, $2, $3, 'ssh-ed25519', $4, $5) RETURNING ",
+        cols!()
     ))
     .bind(id)
     .bind(user)
@@ -110,9 +122,10 @@ pub async fn rename_key<'e, E: PgExecutor<'e>>(
     id: Uuid,
     name: &str,
 ) -> Result<Option<SshKeyRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(concat!(
         "UPDATE ssh_keys SET name = $3, updated_at = now()
-          WHERE user_id = $1 AND id = $2 RETURNING {COLS}"
+          WHERE user_id = $1 AND id = $2 RETURNING ",
+        cols!()
     ))
     .bind(user)
     .bind(id)
@@ -127,8 +140,9 @@ pub async fn delete_key<'e, E: PgExecutor<'e>>(
     user: Uuid,
     id: Uuid,
 ) -> Result<Option<SshKeyRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
-        "DELETE FROM ssh_keys WHERE user_id = $1 AND id = $2 RETURNING {COLS}"
+    Ok(sqlx::query_as(concat!(
+        "DELETE FROM ssh_keys WHERE user_id = $1 AND id = $2 RETURNING ",
+        cols!()
     ))
     .bind(user)
     .bind(id)

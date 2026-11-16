@@ -106,9 +106,9 @@ pub async fn get_for_update_by_hash(
     conn: &mut sqlx::PgConnection,
     token_hash: &[u8],
 ) -> Result<Option<LinkRequestRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {REQ_COLS} FROM link_requests WHERE token_hash=$1 FOR UPDATE"
-    ))
+    )))
     .bind(token_hash)
     .fetch_optional(conn)
     .await?)
@@ -119,9 +119,9 @@ pub async fn get_by_hash<'e, E: PgExecutor<'e>>(
     exec: E,
     token_hash: &[u8],
 ) -> Result<Option<LinkRequestRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {REQ_COLS} FROM link_requests WHERE token_hash=$1"
-    ))
+    )))
     .bind(token_hash)
     .fetch_optional(exec)
     .await?)

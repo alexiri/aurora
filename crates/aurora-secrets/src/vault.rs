@@ -18,8 +18,6 @@ pub struct SecretVault {
     /// registry once, so an in-flight call finishes against the stores it started with.
     registry: ArcSwap<StoreRegistry>,
     failures: ArcSwap<Vec<StoreFailure>>,
-    /// `gateway.allowed_private`, which opens private addresses to dashboard Vault stores.
-    allowed_private: std::sync::OnceLock<Vec<String>>,
 }
 
 impl SecretVault {
@@ -27,7 +25,6 @@ impl SecretVault {
         Self {
             registry: ArcSwap::from_pointee(registry),
             failures: ArcSwap::from_pointee(Vec::new()),
-            allowed_private: std::sync::OnceLock::new(),
         }
     }
 
@@ -42,11 +39,6 @@ impl SecretVault {
         self.failures.store(Arc::new(Vec::new()));
     }
 
-    /// Set `gateway.allowed_private` once, before the first rebuild from settings.
-    pub fn set_allowed_private(&self, entries: Vec<String>) {
-        let _ = self.allowed_private.set(entries);
-    }
-
     /// Rebuild the registry from the merged `secrets` settings (FIX-124): a store that fails to
     /// initialise stays out of the registry and is reported by [`Self::failures`]; the default
     /// falls back to `inline` when it is one of them. Stores defined in the dashboard are
@@ -59,7 +51,9 @@ impl SecretVault {
     ) {
         let guard = crate::StoreGuard::for_dashboard_stores(
             eff,
-            self.allowed_private.get().map_or(&[][..], Vec::as_slice),
+            // `gateway.allowed_private` of the merged view opens private addresses to dashboard
+            // Vault stores (SET-5: it is a live setting, so a rebuild reads the current list).
+            &eff.raw.gateway.allowed_private,
         );
         let (reg, failed) = StoreRegistry::from_config_tolerant(
             &eff.raw.secrets,

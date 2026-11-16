@@ -46,7 +46,7 @@ pub struct Listing {
 
 /// 404 `skill_libraries_disabled` while the kill-switch is off.
 pub fn ensure_enabled(state: &AppState) -> Result<(), ApiError> {
-    if state.config.skills_library.enabled {
+    if state.ops().skills_library.enabled {
         Ok(())
     } else {
         Err(ApiError::new(
@@ -172,7 +172,7 @@ fn unreachable_on_create(e: &ReadError) -> ApiError {
 
 fn refresh_interval(state: &AppState) -> f64 {
     state
-        .config
+        .ops()
         .skills_library
         .refresh_interval_secs
         .max(limits::LIBRARY_REFRESH_INTERVAL_MIN.as_secs()) as f64

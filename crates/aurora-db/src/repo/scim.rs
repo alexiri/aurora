@@ -43,9 +43,9 @@ pub async fn token_by_hash<'e, E: PgExecutor<'e>>(
     exec: E,
     hash: &[u8],
 ) -> Result<Option<TokenRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {TOKEN_COLS} FROM scim_tokens WHERE token_hash = $1"
-    ))
+    )))
     .bind(hash)
     .fetch_optional(exec)
     .await?)
@@ -56,9 +56,9 @@ pub async fn token_by_id<'e, E: PgExecutor<'e>>(
     org: Uuid,
     id: Uuid,
 ) -> Result<Option<TokenRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {TOKEN_COLS} FROM scim_tokens WHERE org_id = $1 AND id = $2"
-    ))
+    )))
     .bind(org)
     .bind(id)
     .fetch_optional(exec)
@@ -71,9 +71,9 @@ pub async fn tokens_of<'e, E: PgExecutor<'e>>(
     exec: E,
     org: Uuid,
 ) -> Result<Vec<TokenRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {TOKEN_COLS} FROM scim_tokens WHERE org_id = $1 ORDER BY created_at DESC, id DESC"
-    ))
+    )))
     .bind(org)
     .fetch_all(exec)
     .await?)
@@ -109,12 +109,12 @@ pub async fn insert_token<'e, E: PgExecutor<'e>>(
     exec: E,
     t: &NewToken<'_>,
 ) -> Result<TokenRow, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "INSERT INTO scim_tokens (id, org_id, name, token_hash, display_prefix, created_by, \
              expires_at) \
          VALUES ($1, $2, $3, $4, $5, $6, $7) \
          RETURNING {TOKEN_COLS}"
-    ))
+    )))
     .bind(t.id)
     .bind(t.org_id)
     .bind(t.name)
@@ -204,9 +204,9 @@ pub async fn user_link<'e, E: PgExecutor<'e>>(
     org: Uuid,
     user: Uuid,
 ) -> Result<Option<UserRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {USER_COLS} FROM scim_users WHERE org_id = $1 AND user_id = $2"
-    ))
+    )))
     .bind(org)
     .bind(user)
     .fetch_optional(exec)
@@ -219,9 +219,9 @@ pub async fn user_by_id<'e, E: PgExecutor<'e>>(
     org: Uuid,
     id: Uuid,
 ) -> Result<Option<UserRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {USER_COLS} FROM scim_users WHERE org_id = $1 AND id = $2"
-    ))
+    )))
     .bind(org)
     .bind(id)
     .fetch_optional(exec)
@@ -234,10 +234,10 @@ pub async fn user_by_external_id<'e, E: PgExecutor<'e>>(
     org: Uuid,
     external_id: &str,
 ) -> Result<Option<UserRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {USER_COLS} FROM scim_users
          WHERE org_id = $1 AND external_id = $2 AND state <> 'removed'"
-    ))
+    )))
     .bind(org)
     .bind(external_id)
     .fetch_optional(exec)
@@ -272,12 +272,12 @@ pub async fn users_window<'e, E: PgExecutor<'e>>(
     offset: i64,
     limit: i64,
 ) -> Result<Vec<UserRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {USER_COLS} FROM scim_users
          WHERE org_id = $1 AND state <> 'removed'
            AND ($2::text IS NULL OR lower(display_name) = lower($2))
          ORDER BY created_at, id OFFSET $3 LIMIT $4"
-    ))
+    )))
     .bind(org)
     .bind(display_name)
     .bind(offset)
@@ -308,10 +308,10 @@ pub async fn users_by_user_name<'e, E: PgExecutor<'e>>(
     org: Uuid,
     user_name: &str,
 ) -> Result<Vec<UserRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {USER_COLS} FROM scim_users WHERE org_id = $1 AND user_name = $2
          ORDER BY created_at, id"
-    ))
+    )))
     .bind(org)
     .bind(user_name)
     .fetch_all(exec)
@@ -324,10 +324,10 @@ pub async fn users_by_external_id<'e, E: PgExecutor<'e>>(
     org: Uuid,
     external_id: &str,
 ) -> Result<Vec<UserRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {USER_COLS} FROM scim_users WHERE org_id = $1 AND external_id = $2
          ORDER BY created_at, id"
-    ))
+    )))
     .bind(org)
     .bind(external_id)
     .fetch_all(exec)
@@ -340,10 +340,10 @@ pub async fn users_by_email<'e, E: PgExecutor<'e>>(
     org: Uuid,
     email: &str,
 ) -> Result<Vec<UserRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {USER_COLS} FROM scim_users WHERE org_id = $1 AND user_name = $2
          ORDER BY created_at, id"
-    ))
+    )))
     .bind(org)
     .bind(email)
     .fetch_all(exec)
@@ -356,9 +356,9 @@ pub async fn users_by_scim_id<'e, E: PgExecutor<'e>>(
     org: Uuid,
     id: Uuid,
 ) -> Result<Vec<UserRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {USER_COLS} FROM scim_users WHERE org_id = $1 AND id = $2"
-    ))
+    )))
     .bind(org)
     .bind(id)
     .fetch_all(exec)
@@ -383,12 +383,12 @@ pub async fn insert_user<'e, E: PgExecutor<'e>>(
     exec: E,
     u: &NewScimUser<'_>,
 ) -> Result<UserRow, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "INSERT INTO scim_users (id, org_id, user_id, external_id, user_name, display_name, \
              given_name, family_name, state, suspended_by_scim) \
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) \
          RETURNING {USER_COLS}"
-    ))
+    )))
     .bind(u.id)
     .bind(u.org_id)
     .bind(u.user_id)
@@ -410,9 +410,9 @@ pub async fn lock_user(
     org: Uuid,
     id: Uuid,
 ) -> Result<Option<UserRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {USER_COLS} FROM scim_users WHERE org_id = $1 AND id = $2 FOR UPDATE"
-    ))
+    )))
     .bind(org)
     .bind(id)
     .fetch_optional(&mut *conn)

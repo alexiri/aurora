@@ -4,6 +4,7 @@
 
 pub mod claude_code;
 pub mod codex;
+pub(crate) mod provider_error;
 
 use std::sync::Arc;
 

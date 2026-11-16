@@ -337,16 +337,29 @@ struct Inner {
 
 /// The shared limiter state (one per replica).
 pub struct Limiter {
-    pub limits: Limits,
+    /// The bucket parameters in force; replaced live (SET-5) while the bucket state stays.
+    limits: arc_swap::ArcSwap<Limits>,
     inner: Mutex<Inner>,
 }
 
 impl Limiter {
     pub fn new(limits: Limits) -> Self {
         Self {
-            limits,
+            limits: arc_swap::ArcSwap::from_pointee(limits),
             inner: Mutex::new(Inner::default()),
         }
+    }
+
+    /// The bucket parameters in force now (one load per request).
+    pub fn limits(&self) -> Arc<Limits> {
+        self.limits.load_full()
+    }
+
+    /// Swap the bucket parameters (SET-5, `limits` settings). Existing bucket state is kept: a
+    /// token count above a lowered burst is clamped at the next take, and a changed rate applies
+    /// from the next take, so a change never resets anyone's budget.
+    pub fn set_limits(&self, limits: Limits) {
+        self.limits.store(Arc::new(limits));
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, Inner> {
@@ -452,7 +465,7 @@ impl Limiter {
     pub fn acquire_stream(self: &Arc<Self>, principal: &str) -> Option<StreamGuard> {
         let mut g = self.lock();
         let n = g.streams.entry(principal.to_owned()).or_insert(0);
-        if *n >= self.limits.streams {
+        if *n >= self.limits().streams {
             return None;
         }
         *n += 1;
@@ -644,7 +657,7 @@ async fn resolve(state: &AppState, headers: &http::HeaderMap, ip: ClientIp, path
 /// Axum middleware (see module docs). Installed inside the client-IP layer.
 pub async fn middleware(State(state): State<AppState>, req: Request, next: Next) -> Response {
     let limiter = state.api_limiter.clone();
-    let limits = &limiter.limits;
+    let limits = limiter.limits();
     let path = req.uri().path().to_owned();
     if !limits.enabled || exempt(&path) || !path.starts_with("/v1/") {
         return next.run(req).await;

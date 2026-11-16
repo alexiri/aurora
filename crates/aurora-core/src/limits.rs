@@ -64,6 +64,11 @@ pub const LLM_TOKEN_SKEW: Duration = Duration::from_secs(300);
 /// (the 55-minute cap of the same row is `LLM_TOKEN_MAX_AGE` in the gateway's `llm_mint.rs`)
 /// After a failed mint the same `(secret, version, mode, region)` answers 502 without a new upstream call for this long.
 pub const LLM_TOKEN_MINT_FAILURE_HOLD: Duration = Duration::from_secs(5);
+/// (P4-LLM-4, D-268(c)) Request body the gateway buffers to SigV4-sign a Bedrock request; larger → 413
+/// `llm_request_too_large`.
+pub const LLM_SIGN_BODY_MAX: usize = 8 * 1024 * 1024;
+/// (P4-LLM-4, D-261) `aws_assume_role` `session_duration_secs`, in seconds (default 3 600).
+pub const LLM_ASSUME_ROLE_DURATION: std::ops::RangeInclusive<u64> = 900..=43_200;
 /// Minted entries per gateway replica (least recently used evicted).
 pub const LLM_MINT_CACHE_MAX: usize = 10_000;
 /// entries per org / workspace.

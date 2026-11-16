@@ -164,12 +164,12 @@ pub async fn unseen(
            AND NOT {} AND NOT {watcher}",
         card("action_approval")
     );
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT id, kind, org_id, workspace_id, agent_id, conversation_id, batch_id, title, \
                 rule_name, expires_at, \
                 agent_name, workspace_name, workspace_slug, org_name, org_slug \
          FROM ({gateway} UNION ALL {action}) u ORDER BY created_at LIMIT $3"
-    ))
+    )))
     .bind(delay_secs)
     .bind(ttl_secs)
     .bind(limit)
@@ -195,7 +195,7 @@ pub async fn deciders(
     workspace: Uuid,
     conversation: Option<Uuid>,
 ) -> Result<Vec<Decider>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "WITH explicit AS ( \
              SELECT m.user_id FROM org_members m \
              JOIN workspace_access wa ON wa.user_id = m.user_id AND wa.workspace_id = $2 \
@@ -218,7 +218,7 @@ pub async fn deciders(
            AND NOT {} \
          ORDER BY u.id",
         crate::authz::hidden_direct_conversation_sql("$3::uuid", "u.id", "$2")
-    ))
+    )))
     .bind(org)
     .bind(workspace)
     .bind(conversation)

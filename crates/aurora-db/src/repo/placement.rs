@@ -24,11 +24,11 @@ const COLS: &str = "mode, default_org_id, default_org_role, shared_workspaces, p
     personal_role, name_template, starter_grants, updated_by, updated_at";
 
 pub async fn get<'e, E: PgExecutor<'e>>(exec: E) -> Result<Option<PlacementRow>, DbError> {
-    Ok(
-        sqlx::query_as(&format!("SELECT {COLS} FROM instance_placement"))
-            .fetch_optional(exec)
-            .await?,
-    )
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT {COLS} FROM instance_placement"
+    )))
+    .fetch_optional(exec)
+    .await?)
 }
 
 /// Insert or replace the single placement row.
@@ -235,21 +235,21 @@ pub async fn list_personal_orgs<'e, E: PgExecutor<'e>>(
     exec: E,
     limit: i64,
 ) -> Result<Vec<PersonalOrg>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT o.id AS org_id, o.slug, o.name, u.email::text AS owner_email, o.created_at
          {PERSONAL_ORGS} ORDER BY o.created_at DESC, o.id DESC LIMIT $1"
-    ))
+    )))
     .bind(limit)
     .fetch_all(exec)
     .await?)
 }
 
 pub async fn count_personal_orgs<'e, E: PgExecutor<'e>>(exec: E) -> Result<i64, DbError> {
-    Ok(
-        sqlx::query_scalar(&format!("SELECT count(*) {PERSONAL_ORGS}"))
-            .fetch_one(exec)
-            .await?,
-    )
+    Ok(sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        "SELECT count(*) {PERSONAL_ORGS}"
+    )))
+    .fetch_one(exec)
+    .await?)
 }
 
 const PERSONAL_ORGS: &str = "FROM organizations o

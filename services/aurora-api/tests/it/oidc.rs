@@ -106,7 +106,10 @@ pub(crate) fn has_session(h: &http::HeaderMap) -> bool {
 }
 
 pub(crate) async fn count(h: &Harness, sql: &str) -> i64 {
-    sqlx::query_scalar(sql).fetch_one(h.pool()).await.unwrap()
+    sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
+        .fetch_one(h.pool())
+        .await
+        .unwrap()
 }
 
 #[tokio::test]
@@ -889,7 +892,10 @@ async fn reauth_stamps_the_session() {
 }
 
 async fn count_bool(h: &Harness, sql: &str) -> bool {
-    sqlx::query_scalar(sql).fetch_one(h.pool()).await.unwrap()
+    sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
+        .fetch_one(h.pool())
+        .await
+        .unwrap()
 }
 
 #[tokio::test]

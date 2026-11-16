@@ -136,7 +136,7 @@ async fn admit(s: &AppState, c: &Caller, agent: Uuid) -> Result<AgentRow, ApiErr
     // Off → every surface 404 `terminal_disabled` (C-616; the route itself answers before this
     // when the feature is off, but re-check: the flag may flip between route registration and
     // now on a hot config reload).
-    if !s.config.terminal.enabled {
+    if !s.ops().terminal.enabled {
         return Err(terminal_disabled());
     }
     let a = load_agent(s, c, agent).await?;
@@ -179,7 +179,7 @@ pub async fn upgrade(
         // C-616: long-poll ≤ `TERMINAL_WAKE_WAIT` for the wake, then upgrade; the 202 stays
         // the answer when it did not come up in time. No connection is held while waiting.
         let deadline = tokio::time::Instant::now()
-            + Duration::from_secs(s.config.terminal.wake_wait_secs.max(1));
+            + Duration::from_secs(s.ops().terminal.wake_wait_secs.max(1));
         loop {
             tokio::time::sleep(WAKE_POLL).await;
             match load_sandbox(&s, a.id).await? {
@@ -323,7 +323,7 @@ pub(crate) async fn open(
 ) -> Result<PreviewStreamOpenResponse, ApiError> {
     // Off → the feature does not exist on this instance (404 `terminal_disabled` shape, but a
     // runner-plane route: 403 `grant_invalid` — no terminal grant could have been minted).
-    if !s.config.terminal.enabled {
+    if !s.ops().terminal.enabled {
         return Err(grant_invalid());
     }
     let hash = hex(&token::hash(req.grant.expose()));

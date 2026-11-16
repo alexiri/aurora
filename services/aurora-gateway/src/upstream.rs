@@ -263,7 +263,9 @@ pub struct Upstream {
     client: HyperClient,
     /// http/1.1 only (upgrades).
     client_h1: HyperClient,
-    header_timeout: Duration,
+    /// `gateway.upstream_header_timeout_secs` in milliseconds; a live setting (SET-5) read per
+    /// request.
+    header_timeout_ms: std::sync::atomic::AtomicU64,
     /// (D-251) The LDAP lane's client: the same guarded dial, egress proxy and extra CAs.
     ldap: crate::ldap::client::Lane,
 }
@@ -293,7 +295,7 @@ impl Upstream {
         Ok(Self {
             client: mk(&[b"h2", b"http/1.1"])?,
             client_h1: mk(&[b"http/1.1"])?,
-            header_timeout,
+            header_timeout_ms: std::sync::atomic::AtomicU64::new(millis(header_timeout)),
             ldap: crate::ldap::client::Lane::new(
                 guard.clone(),
                 egress.clone(),
@@ -301,6 +303,12 @@ impl Upstream {
                 header_timeout.max(Duration::from_secs(10)),
             )?,
         })
+    }
+
+    /// Replace the header timeout live (SET-5); applies to the next request.
+    pub fn set_header_timeout(&self, d: Duration) {
+        self.header_timeout_ms
+            .store(millis(d), std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Relays the prepared request. No `Host` header is ever set here
@@ -340,12 +348,20 @@ impl Upstream {
         } else {
             &self.client
         };
-        match tokio::time::timeout(self.header_timeout, client.request(req)).await {
+        let timeout = Duration::from_millis(
+            self.header_timeout_ms
+                .load(std::sync::atomic::Ordering::Relaxed),
+        );
+        match tokio::time::timeout(timeout, client.request(req)).await {
             Err(_) => Err(guidance::upstream_timeout()),
             Ok(Ok(r)) => Ok(r),
             Ok(Err(e)) => Err(map_error(&e)),
         }
     }
+}
+
+fn millis(d: Duration) -> u64 {
+    u64::try_from(d.as_millis()).unwrap_or(u64::MAX)
 }
 
 fn map_error(e: &(dyn std::error::Error + 'static)) -> ApiError {

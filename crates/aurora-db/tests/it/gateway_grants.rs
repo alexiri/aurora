@@ -9,7 +9,7 @@ use sqlx::{Connection, PgConnection};
 
 /// The SQLSTATE of a failed statement run as the role (`None` when it succeeded).
 async fn code(conn: &mut PgConnection, sql: &str) -> Option<String> {
-    match sqlx::query(sql).execute(conn).await {
+    match sqlx::query(sqlx::AssertSqlSafe(sql)).execute(conn).await {
         Ok(_) => None,
         Err(sqlx::Error::Database(e)) => e.code().map(|c| c.to_string()),
         Err(e) => panic!("{sql}: {e}"),
@@ -32,17 +32,19 @@ async fn missing_role_message_names_both_ways_out(pool: PgPool) {
 async fn grants_are_idempotent_and_sufficient_for_the_gateway(pool: PgPool) {
     // The DBA's step: a login role with a password and nothing else (cluster-wide, so dropped below).
     let role = format!("aurora_test_gw_{}", uuid::Uuid::now_v7().simple());
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "CREATE ROLE \"{role}\" LOGIN PASSWORD 'pw' NOSUPERUSER NOCREATEDB NOCREATEROLE"
-    ))
+    )))
     .execute(&pool)
     .await
     .unwrap();
     // (FIX-106) An earlier release granted `api_keys`: applying the grants takes it back.
-    sqlx::query(&format!("GRANT SELECT ON api_keys TO \"{role}\""))
-        .execute(&pool)
-        .await
-        .unwrap();
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "GRANT SELECT ON api_keys TO \"{role}\""
+    )))
+    .execute(&pool)
+    .await
+    .unwrap();
     // `migrate` applies the grants after every upgrade: twice must be fine.
     apply_gateway_grants(&pool, &role).await.unwrap();
     apply_gateway_grants(&pool, &role).await.unwrap();
@@ -136,11 +138,11 @@ async fn grants_are_idempotent_and_sufficient_for_the_gateway(pool: PgPool) {
     }
     c.close().await.ok();
 
-    sqlx::query(&format!("DROP OWNED BY \"{role}\""))
+    sqlx::query(sqlx::AssertSqlSafe(format!("DROP OWNED BY \"{role}\"")))
         .execute(&pool)
         .await
         .unwrap();
-    sqlx::query(&format!("DROP ROLE \"{role}\""))
+    sqlx::query(sqlx::AssertSqlSafe(format!("DROP ROLE \"{role}\"")))
         .execute(&pool)
         .await
         .unwrap();

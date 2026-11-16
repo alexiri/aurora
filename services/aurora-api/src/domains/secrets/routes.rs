@@ -404,7 +404,7 @@ async fn list_llm_providers(
         let modes = aurora_llm::endpoint_auth_modes(p.as_ref(), ep);
         let ep_dialects = p.dialects(ep);
         let harnesses: Vec<String> = state
-            .config
+            .ops()
             .hosted
             .enabled_harnesses
             .iter()

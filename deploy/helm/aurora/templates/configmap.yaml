@@ -14,22 +14,21 @@
 {{- with .Values.image.registry }}{{ $sandboxImage = printf "%s/aurora-sandbox:%s" (trimSuffix "/" .) (default $.Chart.AppVersion $.Values.image.tag) }}{{ end -}}
 {{- $sandboxImage := default $sandboxImage .Values.runner.sandboxImage -}}
 {{- $_ := set $cfg "runner" (merge (dict "backend" "kubernetes" "api_url" (printf "http://%s-api:4101" $full) "image" (default $sandboxImage ($cfg.runner).image) "k8s" $k8s) (default (dict) $cfg.runner)) -}}
-{{- /* (P4-TERM, FIX-053) the web terminal: `terminal.enabled` (top-level) is the single
-      operator switch and MIRRORS `config.terminal.enabled` (D-159 semantics, as
-      `config.runner.image` is derived): with the config side not explicitly set it renders
-      FROM the top-level value, so flipping one key wires the whole feature. The guard fails
-      only on real disagreement: both keys set and unequal, or `config.terminal.enabled=true`
-      alone — the top-level switch does the chart-level work (the runner :4108 stream listener
-      below, the NetworkPolicy api→runner:4108 flows) that the config value alone never
-      renders, so config-only-true is refused with an actionable message instead of silently
-      half-wiring a route the NetworkPolicy blocks. The limits ride [terminal] unchanged.
-      (Must precede the stream-listener block: its `$terminal` reads the mirrored value.) */ -}}
+{{- /* (P4-TERM, FIX-053; phase 5, SET-5, D-237(d)) the web terminal: `terminal.enabled`
+      (top-level) says the deployment PROVIDES the terminal (the runner :4108 stream listener
+      below, the NetworkPolicy api→runner:4108 flows), so it renders `terminal.available`
+      — never `terminal.enabled`, which is an instance setting (Admin › Settings › Terminal)
+      that defaults to `available`, is switched there and is only locked by a `config.terminal.
+      enabled` the operator sets. The guard fails on `config.terminal.enabled=true` alone: the
+      top-level value does the chart-level work that the config value never renders, so
+      config-only-true is refused with an actionable message instead of silently half-wiring a
+      route the NetworkPolicy blocks. (`config.terminal.enabled=false` with the top-level value
+      on is the operator keeping the terminal off, locked.) The limits ride [terminal]
+      unchanged. */ -}}
 {{- $tm := default (dict) $cfg.terminal -}}
-{{- if hasKey $tm "enabled" }}
-{{- if and .Values.terminal.enabled (not (get $tm "enabled")) }}{{ fail "terminal.enabled (top-level) mirrors config.terminal.enabled and they disagree; set only terminal.enabled, or make both equal" }}{{ end -}}
 {{- if and (not .Values.terminal.enabled) (get $tm "enabled") }}{{ fail "config.terminal.enabled=true alone does not turn the terminal on: set the top-level terminal.enabled — config.terminal.enabled alone leaves the chart's runner :4108 listener and NetworkPolicy wiring off" }}{{ end -}}
-{{- else }}
-{{- $_ := set $tm "enabled" .Values.terminal.enabled -}}
+{{- if .Values.terminal.enabled }}
+{{- $_ := set $tm "available" true -}}
 {{- $_ := set $cfg "terminal" $tm -}}
 {{- end -}}
 {{- /* (P4-PRV-2, FIX-056) port previews: `relay.enabled` (top-level) is the single
@@ -60,18 +59,22 @@
       plaintext, so the runner advertises itself by the headless Service name and registers
       `stream_tls: false` (the default): the API hands the relay/leg-1 dialer
       `ws://<advertised_host>:4108` (`16 §W18`/`W19`). */ -}}
-{{- $terminal := get (default (dict) $cfg.terminal) "enabled" | default false -}}
+{{- $terminal := .Values.terminal.enabled | default false -}}
 {{- if or .Values.relay.enabled $terminal }}{{- $_ := set $cfg.runner "stream_bind" "0.0.0.0" -}}{{- $_ := set $cfg.runner "advertised_host" (printf "%s-runner" $full) -}}{{- end -}}
 {{- $_ := set $cfg "connector_host" (merge (dict "api_url" (printf "http://%s-api:4101" $full) "test_types" (.Values.connectorHost.testTypes | default false)) (default (dict) $cfg.connector_host)) -}}
-{{- /* (P4-GRP-2) SCIM: the rate limit is chart-owned; `enabled` itself comes from [scim] in
-      the operator's config (the chart comment points there) — the edge route follows
-      `scim.enabled` below. */ -}}
-{{- $_ := set $cfg "scim" (merge (dict "rate_per_minute" .Values.scim.ratePerMinute) (default (dict) $cfg.scim)) -}}
+{{- /* (P4-GRP-2; phase 5, SET-5, D-237(d)) SCIM: `scim.enabled` (top-level) says the deployment
+      routes /scim/v2 to the API, so it renders `scim.available` — `scim.enabled` is an
+      instance setting (Admin › Settings › Directory sync) that defaults to it. The rate limit
+      is a setting too: `scim.ratePerMinute` renders `scim.rate_per_minute` only when the
+      operator sets it (and then locks it). */ -}}
+{{- $sc := default (dict) $cfg.scim -}}
+{{- if .Values.scim.ratePerMinute }}{{- $_ := set $sc "rate_per_minute" (.Values.scim.ratePerMinute | int) -}}{{- end -}}
+{{- if .Values.scim.enabled }}{{- $_ := set $sc "available" true -}}{{- end -}}
+{{- if $sc }}{{- $_ := set $cfg "scim" $sc -}}{{- end -}}
 {{- /* (FIX-102) half-enabled switches fail the render instead of serving a surface the edge does not route
       (SCIM) or rendering runner-bound policy without a runner (terminal, previews). */ -}}
 {{- if and (get (default (dict) $cfg.scim) "enabled") (not .Values.scim.enabled) }}{{ fail "config.scim.enabled=true alone serves /scim/v2 with no edge route: set the top-level scim.enabled (the chart then routes /scim to the API)" }}{{ end -}}
 {{- if and (or .Values.terminal.enabled .Values.relay.enabled) (not .Values.runner.enabled) }}{{ fail "terminal.enabled and relay.enabled (previews) need the runner (their streams terminate there): set runner.enabled=true, or turn both features off" }}{{ end -}}
-{{- if .Values.scim.enabled }}{{ $_ := set (default (dict) $cfg).scim "enabled" true }}{{ end -}}
 {{- /* (P4-PRV-2, FIX-056) the chart-level wiring renders only from the top-level switch:
       the relay workload, the wildcard edge rules and the NetworkPolicy posture below all
       read `.Values.relay.enabled` (never the config side). The domain and the [relay]

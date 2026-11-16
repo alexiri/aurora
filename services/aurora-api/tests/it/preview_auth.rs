@@ -295,13 +295,20 @@ async fn authorize_flow_redirects_and_redeem_mints_the_session() {
     // The relay-plane answer shape: no runner endpoint until a sandbox runs.
     assert_eq!(v["route"]["sandbox"], "unavailable", "{v}");
 
-    // The audit row of the mint.
-    let n: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM audit_log WHERE action = 'preview.session.create'",
-    )
-    .fetch_one(r.h.pool())
-    .await
-    .unwrap();
+    // The audit row of the mint (best-effort class: written by a spawned task, so poll).
+    let mut n: i64 = 0;
+    for _ in 0..100 {
+        n = sqlx::query_scalar(
+            "SELECT count(*) FROM audit_log WHERE action = 'preview.session.create'",
+        )
+        .fetch_one(r.h.pool())
+        .await
+        .unwrap();
+        if n > 0 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
     assert_eq!(n, 1, "one preview.session.create row");
 }
 

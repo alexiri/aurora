@@ -31,22 +31,24 @@ const SELECT: &str =
     FROM reach_grants g LEFT JOIN users u ON u.id = g.decided_by_user_id";
 
 pub async fn get<'e, E: PgExecutor<'e>>(exec: E, id: Uuid) -> Result<Option<ReachRow>, DbError> {
-    Ok(sqlx::query_as(&format!("{SELECT} WHERE g.id=$1"))
-        .bind(id)
-        .fetch_optional(exec)
-        .await?)
+    Ok(
+        sqlx::query_as(sqlx::AssertSqlSafe(format!("{SELECT} WHERE g.id=$1")))
+            .bind(id)
+            .fetch_optional(exec)
+            .await?,
+    )
 }
 
 pub async fn get_for_update(
     conn: &mut PgConnection,
     id: Uuid,
 ) -> Result<Option<ReachRow>, DbError> {
-    Ok(
-        sqlx::query_as(&format!("{SELECT} WHERE g.id=$1 FOR UPDATE OF g"))
-            .bind(id)
-            .fetch_optional(conn)
-            .await?,
-    )
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "{SELECT} WHERE g.id=$1 FOR UPDATE OF g"
+    )))
+    .bind(id)
+    .fetch_optional(conn)
+    .await?)
 }
 
 /// The grant for a subject (`kind`: `space` | `person`), whatever its state.
@@ -57,9 +59,9 @@ pub async fn reach_for<'e, E: PgExecutor<'e>>(
     subject_kind: &str,
     subject_ref: &str,
 ) -> Result<Option<ReachRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "{SELECT} WHERE g.agent_id=$1 AND g.integration_id=$2 AND g.subject_kind=$3 AND g.subject_ref=$4"
-    ))
+    )))
     .bind(agent)
     .bind(integration)
     .bind(subject_kind)
@@ -76,10 +78,10 @@ pub async fn page_for_agent<'e, E: PgExecutor<'e>>(
     limit: i64,
 ) -> Result<Vec<ReachRow>, DbError> {
     let (t, id) = after.unzip();
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "{SELECT} WHERE g.agent_id=$1 AND ($2::timestamptz IS NULL OR (g.created_at, g.id) < ($2, $3))
          ORDER BY g.created_at DESC, g.id DESC LIMIT $4"
-    ))
+    )))
     .bind(agent)
     .bind(t)
     .bind(id)

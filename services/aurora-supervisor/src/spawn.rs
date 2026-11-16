@@ -27,10 +27,21 @@ fn may_pass(key: &str, value: &str) -> bool {
     if k.starts_with("AURORA_BOOT") || PLATFORM_PREFIXES.iter().any(|p| value.starts_with(p)) {
         return false;
     }
+    // (P4-LLM-5) Claude Code's "skip auth" switches end in `_AUTH` but carry the flag `1`, not a credential:
+    // without them the CLI looks for AWS/Google credentials the sandbox must never hold.
+    if SKIP_AUTH_SWITCHES.contains(&k.as_str()) {
+        return value == "1";
+    }
     let secret_name = SECRET_SUFFIXES.iter().any(|s| k.ends_with(s))
         || ["TOKEN", "SECRET", "PASSWORD", "DATABASE_URL", "DB_URL"].contains(&k.as_str());
     !secret_name || value == PLACEHOLDER
 }
+
+/// The exact names of Claude Code's provider "skip auth" switches (value `1` only).
+const SKIP_AUTH_SWITCHES: [&str; 2] = [
+    "CLAUDE_CODE_SKIP_BEDROCK_AUTH",
+    "CLAUDE_CODE_SKIP_VERTEX_AUTH",
+];
 
 /// (FIX-114, SEC-34) Every platform token prefix (`aurora_core::token::TokenPrefix`): a value
 /// that starts with one is a platform credential whatever the variable is called.
@@ -151,6 +162,24 @@ mod tests {
         assert!(env.iter().all(|(k, _)| k != "AURORA_BOOT"));
         assert!(env.iter().any(|(k, v)| k == "MY_APP" && v == "1"));
         assert!(env.iter().any(|(k, _)| k == "PATH"));
+    }
+
+    /// (P4-LLM-5) The Bedrock/Vertex skip-auth flags reach the child, with the value `1` only; other `_AUTH` names still do not.
+    #[test]
+    fn skip_auth_switches_pass_with_the_flag_only() {
+        for n in [
+            "CLAUDE_CODE_SKIP_BEDROCK_AUTH",
+            "CLAUDE_CODE_SKIP_VERTEX_AUTH",
+        ] {
+            assert!(may_pass(n, "1"), "{n}");
+            assert!(!may_pass(n, "real-value"), "{n}");
+        }
+        assert!(!may_pass("CLAUDE_CODE_SKIP_OTHER_AUTH", "1"));
+        let env = child_env([("CLAUDE_CODE_SKIP_BEDROCK_AUTH", "1")]);
+        assert!(
+            env.iter()
+                .any(|(k, v)| k == "CLAUDE_CODE_SKIP_BEDROCK_AUTH" && v == "1")
+        );
     }
 
     /// (FIX-114) Every added name suffix and every platform token prefix is refused.

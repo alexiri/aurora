@@ -340,13 +340,13 @@ pub async fn create(
     // The config may only lower the built-in limits (validated at startup).
     if repo::count_in_org(&mut *tx, a.org_id).await? >= repo::SHARES_PER_ORG
         || repo::count_in_org(&mut *tx, a.org_id).await?
-            >= i64::from(s.config.previews.shares_per_org)
+            >= i64::from(s.ops().previews.shares_per_org)
     {
         return Err(limit_reached());
     }
     if repo::count_for_agent(&mut *tx, agent).await? >= repo::SHARES_PER_AGENT
         || repo::count_for_agent(&mut *tx, agent).await?
-            >= i64::from(s.config.previews.shares_per_agent)
+            >= i64::from(s.ops().previews.shares_per_agent)
     {
         return Err(limit_reached());
     }

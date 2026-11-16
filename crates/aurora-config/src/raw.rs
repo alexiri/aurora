@@ -634,6 +634,10 @@ pub struct ScimSection {
     /// Serve `/scim/v2` and show the Directory sync page; while `false` every
     /// `/scim/v2` path is 404 and no org can enable SCIM.
     pub enabled: bool,
+    /// (phase 5, SET-5, D-237(d)) The deployment routes `/scim/v2` to the API. Configuration only,
+    /// never a setting: `enabled` cannot be turned on from the dashboard while it is `false`, and
+    /// an unset `enabled` follows it.
+    pub available: bool,
     /// Optional instance allow-list of the e-mail domains an org may provision (exact,
     /// case-insensitive; empty = any domain the org owner lists).
     pub allowed_email_domains: Vec<String>,
@@ -646,6 +650,7 @@ impl Default for ScimSection {
     fn default() -> Self {
         Self {
             enabled: false,
+            available: false,
             allowed_email_domains: vec![],
             rate_per_minute: 600,
             token_max_days: 730,
@@ -737,6 +742,11 @@ pub struct TerminalSection {
     /// `terminal_disabled`, the runner registers no `terminal` capability and the tab is
     /// hidden. An interactive path into sandboxes is a deliberate deployment choice.
     pub enabled: bool,
+    /// (phase 5, SET-5, D-237(d)) The deployment provides the terminal's wiring (the runner's
+    /// :4108 listener and the network flows). Configuration only, never a setting: `enabled`
+    /// cannot be turned on from the dashboard while it is `false`, and an unset `enabled` follows
+    /// it. Runners open :4108 and register the capability when this or `enabled` is `true`.
+    pub available: bool,
     /// `TERMINAL_AWAKE_CAP` in seconds; at most `hosted.background_cap_secs`.
     pub awake_cap_secs: u64,
     /// (P4-TERM) `TERMINAL_WAKE_WINDOW` in seconds (60): how long a wake demand stays due work.
@@ -749,6 +759,7 @@ impl Default for TerminalSection {
     fn default() -> Self {
         Self {
             enabled: false,
+            available: false,
             awake_cap_secs: 4 * 3600,
             wake_window_secs: 60,
             wake_wait_secs: 45,

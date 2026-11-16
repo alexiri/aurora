@@ -63,12 +63,12 @@ pub struct NewSchedule<'a> {
 }
 
 pub async fn get<'e, E: PgExecutor<'e>>(exec: E, id: Uuid) -> Result<Option<ScheduleRow>, DbError> {
-    Ok(
-        sqlx::query_as(&format!("SELECT {COLS} {FROM} WHERE s.id = $1"))
-            .bind(id)
-            .fetch_optional(exec)
-            .await?,
-    )
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT {COLS} {FROM} WHERE s.id = $1"
+    )))
+    .bind(id)
+    .fetch_optional(exec)
+    .await?)
 }
 
 /// (FIX-110) The row, locked for the rest of the transaction: a user-facing edit must start from
@@ -77,9 +77,9 @@ pub async fn get_for_update(
     conn: &mut PgConnection,
     id: Uuid,
 ) -> Result<Option<ScheduleRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {COLS} {FROM} WHERE s.id = $1 FOR UPDATE OF s"
-    ))
+    )))
     .bind(id)
     .fetch_optional(conn)
     .await?)
@@ -89,9 +89,9 @@ pub async fn list_for_agent<'e, E: PgExecutor<'e>>(
     exec: E,
     agent: Uuid,
 ) -> Result<Vec<ScheduleRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {COLS} {FROM} WHERE s.agent_id = $1 ORDER BY s.created_at, s.id LIMIT 500"
-    ))
+    )))
     .bind(agent)
     .fetch_all(exec)
     .await?)
@@ -214,9 +214,9 @@ pub async fn lock_by_creator(
     .bind(ids)
     .fetch_all(&mut *conn)
     .await?;
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {COLS} {FROM} WHERE s.id = ANY($1) ORDER BY s.id"
-    ))
+    )))
     .bind(&locked)
     .fetch_all(conn)
     .await?)
@@ -254,9 +254,9 @@ pub async fn claim_due(
     if ids.is_empty() {
         return Ok(Vec::new());
     }
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {COLS} {FROM} WHERE s.id = ANY($1) ORDER BY s.next_fire_at, s.id"
-    ))
+    )))
     .bind(&ids)
     .fetch_all(conn)
     .await?)
@@ -356,10 +356,10 @@ pub async fn insert_run(
     turn: Option<Uuid>,
     outcome: &str,
 ) -> Result<RunRow, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "INSERT INTO schedule_runs (id, schedule_id, turn_id, outcome, fired_at)
          VALUES ($1,$2,$3,$4, now()) RETURNING {RUN_COLS}"
-    ))
+    )))
     .bind(Uuid::now_v7())
     .bind(schedule)
     .bind(turn)
@@ -376,11 +376,11 @@ pub async fn list_runs<'e, E: PgExecutor<'e>>(
     limit: i64,
 ) -> Result<Vec<RunRow>, DbError> {
     let (t, id) = after.unzip();
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {RUN_COLS} FROM schedule_runs WHERE schedule_id = $1
            AND ($2::timestamptz IS NULL OR (created_at, id) < ($2, $3))
          ORDER BY created_at DESC, id DESC LIMIT $4"
-    ))
+    )))
     .bind(schedule)
     .bind(t)
     .bind(id)
@@ -391,9 +391,9 @@ pub async fn list_runs<'e, E: PgExecutor<'e>>(
 
 /// The run row that carries `turn` (fenced writers lock it).
 pub async fn run_by_turn(conn: &mut PgConnection, turn: Uuid) -> Result<Option<RunRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {RUN_COLS} FROM schedule_runs WHERE turn_id = $1 FOR UPDATE"
-    ))
+    )))
     .bind(turn)
     .fetch_optional(conn)
     .await?)

@@ -102,11 +102,13 @@ async fn partition_job_idempotent_moves_default_rows_and_drops_old() {
     };
     assert_eq!(count().await, 3);
     let cur = format!("request_log_p{:04}{:02}", now.year(), now.month());
-    let in_part: i64 = sqlx::query_scalar(&format!("SELECT count(*) FROM {cur} WHERE id = $1"))
-        .bind(id)
-        .fetch_one(h.pool())
-        .await
-        .unwrap();
+    let in_part: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        "SELECT count(*) FROM {cur} WHERE id = $1"
+    )))
+    .bind(id)
+    .fetch_one(h.pool())
+    .await
+    .unwrap();
     assert_eq!(in_part, 1);
     let in_default: i64 = sqlx::query_scalar("SELECT count(*) FROM request_log_default")
         .fetch_one(h.pool())
@@ -220,7 +222,7 @@ async fn retention_pass_removes_only_what_each_window_allows() {
     let q = |sql: String, binds: Vec<Uuid>| {
         let pool = h.pool().clone();
         async move {
-            let mut qq = sqlx::query(&sql);
+            let mut qq = sqlx::query(sqlx::AssertSqlSafe(&*sql));
             for b in binds {
                 qq = qq.bind(b);
             }
@@ -288,7 +290,7 @@ async fn retention_pass_removes_only_what_each_window_allows() {
         let (revoked, expires) = (revoked.map(str::to_owned), expires.to_owned());
         async move {
             let id = Uuid::now_v7();
-            sqlx::query(&format!("INSERT INTO sessions (id, user_id, token_hash, last_seen_at, expires_at, revoked_at) VALUES ($1,$2,decode(replace($1::text,'-','') || replace($1::text,'-',''),'hex'), now(), {expires}, {})", revoked.as_deref().unwrap_or("NULL")))
+            sqlx::query(sqlx::AssertSqlSafe(format!("INSERT INTO sessions (id, user_id, token_hash, last_seen_at, expires_at, revoked_at) VALUES ($1,$2,decode(replace($1::text,'-','') || replace($1::text,'-',''),'hex'), now(), {expires}, {})", revoked.as_deref().unwrap_or("NULL"))))
                 .bind(id).bind(user).execute(&pool).await.unwrap();
             id
         }

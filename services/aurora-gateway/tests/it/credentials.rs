@@ -93,10 +93,10 @@ async fn world(pool: &PgPool) -> W {
 
 async fn cred(pool: &PgPool, agent: Uuid, token: &str, kind: &str, expires: &str) -> Uuid {
     let id = Uuid::now_v7();
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "INSERT INTO gateway_credentials (id, kind, token_hash, display_prefix, agent_id, expires_at) \
          VALUES ($1,$2,$3,'x',$4, {expires})"
-    ))
+    )))
     .bind(id)
     .bind(kind)
     .bind(aurora_core::token::hash(token).to_vec())
@@ -725,7 +725,11 @@ async fn frozen_agents_are_refused_at_every_level_and_unfreeze_is_instant() {
                 "UPDATE {table} SET frozen_at = NULL, frozen_reason = NULL, frozen_authority = NULL, frozen_by_user_id = NULL WHERE id = $1"
             )
         };
-        sqlx::query(&sql).bind(id).execute(p).await.unwrap();
+        sqlx::query(sqlx::AssertSqlSafe(&*sql))
+            .bind(id)
+            .execute(p)
+            .await
+            .unwrap();
     };
     let wait_frozen = |want: Option<&'static str>| {
         let r = r.clone();

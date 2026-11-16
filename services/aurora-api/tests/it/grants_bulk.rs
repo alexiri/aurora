@@ -128,18 +128,22 @@ apps:
     }
 
     async fn count(&self, table_cond: &str) -> i64 {
-        sqlx::query_scalar(&format!("SELECT count(*) FROM grants WHERE {table_cond}"))
-            .fetch_one(self.h.pool())
-            .await
-            .unwrap()
+        sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "SELECT count(*) FROM grants WHERE {table_cond}"
+        )))
+        .fetch_one(self.h.pool())
+        .await
+        .unwrap()
     }
 
     async fn grants_of(&self, col: &str, id: Uuid) -> i64 {
-        sqlx::query_scalar(&format!("SELECT count(*) FROM grants WHERE {col} = $1"))
-            .bind(id)
-            .fetch_one(self.h.pool())
-            .await
-            .unwrap()
+        sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "SELECT count(*) FROM grants WHERE {col} = $1"
+        )))
+        .bind(id)
+        .fetch_one(self.h.pool())
+        .await
+        .unwrap()
     }
 
     async fn audit(&self) -> Vec<Value> {

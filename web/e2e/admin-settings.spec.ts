@@ -75,6 +75,33 @@ for (const scheme of ["light", "dark"] as const) {
         expect(await axeClean(page)).toEqual([]);
       });
 
+      // SET-5: the operational pages — the runners' sizes read-only, a terminal the deployment lacks, rate classes.
+      test("the agents page shows a locked deadline and the runners' sizes", async ({ page }) => {
+        await openRoute(page, "/admin/settings/agents", scheme);
+        await expect(page.getByRole("heading", { name: "Agents & sandboxes", level: 1 })).toBeVisible();
+        await expect(page.getByTestId("hosted.idle_stop_secs-locked-value")).toHaveText("1800");
+        await expect(page.getByRole("region", { name: "Runners and sandbox sizes" })).toContainText("4096");
+        expect(await overflow(page)).toBeLessThanOrEqual(0);
+        expect(await axeClean(page)).toEqual([]);
+      });
+
+      test("the terminal page explains a missing deployment wiring", async ({ page }) => {
+        await openRoute(page, "/admin/settings/terminal", scheme);
+        await expect(page.getByRole("heading", { name: "Terminal", level: 1 })).toBeVisible();
+        await expect(page.getByText(/does not provide the terminal/)).toBeVisible();
+        expect(await overflow(page)).toBeLessThanOrEqual(0);
+        expect(await axeClean(page)).toEqual([]);
+      });
+
+      test("the limits page lists a Helm rate class and warns about private destinations", async ({ page }) => {
+        await openRoute(page, "/admin/settings/limits", scheme);
+        await expect(page.getByRole("heading", { name: "Limits", level: 1 })).toBeVisible();
+        await expect(page.getByText("Managed by Helm")).toBeVisible();
+        await expect(page.getByText(/Private destinations\./)).toBeVisible();
+        expect(await overflow(page)).toBeLessThanOrEqual(0);
+        expect(await axeClean(page)).toEqual([]);
+      });
+
       test("the email page offers a test e-mail", async ({ page }) => {
         await openRoute(page, "/admin/settings/email", scheme);
         await expect(page.getByRole("heading", { name: "Email", level: 1 })).toBeVisible();

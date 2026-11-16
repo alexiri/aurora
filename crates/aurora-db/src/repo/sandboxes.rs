@@ -81,12 +81,12 @@ const COLS: &str = "id, agent_id, runner_id, state, owner_replica_id, channel_re
     home_ref, stop_reason, home_applied_generation, created_at";
 
 pub async fn get(conn: &mut PgConnection, id: Uuid) -> Result<Option<SandboxRow>, DbError> {
-    Ok(
-        sqlx::query_as(&format!("SELECT {COLS} FROM sandboxes WHERE id = $1"))
-            .bind(id)
-            .fetch_optional(conn)
-            .await?,
-    )
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT {COLS} FROM sandboxes WHERE id = $1"
+    )))
+    .bind(id)
+    .fetch_optional(conn)
+    .await?)
 }
 
 /// Arm 1: sandboxes of this runner whose owner replica is not live move to `replica`.
@@ -182,7 +182,7 @@ pub async fn claim_stops(
              AND (s.files_awake_since IS NULL \
                   OR now() - s.files_awake_since < make_interval(secs => $9))",
     );
-    Ok(sqlx::query_as(&sql)
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(&*sql))
         .bind(runner)
         .bind(replica)
         .bind(idle_secs)
@@ -207,10 +207,10 @@ pub async fn claim_evict(
     lease_secs: f64,
     wake_window_secs: f64,
 ) -> Result<Option<StopClaim>, DbError> {
-    let held: i64 = sqlx::query_scalar(&format!(
+    let held: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT count(*) FROM sandboxes s WHERE s.runner_id = $1 AND s.state = 'running'
          AND NOT {ACTIVE_TURN}"
-    ))
+    )))
     .bind(runner)
     .fetch_one(&mut *conn)
     .await?;
@@ -219,7 +219,7 @@ pub async fn claim_evict(
     {
         return Ok(None);
     }
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "UPDATE sandboxes SET state = 'stopping', stop_reason = 'evict',
              lifecycle_lease_until = now() + make_interval(secs => $3), updated_at = now()
          WHERE id = (SELECT s.id FROM sandboxes s
@@ -228,7 +228,7 @@ pub async fn claim_evict(
              ORDER BY coalesce(s.last_engaged_at, s.last_active_at, s.created_at)
              LIMIT 1 FOR UPDATE SKIP LOCKED)
          RETURNING id AS sandbox_id, boot_id, 'evict'::text AS reason"
-    ))
+    )))
     .bind(runner)
     .bind(replica)
     .bind(lease_secs)
@@ -246,11 +246,11 @@ pub async fn pending_start(
 ) -> Result<bool, DbError> {
     // `start_eligible()` is shared with `claim_starts`, where `$4`/`$5` are the limit and the
     // lease and `$6` the wake window: bind the unused `$4`/`$5` so `$6` stays the wake window.
-    Ok(sqlx::query_scalar(&format!(
+    Ok(sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT EXISTS (SELECT 1 FROM sandboxes s JOIN agents a ON a.id = s.agent_id
                         WHERE {})",
         start_eligible()
-    ))
+    )))
     .bind(runner)
     .bind(replica)
     .bind(default_harness)
@@ -373,7 +373,7 @@ pub async fn claim_starts(
          RETURNING s.id AS sandbox_id, s.agent_id",
         start_eligible()
     );
-    Ok(sqlx::query_as(&sql)
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(&*sql))
         .bind(runner)
         .bind(replica)
         .bind(default_harness)

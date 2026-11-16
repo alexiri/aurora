@@ -506,7 +506,7 @@ pub async fn discover(state: &AppState, issuer: &str) -> Result<Discovered, &'st
     if !issuer_scheme_ok(issuer) {
         return Err("issuer_not_https");
     }
-    let guard = aurora_secrets::DialGuard::new(&state.config.gateway_allowed_private);
+    let guard = aurora_secrets::DialGuard::new(&state.ops().gateway_allowed_private);
     if !guard.permits_address(issuer).await {
         return Err("destination_refused");
     }
@@ -719,7 +719,7 @@ pub async fn email_test(
             }
             if !same_url {
                 // A server named on the page (not Helm's) passes the destination guard.
-                let guard = aurora_secrets::DialGuard::new(&state.config.gateway_allowed_private);
+                let guard = aurora_secrets::DialGuard::new(&state.ops().gateway_allowed_private);
                 if let Some(u) = e.smtp_url.as_ref()
                     && !state.settings.source.sets("email.smtp_url")
                     && !guard.permits_address(u.expose()).await

@@ -195,7 +195,6 @@ async fn serve(
             cfg.tls.extra_ca_bundle.as_deref(),
         )?,
     ));
-    vault.set_allowed_private(cfg.gateway.allowed_private.clone());
     // (FIX-124) Kept for the settings reload: the stores the dashboard defines.
     let settings_vault = (vault.clone(), keyring, cfg.tls.extra_ca_bundle.clone());
     let governance = Arc::new(
@@ -298,6 +297,8 @@ async fn serve(
         resolver.clone(),
         policy_resolver.clone(),
     );
+    // (SET-5) Hold timeouts follow the `approvals` settings live.
+    settings.apply_approvals_on_change(holds.clone());
     // Loaded before serving so a dashboard-defined store is there for the first request; a
     // database without the grant yet keeps the configuration's stores (logged by `run`).
     if let Err(e) = settings.reload(&pool).await {
@@ -472,8 +473,8 @@ async fn serve(
             ca,
             tls: proxy_tls,
             resolver,
-            handler,
-            guard,
+            handler: handler.clone(),
+            guard: guard.clone(),
             header_timeout: Duration::from_secs(cfg.gateway.upstream_header_timeout_secs),
             extra_ca_pem,
             egress_proxy: cfg.gateway.egress_proxy.clone(),
@@ -486,6 +487,9 @@ async fn serve(
             tunnel_limits: aurora_gateway::proxy::TunnelLimits::default(),
         },
     )?;
+    // (SET-5) The destination guard's list, the condition body cap and the header timeout follow
+    // the `limits` settings live.
+    settings.apply_limits_on_change(guard, handler, proxy.clone());
     let proxy_listener = service::bind(bind, PROXY_PORT).await?;
     let internal_listener = service::bind(internal_bind, INTERNAL_PORT).await?;
     let drain_health = health.clone();

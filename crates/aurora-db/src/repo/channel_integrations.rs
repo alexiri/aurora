@@ -48,9 +48,9 @@ pub async fn get<'e, E: PgExecutor<'e>>(
     exec: E,
     id: Uuid,
 ) -> Result<Option<IntegrationRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {COLS} FROM channel_integrations WHERE id=$1"
-    ))
+    )))
     .bind(id)
     .fetch_optional(exec)
     .await?)
@@ -108,10 +108,10 @@ pub async fn get_owned<'e, E: PgExecutor<'e>>(
     replica: Uuid,
     id: Uuid,
 ) -> Result<Option<IntegrationRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {COLS} FROM channel_integrations
          WHERE id=$1 AND connector_id=$2 AND owner_replica_id=$3"
-    ))
+    )))
     .bind(id)
     .bind(connector_id)
     .bind(replica)
@@ -301,11 +301,11 @@ pub async fn claim_owned(
         .await?;
     }
 
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {COLS} FROM channel_integrations
          WHERE connector_id=$1 AND owner_replica_id=$2 AND status='active'
          ORDER BY created_at, id"
-    ))
+    )))
     .bind(connector_id)
     .bind(replica)
     .fetch_all(&mut *conn)
@@ -427,11 +427,11 @@ pub async fn page_for_org<'e, E: PgExecutor<'e>>(
     limit: i64,
 ) -> Result<Vec<IntegrationRow>, DbError> {
     let (t, id) = after.unzip();
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {COLS} FROM channel_integrations
           WHERE org_id=$1 AND ($2::timestamptz IS NULL OR (created_at, id) < ($2, $3))
           ORDER BY created_at DESC, id DESC LIMIT $4"
-    ))
+    )))
     .bind(org)
     .bind(t)
     .bind(id)
@@ -445,9 +445,9 @@ pub async fn get_for_update(
     conn: &mut PgConnection,
     id: Uuid,
 ) -> Result<Option<IntegrationRow>, DbError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {COLS} FROM channel_integrations WHERE id=$1 FOR UPDATE"
-    ))
+    )))
     .bind(id)
     .fetch_optional(conn)
     .await?)

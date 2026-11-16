@@ -319,7 +319,7 @@ pub async fn create_user(
     bad_input(&body)?;
     let org = caller.org.clone();
     let email = resolved_email(&input)?;
-    if !email_domain_allowed(&org, &state.config.scim.allowed_email_domains, &email) {
+    if !email_domain_allowed(&org, &state.ops().scim.allowed_email_domains, &email) {
         return Err(ScimError::invalid_value(
             "The e-mail domain is not allowed for this organization.",
         ));
@@ -679,11 +679,7 @@ pub async fn put_user(
         .map_err(|e| ScimError::invalid_syntax(e.to_string()))?;
     bad_input(&body)?;
     let email = resolved_email(&input)?;
-    if !email_domain_allowed(
-        &caller.org,
-        &state.config.scim.allowed_email_domains,
-        &email,
-    ) {
+    if !email_domain_allowed(&caller.org, &state.ops().scim.allowed_email_domains, &email) {
         return Err(ScimError::invalid_value(
             "The e-mail domain is not allowed for this organization.",
         ));
@@ -770,11 +766,7 @@ fn patch_to_update(
     // A removed `displayName` stores NULL — it must not come back through `display_of`'s
     // fallbacks (`name.formatted`, given + family): updates store exactly what was sent.
     let email = resolved_email(&merged)?;
-    if !email_domain_allowed(
-        &caller.org,
-        &state.config.scim.allowed_email_domains,
-        &email,
-    ) {
+    if !email_domain_allowed(&caller.org, &state.ops().scim.allowed_email_domains, &email) {
         return Err(ScimError::invalid_value(
             "The e-mail domain is not allowed for this organization.",
         ));

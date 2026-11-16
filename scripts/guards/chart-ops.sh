@@ -218,7 +218,29 @@ must_fail() {
   if "${H[@]}" "$@" >/dev/null 2>&1; then fail "$what rendered but must refuse"; fi
 }
 must_fail "config.scim.enabled=true without scim.enabled" --set config.scim.enabled=true
+must_fail "config.terminal.enabled=true without terminal.enabled" --set config.terminal.enabled=true
 must_fail "terminal without a runner" --set terminal.enabled=true --set runner.enabled=false
 must_fail "previews without a runner" --set relay.enabled=true --set relay.domain=previews.guard.invalid --set runner.enabled=false
 "${H[@]}" --set runner.enabled=false >/dev/null || fail "runner.enabled=false alone must render"
 echo "chart-ops: half-enabled switches refuse to render"
+
+# --- (SET-5, D-237(d)) the terminal and SCIM chart values render `available`, never the movable switch ---
+toml_of() { "${H[@]}" "$@" | python3 -I -c '
+import sys, tomllib, yaml
+out = {}
+for d in yaml.safe_load_all(sys.stdin):
+    if d and d.get("kind") == "ConfigMap":
+        for n, t in (d.get("data") or {}).items():
+            if n.endswith(".toml"):
+                out.update(tomllib.loads(t))
+print(repr({k: out.get(k) for k in ("terminal", "scim")}))
+'; }
+dflt="$(toml_of)" || fail "default render failed"
+[ "$dflt" = "{'terminal': None, 'scim': None}" ] || fail "default render must set neither [terminal] nor [scim]: $dflt"
+on="$(toml_of --set terminal.enabled=true --set scim.enabled=true)" || fail "terminal+scim render failed"
+[ "$on" = "{'terminal': {'available': True}, 'scim': {'available': True}}" ] || fail "terminal.enabled / scim.enabled must render available only: $on"
+rate="$(toml_of --set scim.ratePerMinute=900)" || fail "scim.ratePerMinute render failed"
+[ "$rate" = "{'terminal': None, 'scim': {'rate_per_minute': 900}}" ] || fail "scim.ratePerMinute must render rate_per_minute only when set: $rate"
+locked="$(toml_of --set terminal.enabled=true --set config.terminal.enabled=false)" || fail "terminal on with config.terminal.enabled=false must render (kept off, locked)"
+[ "$locked" = "{'terminal': {'available': True, 'enabled': False}, 'scim': None}" ] || fail "an operator-set config.terminal.enabled must be kept next to available: $locked"
+echo "chart-ops: terminal and SCIM render availability"

@@ -160,7 +160,9 @@ pub async fn apply_gateway_grants(pool: &PgPool, role: &str) -> Result<(), Grant
     ));
 
     for sql in &stmts {
-        sqlx::query(sql).execute(&mut *tx).await?;
+        sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
+            .execute(&mut *tx)
+            .await?;
     }
     tx.commit().await?;
     Ok(())

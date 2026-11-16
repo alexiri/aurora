@@ -179,7 +179,7 @@ impl W {
     }
 
     async fn probe(&self, sql: &str) -> String {
-        sqlx::query_scalar(sql)
+        sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
             .fetch_one(self.h.pool())
             .await
             .unwrap()

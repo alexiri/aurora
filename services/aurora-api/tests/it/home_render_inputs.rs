@@ -155,7 +155,7 @@ impl W {
     }
 
     async fn sql(&self, q: &str, binds: &[Uuid]) {
-        let mut x = sqlx::query(q);
+        let mut x = sqlx::query(sqlx::AssertSqlSafe(q));
         for b in binds {
             x = x.bind(*b);
         }

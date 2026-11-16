@@ -9,6 +9,10 @@ only, never from inside the sandbox.
 The design is in [docs/12 §Harness selection and adapter contract](../12-supervisor-harness.md#harness-selection-and-adapter-contract-phase-4-p4-har-d-122-sec-66)
 and [§Adapter codex](../12-supervisor-harness.md#adapter-codex-phase-4-p4-har); decisions D-122 and D-153.
 
+(Phase 5, SET-5.) The list is an instance setting: **Admin › Settings › Agents & sandboxes › Hosted agents**. It can only name
+harnesses a registered runner reports (otherwise the save is refused with `harness_not_available`), and the runners' harnesses
+are shown on the same page. `config.hosted.enabled_harnesses` in Helm locks it as a whole.
+
 ## What Codex needs
 
 | Need | Where |

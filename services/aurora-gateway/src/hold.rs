@@ -17,7 +17,7 @@ use aurora_db::repo::gateway::{self as repo, NewApproval};
 use aurora_summary::ApprovalSummary;
 use aurora_summary::template;
 use serde_json::json;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::time::Instant;
@@ -161,15 +161,21 @@ pub struct HoldRequest<'a> {
     pub rule_timeout_secs: Option<u32>,
 }
 
+fn millis(d: Duration) -> u64 {
+    u64::try_from(d.as_millis()).unwrap_or(u64::MAX)
+}
+
 pub struct Holds {
     pool: PgPool,
     hub: Arc<Hub>,
     instance_id: Uuid,
     /// `approvals.timeout_secs`: the timeout of holds whose rules set none.
-    timeout: Duration,
+    /// Milliseconds; replaced live when the `approvals` settings change (SET-5).
+    timeout: AtomicU64,
     /// (RFE-011a) bounds of a rule-level timeout: `APPROVAL_TIMEOUT_MIN ..= approvals.max_timeout_secs`.
     min_timeout: Duration,
-    max_timeout: Duration,
+    /// Milliseconds; replaced live with `timeout` (SET-5).
+    max_timeout: AtomicU64,
     poll: Duration,
     shutdown: Option<tokio::sync::watch::Receiver<bool>>,
     /// (RFE-014) Outage state: no hold is recorded while the database is unreachable.
@@ -239,9 +245,9 @@ impl Holds {
             pool,
             hub,
             instance_id,
-            timeout,
+            timeout: AtomicU64::new(millis(timeout)),
             min_timeout: aurora_core::limits::APPROVAL_TIMEOUT_MIN,
-            max_timeout: aurora_core::limits::APPROVAL_TIMEOUT_MAX,
+            max_timeout: AtomicU64::new(millis(aurora_core::limits::APPROVAL_TIMEOUT_MAX)),
             poll: POLL_INTERVAL,
             shutdown,
             health: None,
@@ -325,9 +331,16 @@ impl Holds {
 
     /// (RFE-011a) Sets the instance maximum of rule-level timeouts (`approvals.max_timeout_secs`).
     #[must_use]
-    pub fn with_max_timeout(mut self, max: Duration) -> Self {
-        self.max_timeout = max;
+    pub fn with_max_timeout(self, max: Duration) -> Self {
+        self.max_timeout.store(millis(max), Ordering::Relaxed);
         self
+    }
+
+    /// (SET-5) Replaces the default timeout and the instance maximum after an `approvals`
+    /// settings swap; holds already waiting keep the deadline they were given.
+    pub fn set_timeouts(&self, timeout: Duration, max: Duration) {
+        self.timeout.store(millis(timeout), Ordering::Relaxed);
+        self.max_timeout.store(millis(max), Ordering::Relaxed);
     }
 
     /// Overrides the lower bound of rule-level timeouts (tests).
@@ -341,13 +354,15 @@ impl Holds {
     /// `[APPROVAL_TIMEOUT_MIN, approvals.max_timeout_secs]`, else the default timeout.
     pub fn effective_timeout(&self, rule_timeout_secs: Option<u32>) -> Duration {
         // Sub-second default timeouts exist only in tests; keep them exact.
+        let timeout = Duration::from_millis(self.timeout.load(Ordering::Relaxed));
+        let max = Duration::from_millis(self.max_timeout.load(Ordering::Relaxed));
         match rule_timeout_secs {
-            None => self.timeout,
+            None => timeout,
             Some(_) => Duration::from_secs(aurora_core::limits::effective_approval_timeout_secs(
                 rule_timeout_secs,
-                self.timeout.as_secs(),
+                timeout.as_secs(),
                 self.min_timeout.as_secs(),
-                self.max_timeout.as_secs(),
+                max.as_secs(),
             )),
         }
     }

@@ -123,31 +123,19 @@ fn build_client(
     if let Some(g) = guard {
         b = b.dns_resolver(g.resolver());
     }
+    // An explicit bundle replaces the default roots for this store (`tls_certs_only`); without one
+    // the OS trust store applies (reqwest's platform verifier). `tls.extra_ca_bundle` is added to
+    // whichever set is in force.
     if let Some(f) = ca_file {
-        // An explicit bundle replaces the default roots for this store.
-        b = b.tls_built_in_root_certs(false);
-        for c in load_pem(f, "ca_file", store)? {
-            b = b.add_root_certificate(c);
-        }
+        b = b.tls_certs_only(load_pem(f, "ca_file", store)?);
     } else if let Some(p) = ca_pem {
-        b = b.tls_built_in_root_certs(false);
         let certs = crate::tls::parse_pem_text(p).map_err(|e| {
             SecretError::InvalidConfig(format!("secret store '{store}': ca_pem: {}", e.why()))
         })?;
-        for c in certs {
-            b = b.add_root_certificate(c);
-        }
-    } else {
-        for c in rustls_native_certs::load_native_certs().certs {
-            if let Ok(c) = reqwest::Certificate::from_der(c.as_ref()) {
-                b = b.add_root_certificate(c);
-            }
-        }
+        b = b.tls_certs_only(certs);
     }
     if let Some(f) = extra_ca_bundle {
-        for c in load_pem(f, "tls.extra_ca_bundle", store)? {
-            b = b.add_root_certificate(c);
-        }
+        b = b.tls_certs_merge(load_pem(f, "tls.extra_ca_bundle", store)?);
     }
     b.build().map_err(|_| {
         SecretError::InvalidConfig(format!(
@@ -646,5 +634,92 @@ impl SecretStore for VaultStore {
         } else {
             StoreHealth::Unavailable
         }
+    }
+}
+
+/// (FIX-160) The store's trust anchors under reqwest 0.13: `ca_pem` replaces the default roots
+/// (`tls_certs_only`), `tls.extra_ca_bundle` adds to whichever set is in force. Real handshakes
+/// against a loopback server whose leaf a private CA signed.
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tls_roots {
+    use super::build_client;
+    use rcgen::{BasicConstraints, CertificateParams, IsCa, Issuer, KeyPair};
+    use std::sync::Arc;
+
+    fn ca() -> (String, CertificateParams, KeyPair) {
+        let key = KeyPair::generate().unwrap();
+        let mut params = CertificateParams::new(vec![]).unwrap();
+        params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+        let pem = params.self_signed(&key).unwrap().pem();
+        (pem, params, key)
+    }
+
+    /// An HTTPS server on 127.0.0.1 answering 200 with a leaf signed by `(params, key)`.
+    async fn serve(params: &CertificateParams, key: &KeyPair) -> String {
+        let leaf_key = KeyPair::generate().unwrap();
+        let leaf = CertificateParams::new(vec!["127.0.0.1".to_owned()])
+            .unwrap()
+            .signed_by(&leaf_key, &Issuer::from_params(params, key))
+            .unwrap();
+        let der = rustls::pki_types::PrivateKeyDer::Pkcs8(
+            rustls::pki_types::PrivatePkcs8KeyDer::from(leaf_key.serialize_der()),
+        );
+        let cfg = rustls::ServerConfig::builder_with_provider(Arc::new(
+            rustls::crypto::aws_lc_rs::default_provider(),
+        ))
+        .with_safe_default_protocol_versions()
+        .unwrap()
+        .with_no_client_auth()
+        .with_single_cert(vec![leaf.der().clone()], der)
+        .unwrap();
+        let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(cfg));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            while let Ok((tcp, _)) = listener.accept().await {
+                let a = acceptor.clone();
+                tokio::spawn(async move {
+                    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+                    let Ok(mut tls) = a.accept(tcp).await else {
+                        return;
+                    };
+                    let mut buf = [0u8; 1024];
+                    let _ = tls.read(&mut buf).await;
+                    let _ = tls
+                        .write_all(
+                            b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\nconnection: close\r\n\r\n",
+                        )
+                        .await;
+                    let _ = tls.shutdown().await;
+                });
+            }
+        });
+        format!("https://127.0.0.1:{port}/")
+    }
+
+    async fn reaches(ca_pem: Option<&str>, extra: Option<&str>, url: &str) -> bool {
+        let c = build_client("t", None, ca_pem, extra, None).unwrap();
+        c.get(url).send().await.is_ok()
+    }
+
+    #[tokio::test]
+    async fn ca_pem_replaces_the_roots_and_the_extra_bundle_adds_to_them() {
+        let (pem, params, key) = ca();
+        let (other_pem, _, _) = ca();
+        let url = serve(&params, &key).await;
+        let bundle =
+            std::env::temp_dir().join(format!("aurora-fix160-{}.pem", uuid::Uuid::now_v7()));
+        std::fs::write(&bundle, &pem).unwrap();
+        let bundle = bundle.to_string_lossy().into_owned();
+
+        // Neither the OS store nor an unrelated CA knows the server's issuer.
+        assert!(!reaches(None, None, &url).await);
+        assert!(!reaches(Some(&other_pem), None, &url).await);
+        // The store's own CA, or the instance-wide extra bundle (default roots or `ca_pem`).
+        assert!(reaches(Some(&pem), None, &url).await);
+        assert!(reaches(None, Some(&bundle), &url).await);
+        assert!(reaches(Some(&other_pem), Some(&bundle), &url).await);
+        let _ = std::fs::remove_file(&bundle);
     }
 }

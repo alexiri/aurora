@@ -1,7 +1,9 @@
 //! LLM key validation and origin verification at save (08 §6, §11.3).
 use aurora_core::{ApiError, Secret};
 use aurora_llm::governance::{EffectiveEndpoint, OriginStatus, StoredOrigin};
-use aurora_llm::{AuthMode, Endpoint, KeyOrigin, LlmError, LlmProvider, OriginMethod, origin};
+use aurora_llm::{
+    AuthMode, Endpoint, KeyCheck, KeyOrigin, LlmError, LlmProvider, OriginMethod, origin,
+};
 use chrono::Utc;
 use http::StatusCode;
 
@@ -9,6 +11,8 @@ pub enum KeyFail {
     InvalidKey,
     /// (C-801) The token endpoint of a minted mode refused the credential.
     MintRejected,
+    /// (C-801) STS refused `AssumeRole`: the role's trust policy.
+    AssumeRoleDenied,
     Unreachable,
 }
 
@@ -20,6 +24,11 @@ impl KeyFail {
                 "The token endpoint rejected this credential.",
             )
             .with_details(serde_json::json!({ "reason": "mint_rejected" })),
+            Self::AssumeRoleDenied => ApiError::unprocessable(
+                "llm_key_invalid",
+                "The role could not be assumed. Its trust policy must let the source key assume it and require this organization's external id.",
+            )
+            .with_details(serde_json::json!({ "reason": "assume_role_denied" })),
             Self::InvalidKey => {
                 ApiError::unprocessable("llm_key_invalid", "The provider rejected this API key.")
             }
@@ -29,6 +38,26 @@ impl KeyFail {
             ),
         }
     }
+}
+
+/// (P4-LLM-4, D-261) The context a provider validates a secret in: its auth mode and, for `aws_assume_role`, the
+/// organization and its own `external_id` (read here from the database, never taken from the request).
+///
+/// # Errors
+/// 500 when the organization cannot be read.
+pub async fn key_check(
+    pool: &sqlx::PgPool,
+    org: uuid::Uuid,
+    mode: AuthMode,
+) -> Result<KeyCheck, ApiError> {
+    let mut c = KeyCheck::new(mode);
+    if mode == AuthMode::AwsAssumeRole {
+        c.org_id = org.to_string();
+        c.org_external_id = aurora_db::repo::connections::org_external_id(pool, org)
+            .await
+            .map_err(|_| ApiError::internal("Internal error."))?;
+    }
+    Ok(c)
 }
 
 fn origin_of(
@@ -56,7 +85,7 @@ pub async fn check_key(
     http: &reqwest::Client,
     provider: &dyn LlmProvider,
     ep: &Endpoint,
-    mode: AuthMode,
+    check: &KeyCheck,
     eff: &EffectiveEndpoint,
     key: &Secret<String>,
     version: i64,
@@ -67,7 +96,7 @@ pub async fn check_key(
     let prefetched = if provider.validates_by_origin() {
         Some(
             provider
-                .verify_key_origin_as(ep, mode, OriginMethod::ProviderAccount, key, http)
+                .verify_key_origin_as(ep, check, OriginMethod::ProviderAccount, key, http)
                 .await,
         )
     } else {
@@ -78,13 +107,15 @@ pub async fn check_key(
         Some(Ok(_)) => Ok(Vec::new()),
         Some(Err(LlmError::InvalidKey)) => Err(LlmError::InvalidKey),
         Some(Err(LlmError::MintRejected)) => Err(LlmError::MintRejected),
+        Some(Err(LlmError::AssumeRoleDenied)) => Err(LlmError::AssumeRoleDenied),
         Some(Err(_)) => Err(LlmError::Unreachable("origin proof unavailable".into())),
-        None => provider.list_models_strict_as(ep, mode, key, http).await,
+        None => provider.list_models_strict_as(ep, check, key, http).await,
     };
     match listed {
         Ok(_) => {}
         Err(LlmError::InvalidKey) => return Err(KeyFail::InvalidKey),
         Err(LlmError::MintRejected) => return Err(KeyFail::MintRejected),
+        Err(LlmError::AssumeRoleDenied) => return Err(KeyFail::AssumeRoleDenied),
         Err(_) if rule.is_none() => {
             return Ok(origin_of(
                 OriginStatus::Pending,
@@ -102,7 +133,7 @@ pub async fn check_key(
         Some(r) if rule.method == OriginMethod::ProviderAccount => r,
         _ => {
             provider
-                .verify_key_origin_as(ep, mode, rule.method, key, http)
+                .verify_key_origin_as(ep, check, rule.method, key, http)
                 .await
         }
     };
@@ -127,6 +158,7 @@ pub async fn check_key(
         }
         Err(LlmError::InvalidKey) => Err(KeyFail::InvalidKey),
         Err(LlmError::MintRejected) => Err(KeyFail::MintRejected),
+        Err(LlmError::AssumeRoleDenied) => Err(KeyFail::AssumeRoleDenied),
         Err(LlmError::Unreachable(_)) => Err(KeyFail::Unreachable),
         Err(e) => {
             let mut o = origin_of(

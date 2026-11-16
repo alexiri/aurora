@@ -101,7 +101,7 @@ impl HarnessAdapter for ClaudeCodeAdapter {
             thinking_deltas: true,
             tool_events: true,
             platform_tools: true,
-            dialects: vec!["anthropic_messages".into()],
+            dialects: config::DIALECTS.iter().map(|d| (*d).to_owned()).collect(),
             skills_dir: Some(".claude/skills".into()),
             instruction_files: vec!["CLAUDE.md".into(), "AGENTS.md".into()],
         }
