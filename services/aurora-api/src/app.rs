@@ -706,6 +706,11 @@ async fn scim_gate(
 /// Cross-cutting middleware: client IP (outer), CSRF, then the API rate limiter (RFE-017).
 pub fn with_middleware(router: Router<AppState>, state: &AppState) -> Router<AppState> {
     router
+        // (P5-UX-2, C-981) Innermost: names the people who can fix a refusal.
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            web::who_can::middleware,
+        ))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             web::apilimit::middleware,

@@ -8,6 +8,16 @@ pub struct AppsQuery {
     pub workspace_id: Option<uuid::Uuid>,
 }
 
+/// (P5-UX-2, C-931, C-955) The level a setup status or connect plan is for.
+#[derive(Debug, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
+pub struct SetupQuery {
+    /// A workspace view (needs workspace owner).
+    pub workspace_id: Option<uuid::Uuid>,
+    /// An organization view when `workspace_id` is absent (needs organization owner or admin).
+    pub org_id: Option<uuid::Uuid>,
+}
+
 #[derive(Debug, Deserialize, IntoParams)]
 #[into_params(parameter_in = Query)]
 pub struct IconQuery {
@@ -130,6 +140,10 @@ pub struct ConnectMethod {
     /// (FIX-136) For a `fields` method: the read scopes whose probe prefills the declaration
     /// ("Which scopes did you give this token?"); the others are asked without a prefill.
     pub probe_scopes: Vec<String>,
+    /// (P5-UX-2, C-956) Who the method is for; an `admin` method is never suggested.
+    pub audience: super::setup::MethodAudience,
+    /// (P5-UX-2, C-956) The scopes of "Read only" and "Read and change", already defaulted.
+    pub scope_presets: super::setup::MethodScopePresets,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -181,6 +195,9 @@ pub struct AppOauthClient {
     pub fields: Vec<OauthClientField>,
     pub setup_note: Option<String>,
     pub redirect_uri: String,
+    /// (P5-UX-2, C-946) The connect methods that use this client: forms and lists say
+    /// "<app> — for <method label>", never a bare `client_key`.
+    pub used_by_methods: Vec<super::setup::MethodRef>,
 }
 
 /// An instance-bound app's `instances` declaration (C-245, D-74).
