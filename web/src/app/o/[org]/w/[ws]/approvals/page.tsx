@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import { ApprovalsView } from "@/components/approvals/approvals-view";
 import { ErrorState, Loading } from "@/components/states";
 import { useResolve, useWorkspace } from "@/lib/api/queries";
+import { forbiddenError, whoCanFromContacts } from "@/lib/who-can";
 
 export default function Page() {
   const { org, ws } = useParams<{ org: string; ws: string }>();
@@ -19,7 +20,7 @@ export default function Page() {
   // Phase 2, RFE-012 (D-55): the approvals page exists only for `can_approve` (owner or approver).
   const role = workspace.data.my_role;
   if (role !== "owner" && role !== "approver") {
-    return <ErrorState error={{ code: "approver_required" }} />;
+    return <ErrorState error={forbiddenError(whoCanFromContacts("workspace_approver", workspace.data.contacts, "view_this"))} />;
   }
   return <ApprovalsView wsId={resolved.data.workspace.id} />;
 }

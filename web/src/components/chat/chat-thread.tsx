@@ -157,8 +157,8 @@ export function ChatThread({
               empty ? (
                 <div className="mx-auto flex max-w-sm flex-col items-center gap-2 text-center">
                   <Avatar name={agent?.name ?? "Agent"} url={agent?.avatarUrl} tintKey={agent?.id} size={72} />
-                  <h3 className="font-display text-lg font-semibold text-ink">Start a conversation with {agent?.name ?? "the agent"}</h3>
-                  {agent?.brief ? <p className="text-sm text-ink-2">{agent.brief}</p> : null}
+                  <h3 className="font-display text-lg font-semibold text-ink">Say hello to {agent?.name ?? "the agent"}</h3>
+                  {agent?.handle ? <p className="text-sm text-ink-2">@{agent.handle}</p> : null}
                 </div>
               ) : undefined
             }

@@ -12,6 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Notice } from "@/components/ui/notice";
 import { errorMessage } from "@/lib/api/errors";
+import { useWhoCan } from "@/lib/api/who-can";
 import { orgRoutes } from "@/lib/routes";
 import {
   appIsCustomOnly,
@@ -202,6 +203,12 @@ function ConnectionRow({
 export function ConnectionsTab({ scope, canOwn }: { scope: ListScope; canOwn: boolean }) {
   const { org } = useParams<{ org?: string }>();
   const list = useConnections(scope);
+  // (C-916) Who connects an app here, for a viewer who cannot.
+  const who = useWhoCan(
+    scope.kind === "workspace" ? { workspaceId: scope.id } : { orgId: scope.id },
+    scope.kind === "workspace" ? "workspace_owner" : "org_admin",
+    "connect_app",
+  );
   // The Reconnect dialog (D-272): opened by a row's button or the deep link `?tab=connections&reconnect=<id>`.
   const [reconnecting, setReconnecting] = useUrlDialog("reconnect");
   // The catalogue says which apps are custom-access-only (`app_restrictions`); the badge is a hint, so a
@@ -236,7 +243,7 @@ export function ConnectionsTab({ scope, canOwn }: { scope: ListScope; canOwn: bo
             </>
           )
         }
-        ask={canOwn ? undefined : "Ask a workspace owner to connect it."}
+        ask={{ whoCan: who, canAct: canOwn }}
       >
         A connection links your account in an app, such as GitHub, so an agent can act there.
       </EmptyState>

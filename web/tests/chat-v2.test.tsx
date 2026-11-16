@@ -53,7 +53,7 @@ function wrap(ui: ReactNode) {
   return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
 }
 const pane = (props: Record<string, unknown> = {}) =>
-  wrap(<ChatPane agentId="a1" wsId="w" base="/o/x/w/y" convId="c1" direct={null} agent={{ id: "a1", name: "Daneel", brief: "Triage the team's pull requests." }} {...props} />);
+  wrap(<ChatPane agentId="a1" wsId="w" base="/o/x/w/y" convId="c1" direct={null} agent={{ id: "a1", name: "Daneel", handle: "daneel", brief: "Triage the team's pull requests." }} {...props} />);
 
 const e = (seq: number, type: string, payload: Record<string, unknown>, ts = "2026-11-08T12:00:00Z") => ({ seq, type, ts, payload });
 const MINUTE = (m: number, s = 0) => `2026-11-08T12:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}Z`;
@@ -102,11 +102,13 @@ describe("thread header", () => {
 });
 
 describe("empty conversation", () => {
-  it("shows the avatar card with the agent's brief and focuses the composer", () => {
+  it("says hello to the agent by name and handle, never shows its instructions, and focuses the composer", () => {
     mock();
     pane();
-    expect(screen.getByRole("heading", { name: "Start a conversation with Daneel" })).toBeTruthy();
-    expect(screen.getByText("Triage the team's pull requests.")).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Say hello to Daneel" })).toBeTruthy();
+    expect(screen.getByText("@daneel")).toBeTruthy();
+    // (P5-UX-1) The brief is the agent's instructions, not a greeting: it stays out of the empty conversation.
+    expect(screen.queryByText("Triage the team's pull requests.")).toBeNull();
     expect(document.activeElement).toBe(screen.getByLabelText("Message"));
     expect(screen.getByPlaceholderText("Message Daneel…")).toBeTruthy();
   });

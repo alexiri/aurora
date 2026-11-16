@@ -15,7 +15,7 @@ import { Field, inputClass } from "@/components/ui/field";
 import { CheckCircleIcon } from "@/components/ui/icons";
 import { Notice } from "@/components/ui/notice";
 import { Section } from "@/components/ui/section";
-import { useAccess } from "@/lib/api/account";
+import { WhoCan } from "@/components/ui/who-can";
 import { usePatchAgent } from "@/lib/api/agents";
 import { grantKeys } from "@/lib/api/credential-grants";
 import { useModels } from "@/lib/api/conversations";
@@ -24,7 +24,9 @@ import { useMeOnboarding, usePatchOnboarding } from "@/lib/api/onboarding";
 import { useAgents, type Agent } from "@/lib/api/queries";
 import { HELLO_MESSAGE, type GuideStep, type GuideStepId } from "@/lib/onboarding/guide";
 import { useGuide } from "@/lib/onboarding/use-guide";
-import { orgRoutes } from "@/lib/routes";
+import { wsRoutes } from "@/lib/routes";
+import { useWhoCan } from "@/lib/api/who-can";
+import type { WhoCanValue } from "@/lib/who-can";
 import { cn } from "@/lib/utils";
 
 import { REASON_COPY } from "@/components/agents/model-readiness";
@@ -54,18 +56,6 @@ export interface GuideProps {
   focus?: GuideStepId | null;
 }
 
-/** Workspace owners' names for a member who cannot do a step. `can_own` is needed to read them. */
-function useOwnerNames(wsId: string, enabled: boolean): string[] {
-  const access = useAccess(wsId, enabled);
-  if (!enabled) return [];
-  return (access.data?.items ?? []).filter((b) => b.role === "owner").map((b) => b.display_name).slice(0, 3);
-}
-
-function ownerAsk(names: string[], what: string): string {
-  return names.length > 0
-    ? `Ask a workspace owner (${names.join(", ")}) to ${what}.`
-    : `Ask a workspace owner to ${what}.`;
-}
 
 /**
  * "Get {agent} talking" (D-141): the numbered guide. Steps tick from real state. Done steps collapse to one line that
@@ -77,7 +67,8 @@ export function GettingStarted(props: GuideProps) {
   const patch = usePatchOnboarding();
   const agent: Agent | undefined = agents.data?.items.find((a) => a.is_default) ?? agents.data?.items[0];
   const state = useGuide({ wsId: props.wsId, orgId: props.orgId, agentId: agent?.id, isOwner: props.isOwner });
-  const ownerNames = useOwnerNames(props.wsId, !props.isOwner);
+  // (C-981) The workspace's owners, from its `contacts` (readable by every member), for a step the viewer cannot do.
+  const who = useWhoCan({ workspaceId: props.wsId }, "workspace_owner", "set_up");
   const [open, setOpen] = useState(false);
   const base = `/o/${props.org}/w/${props.ws}`;
   const dismissed = onboarding.data?.guide_dismissed?.includes(props.wsId) === true;
@@ -90,7 +81,7 @@ export function GettingStarted(props: GuideProps) {
         <p className="min-w-0 text-sm text-ink-2">
           An agent is the assistant that does the work. This workspace has none yet.
         </p>
-        {props.isOwner ? <CreateAgentDialog wsId={props.wsId} /> : <p className="text-sm text-ink-2">{ownerAsk(ownerNames, "create one")}</p>}
+        {props.isOwner ? <CreateAgentDialog wsId={props.wsId} /> : <WhoCan value={{ ...who, action: "add_agent" }} lead />}
       </Card>
     );
   }
@@ -142,7 +133,7 @@ export function GettingStarted(props: GuideProps) {
           .filter((s) => s.state !== "skipped")
           .map((s, i) => (
             <StepRow key={s.id} step={s} index={i + 1} agent={agent} expanded={expanded === s.id}>
-              <StepBody step={s} agent={agent} {...props} base={base} ownerNames={ownerNames} keysCount={state.keys.length} />
+              <StepBody step={s} agent={agent} {...props} base={base} who={who} keysCount={state.keys.length} />
             </StepRow>
           ))}
       </ol>
@@ -211,14 +202,14 @@ function StepBody({
   orgId,
   isOwner,
   base,
-  ownerNames,
+  who,
   keysCount,
-}: GuideProps & { step: GuideStep; agent: Agent; base: string; ownerNames: string[]; keysCount: number }) {
+}: GuideProps & { step: GuideStep; agent: Agent; base: string; who: WhoCanValue; keysCount: number }) {
   // "Not now" on the access panel: put the panel away for this visit; the step stays open.
   const [accessDeferred, setAccessDeferred] = useState(false);
   if (step.state === "done") return null;
   if (step.state === "owner" && step.id !== "hello") {
-    return <p>{ownerAsk(ownerNames, step.id === "key" ? "add an LLM key" : `give ${agent.name} access to it`)}</p>;
+    return <WhoCan value={{ ...who, action: step.id === "key" ? "add_account" : "give_access" }} lead />;
   }
   switch (step.id) {
     case "key":
@@ -349,14 +340,33 @@ function ModelStep({ agent, wsId }: { agent: Agent; wsId: string }) {
 }
 
 /** Optional next steps below the guide on the Welcome page. */
-export function OptionalNext({ org, ws, handle, isOwner }: { org: string; ws: string; handle?: string; isOwner: boolean }) {
-  const base = `/o/${org}/w/${ws}`;
-  const items = [
-    { href: `${base}/apps`, label: "Connect an app", text: "Let the agent use GitHub, Linear and more, with your approval." },
-    handle ? { href: `${base}/agents/${handle}?tab=instructions`, label: "Write instructions for the agent", text: "Tell it what you want it to do and how." } : null,
-    handle ? { href: `${base}/agents/${handle}?tab=schedules`, label: "Set up a schedule", text: "Have it do something every morning." } : null,
-    isOwner ? { href: orgRoutes(org).people("members"), label: "Invite a teammate", text: "Share this workspace with people you work with." } : null,
+export function optionalNextLinks({
+  org,
+  ws,
+  handle,
+  agentName,
+  isOwner,
+}: {
+  org: string;
+  ws: string;
+  handle?: string;
+  agentName?: string;
+  isOwner: boolean;
+}): { href: string; label: string; text: string }[] {
+  const w = wsRoutes(org, ws);
+  // "Give <Agent> an app" opens the agent's Access tab, where an owner gives it an app (P5-UX-7 points it at the journey).
+  // "Invite a teammate" is gone: it led to a page a workspace owner may not open (P5-UX-5 adds **Add people**).
+  return [
+    handle && isOwner
+      ? { href: w.agent(handle, { tab: "access" }), label: `Give ${agentName ?? "the agent"} an app`, text: "Let the agent use GitHub, Linear and more, with your approval." }
+      : null,
+    handle ? { href: w.agent(handle, { tab: "instructions" }), label: "Write instructions for the agent", text: "Tell it what you want it to do and how." } : null,
+    handle ? { href: w.agent(handle, { tab: "schedules" }), label: "Set up a schedule", text: "Have it do something every morning." } : null,
   ].filter((x): x is { href: string; label: string; text: string } => x !== null);
+}
+
+export function OptionalNext(props: { org: string; ws: string; handle?: string; agentName?: string; isOwner: boolean }) {
+  const items = optionalNextLinks(props);
   return (
     <Section id="optional" title="Next, when you are ready" description="None of this is needed to start.">
       <ul className="grid gap-3 sm:grid-cols-2">

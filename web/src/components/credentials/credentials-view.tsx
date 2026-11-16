@@ -5,11 +5,12 @@ import { useState } from "react";
 
 import { EmptyState, ErrorState, Loading } from "@/components/states";
 import { Button } from "@/components/ui/button";
-import { Notice } from "@/components/ui/notice";
+import { MainAction } from "@/components/ui/main-action";
 import { PageHeader } from "@/components/ui/page-header";
 import { Section } from "@/components/ui/section";
 import { Tabs, tabId, tabPanelId } from "@/components/ui/tabs";
 import { useSecrets, type SecretScope } from "@/lib/api/secrets";
+import { useWhoCan } from "@/lib/api/who-can";
 import { useTabParam } from "@/lib/use-tab-param";
 
 import { AppsTab } from "@/components/apps/apps-tab";
@@ -39,6 +40,12 @@ function SecretsList({
   kind: "generic" | "llm";
   secrets: ReturnType<typeof useSecrets>;
 }) {
+  // (C-916) Who adds an account here, for a viewer who cannot: the workspace's owners, or the organization's admins.
+  const who = useWhoCan(
+    scope.kind === "workspace" ? { workspaceId: scope.id } : { orgId: scope.id },
+    scope.kind === "workspace" ? "workspace_owner" : "org_admin",
+    "add_account",
+  );
   if (secrets.isPending) return <Loading />;
   if (secrets.isError) return <ErrorState error={secrets.error} onRetry={() => secrets.refetch()} />;
   const rows = (secrets.data?.items ?? []).filter((s) => s.kind === kind && s.status === "active");
@@ -47,7 +54,7 @@ function SecretsList({
       <EmptyState
         title="No AI keys yet"
         when="You need one before an agent can answer. Add it with the form above, then give your agent access to it."
-        ask="Ask a workspace owner to add one."
+        ask={{ whoCan: who, canAct: canOwn }}
       >
         An AI key is the password to the AI service that does your agents&apos; thinking.
       </EmptyState>
@@ -55,7 +62,7 @@ function SecretsList({
       <EmptyState
         title="No websites yet"
         when="Add one when an agent should reach a website that needs a login. The agent never sees the token: the gateway adds it."
-        ask="Ask a workspace owner to add one."
+        ask={{ whoCan: who, canAct: canOwn }}
       >
         A website here is any site or API Aurora holds a token for, so an agent can call it.
       </EmptyState>
@@ -78,6 +85,11 @@ export function AccountsPanel({ scope, orgId, canOwn }: { scope: SecretScope; or
   const kind = useSearchParams().get("kind");
   const [adding, setAdding] = useState(false);
   const secrets = useSecrets(scope);
+  const who = useWhoCan(
+    scope.kind === "workspace" ? { workspaceId: scope.id } : { orgId: scope.id },
+    scope.kind === "workspace" ? "workspace_owner" : "org_admin",
+    "add_account",
+  );
   const only = (k: string) => !kind || kind === k;
   return (
     <div className="space-y-8">
@@ -89,8 +101,8 @@ export function AccountsPanel({ scope, orgId, canOwn }: { scope: SecretScope; or
       {only("website") ? (
         <Section id="accounts-websites" title="Websites" description="Any other website or API, reached with a token you store.">
           <div className="space-y-4">
-            {canOwn ? (
-              adding ? (
+            <MainAction canAct={canOwn} whoCan={who}>
+              {adding ? (
                 <GenericSecretForm scope={scope} orgId={orgId} onDone={() => setAdding(false)} />
               ) : (
                 <div>
@@ -98,10 +110,8 @@ export function AccountsPanel({ scope, orgId, canOwn }: { scope: SecretScope; or
                     Add a website
                   </Button>
                 </div>
-              )
-            ) : (
-              <Notice role="status">You can view these accounts but not change them.</Notice>
-            )}
+              )}
+            </MainAction>
             <SecretsList scope={scope} orgId={orgId} canOwn={canOwn} kind="generic" secrets={secrets} />
           </div>
         </Section>
@@ -109,7 +119,9 @@ export function AccountsPanel({ scope, orgId, canOwn }: { scope: SecretScope; or
       {only("ai-key") ? (
         <Section id="accounts-ai-keys" title="AI keys" description="The keys to AI providers, for the models your agents think with.">
           <div className="space-y-4">
-            {canOwn ? <LlmKeyForm scope={scope} orgId={orgId} /> : <Notice role="status">You can view these keys but not change them.</Notice>}
+            <MainAction canAct={canOwn} whoCan={who}>
+              <LlmKeyForm scope={scope} orgId={orgId} />
+            </MainAction>
             <SecretsList scope={scope} orgId={orgId} canOwn={canOwn} kind="llm" secrets={secrets} />
           </div>
         </Section>
@@ -146,6 +158,11 @@ export function CredentialsView({
   const tab: Tab = requested === "proposals" || requested === "apps" ? (scope.kind === "workspace" ? requested : "secrets") : requested;
   const [adding, setAdding] = useState(false);
   const secrets = useSecrets(scope);
+  const who = useWhoCan(
+    scope.kind === "workspace" ? { workspaceId: scope.id } : { orgId: scope.id },
+    scope.kind === "workspace" ? "workspace_owner" : "org_admin",
+    "add_account",
+  );
   const items = secrets.data?.items ?? [];
   const tabs: { id: Tab; label: string }[] = [
     { id: "secrets", label: "Secrets" },
@@ -177,8 +194,8 @@ export function CredentialsView({
       <div role="tabpanel" id={tabPanelId("creds", tab)} aria-labelledby={tabId("creds", tab)} className="space-y-4 pt-2">
         {tab === "secrets" ? (
           <>
-            {canOwn ? (
-              adding ? (
+            <MainAction canAct={canOwn} whoCan={who}>
+              {adding ? (
                 <GenericSecretForm scope={scope} orgId={orgId} onDone={() => setAdding(false)} />
               ) : (
                 <div>
@@ -186,16 +203,16 @@ export function CredentialsView({
                     Add a secret
                   </Button>
                 </div>
-              )
-            ) : (
-              <Notice role="status">You can view these credentials but not change them.</Notice>
-            )}
+              )}
+            </MainAction>
             {list("generic")}
           </>
         ) : null}
         {tab === "llm" ? (
           <>
-            {canOwn ? <LlmKeyForm scope={scope} orgId={orgId} /> : <Notice role="status">You can view these keys but not change them.</Notice>}
+            <MainAction canAct={canOwn} whoCan={who}>
+              <LlmKeyForm scope={scope} orgId={orgId} />
+            </MainAction>
             {list("llm")}
           </>
         ) : null}

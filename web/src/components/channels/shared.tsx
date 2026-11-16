@@ -1,6 +1,5 @@
 "use client";
 
-import { ErrorState } from "@/components/states";
 import { ApiError } from "@/lib/api/client";
 import { errorMessage } from "@/lib/api/errors";
 import { Badge } from "@/components/ui/badge";
@@ -90,8 +89,4 @@ export function splitByStore(fields: FormField[], values: Record<string, string>
     (f.store === "credentials" ? credentials : config)[f.name] = v;
   }
   return { config, credentials };
-}
-
-export function Forbidden() {
-  return <ErrorState error={{ code: "forbidden" }} />;
 }

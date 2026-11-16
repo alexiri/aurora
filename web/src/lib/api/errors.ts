@@ -98,6 +98,11 @@ export const ERROR_MESSAGES: Record<string, string> = {
   commit_required: "Reload the library list so the page knows which commit you are adding.",
   library_tree_too_large: "This repository is too large to list. Connect a narrower folder.",
   skill_libraries_disabled: "Skill libraries are turned off on this instance.",
+  // (P5-UX-1, C-915, C-958, C-980) Refusals the connect journey and the access choices show in words.
+  connect_probe_failed: "The app did not accept these details. Check them and try again.",
+  oauth_client_required: "Signing in to this app needs an OAuth client that an administrator has to register first.",
+  above_account_limit: "This is more than the account's limit allows. Whoever manages the account can raise the limit.",
+  always_not_available: "\"Always allow\" is not available for this request.",
 };
 
 /** `details.conflict` of a 422 `instance_host_conflict` (FIX-132): who holds the host. */
@@ -235,13 +240,45 @@ export function probeFailedMessage(d: ProbeFailure, appName: string, host: strin
   return `${host} could not be reached from the Aurora server.`;
 }
 
+/** The one sentence for "no answer came" (C-915): never used for a refusal or any answer the server gave. */
+export const NETWORK_SENTENCE = "Could not reach the server. Check your connection and try again.";
+
+/**
+ * (C-915) A failed call that never produced an answer: `fetch` itself failing (a `TypeError`), an aborted request, or
+ * a 5xx that carried no error body (the client's `unknown`). Anything the server said is a real error.
+ */
+export function isTransportFailure(err: unknown): boolean {
+  if (err instanceof ApiError) {
+    return err.code === "network_error" || (err.code === "unknown" && (err.status === undefined || err.status === 0 || err.status >= 500));
+  }
+  if (err instanceof TypeError) return true;
+  return typeof err === "object" && err !== null && (err as { name?: unknown }).name === "AbortError";
+}
+
+/** `details.cause` of a 422 `connect_probe_failed` (C-958): what the probe found, in words. */
+export const CONNECT_PROBE_CAUSE: Record<string, string> = {
+  rejected: "The app did not accept this token. Check that it is complete and has not expired.",
+  unreachable: "Aurora could not reach the app. Check the address, and that Aurora may connect to it.",
+  unexpected: "The app answered with an unexpected error.",
+};
+
 export function errorMessage(err: unknown): string {
   const conflict = hostConflict(err);
   if (conflict) return hostConflictMessage(conflict);
   if (err instanceof ApiError) {
+    if (err.code === "connect_probe_failed") {
+      const cause = (err.details as { cause?: unknown } | null)?.cause;
+      if (typeof cause === "string" && CONNECT_PROBE_CAUSE[cause]) return CONNECT_PROBE_CAUSE[cause];
+    }
+    if (isTransportFailure(err)) return NETWORK_SENTENCE;
     return ERROR_MESSAGES[err.code] ?? (err.message || "Something went wrong.");
   }
-  return "Could not reach the server. Check your connection and try again.";
+  // A page gate's own error value, `{ code }` (C-915): its code is looked up like a server's, never read as "no answer".
+  if (typeof err === "object" && err !== null && typeof (err as { code?: unknown }).code === "string") {
+    const { code, message } = err as { code: string; message?: unknown };
+    return ERROR_MESSAGES[code] ?? (typeof message === "string" && message ? message : "Something went wrong.");
+  }
+  return isTransportFailure(err) ? NETWORK_SENTENCE : "Something went wrong.";
 }
 
 /** Field-level validation messages keyed by field path (`details.fields[]`). */
