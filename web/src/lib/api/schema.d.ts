@@ -3970,6 +3970,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/orgs/{org}/workspace-overrides": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * What the workspaces tightened in Internet access below the organization (C-964): their
+         *     published defaults and rule count; only the differing ones unless `?all=true`.
+         */
+        get: operations["listWorkspaceOverrides"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/orgs/{org}/workspaces": {
         parameters: {
             query?: never;
@@ -8571,6 +8591,12 @@ export interface components {
             /** Format: uuid */
             skill_id: string;
         };
+        OverrideWorkspace: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+            personal_of?: components["schemas"]["PersonalOf"] | null;
+        };
         /**
          * @description (FIX-148, C-841) `previews` of `GET /v1/admin/overview`: the relay replicas the API has
          *     seen (the rows of `GET /v1/admin/relays`: last seen within 15 minutes).
@@ -9622,6 +9648,20 @@ export interface components {
             }[];
             next_cursor?: string | null;
         };
+        Page_WorkspaceOverride: {
+            items: {
+                /** @description The workspace's default rule: `none`, `allow` or `block`. */
+                default_rule: string;
+                /** @description `allowlist_only` or `disabled` when browser connections are tightened. */
+                open_lane: string;
+                /** Format: int64 */
+                rule_count: number;
+                /** @description `block` when requests without an account are blocked unless allow-listed. */
+                uncredentialed: string;
+                workspace: components["schemas"]["OverrideWorkspace"];
+            }[];
+            next_cursor?: string | null;
+        };
         PatchAdminUserRequest: {
             disabled?: boolean | null;
             is_instance_admin?: boolean | null;
@@ -9856,6 +9896,11 @@ export interface components {
         };
         /** @enum {string} */
         Per: "minute" | "hour" | "day";
+        PersonalOf: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+        };
         PersonalOrgView: {
             /** Format: date-time */
             created_at: string;
@@ -12138,6 +12183,18 @@ export interface components {
             timezone: string;
             /** Format: date-time */
             updated_at: string;
+        };
+        /** @description (C-964) What one workspace's published policy sets below its organization. */
+        WorkspaceOverride: {
+            /** @description The workspace's default rule: `none`, `allow` or `block`. */
+            default_rule: string;
+            /** @description `allowlist_only` or `disabled` when browser connections are tightened. */
+            open_lane: string;
+            /** Format: int64 */
+            rule_count: number;
+            /** @description `block` when requests without an account are blocked unless allow-listed. */
+            uncredentialed: string;
+            workspace: components["schemas"]["OverrideWorkspace"];
         };
         WorkspaceRef: {
             /** Format: uuid */
@@ -29749,6 +29806,75 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["FreezeResult"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    listWorkspaceOverrides: {
+        parameters: {
+            query?: {
+                limit?: number;
+                cursor?: string;
+                /** @description Every workspace, not only those that differ from the organization. */
+                all?: boolean;
+            };
+            header?: never;
+            path: {
+                /** @description Organization id */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_WorkspaceOverride"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
             /** @description Unauthenticated: no credential, or an invalid or expired one */
