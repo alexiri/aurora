@@ -10,6 +10,9 @@ export type SettingsIndex = components["schemas"]["SettingsIndex"];
 export type SettingsSection = components["schemas"]["SettingsSection"];
 export type Setting = components["schemas"]["Setting"];
 export type SettingEntry = components["schemas"]["SettingEntry"];
+/** A settings field in words (C-972) and a read-only current value (C-973). */
+export type FieldInfo = components["schemas"]["FieldInfo"];
+export type CurrentValue = components["schemas"]["CurrentValue"];
 export type SettingsPreview = components["schemas"]["SettingsPreview"];
 export type ImportResult = components["schemas"]["ImportResult"];
 export type ImportRequest = components["schemas"]["ImportRequest"];

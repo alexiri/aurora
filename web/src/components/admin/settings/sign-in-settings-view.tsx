@@ -177,7 +177,7 @@ export function SignInSettingsView() {
       <Notice tone="neutral" role="status" className="max-w-3xl">
         Break-glass: <code className="font-mono">auth.instance_admins</code> and any provider defined in Helm stay in force
         whatever is saved here, and <code className="font-mono">aurora-api settings reset sign_in</code> restores the defaults.
-        See docs/operator/sign-in.md.
+        See “Sign-in providers” in the operator guide.
       </Notice>
       <SettingsSectionForm
         key={section.generation}

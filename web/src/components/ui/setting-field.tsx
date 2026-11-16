@@ -29,6 +29,7 @@ export function SettingField({
   helmKey,
   lockedValue,
   defaultLabel,
+  doc,
   onReset,
   error,
   children,
@@ -43,6 +44,8 @@ export function SettingField({
   lockedValue?: ReactNode;
   /** The default, as text, for the reset action. */
   defaultLabel?: string;
+  /** The title of the operator guide page that explains the setting (never a path). */
+  doc?: string;
   onReset?: () => void;
   error?: string;
   /** The control, with `id={settingControlId(id)}`. */
@@ -70,7 +73,17 @@ export function SettingField({
             {label}
           </label>
         )}
-        <Badge tone={locked ? "pending" : source === "dashboard" ? "accent" : "neutral"}>{SOURCE_LABEL[source]}</Badge>
+        {source === "default" && !locked && defaultLabel ? (
+          // "Default: 15 minutes" — the default in words, not a bare "DEFAULT" badge (D-341).
+          <span
+            data-testid={`${id}-default`}
+            className="inline-flex h-5 items-center rounded-full border border-line-strong px-2 text-label font-medium leading-none text-muted"
+          >
+            Default: {defaultLabel}
+          </span>
+        ) : (
+          <Badge tone={locked ? "pending" : source === "dashboard" ? "accent" : "neutral"}>{SOURCE_LABEL[source]}</Badge>
+        )}
       </div>
       {locked ? (
         <div className="space-y-1">
@@ -86,6 +99,7 @@ export function SettingField({
               </>
             ) : null}
             . Remove it from your values to manage it here.
+            {doc ? <> See “{doc}” in the operator guide.</> : null}
           </p>
         </div>
       ) : (
@@ -101,6 +115,7 @@ export function SettingField({
               {error}
             </p>
           ) : null}
+          {doc ? <p className="text-xs text-muted">More in “{doc}” in the operator guide.</p> : null}
           {source === "dashboard" && onReset ? (
             <Button type="button" variant="ghost" size="sm" onClick={onReset}>
               Reset to default{defaultLabel ? ` (${defaultLabel})` : ""}

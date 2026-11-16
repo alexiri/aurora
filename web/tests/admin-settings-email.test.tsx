@@ -10,6 +10,7 @@ vi.mock("next/navigation", () => ({
 }));
 
 import { SettingsSectionView } from "@/components/admin/settings/settings-section-view";
+import { withFields } from "./support/settings-fields";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- request bodies are inspected loosely
 type Json = Record<string, any>;
@@ -37,7 +38,7 @@ const base = { locked: false, helm_key: "config.email.x", list: null, id_field: 
 
 function email(o: { url?: string | null; passwordEnv?: boolean } = {}) {
   const url = o.url === undefined ? "smtp://mail.example.test:25" : o.url;
-  return {
+  return withFields({
     section: "email",
     title: "Email",
     description: "The mail server.",
@@ -51,7 +52,7 @@ function email(o: { url?: string | null; passwordEnv?: boolean } = {}) {
       { ...base, key: "email.smtp_username", value: null, source: "default", schema: schema("string"), secret: null },
       { ...base, key: "email.smtp_password", value: null, source: "default", schema: schema("string"), secret: { set: !o.passwordEnv, from_env: o.passwordEnv ? "AURORA_SMTP_PASSWORD" : null } },
     ],
-  };
+  });
 }
 
 const bodyOf = async (req: Request) => (await req.clone().json()) as Json;
@@ -92,9 +93,9 @@ describe("Admin › Settings › Email (SET-4)", () => {
         <SettingsSectionView slug="email" />
       </QueryClientProvider>,
     );
-    fireEvent.change(await screen.findByLabelText("Smtp url"), { target: { value: "smtps://mail2.example.test:465" } });
+    fireEvent.change(await screen.findByLabelText("Words of email.smtp_url"), { target: { value: "smtps://mail2.example.test:465" } });
     fireEvent.click(screen.getByRole("button", { name: "Replace…" }));
-    fireEvent.change(screen.getByLabelText("Smtp password: new value"), { target: { value: "pw-canary" } });
+    fireEvent.change(screen.getByLabelText("Words of email.smtp_password: new value"), { target: { value: "pw-canary" } });
     fireEvent.click(screen.getByRole("button", { name: "Send test e-mail" }));
     const r = await screen.findByRole("status", { name: "Test e-mail result" });
     expect(r.textContent).toContain("refused the user name or password");

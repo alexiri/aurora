@@ -60,6 +60,19 @@ const setting = (over: Record<string, unknown>) => ({
   ...over,
 });
 
+/** A field in words (C-972): the label is written, never derived from the key. */
+const fld = (key: string, label: string, kind: string, over: Record<string, unknown> = {}) => ({
+  key,
+  label,
+  help: `${label}, in a sentence.`,
+  kind,
+  choices: null,
+  default_display: "None",
+  unit: null,
+  doc: null,
+  ...over,
+});
+
 function section(over: Record<string, unknown> = {}) {
   return {
     section: "settings_test",
@@ -69,6 +82,24 @@ function section(over: Record<string, unknown> = {}) {
     updated_at: "2026-11-15T10:00:00Z",
     updated_by_label: "root@x.io",
     extra: null,
+    editable: true,
+    current: null,
+    fields: [
+      fld("t.limit", "Limit", "int"),
+      fld("t.flag", "A switch", "bool"),
+      fld("t.mode", "Mode", "enum", {
+        choices: [
+          { value: "strict", label: "Strict", description: "Nothing gets through." },
+          { value: "standard", label: "Standard", description: "The usual rules." },
+          { value: "open", label: "Open", description: "Everything is allowed." },
+        ],
+        default_display: "Standard",
+      }),
+      fld("t.count", "Count", "int", { default_display: "10", unit: "things" }),
+      fld("t.names", "Names", "list"),
+      fld("t.token", "Token", "secret"),
+      fld("t.items", "Items", "keyed_list"),
+    ],
     settings: [
       setting({ key: "t.limit", value: 5, source: "helm", locked: true, helm_key: "config.t.limit", default: 10, schema: schema("int", { min: 1, max: 100 }) }),
       setting({ key: "t.flag", value: false, default: false, schema: schema("bool") }),
@@ -178,8 +209,12 @@ describe("Generic settings section form (SET-1)", () => {
     expect((document.getElementById("t.count-c") as HTMLInputElement).value).toBe("20");
     fireEvent.click(screen.getByRole("button", { name: "Reset to default (10)" }));
     expect((document.getElementById("t.count-c") as HTMLInputElement).value).toBe("10");
-    // Default settings show their default; the secret is write-only.
-    expect((document.getElementById("t.mode-c") as HTMLSelectElement).value).toBe("standard");
+    // Default settings show their default in words ("Default: Standard"); the enumeration is a choice of sentences.
+    expect(screen.getByTestId("t.mode-default").textContent).toBe("Default: Standard");
+    expect((screen.getByRole("radio", { name: /Standard/ }) as HTMLInputElement).checked).toBe(true);
+    expect(screen.getByText("The usual rules.")).toBeTruthy();
+    expect(screen.queryByText("standard")).toBeNull();
+    expect(screen.getByText("Count, in a sentence.")).toBeTruthy();
     expect(screen.getByText("Set")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Replace…" })).toBeTruthy();
     expect(screen.queryByDisplayValue("canary")).toBeNull();

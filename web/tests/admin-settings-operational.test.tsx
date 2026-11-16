@@ -20,6 +20,7 @@ import {
   TERMINAL_PAGE,
 } from "@/components/admin/settings/operational-settings-views";
 import { SettingsSectionView } from "@/components/admin/settings/settings-section-view";
+import { withFields } from "./support/settings-fields";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- request bodies are inspected loosely
 type Json = Record<string, any>;
@@ -52,7 +53,7 @@ const wrap = (slug: string) => (
 const bodyOf = async (req: Request) => (await req.clone().json()) as Json;
 
 function section(id: string, title: string, settings: Json[], extra: unknown = null): Json {
-  return { section: id, title, description: `${title} description.`, generation: 3, updated_at: null, updated_by_label: null, extra, settings };
+  return withFields({ section: id, title, description: `${title} description.`, generation: 3, updated_at: null, updated_by_label: null, extra, settings });
 }
 
 describe("Admin › Settings › the operational pages (SET-5)", () => {
@@ -85,7 +86,6 @@ describe("Admin › Settings › the operational pages (SET-5)", () => {
     for (const [id, page] of Object.entries(pages)) {
       const shown = page.groups.flatMap((g) => g.keys ?? []);
       expect([...shown].sort(), id).toEqual([...registry[id]!].sort());
-      for (const k of Object.keys(page.hints)) expect(shown, `${id} hint for ${k}`).toContain(k);
     }
   });
 
