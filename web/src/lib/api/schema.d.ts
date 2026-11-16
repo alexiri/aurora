@@ -1130,6 +1130,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/admin/terminators": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The registered terminator replicas (instance admin). */
+        get: operations["listTerminators"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/admin/trusted-keys": {
         parameters: {
             query?: never;
@@ -1971,6 +1988,26 @@ export interface paths {
         put?: never;
         /** Mint a short-lived SSH user certificate for an agent (session or the caller's own API key). */
         post: operations["mintSshCertificate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/agents/{agent}/ssh-sessions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Open SSH sessions on an agent: everyone with `can_own` sees all (with the person), a member
+         *     with `can_use` only their own.
+         */
+        get: operations["listAgentSshSessions"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -3216,6 +3253,23 @@ export interface paths {
         head?: never;
         /** Rename one of the caller's keys (session only). */
         patch: operations["renameSshKey"];
+        trace?: never;
+    };
+    "/v1/me/ssh-sessions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The caller's open SSH sessions. */
+        get: operations["listMySshSessions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/v1/oauth-clients/{id}": {
@@ -4522,6 +4576,26 @@ export interface paths {
         put?: never;
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/ssh-sessions/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Disconnect a session: its person or a workspace owner. The terminator closes it at its next
+         *     heartbeat (within 30 s).
+         */
+        delete: operations["disconnectSshSession"];
         options?: never;
         head?: never;
         patch?: never;
@@ -6849,6 +6923,10 @@ export interface components {
             display_name: string;
             /** Format: uuid */
             id: string;
+        };
+        /** @description 202 body of `DELETE /v1/ssh-sessions/{id}`. */
+        Disconnecting: {
+            disconnecting: boolean;
         };
         DmDefault: {
             /** Format: uuid */
@@ -11405,7 +11483,7 @@ export interface components {
             port: number;
             /**
              * Format: int32
-             * @description SSH terminator replicas seen in the last 90 s (`0` until P4-SSH-2's terminators exist).
+             * @description SSH terminator replicas seen in the last 90 s (`0` until one registers).
              */
             terminators_live: number;
         };
@@ -11428,6 +11506,51 @@ export interface components {
         SshKeyList: {
             /** @description Newest first. */
             keys: components["schemas"]["SshKey"][];
+        };
+        /** @description An open SSH session (C-793): names, a coarse client address and counts; never content. */
+        SshSession: {
+            agent: components["schemas"]["SshSessionAgent"];
+            /**
+             * Format: int32
+             * @description Channels open at the last heartbeat is not tracked by the API; `0` until then.
+             */
+            channels_open: number;
+            /** Format: int32 */
+            channels_total: number;
+            /** @description Coarsened at insert (IPv4 /24, IPv6 /48). */
+            client_address?: string | null;
+            /** Format: uuid */
+            id: string;
+            key: components["schemas"]["SshSessionKey"];
+            /** Format: date-time */
+            last_activity_at?: string | null;
+            /** Format: date-time */
+            opened_at: string;
+            user?: components["schemas"]["SshSessionUser"] | null;
+            /** Format: uuid */
+            workspace_id: string;
+        };
+        /** @description The agent an SSH session is on (C-793). */
+        SshSessionAgent: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+        };
+        /** @description The key a session authenticated with; `id`/`name` are null once the key is deleted. */
+        SshSessionKey: {
+            fingerprint: string;
+            /** Format: uuid */
+            id?: string | null;
+            name?: string | null;
+        };
+        SshSessionList: {
+            sessions: components["schemas"]["SshSession"][];
+        };
+        /** @description The person behind a session, shown to `can_own` only. */
+        SshSessionUser: {
+            /** Format: uuid */
+            id: string;
+            label: string;
         };
         /** @description (FIX-029, C-611) One entry of the boot's start log (`sandboxes.start_log`, C-612). */
         StartLogEntry: {
@@ -11595,6 +11718,21 @@ export interface components {
             path?: string | null;
             /** @enum {string} */
             type: "network";
+        };
+        /** @description One registered terminator replica (`GET /v1/admin/terminators`, C-793). */
+        TerminatorInfo: {
+            host_key_fingerprint: string;
+            /** Format: uuid */
+            id: string;
+            /** Format: date-time */
+            last_seen_at: string;
+            live: boolean;
+            /** Format: int32 */
+            sessions_open: number;
+            version: string;
+        };
+        TerminatorList: {
+            terminators: components["schemas"]["TerminatorInfo"][];
         };
         /** @description `POST /v1/admin/secret-stores/test` (C-746). */
         TestResult: {
@@ -16644,6 +16782,58 @@ export interface operations {
             };
         };
     };
+    listTerminators: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TerminatorList"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     adminListTrustedKeys: {
         parameters: {
             query?: {
@@ -20698,6 +20888,53 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    listAgentSshSessions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent id */
+                agent: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SshSessionList"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
             429: {
                 headers: {
                     [name: string]: unknown;
@@ -25609,6 +25846,50 @@ export interface operations {
                 };
             };
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    listMySshSessions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SshSessionList"];
+                };
+            };
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -32278,6 +32559,53 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SshFacts"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    disconnectSshSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description SSH session id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Disconnecting"];
                 };
             };
             401: {

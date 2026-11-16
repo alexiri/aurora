@@ -6220,6 +6220,68 @@
         ]
       }
     },
+    "/v1/admin/terminators": {
+      "get": {
+        "tags": [
+          "ssh"
+        ],
+        "summary": "The registered terminator replicas (instance admin).",
+        "operationId": "listTerminators",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TerminatorList"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
     "/v1/admin/trusted-keys": {
       "get": {
         "tags": [
@@ -11947,6 +12009,74 @@
             }
           },
           "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/agents/{agent}/ssh-sessions": {
+      "get": {
+        "tags": [
+          "ssh"
+        ],
+        "summary": "Open SSH sessions on an agent: everyone with `can_own` sees all (with the person), a member\nwith `can_use` only their own.",
+        "operationId": "listAgentSshSessions",
+        "parameters": [
+          {
+            "name": "agent",
+            "in": "path",
+            "description": "Agent id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SshSessionList"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
             "content": {
               "application/json": {
                 "schema": {
@@ -18707,6 +18837,62 @@
         "security": [
           {
             "session": []
+          }
+        ]
+      }
+    },
+    "/v1/me/ssh-sessions": {
+      "get": {
+        "tags": [
+          "ssh"
+        ],
+        "summary": "The caller's open SSH sessions.",
+        "operationId": "listMySshSessions",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SshSessionList"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
           }
         ]
       }
@@ -28137,6 +28323,74 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/SshFacts"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/ssh-sessions/{id}": {
+      "delete": {
+        "tags": [
+          "ssh"
+        ],
+        "summary": "Disconnect a session: its person or a workspace owner. The terminator closes it at its next\nheartbeat (within 30 s).",
+        "operationId": "disconnectSshSession",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "SSH session id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Disconnecting"
                 }
               }
             }
@@ -38260,6 +38514,18 @@
           "id": {
             "type": "string",
             "format": "uuid"
+          }
+        }
+      },
+      "Disconnecting": {
+        "type": "object",
+        "description": "202 body of `DELETE /v1/ssh-sessions/{id}`.",
+        "required": [
+          "disconnecting"
+        ],
+        "properties": {
+          "disconnecting": {
+            "type": "boolean"
           }
         }
       },
@@ -53316,7 +53582,7 @@
           "terminators_live": {
             "type": "integer",
             "format": "int32",
-            "description": "SSH terminator replicas seen in the last 90 s (`0` until P4-SSH-2's terminators exist).",
+            "description": "SSH terminator replicas seen in the last 90 s (`0` until one registers).",
             "minimum": 0
           }
         }
@@ -53377,6 +53643,148 @@
               "$ref": "#/components/schemas/SshKey"
             },
             "description": "Newest first."
+          }
+        }
+      },
+      "SshSession": {
+        "type": "object",
+        "description": "An open SSH session (C-793): names, a coarse client address and counts; never content.",
+        "required": [
+          "id",
+          "agent",
+          "workspace_id",
+          "key",
+          "opened_at",
+          "channels_open",
+          "channels_total"
+        ],
+        "properties": {
+          "agent": {
+            "$ref": "#/components/schemas/SshSessionAgent"
+          },
+          "channels_open": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Channels open at the last heartbeat is not tracked by the API; `0` until then.",
+            "minimum": 0
+          },
+          "channels_total": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "client_address": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Coarsened at insert (IPv4 /24, IPv6 /48)."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "key": {
+            "$ref": "#/components/schemas/SshSessionKey"
+          },
+          "last_activity_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "opened_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "user": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SshSessionUser",
+                "description": "Present for `can_own` listings of an agent's sessions."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "workspace_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "SshSessionAgent": {
+        "type": "object",
+        "description": "The agent an SSH session is on (C-793).",
+        "required": [
+          "id",
+          "name"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "SshSessionKey": {
+        "type": "object",
+        "description": "The key a session authenticated with; `id`/`name` are null once the key is deleted.",
+        "required": [
+          "fingerprint"
+        ],
+        "properties": {
+          "fingerprint": {
+            "type": "string"
+          },
+          "id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "SshSessionList": {
+        "type": "object",
+        "required": [
+          "sessions"
+        ],
+        "properties": {
+          "sessions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SshSession"
+            }
+          }
+        }
+      },
+      "SshSessionUser": {
+        "type": "object",
+        "description": "The person behind a session, shown to `can_own` only.",
+        "required": [
+          "id",
+          "label"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "label": {
+            "type": "string"
           }
         }
       },
@@ -53952,6 +54360,56 @@
           }
         ],
         "description": "Rule target (I-12: tagged with `type`)."
+      },
+      "TerminatorInfo": {
+        "type": "object",
+        "description": "One registered terminator replica (`GET /v1/admin/terminators`, C-793).",
+        "required": [
+          "id",
+          "version",
+          "host_key_fingerprint",
+          "sessions_open",
+          "last_seen_at",
+          "live"
+        ],
+        "properties": {
+          "host_key_fingerprint": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "last_seen_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "live": {
+            "type": "boolean"
+          },
+          "sessions_open": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "version": {
+            "type": "string"
+          }
+        }
+      },
+      "TerminatorList": {
+        "type": "object",
+        "required": [
+          "terminators"
+        ],
+        "properties": {
+          "terminators": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TerminatorInfo"
+            }
+          }
+        }
       },
       "TestResult": {
         "type": "object",

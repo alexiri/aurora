@@ -481,6 +481,36 @@ pub const SSH_CERT_TTL: Duration = Duration::from_secs(900);
 /// (P4-SSH-1, D-239(c)) certificate mints per person per agent per clock hour (429
 /// `ssh_mint_rate_limited`); counted exactly across replicas in `ssh_mint_counters`.
 pub const SSH_MINTS_PER_USER_AGENT_HOUR: u32 = 30;
+/// (phase 5, P4-SSH-2, D-239, C-794) an SSH session is alive while its lease is current; every
+/// heartbeat that keeps it renews it to `now() + SSH_SESSION_LEASE`.
+pub const SSH_SESSION_LEASE: Duration = Duration::from_secs(90);
+/// (C-794) the terminator's heartbeat period (`TerminatorConfig.heartbeat_secs`).
+pub const SSH_HEARTBEAT: Duration = Duration::from_secs(30);
+/// (C-794) open SSH sessions per person / per agent, counted over open lease-current rows
+/// (global); `ssh.sessions_per_user` / `ssh.sessions_per_agent` may only lower them.
+pub const SSH_SESSIONS_PER_USER: u32 = 4;
+pub const SSH_SESSIONS_PER_AGENT: u32 = 8;
+/// (C-794, 16 §W20) concurrent session channels per SSH connection (the terminator enforces it;
+/// the API reports it in `TerminatorConfig`).
+pub const SSH_CHANNELS_PER_SESSION: u32 = 4;
+/// (C-794) single-use `auz_` channel grant lifetime.
+pub const SSH_GRANT_TTL: Duration = Duration::from_secs(30);
+/// (C-794) default idle timeout and maximum lifetime of one SSH connection;
+/// `ssh.idle_timeout_secs` may only lower the idle value.
+pub const SSH_IDLE_TIMEOUT: Duration = Duration::from_secs(600);
+pub const SSH_MAX_LIFETIME: Duration = Duration::from_secs(4 * 3600);
+/// (C-796, D-239(h)) SSH keep-awake: grace after the last channel byte and the cap per boot
+/// (`ssh.awake_cap_secs`, at most `BACKGROUND_CAP`).
+pub const SSH_AWAKE_GRACE: Duration = Duration::from_secs(120);
+pub const SSH_AWAKE_CAP: Duration = Duration::from_secs(4 * 3600);
+/// (C-794) how long a channel waits for a waking sandbox (`ssh.wake_wait_secs` may only lower it).
+pub const SSH_WAKE_WAIT: Duration = Duration::from_secs(90);
+/// (C-794) one long-poll of `POST /v1/terminator/sessions/{id}/channels` (`wait_secs` ≤ this).
+pub const SSH_CHANNEL_POLL_MAX: Duration = Duration::from_secs(45);
+/// (C-794) terminator-plane requests per second per replica, burst `2 ×` it.
+pub const SSH_API_RATE: u32 = 50;
+/// (03 §ssh_sessions) closed session rows are kept this long; grants are pruned after 24 h.
+pub const SSH_SESSION_RETENTION: Duration = Duration::from_secs(30 * 24 * 3600);
 
 #[cfg(test)]
 mod tests {

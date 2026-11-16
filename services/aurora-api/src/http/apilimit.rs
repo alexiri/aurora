@@ -124,6 +124,8 @@ pub fn exempt(path: &str) -> bool {
         || path.starts_with("/v1/runner/")
         || path.starts_with("/v1/connector/")
         || path.starts_with("/v1/hooks/")
+        // (P4-SSH-2, C-794) the terminator plane has its own per-replica class in its extractor.
+        || path.starts_with("/v1/terminator/")
 }
 
 /// Whether this is a relay-plane request (its own per-replica class, no org bucket).

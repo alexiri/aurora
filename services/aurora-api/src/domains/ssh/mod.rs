@@ -4,8 +4,10 @@
 //! route answers 404 `ssh_disabled` while `ssh.enabled` is off.
 mod dto;
 pub mod keys;
+pub mod plane;
 mod routes;
 pub mod service;
+pub mod sessions;
 pub mod signer;
 
 pub use routes::router;

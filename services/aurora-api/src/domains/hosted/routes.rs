@@ -166,6 +166,10 @@ async fn view_full(s: &AppState, a: &AgentRow) -> Result<SandboxView, ApiError> 
     if r.files_in_use {
         reasons.push("files".to_owned());
     }
+    // (P4-SSH-2, C-796) Keep-awake reason `ssh`: a channel's bytes within the grace.
+    if r.ssh_in_use {
+        reasons.push("ssh".to_owned());
+    }
     // The image is whatever the owning runner advertised (`runner.image`).
     let runner_caps = if running {
         match r.runner_id {

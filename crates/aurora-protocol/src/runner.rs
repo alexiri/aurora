@@ -906,10 +906,10 @@ pub struct PreviewStreamOpenResponse {
 impl Validate for PreviewStreamOpenRequest {
     fn validate(&self) -> Result<(), ValidationError> {
         match self.kind.as_deref() {
-            None | Some("port") | Some("terminal") | Some("files") => Ok(()),
+            None | Some("port") | Some("terminal") | Some("files") | Some("ssh") => Ok(()),
             Some(_) => Err(ValidationError::Invalid {
                 field: "kind",
-                reason: "must be `port`, `terminal` or `files`",
+                reason: "must be `port`, `terminal`, `files` or `ssh`",
             }),
         }
     }

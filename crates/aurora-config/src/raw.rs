@@ -51,6 +51,9 @@ pub struct EnvSecrets {
     /// (P4-SSH-1, D-239(d)) `AURORA_SSH_CA_KEY`: the SSH user-certificate CA private key
     /// (`ed25519:<base64 seed>` or unencrypted OpenSSH ed25519); the API only.
     pub ssh_ca_key: Option<Redacted<String>>,
+    /// (P4-SSH-2, C-794) `aut_…`: the SSH terminator's anchor token; the API holds its hash in
+    /// memory. Without it every terminator-plane route answers 401.
+    pub bootstrap_terminator_token: Option<Redacted<String>>,
     /// (P4-PRV-2) `aul_…`: the relay's own credential (`aurora-relay` only).
     pub relay_token: Option<Redacted<String>>,
     /// OIDC client secrets keyed by provider id (from each `client_secret_env`).
@@ -784,6 +787,15 @@ pub struct SshSection {
     /// `SSH_CERT_TTL` in seconds, 60 … 86 400.
     pub cert_ttl_secs: u64,
     pub ca: SshCaSection,
+    /// (P4-SSH-2) `SSH_SESSIONS_PER_USER` / `SSH_SESSIONS_PER_AGENT`: may only lower the limits.
+    pub sessions_per_user: u32,
+    pub sessions_per_agent: u32,
+    /// (P4-SSH-2) `SSH_IDLE_TIMEOUT` in seconds (lower only).
+    pub idle_timeout_secs: u64,
+    /// (P4-SSH-2) `SSH_AWAKE_CAP` in seconds, 1 … `hosted.background_cap_secs`.
+    pub awake_cap_secs: u64,
+    /// (P4-SSH-2) `SSH_WAKE_WAIT` in seconds (lower only).
+    pub wake_wait_secs: u64,
 }
 impl Default for SshSection {
     fn default() -> Self {
@@ -793,6 +805,11 @@ impl Default for SshSection {
             public_port: 22,
             cert_ttl_secs: 900,
             ca: SshCaSection::default(),
+            sessions_per_user: 4,
+            sessions_per_agent: 8,
+            idle_timeout_secs: 600,
+            awake_cap_secs: 4 * 3600,
+            wake_wait_secs: 90,
         }
     }
 }

@@ -169,6 +169,12 @@ pub struct SshConfig {
     pub public_host: String,
     pub public_port: u16,
     pub cert_ttl_secs: u64,
+    /// (P4-SSH-2) validated against `aurora_core::limits` (only lower).
+    pub sessions_per_user: u32,
+    pub sessions_per_agent: u32,
+    pub idle_timeout_secs: u64,
+    pub awake_cap_secs: u64,
+    pub wake_wait_secs: u64,
     /// OpenSSH public-key lines of retired CA keys (each parsed as ed25519 at startup).
     pub previous_public_keys: Vec<String>,
 }
@@ -198,6 +204,8 @@ pub struct ApiConfig {
     pub ssh: SshConfig,
     /// (P4-SSH-1) `AURORA_SSH_CA_KEY` (api only); checked parsable when `ssh.enabled`.
     pub ssh_ca_key: Option<Redacted<String>>,
+    /// (P4-SSH-2, C-794) `aut_…` terminator anchor token (its hash is held in memory).
+    pub bootstrap_terminator_token: Option<Redacted<String>>,
     pub auth: AuthSection,
     pub signup_mode: SignupMode,
     pub org_creation: OrgCreation,
@@ -485,6 +493,9 @@ impl RawConfig {
         if let Some(t) = &s.bootstrap_relay_token {
             token_prefix(&mut c, "AURORA_BOOTSTRAP_RELAY_TOKEN", t, "aul_");
         }
+        if let Some(t) = &s.bootstrap_terminator_token {
+            token_prefix(&mut c, "AURORA_BOOTSTRAP_TERMINATOR_TOKEN", t, "aut_");
+        }
         let bootstrap_connector_tokens =
             bootstrap_connectors(&mut c, &s.bootstrap_connector_tokens);
         let bootstrap_connector_host_tokens =
@@ -562,7 +573,13 @@ impl RawConfig {
         }
         check_dev_switches(&mut c, self);
 
-        let ssh = check_ssh(&mut c, &self.ssh, s, external_url.as_deref());
+        let ssh = check_ssh(
+            &mut c,
+            &self.ssh,
+            s,
+            external_url.as_deref(),
+            self.hosted.background_cap_secs,
+        );
         let previews = check_previews(&mut c, &self.previews, self, &external_url);
         // (P4-TERM, C-623) the terminal's operator-tunable clocks; the limits live in
         // `aurora_core::limits`.
@@ -679,6 +696,7 @@ impl RawConfig {
             bootstrap_relay_token: s.bootstrap_relay_token.clone(),
             ssh,
             ssh_ca_key: s.ssh_ca_key.clone(),
+            bootstrap_terminator_token: s.bootstrap_terminator_token.clone(),
             auth,
             signup_mode: signup_mode.unwrap_or(SignupMode::InviteOnly),
             org_creation: org_creation.unwrap_or(OrgCreation::InstanceAdmins),
@@ -1893,6 +1911,7 @@ fn check_ssh(
     ssh: &SshSection,
     s: &EnvSecrets,
     external_url: Option<&str>,
+    background_cap_secs: u64,
 ) -> SshConfig {
     let default_host = external_url
         .and_then(|u| parse_url(u, &["http", "https"]).ok())
@@ -1920,6 +1939,38 @@ fn check_ssh(
     if !(60..=86_400).contains(&ssh.cert_ttl_secs) {
         c.err("ssh.cert_ttl_secs", "must be between 60 and 86400 seconds");
     }
+    // (P4-SSH-2) the caps and clocks only tighten the limits of `aurora_core::limits`.
+    use aurora_core::limits as lim;
+    if ssh.sessions_per_user == 0 || ssh.sessions_per_user > lim::SSH_SESSIONS_PER_USER {
+        c.err(
+            "ssh.sessions_per_user",
+            format!("must be between 1 and {}", lim::SSH_SESSIONS_PER_USER),
+        );
+    }
+    if ssh.sessions_per_agent == 0 || ssh.sessions_per_agent > lim::SSH_SESSIONS_PER_AGENT {
+        c.err(
+            "ssh.sessions_per_agent",
+            format!("must be between 1 and {}", lim::SSH_SESSIONS_PER_AGENT),
+        );
+    }
+    if ssh.idle_timeout_secs == 0 || ssh.idle_timeout_secs > lim::SSH_IDLE_TIMEOUT.as_secs() {
+        c.err(
+            "ssh.idle_timeout_secs",
+            format!("must be between 1 and {}", lim::SSH_IDLE_TIMEOUT.as_secs()),
+        );
+    }
+    if ssh.awake_cap_secs == 0 || ssh.awake_cap_secs > background_cap_secs {
+        c.err(
+            "ssh.awake_cap_secs",
+            "must be greater than 0 and at most hosted.background_cap_secs",
+        );
+    }
+    if ssh.wake_wait_secs == 0 || ssh.wake_wait_secs > lim::SSH_WAKE_WAIT.as_secs() {
+        c.err(
+            "ssh.wake_wait_secs",
+            format!("must be between 1 and {}", lim::SSH_WAKE_WAIT.as_secs()),
+        );
+    }
     for (i, line) in ssh.ca.previous_public_keys.iter().enumerate() {
         if let Err(m) = crate::ssh::parse_ssh_ed25519_public_key(line) {
             c.err(format!("ssh.ca.previous_public_keys[{i}]"), m);
@@ -1943,6 +1994,11 @@ fn check_ssh(
         public_host,
         public_port: ssh.public_port,
         cert_ttl_secs: ssh.cert_ttl_secs,
+        sessions_per_user: ssh.sessions_per_user,
+        sessions_per_agent: ssh.sessions_per_agent,
+        idle_timeout_secs: ssh.idle_timeout_secs,
+        awake_cap_secs: ssh.awake_cap_secs,
+        wake_wait_secs: ssh.wake_wait_secs,
         previous_public_keys: ssh
             .ca
             .previous_public_keys

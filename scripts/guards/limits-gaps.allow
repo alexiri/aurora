@@ -6,29 +6,17 @@
 # the code exists, marked with the task that must close them; that task's lane removes them.
 # P4-SSH (spec, 2026-11-14) — P4-SSH-1 adds SSH_KEYS_PER_USER, SSH_CERT_TTL, SSH_MINTS_PER_USER_AGENT_HOUR;
 # P4-SSH-2 adds the rest:
-SSH_API_RATE doc-only
+# (Part A of P4-SSH-2 defined the API-side ones; Parts B and C close these:)
 SSH_AUTH_ATTEMPTS doc-only
 SSH_AUTH_FAILURE_DELAY doc-only
 SSH_AUTH_TIMEOUT doc-only
-SSH_AWAKE_CAP doc-only
-SSH_AWAKE_GRACE doc-only
 SSH_CHANNELS_PER_SANDBOX doc-only
-SSH_CHANNELS_PER_SESSION doc-only
 SSH_CONNECT_RATE doc-only
 SSH_ENV_VARS_MAX doc-only
 SSH_EXEC_COMMAND_MAX doc-only
-SSH_GRANT_TTL doc-only
-SSH_HEARTBEAT doc-only
 SSH_HEARTBEAT_FAILURES doc-only
-SSH_IDLE_TIMEOUT doc-only
-SSH_MAX_LIFETIME doc-only
 SSH_PREAUTH_MAX doc-only
 SSH_PREAUTH_PER_IP doc-only
-SSH_SESSION_LEASE doc-only
-SSH_SESSION_RETENTION doc-only
-SSH_SESSIONS_PER_AGENT doc-only
-SSH_SESSIONS_PER_USER doc-only
-SSH_WAKE_WAIT doc-only
 # P4-LLM (spec batch, 2026-11-14) — P4-LLM-2 (mint service) adds LLM_TOKEN_MINT_FAILURE_HOLD and
 # LLM_MINT_CACHE_MAX and closes LLM_TOKEN_MINT_TIMEOUT / LLM_TOKEN_SKEW (listed below, earlier spec);
 # P4-LLM-4 (Bedrock) adds LLM_ASSUME_ROLE_DURATION and closes LLM_SIGN_BODY_MAX:

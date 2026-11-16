@@ -106,6 +106,7 @@ mod skill_library;
 mod skills;
 mod sse_revocation;
 mod ssh;
+mod ssh_sessions;
 mod telemetry_ingest;
 mod tenancy;
 mod terminal;

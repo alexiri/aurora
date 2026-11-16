@@ -15,6 +15,7 @@ pub mod host;
 pub mod runner;
 pub mod schema;
 pub mod supervisor;
+pub mod terminator;
 pub mod tools;
 pub mod version;
 pub mod vocab;

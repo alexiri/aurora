@@ -395,6 +395,7 @@ overridden by the named configuration key (`15`).
 | `SSH_IDLE_TIMEOUT` / `SSH_MAX_LIFETIME` | (phase 5, P4-SSH-2) 600 s without channel bytes or client keepalives / 4 h per SSH connection | `ssh.idle_timeout_secs` (lower only) | 11 |
 | `SSH_AWAKE_GRACE` / `SSH_AWAKE_CAP` | (phase 5, P4-SSH-2) 120 s after the last channel byte / 4 h per boot of SSH-held wakefulness | `ssh.awake_cap_secs` (≤ `BACKGROUND_CAP`) | 11 |
 | `SSH_WAKE_WAIT` | (phase 5, P4-SSH-2) 90 s a channel waits for a waking sandbox (the terminator's long-polls of ≤ 45 s each), then the channel fails with a notice | `ssh.wake_wait_secs` | 11 |
+| `SSH_CHANNEL_POLL_MAX` | (phase 5, P4-SSH-2) 45 s: the longest `wait_secs` of one `POST /v1/terminator/sessions/{id}/channels` long-poll for a waking sandbox | — | 16 |
 | `SSH_PREAUTH_MAX` / `SSH_PREAUTH_PER_IP` | (phase 5, P4-SSH-2) 256 / 8 concurrent unauthenticated connections per terminator replica (globally / per client address); beyond them the socket is closed at once | `terminator.max_preauth`, `terminator.max_preauth_per_ip` (lower only) | 15 |
 | `SSH_CONNECT_RATE` | (phase 5, P4-SSH-2) 30 new connections per minute per client address, burst 10, per terminator replica | — | 15 |
 | `SSH_AUTH_TIMEOUT` / `SSH_AUTH_ATTEMPTS` / `SSH_AUTH_FAILURE_DELAY` | (phase 5, P4-SSH-2) 20 s from accept to successful authentication / 6 credential attempts per connection (the `none` probe does not count) / 1 s before every authentication failure, whatever its cause (hint-free) | — | 15, 16 |

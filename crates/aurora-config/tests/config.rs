@@ -2589,3 +2589,45 @@ fn ssh_section_defaults_bounds_and_ca_key_refusal() {
     }
     api("[ssh]\ncert_ttl_secs = 86400\n", &[]).unwrap();
 }
+
+/// (P4-SSH-2) the session caps and clocks default to the limits, only lower them, and the
+/// terminator anchor token must carry the `aut_` prefix.
+#[test]
+fn ssh_session_caps_clocks_and_terminator_token() {
+    let api = |extra: &str, env: &[(&str, &str)]| {
+        load_with(&format!("{BASE}{extra}"), env)
+            .unwrap()
+            .api_config()
+    };
+    let c = api("", &[]).unwrap();
+    assert_eq!((c.ssh.sessions_per_user, c.ssh.sessions_per_agent), (4, 8));
+    assert_eq!((c.ssh.idle_timeout_secs, c.ssh.wake_wait_secs), (600, 90));
+    assert_eq!(c.ssh.awake_cap_secs, 4 * 3600);
+    assert!(c.bootstrap_terminator_token.is_none());
+    let c = api(
+        "[ssh]\nsessions_per_user = 1\nsessions_per_agent = 2\nidle_timeout_secs = 60\nawake_cap_secs = 600\nwake_wait_secs = 30\n",
+        &[("AURORA_BOOTSTRAP_TERMINATOR_TOKEN", "aut_abc")],
+    )
+    .unwrap();
+    assert_eq!((c.ssh.sessions_per_user, c.ssh.sessions_per_agent), (1, 2));
+    assert_eq!(c.ssh.awake_cap_secs, 600);
+    assert!(c.bootstrap_terminator_token.is_some());
+    for (extra, key) in [
+        ("sessions_per_user = 0\n", "ssh.sessions_per_user"),
+        ("sessions_per_user = 5\n", "ssh.sessions_per_user"),
+        ("sessions_per_agent = 9\n", "ssh.sessions_per_agent"),
+        ("idle_timeout_secs = 601\n", "ssh.idle_timeout_secs"),
+        ("awake_cap_secs = 0\n", "ssh.awake_cap_secs"),
+        ("awake_cap_secs = 43201\n", "ssh.awake_cap_secs"),
+        ("wake_wait_secs = 91\n", "ssh.wake_wait_secs"),
+    ] {
+        let e = api(&format!("[ssh]\n{extra}"), &[]).unwrap_err();
+        assert!(e.has_key(key), "{extra}: {e}");
+    }
+    let e = api(
+        "",
+        &[("AURORA_BOOTSTRAP_TERMINATOR_TOKEN", "aul_wrongprefix")],
+    )
+    .unwrap_err();
+    assert!(e.has_key("AURORA_BOOTSTRAP_TERMINATOR_TOKEN"), "{e}");
+}

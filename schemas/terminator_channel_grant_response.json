@@ -1,0 +1,31 @@
+{
+  "$defs": {
+    "SecretString": {
+      "description": "A secret-bearing string: serializes transparently, never printed by `Debug`.",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "expires_in": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "grant": {
+      "$ref": "#/$defs/SecretString",
+      "description": "The single-use `auz_` grant; returned once."
+    },
+    "runner_endpoint": {
+      "description": "The runner's `:4108` leg-1 endpoint (`ws://host:4108/v1/preview-stream`).",
+      "type": "string"
+    }
+  },
+  "required": [
+    "grant",
+    "expires_in",
+    "runner_endpoint"
+  ],
+  "title": "ChannelGrantResponse",
+  "type": "object"
+}

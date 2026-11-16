@@ -759,6 +759,8 @@ pub struct SandboxViewRow {
     pub terminal_in_use: bool,
     /// (P5-FILES-1, C-900) keep-awake reason `files` is live now.
     pub files_in_use: bool,
+    /// (P4-SSH-2, C-796) keep-awake reason `ssh` is live now.
+    pub ssh_in_use: bool,
     /// (P4-PRV-1) Ports of the current boot that carry an active preview share.
     pub shared_ports: Vec<i32>,
     /// (P4-PRV-1) Share ids for `shared_ports` (same order; empty when none).
@@ -852,6 +854,8 @@ pub async fn sandbox_view(
             coalesce(s.terminal_active_until > now(), false) AS terminal_in_use,
             -- (P5-FILES-1, C-900) keep-awake reason `files` is live now.
             coalesce(s.files_active_until > now(), false) AS files_in_use,
+            -- (P4-SSH-2, C-796) keep-awake reason `ssh` is live now.
+            coalesce(s.ssh_active_until > now(), false) AS ssh_in_use,
             -- ports of the current boot with an active share (parallel arrays for the API view)
             coalesce((SELECT array_agg(x.port ORDER BY x.port) FROM preview_shares x
                 WHERE x.agent_id = s.agent_id AND x.state = 'active'

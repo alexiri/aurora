@@ -18,6 +18,10 @@ use uuid::Uuid;
 #[derive(Debug, Deserialize)]
 pub struct KeepAwakeRequest {
     pub sandbox_id: Uuid,
+    /// (P4-SSH-2, C-796) `terminal` (absent = terminal) or `ssh`: the stamp's reason. An
+    /// unknown kind is 422 at the route.
+    #[serde(default)]
+    pub kind: Option<String>,
 }
 
 /// The runner-plane keep-awake stamp: refresh `terminal_active_until` by
@@ -29,6 +33,20 @@ pub async fn keep_awake(
     req: KeepAwakeRequest,
 ) -> Result<(), aurora_core::ApiError> {
     use aurora_db::DbError;
+    let ssh = match req.kind.as_deref() {
+        None | Some("terminal") => false,
+        Some("ssh") => true,
+        Some(_) => {
+            return Err(aurora_core::ApiError::unprocessable(
+                "invalid_kind",
+                "kind must be `terminal` or `ssh`.",
+            ));
+        }
+    };
+    if ssh && !s.config.ssh.enabled {
+        // Nothing to hold awake while SSH is off (a stale runner stamp is harmless).
+        return Ok(());
+    }
     let mut conn = s.pool.acquire().await.map_err(DbError::from)?;
     // Scope the stamp to a sandbox this runner (replica) actually owns: a stale or foreign id
     // updates nothing.
@@ -40,7 +58,14 @@ pub async fn keep_awake(
     .fetch_optional(&mut *conn)
     .await
     .map_err(DbError::from)?;
-    if owned.is_some() {
+    if owned.is_some() && ssh {
+        aurora_db::repo::sandboxes::keep_ssh_awake(
+            &mut *conn,
+            req.sandbox_id,
+            aurora_core::limits::SSH_AWAKE_GRACE.as_secs() as i64,
+        )
+        .await?;
+    } else if owned.is_some() {
         aurora_db::repo::sandboxes::keep_terminal_awake(
             &mut *conn,
             req.sandbox_id,

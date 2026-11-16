@@ -1,0 +1,78 @@
+{
+  "$defs": {
+    "TerminatorConfig": {
+      "description": "What the API tells the terminator about the instance (`register` and every heartbeat).",
+      "properties": {
+        "ca_public_keys": {
+          "description": "OpenSSH public-key lines of the CA(s) the terminator may pre-verify certificates with.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "channels_per_session": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "heartbeat_secs": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "idle_timeout_secs": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "lease_secs": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_lifetime_secs": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "wake_wait_secs": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "ca_public_keys",
+        "heartbeat_secs",
+        "lease_secs",
+        "wake_wait_secs",
+        "idle_timeout_secs",
+        "max_lifetime_secs",
+        "channels_per_session"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "config": {
+      "$ref": "#/$defs/TerminatorConfig"
+    },
+    "protocol": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "replica_id": {
+      "format": "uuid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "replica_id",
+    "protocol",
+    "config"
+  ],
+  "title": "RegisterResponse",
+  "type": "object"
+}
