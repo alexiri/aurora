@@ -252,7 +252,7 @@ function ClientRow({
         </div>
         {canOwn && mine ? (
           <div className="flex flex-wrap gap-2">
-            <Button size="sm" variant="outline" disabled={patch.isPending} onClick={() => patch.mutate({ id: c.id, enabled: !c.enabled })}>{c.enabled ? "Disable" : "Enable"}</Button>
+            <Button size="sm" variant="outline" disabled={patch.isPending} onClick={() => patch.mutate({ id: c.id, enabled: !c.enabled })}>{c.enabled ? "Turn off" : "Turn on"}</Button>
             <Button size="sm" variant="outline" onClick={startEdit}>Edit</Button>
             <Button size="sm" variant="danger" onClick={() => setMode("delete")} aria-label={`Delete ${c.client_key}`}>Delete</Button>
           </div>

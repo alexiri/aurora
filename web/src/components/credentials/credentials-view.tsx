@@ -1,11 +1,13 @@
 "use client";
 
+import { useSearchParams } from "next/navigation";
 import { useState } from "react";
 
 import { EmptyState, ErrorState, Loading } from "@/components/states";
 import { Button } from "@/components/ui/button";
 import { Notice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
+import { Section } from "@/components/ui/section";
 import { Tabs, tabId, tabPanelId } from "@/components/ui/tabs";
 import { useSecrets, type SecretScope } from "@/lib/api/secrets";
 import { useTabParam } from "@/lib/use-tab-param";
@@ -22,6 +24,110 @@ type Tab = "secrets" | "llm" | "proposals" | "apps" | "connections" | "oauth";
 const TABS: readonly Tab[] = ["secrets", "llm", "proposals", "apps", "connections", "oauth"];
 /** The tab ids the page accepts (the dashboard-links conformance test checks the gateway's links against them). */
 export const CREDENTIAL_TAB_IDS: readonly string[] = TABS;
+
+/** The stored secrets of one kind (websites' tokens, or AI keys), as rows. */
+function SecretsList({
+  scope,
+  orgId,
+  canOwn,
+  kind,
+  secrets,
+}: {
+  scope: SecretScope;
+  orgId: string;
+  canOwn: boolean;
+  kind: "generic" | "llm";
+  secrets: ReturnType<typeof useSecrets>;
+}) {
+  if (secrets.isPending) return <Loading />;
+  if (secrets.isError) return <ErrorState error={secrets.error} onRetry={() => secrets.refetch()} />;
+  const rows = (secrets.data?.items ?? []).filter((s) => s.kind === kind && s.status === "active");
+  if (rows.length === 0)
+    return kind === "llm" ? (
+      <EmptyState
+        title="No AI keys yet"
+        when="You need one before an agent can answer. Add it with the form above, then give your agent access to it."
+        ask="Ask a workspace owner to add one."
+      >
+        An AI key is the password to the AI service that does your agents&apos; thinking.
+      </EmptyState>
+    ) : (
+      <EmptyState
+        title="No websites yet"
+        when="Add one when an agent should reach a website that needs a login. The agent never sees the token: the gateway adds it."
+        ask="Ask a workspace owner to add one."
+      >
+        A website here is any site or API Aurora holds a token for, so an agent can call it.
+      </EmptyState>
+    );
+  return (
+    <ul className="space-y-3" aria-label={kind === "llm" ? "AI keys" : "Websites"}>
+      {rows.map((s) => (
+        <SecretRow key={s.id} scope={scope} orgId={orgId} secret={s} canOwn={canOwn} />
+      ))}
+    </ul>
+  );
+}
+
+/**
+ * The Accounts tab of Apps & accounts (P5-IA-1): the existing lists under the headings Apps, Websites and AI keys.
+ * P5-UX-4 replaces it with the one Accounts list. `kind=` (`app`, `website`, `ai-key`) shows one heading only; in a
+ * workspace, agents' requests for an account come last (`#requests`).
+ */
+export function AccountsPanel({ scope, orgId, canOwn }: { scope: SecretScope; orgId: string; canOwn: boolean }) {
+  const kind = useSearchParams().get("kind");
+  const [adding, setAdding] = useState(false);
+  const secrets = useSecrets(scope);
+  const only = (k: string) => !kind || kind === k;
+  return (
+    <div className="space-y-8">
+      {only("app") ? (
+        <Section id="accounts-apps" title="Apps" description="Accounts of apps from the catalogue, such as GitHub.">
+          <ConnectionsTab scope={scope} canOwn={canOwn} />
+        </Section>
+      ) : null}
+      {only("website") ? (
+        <Section id="accounts-websites" title="Websites" description="Any other website or API, reached with a token you store.">
+          <div className="space-y-4">
+            {canOwn ? (
+              adding ? (
+                <GenericSecretForm scope={scope} orgId={orgId} onDone={() => setAdding(false)} />
+              ) : (
+                <div>
+                  <Button variant="outline" onClick={() => setAdding(true)}>
+                    Add a website
+                  </Button>
+                </div>
+              )
+            ) : (
+              <Notice role="status">You can view these accounts but not change them.</Notice>
+            )}
+            <SecretsList scope={scope} orgId={orgId} canOwn={canOwn} kind="generic" secrets={secrets} />
+          </div>
+        </Section>
+      ) : null}
+      {only("ai-key") ? (
+        <Section id="accounts-ai-keys" title="AI keys" description="The keys to AI providers, for the models your agents think with.">
+          <div className="space-y-4">
+            {canOwn ? <LlmKeyForm scope={scope} orgId={orgId} /> : <Notice role="status">You can view these keys but not change them.</Notice>}
+            <SecretsList scope={scope} orgId={orgId} canOwn={canOwn} kind="llm" secrets={secrets} />
+          </div>
+        </Section>
+      ) : null}
+      {scope.kind === "workspace" && !kind ? (
+        <Section id="requests" title="Requests" description="Accounts that agents asked for.">
+          {secrets.isPending ? (
+            <Loading />
+          ) : secrets.isError ? (
+            <ErrorState error={secrets.error} />
+          ) : (
+            <ProposalsList scope={scope} items={secrets.data?.items ?? []} canOwn={canOwn} />
+          )}
+        </Section>
+      ) : null}
+    </div>
+  );
+}
 
 export function CredentialsView({
   scope,
@@ -49,36 +155,9 @@ export function CredentialsView({
     { id: "oauth", label: "OAuth clients" },
   ];
 
-  const list = (kind: "generic" | "llm") => {
-    if (secrets.isPending) return <Loading />;
-    if (secrets.isError) return <ErrorState error={secrets.error} onRetry={() => secrets.refetch()} />;
-    const rows = items.filter((s) => s.kind === kind && s.status === "active");
-    if (rows.length === 0)
-      return kind === "llm" ? (
-        <EmptyState
-          title="No LLM keys yet"
-          when="You need one before an agent can answer. Add it with the form above, then give your agent access to it."
-          ask="Ask a workspace owner to add one."
-        >
-          An LLM key is the password to the AI service that does your agents&apos; thinking.
-        </EmptyState>
-      ) : (
-        <EmptyState
-          title="No secrets yet"
-          when="Add one when an agent should reach a service that needs a login. The agent never sees the value: the gateway adds it."
-          ask="Ask a workspace owner to add one."
-        >
-          A secret is a password or token an agent uses to call a service.
-        </EmptyState>
-      );
-    return (
-      <ul className="space-y-3" aria-label={kind === "llm" ? "LLM keys" : "Secrets"}>
-        {rows.map((s) => (
-          <SecretRow key={s.id} scope={scope} orgId={orgId} secret={s} canOwn={canOwn} />
-        ))}
-      </ul>
-    );
-  };
+  const list = (kind: "generic" | "llm") => (
+    <SecretsList scope={scope} orgId={orgId} canOwn={canOwn} kind={kind} secrets={secrets} />
+  );
 
   return (
     <div className="max-w-page space-y-4">

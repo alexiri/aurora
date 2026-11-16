@@ -397,7 +397,7 @@ describe("instance setup wizard (D-141)", () => {
 // ---------------------------------------------------------------------------------------------------------------------
 // The tour
 // ---------------------------------------------------------------------------------------------------------------------
-const NAV = ["overview", "agents", "credentials", "policy", "approvals", "activity", "members", "settings"];
+const NAV = ["overview", "agents", "apps", "internet-access", "approvals", "activity", "people", "settings"];
 
 function nav() {
   return (
@@ -440,7 +440,7 @@ describe("tour (D-141)", () => {
     expect(setNavOpen).not.toHaveBeenCalledWith(true);
 
     fireEvent.keyDown(window, { key: "ArrowRight" });
-    expect(await screen.findByRole("dialog", { name: "Agents and Chat" })).toBeInTheDocument();
+    expect(await screen.findByRole("dialog", { name: "Agents" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "agents" })).toHaveAttribute("data-tour-active", "true");
     expect(screen.getByRole("link", { name: "overview" })).not.toHaveAttribute("data-tour-active");
     fireEvent.keyDown(window, { key: "ArrowLeft" });
@@ -448,7 +448,7 @@ describe("tour (D-141)", () => {
     // Back is disabled on the first stop; Next is a real button.
     expect(screen.getByRole("button", { name: "Back" })).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
-    expect(await screen.findByRole("dialog", { name: "Agents and Chat" })).toBeInTheDocument();
+    expect(await screen.findByRole("dialog", { name: "Agents" })).toBeInTheDocument();
 
     fireEvent.keyDown(window, { key: "Escape" });
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
@@ -496,16 +496,16 @@ describe("tour (D-141)", () => {
     expect(screen.getByRole("dialog", { name: "Overview" })).toBeInTheDocument();
     // Elsewhere the arrow still moves it.
     expect(fireEvent.keyDown(window, { key: "ArrowRight" })).toBe(false);
-    expect(await screen.findByRole("dialog", { name: "Agents and Chat" })).toBeInTheDocument();
+    expect(await screen.findByRole("dialog", { name: "Agents" })).toBeInTheDocument();
   });
 
-  it("skips stops whose link is not there (a member has no Approvals or Members) and ends on Done", async () => {
+  it("skips stops whose link is not there (a member has no Approvals, People or Settings) and ends on Done", async () => {
     stubLayout(false);
     routes["PATCH /v1/me/onboarding"] = () => json(200, { welcome_seen: true, guide_dismissed: [], tour_completed_at: "2026-11-10T10:00:00Z" });
     wrap(
       <>
         <nav>
-          {NAV.filter((t) => t !== "approvals" && t !== "members").map((t) => (
+          {NAV.filter((t) => t !== "approvals" && t !== "people" && t !== "settings").map((t) => (
             <a key={t} href={`/${t}`} data-tour={t}>
               {t}
             </a>
@@ -515,9 +515,12 @@ describe("tour (D-141)", () => {
       </>,
     );
     act(() => startTour());
-    expect(await screen.findByText("Stop 1 of 6", undefined)).toBeInTheDocument();
-    for (let i = 0; i < 5; i++) fireEvent.click(screen.getByRole("button", { name: "Next" }));
-    expect(await screen.findByText("Stop 6 of 6")).toBeInTheDocument();
+    expect(await screen.findByText("Stop 1 of 5", undefined)).toBeInTheDocument();
+    // The Agents stop says an agent gets apps on its Access tab (C-975).
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    expect(await screen.findByText(/Give <Agent> an app/)).toBeInTheDocument();
+    for (let i = 0; i < 3; i++) fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    expect(await screen.findByText("Stop 5 of 5")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Done" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     expect(calls.some((c) => c.key === "PATCH /v1/me/onboarding")).toBe(true);

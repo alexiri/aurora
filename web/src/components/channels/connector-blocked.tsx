@@ -8,6 +8,7 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Notice } from "@/components/ui/notice";
 import type { ConnectorAvailability } from "@/lib/api/connectors";
+import { adminRoutes } from "@/lib/routes";
 import { cn } from "@/lib/utils";
 
 /** Who to ask, in words ("Ana, Ben"), or a generic fallback. */
@@ -51,7 +52,7 @@ export function ConnectorBlocked({
               Add {item.name}
             </Button>
           ) : (
-            <Link href="/admin/connectors" className={cn(buttonVariants({ size: "sm" }), "text-on-primary!")}>
+            <Link href={adminRoutes.chatPlatforms()} className={cn(buttonVariants({ size: "sm" }), "text-on-primary!")}>
               Open Admin › Connectors
             </Link>
           )
@@ -77,7 +78,7 @@ export function NoConnectorsYet({ admins, isInstanceAdmin }: { admins: { name: s
         {isInstanceAdmin ? "Start the connector host, then add a connector." : <>Ask {adminNames(admins)} to set one up.</>}
       </span>
       {isInstanceAdmin ? (
-        <Link href="/admin/connectors" className={cn(buttonVariants({ size: "sm" }), "text-on-primary!")}>
+        <Link href={adminRoutes.chatPlatforms()} className={cn(buttonVariants({ size: "sm" }), "text-on-primary!")}>
           Open Admin › Connectors
         </Link>
       ) : null}

@@ -4,6 +4,7 @@ import Link from "next/link";
 
 import { Notice } from "@/components/ui/notice";
 import { useAdminOverview } from "@/lib/api/org";
+import { adminRoutes } from "@/lib/routes";
 
 /**
  * (FIX-050, C-630) Admin warning banner for organizations without an active owner: the gateway
@@ -21,7 +22,7 @@ export function OwnerlessBanner() {
       {orgs.map((o, i) => (
         <span key={o.slug}>
           {i > 0 ? ", " : null}
-          <Link href={`/admin/orgs#org-${o.slug}`} className="font-medium underline">
+          <Link href={adminRoutes.organizations(`org-${o.slug}`)} className="font-medium underline">
             {o.slug}
           </Link>
         </span>

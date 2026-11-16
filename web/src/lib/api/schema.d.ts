@@ -7827,6 +7827,11 @@ export interface components {
             /** @description Workspaces whose getting-started guide the person dismissed. */
             guide_dismissed: string[];
             /**
+             * @description (P5-IA-1, C-987) Keys of the one-time notices the person dismissed, at most 50. A person
+             *     created after the 2026-11 release has `renames-2026-11` from the start.
+             */
+            notices_seen: string[];
+            /**
              * Format: date-time
              * @description When the navigation tour was finished or skipped; `null` = not yet.
              */
@@ -9495,6 +9500,8 @@ export interface components {
         PatchOnboarding: {
             /** @description The whole list (at most 200 workspaces). `[]` shows every guide again. */
             guide_dismissed?: string[] | null;
+            /** @description (C-987) Append one notice key (1–64 characters: lowercase letters, digits, `-`). */
+            notice_seen?: string | null;
             /** @description `true` records now; `false` clears it so the tour is offered again. */
             tour_completed?: boolean | null;
             welcome_seen?: boolean | null;
@@ -10422,6 +10429,12 @@ export interface components {
              * @description The instance maximum, when one is configured.
              */
             conversations_days_max?: number | null;
+            /**
+             * @description (SET-5, C-783) The instance setting behind each configured ceiling, for the dashboard
+             *     link (instance admins only): `conversations_days_max`, `attachments_days_max`,
+             *     `attachment_quota_mib_max`. A ceiling that is not set has no entry.
+             */
+            instance_settings: Record<string, never>;
         };
         RevokedResponse: {
             /** Format: int64 */

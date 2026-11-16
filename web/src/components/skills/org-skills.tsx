@@ -10,6 +10,7 @@ import { PageHeader } from "@/components/ui/page-header";
 
 import { SkillsEditor } from "./skills-view";
 import { useSkillLibraries } from "@/lib/api/skill-libraries";
+import { orgRoutes } from "@/lib/routes";
 
 export function OrgSkills() {
   const { org: slug } = useParams<{ org: string }>();
@@ -42,7 +43,7 @@ function LibrariesLink({ slug, orgId }: { slug: string; orgId: string }) {
   if (libs.isError) return null;
   return (
     <Button asChild variant="outline">
-      <Link href={`/o/${slug}/skills/libraries`}>Skill libraries</Link>
+      <Link href={orgRoutes(slug).skillLibraries()}>Skill libraries</Link>
     </Button>
   );
 }
@@ -55,7 +56,7 @@ function AddLibraryCallToAction({ slug, orgId }: { slug: string; orgId: string }
     <div className="mb-4">
       <Notice role="status">
         Skills can also come from a git repository.{" "}
-        <Link href={`/o/${slug}/skills/libraries`} className="text-link underline">
+        <Link href={orgRoutes(slug).skillLibraries()} className="text-link underline">
           Add a library
         </Link>
         .

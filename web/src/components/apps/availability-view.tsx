@@ -10,6 +10,7 @@ import { Notice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
 import { appDisplayName } from "@/lib/api/app-name";
 import { errorMessage } from "@/lib/api/errors";
+import { orgRoutes } from "@/lib/routes";
 import {
   toggleAllow,
   useApps,
@@ -58,8 +59,8 @@ export function AvailabilityEditor({
     return (
       <Notice role="status">
         Every app is available — change in{" "}
-        <Link className="font-medium underline" href={`/o/${orgSlug}/governance`}>
-          Governance
+        <Link className="font-medium underline" href={orgRoutes(orgSlug).apps("apps")}>
+          Apps &amp; accounts › Apps
         </Link>
         .
       </Notice>
@@ -71,8 +72,8 @@ export function AvailabilityEditor({
         <legend className="px-1 font-display text-base font-semibold text-ink">Allowed apps (organization-wide)</legend>
         <p className="text-sm text-ink-2">
           Only these apps can be connected while the posture is restricted (set in{" "}
-          <Link className="font-medium text-link underline" href={`/o/${orgSlug}/governance`}>
-            Governance
+          <Link className="font-medium text-link underline" href={orgRoutes(orgSlug).apps("apps")}>
+            Apps &amp; accounts › Apps
           </Link>
           ).
         </p>

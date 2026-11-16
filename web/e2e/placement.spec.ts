@@ -13,7 +13,8 @@ for (const scheme of ["light", "dark"] as const) {
 
       test("sign-up & placement has no serious or critical violations and no horizontal scroll", async ({ page }) => {
         await openRoute(page, "/admin/placement", scheme);
-        await expect(page.getByRole("heading", { name: "Sign-up & placement", level: 1 })).toBeVisible();
+        await expect(page).toHaveURL(/\/admin\/people\?tab=new-users$/);
+        await expect(page.getByRole("heading", { name: "People", level: 1 })).toBeVisible();
         await expect(page.getByTestId("placement-preview")).toContainText("bobj");
         expect(await overflow(page)).toBeLessThanOrEqual(0);
         const { violations } = await new AxeBuilder({ page }).analyze();

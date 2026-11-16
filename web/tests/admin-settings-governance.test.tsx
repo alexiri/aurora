@@ -137,7 +137,7 @@ describe("Admin › Settings › Governance (SET-2)", () => {
     expect(within(table).getByText("Globex")).toBeTruthy();
     expect(within(table).getByText("frozen")).toBeTruthy();
     expect(within(table).getByText("byo.minimum_posture")).toBeTruthy();
-    expect(within(table).getByRole("link", { name: "Acme" }).getAttribute("href")).toBe("/o/acme/governance");
+    expect(within(table).getByRole("link", { name: "Acme" }).getAttribute("href")).toBe("/o/acme/ai-models");
   });
 
   it("a loosening save asks for confirmation naming the affected organizations", async () => {
@@ -179,7 +179,7 @@ describe("Org governance pages: the instance link (SET-2, C-783)", () => {
     mockFetch(me(true));
     wrap(<Locked setting="governance.llm.minimum_posture" />);
     const link = await screen.findByRole("link");
-    expect(link.getAttribute("href")).toBe("/admin/settings/governance#governance.llm.minimum_posture");
+    expect(link.getAttribute("href")).toBe("/admin/ai-models?tab=rules#governance.llm.minimum_posture");
   });
 
   it("is plain text for everyone else", async () => {

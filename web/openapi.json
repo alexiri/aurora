@@ -41337,7 +41337,8 @@
         "description": "`GET/PATCH /v1/me/onboarding` (C-530): what cannot be computed from real state.",
         "required": [
           "welcome_seen",
-          "guide_dismissed"
+          "guide_dismissed",
+          "notices_seen"
         ],
         "properties": {
           "guide_dismissed": {
@@ -41347,6 +41348,13 @@
               "format": "uuid"
             },
             "description": "Workspaces whose getting-started guide the person dismissed."
+          },
+          "notices_seen": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "(P5-IA-1, C-987) Keys of the one-time notices the person dismissed, at most 50. A person\ncreated after the 2026-11 release has `renames-2026-11` from the start."
           },
           "tour_completed_at": {
             "type": [
@@ -46924,6 +46932,13 @@
             },
             "description": "The whole list (at most 200 workspaces). `[]` shows every guide again."
           },
+          "notice_seen": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "(C-987) Append one notice key (1–64 characters: lowercase letters, digits, `-`)."
+          },
           "tour_completed": {
             "type": [
               "boolean",
@@ -49755,6 +49770,9 @@
       "Retention": {
         "type": "object",
         "description": "(phase 2, RFE-010) `GET/PUT /orgs/{org}/retention`.",
+        "required": [
+          "instance_settings"
+        ],
         "properties": {
           "attachment_quota_mib": {
             "type": [
@@ -49811,6 +49829,10 @@
             ],
             "format": "int64",
             "description": "The instance maximum, when one is configured."
+          },
+          "instance_settings": {
+            "type": "object",
+            "description": "(SET-5, C-783) The instance setting behind each configured ceiling, for the dashboard\nlink (instance admins only): `conversations_days_max`, `attachments_days_max`,\n`attachment_quota_mib_max`. A ceiling that is not set has no entry."
           }
         }
       },

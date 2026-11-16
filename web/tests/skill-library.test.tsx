@@ -118,7 +118,7 @@ describe("skill libraries page", () => {
     expect(within(rows[1]).getByText("Active")).toBeTruthy();
     expect(within(rows[2]).getByText("Error")).toBeTruthy();
     expect(within(rows[2]).getByText(/reauth_required/)).toBeTruthy();
-    expect((within(rows[2]).getByRole("link", { name: "Reconnect" }) as HTMLAnchorElement).getAttribute("href")).toBe("/o/acme/credentials");
+    expect((within(rows[2]).getByRole("link", { name: "Reconnect" }) as HTMLAnchorElement).getAttribute("href")).toBe("/o/acme/apps?tab=accounts");
   });
 
   it("connect dialog: only org-scoped active connections of apps that serve a library, read-only warning, errors in words", async () => {

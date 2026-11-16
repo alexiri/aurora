@@ -190,7 +190,7 @@ describe("PluginReview", () => {
     await waitFor(() =>
       expect(calls.some((c) => c.method === "DELETE" && c.search === "?force=true")).toBe(true),
     );
-    expect(await screen.findByText(/Plugin uninstalled/)).toBeInTheDocument();
+    expect(await screen.findByText(/App package uninstalled/)).toBeInTheDocument();
   });
 });
 

@@ -6,7 +6,7 @@ In Helm, put the keys under `config.auth` (and the client secret in `api.extraEn
 
 ## In the dashboard first (phase 5, SET-4, D-235(b), D-309)
 
-Everything below can also be set in **Admin › Settings › Sign-in** (sign-up mode, organization creation, session and CLI key lifetimes, identity providers with their role and group mappings and JIT) and **Admin › Settings › Email** (SMTP URL, from, user name, password) without `helm upgrade`; saving applies at once in every replica. Values you set in Helm stay possible and are **locked** ("Managed by Helm") in the dashboard; removing a key from the values file hands it to the dashboard with the value it had. `auth.instance_admins`, `auth.trusted_origins` and the development IdP are never dashboard settings.
+Everything below can also be set in **Administration › People › Sign-in** (sign-up mode, organization creation, session and CLI key lifetimes, identity providers with their role and group mappings and JIT) and **Admin › Settings › Email** (SMTP URL, from, user name, password) without `helm upgrade`; saving applies at once in every replica. Values you set in Helm stay possible and are **locked** ("Managed by Helm") in the dashboard; removing a key from the values file hands it to the dashboard with the value it had. `auth.instance_admins`, `auth.trusted_origins` and the development IdP are never dashboard settings.
 
 * **Client secrets** (and the SMTP password) are entered once in the dashboard, sealed in the built-in `inline` secret store and never shown, exported, logged or e-mailed. A dashboard provider cannot name an environment variable or a file; only a provider Helm used to define keeps its `client_secret_env` (until you enter a secret), and only while its issuer and client id stay as they were. `AURORA_SMTP_PASSWORD` locks the password field.
 * **Rules that protect sign-in.** Saving a new or re-pointed provider checks its OpenID discovery (the issuer must be `https`, or a loopback/private address you opened with `gateway.allowed_private`). The last provider cannot be removed (`last_oidc_provider`). You cannot save a change that would remove or re-point every provider *you* can sign in with (`removes_own_provider`). The preview before saving names accounts that stop being able to sign in (`identities_orphaned`), mappings to `instance_admin` (`grants_instance_admin`) and everything that loosens sign-in.
@@ -89,7 +89,7 @@ What happens at **every** sign-in:
 - Roles given any other way (invitation, dashboard, `jit`, `bootstrap-admin`, `auth.instance_admins`) are never changed or removed. A claim can only **raise** a manual role; when the claim goes, the manual role comes back. The last owner of an organization is never removed (audited as `org_role.idp_sync_blocked`).
 - An organization or workspace named by a mapping that does not exist is created at the first sign-in that needs it (an organization with its default workspace and default agent), so a fresh instance needs no hand-made orgs.
 - Under `invite_only` and `sso_jit` a **new** person whose claim maps to at least one grant is admitted (D-143); everything else (verified e-mail, `allowed_email_domains`, disabled users) still applies first.
-- In the dashboard, roles from the IdP show "From IdP role `value`" and cannot be edited or removed there. People see "Roles from your sign-in" on their account page; instance admins see the same per user on **Admin › Users** and the mapping table on **Admin › Identity** (both read-only). Mappings live only in the Helm values.
+- In the dashboard, roles from the IdP show "From IdP role `value`" and cannot be edited or removed there. People see "Roles from your sign-in" on their account page; instance admins see the same per user on **Admin › Users** and the mapping table on **Administration › People › Sign-in** (both read-only). Mappings live only in the Helm values.
 
 **CERN SSO** (`cern_roles` carries the application roles that e-groups were given in the Application Portal):
 
@@ -135,7 +135,7 @@ config:
             org: { slug: example, role: member }
 ```
 
-**"It does not work."** Sign in, open **Account › Roles from your sign-in** and compare the values with the mapping table under **Admin › Identity**. A value that is not listed under *Grants* matched no mapping (values are case-sensitive); an empty list means the token carried no value at the `role_claim` path (check the client's mappers and scopes, or use `role_claim_source: userinfo`). To try it locally, run the development IdP and set a user's claims with `PUT <dev-idp>/dev/claims/<email>` and a body such as `{"cern_roles": ["aurora-admins"]}`.
+**"It does not work."** Sign in, open **Account › Roles from your sign-in** and compare the values with the mapping table under **Administration › People › Sign-in**. A value that is not listed under *Grants* matched no mapping (values are case-sensitive); an empty list means the token carried no value at the `role_claim` path (check the client's mappers and scopes, or use `role_claim_source: userinfo`). To try it locally, run the development IdP and set a user's claims with `PUT <dev-idp>/dev/claims/<email>` and a body such as `{"cern_roles": ["aurora-admins"]}`.
 
 ## Groups from the IdP (phase 4, P4-GRP-1, D-156)
 

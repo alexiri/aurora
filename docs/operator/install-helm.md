@@ -720,7 +720,7 @@ external PostgreSQL 16. Record the date, the Kubernetes version, the CNI and the
 6. **Bootstrap and first use.** `kubectl -n aurora exec deploy/aurora-api -- /usr/local/bin/aurora-api bootstrap-admin --email <you>`
    (see [Post-install checks](#post-install-checks)), sign in, register a runner ([runners.md](runners.md)),
    start a sandbox, send one chat turn, park it and wake it. A new instance's first administrator is sent
-   to **Admin → Setup** (`/admin/setup`, the setup wizard, `docs/14 §Onboarding`, C-533..C-536) until the placement is
+   to **Administration › Overview** (`/admin`, the setup wizard, `docs/14 §Onboarding`, C-533..C-536) until the placement is
    saved. The page is read-only: it lists what is configured and what is still to do in five steps (roles, placement,
    LLM, runners, optional), each check with one plain sentence and, where one exists, the Helm value that changes it.
    Nothing on it shows a secret. People who join later see their own Welcome page and tour instead (per-user,
@@ -748,10 +748,10 @@ kubectl -n aurora get pods
 kubectl -n aurora exec deploy/aurora-api -- /usr/local/bin/aurora-api bootstrap-admin --email you@example.org
 ```
 
-**Becoming an instance admin** (needed for Admin › Connectors, Plugins, Users, …): either list your address
+**Becoming an instance admin** (needed for Administration: Chat platforms, Apps & accounts, People, …): either list your address
 in `config.auth.instance_admins` (applied at every sign-in: sign out and in again after `helm upgrade`), or run
 `bootstrap-admin` below, or map an IdP role to `instance_admin: true` (`sign-in.md`). Instance admins open
-the admin area from the sidebar's **Organization** selector ("All organizations").
+Administration from the **Administration** link at the foot of the sidebar (or the account menu).
 
 All sign-in is OIDC (phase 1, RFE-004): configure at least one provider under `config.auth.oidc_providers`
 (`docs/04 §OIDC`), or the API refuses to start (`no_oidc_provider`). `bootstrap-admin` **pre-provisions** an

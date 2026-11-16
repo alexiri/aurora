@@ -88,10 +88,10 @@ export function ApprovalCard({
       ) : null}
       <div className="flex flex-wrap justify-end gap-2">
         <Button size="lg" variant="outline" disabled={pending} onClick={() => onDecide("deny")}>
-          Deny
+          Block
         </Button>
         <Button size="lg" variant="approve" disabled={pending} onClick={() => onDecide("approve")}>
-          Approve
+          Allow once
         </Button>
       </div>
     </li>
@@ -188,7 +188,7 @@ function PendingTab({ wsId }: { wsId: string }) {
                     );
                   }}
                 >
-                  {d === "approve" ? `Approve all ${g.items.length}` : "Deny all"}
+                  {d === "approve" ? `Allow all ${g.items.length} once` : "Block all"}
                 </Button>
               ))}
             </div>
@@ -236,10 +236,10 @@ export function ActionApprovalCard({
       ) : null}
       <div className="flex flex-wrap justify-end gap-2">
         <Button size="lg" variant="outline" disabled={pending} onClick={() => onDecide("deny")}>
-          Deny
+          Block
         </Button>
         <Button size="lg" variant="approve" disabled={pending} onClick={() => onDecide("approve")}>
-          Approve
+          Allow once
         </Button>
       </div>
     </li>
@@ -402,7 +402,7 @@ export function ApprovalsView({ wsId }: { wsId: string }) {
   const [tab, setTab] = useState<"pending" | "history">("pending");
   return (
     <div className="max-w-5xl">
-      <PageHeader title="Approvals" description="Requests that wait for a person to allow or deny them." />
+      <PageHeader title="Approvals" description="Requests that wait for a person to allow them once or block them." />
       <Tabs
         items={[
           { value: "pending", label: "Pending" },

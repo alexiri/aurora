@@ -71,7 +71,7 @@ export function TrustedKeysView() {
   const [target, setTarget] = useState<TrustedKey | null>(null);
   return (
     <div className="max-w-page space-y-8">
-      <PageHeader title="Trusted keys" description="Publishers whose signed plugin packages this instance accepts." className="mb-6" />
+      <PageHeader title="Publishers" description="Publishers whose signed app packages this instance accepts." className="mb-6" />
       <Section id="tk-add" title="Add a trusted key" card>
         <AddKeyForm />
       </Section>

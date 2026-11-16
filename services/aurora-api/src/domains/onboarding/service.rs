@@ -23,11 +23,14 @@ fn view(r: Option<repo::OnboardingRow>) -> MeOnboarding {
             welcome_seen: r.welcome_seen,
             guide_dismissed: r.guide_dismissed,
             tour_completed_at: r.tour_completed_at,
+            notices_seen: r.notices_seen,
         },
+        // No row: created after the 2026-11 release (the migration gave everyone older a row).
         None => MeOnboarding {
             welcome_seen: false,
             guide_dismissed: vec![],
             tour_completed_at: None,
+            notices_seen: vec!["renames-2026-11".to_owned()],
         },
     }
 }
@@ -58,7 +61,33 @@ pub async fn patch_me(
         }
         None => None,
     };
+    if let Some(key) = &req.notice_seen {
+        let shape_ok = (1..=64).contains(&key.len())
+            && key
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-');
+        if !shape_ok {
+            return Err(ApiError::invalid_request(
+                "Not a notice key.",
+                vec![FieldError::new(
+                    "/notice_seen",
+                    "must be 1 to 64 lowercase letters, digits or dashes",
+                )],
+            ));
+        }
+        let seen = view(repo::get(&state.pool, user).await?).notices_seen;
+        if !seen.contains(key) && seen.len() >= limits::ONBOARDING_NOTICES_MAX {
+            return Err(ApiError::invalid_request(
+                "Too many notices.",
+                vec![FieldError::new(
+                    "/notice_seen",
+                    "at most 50 notices are remembered",
+                )],
+            ));
+        }
+    }
     let patch = repo::Patch {
+        notice_seen: req.notice_seen,
         welcome_seen: req.welcome_seen,
         guide_dismissed,
         tour_completed_at: req.tour_completed.map(|done| done.then(Utc::now)),

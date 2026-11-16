@@ -19,6 +19,7 @@ import { Notice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
 import { useAdminDeleteOrg } from "@/lib/api/admin-orgs";
 import { errorMessage } from "@/lib/api/errors";
+import { adminRoutes } from "@/lib/routes";
 import { useAdminFreezeOrg, useAdminOrgs, type AdminOrg } from "@/lib/api/freeze";
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
@@ -93,7 +94,7 @@ function OrgRowActions({ org, onDeleted, onError }: { org: AdminOrg; onDeleted: 
             <MenuItem onSelect={() => setFreezing(true)}>Freeze…</MenuItem>
           )}
           <MenuItem asChild>
-            <Link href={`/admin/orgs/${org.id}`}>Workspaces</Link>
+            <Link href={adminRoutes.organization(org.id)}>Workspaces</Link>
           </MenuItem>
           <MenuSeparator />
           <MenuItem className="text-danger-ink data-[highlighted]:bg-danger-soft" onSelect={() => setDeleting(true)}>
@@ -164,7 +165,7 @@ export function AdminOrgsView() {
             {q.data.items.map((o) => (
               <tr key={o.id} id={`org-${o.slug}`} className="scroll-mt-24 target:bg-accent-soft">
                 <Td className="font-medium">
-                  <Link href={`/admin/orgs/${o.id}`} className="underline-offset-2 hover:underline">
+                  <Link href={adminRoutes.organization(o.id)} className="underline-offset-2 hover:underline">
                     {o.name}
                   </Link>
                 </Td>

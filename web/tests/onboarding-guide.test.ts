@@ -113,7 +113,7 @@ describe("where `/` sends people (D-141)", () => {
   });
 
   it("an instance admin without a saved placement gets the setup wizard, even without an organization", () => {
-    expect(homeTarget({ landing: null, me: undefined, isInstanceAdmin: true, placementSaved: false, welcomeSeen: false })).toBe("/admin/setup");
+    expect(homeTarget({ landing: null, me: undefined, isInstanceAdmin: true, placementSaved: false, welcomeSeen: false })).toBe("/admin");
     expect(homeTarget({ landing: "/o/a/w/b", me, isInstanceAdmin: false, placementSaved: false, welcomeSeen: true })).toBe("/o/a/w/b");
   });
 

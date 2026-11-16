@@ -10,7 +10,7 @@ import type { Agent } from "@/lib/api/queries";
 import { PolicyView } from "./policy-view";
 
 /** Workspace members with `can_use`: the people a `user` identity or a simulated speaker can name. */
-function WorkspacePolicyBody({ wsId, orgId, agents }: { wsId: string; orgId: string; agents: Agent[] }) {
+function WorkspacePolicyBody({ wsId, orgId, orgSlug, agents }: { wsId: string; orgId: string; orgSlug: string; agents: Agent[] }) {
   const access = useAccess(wsId);
   const session = useSession();
   const users = (access.data?.items ?? []).map((b) => ({ id: b.user_id, label: `${b.display_name} (${b.email})` }));
@@ -19,6 +19,7 @@ function WorkspacePolicyBody({ wsId, orgId, agents }: { wsId: string; orgId: str
       title="Policy"
       scope={{ kind: "workspace", id: wsId }}
       orgId={orgId}
+      orgSlug={orgSlug}
       canEdit
       agents={agents}
       users={users}
@@ -39,5 +40,5 @@ export function WorkspacePolicy() {
   if (!wsId || !workspace.data) return <ErrorState error={{ code: "not_found" }} />;
   // Workspace policy is `can_own` (I-27); members get the standard forbidden state.
   if (workspace.data.my_role !== "owner") return <ErrorState error={{ code: "forbidden" }} />;
-  return <WorkspacePolicyBody wsId={wsId} orgId={workspace.data.org_id} agents={agents.data?.items ?? []} />;
+  return <WorkspacePolicyBody wsId={wsId} orgId={workspace.data.org_id} orgSlug={org} agents={agents.data?.items ?? []} />;
 }

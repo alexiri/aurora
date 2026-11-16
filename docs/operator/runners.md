@@ -32,12 +32,12 @@ Other admin actions:
 Every change is audited (`admin.runner_create`, `admin.runner_delete`, `admin.runner_rotate`
 with the grace in its metadata).
 
-Adding and removing runners is Helm/CLI work, not a dashboard action (D-211). **Admin ›
-Runners** shows the capacity table and has a **Rotate token** action.
+Adding and removing runners is Helm/CLI work, not a dashboard action (D-211). **Administration ›
+Platform › Runners** shows the capacity table and has a **Rotate token** action.
 
 ### Rotate a runner's token (D-211)
 
-1. Rotate: Admin › Runners › **Rotate token** (choose the grace, default 10 minutes), or
+1. Rotate: Administration › Platform › Runners › **Rotate token** (choose the grace, default 10 minutes), or
    `POST /v1/admin/runners/{id}/token?grace_secs=…`. Copy the new token; it is shown once.
 2. Put the new token where the runner reads `AURORA_RUNNER_TOKEN` (Helm: update the runner
    token Secret, e.g. `kubectl -n aurora create secret generic … --dry-run=client -o yaml | kubectl apply -f -`,
@@ -178,7 +178,7 @@ A turn that needs a sandbox is bounded end to end by `hosted.sandbox_ready_timeo
 (default 300 s): if the sandbox is not ready in time, the turn fails with a code naming
 where the start stopped, the agent header pill says **Sandbox failed** with the reason, and
 the Computer tab shows **Last start attempt** (phase, detail, elapsed, the pod's Warning
-events). Admin › Runners lists each runner's recent start failures. You should not need
+events). Administration › Platform › Runners lists each runner's recent start failures. You should not need
 kubectl for the first diagnosis; the commands below are the fallback.
 
 **What the failure codes mean** (the chat error block, the pill tooltip and the admin page
@@ -186,7 +186,7 @@ all show the same reason):
 
 | Code | Meaning | First thing to check |
 | --- | --- | --- |
-| `runner_unavailable` | No runner claimed the start | Admin › Runners: is any runner live? Is the runner's token valid, can it reach the API? |
+| `runner_unavailable` | No runner claimed the start | Administration › Platform › Runners: is any runner live? Is the runner's token valid, can it reach the API? |
 | `pod_refused` | The cluster refused pod creation | `kubectl -n <sandboxes ns> describe pod …` / the runner's log: quota, admission, image pull secret? |
 | `pod_failed` | The pod ended while it was starting | Pod Warning events (Computer tab / admin page): crash loop, OOM? |
 | `home_volume_unbound` | The home PVC never bound | `kubectl get pvc -n <ns>`: storage class, capacity? Run `kubectl describe pvc <claim> -n <ns>` and read the events **bottom-up** before deleting anything. On Magnum + manila CephFS CSI clusters a `ProvisioningFailed` warning from `persistentvolume-controller` ("Error saving claim: … the object has been modified; please apply your changes to the latest version") is a transient annotation race: when it is followed by Normal `Provisioning` / `ProvisioningSucceeded` events from the CSI provisioner, the volume bound anyway and it is not a failure. The runner treats such a warning as slow provisioning, not a verdict: it keeps waiting while a newer provisioning event exists or the warning is younger than `PVC_PROVISION_GRACE` (90 s), bounded by `hosted.sandbox_ready_timeout_secs`; only a `FailedBinding`, or a `ProvisioningFailed` that is the newest event and older than the grace, fails the start (FIX-049, D-164). If a start failed anyway, **Retry now** works from `failed` even during the backoff (it overrides the failure-backoff lease), and **Restart** performs the same recovery: the computer then starts on the now-bound volume. Delete the claim only when it is still `Pending` with no newer provisioning event. |
@@ -212,7 +212,7 @@ kubectl -n <sandboxes ns> exec <sandbox pod> -- sh -c 'nc -zv -w3 aurora-runner.
 ```
 
 Start attempts are recorded per runner (`sandbox_start_failures`, 30 days) and shown on
-Admin › Runners:
+Administration › Platform › Runners:
 
 ```sh
 curl -H "Authorization: Bearer <session>" https://aurora.example.org/v1/admin/runners/<runner-id>/start-failures

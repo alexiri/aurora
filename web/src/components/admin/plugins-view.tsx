@@ -16,6 +16,7 @@ import { checkSummary, useAddonSources, useCheckAllAddonSources } from "@/lib/ap
 import { ApiError } from "@/lib/api/client";
 import { errorMessage } from "@/lib/api/errors";
 import { usePlugins, useUploadPlugin, type PluginViolation } from "@/lib/api/plugins";
+import { adminRoutes } from "@/lib/routes";
 
 const STATUSES = ["", "pending_approval", "active", "disabled", "rejected", "superseded", "invalid"];
 
@@ -136,8 +137,8 @@ export function PluginsView() {
   return (
     <div className="max-w-page space-y-4">
       <PageHeader
-        title="Plugins"
-        description="Signed packages that add apps and connectors to this instance."
+        title="Apps"
+        description="Signed packages that add apps and chat platforms to this instance."
         className="mb-2"
         actions={
           <Dialog open={open} onOpenChange={setOpen}>
@@ -153,7 +154,7 @@ export function PluginsView() {
       {updates > 0 ? (
         <Notice tone="pending" role="status">
           {`${updates} ${updates === 1 ? "plugin has" : "plugins have"} a newer version in an addon source. `}
-          <Link href="/admin/addon-sources" className="font-medium underline">
+          <Link href={adminRoutes.advanced("package-sources")} className="font-medium underline">
             See the addon sources
           </Link>
         </Notice>
@@ -190,7 +191,7 @@ export function PluginsView() {
             {q.data.items.map((p) => (
               <tr key={p.id}>
                 <Td>
-                  <Link href={`/admin/plugins/${p.id}`} className="font-medium text-link underline">
+                  <Link href={adminRoutes.package(p.id)} className="font-medium text-link underline">
                     {p.package_id}
                   </Link>
                   <div className="text-muted">{p.publisher}</div>
@@ -198,7 +199,7 @@ export function PluginsView() {
                 <Td className="font-mono text-xs">{p.version}</Td>
                 <Td>
                   {p.source === "addon" && p.source_id ? (
-                    <Link href={`/admin/addon-sources#${p.source_id}`} className="text-link underline">
+                    <Link href={adminRoutes.advanced(p.source_id)} className="text-link underline">
                       {sourceLabel(p)}
                     </Link>
                   ) : (
@@ -210,7 +211,7 @@ export function PluginsView() {
                   <div className="flex flex-wrap items-center gap-1">
                     <Badge tone={statusTone(p.status)}>{p.status.replace("_", " ")}</Badge>
                     {p.update_available ? (
-                      <Link href={p.source_id ? `/admin/addon-sources#${p.source_id}` : "/admin/addon-sources"}>
+                      <Link href={adminRoutes.advanced(p.source_id ?? "package-sources")}>
                         <Badge tone="pending">Update available</Badge>
                       </Link>
                     ) : null}

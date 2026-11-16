@@ -10,6 +10,8 @@ pub struct OnboardingRow {
     pub welcome_seen: bool,
     pub guide_dismissed: Vec<Uuid>,
     pub tour_completed_at: Option<DateTime<Utc>>,
+    /// (P5-IA-1, C-987) Keys of the one-time notices the person dismissed.
+    pub notices_seen: Vec<String>,
 }
 
 pub async fn get<'e, E: PgExecutor<'e>>(
@@ -17,7 +19,7 @@ pub async fn get<'e, E: PgExecutor<'e>>(
     user: Uuid,
 ) -> Result<Option<OnboardingRow>, DbError> {
     Ok(sqlx::query_as(
-        "SELECT welcome_seen, guide_dismissed, tour_completed_at
+        "SELECT welcome_seen, guide_dismissed, tour_completed_at, notices_seen
          FROM user_onboarding WHERE user_id = $1",
     )
     .bind(user)
@@ -71,6 +73,8 @@ pub struct Patch {
     pub welcome_seen: Option<bool>,
     pub guide_dismissed: Option<Vec<Uuid>>,
     pub tour_completed_at: Option<Option<DateTime<Utc>>>,
+    /// Appended to `notices_seen` when not already there (the API checks the limit).
+    pub notice_seen: Option<String>,
 }
 
 /// Upsert the row, applying only the fields in `patch`; returns the stored row.
@@ -84,20 +88,30 @@ pub async fn apply<'e, E: PgExecutor<'e>>(
         None => (false, None),
     };
     Ok(sqlx::query_as(
-        "INSERT INTO user_onboarding (user_id, welcome_seen, guide_dismissed, tour_completed_at)
-         VALUES ($1, COALESCE($2, false), COALESCE($3, '{}'), $5)
+        // A new row starts with the notices of the column default seen (the 2026-11 renames: a
+        // person created after the release never saw the old pages), plus the one sent.
+        "INSERT INTO user_onboarding
+            (user_id, welcome_seen, guide_dismissed, tour_completed_at, notices_seen)
+         VALUES ($1, COALESCE($2, false), COALESCE($3, '{}'), $5,
+            CASE WHEN $6::text IS NULL OR $6 = ANY (ARRAY['renames-2026-11'])
+                 THEN ARRAY['renames-2026-11'] ELSE ARRAY['renames-2026-11', $6::text] END)
          ON CONFLICT (user_id) DO UPDATE SET
             welcome_seen = COALESCE($2, user_onboarding.welcome_seen),
             guide_dismissed = COALESCE($3, user_onboarding.guide_dismissed),
             tour_completed_at = CASE WHEN $4 THEN $5 ELSE user_onboarding.tour_completed_at END,
+            notices_seen = CASE
+                WHEN $6::text IS NULL OR $6 = ANY (user_onboarding.notices_seen)
+                    THEN user_onboarding.notices_seen
+                ELSE user_onboarding.notices_seen || $6::text END,
             updated_at = now()
-         RETURNING welcome_seen, guide_dismissed, tour_completed_at",
+         RETURNING welcome_seen, guide_dismissed, tour_completed_at, notices_seen",
     )
     .bind(user)
     .bind(patch.welcome_seen)
     .bind(patch.guide_dismissed.as_deref())
     .bind(set_tour)
     .bind(tour)
+    .bind(patch.notice_seen.as_deref())
     .fetch_one(exec)
     .await?)
 }
