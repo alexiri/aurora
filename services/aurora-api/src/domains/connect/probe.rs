@@ -18,9 +18,61 @@ const BODY_MAX: usize = 1024 * 1024;
 /// A probe value read from a response header is cut to this many characters.
 const HEADER_META_MAX: usize = 500;
 
+/// (P5-UX-2, C-958) Why a probe failed, for the journey's sentence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProbeCause {
+    /// The provider answered 401 or 403: it refused the credential.
+    Rejected,
+    /// DNS, connect, TLS or timeout: nothing answered.
+    Unreachable,
+    /// Anything else (another status, a malformed answer, a probe that could not be built).
+    Unexpected,
+}
+
+impl ProbeCause {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Rejected => "rejected",
+            Self::Unreachable => "unreachable",
+            Self::Unexpected => "unexpected",
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct ProbeFail {
     pub status: Option<u16>,
+    pub cause: ProbeCause,
+    /// The probed host, when one was determined.
+    pub host: Option<String>,
+}
+
+impl ProbeFail {
+    /// A failure with an upstream `status` (or none): 401 and 403 are `rejected`.
+    pub fn of(status: Option<u16>) -> Self {
+        Self {
+            status,
+            cause: match status {
+                Some(401 | 403) => ProbeCause::Rejected,
+                _ => ProbeCause::Unexpected,
+            },
+            host: None,
+        }
+    }
+
+    /// Nothing answered `host` (DNS, connect, TLS or timeout).
+    pub fn unreachable(host: &str) -> Self {
+        Self {
+            status: None,
+            cause: ProbeCause::Unreachable,
+            host: Some(host.to_owned()),
+        }
+    }
+
+    fn at(mut self, host: &str) -> Self {
+        self.host = Some(host.to_owned());
+        self
+    }
 }
 
 #[derive(Default)]
@@ -219,9 +271,9 @@ pub async fn run(
     probe: &Probe,
     v: &Vars<'_>,
 ) -> Result<ProbeOut, ProbeFail> {
-    let none = ProbeFail { status: None };
-    let raw = render(&probe.url, v, true).ok_or(ProbeFail { status: None })?;
-    let parsed = reqwest::Url::parse(&raw).map_err(|_| ProbeFail { status: None })?;
+    let none = ProbeFail::of(None);
+    let raw = render(&probe.url, v, true).ok_or(ProbeFail::of(None))?;
+    let parsed = reqwest::Url::parse(&raw).map_err(|_| ProbeFail::of(None))?;
     let host = parsed.host_str().unwrap_or_default().to_ascii_lowercase();
     if parsed.scheme() != "https" {
         return Err(none);
@@ -235,14 +287,14 @@ pub async fn run(
             .filter(|_| v.instance_registered)
             .map(|h| InstanceBase::new(h, v.instance_base_path)),
     )
-    .ok_or(ProbeFail { status: None })?;
+    .ok_or(ProbeFail::of(None))?;
     if let Some(t) = &entry.tenant
         && t.field == "connection.tenant_host"
         && v.tenant_host.map(str::to_ascii_lowercase).as_deref() != Some(host.as_str())
     {
         return Err(none);
     }
-    let mut url = env.prepare(&raw).map_err(|_| ProbeFail { status: None })?;
+    let mut url = env.prepare(&raw).map_err(|_| ProbeFail::of(None))?;
     let method = match probe.method {
         ProbeMethod::Get => reqwest::Method::GET,
         ProbeMethod::Head => reqwest::Method::HEAD,
@@ -254,26 +306,23 @@ pub async fn run(
             Inject::Bearer(t) => {
                 headers.push((
                     "authorization".into(),
-                    format!(
-                        "Bearer {}",
-                        render(t, v, false).ok_or(ProbeFail { status: None })?
-                    ),
+                    format!("Bearer {}", render(t, v, false).ok_or(ProbeFail::of(None))?),
                 ));
             }
             Inject::Basic { user, password } => {
-                let u = render(user, v, false).ok_or(ProbeFail { status: None })?;
-                let p = render(password, v, false).ok_or(ProbeFail { status: None })?;
+                let u = render(user, v, false).ok_or(ProbeFail::of(None))?;
+                let p = render(password, v, false).ok_or(ProbeFail::of(None))?;
                 let enc = base64::engine::general_purpose::STANDARD.encode(format!("{u}:{p}"));
                 headers.push(("authorization".into(), format!("Basic {enc}")));
             }
             Inject::Header { name, value } => {
                 headers.push((
                     name.clone(),
-                    render(value, v, false).ok_or(ProbeFail { status: None })?,
+                    render(value, v, false).ok_or(ProbeFail::of(None))?,
                 ));
             }
             Inject::Query { name, value } => {
-                let val = render(value, v, false).ok_or(ProbeFail { status: None })?;
+                let val = render(value, v, false).ok_or(ProbeFail::of(None))?;
                 url.query_pairs_mut().append_pair(name, &val);
             }
             _ => {}
@@ -294,21 +343,26 @@ pub async fn run(
         }
         req = req.header(k, val);
     }
-    let mut resp = req.send().await.map_err(|_| ProbeFail { status: None })?;
+    // (C-958) DNS, connect, TLS and timeout are `unreachable`; the rest of a failed send is not.
+    let mut resp = req.send().await.map_err(|e| {
+        if e.is_connect() || e.is_timeout() {
+            ProbeFail::unreachable(&host)
+        } else {
+            ProbeFail::of(None).at(&host)
+        }
+    })?;
     let status = resp.status().as_u16();
     if !probe.expect_status.contains(&status) {
-        return Err(ProbeFail {
-            status: Some(status),
-        });
+        return Err(ProbeFail::of(Some(status)).at(&host));
     }
     let mut body = Vec::new();
-    while let Some(chunk) = resp.chunk().await.map_err(|_| ProbeFail {
-        status: Some(status),
-    })? {
+    while let Some(chunk) = resp
+        .chunk()
+        .await
+        .map_err(|_| ProbeFail::of(Some(status)).at(&host))?
+    {
         if body.len() + chunk.len() > BODY_MAX {
-            return Err(ProbeFail {
-                status: Some(status),
-            });
+            return Err(ProbeFail::of(Some(status)).at(&host));
         }
         body.extend_from_slice(&chunk);
     }
@@ -316,9 +370,8 @@ pub async fn run(
     if probe.label.is_none() && probe.metadata.is_empty() {
         return Ok(out);
     }
-    let doc: Value = serde_json::from_slice(&body).map_err(|_| ProbeFail {
-        status: Some(status),
-    })?;
+    let doc: Value =
+        serde_json::from_slice(&body).map_err(|_| ProbeFail::of(Some(status)).at(&host))?;
     if let Some(p) = &probe.label {
         out.label = doc.pointer(p).and_then(sval).and_then(|s| clean_label(&s));
     }

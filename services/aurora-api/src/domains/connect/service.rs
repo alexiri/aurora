@@ -1,4 +1,4 @@
-use super::dto::{ConnectRequest, ConnectResponse};
+use super::dto::{ConnectGrant, ConnectRequest, ConnectResponse};
 use super::fields::{self, Parsed};
 use super::flow::{self, Flow};
 use super::hooks::{Call, Connected, Exchanged, kv};
@@ -7,9 +7,13 @@ use crate::app::AppState;
 use crate::audit::{self, AuditActor, AuditEvent, Outcome};
 use crate::domains::apps::service::find_app;
 use crate::domains::connections::dto::Connection;
+use crate::domains::grants::dto::ConnectionGrant;
+use crate::domains::grants::levels::{self, Level};
+use crate::domains::grants::service as grants_service;
 use crate::domains::plugins::registry;
 use crate::domains::secrets::service::secret_err;
 use crate::http::auth::{Caller, require_own};
+use crate::http::who_can::{self, WhoCanRole};
 use aurora_core::{ApiError, ids};
 use aurora_db::DbError;
 use aurora_db::repo::app_instances::{self, InstanceRow};
@@ -28,7 +32,7 @@ use uuid::Uuid;
 
 pub enum ConnectErr {
     Api(ApiError),
-    Probe(Option<u16>),
+    Probe(probe::ProbeFail),
     Hook(String),
     Exchange,
 }
@@ -49,9 +53,15 @@ impl From<ConnectErr> for ApiError {
     fn from(e: ConnectErr) -> Self {
         match e {
             ConnectErr::Api(a) => a,
-            ConnectErr::Probe(s) => {
+            // (C-958) The journey tells the person why: `rejected` (401/403), `unreachable`
+            // (DNS, connect, TLS, timeout; with the host) or `unexpected` (the status is kept).
+            ConnectErr::Probe(f) => {
                 ApiError::unprocessable("connect_probe_failed", "The connection probe failed.")
-                    .with_details(json!({"upstream_status": s}))
+                    .with_details(json!({
+                        "upstream_status": f.status,
+                        "cause": f.cause.as_str(),
+                        "host": f.host,
+                    }))
             }
             ConnectErr::Hook(m) => ApiError::unprocessable("connect_hook_failed", m),
             ConnectErr::Exchange => {
@@ -83,8 +93,25 @@ pub struct Started {
     pub cookie: Option<String>,
 }
 
+/// (P5-UX-2, C-957) What the access part of a connect did: the grants written, and, when the
+/// callback could not apply the access, the code of why (the account itself is kept).
+#[derive(Default)]
+pub struct Applied {
+    pub grants: Vec<ConnectionGrant>,
+    pub granted_agent_ids: Vec<Uuid>,
+    pub failed: Option<String>,
+}
+
+/// The access a connect gives, and how failure behaves: `soft` (the OAuth callback) keeps the
+/// account and reports the failure; strict (a request that connects directly) fails the whole
+/// request, so nothing is written.
+struct Intent {
+    grant: ConnectGrant,
+    soft: bool,
+}
+
 pub enum Done {
-    Connected(Uuid, Vec<String>, Landing),
+    Connected(Uuid, Vec<String>, Landing, Applied),
     Redirect { url: String, cookie: String },
 }
 
@@ -223,19 +250,23 @@ fn client_ctx(c: &aurora_db::repo::oauth_clients::ClientRow) -> SealContext {
 
 type ClientRow = aurora_db::repo::oauth_clients::ClientRow;
 
-fn client_required(msg: &str) -> ConnectErr {
-    ConnectErr::Api(ApiError::unprocessable(
-        "oauth_client_required",
-        msg.to_owned(),
-    ))
+fn client_required(org: Uuid, msg: &str) -> ConnectErr {
+    ConnectErr::Api(
+        ApiError::unprocessable("oauth_client_required", msg.to_owned())
+            // (C-958) Who can register the client: the organization's administrators.
+            .with_details(who_can::stub(WhoCanRole::OrgAdmin, Some(org), None)),
+    )
 }
 
 /// OAuth methods of a self-hosted instance use only a BYOC client bound to that instance (C-243).
-fn instance_client_required() -> ConnectErr {
-    ConnectErr::Api(ApiError::unprocessable(
-        "instance_oauth_client_required",
-        "Register an OAuth application for this instance first.",
-    ))
+fn instance_client_required(org: Uuid) -> ConnectErr {
+    ConnectErr::Api(
+        ApiError::unprocessable(
+            "instance_oauth_client_required",
+            "Register an OAuth application for this instance first.",
+        )
+        .with_details(who_can::stub(WhoCanRole::OrgAdmin, Some(org), None)),
+    )
 }
 
 async fn resolve_client(
@@ -253,9 +284,9 @@ async fn resolve_client(
     };
     found.ok_or_else(|| {
         if instance.is_some() {
-            instance_client_required()
+            instance_client_required(t.org)
         } else {
-            client_required("No usable OAuth client is configured.")
+            client_required(t.org, "No usable OAuth client is configured.")
         }
     })
 }
@@ -339,6 +370,8 @@ struct Ctx<'a> {
     /// (FIX-133, D-240) `read` | `write` requested for the connection (validated); `None` = `write`
     /// for a new connection, unchanged for a reconnect.
     access: Option<String>,
+    /// (P5-UX-2, C-957) The access to write with the connection.
+    grant: Option<Intent>,
 }
 
 #[derive(Default)]
@@ -473,6 +506,7 @@ impl Ctx<'_> {
             instance_id: self.instance.as_ref().map(|i| i.id),
             access_level: level,
             access: self.access.clone(),
+            grant: self.grant.as_ref().map(|g| g.grant.clone()),
             pkce_verifier: None,
             reconnect: self.reconnect.as_ref().map(|r| r.id),
             continuation: None,
@@ -490,7 +524,7 @@ impl Ctx<'_> {
         method: &Connect,
         kind: Kind,
         g: Gathered,
-    ) -> Result<(ConnectionRow, Vec<String>), ConnectErr> {
+    ) -> Result<(ConnectionRow, Vec<String>, Applied), ConnectErr> {
         let declared = |n: &str| self.app.credentials.iter().any(|c| c.name == n);
         if g.credentials.keys().any(|k| !declared(k))
             || g.metadata
@@ -528,7 +562,7 @@ impl Ctx<'_> {
                 },
             )
             .await
-            .map_err(|f| ConnectErr::Probe(f.status))?;
+            .map_err(ConnectErr::Probe)?;
             metadata.extend(out.metadata);
             label = out.label.or(label);
         }
@@ -542,7 +576,7 @@ impl Ctx<'_> {
             .filter(|s| !granted.contains(s))
             .cloned()
             .collect();
-        let row = self
+        let (row, applied) = self
             .persist(
                 caller,
                 &g,
@@ -552,7 +586,7 @@ impl Ctx<'_> {
                 method.id(),
             )
             .await?;
-        Ok((row, missing))
+        Ok((row, missing, applied))
     }
 
     async fn persist(
@@ -563,7 +597,7 @@ impl Ctx<'_> {
         metadata: &Value,
         scopes: &[String],
         method_id: &str,
-    ) -> Result<ConnectionRow, ConnectErr> {
+    ) -> Result<(ConnectionRow, Applied), ConnectErr> {
         let state = self.state;
         let id = self.reconnect.as_ref().map_or_else(ids::new_id, |r| r.id);
         let sctx = SealContext {
@@ -606,7 +640,7 @@ impl Ctx<'_> {
             connect_method: Some(method_id),
             access: self.access.as_deref(),
         };
-        let old = match self.write(caller, &n).await {
+        let (old, applied) = match self.write(caller, &n).await {
             Ok(o) => o,
             Err(e) => {
                 discard(state, &sctx, &sref).await;
@@ -619,20 +653,105 @@ impl Ctx<'_> {
         let row = repo::get(&state.pool, id)
             .await?
             .ok_or_else(|| ApiError::internal("Internal error."))?;
-        Ok(row)
+        Ok((row, applied))
     }
 
     /// Insert or CAS-update inside one transaction (with its `connection.create` /
-    /// `connection.reconnect` audit row, RFE-008); returns the replaced credentials ref.
+    /// `connection.reconnect` audit row, RFE-008, and, with a `grant`, the access, SEC-130);
+    /// returns the replaced credentials ref and what the access part did.
     async fn write(
         &self,
         caller: &Caller,
         n: &NewConnection<'_>,
-    ) -> Result<Option<String>, ConnectErr> {
+    ) -> Result<(Option<String>, Applied), ConnectErr> {
         let mut tx = audit::begin(self.state).await?;
-        let (old, ev) = self.write_in_tx(&mut tx, caller, n, None).await?;
-        audit::commit_critical(tx, &ev).await?;
-        Ok(old)
+        let extra = self.grant.as_ref().map(|g| {
+            json!({"via": "connect_journey", "agent_ids": g.grant.agent_ids, "level": g.grant.level})
+        });
+        let (old, ev) = self.write_in_tx(&mut tx, caller, n, extra).await?;
+        let mut events = vec![ev];
+        let applied = match &self.grant {
+            Some(g) => {
+                self.apply_grant(&mut tx, caller, n.id, g, &mut events)
+                    .await?
+            }
+            None => Applied::default(),
+        };
+        audit::commit_critical_many(tx, &events).await?;
+        Ok((old, applied))
+    }
+
+    /// The access of a connect, in the connection's own transaction (SEC-130): every agent is
+    /// authorized again against current state by the grant service (visible, `can_own`, the
+    /// connection in its workspace, `custom_only` respected) and the level is expanded there from
+    /// the snapshot's tools. A strict apply fails the whole request, which rolls the connection
+    /// back; a soft one (the OAuth callback) rolls back only the access, to a savepoint, so the
+    /// account stays and the failure is reported.
+    async fn apply_grant(
+        &self,
+        tx: &mut audit::Tx,
+        caller: &Caller,
+        connection_id: Uuid,
+        intent: &Intent,
+        events: &mut Vec<AuditEvent>,
+    ) -> Result<Applied, ConnectErr> {
+        if intent.soft {
+            sqlx::query("SAVEPOINT connect_access")
+                .execute(&mut **tx)
+                .await
+                .map_err(DbError::from)?;
+        }
+        let tools = crate::domains::apps::service::tools(self.app);
+        let req = levels::expand(intent.grant.level, &tools);
+        let mut applied = Applied::default();
+        let mut written = Vec::new();
+        let mut failure = None;
+        for &agent_id in &intent.grant.agent_ids {
+            match grants_service::grant_connection_in_tx(
+                tx,
+                self.state,
+                caller,
+                agent_id,
+                connection_id,
+                req.clone(),
+                grants_service::Origin::ConnectJourney,
+            )
+            .await
+            {
+                Ok(w) => {
+                    written.extend(w.event);
+                    applied.grants.push(w.grant);
+                    applied.granted_agent_ids.push(agent_id);
+                }
+                Err(e) => {
+                    failure = Some(grants_service::at_agent(e, agent_id));
+                    break;
+                }
+            }
+        }
+        match failure {
+            None => {
+                if intent.soft {
+                    sqlx::query("RELEASE SAVEPOINT connect_access")
+                        .execute(&mut **tx)
+                        .await
+                        .map_err(DbError::from)?;
+                }
+                events.extend(written);
+                Ok(applied)
+            }
+            Some(e) if intent.soft => {
+                sqlx::query("ROLLBACK TO SAVEPOINT connect_access")
+                    .execute(&mut **tx)
+                    .await
+                    .map_err(DbError::from)?;
+                Ok(Applied {
+                    failed: Some(e.code().to_owned()),
+                    ..Applied::default()
+                })
+            }
+            Some(e) => Err(ConnectErr::Api(e)),
+        }
     }
 
     /// [`Self::write`] inside the caller's transaction: returns the replaced credentials ref and
@@ -852,10 +971,48 @@ pub async fn start(
         .find(|c| c.id() == req.method_id)
         .ok_or_else(|| invalid("/method_id", "unknown connect method"))?;
     let instance = resolve_instance(state, app, &t, req.instance_id, reconnect.as_ref()).await?;
-    let access = match req.access.as_deref() {
+    let mut access = match req.access.as_deref() {
         None => None,
         Some(a @ ("read" | "write")) => Some(a.to_owned()),
         Some(_) => return Err(invalid("/access", "must be read or write")),
+    };
+    // (P5-UX-2, C-957, SEC-130) The access that travels with the account is checked before any
+    // write or redirect; the connection's `access` follows the level (C-980).
+    let grant = match &req.grant {
+        None => None,
+        Some(g) => {
+            if reconnect.is_some() {
+                return Err(ConnectErr::Api(ApiError::unprocessable(
+                    "grant_not_allowed_on_reconnect",
+                    "A reconnect keeps the access it has; change it on the agent's Access tab.",
+                )));
+            }
+            let Some(ws) = t.ws else {
+                return Err(invalid("/grant", "needs workspace scope"));
+            };
+            grants_service::check_agents_for_new_account(state, caller, ws, &g.agent_ids).await?;
+            if g.level == Level::Act && app.grants.custom_only {
+                return Err(ConnectErr::Api(
+                    ApiError::unprocessable(
+                        "full_grant_forbidden",
+                        "This app only allows custom access: choose Read only or Ask before changes.",
+                    )
+                    .with_details(json!({"app_id": app_id})),
+                ));
+            }
+            let derived = levels::access_for_levels(&[g.level]);
+            if access.as_deref().is_some_and(|a| a != derived) {
+                return Err(invalid(
+                    "/access",
+                    "follows grant.level; leave it out when a grant is given",
+                ));
+            }
+            access = Some(derived.to_owned());
+            Some(Intent {
+                grant: g.clone(),
+                soft: false,
+            })
+        }
     };
     let ctx = Ctx {
         state,
@@ -867,6 +1024,7 @@ pub async fn start(
         reconnect,
         instance,
         access,
+        grant,
     };
     match method {
         Connect::Fields(f) => {
@@ -891,8 +1049,8 @@ pub async fn start(
                     None => ctx.probe_declared_scopes(f, &g).await,
                 });
             }
-            let (row, missing) = ctx.finalize(caller, method, Kind::Fields, g).await?;
-            Ok(connected(row, missing, &snap))
+            let (row, missing, applied) = ctx.finalize(caller, method, Kind::Fields, g).await?;
+            Ok(connected(row, missing, applied, &snap))
         }
         Connect::Oauth2(o) => start_oauth(&ctx, o, &req).await,
         Connect::Hook(h) => {
@@ -952,7 +1110,7 @@ pub async fn start(
                 .map_err(|e| ConnectErr::Hook(e.0))?
             {
                 Exchanged::Connected(c) => {
-                    let (row, missing) = ctx
+                    let (row, missing, applied) = ctx
                         .finalize(
                             caller,
                             method,
@@ -960,7 +1118,7 @@ pub async fn start(
                             gathered_from_hook(c, client.map(|c| c.id)),
                         )
                         .await?;
-                    Ok(connected(row, missing, &snap))
+                    Ok(connected(row, missing, applied, &snap))
                 }
                 Exchanged::Continue { url, continuation } => {
                     let (url, cookie) = continue_to(&ctx, &mut flow, url, continuation)?;
@@ -1028,6 +1186,7 @@ pub async fn ensure_credential_free_in_tx(
         reconnect: None,
         instance: None,
         access: None,
+        grant: None,
     };
     let label = app
         .about
@@ -1100,11 +1259,17 @@ fn from_fields(p: Parsed) -> Gathered {
     }
 }
 
-fn connected(row: ConnectionRow, missing: Vec<String>, snap: &Snapshot) -> Started {
+fn connected(
+    row: ConnectionRow,
+    missing: Vec<String>,
+    applied: Applied,
+    snap: &Snapshot,
+) -> Started {
     Started {
         response: ConnectResponse::Connected {
             connection: Box::new(Connection::new(row, Some(snap))),
             missing_scopes: missing,
+            grants: applied.grants,
         },
         cookie: None,
     }
@@ -1129,7 +1294,7 @@ async fn find_ce_client(
     });
     usable
         .map(Some)
-        .ok_or_else(|| client_required("OAuth client not usable here."))
+        .ok_or_else(|| client_required(ctx.t.org, "OAuth client not usable here."))
 }
 
 fn continue_to(
@@ -1161,7 +1326,7 @@ async fn start_oauth(
         .oauth_clients
         .iter()
         .find(|c| c.package_id == ctx.pkg.package_id && c.client_key == o.client)
-        .ok_or_else(|| client_required("The app's OAuth client is not declared."))?;
+        .ok_or_else(|| client_required(ctx.t.org, "The app's OAuth client is not declared."))?;
     let client = resolve_client(
         ctx.state,
         &ctx.pkg.package_id,
@@ -1188,7 +1353,7 @@ async fn start_oauth(
         .fields
         .get("client_id")
         .and_then(Value::as_str)
-        .ok_or_else(|| client_required("The OAuth client has no client_id."))?
+        .ok_or_else(|| client_required(ctx.t.org, "The OAuth client has no client_id."))?
         .to_owned();
     let parsed = fields::parse(&o.fields, &req.fields)?;
     let tenant = parsed
@@ -1276,7 +1441,9 @@ pub async fn callback(
     }
     let land = landing(state, &flow).await;
     match run_callback(state, caller, q, flow).await {
-        Ok(Done::Connected(id, missing, _)) => Ok(Done::Connected(id, missing, land)),
+        Ok(Done::Connected(id, missing, _, applied)) => {
+            Ok(Done::Connected(id, missing, land, applied))
+        }
         Ok(other) => Ok(other),
         Err(e) => {
             if let ConnectErr::Api(a) = &e {
@@ -1343,6 +1510,9 @@ async fn run_callback(
         reconnect,
         instance,
         access: flow.access.clone(),
+        // (SEC-130) The access carried through the sign-in is applied now, softly: the grant
+        // service authorizes every agent again, and a failure keeps the account.
+        grant: flow.grant.clone().map(|grant| Intent { grant, soft: true }),
     };
     let client_row = match flow.client_id {
         Some(id) => aurora_db::repo::oauth_clients::get(&state.pool, id).await?,
@@ -1405,7 +1575,7 @@ async fn run_callback(
         }
         Connect::Fields(_) => return Err(ConnectErr::Exchange),
     };
-    let (row, missing) = ctx.finalize(caller, method, kind, g).await?;
+    let (row, missing, applied) = ctx.finalize(caller, method, kind, g).await?;
     Ok(Done::Connected(
         row.id,
         missing,
@@ -1413,6 +1583,7 @@ async fn run_callback(
             app_id: flow.app_id.clone(),
             connections_path: None,
         },
+        applied,
     ))
 }
 

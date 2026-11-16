@@ -268,7 +268,7 @@ async fn ensure_personal_workspace(
             .await
             .map_err(aurora_db::DbError::from)?;
         let res = match s.kind.as_str() {
-            "secret" => grants::grant_secret_as_system(tx, state, &agent, s.id, actor())
+            "secret" => grants::grant_secret_as_system(tx, &agent, s.id, actor())
                 .await
                 .map(|w| w.event),
             "connection" => grants::grant_connection_as_system(tx, state, &agent, s.id, actor())

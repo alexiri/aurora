@@ -70,8 +70,8 @@ async fn callback(
         return page::bridge();
     }
     match service::callback(&state, &caller, &q, cookie).await {
-        Ok(service::Done::Connected(id, missing, landing)) => {
-            page::connected(id, &missing, &landing)
+        Ok(service::Done::Connected(id, missing, landing, applied)) => {
+            page::connected(id, &missing, &landing, &applied)
         }
         Ok(service::Done::Redirect { url, cookie }) => {
             let mut r = StatusCode::FOUND.into_response();

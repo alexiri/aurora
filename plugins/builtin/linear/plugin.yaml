@@ -1,6 +1,6 @@
 package:
   id: linear
-  version: 1.0.2
+  version: 1.0.3
   contract: 1
   min_core: 0.1.0
   publisher: aurora
@@ -45,6 +45,7 @@ apps:
           - { scope: write, name: "Read and change everything your Linear account can (issues, comments, projects)", access: write }
           - { scope: "issues:create", name: "Create and update issues and their attachments", access: write }
           - { scope: "comments:create", name: "Create comments on issues", access: write }
+        scope_presets: { read: [read], write: [read, write] }
         default_scopes: [read]
         callback: query
         token_response:

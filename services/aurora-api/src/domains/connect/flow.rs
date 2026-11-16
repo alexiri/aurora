@@ -30,6 +30,11 @@ pub struct Flow {
     /// (FIX-133, D-240) The connection's `read` | `write` access chosen at connect time.
     #[serde(default)]
     pub access: Option<String>,
+    /// (P5-UX-2, SEC-130) The access to give at the callback: lives only inside this sealed,
+    /// user-bound object, never in a URL in clear, a readable cookie or a table. Re-authorized
+    /// against current state when the callback applies it.
+    #[serde(default)]
+    pub grant: Option<super::dto::ConnectGrant>,
     pub pkce_verifier: Option<String>,
     pub reconnect: Option<Uuid>,
     pub continuation: Option<String>,

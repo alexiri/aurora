@@ -618,6 +618,10 @@ const ROWS: &[Row] = &[
     r("GET", "/v1/apps/{app}", G::Auth, false),
     r("GET", "/v1/apps/{app}/guide", G::Auth, false),
     r("GET", "/v1/apps/{app}/icon", G::Auth, false),
+    // (P5-UX-2, C-931, C-955) Fired with `?workspace_id=` (the workspace view: `can_own`); the
+    // organization view (owner/admin) is covered by it/app_setup.rs.
+    r("GET", "/v1/apps/{app}/setup", G::WsOwn, false),
+    r("GET", "/v1/apps/{app}/connect-plan", G::WsOwn, false),
     r("GET", "/v1/connectors", G::Auth, false),
     r("GET", "/v1/connectors/{id}/icon", G::Auth, false),
     r("POST", "/v1/apps/{app}/connect", G::Auth, false),
@@ -1549,6 +1553,9 @@ async fn fire(h: &Harness, fx: &Fx, row: &Row, p: P) -> (u16, Value) {
     let mut uri = fill(row.p, fx);
     if row.p.ends_with("/memories/search") || row.p.ends_with("/messages/search") {
         uri.push_str("?q=matrix");
+    }
+    if row.p == "/v1/apps/{app}/setup" || row.p == "/v1/apps/{app}/connect-plan" {
+        uri.push_str(&format!("?workspace_id={}", fx.ws));
     }
     if row.p == "/v1/channel-links/preview" {
         uri.push_str("?token=aui_matrix");

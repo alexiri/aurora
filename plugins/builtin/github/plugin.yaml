@@ -1,6 +1,6 @@
 package:
   id: github
-  version: 2.2.0
+  version: 2.2.1
   contract: 1
   min_core: 0.1.0
   publisher: aurora
@@ -90,6 +90,7 @@ apps:
         label: GitHub App
         description: "An app installed on the repositories you choose; tokens last one hour and do not depend on one person's account. GitHub enforces the app's permissions and repositories. With Read only chosen, Aurora also asks GitHub for a read-only token (and can limit it to named repositories). Recommended for teams."
         recommended: true
+        audience: admin
         authorize: false
         token: { kind: hook, max_lifetime_secs: 3600 }
         fields:
@@ -354,6 +355,7 @@ apps:
         label: GitHub App
         description: "An app installed on the repositories you choose; tokens last one hour and do not depend on one person's account. GitHub enforces the app's permissions and repositories. With Read only chosen, Aurora also asks GitHub for a read-only token (and can limit it to named repositories). Recommended for teams."
         recommended: true
+        audience: admin
         authorize: false
         token: { kind: hook, max_lifetime_secs: 3600 }
         fields:

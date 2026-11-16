@@ -392,6 +392,36 @@ impl Connect {
         }
     }
 
+    /// (P5-UX-2, C-956) Who the method is for; `Admin` is never suggested.
+    pub fn audience(&self) -> Audience {
+        match self {
+            Self::Oauth2(c) => c.audience,
+            Self::Fields(c) => c.audience,
+            Self::Hook(c) => c.audience,
+        }
+    }
+
+    /// (P5-UX-2, C-956) The scopes of the journey's choices: the declared `scope_presets`, else
+    /// `read` = the method's read scopes and `write` = all of its scopes.
+    pub fn effective_scope_presets(&self) -> ScopePresets {
+        let declared = match self {
+            Self::Oauth2(c) => c.scope_presets.clone(),
+            Self::Fields(c) => c.scope_presets.clone(),
+            Self::Hook(_) => None,
+        };
+        declared.unwrap_or_else(|| {
+            let all = self.declared_scopes();
+            ScopePresets {
+                read: all
+                    .iter()
+                    .filter(|d| d.access == Access::Read)
+                    .map(|d| d.scope.clone())
+                    .collect(),
+                write: all.iter().map(|d| d.scope.clone()).collect(),
+            }
+        })
+    }
+
     /// The method the connect window preselects (at most one per app).
     pub fn recommended(&self) -> bool {
         match self {
@@ -481,6 +511,32 @@ pub struct AccessLevel {
     pub authorize_params: BTreeMap<String, String>,
 }
 
+/// (P5-UX-2, C-956) Who a connect method is for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Audience {
+    #[default]
+    Person,
+    Admin,
+}
+
+impl Audience {
+    fn is_person(&self) -> bool {
+        *self == Self::Person
+    }
+}
+
+/// (P5-UX-2, C-956) The scopes each journey choice requests; each is one of the method's scopes,
+/// and `read` holds only `access: read` ones.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ScopePresets {
+    #[serde(default)]
+    pub read: Vec<String>,
+    #[serde(default)]
+    pub write: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Oauth2Connect {
@@ -493,6 +549,13 @@ pub struct Oauth2Connect {
     pub description: Option<String>,
     #[serde(default, skip_serializing_if = "is_false")]
     pub recommended: bool,
+    /// (P5-UX-2, C-956) Who can use the method: `admin` needs material only an administrator
+    /// holds, so the journey never suggests it.
+    #[serde(default, skip_serializing_if = "Audience::is_person")]
+    pub audience: Audience,
+    /// (P5-UX-2, C-956) Scopes of the journey's "Read only" and "Read and change" choices.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope_presets: Option<ScopePresets>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub token: Option<Token>,
     pub client: String,
@@ -524,6 +587,13 @@ pub struct FieldsConnect {
     pub description: Option<String>,
     #[serde(default, skip_serializing_if = "is_false")]
     pub recommended: bool,
+    /// (P5-UX-2, C-956) Who can use the method: `admin` needs material only an administrator
+    /// holds, so the journey never suggests it.
+    #[serde(default, skip_serializing_if = "Audience::is_person")]
+    pub audience: Audience,
+    /// (P5-UX-2, C-956) Scopes of the journey's "Read only" and "Read and change" choices.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope_presets: Option<ScopePresets>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub token: Option<Token>,
     pub fields: Vec<FormField>,
@@ -549,6 +619,10 @@ pub struct HookConnect {
     pub description: Option<String>,
     #[serde(default, skip_serializing_if = "is_false")]
     pub recommended: bool,
+    /// (P5-UX-2, C-956) Who can use the method: `admin` needs material only an administrator
+    /// holds, so the journey never suggests it.
+    #[serde(default, skip_serializing_if = "Audience::is_person")]
+    pub audience: Audience,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub token: Option<Token>,
     #[serde(default)]

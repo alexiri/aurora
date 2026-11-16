@@ -6,6 +6,7 @@
 
 pub mod audit;
 pub mod cidr;
+pub mod dash_paths;
 pub mod error;
 pub mod ids;
 pub mod limits;

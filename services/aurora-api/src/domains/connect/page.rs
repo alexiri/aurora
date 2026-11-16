@@ -1,6 +1,6 @@
 //! Tiny HTML pages for the OAuth callback (C-14).
 use super::flow;
-use super::service::Landing;
+use super::service::{Applied, Landing};
 use axum::response::{IntoResponse, Response};
 use http::{HeaderValue, StatusCode, header};
 
@@ -66,6 +66,7 @@ pub fn connected(
     connection_id: uuid::Uuid,
     missing_scopes: &[String],
     landing: &Landing,
+    applied: &Applied,
 ) -> Response {
     let Ok(nonce) = flow::random(16) else {
         return error("server_error", Some(landing));
@@ -83,8 +84,17 @@ pub fn connected(
             .join(", ");
         format!("<p>Warning: these permissions were not granted: {list}.</p>")
     };
+    // (P5-UX-2, C-957) The access that was written with the account, and why it was not (the
+    // account is kept either way). Agent ids are UUIDs the dashboard already holds.
+    let granted_js = serde_json::to_string(&applied.granted_agent_ids)
+        .unwrap_or_else(|_| "[]".into())
+        .replace('<', "\\u003c");
+    let failed_js = match &applied.failed {
+        Some(code) => format!(",grant_failed:{{code:{}}}", js(code)),
+        None => String::new(),
+    };
     let msg = format!(
-        "{{type:\"aurora:connected\",app_id:{},connection_id:\"{connection_id}\",missing_scopes:{missing_js}}}",
+        "{{type:\"aurora:connected\",app_id:{},connection_id:\"{connection_id}\",missing_scopes:{missing_js},granted_agent_ids:{granted_js}{failed_js}}}",
         js(&landing.app_id)
     );
     let link = continue_link(Some(landing));
@@ -174,7 +184,19 @@ mod tests {
     /// close only on the dashboard's ack.
     #[tokio::test]
     async fn pages_use_the_channel_and_close_only_on_the_ack() {
-        let ok = html(connected(uuid::Uuid::nil(), &["a:b".into()], &landing())).await;
+        let applied = Applied {
+            failed: Some("not_found".into()),
+            ..Applied::default()
+        };
+        let ok = html(connected(
+            uuid::Uuid::nil(),
+            &["a:b".into()],
+            &landing(),
+            &applied,
+        ))
+        .await;
+        assert!(ok.contains("granted_agent_ids:[]"), "{ok}");
+        assert!(ok.contains("grant_failed:{code:\"not_found\"}"), "{ok}");
         assert!(ok.contains("BroadcastChannel(\"aurora-connect\")"), "{ok}");
         assert!(ok.contains("type:\"aurora:connected\""), "{ok}");
         assert!(ok.contains("app_id:\"acme_app\""), "{ok}");

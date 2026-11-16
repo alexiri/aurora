@@ -23,6 +23,7 @@ pub mod cli_logins;
 pub mod connections;
 pub mod connector_hosts;
 pub mod connectors;
+pub mod contacts;
 pub mod conversations;
 pub mod credentials;
 pub mod derived_rules;
