@@ -45,8 +45,9 @@ mkdir -p "$ROOT/target"
 run_logged "$LOG" bash scripts/e2e/kind.sh --no-upgrade-legs "$@" -- k8_files_journey 9>&-
 rc=$?
 if [ "$rc" -eq 0 ]; then
-  if grep -qE '^[[:space:]]*SKIPPED:' "$LOG"; then
-    echo "files e2e: SKIPPED ($(grep -E '^[[:space:]]*SKIPPED:' "$LOG" | head -1 | sed 's/^[[:space:]]*//'))"
+  # cargo prints the test name first (`test k8_files_journey ... SKIPPED: ...`), so the marker is mid-line.
+  if grep -qE 'SKIPPED:' "$LOG"; then
+    echo "files e2e: SKIPPED ($(grep -E 'SKIPPED:' "$LOG" | head -1 | sed 's/^.*SKIPPED:/SKIPPED:/'))"
   elif grep -q "test result: ok. 1 passed" "$LOG"; then
     echo "files e2e: PASS (k8_files_journey)"
   else
