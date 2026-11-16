@@ -206,6 +206,12 @@ async fn email_domain_allow_lists() {
         .await;
     assert_eq!(s, 422, "{v}");
     assert_eq!(v["error"]["code"], "scim_domain_not_allowed", "{v}");
+    // C-783: the refusal names the instance setting that decides.
+    assert_eq!(
+        v["error"]["details"]["instance_setting"],
+        json!({"section": "scim", "key": "scim.allowed_email_domains"}),
+        "{v}"
+    );
     // A listed one is accepted.
     let (s, _, v) = h
         .send(

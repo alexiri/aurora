@@ -758,6 +758,14 @@ async fn retention_setting_validation_authority_and_audit() {
             (422, Some(code)),
             "{d}: {v}"
         );
+        // C-783: the ceiling refusal names the instance setting that decides.
+        if code == "retention_above_instance_maximum" {
+            assert_eq!(
+                v["error"]["details"]["instance_setting"],
+                json!({"section": "retention", "key": "retention.conversation_days_max"}),
+                "{v}"
+            );
+        }
     }
     assert_eq!(f.audit("retention.update").await.len(), 0);
     for d in [7, 365] {

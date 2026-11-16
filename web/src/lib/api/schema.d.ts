@@ -10270,6 +10270,12 @@ export interface components {
              * @description The instance maximum, when one is configured.
              */
             conversations_days_max?: number | null;
+            /**
+             * @description (SET-5, C-783) The instance setting behind each configured ceiling, for the dashboard
+             *     link (instance admins only): `conversations_days_max`, `attachments_days_max`,
+             *     `attachment_quota_mib_max`. A ceiling that is not set has no entry.
+             */
+            instance_settings: Record<string, never>;
         };
         RevokedResponse: {
             /** Format: int64 */

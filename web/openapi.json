@@ -48743,6 +48743,9 @@
       "Retention": {
         "type": "object",
         "description": "(phase 2, RFE-010) `GET/PUT /orgs/{org}/retention`.",
+        "required": [
+          "instance_settings"
+        ],
         "properties": {
           "attachment_quota_mib": {
             "type": [
@@ -48799,6 +48802,10 @@
             ],
             "format": "int64",
             "description": "The instance maximum, when one is configured."
+          },
+          "instance_settings": {
+            "type": "object",
+            "description": "(SET-5, C-783) The instance setting behind each configured ceiling, for the dashboard\nlink (instance admins only): `conversations_days_max`, `attachments_days_max`,\n`attachment_quota_mib_max`. A ceiling that is not set has no entry."
           }
         }
       },

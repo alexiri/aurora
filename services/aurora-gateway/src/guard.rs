@@ -30,6 +30,9 @@ pub struct Guard {
     /// The parts of `allow`, kept so either can be replaced alone.
     operator: arc_swap::ArcSwap<Vec<String>>,
     derived: arc_swap::ArcSwap<Vec<String>>,
+    /// Serialises the list updates: each reads the other half, computes and stores `allow`, so
+    /// two concurrent ones could lose an update. Judgements never take it (they load `allow`).
+    update: std::sync::Mutex<()>,
     /// Gateway listeners and database (address, port); an unspecified address
     /// means every loopback, unspecified and local interface address.
     own: Vec<(IpAddr, u16)>,
@@ -165,6 +168,7 @@ impl Guard {
             allow: arc_swap::ArcSwap::from_pointee(allow),
             operator: arc_swap::ArcSwap::from_pointee(allowed.to_vec()),
             derived: arc_swap::ArcSwap::from_pointee(Vec::new()),
+            update: std::sync::Mutex::new(()),
             own,
             local,
         })
@@ -173,6 +177,8 @@ impl Guard {
     /// Replace the operator's list (`gateway.allowed_private`, SET-5): applies to the next
     /// judgement. A list that does not parse changes nothing.
     pub fn set_allowed_private(&self, entries: &[String]) -> Result<(), String> {
+        // A poisoned lock guards nothing that can be half-written (the guard holds no data).
+        let _serial = self.update.lock().unwrap_or_else(|e| e.into_inner());
         let all: Vec<String> = entries
             .iter()
             .chain(self.derived.load().iter())
@@ -187,6 +193,7 @@ impl Guard {
     /// Replace the hosts derived from configuration beyond the operator's list (the LLM
     /// endpoints' hosts); the operator's list stays.
     pub fn set_derived_hosts(&self, hosts: &[String]) -> Result<(), String> {
+        let _serial = self.update.lock().unwrap_or_else(|e| e.into_inner());
         let all: Vec<String> = self
             .operator
             .load()
@@ -323,6 +330,50 @@ mod tests {
     }
     fn ip(s: &str) -> IpAddr {
         s.parse().unwrap()
+    }
+
+    /// Both list updates read the other half and store the combined list: interleaved from
+    /// threads, neither may lose the other's change (a removed entry must not stay allowed).
+    #[test]
+    fn concurrent_list_updates_do_not_lose_one() {
+        for round in 0..300 {
+            let g = Arc::new(g(&["10.0.0.2"]));
+            g.set_derived_hosts(&["old.internal".to_owned()]).unwrap();
+            let barrier = Arc::new(std::sync::Barrier::new(2));
+            let a = {
+                let (g, b) = (g.clone(), barrier.clone());
+                std::thread::spawn(move || {
+                    b.wait();
+                    g.set_allowed_private(&["10.0.0.1".to_owned()]).unwrap();
+                })
+            };
+            let d = {
+                let (g, b) = (g.clone(), barrier.clone());
+                std::thread::spawn(move || {
+                    b.wait();
+                    g.set_derived_hosts(&["new.internal".to_owned()]).unwrap();
+                })
+            };
+            a.join().unwrap();
+            d.join().unwrap();
+            let ok = |ip: &str, host: &str| g.check_ip(ip.parse().unwrap(), host, 80).is_ok();
+            assert!(
+                ok("10.0.0.1", "x"),
+                "round {round}: the new operator entry is lost"
+            );
+            assert!(
+                !ok("10.0.0.2", "x"),
+                "round {round}: the removed operator entry is still allowed"
+            );
+            assert!(
+                ok("10.0.0.9", "new.internal"),
+                "round {round}: the new derived host is lost"
+            );
+            assert!(
+                !ok("10.0.0.9", "old.internal"),
+                "round {round}: the removed derived host is still allowed"
+            );
+        }
     }
 
     #[test]
