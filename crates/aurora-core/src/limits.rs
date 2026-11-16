@@ -407,6 +407,36 @@ pub const TERMINAL_STREAM_WINDOW: usize = 128 * KIB;
 pub const TERMINALS_PER_SANDBOX: u32 = 2;
 pub const TERMINALS_PER_AGENT: u32 = 4;
 pub const TERMINALS_PER_USER: u32 = 2;
+/// (phase 5, P5-FILES-1, D-316) concurrent `exec.*` children per sandbox at the supervisor
+/// (`SSH_CHANNELS_PER_SANDBOX` 8 + `FILE_SESSIONS_PER_SANDBOX` 4; the per-kind caps are the
+/// runner's), separate from `TERMINALS_PER_SANDBOX`.
+pub const EXECS_PER_SANDBOX: u32 = 12;
+/// (phase 5, P5-FILES-1) live `auf_` files legs per sandbox at the runner (close 4409).
+pub const FILE_SESSIONS_PER_SANDBOX: u32 = 4;
+/// (phase 5, P5-FILES-1, C-901) single-use `auf_` files grant lifetime.
+pub const FILES_GRANT_TTL: Duration = Duration::from_secs(30);
+/// (C-901) a pooled SFTP session without a request closes after this.
+pub const FILES_SESSION_IDLE: Duration = Duration::from_secs(60);
+/// (C-901) a pooled SFTP session is reopened transparently after this.
+pub const FILES_SESSION_LIFETIME: Duration = Duration::from_secs(3600);
+/// (D-316(e)) entries per listing (`truncated` beyond).
+pub const FILES_LIST_MAX: usize = 5_000;
+/// (D-316(e)) entries per recursive delete (422 `too_many_entries`, nothing deleted).
+pub const FILES_DELETE_MAX: usize = 10_000;
+/// (D-316(e)) bytes per uploaded file (413 `file_too_large`).
+pub const FILES_UPLOAD_MAX: u64 = 512 * 1024 * 1024;
+/// (D-316(e)) bytes of UTF-8 text opened in the editor.
+pub const FILES_EDIT_MAX: u64 = 1024 * 1024;
+/// (C-899) bytes per request path (255 per component).
+pub const FILES_PATH_MAX: usize = 4_096;
+/// (C-900) concurrent content transfers per person per API replica (429 `too_many_transfers`).
+pub const FILE_TRANSFERS_PER_USER: u32 = 4;
+/// (C-900) a transfer with no progress this long is aborted.
+pub const FILES_TRANSFER_IDLE: Duration = Duration::from_secs(60);
+/// (C-900) the Files keep-awake grace after the last request.
+pub const FILES_AWAKE_GRACE: Duration = Duration::from_secs(120);
+/// (C-900) per-boot cap on Files-held wakefulness.
+pub const FILES_AWAKE_CAP: Duration = Duration::from_secs(4 * 3600);
 /// idle timeout of an open terminal session (a WebSocket ping counts).
 pub const TERMINAL_IDLE_TIMEOUT: Duration = Duration::from_secs(600);
 /// total life of one terminal session.
@@ -485,6 +515,20 @@ mod tests {
         assert_eq!(TERMINALS_PER_SANDBOX, 2);
         assert_eq!(TERMINALS_PER_AGENT, 4);
         assert_eq!(TERMINALS_PER_USER, 2);
+        assert_eq!(EXECS_PER_SANDBOX, 12);
+        assert_eq!(FILE_SESSIONS_PER_SANDBOX, 4);
+        assert_eq!(FILES_GRANT_TTL, Duration::from_secs(30));
+        assert_eq!(FILES_SESSION_IDLE, Duration::from_secs(60));
+        assert_eq!(FILES_SESSION_LIFETIME, Duration::from_secs(3600));
+        assert_eq!(FILES_LIST_MAX, 5_000);
+        assert_eq!(FILES_DELETE_MAX, 10_000);
+        assert_eq!(FILES_UPLOAD_MAX, 512 * 1024 * 1024);
+        assert_eq!(FILES_EDIT_MAX, 1024 * 1024);
+        assert_eq!(FILES_PATH_MAX, 4_096);
+        assert_eq!(FILE_TRANSFERS_PER_USER, 4);
+        assert_eq!(FILES_TRANSFER_IDLE, Duration::from_secs(60));
+        assert_eq!(FILES_AWAKE_GRACE, Duration::from_secs(120));
+        assert_eq!(FILES_AWAKE_CAP, Duration::from_secs(4 * 3600));
         assert_eq!(TERMINAL_IDLE_TIMEOUT, Duration::from_secs(600));
         assert_eq!(TERMINAL_MAX_LIFETIME, Duration::from_secs(14_400));
         assert_eq!(TERMINAL_AWAKE_GRACE, Duration::from_secs(120));

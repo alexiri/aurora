@@ -162,6 +162,10 @@ async fn view_full(s: &AppState, a: &AgentRow) -> Result<SandboxView, ApiError> 
     if r.terminal_in_use {
         reasons.push("terminal".to_owned());
     }
+    // (P5-FILES-1, C-900) Keep-awake reason `files`: a Files request within the grace.
+    if r.files_in_use {
+        reasons.push("files".to_owned());
+    }
     // The image is whatever the owning runner advertised (`runner.image`).
     let runner_caps = if running {
         match r.runner_id {

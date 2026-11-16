@@ -122,6 +122,18 @@ pub async fn open(
     if matches!(req.kind.as_deref(), Some("terminal")) {
         return terminal::open(s, runner, req).await;
     }
+    // (P5-FILES-1, C-901) `auf_` grants redeem from `file_stream_grants` only, as kind `files`;
+    // any other pairing never finds its row and is 403 `grant_invalid`.
+    if matches!(req.kind.as_deref(), Some("files")) {
+        return crate::domains::files::service::open(s, runner, req).await;
+    }
+    if req.grant.expose().starts_with("auf_") {
+        return Err(ApiError::new(
+            axum::http::StatusCode::FORBIDDEN,
+            "grant_invalid",
+            "This stream grant is not valid.",
+        ));
+    }
     previews::ensure_enabled(s)?;
     let row = relay_repo::consume_stream_grant(&s.pool, &token::hash(req.grant.expose()))
         .await?

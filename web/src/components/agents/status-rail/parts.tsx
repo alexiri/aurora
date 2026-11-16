@@ -245,6 +245,12 @@ export function ComputerPart({
             Terminal
           </Button>
         ) : null}
+        {/* (P5-FILES-2, D-316) Files exists exactly where the Terminal does. */}
+        {terminalAvailable ? (
+          <Button type="button" variant="outline" size="sm" onClick={() => onNavigate("files")}>
+            Files
+          </Button>
+        ) : null}
       </div>
     </div>
   );

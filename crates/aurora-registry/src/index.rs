@@ -7,7 +7,7 @@
 //! exact tier the longest path prefix wins. Path prefixes are plain string
 //! prefixes (absent = `/`). Governed-LLM-host blocking (`reserved_hosts`) is
 //! the gateway's job, not the index's.
-use aurora_policy::{HostPattern, PathPattern};
+use aurora_policy::HostPattern;
 
 use crate::manifest::{INSTANCE_HOST, ToolItem};
 pub use crate::snapshot::{AppEntry, ClaimStatus, HostEntry, Snapshot};
@@ -93,17 +93,8 @@ impl<'a> HostIndex<'a> {
     ) -> Option<(&'a AppEntry, &'a ToolItem)> {
         let entry = self.lookup(host, path)?;
         let app = self.snap.app(&entry.app_id)?;
-        let tools = app.tools.as_ref()?;
-        [&tools.read, &tools.write]
-            .into_iter()
-            .flatten()
-            .flat_map(|g| &g.items)
-            .find(|t| {
-                tool_serves_host(app, t, host, 443, false)
-                    && PathPattern::lenient(&t.path).matches(path)
-                    && (t.methods.is_empty()
-                        || t.methods.iter().any(|m| m.eq_ignore_ascii_case(method)))
-            })
+        crate::identify::tools(app)
+            .find(|t| crate::identify::serves(app, false, t, host, 443, path, method))
             .map(|t| (app, t))
     }
 }

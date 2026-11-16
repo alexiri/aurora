@@ -7,6 +7,7 @@ pub mod claims;
 pub mod credential_free;
 pub mod diff;
 pub mod digest;
+pub mod identify;
 pub mod index;
 pub mod instance;
 pub mod library;

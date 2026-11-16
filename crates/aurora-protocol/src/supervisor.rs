@@ -15,11 +15,12 @@ use crate::common::{
     Empty, SecretString, Validate, ValidationError, check_chars, check_max, json_len,
 };
 use crate::runner::{
-    Code, GateResult, HomeSync, HomeSynced, MemoryWrite, PortsState, PreviewStartFrame,
-    ProcessStates, PtyClose, PtyCredit, PtyOpen, PtyOpened, PtyRefused, PtyResize, SandboxStatus,
-    SendNowResult, SessionPurge, SessionPurged, SessionRelease, SessionReport, SteerResult,
-    StreamClose, StreamCredit, StreamOpen, StreamOpened, StreamRefused, SupervisorReady,
-    TurnDeliver, TurnEvent, TurnMessage, TurnNotice, TurnRef, TurnResult, WatchFired,
+    Code, ExecEof, ExecExit, ExecOpen, ExecOpened, ExecRefused, GateResult, HomeSync, HomeSynced,
+    MemoryWrite, PortsState, PreviewStartFrame, ProcessStates, PtyClose, PtyCredit, PtyOpen,
+    PtyOpened, PtyRefused, PtyResize, SandboxStatus, SendNowResult, SessionPurge, SessionPurged,
+    SessionRelease, SessionReport, SteerResult, StreamClose, StreamCredit, StreamOpen,
+    StreamOpened, StreamRefused, SupervisorReady, TurnDeliver, TurnEvent, TurnMessage, TurnNotice,
+    TurnRef, TurnResult, WatchFired,
 };
 use crate::tools::{ToolCallBody, ToolError, ToolResult};
 
@@ -197,6 +198,10 @@ tagged_open! {
         PtyResize(PtyResize) = "pty.resize",
         PtyCredit(PtyCredit) = "pty.credit",
         PtyClose(PtyClose) = "pty.close",
+        // (phase 5, P5-FILES-1, D-316, `16 §W20` leg 2) exec frames beside the pty frames:
+        // the same unsequenced side-channel and id space; an older supervisor ignores them.
+        ExecOpen(ExecOpen) = "exec.open",
+        ExecEof(ExecEof) = "exec.eof",
         Shutdown(ShutdownBody) = "shutdown",
         Ack(Empty) = "ack",
     }
@@ -237,6 +242,9 @@ tagged_open! {
         PtyRefused(PtyRefused) = "pty.refused",
         PtyCredit(PtyCredit) = "pty.credit",
         PtyClose(PtyClose) = "pty.close",
+        ExecOpened(ExecOpened) = "exec.opened",
+        ExecRefused(ExecRefused) = "exec.refused",
+        ExecExit(ExecExit) = "exec.exit",
         Ack(Empty) = "ack",
     }
 }
@@ -347,6 +355,7 @@ impl Validate for RunnerToSupervisor {
             Self::PtyResize(v) => v.validate(),
             Self::PtyCredit(v) => v.validate(),
             Self::PtyClose(v) => check_chars("reason", v.reason.as_str(), 32),
+            Self::ExecOpen(v) => v.validate(),
             _ => Ok(()),
         }
     }
@@ -372,6 +381,8 @@ impl Validate for SupervisorToRunner {
             Self::PtyRefused(v) => check_chars("reason", v.reason.as_str(), 32),
             Self::PtyClose(v) => check_chars("reason", v.reason.as_str(), 32),
             Self::PtyCredit(v) => v.validate(),
+            Self::ExecRefused(v) => check_chars("reason", v.reason.as_str(), 32),
+            Self::ExecExit(v) => v.validate(),
             _ => Ok(()),
         }
     }

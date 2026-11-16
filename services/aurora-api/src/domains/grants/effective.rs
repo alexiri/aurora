@@ -194,15 +194,14 @@ async fn compute_inner(
                         truncated: false,
                         app_id: Some(c.app_id.clone()),
                         tool_id: Some(t.id.clone()),
-                        tool_tags: aurora_policy::facts::ToolTags {
-                            graphql: t.graphql.is_some(),
-                            git: t.git.is_some(),
-                            write: t.group == "write",
-                            // (FIX-136, D-241) The token cannot serve the tool: shown blocked.
-                            scope_missing: !t.scopes.is_empty()
-                                && !c.scopes.is_empty()
-                                && !t.scopes.iter().any(|s| c.scopes.contains(s)),
-                        },
+                        // (FIX-159, FIX-136, D-241) The gateway's tags: the group, the kind and
+                        // whether the token cannot serve the tool (shown blocked).
+                        tool_tags: aurora_registry::identify::tags(
+                            t.group == "write",
+                            t.graphql.is_some(),
+                            t.git.is_some(),
+                            aurora_registry::identify::scope_missing(&t.scopes, &c.scopes),
+                        ),
                         winning_credential: Some(cred.clone()),
                         is_llm_host: false,
                         identity: identity.clone(),

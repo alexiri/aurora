@@ -96,6 +96,9 @@ rcgen = "0.14"
 x509-parser = "0.18"
 futures = "0.3"
 tokio-tungstenite = { version = "0.30", default-features = false, features = ["connect", "handshake"] }
+# (P5-FILES-1, D-316) the SFTP v3 client of the Files page (Apache-2.0; the raw session over any
+# AsyncRead + AsyncWrite, `extended()` for `posix-rename@openssh.com`; no SSH stack).
+russh-sftp = { version = "3.0.1", default-features = false }
 lru = "0.19"
 # No `reqwest` feature: openidconnect 4 is built for reqwest 0.12; aurora-api's OidcHttp adapts the
 # workspace reqwest instead (domains/oidc/client.rs).

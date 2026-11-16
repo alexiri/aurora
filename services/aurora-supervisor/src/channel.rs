@@ -399,7 +399,11 @@ async fn connection(
                             .and_then(|v| {
                                 v.get("kind")
                                     .and_then(|k| k.as_str())
-                                    .map(|k| k.starts_with("stream.") || k.starts_with("pty."))
+                                    .map(|k| {
+                                        k.starts_with("stream.")
+                                            || k.starts_with("pty.")
+                                            || k.starts_with("exec.")
+                                    })
                             })
                             .unwrap_or(false);
                         if unsequenced {
@@ -407,7 +411,7 @@ async fn connection(
                                 .ok()
                                 .and_then(|v| {
                                     v.get("kind").and_then(|k| k.as_str())
-                                        .map(|k| k.starts_with("pty."))
+                                        .map(|k| k.starts_with("pty.") || k.starts_with("exec."))
                                 })
                                 .unwrap_or(false);
                             match serde_json::from_str::<Frame<RunnerToSupervisor>>(t.as_str()) {

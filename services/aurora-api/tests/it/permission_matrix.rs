@@ -189,6 +189,31 @@ const fn r(m: &'static str, p: &'static str, g: G, so: bool) -> Row {
 /// Routes that are not checked against the principal matrix, with reasons.
 const EXEMPT: &[(&str, &str, &str)] = &[
     (
+        "GET",
+        "/v1/agents/{agent}/files",
+        "P5-FILES-1 (C-898/C-900): session-cookie only like the terminal (a key is 401, not 403), 404 `terminal_disabled` while the terminal is off (this harness leaves it off) and a live sandbox + runner leg for anything else; the auth matrix is it/files.rs",
+    ),
+    (
+        "GET",
+        "/v1/agents/{agent}/files/text",
+        "P5-FILES-1: see GET /files",
+    ),
+    (
+        "GET",
+        "/v1/agents/{agent}/files/content",
+        "P5-FILES-1: see GET /files",
+    ),
+    (
+        "PUT",
+        "/v1/agents/{agent}/files/content",
+        "P5-FILES-1: see GET /files",
+    ),
+    (
+        "POST",
+        "/v1/agents/{agent}/files/ops",
+        "P5-FILES-1: see GET /files",
+    ),
+    (
         "POST",
         "/v1/telemetry/traces",
         "FIX-146 D (C-732): any session may post browser spans, but the route is 404 for everyone \

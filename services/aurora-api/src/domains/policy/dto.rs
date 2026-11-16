@@ -465,7 +465,18 @@ pub struct Simulation {
     pub guidance_code: Option<String>,
     pub winning_credential: Option<WinningCredential>,
     pub candidates: Vec<SimCandidate>,
+    /// (FIX-159, C-930) The app the request was recognized as (host, port and path against Active
+    /// host claims), and the catalogue tool when one matched. Absent for a request no app serves.
+    pub app: Option<SimApp>,
     pub trace: SimTrace,
+}
+
+/// (FIX-159, C-930) What the request was recognized as.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct SimApp {
+    pub app_id: String,
+    /// The catalogue tool the request matched; null when none did.
+    pub tool_id: Option<String>,
 }
 
 // ---- row conversions ----
