@@ -97,6 +97,9 @@ pub struct AppState {
     /// (phase 5, FIX-146 Part D, C-732 (6)) Browser span ingestion: `None` without
     /// `telemetry.otlp_endpoint`, then `POST /v1/telemetry/traces` answers 404.
     pub browser_spans: Option<Arc<domains::telemetry::BrowserSpans>>,
+    /// (phase 5, P4-SSH-1, D-239(d)) The SSH user-certificate signer: `Some` only while
+    /// `ssh.enabled` (built from `AURORA_SSH_CA_KEY`; the `local` implementation).
+    pub ssh_signer: Option<Arc<dyn domains::ssh::signer::SshCaSigner>>,
     /// SSE keepalive interval.
     pub sse_keepalive: std::time::Duration,
     /// How often open SSE streams re-validate their principal (besides revocation NOTIFYs).
@@ -192,6 +195,16 @@ impl AppState {
         let browser_spans = domains::telemetry::BrowserSpans::from_config(&config.telemetry)
             .map_err(|e| format!("telemetry.otlp_endpoint: {e}"))?
             .map(Arc::new);
+        // (P4-SSH-1, D-239(d)) the signer seam: `local` from `AURORA_SSH_CA_KEY`, only while
+        // SSH is enabled (the configuration already refused a missing or garbled key).
+        let ssh_signer: Option<Arc<dyn domains::ssh::signer::SshCaSigner>> = if config.ssh.enabled {
+            Some(Arc::new(
+                domains::ssh::signer::LocalSigner::from_config(&config)
+                    .map_err(|e| format!("AURORA_SSH_CA_KEY: {e}"))?,
+            ))
+        } else {
+            None
+        };
         let state = Self {
             pool,
             browser_spans,
@@ -218,6 +231,7 @@ impl AppState {
             card_requests,
             library,
             settings: Arc::new(domains::settings::handle::SettingsHandle::new(None)),
+            ssh_signer,
             sse_keepalive: aurora_core::limits::SSE_KEEPALIVE,
             stream_recheck: crate::http::auth::STREAM_RECHECK,
         };
@@ -527,6 +541,7 @@ pub fn v1_router() -> OpenApiRouter<AppState> {
         .merge(domains::previews::router())
         .merge(domains::terminal::router())
         .merge(domains::files::router())
+        .merge(domains::ssh::router())
         .merge(domains::telemetry::router())
         .merge(domains::relay::router())
         .merge(domains::groups::router())

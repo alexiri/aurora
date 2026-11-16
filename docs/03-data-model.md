@@ -1730,29 +1730,8 @@ Five new tables and three `sandboxes` columns. P4-SSH-1 lands `ssh_keys` and `ss
 `### \`table\`` section, in the change that adds its migration. The gateway database role gets
 nothing on any of them.
 
-#### `ssh_keys` (new table; a person's registered SSH public keys)
-| Planned column | Type | Notes | Phase |
-|---|---|---|---|
-| id | uuid pk | | 5 (P4-SSH-1) |
-| user_id | uuid not null FK→users (cascade) | owned by the person, not by an org or workspace; at most `SSH_KEYS_PER_USER` (10) | 5 (P4-SSH-1) |
-| name | text not null CHECK (char_length(name) BETWEEN 1 AND 80) | sanitized (`02 §Untrusted text`); defaults to the key's comment, else "SSH key" | 5 (P4-SSH-1) |
-| algorithm | text not null CHECK in (`ssh-ed25519`) | the only accepted type (D-239(b)) | 5 (P4-SSH-1) |
-| public_key | text not null | **canonical** OpenSSH form `ssh-ed25519 <base64>`, rebuilt from the parsed key (never the raw paste; the comment and any options are dropped) | 5 (P4-SSH-1) |
-| fingerprint | text not null | `SHA256:<unpadded base64>` of the key blob, computed by the server (OpenSSH format) | 5 (P4-SSH-1) |
-| last_used_at | timestamptz null | stamped at a certificate mint and at a session open with this key, at most once a minute (churn column) | 5 (P4-SSH-1) |
-| unique | `(user_id, fingerprint)` | the same key twice for one person is 409 `ssh_key_exists`; two people may register the same public key (a row grants nothing by itself: a certificate also needs the private key) | 5 (P4-SSH-1) |
-
-#### `ssh_mint_counters` (new table; certificate-mint rate limit, a ledger)
-| Planned column | Type | Notes | Phase |
-|---|---|---|---|
-| user_id | uuid not null | pk part; no FK (a ledger, like `preview_grant_uses`) | 5 (P4-SSH-1) |
-| agent_id | uuid not null | pk part; no FK | 5 (P4-SSH-1) |
-| window_start | timestamptz not null | pk part; `date_trunc('hour', now())` | 5 (P4-SSH-1) |
-| count | int not null default 0 | incremented by one `INSERT … ON CONFLICT DO UPDATE SET count = count + 1 WHERE count < SSH_MINTS_PER_USER_AGENT_HOUR RETURNING count` in the mint transaction: no row returned → 429 `ssh_mint_rate_limited`. Rows older than 24 h are pruned by the retention sweep | 5 (P4-SSH-1) |
-
-Its own table rather than `rate_limit_windows`/`aurora-counters` (D-239(c)): the mint limit must be exact
-across API replicas whatever `ratelimit.counters.backend` says (the default `local` counts per
-replica) and must never fail open; the audit row is best-effort and cannot be the counter.
+`ssh_keys` and `ssh_mint_counters` (P4-SSH-1) are real sections above (§9–§11 area, after
+`file_stream_grants`).
 
 #### `ssh_sessions` (new table; one row per authenticated SSH connection)
 | Planned column | Type | Notes | Phase |
@@ -1936,6 +1915,33 @@ this table.
 A table of its own, not rows in `terminal_stream_grants` or `ssh_stream_grants`: the `auf_` prefix
 routes redemption to this table alone, so a files grant can only ever open an `sftp` exec (D-239(f)
 pattern). File contents are never stored anywhere; the gateway database role gets nothing on it.
+
+### `ssh_keys` (a person's registered SSH public keys, phase 5, P4-SSH-1, D-239(b), SEC-93, C-790; migration `20261201000200`)
+| Column | Type | Notes |
+|---|---|---|
+| id | uuid pk | |
+| user_id | uuid not null FK→users (cascade) | owned by the person, not by an org or workspace; at most `SSH_KEYS_PER_USER` (10) |
+| name | text not null CHECK (char_length(name) BETWEEN 1 AND 80) | sanitized (`02 §Untrusted text`); defaults to the key's comment, else "SSH key" |
+| algorithm | text not null CHECK in (`ssh-ed25519`) | the only accepted type (D-239(b)) |
+| public_key | text not null | **canonical** OpenSSH form `ssh-ed25519 <base64>`, rebuilt from the parsed key (never the raw paste; the comment and any options are dropped) |
+| fingerprint | text not null | `SHA256:<unpadded base64>` of the key blob, computed by the server (OpenSSH format) |
+| last_used_at | timestamptz null | stamped at a certificate mint and at a session open with this key, at most once a minute (churn column) |
+| unique | `(user_id, fingerprint)` | the same key twice for one person is 409 `ssh_key_exists`; two people may register the same public key (a row grants nothing by itself: a certificate also needs the private key) |
+
+The gateway database role gets nothing on this table.
+
+### `ssh_mint_counters` (certificate-mint rate limit, a ledger, phase 5, P4-SSH-1, D-239(c), C-791; migration `20261201000201`)
+| Column | Type | Notes |
+|---|---|---|
+| user_id | uuid not null | pk part; no FK (a ledger, like `preview_grant_uses`) |
+| agent_id | uuid not null | pk part; no FK |
+| window_start | timestamptz not null | pk part; `date_trunc('hour', now())` |
+| count | int not null default 0 | incremented by one `INSERT … ON CONFLICT DO UPDATE SET count = count + 1 WHERE count < SSH_MINTS_PER_USER_AGENT_HOUR RETURNING count` in the mint transaction: no row returned → 429 `ssh_mint_rate_limited`. Rows older than 24 h are pruned by the retention sweep |
+
+Its own table rather than `rate_limit_windows`/`aurora-counters` (D-239(c)): the mint limit must be exact
+across API replicas whatever `ratelimit.counters.backend` says (the default `local` counts per
+replica) and must never fail open; the audit row is best-effort and cannot be the counter. The
+gateway database role gets nothing on this table.
 
 #### `eval_questions` (phase 5, P4-EVAL, D-289, C-861; migration `20261201000236`)
 | Column | Type | Notes |

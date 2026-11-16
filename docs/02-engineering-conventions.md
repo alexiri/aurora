@@ -78,6 +78,7 @@ loaders live in `aurora-db`.
 | OpenAPI | `utoipa` (+ `utoipa-axum`); the API serves `/v1/openapi.json` |
 | WebSocket | `tokio-tungstenite` |
 | Crypto | `aws-lc-rs` (AES-256-GCM, HKDF, HMAC, SHA-256), `ed25519-dalek` (package/manifest signatures), `argon2` (passwords; phase 0 only, removed with password sign-in in phase 1, RFE-004) |
+| SSH keys and certificates (phase 5, P4-SSH-1, D-239) | `ssh-key` 0.7 (RustCrypto, Apache-2.0 OR MIT; features `ed25519`, `std`, `alloc`, `rand_core`): parses OpenSSH public keys, computes `SHA256:` fingerprints, builds and signs user certificates (`certificate::Builder`) in the API, and parses them in `aurora-cli`. Pinned to the `0.7.0-rc.12` release candidate because 0.6.x would add a second `ed25519-dalek`/`sha2`/`rand_core` line beside this workspace's; revisit when 0.7 is final |
 | OIDC | `openidconnect` |
 | WebAssembly | `wasmtime` (component model, epoch interruption), `wit-bindgen` (guest SDK) |
 | Kubernetes | `kube`, `k8s-openapi` |

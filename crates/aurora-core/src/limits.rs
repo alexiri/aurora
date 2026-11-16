@@ -465,6 +465,15 @@ pub const TERMINAL_WAKE_WAIT: Duration = Duration::from_secs(45);
 pub const TERMINAL_WAKES_PER_AGENT_HOUR: u32 = 12;
 /// the `pty.open` round trip to the supervisor (an older supervisor answers nothing → 4502).
 pub const TERMINAL_PTY_OPEN_TIMEOUT: Duration = Duration::from_secs(5);
+/// (phase 5, P4-SSH-1, D-239(b), C-790) registered SSH public keys per person (409
+/// `ssh_key_limit`).
+pub const SSH_KEYS_PER_USER: usize = 10;
+/// (P4-SSH-1, C-791) default validity of a minted SSH user certificate; `ssh.cert_ttl_secs`
+/// (60 … 86 400 s) overrides it. `valid_after` is backdated 60 s for clock skew.
+pub const SSH_CERT_TTL: Duration = Duration::from_secs(900);
+/// (P4-SSH-1, D-239(c)) certificate mints per person per agent per clock hour (429
+/// `ssh_mint_rate_limited`); counted exactly across replicas in `ssh_mint_counters`.
+pub const SSH_MINTS_PER_USER_AGENT_HOUR: u32 = 30;
 
 #[cfg(test)]
 mod tests {
@@ -530,6 +539,9 @@ mod tests {
         assert_eq!(TERMINAL_WAKE_WAIT, Duration::from_secs(45));
         assert_eq!(TERMINAL_WAKES_PER_AGENT_HOUR, 12);
         assert_eq!(TERMINAL_PTY_OPEN_TIMEOUT, Duration::from_secs(5));
+        assert_eq!(SSH_KEYS_PER_USER, 10);
+        assert_eq!(SSH_CERT_TTL, Duration::from_secs(900));
+        assert_eq!(SSH_MINTS_PER_USER_AGENT_HOUR, 30);
         const { assert!(CONDITION_BODY_BUFFER_MIN <= CONDITION_BODY_BUFFER) };
         const { assert!(CONDITION_BODY_BUFFER <= CONDITION_BODY_BUFFER_MAX) };
     }

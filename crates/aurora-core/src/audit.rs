@@ -45,6 +45,9 @@ pub const SECURITY_CRITICAL_ACTIONS: &[&str] = &[
     "oauth_client.create",
     "oauth_client.delete",
     "oauth_client.update",
+    // (P4-SSH-1, D-239(b), C-790) a person's registered SSH public keys
+    "ssh_key.create",
+    "ssh_key.delete",
     "secret.accept",
     "secret.create",
     "secret.delete",
