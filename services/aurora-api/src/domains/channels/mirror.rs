@@ -269,7 +269,10 @@ pub(super) async fn link_of(
 }
 
 /// `integration` with its manifest, when active.
-pub(super) async fn ctx_of(conn: &mut PgConnection, integration: uuid::Uuid) -> Result<Option<Ctx>, ApiError> {
+pub(super) async fn ctx_of(
+    conn: &mut PgConnection,
+    integration: uuid::Uuid,
+) -> Result<Option<Ctx>, ApiError> {
     let Some(integ) = integrations::get(&mut *conn, integration).await? else {
         return Ok(None);
     };

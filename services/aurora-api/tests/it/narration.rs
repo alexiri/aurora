@@ -127,7 +127,11 @@ async fn an_agent_with_the_setting_off_gets_the_receipt_and_no_card() {
     let turn = w.turns().await[0];
     w.start_turn(turn).await;
     assert!(w.narr_ops().await.is_empty());
-    assert_eq!(w.ops("reaction.add").await.len(), 1, "the receipt is untouched");
+    assert_eq!(
+        w.ops("reaction.add").await.len(),
+        1,
+        "the receipt is untouched"
+    );
     let on: bool = sqlx::query_scalar("SELECT narration_cards FROM agents WHERE id=$1")
         .bind(a)
         .fetch_one(w.h.pool())
@@ -166,8 +170,10 @@ async fn steps_update_in_place_and_are_cut_to_the_last_twelve() {
     let many: Vec<(String, String, Option<bool>)> = (0..14)
         .map(|i| (format!("Tool{i}"), String::new(), Some(i != 3)))
         .collect();
-    let refs: Vec<(&str, &str, Option<bool>)> =
-        many.iter().map(|(n, s, o)| (n.as_str(), s.as_str(), *o)).collect();
+    let refs: Vec<(&str, &str, Option<bool>)> = many
+        .iter()
+        .map(|(n, s, o)| (n.as_str(), s.as_str(), *o))
+        .collect();
     w.tools(turn, &refs).await;
     let ops = w.narr_ops().await;
     assert_eq!(ops.len(), 2, "{ops:?}");
@@ -195,7 +201,13 @@ async fn a_burst_is_one_update_per_interval() {
     assert_eq!(narration::sweep(w.h.pool()).await.unwrap(), 1);
     let ops = w.narr_ops().await;
     assert_eq!(ops.len(), 3);
-    assert_eq!(ops[2].2["content"]["narration"]["steps"].as_array().unwrap().len(), 3);
+    assert_eq!(
+        ops[2].2["content"]["narration"]["steps"]
+            .as_array()
+            .unwrap()
+            .len(),
+        3
+    );
 }
 
 #[tokio::test]
@@ -203,7 +215,8 @@ async fn the_card_collapses_when_the_answer_posts_and_the_close_is_never_dropped
     let (w, _a, turn) = W::narrating_dm().await;
     w.card_delivered().await;
     sqlx::query(AGE).execute(w.h.pool()).await.unwrap();
-    w.tools(turn, &[("Read", "", Some(true)), ("Bash", "", Some(false))]).await;
+    w.tools(turn, &[("Read", "", Some(true)), ("Bash", "", Some(false))])
+        .await;
     // The space is at its write cap: the collapse still goes out.
     sqlx::query(
         "INSERT INTO channel_ops (id, connector_id, integration_id, kind, payload, dedupe_key, status)
@@ -227,7 +240,10 @@ async fn the_card_collapses_when_the_answer_posts_and_the_close_is_never_dropped
     assert_eq!(n["step_count"], 2);
     assert_eq!(n["failed_count"], 1);
     assert!(n.get("steps").is_none(), "{n}");
-    assert!(w.ops("message.delete").await.is_empty(), "collapsed, not deleted (D-286)");
+    assert!(
+        w.ops("message.delete").await.is_empty(),
+        "collapsed, not deleted (D-286)"
+    );
     // Idempotent: a second finish (a restart, the sweep) queues no second collapse.
     let row = w.turn_row(turn).await;
     let mut c = w.h.pool().acquire().await.unwrap();
@@ -278,7 +294,8 @@ async fn a_card_carries_names_only_in_a_shared_space_and_the_summary_in_a_direct
             .unwrap();
     }
     tx.commit().await.unwrap();
-    w.tools(turn, &[("Read", "reading notes.md", Some(true))]).await;
+    w.tools(turn, &[("Read", "reading notes.md", Some(true))])
+        .await;
     let all = serde_json::to_string(&w.narr_ops().await).unwrap();
     assert!(all.contains("reading notes.md"), "{all}");
     assert!(!all.contains("CANARY"), "{all}");
@@ -295,13 +312,18 @@ async fn a_card_carries_names_only_in_a_shared_space_and_the_summary_in_a_direct
     w.start_turn(turn).await;
     w.card_delivered().await;
     sqlx::query(AGE).execute(w.h.pool()).await.unwrap();
-    w.tools(turn, &[("Read", "CANARY-ARGUMENT /etc/secret", Some(true))]).await;
+    w.tools(turn, &[("Read", "CANARY-ARGUMENT /etc/secret", Some(true))])
+        .await;
     let ops = w.narr_ops().await;
     assert_eq!(ops.len(), 2, "{ops:?}");
     let all = serde_json::to_string(&ops).unwrap();
     assert!(all.contains("\"Read\""), "{all}");
     assert!(!all.contains("CANARY"), "{all}");
-    assert!(ops[1].2["content"]["narration"]["steps"][0].get("detail").is_none());
+    assert!(
+        ops[1].2["content"]["narration"]["steps"][0]
+            .get("detail")
+            .is_none()
+    );
 }
 
 #[tokio::test]
@@ -335,9 +357,18 @@ async fn a_space_at_its_card_cap_gets_no_card_for_a_further_turn_and_its_answer_
     let before = w.narr_ops().await.len();
     let next = *t.last().unwrap();
     w.start_turn(next).await;
-    assert_eq!(w.narr_ops().await.len(), before, "no card for the further turn");
+    assert_eq!(
+        w.narr_ops().await.len(),
+        before,
+        "no card for the further turn"
+    );
     w.finish_turn(next, "done", Some("still answered")).await;
-    assert!(w.ops("message.post").await.iter().any(|p| p["content"]["text"] == "still answered"));
+    assert!(
+        w.ops("message.post")
+            .await
+            .iter()
+            .any(|p| p["content"]["text"] == "still answered")
+    );
 }
 
 #[tokio::test]
@@ -356,7 +387,11 @@ async fn a_space_at_its_write_cap_drops_updates() {
     .unwrap();
     w.tools(turn, &[("Read", "", Some(true))]).await;
     assert_eq!(
-        w.narr_ops().await.iter().filter(|o| o.0.starts_with(&format!("narr:{turn}:"))).count(),
+        w.narr_ops()
+            .await
+            .iter()
+            .filter(|o| o.0.starts_with(&format!("narr:{turn}:")))
+            .count(),
         0,
         "no update inside a full minute"
     );
@@ -386,6 +421,12 @@ async fn a_rate_limited_update_is_dropped_but_the_post_and_the_close_are_retried
         .execute(w.h.pool())
         .await
         .unwrap();
-    assert!(kinds(format!("narr:{turn}:77")).await, "an update is dropped");
-    assert!(!kinds(format!("narr:{turn}:end")).await, "the close is retried");
+    assert!(
+        kinds(format!("narr:{turn}:77")).await,
+        "an update is dropped"
+    );
+    assert!(
+        !kinds(format!("narr:{turn}:end")).await,
+        "the close is retried"
+    );
 }

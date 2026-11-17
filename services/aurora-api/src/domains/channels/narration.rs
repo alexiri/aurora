@@ -57,7 +57,10 @@ fn update_key(turn: Uuid, seq: i64) -> String {
 }
 
 /// The turn's card post, when one was queued.
-async fn card_op(conn: &mut PgConnection, turn: Uuid) -> Result<Option<channel_ops::OpRow>, ApiError> {
+async fn card_op(
+    conn: &mut PgConnection,
+    turn: Uuid,
+) -> Result<Option<channel_ops::OpRow>, ApiError> {
     Ok(channel_ops::by_dedupe_key(&mut *conn, &post_key(turn)).await?)
 }
 
@@ -73,7 +76,11 @@ fn db(e: sqlx::Error) -> ApiError {
 }
 
 /// Serializes the cap checks of one space across replicas, for the rest of the transaction.
-async fn lock_space(conn: &mut PgConnection, integration: Uuid, space: &str) -> Result<(), ApiError> {
+async fn lock_space(
+    conn: &mut PgConnection,
+    integration: Uuid,
+    space: &str,
+) -> Result<(), ApiError> {
     sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
         .bind(format!("narr-space:{integration}:{space}"))
         .execute(&mut *conn)
@@ -143,7 +150,11 @@ async fn view_of(conn: &mut PgConnection, t: &TurnRow, direct: bool) -> Result<V
     let mut last_seq = 0;
     for ev in transcript::tool_events_of_turn(&mut *conn, t.conversation_id, t.id).await? {
         last_seq = last_seq.max(ev.seq);
-        let call_id = ev.payload.get("call_id").and_then(Value::as_str).unwrap_or("");
+        let call_id = ev
+            .payload
+            .get("call_id")
+            .and_then(Value::as_str)
+            .unwrap_or("");
         match ev.ty.as_str() {
             "tool.started" => {
                 let name = clip(ev.payload.get("name").and_then(Value::as_str).unwrap_or(""));
@@ -155,14 +166,22 @@ async fn view_of(conn: &mut PgConnection, t: &TurnRow, direct: bool) -> Result<V
                 steps.push(Step {
                     call_id: call_id.to_owned(),
                     step: NarrationStep {
-                        name: if name.is_empty() { "tool".to_owned() } else { name },
+                        name: if name.is_empty() {
+                            "tool".to_owned()
+                        } else {
+                            name
+                        },
                         detail,
                         status: NarrationStepStatus::Running,
                     },
                 });
             }
             "tool.finished" => {
-                let ok = ev.payload.get("ok").and_then(Value::as_bool).unwrap_or(false);
+                let ok = ev
+                    .payload
+                    .get("ok")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
                 if let Some(s) = steps
                     .iter_mut()
                     .rev()
@@ -301,14 +320,22 @@ fn delivered(post: &channel_ops::OpRow) -> Option<(String, String, Sender)> {
     if post.status != "done" {
         return None;
     }
-    let message_ref = post.result.as_ref()?.get("message_ref")?.as_str()?.to_owned();
+    let message_ref = post
+        .result
+        .as_ref()?
+        .get("message_ref")?
+        .as_str()?
+        .to_owned();
     let sender = serde_json::from_value(post.payload.get("sender")?.clone()).ok()?;
     Some((space_of_post(post).to_owned(), message_ref, sender))
 }
 
 /// When the turn's card was last written (post, update or collapse), and the highest event seq
 /// an earlier update already shows.
-async fn last_write(conn: &mut PgConnection, turn: Uuid) -> Result<(Option<DateTime<Utc>>, i64), ApiError> {
+async fn last_write(
+    conn: &mut PgConnection,
+    turn: Uuid,
+) -> Result<(Option<DateTime<Utc>>, i64), ApiError> {
     let rows: Vec<(String, DateTime<Utc>)> = sqlx::query_as(
         "SELECT dedupe_key, created_at FROM channel_ops
           WHERE dedupe_key = $1 OR dedupe_key LIKE $2",
@@ -338,7 +365,10 @@ pub async fn refresh(conn: &mut PgConnection, t: &TurnRow) -> Result<(), ApiErro
         return Ok(());
     };
     let (last_at, shown_seq) = last_write(conn, t.id).await?;
-    if channel_ops::by_dedupe_key(&mut *conn, &end_key(t.id)).await?.is_some() {
+    if channel_ops::by_dedupe_key(&mut *conn, &end_key(t.id))
+        .await?
+        .is_some()
+    {
         return Ok(());
     }
     if last_at.is_some_and(|at| {
@@ -417,7 +447,10 @@ pub async fn finish(conn: &mut PgConnection, t: &TurnRow) -> Result<(), ApiError
     let Some(post) = card_op(conn, t.id).await? else {
         return Ok(());
     };
-    if channel_ops::by_dedupe_key(&mut *conn, &end_key(t.id)).await?.is_some() {
+    if channel_ops::by_dedupe_key(&mut *conn, &end_key(t.id))
+        .await?
+        .is_some()
+    {
         return Ok(());
     }
     let Some((space, message_ref, sender)) = delivered(&post) else {
@@ -450,7 +483,17 @@ pub async fn finish(conn: &mut PgConnection, t: &TurnRow) -> Result<(), ApiError
         elapsed_ms: Some(elapsed_ms),
     });
     lock_space(conn, integ, &space).await?;
-    enqueue_update(conn, integ, &post, &space, &message_ref, &sender, content, end_key(t.id)).await
+    enqueue_update(
+        conn,
+        integ,
+        &post,
+        &space,
+        &message_ref,
+        &sender,
+        content,
+        end_key(t.id),
+    )
+    .await
 }
 
 /// The channel-op sweep: collapses the cards of turns that ended while their post was still in

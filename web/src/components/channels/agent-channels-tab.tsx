@@ -9,6 +9,7 @@ import { EmptyState, ErrorState, Loading } from "@/components/states";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { inputClass } from "@/components/ui/field";
+import { CheckboxField } from "@/components/ui/form";
 import { Notice } from "@/components/ui/notice";
 import { ItemList, Section } from "@/components/ui/section";
 import { defaultValues, validateFields, visibleFields, type FieldValues } from "@/lib/api/apps";
@@ -28,6 +29,7 @@ import {
   type PresenceMode,
   type SpaceBinding,
 } from "@/lib/api/channels";
+import { usePatchAgent } from "@/lib/api/agents";
 import { dedicatedFields, formFields, useConnectors, type ConnectorInfo } from "@/lib/api/connectors";
 import { useOrg } from "@/lib/api/queries";
 import { orgRoutes } from "@/lib/routes";
@@ -407,9 +409,40 @@ function Reach({ agentId, canOwn }: { agentId: string; canOwn: boolean }) {
   );
 }
 
-export function AgentChannelsTab({ agentId, orgId, canOwn }: { agentId: string; orgId?: string; canOwn: boolean }) {
+/** (phase 5, P4-NARR, C-852) "Show progress in chat": the agent's `narration_cards` setting. Off by default. */
+function NarrationSwitch({ wsId, agentId, value, canOwn }: { wsId?: string; agentId: string; value: boolean; canOwn: boolean }) {
+  const patch = usePatchAgent(wsId, agentId);
+  return (
+    <Section id="narration" title="Progress in chat" description="How this agent shows its work on chat platforms.">
+      <CheckboxField
+        id="narration-cards"
+        label="Show progress in chat"
+        hint="Posts one message per reply that lists the steps the agent takes, updated as they run and shrunk to one line when the answer arrives. Chat platforms that can edit messages only. In shared channels the card shows step names, not details."
+        checked={value}
+        disabled={!canOwn || patch.isPending}
+        onChange={(checked) => patch.mutate({ narration_cards: checked })}
+      />
+      <MutationError error={patch.error} />
+    </Section>
+  );
+}
+
+export function AgentChannelsTab({
+  agentId,
+  orgId,
+  canOwn,
+  wsId,
+  narrationCards = false,
+}: {
+  agentId: string;
+  orgId?: string;
+  canOwn: boolean;
+  wsId?: string;
+  narrationCards?: boolean;
+}) {
   return (
     <div className="space-y-8">
+      <NarrationSwitch wsId={wsId} agentId={agentId} value={narrationCards} canOwn={canOwn} />
       <Presences agentId={agentId} orgId={orgId} canOwn={canOwn} />
       {canOwn ? <Bindings agentId={agentId} /> : null}
       <Reach agentId={agentId} canOwn={canOwn} />

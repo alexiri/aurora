@@ -815,7 +815,11 @@ mod tests {
         assert!(!verify(&key, "v1.token", "not base64 !!"));
     }
 
-    fn step(name: &str, detail: Option<&str>, status: aurora_channels::NarrationStepStatus) -> aurora_channels::NarrationStep {
+    fn step(
+        name: &str,
+        detail: Option<&str>,
+        status: aurora_channels::NarrationStepStatus,
+    ) -> aurora_channels::NarrationStep {
         aurora_channels::NarrationStep {
             name: name.to_owned(),
             detail: detail.map(str::to_owned),
@@ -823,7 +827,10 @@ mod tests {
         }
     }
 
-    fn card(steps: Vec<aurora_channels::NarrationStep>, earlier: u32) -> aurora_channels::Narration {
+    fn card(
+        steps: Vec<aurora_channels::NarrationStep>,
+        earlier: u32,
+    ) -> aurora_channels::Narration {
         aurora_channels::Narration {
             turn_id: Uuid::nil().to_string(),
             status: aurora_channels::NarrationStatus::Running,
@@ -842,20 +849,39 @@ mod tests {
         let n = card(
             vec![
                 step("@here", None, St::Ok),
-                step("@all <@user:U1> @devs", Some("see https://evil.example/x `x`"), St::Running),
+                step(
+                    "@all <@user:U1> @devs",
+                    Some("see https://evil.example/x `x`"),
+                    St::Running,
+                ),
                 step("Bash", None, St::Failed),
             ],
             4,
         );
         let t = render_narration(&n);
-        assert!(t.starts_with("**Working on it**\n- `@\u{200B}here`: done"), "{t}");
+        assert!(
+            t.starts_with("**Working on it**\n- `@\u{200B}here`: done"),
+            "{t}"
+        );
         assert!(t.contains("- `Bash`: failed"), "{t}");
         assert!(t.ends_with("\n- 4 earlier"), "{t}");
-        assert!(t.contains("`see https://evil.example/x 'x'`"), "the URL stays inside a code span: {t}");
+        assert!(
+            t.contains("`see https://evil.example/x 'x'`"),
+            "the URL stays inside a code span: {t}"
+        );
         // After defusing, no `@name`, `<@user:…>` token or hereless broadcast is left active.
-        assert!(!t.contains("@here") && !t.contains("@all") && !t.contains("<@user"), "{t}");
-        assert!(!t.contains('😀') && !t.contains("]("), "no emoji, no link: {t}");
-        assert!(mention_refs(&t).users.is_empty() && mention_refs(&t).names.is_empty(), "{t}");
+        assert!(
+            !t.contains("@here") && !t.contains("@all") && !t.contains("<@user"),
+            "{t}"
+        );
+        assert!(
+            !t.contains('😀') && !t.contains("]("),
+            "no emoji, no link: {t}"
+        );
+        assert!(
+            mention_refs(&t).users.is_empty() && mention_refs(&t).names.is_empty(),
+            "{t}"
+        );
     }
 
     #[test]
@@ -871,7 +897,10 @@ mod tests {
         c.step_count = Some(4);
         c.failed_count = Some(1);
         c.elapsed_ms = Some(75_000);
-        assert_eq!(render_narration(&c), "**Done** · 4 steps, 1 failed · 1 min 15 s");
+        assert_eq!(
+            render_narration(&c),
+            "**Done** · 4 steps, 1 failed · 1 min 15 s"
+        );
         c.status = aurora_channels::NarrationStatus::Failed;
         c.step_count = Some(1);
         c.failed_count = Some(0);
