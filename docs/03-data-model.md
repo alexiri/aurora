@@ -1316,6 +1316,27 @@ the agent's own generation; a share change bumps `agents.home_sync_generation`.
 | org_id, agent_id | uuid | pk part |
 | day | date | pk part (UTC) |
 | awake_seconds | bigint not null | rebuildable from intervals |
+| workspace_id | uuid not null | (phase 5, P5-USAGE-1, C-1002; migration `20261201000247`) indexes (workspace_id, day) and (day); the migration truncated the never-written table and the hourly "Runtime daily rollup" rebuilds it (`05 §Background jobs`) |
+
+### `usage_daily` — *no FKs*
+A ledger of tokens and turn time, added to at turn end (the fenced terminal transition) and never decremented or deleted (phase 5, P5-USAGE-1, D-359, C-1001; migration `20261201000247`, which also backfills it from the turns still present).
+| Column | Type | Notes |
+|---|---|---|
+| org_id, workspace_id, agent_id | uuid not null | |
+| day | date not null | UTC day of `turns.finished_at` |
+| provider, model | text null | the turn's stamp (`turns.usage`, else `turns.model_basis`); `model` is the `by_model` entry's for tokens, the default model's for turns |
+| endpoint_id | text null | the operator-configured endpoint id (a slug, not a uuid; the contract row's `uuid` was a defect) |
+| turns, turn_seconds | bigint not null default 0 | counted under the default model's key |
+| input_tokens, output_tokens, cache_read_tokens, cache_write_tokens | bigint not null default 0 | |
+| unique | (workspace_id, agent_id, day, provider, endpoint_id, model) NULLS NOT DISTINCT | the upsert key |
+| index | (workspace_id, day); (org_id, day); (day) | the workspace, organization and instance views |
+
+### `usage_rollup_state`
+One row: the runtime rollup's watermark (phase 5, P5-USAGE-1, C-1002; migration `20261201000247`).
+| Column | Type | Notes |
+|---|---|---|
+| singleton | bool pk | default true, CHECK (singleton) |
+| runtime_watermark | timestamptz null | start of the last successful "Runtime daily rollup" run; null = rebuild everything; returned as `runtime_as_of` |
 
 ---
 
@@ -1610,30 +1631,6 @@ phase-0 schema: the tables above are machine-checked against the migrations
 headings and a different header so that the extractor ignores it. A migration
 for a planned change lands with its phase; the corresponding rows move into the
 tables above in the same change (and this section shrinks).
-
-#### `runtime_daily` (P5-USAGE-1)
-| Planned column | Type | Notes |
-|---|---|---|
-| workspace_id | uuid not null | (phase 5, P5-USAGE-1, C-1002; migration `20261201000247`) indexes (workspace_id, day) and (day); the migration truncates the never-written table and the hourly rollup rebuilds it |
-
-#### `usage_daily` (new table) — *no FKs* (phase 5, P5-USAGE-1, D-359, C-1001; migration `20261201000247`)
-A ledger of tokens and turn time, added to at turn end and never decremented.
-| Planned column | Type | Notes |
-|---|---|---|
-| org_id, workspace_id, agent_id | uuid not null | |
-| day | date not null | UTC day of `turns.finished_at` |
-| provider, model | text null | the turn's stamp (`turns.usage`, else `turns.model_basis`); `model` is the `by_model` entry's for tokens, the default model's for turns |
-| endpoint_id | uuid null | |
-| turns, turn_seconds | bigint not null default 0 | counted under the default model's key |
-| input_tokens, output_tokens, cache_read_tokens, cache_write_tokens | bigint not null default 0 | |
-| key | | `UNIQUE NULLS NOT DISTINCT (workspace_id, agent_id, day, provider, endpoint_id, model)`; indexes (workspace_id, day), (org_id, day), (day) |
-
-#### `usage_rollup_state` (new table) (phase 5, P5-USAGE-1, C-1002; migration `20261201000247`)
-One row: the runtime rollup's watermark.
-| Planned column | Type | Notes |
-|---|---|---|
-| singleton | bool pk default true | CHECK (singleton) |
-| runtime_watermark | timestamptz null | start of the last successful "Runtime daily rollup" run; null = rebuild everything; returned as `runtime_as_of` |
 
 #### `attachments` (S3 blob backend; phase 6, D-318)
 | Planned column | Type | Notes | Phase |

@@ -33,6 +33,10 @@ const RETENTION_PRUNE_JOB: &str = "retention_prune";
 pub const PARTITION_EVERY: Duration = Duration::from_secs(24 * 3600);
 pub const PARTITIONS_AHEAD: u32 = 2;
 const PARTITION_JOB: &str = "request_log_partitions";
+/// Runtime daily rollup (P5-USAGE-1, C-1002, singleton); the first tick runs at start-up, so a restart
+/// after downtime catches up at once.
+pub const RUNTIME_ROLLUP_EVERY: Duration = Duration::from_secs(3600);
+const RUNTIME_ROLLUP_JOB: &str = "runtime_daily_rollup";
 
 /// One approval sweep; returns `(expired, abandoned)` counts.
 pub async fn sweep_approvals(pool: &PgPool) -> Result<(usize, usize), aurora_db::DbError> {
@@ -100,6 +104,19 @@ pub async fn sweep_attachment_storage(
 ) -> Result<Option<crate::domains::attachments::sweep::SweepReport>, aurora_core::ApiError> {
     let ran = aurora_db::jobs::try_singleton(pool, ATTACHMENT_SWEEP_JOB, || {
         crate::domains::attachments::sweep::run_with(pool, cfg, mail)
+    })
+    .await?;
+    ran.transpose()
+}
+
+/// Runtime daily rollup (P5-USAGE-1, C-1002, singleton): recompute `runtime_daily` for every UTC day
+/// touched by an open interval or one changed since the watermark. `Ok(None)` when another replica holds
+/// the lock, otherwise the number of (agent, day) rows written.
+pub async fn rollup_runtime_daily(pool: &PgPool) -> Result<Option<u64>, aurora_db::DbError> {
+    let ran = aurora_db::jobs::try_singleton(pool, RUNTIME_ROLLUP_JOB, || async {
+        let mut conn = pool.acquire().await?;
+        let at = aurora_db::repo::usage::clock(&mut conn).await?;
+        aurora_db::repo::usage::rollup_runtime(&mut conn, at).await
     })
     .await?;
     ran.transpose()
@@ -509,6 +526,19 @@ pub fn spawn(
                 Ok(Some(n)) if n > 0 => tracing::info!(notices = n, "scim token expiry notices"),
                 Ok(_) => {}
                 Err(e) => tracing::warn!(error = %e.message(), "scim token expiry sweep failed"),
+            }
+        }
+    });
+    let up = pool.clone();
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(RUNTIME_ROLLUP_EVERY);
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            tick.tick().await;
+            match rollup_runtime_daily(&up).await {
+                Ok(Some(n)) if n > 0 => tracing::info!(rows = n, "runtime daily rollup"),
+                Ok(_) => {}
+                Err(e) => tracing::warn!(error = %e, "runtime daily rollup failed"),
             }
         }
     });

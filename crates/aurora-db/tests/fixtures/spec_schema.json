@@ -871,7 +871,8 @@
       "agent_id",
       "awake_seconds",
       "day",
-      "org_id"
+      "org_id",
+      "workspace_id"
     ],
     "runtime_intervals": [
       "agent_id",
@@ -1269,6 +1270,25 @@
       "text",
       "trace_context",
       "usage"
+    ],
+    "usage_daily": [
+      "agent_id",
+      "cache_read_tokens",
+      "cache_write_tokens",
+      "day",
+      "endpoint_id",
+      "input_tokens",
+      "model",
+      "org_id",
+      "output_tokens",
+      "provider",
+      "turn_seconds",
+      "turns",
+      "workspace_id"
+    ],
+    "usage_rollup_state": [
+      "runtime_watermark",
+      "singleton"
     ],
     "user_identities": [
       "email_at_link",
@@ -2276,7 +2296,8 @@
       "agent_id": "uuid",
       "awake_seconds": "bigint not null",
       "day": "date",
-      "org_id": "uuid"
+      "org_id": "uuid",
+      "workspace_id": "uuid not null"
     },
     "runtime_intervals": {
       "agent_id": "uuid",
@@ -2674,6 +2695,25 @@
       "text": "text not null",
       "trace_context": "text null",
       "usage": "jsonb null"
+    },
+    "usage_daily": {
+      "agent_id": "uuid not null",
+      "cache_read_tokens": "bigint not null",
+      "cache_write_tokens": "bigint not null",
+      "day": "date not null",
+      "endpoint_id": "text null",
+      "input_tokens": "bigint not null",
+      "model": "text null",
+      "org_id": "uuid not null",
+      "output_tokens": "bigint not null",
+      "provider": "text null",
+      "turn_seconds": "bigint not null",
+      "turns": "bigint not null",
+      "workspace_id": "uuid not null"
+    },
+    "usage_rollup_state": {
+      "runtime_watermark": "timestamptz null",
+      "singleton": "bool not null"
     },
     "user_identities": {
       "email_at_link": "citext not null",

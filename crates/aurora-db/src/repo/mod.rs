@@ -76,6 +76,7 @@ pub mod thread_links;
 pub mod tool_identity;
 pub mod transcript;
 pub mod turns;
+pub mod usage;
 pub mod user_links;
 pub mod user_tokens;
 pub mod users;
