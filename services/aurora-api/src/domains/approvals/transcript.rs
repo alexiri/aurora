@@ -92,6 +92,9 @@ pub async fn write(
     if let Some(app) = &a.sentence.app {
         payload["app_name"] = json!(app.name);
     }
+    if let Some(agent) = &a.agent {
+        payload["agent_handle"] = json!(agent.handle);
+    }
     match kind {
         Kind::Pending => {
             payload["expires_at"] = json!(row.deadline);
