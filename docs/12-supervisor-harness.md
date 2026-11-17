@@ -240,7 +240,7 @@ does not enable a second harness.
   `["claude-code"]`, so Codex is opt-in). The API stamps it into the boot document
   (`harness.id`, `11 §The boot document`) and the supervisor instantiates the adapter
   **by that id from a compile-time registry** (`claude-code`, `codex`, `fake`; `fake`
-  only with `hosted.allow_fake_harness`). Nothing inside the sandbox (an agent, a
+  only with `hosted.allow_fake_harness`; phase 5, P5-HARN, adds `pi`, `goose` and `opencode`, D-361). Nothing inside the sandbox (an agent, a
   tool, a file) can change it. An id the supervisor does not know, or whose runtime is
   not in the image, fails the boot (`sandbox.status failed`, `reason_code =
   harness_unsupported`) before `ready`, never a fallback to another harness.
@@ -257,6 +257,9 @@ does not enable a second harness.
   |---------|-------------------|-------|
   | `claude-code` | `anthropic_messages`, `anthropic_bedrock`, `anthropic_vertex` | `08 §Phase 4 providers` |
   | `codex` | `openai_responses` | `openai_chat` only while the pinned version supports the chat wire API; a version that drops it removes it here. The pinned 0.167.0 refuses `wire_api = "chat"`, so it is not declared (D-153) |
+  | `pi` | `anthropic_messages`, `openai_responses`, `openai_chat` | phase 5, P5-HARN (D-362); P5-HARN Part A checks it against the pinned version |
+  | `goose` | `anthropic_messages`, `openai_chat` (+ `openai_responses` if the pinned version sends to it) | phase 5, P5-HARN |
+  | `opencode` | `anthropic_messages`, `openai_responses`, `openai_chat` | phase 5, P5-HARN |
   | `fake` | none (needs no model key) | tests |
 
 - **Dialect choice.** For an agent, a usable key's endpoint serves the harness when the
@@ -355,6 +358,99 @@ specified here is the contract.
   version that can choose a model per task declares roles in its own spec change. The rendered `model` is
   the default. Usage reports one `by_model` entry, for the default model, unless the pinned version
   reports per-model token counts.
+
+### Adapters `pi`, `goose` and `opencode` (phase 5, P5-HARN, D-361, D-362, SEC-133)
+
+These three harnesses get the same treatment as `claude-code` (owner, 2026-11-17). Selection, placement,
+switching, purge, the conformance suite and the provider-error mapping are exactly as above. This section
+gives the contract each adapter adds. **It was written from the projects' documentation.** P5-HARN Part A
+checks it against the pinned binaries and corrects it. A flag, variable, dialect or role the pinned
+version does not have is removed here, never emulated. Exact names are pinned in each adapter next to its
+`PINNED_VERSION`, as for `claude-code` and `codex`.
+
+**Common to all three** (D-362):
+
+- **State.** Each conversation's harness state lives in its own directory,
+  `<home>/.aurora/harness/<id>/sessions/<conversation_id>/`. `purge_session` removes that directory, which
+  is idempotent and exact. Any configuration the adapter renders lives in
+  `<home>/.aurora/harness/<id>/config/`, owned by Aurora, and is **re-rendered and read back before every
+  start** (SEC-66). The harness's credential stores are deleted before every start: `auth.json` (Pi,
+  OpenCode), `secrets.yaml` (goose), and any keyring use, which is switched off.
+- **Credential.** Rendered files refer to the placeholder **through an environment variable**
+  (`ANTHROPIC_API_KEY` or `OPENAI_API_KEY` = `aurora-placeholder`), never as a literal. The gateway removes
+  it and injects the key. All traffic uses the per-session proxy and the boot document's CA bundle.
+- **Dialects** in preference order (a dialect the pinned version cannot use without a credential is not
+  declared). `pi`: `anthropic_messages`, `openai_responses`, `openai_chat`. `goose`: `anthropic_messages`,
+  `openai_chat`, plus `openai_responses` only if the pinned version sends a configured endpoint to the
+  Responses API. `opencode`: `anthropic_messages`, `openai_responses`, `openai_chat`. None declares
+  `anthropic_bedrock` or `anthropic_vertex`: their SDK paths sign with cloud credentials and have no
+  skip-auth switch, so Bedrock and Vertex reach them only through a `litellm` endpoint (D-260(a)).
+- **No vendor network**: telemetry, update checks, model catalogues, share links, session-naming calls and
+  background services are switched off. The live suite asserts that a turn calls only the endpoint host,
+  and only its inference path set.
+- **Approvals** are off: the Aurora sandbox and the gateway are the boundaries, as for `claude-code` and
+  `codex`.
+- **Instructions**: `instruction_files = ["AGENTS.md"]`. **Platform tools**: one stdio MCP server `aurora` =
+  `aurora-supervisor mcp-bridge --session <conversation_id>`, with tools **exposed directly**, not
+  through the harness's own code mode. The bridge must run as a descendant of the harness process the
+  supervisor started (D-301).
+- **Built-in tools**: the harness's own file, edit and shell tools stay on. Built-ins that duplicate a
+  platform feature with their own storage, or that call a vendor service, are switched off.
+- `background_tool = false`. **Usage**: `by_model` entries come from the per-message usage and its
+  model (input, output, cache read, cache write); totals are their sum; cost fields are dropped (D-304).
+  A version without per-model data reports one entry, for the default model. **Effort**: a version-pinned
+  table (`low`, `medium`, `high`; `max` = the highest level the CLI accepts for the model).
+- **Models** (D-303): a role is declared in `model_roles` only when the harness has a native slot that
+  receives it. `model_meta`'s `context_window` for the default model goes to the harness's context
+  setting. Values are re-checked against `MODEL_ID_PATTERN` before they are rendered (SEC-122).
+
+**`pi`** (Node.js, the npm tree pinned by a lockfile):
+- **Drive**: one long-lived `pi --mode rpc` child per live session, with JSONL commands on stdin and events
+  on stdout (16 MiB line bound, like `codex`). `--session-dir` is the conversation's directory and
+  `--session-id` is the session ref. `PI_CODING_AGENT_DIR` is the config directory.
+- **Config**: `models.json` has one provider with `baseUrl` from `ModelChoice` and `api`
+  (`anthropic-messages`, `openai-responses` or `openai-completions`) from the dialect. Its `apiKey` names
+  the placeholder variable. The model's `contextWindow` comes from `model_meta`. `mcp.json` holds the
+  bridge. Settings turn off install telemetry, set direct MCP exposure, and turn off project trust, so a
+  `.pi/` directory written in the workspace cannot replace the rendered provider or MCP configuration.
+  Environment: `PI_OFFLINE=1`, `PI_TELEMETRY=0`, `PI_SKIP_VERSION_CHECK=1`.
+- **Capabilities**: `resume`, `tool_events`, `thinking_deltas`, `platform_tools`. `steer` only if the pinned
+  version passes the steer conformance tests; RPC `prompt` with `streamingBehavior: "steer"` is accepted
+  only during a run. `skills_dir = ".agents/skills"`. `model_roles = []`, because Pi has no subagents.
+- **Events**: `message_update` text and thinking deltas → text and thinking; `tool_execution_start/end`
+  → tool started and finished; `agent_settled` → exactly one `Done`, or `Error` when the run failed.
+  `abort` → RPC `abort`. Effort → Pi's thinking level.
+
+**`goose`** (Rust release binary, checksum verified):
+- **Drive**: one `goose run --output-format stream-json` child per turn, prompt on stdin, resumed by
+  session name. If the pinned version's stream-json lacks tool events or usage, the adapter uses `goose acp`
+  over stdio instead (one child per live session, ACP `session/load` to resume, `session/cancel` to abort).
+  The choice is recorded here and in D-362. `GOOSE_PATH_ROOT` is the conversation's directory, so the
+  SQLite session store is per conversation.
+- **Config and environment**: `GOOSE_PROVIDER` (`anthropic`, `openai` or `litellm` for the dialect),
+  `GOOSE_MODEL`, the provider's host/base-path variables from `ModelChoice`, and the placeholder key.
+  Also `GOOSE_MODE=auto`, `GOOSE_TELEMETRY_ENABLED=false`, `GOOSE_DISABLE_KEYRING=1`,
+  `GOOSE_DISABLE_SESSION_NAMING=true` and `CONTEXT_FILE_NAMES=["AGENTS.md"]`. `GOOSE_CONTEXT_LIMIT` comes
+  from `model_meta`. Extensions: `developer` on, `memory` and `computercontroller` off, `aurora` (the
+  bridge) as stdio.
+- **Capabilities**: `resume`, `tool_events`, `platform_tools`; `thinking_deltas` if the pinned version
+  streams thinking; `steer = false`. `skills_dir` is the pinned version's skills directory if it has one;
+  otherwise the skills are listed in `AGENTS.md`. **Roles**: `subagent_role` → `GOOSE_SUBAGENT_PROVIDER`
+  and `GOOSE_SUBAGENT_MODEL` (same endpoint), so `model_roles` lists the roles that slot can take.
+
+**`opencode`** (release binary, checksum verified; the line GitHub marks Latest, Q-HARN-2):
+- **Drive**: one `opencode run --format json --standalone --auto` child per turn, prompt on stdin,
+  resumed with `--session <id>`. Never the shared per-user background service. Its database (`OPENCODE_DB`
+  or the data directory) is in the conversation's directory.
+- **Config**: `opencode.json` (path given through the pinned config variable). One provider for the
+  dialect, with `baseURL` from `ModelChoice` and `apiKey: "{env:…}"` naming the placeholder. The model has
+  `limit.context` from `model_meta`. Also: updates `disable`, sharing off, the model catalogue fetch off,
+  permissions that allow everything, the `aurora` local MCP server, and Code Mode off.
+- **Capabilities**: `resume`, `tool_events`, `thinking_deltas`, `platform_tools`; `steer = false`.
+  `skills_dir = ".agents/skills"`. **Roles**: `roles.small` → the small/title model, and
+  `subagent_role` → the built-in general subagent's model, if the pinned version has those slots.
+
+The web terminal gets `pi`, `goose` and `opencode` wrappers like `claude` and `codex` (D-247, C-1015).
 
 ### Adapter `fake`
 
