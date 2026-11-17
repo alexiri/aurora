@@ -308,6 +308,34 @@ relay:
   # X-Forwarded-For sent to the app); empty means the socket peer is the visitor (FIX-090).
   trusted_proxies: []
 
+# Web Push for approvals (phase 5, P4-011B-3, D-134, D-266, C-837, docs/15 §Web Push): wakes an
+# opted-in decider's browser when an approval waits and no Aurora tab is open. The api sends
+# end-to-end encrypted, fixed-field pushes to the browser vendors' push services, so it needs
+# outbound HTTPS to them. `push.enabled` is the single switch: it mirrors config.push.enabled (both
+# set and unequal, or the config key alone, fails the render) and renders the api's egress rule to
+# `push.networkPolicy.egressTo`. Nothing else of push is a chart value: the VAPID key is generated
+# by the first api replica and sealed in the api's own store (no Secret needed); the contact and
+# the limits are config.push.* (docs/15).
+push:
+  enabled: false
+  networkPolicy:
+    # NetworkPolicy peers (podSelector / namespaceSelector / ipBlock entries) the api may reach on
+    # TCP 443: the push services (fcm.googleapis.com, *.push.services.mozilla.com,
+    # *.push.apple.com, *.notify.windows.com) or the egress proxy in front of them. REQUIRED when
+    # push.enabled: default deny stays, so no peer means no push. Example: an ipBlock of the
+    # public internet, [{ipBlock: {cidr: 0.0.0.0/0, except: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16]}}]
+    egressTo: []
+  # Optional operator-managed VAPID private key instead of the generated one (then
+  # `aurora-api push rotate-vapid` is refused: rotate by replacing the Secret). A Secret with the
+  # key `vapid.key` holding a PKCS#8 PEM or the base64url raw 32-byte P-256 scalar; mounted as
+  # AURORA_PUSH_VAPID_KEY and named by config.push.vapid.private_key_env. A bad key stops the api.
+  vapid:
+    existingSecret: ""
+    key: AURORA_PUSH_VAPID_KEY
+  # Optional: the hosts a subscription may name (exact or `*.suffix`). Empty keeps the built-in
+  # list (FCM, Mozilla, Apple, Windows); set it only to narrow or add. Re-checked before every send.
+  allowedEndpointHosts: []
+
 # SSH access (phase 5, P4-SSH-1/2, D-239, docs/15 §SSH access): `ssh <agent id>@<host>` with a
 # short-lived certificate (Account › SSH keys, `aurora ssh`) into a hosted agent's sandbox. The
 # single switch: renders the terminator Deployment, its LoadBalancer and ops Services,

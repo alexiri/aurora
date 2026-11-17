@@ -22,6 +22,7 @@ pub mod git_host;
 pub mod llm;
 pub mod oauth;
 pub mod oidc;
+pub mod push;
 pub mod responses;
 pub mod template;
 

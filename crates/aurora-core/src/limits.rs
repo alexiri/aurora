@@ -41,6 +41,28 @@ pub const PARK_PER_AGENT_HOUR: u32 = 60;
 pub const PARK_RESUME_WINDOW: Duration = Duration::from_secs(1800);
 /// (P4-011B-2, D-264(e), C-824) approvals listed in one resume follow-up, then "…and N more".
 pub const PARK_FOLLOWUP_LINES_MAX: usize = 10;
+/// (P4-011B-3, D-134) grace before a push for a new approval (a decision or a live tab first wins).
+pub const APPROVAL_PUSH_DELAY: Duration = Duration::from_secs(5);
+/// (P4-011B-3) pushes per user per hour; the next one becomes a digest, the rest fold silently.
+pub const PUSH_PER_USER_HOUR: u32 = 30;
+/// (P4-011B-3) Web Push registrations per user (409 `push_subscription_limit_reached`).
+pub const PUSH_SUBSCRIPTIONS_PER_USER: u32 = 10;
+/// (P4-011B-3) test pushes per user per hour (429 `push_test_rate_limited`).
+pub const PUSH_TEST_PER_HOUR: u32 = 3;
+/// (P4-011B-3) the longest `TTL` sent to a push service.
+pub const PUSH_TTL_MAX: Duration = Duration::from_secs(86_400);
+/// (P4-011B-3, C-832) the largest plaintext payload before encryption.
+pub const PUSH_PAYLOAD_MAX: usize = KIB;
+/// (P4-011B-3) how long a retired VAPID key stays for the subscriptions that reference it.
+pub const PUSH_VAPID_RETIRE: Duration = Duration::from_secs(30 * 86_400);
+/// (P4-011B-3, C-834) tries for a 429/5xx answer within 60 s.
+pub const PUSH_RETRY_MAX: u32 = 3;
+/// (P4-011B-3, C-834) consecutive failures that disable a subscription.
+pub const PUSH_DISABLE_AFTER_FAILURES: i32 = 5;
+/// (P4-011B-3, C-831) the longest accepted subscription endpoint URL, in characters.
+pub const PUSH_ENDPOINT_MAX: usize = 2048;
+/// (P4-011B-3, C-833) lifetime of a VAPID JWT (`exp`).
+pub const PUSH_VAPID_JWT_TTL: Duration = Duration::from_secs(3600);
 /// (RFE-011a) The effective hold timeout in seconds: the rule-level minimum clamped to
 /// `[min, max]`, else `default` (`approvals.timeout_secs`). One definition for the gateway hold
 /// and for the simulate / effective views, so they cannot disagree.

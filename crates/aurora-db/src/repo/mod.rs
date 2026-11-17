@@ -54,6 +54,7 @@ pub mod plugins;
 pub mod policy;
 pub mod preview_relay;
 pub mod preview_shares;
+pub mod push;
 pub mod reach_grants;
 pub mod request_log;
 pub mod retention;

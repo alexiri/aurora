@@ -28,9 +28,18 @@ pub enum Purpose {
     /// (P4-UTOK, D-282) The per-op copy of a person's token for one `message.post` or
     /// `user_token.verify`; owner = the op id; discarded at the op's terminal state.
     ChannelOpUserToken,
+    /// (phase 5, P4-011B-3, D-266(b)) The generated Web Push VAPID private key; owner = the key
+    /// id, org = nil UUID; always the inline store.
+    WebpushVapid,
+    /// (phase 5, P4-011B-3, D-266(b)) A Web Push subscription's `{ endpoint, p256dh, auth }`;
+    /// owner = the subscription id, org = nil UUID; always the inline store.
+    WebpushSubscription,
 }
 
 impl Purpose {
+    /// The purposes the migration job and CLI know (one source table each). The Web Push
+    /// purposes are not here: they are sealed in the `inline` store whatever the default store is
+    /// (D-266(b)) and are never moved, rekeyed or counted by those tools.
     pub const ALL: [Purpose; 11] = [
         Purpose::SecretValue,
         Purpose::ConnectionCredentials,
@@ -58,6 +67,8 @@ impl Purpose {
             Self::InstanceSetting => "instance_setting",
             Self::UserToken => "user_token",
             Self::ChannelOpUserToken => "channel_op_user_token",
+            Self::WebpushVapid => "webpush.vapid",
+            Self::WebpushSubscription => "webpush.subscription",
         }
     }
 }

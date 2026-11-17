@@ -400,6 +400,26 @@ spec:
 {{- end }}
 {{- end -}}
 
+{{/* (P4-011B-3, C-837) The operator-managed Web Push VAPID key: the Secret's key becomes
+     AURORA_PUSH_VAPID_KEY, which config.push.vapid.private_key_env names (set by the configmap
+     template). Never a value; the api only. */}}
+{{- define "aurora.pushEnv" -}}
+{{- if and .Values.push.enabled .Values.push.vapid.existingSecret }}
+- name: AURORA_PUSH_VAPID_KEY
+  valueFrom: {secretKeyRef: {name: {{ .Values.push.vapid.existingSecret | quote }}, key: {{ .Values.push.vapid.key | quote }}}}
+{{- end }}
+{{- end -}}
+
+{{/* (P4-011B-3, C-837) Egress of the api to the Web Push services: TCP 443 to the operator's peers
+     (default deny stays; the configmap template refuses push.enabled with no peer). */}}
+{{- define "aurora.pushEgress" -}}
+{{- if and .Values.push.enabled .Values.push.networkPolicy.egressTo }}
+- to:
+    {{- toYaml .Values.push.networkPolicy.egressTo | nindent 4 }}
+  ports: [{protocol: TCP, port: 443}]
+{{- end }}
+{{- end -}}
+
 {{/* (P4-CNT) Egress to the Redis of the shared counters (default deny stays: no peer, no egress). */}}
 {{- define "aurora.countersEgress" -}}
 {{- if and (eq (default "memory" .Values.counters.backend) "redis") .Values.counters.redis.networkPolicy.egressTo }}

@@ -2820,3 +2820,80 @@ fn ssh_session_caps_clocks_and_terminator_token() {
     .unwrap_err();
     assert!(e.has_key("AURORA_BOOTSTRAP_TERMINATOR_TOKEN"), "{e}");
 }
+
+/// (P4-011B-3, C-837, D-266(a), D-267(b)) `[push]`: off by default and inert; on needs an allow-list, an https or
+/// mailto contact and a readable operator key; the dev override is loopback-only.
+#[test]
+fn push_validation_follows_the_switch_and_the_override_rules() {
+    let ok = |c: &str| load_with(c, &[]).unwrap().api_config();
+    // off (the default): nothing is required
+    assert!(ok(BASE).is_ok());
+    assert!(ok(&format!("{BASE}[push]\nallowed_endpoint_hosts = []\n")).is_ok());
+    // on: https external_url is the default contact
+    assert!(ok(&format!("{BASE}[push]\nenabled = true\n")).is_ok());
+    // on with an http external url and no subject
+    let e = ok(&format!("{}[push]\nenabled = true\n", local_base())).unwrap_err();
+    assert!(e.has_key("push.vapid.subject"), "{e}");
+    assert!(
+        ok(&format!(
+            "{}[push]\nenabled = true\n[push.vapid]\nsubject = \"mailto:ops@example.org\"\n",
+            local_base()
+        ))
+        .is_ok()
+    );
+    // empty or invalid allow-list
+    let e = ok(&format!(
+        "{BASE}[push]\nenabled = true\nallowed_endpoint_hosts = []\n"
+    ))
+    .unwrap_err();
+    assert!(e.has_key("push.allowed_endpoint_hosts"), "{e}");
+    for bad in [
+        "*.com",
+        "*",
+        "https://fcm.googleapis.com",
+        "10.0.0.1",
+        "FCM.googleapis.com",
+        "a.b/c",
+        "fcm.googleapis.com:443",
+    ] {
+        let e = ok(&format!(
+            "{BASE}[push]\nallowed_endpoint_hosts = [\"{bad}\"]\n"
+        ))
+        .unwrap_err();
+        assert!(
+            e.to_string().contains("push.allowed_endpoint_hosts[0]"),
+            "{bad}: {e}"
+        );
+    }
+    // bounds and the operator key variable
+    assert!(ok(&format!("{BASE}[push]\nconcurrency = 65\n")).is_err());
+    assert!(ok(&format!("{BASE}[push]\ntimeout_secs = 1\n")).is_err());
+    let e = ok(&format!("{BASE}[push]\nenabled = true\n[push.vapid]\nprivate_key_env = \"AURORA_TEST_NO_SUCH_VAPID_KEY\"\n")).unwrap_err();
+    assert!(e.has_key("push.vapid.private_key_env"), "{e}");
+    let e = ok(&format!(
+        "{BASE}[push]\nenabled = true\n[push.vapid]\nprivate_key_env = \"not a name\"\n"
+    ))
+    .unwrap_err();
+    assert!(e.has_key("push.vapid.private_key_env"), "{e}");
+    // the dev override: loopback target, loopback external url, a listed host
+    let dev = |base: &str, host: &str, target: &str| {
+        ok(&format!(
+            "{base}[push]\nenabled = true\n[push.vapid]\nsubject = \"mailto:o@example.org\"\n[push.dev_endpoint_overrides]\n\"{host}\" = \"{target}\"\n"
+        ))
+    };
+    assert!(dev(&local_base(), "fcm.googleapis.com", "http://127.0.0.1:9100").is_ok());
+    let e = dev(BASE, "fcm.googleapis.com", "http://127.0.0.1:9100").unwrap_err();
+    assert!(e.has_key("push.dev_endpoint_overrides"), "{e}");
+    for (h, t) in [
+        ("fcm.googleapis.com", "http://10.0.0.5:9100"),
+        ("fcm.googleapis.com", "https://127.0.0.1:9100"),
+        ("fcm.googleapis.com", "http://user@127.0.0.1:9100"),
+        ("evil.example", "http://127.0.0.1:9100"),
+    ] {
+        let e = dev(&local_base(), h, t).unwrap_err();
+        assert!(
+            e.to_string().contains("push.dev_endpoint_overrides"),
+            "{h} {t}: {e}"
+        );
+    }
+}

@@ -149,6 +149,9 @@ arc-swap = "1"
 
 # crypto
 aws-lc-rs = "1.18"
+# (phase 5, P4-011B-3, D-134) Web Push: the VAPID ES256 key and the RFC 8291 ECDH (RustCrypto,
+# Apache-2.0/MIT, already in the lockfile); HKDF and AES-GCM come from aws-lc-rs.
+p256 = { version = "0.14", default-features = false, features = ["ecdsa", "ecdh", "pkcs8", "pem", "std"] }
 ed25519-dalek = { version = "3.0", features = ["rand_core", "zeroize"] }
 lettre = { version = "0.11", default-features = false, features = ["tokio1-rustls-tls", "builder", "smtp-transport", "tokio1", "aws-lc-rs", "hostname"] }
 zeroize = { version = "1.8", features = ["derive"] }

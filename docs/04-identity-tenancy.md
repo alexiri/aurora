@@ -1366,7 +1366,8 @@ strings are the ones the API already used and are listed in `SECURITY_CRITICAL_A
 `plugin.host_claim.decide`, `user.instance_admin_grant\|revoke` and `user.disable\|enable` as
 `admin.user_update`, `approval.batch_decide` as one `approval.decide` row per approval
 (`batch: true`); also critical: `invitation.accept` (including first sign-in),
-`connection.reconnect`, `cli_login.consume`, `member.add` (SSO provisioning):
+`connection.reconnect`, `cli_login.consume`, `member.add` (SSO provisioning),
+`push.vapid_rotate` (the Web Push signing key rotated by the CLI, C-833):
 
 | Area | Actions |
 |------|---------|

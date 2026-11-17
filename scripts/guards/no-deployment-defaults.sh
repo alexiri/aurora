@@ -71,5 +71,23 @@ if ! grep -q 'KUBERNETES_SERVICE_HOST' crates/aurora-config/src/validate.rs; the
   fail=1
 fi
 
+# 6. (P4-011B-3, C-837, D-267(b)) `push.dev_endpoint_overrides` is a test seam as well: the chart never renders it
+# (only the one `fail` in configmap.yaml names it) and the config layer refuses it unless every target and
+# `server.external_url` are loopback, and inside a cluster.
+push_hits=$(git grep -nI 'dev_endpoint_overrides' -- deploy ':!deploy/helm/aurora/templates/configmap.yaml' || true)
+if [ -n "$push_hits" ]; then
+  echo "no-deployment-defaults: FAIL: push.dev_endpoint_overrides is test-only; deploy/ must not set it:" >&2
+  echo "$push_hits" >&2
+  fail=1
+fi
+if ! grep -q 'hasKey \$ps "dev_endpoint_overrides"' deploy/helm/aurora/templates/configmap.yaml; then
+  echo "no-deployment-defaults: FAIL: configmap.yaml must refuse config.push.dev_endpoint_overrides" >&2
+  fail=1
+fi
+if ! grep -q 'dev_endpoint_overrides' crates/aurora-config/src/validate.rs; then
+  echo "no-deployment-defaults: FAIL: the config layer must refuse push.dev_endpoint_overrides outside loopback and in a cluster (validate.rs)" >&2
+  fail=1
+fi
+
 [ "$fail" -eq 0 ] || exit 1
 echo "no-deployment-defaults: ok"
