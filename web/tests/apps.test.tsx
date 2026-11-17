@@ -1,8 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ConnectionsTab } from "@/components/apps/connections-tab";
 import { AvailabilityEditor } from "@/components/apps/availability-view";
 import { DynamicForm } from "@/components/apps/dynamic-form";
 import { Markdown, safeHref } from "@/components/ui/markdown";
@@ -167,113 +166,5 @@ describe("oauth client secrets", () => {
     expect(screen.getByLabelText("Client ID")).toHaveValue("abc");
     expect(screen.getByText("Create an app first.")).toBeInTheDocument();
     expect(screen.getByText("https://x.test/v1/oauth/callback")).toBeInTheDocument();
-  });
-});
-
-describe("connection missing scopes", () => {
-  const conn = (over: Record<string, unknown>) => ({
-    id: "k1", org_id: "o", workspace_id: "w1", scope: "workspace", app_id: "gmail", package_id: "p", app_version: "1",
-    label: "me@acme.io", status: "active", status_reason: null, scopes: ["read"], missing_scopes: [], metadata: {},
-    tenant_host: null, oauth_client_id: null, credentials_expires_at: null, connected_by: null, last_used_at: null,
-    created_at: "", updated_at: "", injecting: [], ...over,
-  });
-  async function show(c: unknown) {
-    vi.stubGlobal("fetch", vi.fn(async () => json(200, { items: [c], next_cursor: null })));
-    wrap(<ConnectionsTab scope={{ kind: "workspace", id: "w1" }} canOwn />);
-    await screen.findByText("me@acme.io");
-  }
-  it("warns when requested scopes were not granted", async () => {
-    await show(conn({ missing_scopes: ["write", "admin"] }));
-    expect(screen.getByRole("status")).toHaveTextContent("not granted: write, admin");
-  });
-  it("shows how to connect to a database connection", async () => {
-    await show(conn({ id: "0190a1b2-0000-7000-8000-000000000001", app_id: "postgresql", database: { engine: "postgres", service: "orders-prod" } }));
-    const note = screen.getByLabelText("How to connect to me@acme.io");
-    expect(note).toHaveTextContent("psql service=orders-prod -c 'select 1'");
-    expect(note).toHaveTextContent("0190a1b2");
-  });
-  it("shows when a database connection does not verify the server certificate (D-178 Q-R5-7)", async () => {
-    await show(conn({ app_id: "postgresql", database: { engine: "postgres", service: "orders" }, metadata: { tls_verification: "off" } }));
-    expect(screen.getByLabelText("TLS verification is off for me@acme.io")).toHaveTextContent("does not verify");
-  });
-  it("shows no TLS warning for a verified database connection", async () => {
-    await show(conn({ app_id: "postgresql", database: { engine: "postgres", service: "orders" }, metadata: {} }));
-    expect(screen.queryByLabelText(/TLS verification is off/)).toBeNull();
-  });
-  it("shows the scopes a classic token reported and warns that repo allows writes (FIX-133)", async () => {
-    await show(conn({ metadata: { token_scopes: "repo, read:org" } }));
-    expect(screen.getByText(/Token scopes/)).toHaveTextContent("repo, read:org");
-    expect(screen.getByText(/Token scopes/)).toHaveTextContent("make this connection read-only");
-  });
-  it("shows no repo warning on a read-only connection or without a repo scope", async () => {
-    await show(conn({ access: "read", metadata: { token_scopes: "repo" } }));
-    expect(screen.getByText(/Token scopes/).textContent).not.toMatch(/make this connection read-only/);
-    cleanup();
-    await show(conn({ metadata: { token_scopes: "read:user, public_repo" } }));
-    expect(screen.getByText(/Token scopes/).textContent).not.toMatch(/make this connection read-only/);
-  });
-  it("shows a pasted token's declared scopes and saves an edit (FIX-136)", async () => {
-    const methods = [
-      {
-        id: "token", kind: "fields", fields: [], default_scopes: [], access_levels: [], probe_scopes: ["read:a"],
-        scopes: [{ scope: "read:a", name: "Read A", access: "read" }, { scope: "write:a", name: "Write A", access: "write" }],
-      },
-    ];
-    const patched: unknown[] = [];
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (req: Request) => {
-        const url = new URL(req.url);
-        if (req.method === "PATCH") {
-          patched.push(await req.json());
-          return json(200, conn({ connect_method: "token", scopes: ["read:a", "write:a"] }));
-        }
-        if (url.pathname.startsWith("/v1/apps/") && !url.pathname.endsWith("/apps")) return json(200, { app_id: "acme", connect: methods, tools: [] });
-        return json(200, { items: [conn({ connect_method: "token", scopes: ["read:a"] })], next_cursor: null });
-      }),
-    );
-    wrap(<ConnectionsTab scope={{ kind: "workspace", id: "w1" }} canOwn />);
-    await screen.findByText("me@acme.io");
-    const box = await screen.findByLabelText("Token scopes of me@acme.io");
-    expect(box).toHaveTextContent("as you declared");
-    expect(box).toHaveTextContent("Read A");
-    fireEvent.click(screen.getByRole("button", { name: "Edit scopes" }));
-    fireEvent.click(within(await screen.findByRole("radiogroup", { name: "Write A" })).getByLabelText("On"));
-    fireEvent.click(screen.getByRole("button", { name: "Save scopes" }));
-    await waitFor(() => expect(patched).toEqual([{ scopes: ["read:a", "write:a"] }]));
-  });
-  it("shows no connection help for other apps", async () => {
-    await show(conn({ database: null }));
-    expect(screen.queryByLabelText("How to connect to me@acme.io")).toBeNull();
-  });
-  it("explains a plugin major upgrade flip and offers Reconnect (RFE-022)", async () => {
-    await show(
-      conn({
-        status: "reauth_required",
-        status_reason: "plugin_major_upgrade: p 1.0.0 -> 2.0.0; missing: token_v2",
-      }),
-    );
-    expect(screen.getByText("Reconnect required")).toBeInTheDocument();
-    expect(screen.getByText(/gmail was upgraded to a version with different credential fields/)).toBeInTheDocument();
-    expect(screen.queryByText(/missing: token_v2/)).toBeNull();
-    expect(screen.getByRole("button", { name: "Reconnect me@acme.io" })).toBeInTheDocument();
-  });
-  it("shows no warning for a full grant", async () => {
-    await show(conn({}));
-    expect(screen.queryByRole("status")).toBeNull();
-  });
-  it("marks a connection of a custom_only app with the Custom access only badge (P4-GRANTS)", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (req: Request | string) => {
-        const url = typeof req === "string" ? req : req.url;
-        return url.includes("/v1/apps")
-          ? json(200, { items: [{ app_id: "gmail", name: "Gmail", app_restrictions: { custom_only: true, block_untooled: false } }] })
-          : json(200, { items: [conn({})], next_cursor: null });
-      }),
-    );
-    wrap(<ConnectionsTab scope={{ kind: "workspace", id: "w1" }} canOwn />);
-    await screen.findByText("me@acme.io");
-    expect(await screen.findByText("Custom access only")).toBeInTheDocument();
   });
 });

@@ -71,12 +71,12 @@ for (const scheme of ["light", "dark"] as const) {
         const panel = page.getByLabel("Give agents access");
         await panel.getByRole("checkbox", { name: `Give ${agent.name} access` }).check();
         await expect(panel.getByText(/This app only supports custom access/)).toBeVisible();
-        await expect(panel.getByRole("button", { name: "Give access" })).toBeDisabled();
+        await expect(panel.getByRole("button", { name: `Give ${agent.name} access` })).toBeDisabled();
         await panel.getByRole("radiogroup", { name: "Set all read tools" }).getByText("Allow", { exact: true }).click();
         expect(await overflow(page), "horizontal page scroll").toBeLessThanOrEqual(0);
         await page.screenshot({ path: `${SHOTS}/give-access-${scheme}-${width}.png` });
         expect(await serious(page)).toEqual([]);
-        await panel.getByRole("button", { name: "Give access" }).click();
+        await panel.getByRole("button", { name: `Give ${agent.name} access` }).click();
         await expect(panel.getByText("Access given to 1 agent.")).toBeVisible();
         expect(posted).toEqual([{ agent_ids: [agent.id], mode: "custom", allow_tools: ["get_event", "list_events"], ask_tools: [] }]);
       });

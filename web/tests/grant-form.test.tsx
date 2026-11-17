@@ -227,7 +227,7 @@ describe("Give agents access with the shared form", () => {
     fireEvent.click(radio("Set all read tools", "Allow"));
     fireEvent.click(radio("Access for Book a room", "Ask"));
     fireEvent.change(screen.getByLabelText("Approval timeout (seconds)"), { target: { value: "900" } });
-    fireEvent.click(screen.getByRole("button", { name: "Give access" }));
+    fireEvent.click(screen.getByRole("button", { name: "Give Daneel access" })); // (C-925) the button names who
     await screen.findByText("Access given to 1 agent.");
     expect(calls.find((c) => c.key === "POST /v1/connections/c1/grants")?.body).toEqual({
       agent_ids: ["a1"], mode: "custom", allow_tools: ["get_event", "list_events"], ask_tools: ["book_room"], ask_timeout_secs: 900,
@@ -240,7 +240,7 @@ describe("Give agents access with the shared form", () => {
     panel();
     fireEvent.click(await screen.findByRole("checkbox", { name: "Give Daneel access" }));
     await waitFor(() => expect(radio("Access mode", "Full access").checked).toBe(true));
-    fireEvent.click(screen.getByRole("button", { name: "Give access" }));
+    fireEvent.click(screen.getByRole("button", { name: "Give Daneel access" }));
     await screen.findByText("Access given to 1 agent.");
     expect(calls.find((c) => c.key === "POST /v1/connections/c1/grants")?.body).toEqual({ agent_ids: ["a1"], mode: "full" });
   });

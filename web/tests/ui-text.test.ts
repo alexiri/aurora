@@ -120,13 +120,7 @@ describe("UI text rules (C-974)", () => {
     "src/components/admin/secret-stores-view.tsx": "P5-IA-4 (Platform › Secret stores)",
     "src/components/admin/settings/llm-controls.tsx": "P5-IA-3 (Administration › AI models)",
     "src/components/admin/settings/llm-endpoint-dialog.tsx": "P5-IA-3",
-    "src/components/agents/access-tab.tsx": "P5-UX-4 (the agent's Access tab)",
-    "src/components/agents/connection-grants.tsx": "P5-UX-4",
-    "src/components/agents/model-readiness.tsx": "P5-UX-4",
     "src/components/apps/connect-dialog.tsx": "P5-UX-3 (extraction), P5-UX-14 (after it)",
-    "src/components/apps/connections-tab.tsx": "P5-UX-4 (removed there)",
-    "src/components/credentials/credentials-view.tsx": "P5-UX-4 (removed there)",
-    "src/components/credentials/llm-form.tsx": "P5-UX-4, P5-UX-7, P5-UX-3",
     "src/components/governance/governance-view.tsx": "P5-IA-3 (deleted there), P5-IA-2 (the Internet access panel)",
     "src/components/policy/rule-editor.tsx": "P5-IA-2",
   };

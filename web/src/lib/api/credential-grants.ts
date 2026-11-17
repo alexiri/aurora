@@ -25,6 +25,8 @@ const listKey = (t: GrantTarget) => (t.kind === "secret" ? grantKeys.secret(t.id
 /** Grants changed: the credential's own list, every touched agent's grants/effective view and the model readiness. */
 function invalidateGrants(qc: QueryClient, target: GrantTarget, agentIds: string[]) {
   void qc.invalidateQueries({ queryKey: listKey(target) });
+  // (C-917) Every grant write changes who can use an account and at which level.
+  void qc.invalidateQueries({ queryKey: ["accounts"] });
   for (const a of agentIds) {
     void qc.invalidateQueries({ queryKey: policyKeys.grants(a) });
     void qc.invalidateQueries({ queryKey: policyKeys.effective(a) });

@@ -9077,7 +9077,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/PutConnectionGrant"
+                "$ref": "#/components/schemas/PutConnectionAccess"
               }
             }
           },
@@ -9125,7 +9125,7 @@
             }
           },
           "422": {
-            "description": "grant_invalid (details.reason: empty_custom | tool_in_both | unknown_tool)",
+            "description": "grant_invalid (details.reason: empty_custom | tool_in_both | unknown_tool | level_or_mode | level_with_tools), full_grant_forbidden, or above_account_limit (an organization's account; details.who_can, details.limit)",
             "content": {
               "application/json": {
                 "schema": {
@@ -19721,6 +19721,134 @@
             }
           },
           "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/orgs/{org}/accounts": {
+      "get": {
+        "tags": [
+          "accounts"
+        ],
+        "summary": "The accounts shared with the whole organization (owners and admins; C-917), each with the\nagents of every workspace that use it and its limit.",
+        "operationId": "listOrgAccounts",
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "description": "Organization id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "agent_id",
+            "in": "query",
+            "description": "Workspace list only: read the list for this agent (adds `given`, given first, the model\nline on AI keys).",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "description": "`app` | `website` | `ai_key`.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "app_id",
+            "in": "query",
+            "description": "Only the accounts of this app.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Accounts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_Account"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid filter",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
             "content": {
               "application/json": {
                 "schema": {
@@ -30440,6 +30568,124 @@
         ]
       }
     },
+    "/v1/workspaces/{ws}/accounts": {
+      "get": {
+        "tags": [
+          "accounts"
+        ],
+        "summary": "One list of what a workspace's agents can use (`can_use`; C-917): the workspace's own apps,\nwebsites and AI keys, and the organization's accounts its agents can be given. With\n`agent_id` the list is read for that agent (`given`, given first).",
+        "operationId": "listWorkspaceAccounts",
+        "parameters": [
+          {
+            "name": "ws",
+            "in": "path",
+            "description": "Workspace id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "agent_id",
+            "in": "query",
+            "description": "Workspace list only: read the list for this agent (adds `given`, given first, the model\nline on AI keys).",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "description": "`app` | `website` | `ai_key`.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "app_id",
+            "in": "query",
+            "description": "Only the accounts of this app.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Accounts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_Account"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid filter",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
     "/v1/workspaces/{ws}/action-approvals": {
       "get": {
         "tags": [
@@ -33707,6 +33953,217 @@
           }
         }
       },
+      "Account": {
+        "type": "object",
+        "required": [
+          "ref",
+          "kind",
+          "name",
+          "scope",
+          "levels",
+          "health",
+          "agents",
+          "can"
+        ],
+        "properties": {
+          "agents": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AgentAccess"
+            }
+          },
+          "app": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/AccountApp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "can": {
+            "$ref": "#/components/schemas/AccountCan"
+          },
+          "connected_by": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PersonName"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "given": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Only with `agent_id`: whether that agent can use the account (given ones come first)."
+          },
+          "health": {
+            "$ref": "#/components/schemas/Health"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/AccountKind"
+          },
+          "levels": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Level"
+            },
+            "description": "The choices that exist for the account, already cut to the limit; empty = no choice."
+          },
+          "limit": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Level",
+                "description": "An organization's account of an app that can change things: the most any agent may do."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "managed_by": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/WhoCan"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "ref": {
+            "$ref": "#/components/schemas/AccountRef"
+          },
+          "scope": {
+            "type": "string",
+            "description": "`workspace` | `organization`."
+          }
+        }
+      },
+      "AccountAgent": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "handle"
+        ],
+        "properties": {
+          "handle": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "AccountApp": {
+        "type": "object",
+        "required": [
+          "app_id",
+          "name",
+          "custom_only"
+        ],
+        "properties": {
+          "app_id": {
+            "type": "string"
+          },
+          "custom_only": {
+            "type": "boolean",
+            "description": "The app allows custom access only (C-410): no `act` choice, the actions table opens\ndirectly."
+          },
+          "family": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/AppFamily"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "AccountCan": {
+        "type": "object",
+        "required": [
+          "give_access",
+          "change_access",
+          "manage"
+        ],
+        "properties": {
+          "change_access": {
+            "type": "boolean"
+          },
+          "give_access": {
+            "type": "boolean"
+          },
+          "manage": {
+            "type": "boolean"
+          }
+        }
+      },
+      "AccountKind": {
+        "type": "string",
+        "enum": [
+          "app",
+          "website",
+          "ai_key"
+        ]
+      },
+      "AccountRef": {
+        "type": "object",
+        "required": [
+          "type",
+          "id"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "type": {
+            "$ref": "#/components/schemas/AccountRefType"
+          }
+        }
+      },
+      "AccountRefType": {
+        "type": "string",
+        "enum": [
+          "connection",
+          "secret"
+        ]
+      },
+      "AccountWorkspace": {
+        "type": "object",
+        "required": [
+          "id",
+          "name"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
       "Action": {
         "type": "string",
         "enum": [
@@ -34626,6 +35083,63 @@
           }
         }
       },
+      "AgentAccess": {
+        "type": "object",
+        "required": [
+          "agent",
+          "workspace",
+          "level"
+        ],
+        "properties": {
+          "agent": {
+            "$ref": "#/components/schemas/AccountAgent"
+          },
+          "always_allowed": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/AlwaysAllowed"
+            },
+            "description": "Under `ask`: the changes the saved choice allows without asking."
+          },
+          "custom": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/CustomChoice"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "level": {
+            "$ref": "#/components/schemas/AgentAccessLevel"
+          },
+          "model": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "AI-key rows of a list read for one agent (`agent_id`): the model that agent's next turn\nuses through the key."
+          },
+          "workspace": {
+            "$ref": "#/components/schemas/AccountWorkspace"
+          }
+        }
+      },
+      "AgentAccessLevel": {
+        "type": "string",
+        "description": "What one agent's saved choice reads as. `use` is the level of accounts with no choice.",
+        "enum": [
+          "read",
+          "ask",
+          "act",
+          "custom",
+          "use"
+        ]
+      },
       "AgentLink": {
         "type": "object",
         "description": "A link seen from one of its two agents.",
@@ -34928,6 +35442,21 @@
           }
         },
         "additionalProperties": false
+      },
+      "AlwaysAllowed": {
+        "type": "object",
+        "required": [
+          "tool_id",
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "tool_id": {
+            "type": "string"
+          }
+        }
       },
       "ApiKey": {
         "type": "object",
@@ -38961,6 +39490,25 @@
           }
         }
       },
+      "CustomChoice": {
+        "type": "object",
+        "required": [
+          "base",
+          "differs"
+        ],
+        "properties": {
+          "base": {
+            "$ref": "#/components/schemas/Level",
+            "description": "The nearest level."
+          },
+          "differs": {
+            "type": "integer",
+            "format": "int32",
+            "description": "How many actions differ from it.",
+            "minimum": 0
+          }
+        }
+      },
       "DatabaseRef": {
         "type": "object",
         "description": "How an agent reaches a database connection (P2-DBL-2, C-230); `null` for other apps.",
@@ -40658,6 +41206,49 @@
             "description": "(P5-MODELS-1, C-882) The model roles the adapter maps (`large`, `medium`, `small`); empty = none."
           }
         }
+      },
+      "Health": {
+        "type": "object",
+        "description": "C-944. Until P5-UX-14 adds the check fields: `sign_in_expired`, `disabled`, else `unknown`.",
+        "required": [
+          "state"
+        ],
+        "properties": {
+          "checked_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "detail": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "last_used_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "state": {
+            "$ref": "#/components/schemas/HealthState"
+          }
+        }
+      },
+      "HealthState": {
+        "type": "string",
+        "enum": [
+          "ok",
+          "rejected",
+          "sign_in_expired",
+          "unreachable",
+          "disabled",
+          "unknown"
+        ]
       },
       "HookAccepted": {
         "type": "object",
@@ -44477,6 +45068,118 @@
           },
           "slug": {
             "type": "string"
+          }
+        }
+      },
+      "Page_Account": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "ref",
+                "kind",
+                "name",
+                "scope",
+                "levels",
+                "health",
+                "agents",
+                "can"
+              ],
+              "properties": {
+                "agents": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AgentAccess"
+                  }
+                },
+                "app": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/AccountApp"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "can": {
+                  "$ref": "#/components/schemas/AccountCan"
+                },
+                "connected_by": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/PersonName"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "given": {
+                  "type": [
+                    "boolean",
+                    "null"
+                  ],
+                  "description": "Only with `agent_id`: whether that agent can use the account (given ones come first)."
+                },
+                "health": {
+                  "$ref": "#/components/schemas/Health"
+                },
+                "kind": {
+                  "$ref": "#/components/schemas/AccountKind"
+                },
+                "levels": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Level"
+                  },
+                  "description": "The choices that exist for the account, already cut to the limit; empty = no choice."
+                },
+                "limit": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Level",
+                      "description": "An organization's account of an app that can change things: the most any agent may do."
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "managed_by": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/WhoCan"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "name": {
+                  "type": "string"
+                },
+                "ref": {
+                  "$ref": "#/components/schemas/AccountRef"
+                },
+                "scope": {
+                  "type": "string",
+                  "description": "`workspace` | `organization`."
+                }
+              }
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },
@@ -49079,6 +49782,17 @@
           "day"
         ]
       },
+      "PersonName": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        }
+      },
       "PersonalOf": {
         "type": "object",
         "required": [
@@ -50621,6 +51335,53 @@
               "type": "string"
             },
             "description": "The agent's own source CIDR list; `null` = inherit the org/instance default."
+          }
+        },
+        "additionalProperties": false
+      },
+      "PutConnectionAccess": {
+        "type": "object",
+        "description": "(P5-UX-4, C-980) Body of `PUT /agents/{agent}/grants/connections/{conn}`: a `level`, or a\n`mode` with its tool lists (the Custom editor). Exactly one of the two; a level carries no tool\nlist (the tools come from the app's catalogue, never from the request).",
+        "properties": {
+          "allow_tools": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "ask_timeout_secs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "ask_tools": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "level": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Level",
+                "description": "`read` | `ask` | `act`: replaces what was saved, always-allowed changes included."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "mode": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/GrantMode"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "additionalProperties": false

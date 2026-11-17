@@ -58,12 +58,12 @@ for (const width of [1280, 390]) {
           await openAccess(page, s, scheme);
           expect(await page.evaluate(() => getComputedStyle(document.body).backgroundColor)).toBe(CANVAS[scheme]);
           expect(await overflow(page), `${s} overflows horizontally`).toBeLessThanOrEqual(0);
-          if (s !== "connections") {
+          if (s !== "list") {
             // The dialog scrolls inside itself; nothing in it may be wider than the dialog.
             const dlg = page.getByRole("dialog");
             expect(await dlg.evaluate((el) => el.scrollWidth - el.clientWidth), `${s} dialog overflows`).toBeLessThanOrEqual(0);
           }
-          await page.screenshot({ path: `${ACCESS_SHOTS}/${s}-${scheme}-${width}.png`, fullPage: s === "connections" });
+          await page.screenshot({ path: `${ACCESS_SHOTS}/${s}-${scheme}-${width}.png`, fullPage: s === "list" });
         });
       }
     }
