@@ -585,6 +585,7 @@ const ROWS: &[Row] = &[
         false,
     ),
     r("GET", "/v1/admin/audit", G::Inst, false),
+    r("GET", "/v1/admin/usage", G::Inst, false),
     r("GET", "/v1/admin/users", G::Inst, false),
     r("PATCH", "/v1/admin/users/{id}", G::Inst, false),
     r("GET", "/v1/admin/storage", G::Inst, false),
@@ -794,6 +795,7 @@ const ROWS: &[Row] = &[
         false,
     ),
     r("GET", "/v1/workspaces/{ws}/activity", G::WsUse, false),
+    r("GET", "/v1/workspaces/{ws}/usage", G::WsUse, false),
     // (P5-CHAT-4, C-727) message search: workspace member; visibility is applied inside the query.
     r(
         "GET",
@@ -1131,6 +1133,7 @@ const ROWS: &[Row] = &[
     r("GET", "/v1/orgs/{org}/retention", G::Admin, false),
     r("PUT", "/v1/orgs/{org}/retention", G::Admin, false),
     r("GET", "/v1/orgs/{org}/storage", G::Admin, false),
+    r("GET", "/v1/orgs/{org}/usage", G::Admin, false),
     r("POST", "/v1/orgs/{org}/storage/refresh", G::Admin, false),
     // BE-074 (M6): channel management.
     r(
