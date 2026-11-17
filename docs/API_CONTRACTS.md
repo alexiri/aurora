@@ -1910,6 +1910,32 @@ Briefs, in four fixed waves (D-352, order inside the waves per D-353; "→" mean
   - **Lowering** the limit lowers, in the same transaction, every agent's access above it: a level becomes the limit; under `ask`, tools allowed without asking become asked; under `read`, write tools are removed. Each change is audited with `via: "limit"`. `GET /v1/connections/{id}/limit-preview?limit=` answers `{ lowered: { agent, workspace, from, to }[] }` for the confirmation. Raising the limit changes no agent.
   - The policy evaluator is unchanged: `read` is still enforced on the connection (D-240), and `ask` holds because no agent's access can allow a write without asking (C-980, C-982, SEC-131).
 
+### Phase 5 — P5-USAGE (workspace usage: tokens and time, D-359)
+
+Reserved C-1000..C-1009 (C-1003..C-1009 for a dashboard follow-up, not yet specified).
+
+- C-1000 **`GET /v1/workspaces/{ws}/usage?from=&to=&agent_id=`** (**S/K**; whoever can read `…/activity`, i.e. the caller passes the workspace check; aggregates only, so invisible direct conversations are counted, `05`). Query: `from`, `to` UTC dates `YYYY-MM-DD`, both inclusive; default `to` = today (UTC), `from` = `to` − 29 days; `agent_id` optional (any id, also a deleted agent's; no 404). 400 `validation_error` for a malformed date; 422 `usage_range_invalid` with `details.reason` `from_after_to` | `too_long` (more than `USAGE_RANGE_MAX_DAYS` = 366 days). Response, unpaginated:
+  ```
+  UsageCounters = { turns, turn_seconds, awake_seconds, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens }   // integers ≥ 0
+  {
+    from: date, to: date,
+    totals: UsageCounters,
+    by_day:   [{ day: date, ...UsageCounters }],                       // every day of the range, ascending, zero days included
+    by_agent: [{ agent_id: uuid, agent_name: string|null, ...UsageCounters }],   // agents with any non-zero counter; name null once the agent is deleted; ordered by input_tokens + output_tokens desc, then agent_id
+    by_model: [{ provider: string|null, endpoint_id: uuid|null, model: string|null,
+                 turns, turn_seconds, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens }],   // no awake_seconds; ordered as by_agent, then provider, model
+    runtime_as_of: timestamp|null                                      // the last runtime rollup (C-1002); awake time after it is not counted yet
+  }
+  ```
+  Tokens and turns come from `usage_daily` (C-1001), awake time from `runtime_daily` (C-1002). `turns`/`turn_seconds` in `by_model` count under the turn's default model, so a model used only by subagents shows tokens and zero turns. `turn_seconds` and `awake_seconds` differ on purpose: a sandbox stays awake between turns. In the OpenAPI document with an operation id `getWorkspaceUsage`; `USAGE_RANGE_MAX_DAYS` is in `02 §Limits`.
+- C-1001 **Ledger `usage_daily`** (no FKs; migration `20261201000247`). Columns `org_id`, `workspace_id`, `agent_id` uuid not null; `day` date not null (UTC day of `turns.finished_at`); `provider` text null, `endpoint_id` uuid null, `model` text null; `turns`, `turn_seconds`, `input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_write_tokens` bigint not null default 0; `created_at`, `updated_at`. `UNIQUE NULLS NOT DISTINCT (workspace_id, agent_id, day, provider, endpoint_id, model)`; index `(workspace_id, day)`.
+  - **Written** in the transaction of the fenced terminal transition (`turns::finish` affecting one row; a replayed report writes nothing), with `INSERT … ON CONFLICT DO UPDATE SET x = usage_daily.x + EXCLUDED.x`. Never decremented, never deleted with the conversation, agent, workspace or organization.
+  - A turn that never started (`started_at` null) writes nothing. Otherwise `turns += 1` and `turn_seconds += floor(finished_at − started_at)` go to the key of its **default model** (`usage.provider/endpoint_id/model`, else `turns.model_basis`, else nulls).
+  - Tokens: each `usage.by_model` entry adds its four counters under `(usage.provider, usage.endpoint_id, entry.model)`. Without `by_model` the totals go under the default model's key. No usage: turn count and time only.
+  - Every counted `usage` has passed the D-304 trust rule (D-359(d)): when the terminal transition carries no usage and the stored value came from a streaming `usage` report, the finish path reduces it with the same function first (`model::usage_for_turn`), stores the reduced value and counts that.
+  - **Backfill**: the migration fills the ledger once from every terminal turn still present (`started_at` not null), with the same rules; turns already deleted are not recoverable.
+- C-1002 **Runtime rollup.** `runtime_daily` gains `workspace_id uuid not null` (the table is empty everywhere: nothing ever wrote it; the migration truncates it and the first run rebuilds it from `runtime_intervals`) and an index `(workspace_id, day)`; the primary key stays `(org_id, agent_id, day)`. The hourly singleton job "Runtime daily rollup" (`05 §Background jobs`) keeps a watermark (the start time of its last successful run; none = rebuild all) in a one-row table `usage_rollup_state (singleton bool primary key default true CHECK (singleton), runtime_watermark timestamptz null)` from the same migration. Each run at time T takes every interval with `ended_at IS NULL` or `updated_at ≥ watermark − 5 min`, and recomputes, for each (agent, UTC day) from the day of its `started_at` to the day of `coalesce(ended_at, T)`, `awake_seconds` = the overlap with that day of all the agent's intervals (open ones end at T), upserted; then the watermark becomes T, in the same transaction. Idempotent; a run after downtime catches up because the watermark did not move. `runtime_as_of` (C-1000) is the watermark.
+
 ## Shared schemas
 
 _Defined alongside the milestone sections above._
