@@ -18,6 +18,8 @@ const approvalOf = (n: number, conversation: string, title: string, m: number) =
   id: id(400 + n), org_id: org.id, workspace_id: ws.id, status: "pending", created_at: new Date().toISOString(), deadline: future(m),
   host: "api.github.com", method: "PUT", path: `/repos/acme/web/pulls/${n}/merge`, conversation_id: conversation, app_id: "github",
   agent: { id: id(11), handle: "daneel", name: "Daneel" }, summary: { source: "app", title, fields: [] },
+  sentence: { agent: { id: id(11), name: "Daneel" }, action: title, app: { app_id: "github", name: "GitHub" } },
+  can_always_allow: false,
 });
 const IN_OPEN = approvalOf(42, MINE.id, "Merge pull request #42", 9);
 const ELSEWHERE = approvalOf(43, NIGHTLY.id, "Merge pull request #43", 4);
