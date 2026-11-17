@@ -54,6 +54,22 @@ export function usePolicy(scope: PolicyScope, enabled = true) {
   });
 }
 
+export type PublishedInternetAccess = S["PublishedInternetAccess"];
+
+/**
+ * (FIX-164, C-1020, D-365) The workspace's **published** Internet access (defaults and rules, nothing else), readable by
+ * any member of the workspace. The summary sentences and a member's read-only page read it; owners edit the full
+ * document (`usePolicy`).
+ */
+export function useInternetAccess(wsId: string | undefined, enabled = true) {
+  return useQuery({
+    queryKey: ["policy", "workspace", wsId ?? "", "internet-access"] as const,
+    enabled: enabled && !!wsId,
+    queryFn: () => unwrap(api.GET("/v1/workspaces/{ws}/internet-access", { params: { path: { ws: wsId! } } })),
+    retry: false,
+  });
+}
+
 export function usePolicyWarnings(scope: PolicyScope, enabled = true) {
   return useQuery({
     queryKey: policyKeys.warnings(scope),

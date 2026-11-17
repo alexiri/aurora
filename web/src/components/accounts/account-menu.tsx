@@ -79,7 +79,8 @@ export function AccountMenu({
           {account.kind === "website" ? <MenuItem onSelect={() => setEditingSite(true)}>Change website</MenuItem> : null}
           {!isConn ? <MenuItem onSelect={() => setReplacing(true)}>Replace</MenuItem> : null}
           {onTest && testable ? <MenuItem onSelect={onTest}>Test</MenuItem> : null}
-          {isConn ? (
+          {/* (FIX-163) Its app instance was deleted: turning it on cannot work (the API refuses with `instance_deleted`). */}
+          {isConn && !(off && account.status_reason === "instance_deleted") ? (
             <MenuItem onSelect={() => patchConn.mutate({ id: account.ref.id, status: off ? "active" : "disabled" }, { onSuccess: refresh })}>
               {off ? "Turn on" : "Turn off"}
             </MenuItem>

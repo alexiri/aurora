@@ -230,10 +230,10 @@ describe("the Welcome links (P5-UX-1)", () => {
     }
   });
 
-  it("offers Give <Agent> an app on the agent's Access tab to an owner, and no teammate invitation", () => {
+  it("offers Give <Agent> an app (the connect journey for this agent, at its App step) to an owner, and no teammate invitation", () => {
     const owner = optionalNextLinks({ org: "acme", ws: "main", handle: "daneel", agentName: "Daneel", isOwner: true });
     const give = owner.find((l) => l.label === "Give Daneel an app");
-    expect(give?.href).toBe("/o/acme/w/main/agents/daneel?tab=access");
+    expect(give?.href).toBe("/o/acme/w/main/agents/daneel?tab=access&connect=");
     expect(owner.some((l) => /Invite|Connect an app/.test(l.label))).toBe(false);
     // A member cannot give an agent an app: the link is not offered (it would lead to a refusal).
     const member = optionalNextLinks({ org: "acme", ws: "main", handle: "daneel", agentName: "Daneel", isOwner: false });

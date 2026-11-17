@@ -124,3 +124,53 @@ the defaults so that a new person's agent works from the first minute.
 
 Sonnet: backend, one page and a dev-script change that needs care with image builds. Haiku could take
 scope 6 alone.
+
+## Completion report (lane p5-agent, branch `alexiri/p5-ux6`; per-task gate only — the batch gate has NOT run)
+
+Commits: `b5837c2f` (C-923), `7862afd3` (backfill + setup reasons), `a54bd2fc` (web), `f45e6593` (dev image + docs).
+
+- **C-923** names a new personal workspace after the person (`template::person_name`: given name, else name, else
+  e-mail local part); `tenancy::create_workspace_named_in_tx` + `SlugFrom::Text` keep the slug coming from the
+  template. Four existing placement tests asserted the old name and were changed (they failed first with the new rule);
+  new test `c923_personal_workspace_is_named_after_the_person` (given name / full name / e-mail).
+- **C-922** `POST /v1/admin/placement/starter-grants/backfill` (`BackfillStarterGrants`/`BackfillResult`), one
+  transaction and one audit row per grant (`actor_label = placement`, `backfill = true`), existing grants counted as
+  skipped. Setup status: `personal_workspaces_without_starter`. Test `c922_backfill_…` (idempotence, audit, 400 for a
+  non-starter id, 403 for a member). **Fail-first not observed** for it: the route did not exist.
+- **C-924** `apps::setup::sign_in_gaps` (built on `setup_status`, default organization) → checks `app:<id>` with
+  `app_needs_oauth_client` / `app_token_only` (`app_id`, `package`, `client_key`, `value` = app name) and `email` with
+  `email_not_configured` in the `optional` step. Test `setup_status_lists_apps_people_cannot_sign_in_to_and_missing_email`
+  (no client → listed; token alternative → informational; instance-bound and no-OAuth apps not listed; an organization
+  client takes Linear off the list). The old `oauth_clients` check stays in the API (stable reason codes) and is hidden by
+  the page.
+- **Web**: `/admin` is the checklist until no step is `todo`, then a health page (needs-you, runners, gateway, AI models,
+  new people, storage); **Run setup again** / **Back to the health page**. `SignInGaps` (one component) is on the
+  Overview and on the organization's Apps tab (`OrgSignInGaps`, mounted in `org-topics.tsx` above `AvailabilityView`;
+  for an organization it applies the same rule to each app's C-931 org view in TS, `gapFromSetup`, because
+  `GET /v1/admin/setup` is instance-admin only). First AI key → starter grant automatically; switch text per the board;
+  backfill offer. People › New users: **Workspace address**. Selector: "<name> (personal)" for the person's own personal
+  workspace (from `/v1/me` memberships). Vitest: 36 onboarding (6 new), placement, context-switcher (1 new).
+- **Dev image**: builder container builds the packages unsigned into `$WORK/plugins`; the API image copies them to
+  `/var/lib/aurora/plugins`; `values-dev.yaml` `config.plugins.allow_unsigned: true`. **Deviation from the brief:**
+  `plugins.builtin_dir` refuses unsigned packages even with `allow_unsigned` (`ingest.rs:287`), so they arrive as the
+  `directory` source and **wait for approval**; the script does not approve them (it has no admin credential), the admin
+  approves under Apps & accounts › Apps (documented in `install-kind-dev.md`). **Not run**: `just kind-up` / the manual
+  Apps-tab check (disk below 50 GB on the box, and no cluster of this lane).
+- Rule slips: two Rust appends (`placement/dto.rs`, `apps/setup.rs`) were written with a heredoc; content verified.
+- Not done: storage line shows bytes held (no quota exists); health stat tiles of the board (People, Agents, …) are not
+  built (no API for them); board "Needs you" is the spec's pending-panel, not pixel-matched.
+- Gates run: `cargo fmt --check`, `cargo clippy -p aurora-api -p aurora-db --all-targets --all-features -D warnings`
+  (ok), targeted `cargo test -p aurora-api --test it` (placement::, onboarding::, c922, setup_status_lists, openapi),
+  `scripts/guards/run-all.sh` (exit 0), `extract-schema.py --check` (ok), `pnpm typecheck`, vitest on the touched files.
+  **Not run:** the batch gate (full aurora-api it + lib, workspace clippy, web full vitest/lint/build, Playwright, axe,
+  upgrade.sh — no migration was added).
+- **Batch gate (run 2026-11-17, after `git merge master`)**: `cargo test -p aurora-db -p aurora-api` (all targets, fixtures
+  built): api lib 141 ok, it 1382 ok / 1 failed → `permission_matrix::coverage_every_openapi_route_is_listed` (the
+  backfill route was not in the matrix) — fixed (commit "the permission matrix lists …"), `permission_matrix` filter rerun
+  5/5 ok. Workspace clippy all-targets/all-features `-D warnings` ok; guards exit 0; `extract-schema.py --check` ok;
+  `gen:api` no drift (openapi test passes); web typecheck ok, lint 0 errors (5 warnings), vitest 132 files / 2202 ok,
+  `pnpm build` ok. Playwright `mocked`: 1116 passed; the `real-stack` project (needs a live stack, not part of this gate)
+  failed 4 specs; `stage4-routes` FIX-029 "Computer tab with a failed start (390 px)" failed in both themes and again alone:
+  P5-UX-14's "1 account needs attention" chip made the agent header's pill row 1 px too wide — fixed (flex-wrap, commit
+  "the agent header's pill row wraps"), stage4-routes + ia-navigation 260/260 ok after. Production project 11/11 ok.
+  No migration → `upgrade.sh` not run.

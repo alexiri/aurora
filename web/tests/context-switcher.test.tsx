@@ -29,8 +29,10 @@ const org = { id: "o1", slug: "acme", name: "Acme Labs", my_role: "owner", app_p
 const otherOrg = { ...org, id: "o2", slug: "other", name: "No other org" };
 const ws = { id: "w1", org_id: "o1", slug: "main", name: "Main workspace", my_role: "owner", memory_language: "en", timezone: "UTC", created_at: now, updated_at: now };
 
+let personalMain = false;
 function me(isAdmin: boolean) {
-  return { user: { id: "u1", email: "alex@example.org", display_name: "Alex", is_instance_admin: isAdmin }, default_org_id: null, memberships: [] };
+  const memberships = personalMain ? [{ org: { slug: "acme" }, status: "active", workspaces: [{ slug: "main", personal: true }] }] : [];
+  return { user: { id: "u1", email: "alex@example.org", display_name: "Alex", is_instance_admin: isAdmin }, default_org_id: null, memberships };
 }
 
 /** Routes the shell needs; later tests override the `me` admin flag per world. */
@@ -170,6 +172,18 @@ describe("workspace selector", () => {
     const all = await item("All workspaces…");
     expect(all.getAttribute("href")).toBe("/o/acme");
     expect(all.className).not.toContain("font-semibold");
+  });
+
+  it("C-923: the person's own personal workspace reads \"<name> (personal)\"", async () => {
+    personalMain = true;
+    try {
+      world("/o/acme/w/main/agents", { org: "acme", ws: "main" });
+      await waitFor(() => expect(within(screen.getByTestId("workspace-selector")).getByText("Main workspace (personal)")).toBeInTheDocument());
+      await open("workspace-selector");
+      expect(await item("Main workspace (personal)")).toBeTruthy();
+    } finally {
+      personalMain = false;
+    }
   });
 });
 

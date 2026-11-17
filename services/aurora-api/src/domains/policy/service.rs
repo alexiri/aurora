@@ -41,6 +41,23 @@ async fn ensure(state: &AppState, s: Scope) -> Result<(), ApiError> {
     Ok(())
 }
 
+/// (FIX-164, D-365) The published generation only, for a member of the workspace.
+pub async fn published_internet_access(
+    state: &AppState,
+    s: Scope,
+) -> Result<PublishedInternetAccess, ApiError> {
+    ensure(state, s).await?;
+    let g = generation(state, s, "published").await?;
+    Ok(PublishedInternetAccess {
+        number: g.number,
+        default_action: g.default_action,
+        uncredentialed_default: g.uncredentialed_default,
+        uncredentialed_allowlist: g.uncredentialed_allowlist,
+        open_lane_posture: g.open_lane_posture,
+        rules: g.rules,
+    })
+}
+
 pub async fn document(state: &AppState, s: Scope) -> Result<PolicyDocument, ApiError> {
     ensure(state, s).await?;
     Ok(PolicyDocument {

@@ -158,7 +158,7 @@ async fn two_users_one_org_two_personal_workspaces_with_starter_grant() {
         let (s, name, wr) = e.personal(email).await.unwrap();
         assert_eq!(
             (s.as_str(), name.as_str(), wr.as_deref()),
-            (slug, slug, Some("owner"))
+            (slug, "Test User", Some("owner"))
         );
         // Default agent holding the starter grant, nothing else.
         assert_eq!(
@@ -317,7 +317,9 @@ async fn sec79_templates_use_only_validated_claims_and_fall_back() {
         c.extra.insert("cern".into(), json!({"upn": "Ada L"}));
     });
     e.sign_in().await.unwrap();
-    assert_eq!(e.personal("a@example.com").await.unwrap().1, "Ada L");
+    // C-923: the template sets the slug (`ada-l`); the name is the person's (the `name` claim).
+    let (slug, name, _) = e.personal("a@example.com").await.unwrap();
+    assert_eq!((slug.as_str(), name.as_str()), ("ada-l", "Test User"));
     // Missing claim: next alternative.
     e.idp.identity("s2", "b@example.com", true);
     e.idp.set(|c| {
@@ -326,12 +328,14 @@ async fn sec79_templates_use_only_validated_claims_and_fall_back() {
         c.extra.insert("family_name".into(), json!("Jones"));
     });
     e.sign_in().await.unwrap();
-    assert_eq!(e.personal("b@example.com").await.unwrap().1, "Bo Jones");
+    let (slug, name, _) = e.personal("b@example.com").await.unwrap();
+    assert_eq!((slug.as_str(), name.as_str()), ("bo-jones", "Bo")); // given name wins
     // Nothing but the e-mail: last alternative.
     e.idp.identity("s3", "c.d@example.com", true);
     e.idp.set(|c| c.extra.clear());
     e.sign_in().await.unwrap();
-    assert_eq!(e.personal("c.d@example.com").await.unwrap().1, "c.d");
+    let (slug, name, _) = e.personal("c.d@example.com").await.unwrap();
+    assert_eq!((slug.as_str(), name.as_str()), ("c-d", "Test User"));
     // Control characters never reach a name; a template with no usable result falls to user-<id>.
     e.shared_again(json!({"personal_workspace": {"enabled": true, "name_template": "{claim:x}"}}))
         .await;
@@ -342,14 +346,139 @@ async fn sec79_templates_use_only_validated_claims_and_fall_back() {
     });
     e.sign_in().await.unwrap();
     let u = e.user("z@example.com").await;
-    let (_, name, _) = e.personal("z@example.com").await.unwrap();
-    assert_eq!(name, format!("user-{}", &u.simple().to_string()[..8]));
+    let (slug, name, _) = e.personal("z@example.com").await.unwrap();
+    assert_eq!(slug, format!("user-{}", &u.simple().to_string()[..8]));
+    assert_eq!(name, "Test User");
     // Request input cannot add variables: unknown ones are refused when saving.
     let (s, _) = e
         .put(json!({"mode": "shared_org", "create_default_org": "X",
             "personal_workspace": {"enabled": true, "name_template": "{password}"}}))
         .await;
     assert_eq!(s, 400);
+}
+
+/// C-922: people who signed in before the starter grant existed get it with the backfill, once;
+/// running it again changes nothing; each grant is audited as the placement with `backfill`.
+#[tokio::test]
+async fn c922_backfill_gives_starter_grants_to_earlier_people_and_is_idempotent() {
+    let e = env(SignupMode::Open).await;
+    let org = e.shared(json!({})).await;
+    for (sub, email) in [("b-1", "bo@example.com"), ("b-2", "cy@example.com")] {
+        e.who(sub, email, None);
+        e.sign_in().await.unwrap();
+    }
+    let key = e.org_secret(org, "org-llm-key", "generic").await;
+    let backfill = |body: Value| {
+        e.call(
+            &e.admin,
+            Method::POST,
+            "/v1/admin/placement/starter-grants/backfill",
+            Some(body),
+        )
+    };
+    let waiting = || async {
+        let (s, v) = e.call(&e.admin, Method::GET, "/v1/admin/setup", None).await;
+        assert_eq!(s, 200, "{v}");
+        v["personal_workspaces_without_starter"].as_i64().unwrap()
+    };
+    // No starter grant saved: nothing is waiting, and the backfill has nothing to give.
+    assert_eq!(waiting().await, 0);
+    let (s, v) = backfill(json!({})).await;
+    assert_eq!((s, v["granted"].as_u64()), (200, Some(0)), "{v}");
+    // An id that is not a starter grant is refused.
+    e.shared_again(json!({"personal_workspace": {"enabled": true},
+        "starter_grants": [{"kind": "secret", "id": key}]}))
+        .await;
+    let (s, v) = backfill(json!({"credential_ids": [Uuid::now_v7()]})).await;
+    assert_eq!(s, 400, "{v}");
+
+    assert_eq!(waiting().await, 2);
+    let (s, v) = backfill(json!({})).await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(
+        (v["granted"].as_u64(), v["skipped"].as_u64()),
+        (Some(2), Some(0))
+    );
+    assert_eq!(waiting().await, 0);
+    let held = format!(
+        "SELECT count(*) FROM agents a JOIN workspaces w ON w.id = a.workspace_id \
+         JOIN grants g ON g.agent_id = a.id AND g.secret_id = '{key}' \
+         WHERE a.is_default AND w.personal_owner_user_id IS NOT NULL"
+    );
+    assert_eq!(e.n(&held).await, 2);
+
+    // Again: nothing changes.
+    let (s, v) = backfill(json!({})).await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(
+        (v["granted"].as_u64(), v["skipped"].as_u64()),
+        (Some(0), Some(2))
+    );
+    assert_eq!(e.n(&held).await, 2);
+
+    // One audit row per grant, written by the placement, marked as a backfill.
+    let rows: Vec<Value> = sqlx::query_scalar(
+        "SELECT metadata FROM audit_log WHERE action = 'grant.create' AND actor_label = 'placement'",
+    )
+    .fetch_all(e.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(rows.len(), 2, "{rows:?}");
+    assert!(
+        rows.iter()
+            .all(|m| m["backfill"] == true && m["starter"] == true)
+    );
+
+    // Only an instance admin may run it.
+    let member = e.h.user("m@example.com", false).await;
+    let (_, tok) = e.h.good_session(member).await;
+    let (s, _) = e
+        .call(
+            &cookie(&tok),
+            Method::POST,
+            "/v1/admin/placement/starter-grants/backfill",
+            Some(json!({})),
+        )
+        .await;
+    assert_eq!(s, 403);
+}
+
+/// C-923: a personal workspace is named after the person: given name, else full name, else the
+/// part of the e-mail before the @; the slug keeps coming from the template (`{sub}`).
+#[tokio::test]
+async fn c923_personal_workspace_is_named_after_the_person() {
+    let e = env(SignupMode::Open).await;
+    e.shared(json!({"personal_workspace": {"enabled": true, "name_template": "{sub}"}}))
+        .await;
+    for (sub, email, name, given, want) in [
+        (
+            "p-1",
+            "bob.smith@example.com",
+            Some("Bob Smith"),
+            Some("Bob"),
+            "Bob",
+        ),
+        (
+            "p-2",
+            "dana@example.com",
+            Some("Dana Cole"),
+            None,
+            "Dana Cole",
+        ),
+        ("p-3", "eve.k@example.com", None, None, "eve.k"),
+    ] {
+        e.idp.identity(sub, email, true);
+        e.idp.set(|c| {
+            c.name = name.map(str::to_owned);
+            c.extra.clear();
+            if let Some(g) = given {
+                c.extra.insert("given_name".into(), json!(g));
+            }
+        });
+        e.sign_in().await.unwrap();
+        let (slug, got, _) = e.personal(email).await.unwrap();
+        assert_eq!((slug.as_str(), got.as_str()), (sub, want), "{email}");
+    }
 }
 
 impl Env {
@@ -996,13 +1125,14 @@ async fn fix045_default_template_names_new_workspaces_from_the_sub() {
     e.sign_in().await.unwrap();
     let (slug1, name1, _) = e.personal("bob@example.com").await.unwrap();
     let (slug2, name2, _) = e.personal("robert@example.com").await.unwrap();
-    assert_eq!((slug1.as_str(), name1.as_str()), ("sub-bob-1", "sub-bob-1"));
-    assert_eq!((slug2.as_str(), name2.as_str()), ("sub-bob-2", "sub-bob-2"));
+    // C-923: the slug comes from the template, the name is the person's own.
+    assert_eq!((slug1.as_str(), name1.as_str()), ("sub-bob-1", "Test User"));
+    assert_eq!((slug2.as_str(), name2.as_str()), ("sub-bob-2", "Test User"));
     // A `sub` with characters the slug derivation trims still yields a usable slug.
     e.who("Sub.Bob@3", "bobby@example.com", Some("bobj"));
     e.sign_in().await.unwrap();
     let (slug3, name3, _) = e.personal("bobby@example.com").await.unwrap();
-    assert_eq!(name3, "Sub.Bob@3");
+    assert_eq!(name3, "Test User");
     assert_eq!(slug3, "sub-bob-3");
     // Three distinct workspaces, no collision slug anywhere.
     assert_eq!(
@@ -1102,8 +1232,8 @@ async fn fix045_same_alias_from_two_providers_gets_distinct_sub_named_workspaces
     let (slug_b, name_b) = row_b
         .expect("personal_of(robert) timed out")
         .expect("no personal ws for robert");
-    assert_eq!((slug_a.as_str(), name_a.as_str()), ("s-bob-a", "s-bob-a"));
-    assert_eq!((slug_b.as_str(), name_b.as_str()), ("s-bob-b", "s-bob-b"));
+    assert_eq!((slug_a.as_str(), name_a.as_str()), ("s-bob-a", "Test User"));
+    assert_eq!((slug_b.as_str(), name_b.as_str()), ("s-bob-b", "Test User"));
     assert_eq!(
         sqlx::query_scalar::<_, i64>(
             "SELECT count(*) FROM workspaces WHERE personal_owner_user_id IS NOT NULL"

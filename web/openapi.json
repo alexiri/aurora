@@ -3349,6 +3349,79 @@
         ]
       }
     },
+    "/v1/admin/placement/starter-grants/backfill": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Give the starter grants to people who signed in before (instance administrators; audited\nper grant). Idempotent: a grant that exists is left alone.",
+        "operationId": "adminBackfillStarterGrants",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BackfillStarterGrants"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackfillResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
     "/v1/admin/plugins": {
       "get": {
         "tags": [
@@ -33117,6 +33190,77 @@
         ]
       }
     },
+    "/v1/workspaces/{ws}/internet-access": {
+      "get": {
+        "tags": [
+          "policy"
+        ],
+        "summary": "(FIX-164, C-1020, D-365; amends I-27 for this one read) A workspace member reads the workspace's **published**\nInternet access, read-only: defaults and rules of the active generation. No draft, history, warnings or write.",
+        "operationId": "getWorkspaceInternetAccess",
+        "parameters": [
+          {
+            "name": "ws",
+            "in": "path",
+            "description": "Workspace id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The published generation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublishedInternetAccess"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
     "/v1/workspaces/{ws}/members/{user}/offboarding": {
       "get": {
         "tags": [
@@ -35139,6 +35283,13 @@
           "scope": {
             "type": "string",
             "description": "`workspace` | `organization`."
+          },
+          "status_reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "(FIX-163) Why a turned-off app account is off, when something other than a person's choice turned it\noff: `instance_deleted` (its self-hosted app instance was removed; it cannot be turned on again)."
           }
         }
       },
@@ -37914,6 +38065,44 @@
             "description": "`string` | `aws_sigv4` | `aws_assume_role` | `azure_entra` | `gcp_service_account`."
           }
         }
+      },
+      "BackfillResult": {
+        "type": "object",
+        "description": "What a backfill did: grants written, and grants that already existed or were refused\n(an unusable credential, or an app that allows only custom access).",
+        "required": [
+          "granted",
+          "skipped"
+        ],
+        "properties": {
+          "granted": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "skipped": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
+      "BackfillStarterGrants": {
+        "type": "object",
+        "description": "`POST /v1/admin/placement/starter-grants/backfill` (C-922).",
+        "properties": {
+          "credential_ids": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Only these starter credentials; absent = every starter grant of the saved placement.\nAn id that is not one of the placement's starter grants is refused."
+          }
+        },
+        "additionalProperties": false
       },
       "BatchDecided": {
         "type": "object",
@@ -46688,6 +46877,13 @@
                 "scope": {
                   "type": "string",
                   "description": "`workspace` | `organization`."
+                },
+                "status_reason": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "(FIX-163) Why a turned-off app account is off, when something other than a person's choice turned it\noff: `instance_deleted` (its self-hosted app instance was removed; it cannot be turned on again)."
                 }
               }
             }
@@ -52836,6 +53032,46 @@
         },
         "additionalProperties": false
       },
+      "PublishedInternetAccess": {
+        "type": "object",
+        "description": "(FIX-164, C-1020, D-365) What a workspace member reads of the workspace's Internet access: the **published**\ngeneration's defaults and rules, and nothing else: no draft, no revision, no generation history, no publisher, no\nwarnings, no other workspace's overrides.",
+        "required": [
+          "number",
+          "default_action",
+          "uncredentialed_default",
+          "uncredentialed_allowlist",
+          "open_lane_posture",
+          "rules"
+        ],
+        "properties": {
+          "default_action": {
+            "$ref": "#/components/schemas/DefaultAction"
+          },
+          "number": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The published generation's number."
+          },
+          "open_lane_posture": {
+            "$ref": "#/components/schemas/OpenLanePosture"
+          },
+          "rules": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PolicyRule"
+            }
+          },
+          "uncredentialed_allowlist": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AllowlistEntry"
+            }
+          },
+          "uncredentialed_default": {
+            "$ref": "#/components/schemas/UncredentialedDefault"
+          }
+        }
+      },
       "PurgedAttachment": {
         "type": "object",
         "required": [
@@ -56043,6 +56279,19 @@
           "message"
         ],
         "properties": {
+          "app_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "(C-924) `app_needs_oauth_client` and `app_token_only`: the app the check is about."
+          },
+          "client_key": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "helm": {
             "type": [
               "string",
@@ -56058,6 +56307,13 @@
             "type": "string",
             "description": "One short plain sentence for the page."
           },
+          "package": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "(C-924) Those checks: the app's package id and the OAuth client key its sign-in method\nreads (`null` for `app_token_only` when it has none to name)."
+          },
           "reason": {
             "type": "string"
           },
@@ -56069,7 +56325,7 @@
               "string",
               "null"
             ],
-            "description": "The current value (never a secret): a model id, an image, a count."
+            "description": "The current value (never a secret): a model id, an image, a count; an app's name for\nthe `app_*` checks."
           }
         }
       },
@@ -56219,9 +56475,15 @@
         "description": "`GET /v1/admin/setup` (C-533): the setup wizard's live status, no secrets.",
         "required": [
           "placement_saved",
+          "personal_workspaces_without_starter",
           "steps"
         ],
         "properties": {
+          "personal_workspaces_without_starter": {
+            "type": "integer",
+            "format": "int64",
+            "description": "(C-922) Personal workspaces of the default organization whose default agent lacks a\nstarter grant of the saved placement: people who signed in before it was set. `0` when\nno placement or no starter grant is saved."
+          },
           "placement_saved": {
             "type": "boolean",
             "description": "A placement has been saved: the wizard is no longer shown at sign-in."

@@ -152,6 +152,10 @@ pub struct Account {
     /// The choices that exist for the account, already cut to the limit; empty = no choice.
     pub levels: Vec<Level>,
     pub health: Health,
+    /// (FIX-163) Why a turned-off app account is off, when something other than a person's choice turned it
+    /// off: `instance_deleted` (its self-hosted app instance was removed; it cannot be turned on again).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status_reason: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub connected_by: Option<PersonName>,
     pub agents: Vec<AgentAccess>,

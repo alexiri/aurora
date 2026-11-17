@@ -220,6 +220,45 @@ pub async fn setup_pending<'e, E: PgExecutor<'e>>(exec: E) -> Result<bool, DbErr
     )
 }
 
+/// Default agents of the personal workspaces of `org` (a person who still owns one: the owner
+/// id is cleared when the account is deleted), oldest first (C-922).
+pub async fn personal_default_agents<'e, E: PgExecutor<'e>>(
+    exec: E,
+    org: Uuid,
+) -> Result<Vec<Uuid>, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT a.id FROM workspaces w JOIN agents a ON a.workspace_id = w.id AND a.is_default
+         WHERE w.org_id = $1 AND w.personal_owner_user_id IS NOT NULL
+         ORDER BY w.created_at, w.id",
+    )
+    .bind(org)
+    .fetch_all(exec)
+    .await?)
+}
+
+/// How many personal workspaces of `org` have a default agent that lacks at least one of the
+/// starter credentials (C-922, `personal_workspaces_without_starter`).
+pub async fn count_personal_without_starter<'e, E: PgExecutor<'e>>(
+    exec: E,
+    org: Uuid,
+    secret_ids: &[Uuid],
+    connection_ids: &[Uuid],
+) -> Result<i64, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT count(*) FROM workspaces w JOIN agents a ON a.workspace_id = w.id AND a.is_default
+         WHERE w.org_id = $1 AND w.personal_owner_user_id IS NOT NULL
+           AND (EXISTS (SELECT 1 FROM unnest($2::uuid[]) s(id) WHERE NOT EXISTS
+                  (SELECT 1 FROM grants g WHERE g.agent_id = a.id AND g.secret_id = s.id))
+             OR EXISTS (SELECT 1 FROM unnest($3::uuid[]) c(id) WHERE NOT EXISTS
+                  (SELECT 1 FROM grants g WHERE g.agent_id = a.id AND g.connection_id = c.id)))",
+    )
+    .bind(org)
+    .bind(secret_ids)
+    .bind(connection_ids)
+    .fetch_one(exec)
+    .await?)
+}
+
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct PersonalOrg {
     pub org_id: Uuid,

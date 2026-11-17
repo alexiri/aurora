@@ -28,10 +28,12 @@ import {
   describeTarget,
   moveRule,
   newRule,
+  useInternetAccess,
   usePolicyGenerations,
   useRollback,
   type DraftState,
   type PolicyScope,
+  type PublishedInternetAccess,
 } from "@/lib/api/policy";
 import type { Agent } from "@/lib/api/queries";
 import { useSecrets } from "@/lib/api/secrets";
@@ -49,6 +51,36 @@ export interface GovernanceEditor {
   /** Sends the document; `true` when it is applied (the editor shows its own error otherwise). */
   apply: () => Promise<boolean>;
   discard: () => void;
+}
+
+/** (FIX-164) The published rules as text, for a member: what each does and to which websites, no controls. */
+function ReadOnlyRules({ rules }: { rules: PublishedInternetAccess["rules"] }) {
+  if (rules.length === 0) {
+    return (
+      <p className="rounded-card border border-dashed border-line-strong bg-surface p-6 text-sm text-ink-2">
+        No rules yet. Requests follow the limits and defaults below.
+      </p>
+    );
+  }
+  return (
+    <ol className="space-y-3" aria-label="Rules people wrote">
+      {rules.map((r) => (
+        <li key={r.logical_id} className="rounded-card border border-line bg-surface p-4 text-sm text-ink shadow-card">
+          <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+            <Badge tone={r.action === "allow" && !r.require_approval ? "accent" : r.action === "allow" ? "pending" : "danger"}>
+              {r.action === "block" ? "Blocks" : r.require_approval ? "Asks" : "Allows"}
+            </Badge>
+            <span className="font-medium">{r.name}</span>
+            {r.enabled === false ? <span className="text-muted">(turned off)</span> : null}
+          </div>
+          {r.description ? <p className="mt-1 text-ink-2">{r.description}</p> : null}
+          <p className="mt-1 break-words font-mono text-xs text-muted">
+            {r.targets.length ? r.targets.map((t) => (t.type === "secret" ? "a stored token" : describeTarget(t))).join("; ") : "all targets"}
+          </p>
+        </li>
+      ))}
+    </ol>
+  );
 }
 
 function History({ scope, onClose }: { scope: PolicyScope; onClose: () => void }) {
@@ -221,6 +253,8 @@ export interface InternetLevelProps {
 export function InternetLevel(p: InternetLevelProps) {
   const workspace = p.level === "workspace";
   const ed = usePolicyEditor(p.scope, p.canEdit);
+  // A member of the workspace reads the published rules from the member route (FIX-164); owners read the full document.
+  const memberRead = useInternetAccess(workspace ? p.scope.id : undefined, workspace && !p.canEdit);
   const addRule = useWhoCan(workspace ? { workspaceId: p.scope.id } : { orgId: p.orgId }, workspace ? "workspace_owner" : "org_admin", "add_rule");
   const groupsQ = useGroups(p.orgId);
   const wsSecrets = useSecrets(workspace ? { kind: "workspace", id: p.scope.id } : { kind: "organization", id: p.orgId }, p.canEdit);
@@ -239,12 +273,43 @@ export function InternetLevel(p: InternetLevelProps) {
   const header = (description: ReactNode, actions?: ReactNode) => <PageHeader title="Internet access" description={description} className="mb-2" actions={actions} />;
 
   if (!p.canEdit) {
+    // (FIX-164, D-365) A workspace's members read its published rules: the summary and the rules as text, no controls.
+    const memberSummary = memberRead.data
+      ? internetSummary(
+          internetAccessOf(memberRead.data, p.eff.egress.posture.value === "credentialed_only", p.eff.egress.baseline_allowlist.length + p.eff.egress.org_allowlist.length),
+          "Agents here",
+        )
+      : null;
     return (
       <div className="max-w-page space-y-6">
-        {header("Which websites agents can reach, and what asks or blocks.")}
+        {header(
+          memberSummary ? (
+            <>
+              <span data-testid="internet-summary" className="block font-display text-xl text-ink">
+                {memberSummary}
+              </span>
+              <span className="mt-2 block">
+                What agents may do in apps is set for each agent, on its{" "}
+                <Link href={wsRoutes(p.orgSlug, p.wsSlug ?? "").agents()} className="font-medium text-link underline">
+                  Access tab
+                </Link>
+                .
+              </span>
+            </>
+          ) : (
+            "Which websites agents can reach, and what asks or blocks."
+          ),
+        )}
         <Notice role="status">
           <WhoCan value={{ ...p.whoCanHere, action: "change_this" }} lead className="text-inherit" />
         </Notice>
+        {workspace ? (
+          <Section id="policy-rules" title="Rules people wrote">
+            {memberRead.isPending ? <Loading /> : null}
+            {memberRead.isError ? <ErrorState error={memberRead.error} onRetry={() => void memberRead.refetch()} /> : null}
+            {memberRead.data ? <ReadOnlyRules rules={memberRead.data.rules} /> : null}
+          </Section>
+        ) : null}
         <Section id="internet-limits" title="Limits">
           <ScopeLadder above={limitsFromAbove("workspace", p.eff, who)} />
         </Section>

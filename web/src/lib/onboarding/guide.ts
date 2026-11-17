@@ -1,18 +1,20 @@
 import type { ModelReadiness } from "@/lib/api/credential-grants";
 
 /**
- * The getting-started guide (D-141, `14 §Onboarding`). Every step is **computed** from real state (model
- * readiness, the keys that exist, a conversation with a reply). Nothing here is stored and nothing counts clicks.
+ * The getting-started guide (D-141, P5-UX-7, C-927, `14 §9`). Two steps, **computed** from real state (model readiness,
+ * the keys that exist, a conversation with a reply): *AI key*, then *Say hello*. A third, "Give <Agent> access to <key>",
+ * exists only while a key exists that the agent cannot use. A model is not a step: the key's own step shows the picker
+ * when the key's endpoint has no default model. Nothing here is stored and nothing counts clicks.
  */
 
-export type GuideStepId = "key" | "access" | "model" | "hello";
+export type GuideStepId = "key" | "access" | "hello";
 
 /**
  * - `done`: satisfied (collapsed, with what provides it).
  * - `todo`: the person can do it now.
  * - `waiting`: an earlier step comes first.
  * - `owner`: a workspace owner has to do it; the person is a member.
- * - `skipped`: not needed (a model is only a step when none resolves).
+ * - `skipped`: not a step now (a key the agent cannot use is the only reason for "access").
  */
 export type GuideStepState = "done" | "todo" | "waiting" | "owner" | "skipped";
 
@@ -27,7 +29,7 @@ export interface GuideInput {
   isOwner: boolean;
   /** Per-key readiness of the agent; `undefined` for a member or while loading. */
   readiness?: ModelReadiness;
-  /** Active LLM keys the person can see in the workspace or its organization (granted or not). */
+  /** Active AI keys the person can see in the workspace or its organization (granted or not). */
   keys: GuideKey[];
   /** A conversation of the agent has an answer from it. */
   replied: boolean;
@@ -36,12 +38,14 @@ export interface GuideInput {
 export interface GuideStep {
   id: GuideStepId;
   state: GuideStepState;
-  /** `done` only: what provides it, in words ("Your organization provides an LLM key: AIGW"). */
+  /** `done` only: what provides it, in words ("Your organization provides an AI key: AIGW"). */
   provider?: string;
   /** A granted key that cannot be used: the first reason code (`not_active`, `origin_unverified`, …). */
   problem?: string;
   /** `todo` for access: the key to give the agent. */
   keyToGrant?: GuideKey;
+  /** `todo` for the key: the agent can use a key, but no model resolves, so the step asks for one. */
+  needsModel?: boolean;
 }
 
 export interface Guide {
@@ -61,55 +65,50 @@ export function computeGuide(input: GuideInput): Guide {
     const usable = readiness?.keys.find((k) => k.usable);
     steps = [
       { id: "key", state: "done", provider: usable ? providerText(usable.scope, usable.name) : undefined },
-      { id: "access", state: "done" },
-      { id: "model", state: "skipped" },
+      { id: "access", state: "skipped" },
       { id: "hello", state: "done" },
     ];
   } else if (!isOwner) {
     steps = [
       { id: "key", state: "owner" },
-      { id: "access", state: "owner" },
-      { id: "model", state: "skipped" },
+      { id: "access", state: "skipped" },
       { id: "hello", state: "todo" },
     ];
   } else if (!readiness) {
     // Loading: nothing is claimed yet.
     steps = [
       { id: "key", state: "waiting" },
-      { id: "access", state: "waiting" },
-      { id: "model", state: "skipped" },
+      { id: "access", state: "skipped" },
       { id: "hello", state: "waiting" },
     ];
   } else {
     const granted = readiness.keys;
     const usable = granted.filter((k) => k.usable);
-    const hasKey = granted.length > 0 || keys.length > 0;
     const unusable = granted.find((k) => !k.usable);
 
-    const key: GuideStep =
-      usable.length > 0
-        ? { id: "key", state: "done", provider: providerText(usable[0].scope, usable[0].name) }
-        : granted.length > 0
-          ? // A key is granted but cannot be used: the person fixes the key, not the grant.
-            { id: "key", state: "todo", problem: unusable?.reason ?? "not_active" }
-          : hasKey
-            ? { id: "key", state: "done", provider: providerText(keys[0].scope, keys[0].name) }
-            : { id: "key", state: "todo" };
-
-    const access: GuideStep =
-      granted.length > 0
-        ? { id: "access", state: "done" }
-        : hasKey
-          ? { id: "access", state: "todo", keyToGrant: keys.find((k) => k.scope === "workspace") ?? keys[0] }
-          : { id: "access", state: "waiting" };
-
-    const needsModel = usable.length > 0 && !readiness.default;
-    const model: GuideStep = needsModel
-      ? { id: "model", state: "todo" }
-      : { id: "model", state: "skipped" };
-
-    const ready = usable.length > 0 && !needsModel;
-    steps = [key, access, model, { id: "hello", state: ready ? "todo" : "waiting" }];
+    if (usable.length > 0) {
+      const provider = providerText(usable[0].scope, usable[0].name);
+      // The key works; without a default model the step stays open to pick one.
+      steps = readiness.default
+        ? [{ id: "key", state: "done", provider }, { id: "access", state: "skipped" }, { id: "hello", state: "todo" }]
+        : [{ id: "key", state: "todo", needsModel: true, provider }, { id: "access", state: "skipped" }, { id: "hello", state: "waiting" }];
+    } else if (granted.length > 0) {
+      // A key is granted but cannot be used: the person fixes the key, not the grant.
+      steps = [
+        { id: "key", state: "todo", problem: unusable?.reason ?? "not_active" },
+        { id: "access", state: "skipped" },
+        { id: "hello", state: "waiting" },
+      ];
+    } else if (keys.length > 0) {
+      // A key exists that the agent cannot use: the one step is to give it access (the key step is not shown).
+      steps = [
+        { id: "key", state: "skipped" },
+        { id: "access", state: "todo", keyToGrant: keys.find((k) => k.scope === "workspace") ?? keys[0] },
+        { id: "hello", state: "waiting" },
+      ];
+    } else {
+      steps = [{ id: "key", state: "todo" }, { id: "access", state: "skipped" }, { id: "hello", state: "waiting" }];
+    }
   }
 
   const counted = steps.filter((s) => s.state !== "skipped");
@@ -118,9 +117,7 @@ export function computeGuide(input: GuideInput): Guide {
 }
 
 function providerText(scope: string, name: string): string {
-  return scope === "organization"
-    ? `Your organization provides an LLM key: ${name}`
-    : `This workspace has an LLM key: ${name}`;
+  return scope === "organization" ? `Your organization provides an AI key: ${name}` : `This workspace has an AI key: ${name}`;
 }
 
 /** The first message the guide suggests to say hello. */

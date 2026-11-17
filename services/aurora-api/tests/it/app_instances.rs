@@ -1817,6 +1817,28 @@ async fn deleting_an_instance_disables_its_connections_and_removes_its_clients()
             .unwrap();
         assert_eq!(n, 0, "{t}");
     }
+    // (FIX-163) The accounts list says why the account is off, so the dashboard does not offer Turn on; the
+    // default-host connection (still active) and other accounts carry no reason.
+    let (s, v) = w
+        .call(
+            &w.owner,
+            Method::GET,
+            &format!("/v1/workspaces/{}/accounts", w.ws),
+            None,
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let row = |id: Uuid| {
+        v["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|a| a["ref"]["id"] == json!(id))
+            .unwrap_or_else(|| panic!("account {id} in {v}"))
+    };
+    assert_eq!(row(cid)["health"]["state"], "disabled", "{v}");
+    assert_eq!(row(cid)["status_reason"], "instance_deleted", "{v}");
+    assert!(row(keep).get("status_reason").is_none(), "{v}");
     // re-enabling would make it look like a default-host connection: refused
     let (s, v) = w
         .call(

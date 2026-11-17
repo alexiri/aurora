@@ -42,7 +42,7 @@ test("first run: sign in, add a LiteLLM key, grant it, say hello, get the mock's
 
   // The guide ticks from real state: the agent (created at first sign-in) has no key yet, so nothing is done.
   const guide = page.getByRole("region", { name: "Get Daneel talking" });
-  await expect(guide.getByText("0 of 3 done")).toBeVisible();
+  await expect(guide.getByText("0 of 2 done")).toBeVisible();
 
   // 2. Step 1 opens the LLM key form in place: add the key for the LiteLLM endpoint.
   const form = guide.getByRole("form", { name: "New LLM key" });
@@ -54,7 +54,7 @@ test("first run: sign in, add a LiteLLM key, grant it, say hello, get the mock's
   // model: no model step).
   await expect(form.getByRole("checkbox", { name: "Daneel can use this key" })).toBeChecked();
   await form.getByRole("button", { name: "Add LLM key" }).click();
-  await expect(guide.getByText("2 of 3 done")).toBeVisible({ timeout: 60_000 });
+  await expect(guide.getByText("1 of 2 done")).toBeVisible({ timeout: 60_000 });
 
   // 4. Step "Say hello" opens Chat with a suggested message; send it, the reply is the mock's scripted answer.
   await guide.getByRole("link", { name: "Say hello to Daneel" }).click();

@@ -13,6 +13,22 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(get_placement, put_placement))
         .routes(routes!(preview))
         .routes(routes!(choices))
+        .routes(routes!(backfill))
+}
+
+/// Give the starter grants to people who signed in before (instance administrators; audited
+/// per grant). Idempotent: a grant that exists is left alone.
+#[utoipa::path(post, path = "/admin/placement/starter-grants/backfill",
+    operation_id = "adminBackfillStarterGrants", tag = "admin", request_body = BackfillStarterGrants,
+    responses((status = 200, body = BackfillResult), (status = 400, body = ErrorEnvelope),
+        (status = 403, body = ErrorEnvelope)),
+    security(("session" = [])))]
+async fn backfill(
+    c: InstanceAdmin,
+    State(s): State<AppState>,
+    Json(req): Json<BackfillStarterGrants>,
+) -> Result<Json<BackfillResult>, ApiError> {
+    Ok(Json(service::backfill_starter_grants(&s, &c, req).await?))
 }
 
 /// Workspaces and org-level credentials the placement form may offer for an organization.

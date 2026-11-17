@@ -68,22 +68,38 @@ build_rust() {
   local pkgs=() s
   # `dev-idp` (P1-005, RFE-004) is the `aurora-dev-idp` binary of the aurora-testkit package.
   for s in "${RUST_SVCS[@]}"; do case "$s" in dev-idp) pkgs+=(-p aurora-testkit) ;; *) pkgs+=(-p "aurora-$s") ;; esac; done
-  log "cargo build ${pkgs[*]} (in container, target volume $VOL_TARGET)"
+  # `aurora-cli` (binary `aurora`) builds the builtin packages below (P5-UX-6); it stays in the one package set.
+  pkgs+=(-p aurora-cli)
+  mkdir -p "$WORK/plugins"
+  log "cargo build ${pkgs[*]} + builtin packages (in container, target volume $VOL_TARGET)"
   # .cargo/config.toml is masked: it is for host builds (the image builds ignore it, too).
+  # The builtin packages are built unsigned (no key): three of them carry a hook guest crate, which needs the
+  # wasm32-wasip2 target (kept in the rustup volume). They go into the API image (thin_image).
   podman run --rm --name "$LANE-kind-dev-build" --label "aurora.lane=$LANE" --security-opt label=disable \
     -v "$ROOT:/src:ro" -v /dev/null:/src/.cargo/config.toml:ro \
-    -v "$VOL_TARGET:/target" -v "$VOL_REGISTRY:/usr/local/cargo/registry" -v "$VOL_RUSTUP:/usr/local/rustup" -v "$WORK/bin:/out" \
-    "$BUILDER_IMAGE" sh -ec "cargo build --locked ${pkgs[*]} && for s in ${RUST_SVCS[*]}; do cp -f /target/debug/aurora-\$s /out/aurora-\$s.new; done" || return 1
+    -v "$VOL_TARGET:/target" -v "$VOL_REGISTRY:/usr/local/cargo/registry" -v "$VOL_RUSTUP:/usr/local/rustup" -v "$WORK/bin:/out" -v "$WORK/plugins:/out-plugins" \
+    "$BUILDER_IMAGE" sh -ec "cargo build --locked ${pkgs[*]} && for s in ${RUST_SVCS[*]}; do cp -f /target/debug/aurora-\$s /out/aurora-\$s.new; done \
+      && rustup target add wasm32-wasip2 >/dev/null \
+      && bash scripts/plugins/build-builtin.sh --build-only --out /out-plugins --aurora /target/debug/aurora" || return 1
 }
+
+# A short digest of the built builtin packages: the API image is rebuilt when they change, not only its binary.
+plugins_hash() { cat "$WORK"/plugins/*.aurora-plugin 2>/dev/null | sha256sum | cut -c1-16; }
 
 # image_for <svc>: thin image from the binary; prints nothing, returns 0 and sets CHANGED=1 when it was (re)built.
 thin_image() { # svc
   local s=$1 bin="$WORK/bin/aurora-$1" new="$WORK/bin/aurora-$1.new"
   [ -f "$new" ] || return 0
   local h; h=$(sha256sum "$new" | cut -c1-64)
+  # The API image also carries the builtin packages, so their digest is part of its identity.
+  [ "$s" = api ] && h="$h-$(plugins_hash)"
   if [ "$h" = "$(cat "$WORK/bin/$s.sha" 2>/dev/null)" ] && podman image exists "$REG/aurora-$s:$TAG"; then rm -f "$new"; return 0; fi
   mv -f "$new" "$bin"
   local ctx; ctx=$(mktemp -d "$WORK/ctx.XXXXXX"); cp "$bin" "$ctx/aurora-$s"
+  # `plugins/` is in every context (the Containerfile copies it); only the API image gets packages.
+  mkdir -p "$ctx/plugins"
+  if [ "$s" = api ]; then cp "$WORK"/plugins/*.aurora-plugin "$ctx/plugins/" 2>/dev/null || log "no builtin packages built: the API image has none"
+  else : >"$ctx/plugins/.keep"; fi
   podman build -q -f deploy/dev/thin.Containerfile --build-arg "BIN=aurora-$s" -t "$REG/aurora-$s:$TAG" "$ctx" >/dev/null || { rm -rf "$ctx"; return 1; }
   rm -rf "$ctx"
   echo "$h" >"$WORK/bin/$s.sha.pending"
