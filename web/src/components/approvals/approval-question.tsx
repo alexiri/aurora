@@ -117,19 +117,20 @@ export function ApprovalQuestion({ approval: a, now, onDecide, pending, message,
         </p>
       ) : null}
       {canApprove ? (
-        <div className={cn("flex flex-wrap items-center gap-2", compact ? "" : "justify-start")}>
-          <Button size={compact ? "default" : "lg"} variant="approve" disabled={pending} onClick={() => (a.parked ? setConfirming(true) : onDecide("approve"))}>
+        // At 390 px: Allow once and Block side by side, Always allow under them (44 px targets).
+        <div className="grid grid-cols-2 items-center gap-2 sm:flex sm:flex-wrap">
+          <Button className="min-h-11 sm:min-h-10" size={compact ? "default" : "lg"} variant="approve" disabled={pending} onClick={() => (a.parked ? setConfirming(true) : onDecide("approve"))}>
             Allow once
           </Button>
           {a.can_always_allow ? (
-            <Button size={compact ? "default" : "lg"} variant="outline" disabled={pending} onClick={() => onDecide("approve", true)}>
+            <Button className="col-span-2 order-last min-h-11 sm:order-none sm:col-auto sm:min-h-10" size={compact ? "default" : "lg"} variant="outline" disabled={pending} onClick={() => onDecide("approve", true)}>
               Always allow
             </Button>
           ) : null}
-          <Button size={compact ? "default" : "lg"} variant="outline" disabled={pending} onClick={() => onDecide("deny")}>
+          <Button className="min-h-11 sm:min-h-10" size={compact ? "default" : "lg"} variant="outline" disabled={pending} onClick={() => onDecide("deny")}>
             Block
           </Button>
-          {a.asked_by?.kind === "rule" ? <span className="text-xs text-muted">Always allow is not offered for a rule&apos;s question.</span> : null}
+          {a.asked_by?.kind === "rule" ? <span className="col-span-2 order-last text-xs text-muted sm:order-none sm:col-auto">Always allow is not offered for a rule&apos;s question.</span> : null}
         </div>
       ) : (
         <p role="status" className="text-sm text-ink-2">

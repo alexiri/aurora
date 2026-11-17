@@ -6,12 +6,13 @@ import { useEffect, useState } from "react";
 import { AlwaysAllowedNote, ApprovalQuestion } from "@/components/approvals/approval-question";
 import { ParkedChip, ParkedNote } from "@/components/approvals/parked";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { ApiError } from "@/lib/api/client";
 import { useCanApprove, useDecide, usePendingApprovals } from "@/lib/api/approvals";
 import type { TranscriptEvent } from "@/lib/api/conversations";
 import { useWorkspace } from "@/lib/api/queries";
 import { approvalStatus, type TranscriptState } from "@/lib/chat/transcript";
-import { whoCanFromContacts } from "@/lib/who-can";
+import { orList, whoCanFromContacts } from "@/lib/who-can";
 
 const s = (v: unknown): string => (typeof v === "string" ? v : "");
 
@@ -140,6 +141,20 @@ export function ApprovalCard({ ev, state, wsId }: { ev: TranscriptEvent; state: 
             <p className="break-words">{s(ev.payload.summary)}</p>
           </div>
           {parked ? <ParkedNote className="text-xs text-ink-2" /> : null}
+          {canApprove ? (
+            <div className="grid grid-cols-2 gap-2 sm:flex">
+              <Button className="min-h-11 sm:min-h-10" variant="approve" disabled={decide.isPending} onClick={() => decide.mutate({ id, decision: "approve" })}>
+                Allow once
+              </Button>
+              <Button className="min-h-11 sm:min-h-10" variant="outline" disabled={decide.isPending} onClick={() => decide.mutate({ id, decision: "deny" })}>
+                Block
+              </Button>
+            </div>
+          ) : (
+            <p role="status" className="text-sm text-ink-2">
+              {approvers.length > 0 ? `Waiting for ${orList(approvers)}` : "Waiting for an approver"}
+            </p>
+          )}
         </>
       )}
     </div>
