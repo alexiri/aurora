@@ -5761,6 +5761,11 @@ export interface components {
             model_provider?: string | null;
             model_roles?: components["schemas"]["ModelRoles"] | null;
             name: string;
+            /**
+             * @description (P4-NARR, C-846) Show a live steps card for this agent's turns on chat platforms that can
+             *     edit messages; default `false`.
+             */
+            narration_cards: boolean;
             /** Format: uuid */
             org_id: string;
             /** @description `ask` | `allow` | `off`. */
@@ -9085,6 +9090,11 @@ export interface components {
                 model_provider?: string | null;
                 model_roles?: components["schemas"]["ModelRoles"] | null;
                 name: string;
+                /**
+                 * @description (P4-NARR, C-846) Show a live steps card for this agent's turns on chat platforms that can
+                 *     edit messages; default `false`.
+                 */
+                narration_cards: boolean;
                 /** Format: uuid */
                 org_id: string;
                 /** @description `ask` | `allow` | `off`. */
@@ -10052,6 +10062,8 @@ export interface components {
             model_id?: string | null;
             model_roles?: components["schemas"]["ModelRoles"] | null;
             name?: string | null;
+            /** @description (P4-NARR, C-846) A non-boolean is refused with 422 `invalid`. */
+            narration_cards?: boolean | null;
             proactive_messaging?: string | null;
             /** @description Instance admins only. */
             resource_overrides?: Record<string, never> | null;

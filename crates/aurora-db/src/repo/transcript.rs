@@ -101,6 +101,24 @@ pub async fn list_after<'e, E: PgExecutor<'e>>(
     .await?)
 }
 
+/// (P4-NARR, C-850) The durable `tool.started` / `tool.finished` events of one turn, ascending:
+/// the only transcript events a narration card reads.
+pub async fn tool_events_of_turn<'e, E: PgExecutor<'e>>(
+    exec: E,
+    conversation_id: Uuid,
+    turn_id: Uuid,
+) -> Result<Vec<EventRow>, DbError> {
+    Ok(sqlx::query_as(
+        "SELECT seq, turn_id, type, payload, created_at FROM transcript_events
+         WHERE conversation_id = $1 AND turn_id = $2 AND type IN ('tool.started', 'tool.finished')
+         ORDER BY seq LIMIT 5000",
+    )
+    .bind(conversation_id)
+    .bind(turn_id)
+    .fetch_all(exec)
+    .await?)
+}
+
 /// Emit an ephemeral delta on `aurora_delta` (`t` is the turn id; `m` the optional message id).
 pub async fn notify_delta<'e, E: PgExecutor<'e>>(
     exec: E,
