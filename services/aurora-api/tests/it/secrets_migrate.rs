@@ -202,6 +202,10 @@ async fn world(vault: SecretVault) -> World {
                     .bind(json!({"kind": "hmac", "header": "x-sig", "secret_ref": r}))
                     .execute(pool).await.unwrap();
             }
+            // (P4-011B-3, D-266(b)) Inline-only: never in `Purpose::ALL`, never migrated.
+            Purpose::WebpushVapid | Purpose::WebpushSubscription => {
+                unreachable!("the Web Push purposes are not migratable")
+            }
         }
         seeds.push(Seed { ctx, value });
     }

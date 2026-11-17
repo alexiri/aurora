@@ -85,6 +85,12 @@ pub async fn touch<'e, E: PgExecutor<'e>>(exec: E, id: Uuid) -> Result<bool, DbE
 
 /// Revoke one session and notify. Returns whether it was newly revoked.
 pub async fn revoke(pool: &PgPool, id: Uuid) -> Result<bool, DbError> {
+    Ok(revoke_counted(pool, id).await?.0)
+}
+
+/// [`revoke`], also returning how many Web Push subscriptions the revocation deleted (D-266(c);
+/// the audit row's `push_subscriptions_removed`).
+pub async fn revoke_counted(pool: &PgPool, id: Uuid) -> Result<(bool, u64), DbError> {
     let mut tx = pool.begin().await?;
     let r = sqlx::query(
         "UPDATE sessions SET revoked_at = now(), updated_at = now()
@@ -99,9 +105,12 @@ pub async fn revoke(pool: &PgPool, id: Uuid) -> Result<bool, DbError> {
         .bind(id)
         .execute(&mut *tx)
         .await?;
+    // (P4-011B-3, D-266(c)) A push subscription is bound to the session that registered it: it
+    // ends with the session, in this transaction (the row stays, so no cascade fires).
+    let push = super::push::delete_for_session(&mut tx, id).await?;
     notify_auth_revoked(&mut *tx, "session", id).await?;
     tx.commit().await?;
-    Ok(r.rows_affected() > 0)
+    Ok((r.rows_affected() > 0, push))
 }
 
 /// Revoke all of a user's sessions except `except`; returns the count.
@@ -122,6 +131,18 @@ pub async fn revoke_all_for_user_except_tx(
     user_id: Uuid,
     except: Option<Uuid>,
 ) -> Result<u64, DbError> {
+    Ok(revoke_all_for_user_except_counted_tx(conn, user_id, except)
+        .await?
+        .0)
+}
+
+/// [`revoke_all_for_user_except_tx`], also returning the Web Push subscriptions it deleted
+/// (D-266(c); the audit row's `push_subscriptions_removed`).
+pub async fn revoke_all_for_user_except_counted_tx(
+    conn: &mut sqlx::PgConnection,
+    user_id: Uuid,
+    except: Option<Uuid>,
+) -> Result<(u64, u64), DbError> {
     let r = sqlx::query(
         "UPDATE sessions SET revoked_at = now(), updated_at = now()
          WHERE user_id = $1 AND revoked_at IS NULL AND ($2::uuid IS NULL OR id <> $2)",
@@ -138,8 +159,9 @@ pub async fn revoke_all_for_user_except_tx(
     .bind(user_id)
     .execute(&mut *conn)
     .await?;
+    let push = super::push::delete_for_revoked_sessions_of_user(&mut *conn, user_id).await?;
     notify_auth_revoked(&mut *conn, "user", user_id).await?;
-    Ok(r.rows_affected())
+    Ok((r.rows_affected(), push))
 }
 
 /// Whether session `id` is still live (same rule as [`SessionRecord::live`]); unknown => false.

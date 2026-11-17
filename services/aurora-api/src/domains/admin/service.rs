@@ -43,9 +43,15 @@ pub async fn patch_user(
     let row = account::update_admin_flags(&mut *tx, id, is_instance_admin, disabled)
         .await?
         .ok_or_else(|| ApiError::not_found("User not found."))?;
+    let mut ev = ev.clone();
     if disabled == Some(true) {
-        sessions::revoke_all_for_user_except_tx(&mut tx, id, None).await?;
+        // (P4-011B-3, D-266(c)) the sessions' Web Push subscriptions go with them.
+        let (_, push) = sessions::revoke_all_for_user_except_counted_tx(&mut tx, id, None).await?;
+        if let Some(m) = ev.metadata.as_object_mut() {
+            m.insert("push_subscriptions_removed".to_owned(), json!(push));
+        }
     }
+    let ev = &ev;
     // (FIX-108) The cached caller carries `is_instance_admin`: whenever it (or the disabled
     // state) changes, every replica drops this user's cache entries on commit.
     if is_instance_admin.is_some() || disabled == Some(true) {

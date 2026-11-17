@@ -18779,6 +18779,383 @@
         ]
       }
     },
+    "/v1/me/push-subscriptions": {
+      "get": {
+        "tags": [
+          "push"
+        ],
+        "summary": "The caller's registered devices (session only).",
+        "operationId": "listPushSubscriptions",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PushSubscriptionList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "push"
+        ],
+        "summary": "Register this browser (session only). 201 for a new registration, 200 when the endpoint\nalready belonged to the caller (the session is re-bound).",
+        "operationId": "createPushSubscription",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreatePushSubscription"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PushSubscription"
+                }
+              }
+            }
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PushSubscription"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/v1/me/push-subscriptions/{id}": {
+      "delete": {
+        "tags": [
+          "push"
+        ],
+        "summary": "Remove one of the caller's devices (session only; idempotent).",
+        "operationId": "deletePushSubscription",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Subscription id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {},
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "push"
+        ],
+        "summary": "Rename, pause or change the details of one of the caller's devices (session only).",
+        "operationId": "updatePushSubscription",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Subscription id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdatePushSubscription"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PushSubscription"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/v1/me/push-subscriptions/{id}/test": {
+      "post": {
+        "tags": [
+          "push"
+        ],
+        "summary": "Send one test notification to one of the caller's devices (session only). The outcome shows in\nthe device row (`last_success_at` / `last_failure_at`).",
+        "operationId": "testPushSubscription",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Subscription id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "202": {},
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
     "/v1/me/ssh-keys": {
       "get": {
         "tags": [
@@ -26121,6 +26498,62 @@
         },
         "security": [
           {}
+        ]
+      }
+    },
+    "/v1/push/config": {
+      "get": {
+        "tags": [
+          "push"
+        ],
+        "summary": "The application-server key and the allowed push hosts.",
+        "operationId": "getPushConfig",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PushConfig"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
         ]
       }
     },
@@ -39724,6 +40157,54 @@
           }
         }
       },
+      "CreatePushSubscription": {
+        "type": "object",
+        "required": [
+          "endpoint",
+          "keys",
+          "vapid_public_key"
+        ],
+        "properties": {
+          "endpoint": {
+            "type": "string"
+          },
+          "expiration_time": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The browser's `expirationTime` (milliseconds since the epoch), when it has one."
+          },
+          "keys": {
+            "$ref": "#/components/schemas/PushKeys"
+          },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "At most 80 characters."
+          },
+          "rebind": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Re-attach this browser's registration to the current session; succeeds only when the\nendpoint is already registered to the caller."
+          },
+          "show_details": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "vapid_public_key": {
+            "type": "string",
+            "description": "The application-server key the browser subscribed with (`GET /v1/push/config`)."
+          }
+        }
+      },
       "CreateRunnerRequest": {
         "type": "object",
         "required": [
@@ -41059,7 +41540,8 @@
           "channels",
           "previews",
           "terminal",
-          "ssh"
+          "ssh",
+          "push"
         ],
         "properties": {
           "channels": {
@@ -41071,6 +41553,10 @@
           "previews": {
             "type": "boolean",
             "description": "(phase 4, P4-PRV-1) Port previews are configured on this instance."
+          },
+          "push": {
+            "type": "boolean",
+            "description": "(phase 5, P4-011B-3, C-830) Web Push is enabled on this instance (`push.enabled`)."
           },
           "ssh": {
             "type": "boolean",
@@ -52241,6 +52727,124 @@
           }
         }
       },
+      "PushConfig": {
+        "type": "object",
+        "required": [
+          "available",
+          "allowed_hosts"
+        ],
+        "properties": {
+          "allowed_hosts": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The endpoint hosts a subscription may name (exact, or `*.suffix`)."
+          },
+          "available": {
+            "type": "boolean",
+            "description": "`push.enabled` and a usable key."
+          },
+          "vapid_public_key": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "base64url of the 65-byte uncompressed P-256 point of the active VAPID key."
+          }
+        }
+      },
+      "PushKeys": {
+        "type": "object",
+        "required": [
+          "p256dh",
+          "auth"
+        ],
+        "properties": {
+          "auth": {
+            "type": "string"
+          },
+          "p256dh": {
+            "type": "string"
+          }
+        }
+      },
+      "PushState": {
+        "type": "string",
+        "enum": [
+          "active",
+          "paused",
+          "disabled",
+          "expired",
+          "stale_key"
+        ]
+      },
+      "PushSubscription": {
+        "type": "object",
+        "required": [
+          "id",
+          "label",
+          "show_details",
+          "paused",
+          "state",
+          "this_session",
+          "created_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "label": {
+            "type": "string"
+          },
+          "last_failure_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "last_success_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "paused": {
+            "type": "boolean"
+          },
+          "show_details": {
+            "type": "boolean"
+          },
+          "state": {
+            "$ref": "#/components/schemas/PushState"
+          },
+          "this_session": {
+            "type": "boolean",
+            "description": "Registered by the session making this request."
+          }
+        }
+      },
+      "PushSubscriptionList": {
+        "type": "object",
+        "required": [
+          "subscriptions"
+        ],
+        "properties": {
+          "subscriptions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PushSubscription"
+            }
+          }
+        }
+      },
       "PutAccessRequest": {
         "type": "object",
         "required": [
@@ -57838,6 +58442,29 @@
           }
         },
         "additionalProperties": false
+      },
+      "UpdatePushSubscription": {
+        "type": "object",
+        "properties": {
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "paused": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "show_details": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          }
+        }
       },
       "UpdateScheduleRequest": {
         "type": "object",

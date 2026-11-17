@@ -12,7 +12,7 @@ use uuid::Uuid;
 /// `U` = SQL expression of the user, `a`/`w` = approval and its workspace aliases: the access law
 /// for `can_approve` (workspace owner/approver or org owner/admin) intersected with conversation
 /// visibility (RFE-009). Mirrors `approvals::may_decide`.
-fn may_decide(user: &str) -> String {
+pub(crate) fn may_decide(user: &str) -> String {
     format!(
         "(EXISTS (SELECT 1 FROM effective_workspace_access ea \
            WHERE ea.workspace_id = w.id AND ea.user_id = {user} \
@@ -197,6 +197,18 @@ pub async fn deciders(
     workspace: Uuid,
     conversation: Option<Uuid>,
 ) -> Result<Vec<Decider>, DbError> {
+    deciders_with(pool, org, workspace, conversation, true).await
+}
+
+/// The same decider set; `require_email = false` keeps users who turned approval e-mails off (the
+/// Web Push audience, P4-011B-3: push has its own per-device opt-in and is independent of e-mail).
+pub async fn deciders_with(
+    pool: &PgPool,
+    org: Uuid,
+    workspace: Uuid,
+    conversation: Option<Uuid>,
+    require_email: bool,
+) -> Result<Vec<Decider>, DbError> {
     Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "WITH explicit AS ( \
              SELECT m.user_id FROM org_members m \
@@ -216,7 +228,7 @@ pub async fn deciders(
                AND NOT EXISTS (SELECT 1 FROM explicit)) \
          SELECT u.id AS user_id, u.email::text AS email, u.display_name \
          FROM recipients r JOIN users u ON u.id = r.user_id \
-         WHERE u.disabled_at IS NULL AND u.approval_email_enabled \
+         WHERE u.disabled_at IS NULL AND (NOT $4 OR u.approval_email_enabled) \
            AND NOT {} \
          ORDER BY u.id",
         crate::authz::hidden_direct_conversation_sql("$3::uuid", "u.id", "$2")
@@ -224,6 +236,7 @@ pub async fn deciders(
     .bind(org)
     .bind(workspace)
     .bind(conversation)
+    .bind(require_email)
     .fetch_all(pool)
     .await?)
 }

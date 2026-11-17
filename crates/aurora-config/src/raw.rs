@@ -116,6 +116,8 @@ pub struct RawConfig {
     /// (phase 5, P4-SSH-1, D-239) SSH access to sandboxes: master switch, the public address
     /// people connect to, the certificate lifetime and the retired CA public keys.
     pub ssh: SshSection,
+    /// (phase 5, P4-011B-3, D-134) Web Push for approvals.
+    pub push: PushSection,
     pub telemetry: TelemetrySection,
     #[serde(skip)]
     pub env_secrets: EnvSecrets,
@@ -827,6 +829,58 @@ impl Default for TerminalSection {
             wake_wait_secs: 45,
         }
     }
+}
+
+/// `[push]` (phase 5, P4-011B-3, D-134, D-266; docs/15 §Approval park-and-resume and Web Push): Web Push
+/// for approvals. Helm-only (D-237(b)): nothing here is an instance setting.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct PushSection {
+    /// Master switch (`false`): every `/v1/push/config` and `/v1/me/push-subscriptions` route answers
+    /// 404 `push_unavailable`, no key is generated and no outbound call is made.
+    pub enabled: bool,
+    pub vapid: PushVapidSection,
+    /// Hosts a subscription endpoint may name (exact, or `*.suffix`); re-checked before every send.
+    pub allowed_endpoint_hosts: Vec<String>,
+    /// Pushes in flight per replica (1–64).
+    pub concurrency: u32,
+    /// Per-request timeout in seconds (2–30).
+    pub timeout_secs: u64,
+    /// (C-837, D-267(b)) **Tests and development only; the Helm chart never renders it; not a setting.**
+    /// `{ "<allow-listed push host>": "http://127.0.0.1:<port>" }` sends pushes for that host to the test
+    /// kit's mock push service. Accepted only with every target loopback and a loopback
+    /// `server.external_url`; refused inside Kubernetes.
+    pub dev_endpoint_overrides: BTreeMap<String, String>,
+}
+impl Default for PushSection {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            vapid: PushVapidSection::default(),
+            allowed_endpoint_hosts: strs(&[
+                "fcm.googleapis.com",
+                "updates.push.services.mozilla.com",
+                "*.push.services.mozilla.com",
+                "web.push.apple.com",
+                "*.push.apple.com",
+                "*.notify.windows.com",
+            ]),
+            concurrency: 16,
+            timeout_secs: 10,
+            dev_endpoint_overrides: BTreeMap::new(),
+        }
+    }
+}
+
+/// `[push.vapid]` (C-833).
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct PushVapidSection {
+    /// VAPID `sub` claim: `mailto:` or `https:`. Unset = `server.external_url` (which must then be https).
+    pub subject: Option<String>,
+    /// Name of an environment variable holding an operator-managed ES256 private key (PKCS#8 PEM or
+    /// base64url raw 32-byte scalar). Unset = Aurora generates and seals one.
+    pub private_key_env: Option<String>,
 }
 
 /// `[ssh]` (phase 5, P4-SSH-1, D-239; docs/15 §SSH access): SSH access to hosted agents'
