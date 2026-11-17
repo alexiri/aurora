@@ -113,7 +113,9 @@ pub async fn enrich(s: &AppState, chooser: Option<Uuid>, items: &mut [Approval])
                     && a.connection_id == Some(connection_id)
                     && ask_tools.iter().any(|t| t == tool);
                 let limit_ok = conn.as_ref().is_some_and(|c| {
-                    c.workspace_id.is_some() || levels::limit_from_access(&c.access) == Level::Act
+                    c.workspace_id.is_some()
+                        || levels::connection_limit(c.limit_level.as_deref(), &c.access)
+                            == Level::Act
                 });
                 if !(in_ask && limit_ok) {
                     continue;

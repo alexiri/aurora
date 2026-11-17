@@ -383,6 +383,7 @@ Audit writes are best-effort and never fail the action (logged on failure). (pha
 | last_used_at | timestamptz null | churn column |
 | last_check_at | timestamptz null | (phase 5, P5-UX-14, D-335, D-350, C-944) when the account's health was last recorded: by Test (C-943) or by the gateway from real use (C-985) |
 | last_check_result | text null CHECK in (`ok`,`rejected`,`unreachable`,`unexpected`) | what was recorded then; informational, never changes `status` or what an agent may do |
+| limit_level | text null CHECK in (`read`,`ask`,`act`) | (phase 5, P5-UX-11, D-353, C-990) the limit of an organization's account: no agent's access may exceed it. Set only for organization scope (`workspace_id IS NULL`), null otherwise; migration `20261201000251_app_connections_limit_level.sql` fills it from `access` (`read` → `read`, `write` → `act`). `access` stays in step (`read` for `read`, `write` otherwise) and keeps being what the gateway enforces |
 | index | (org_id, workspace_id, app_id) | |
 
 ### `app_oauth_clients` (BYOC)
@@ -1664,11 +1665,7 @@ One row: the runtime rollup's watermark.
 C-923 (a personal workspace named after the person) adds no column and no setting: the name is derived when
 the workspace is created.
 
-#### `app_connections` (the limit of an organization's account; phase 5, P5-UX-11, D-353, C-990)
-
-| Column | Type | Notes | Phase |
-|---|---|---|---|
-| limit_level | text null | CHECK in (`read`, `ask`, `act`); set only for organization scope, null otherwise. The migration fills it from `access` (`read` → `read`, `write` → `act`). `access` stays in step (`read` for `read`, `write` otherwise) and keeps being what the gateway enforces | 5 (P5-UX-11) |
+(Landed, P5-UX-11, D-353, C-990: `app_connections.limit_level` is in the `app_connections` section above, migration `20261201000251_app_connections_limit_level.sql`.)
 
 (Landed, FIX-146 Part B: `turns.trace_context` and `gateway_credentials.trace_context` are in §6 and §3 with migration `20261201000150_turn_trace_context.sql`. The gateway role gets no grant on `turns`: the value is copied onto the context credential at mint.)
 

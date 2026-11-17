@@ -26,6 +26,9 @@ pub struct ConnectionRow {
     pub connect_method: Option<String>,
     /// (FIX-133, D-240) `read` | `write`: a `read` connection allows only the app's read tools.
     pub access: String,
+    /// (P5-UX-11, C-990) `read` | `ask` | `act`: the limit of an organization's account; null for
+    /// a workspace's account.
+    pub limit_level: Option<String>,
     /// The registered self-hosted instance (D-74); null for `default_host` and other apps.
     pub instance_id: Option<Uuid>,
     pub instance_host: Option<String>,
@@ -46,7 +49,7 @@ pub struct ConnectionRow {
 
 const SELECT: &str = "SELECT c.id, c.org_id, c.workspace_id, c.app_id, c.package_id, c.app_version, \
     c.label, c.status, c.status_reason, c.scopes, c.requested_scopes, c.metadata, c.tenant_host, c.oauth_client_id, \
-    c.connect_method, c.access, c.instance_id, ai.host AS instance_host, ai.base_path AS instance_base_path, ai.label AS instance_label, \
+    c.connect_method, c.access, c.limit_level, c.instance_id, ai.host AS instance_host, ai.base_path AS instance_base_path, ai.label AS instance_label, \
     c.credentials_expires_at, c.connected_by, u.display_name AS connected_by_name, c.last_used_at, \
     c.last_check_at, c.last_check_result, c.created_at, c.updated_at FROM app_connections c LEFT JOIN users u ON u.id = c.connected_by \
     LEFT JOIN app_instances ai ON ai.id = c.instance_id";
@@ -236,14 +239,19 @@ pub struct NewConnection<'a> {
     /// (FIX-133, D-240) `read` | `write`. A new connection with `None` is `write`; a reconnect with
     /// `None` keeps what the connection has.
     pub access: Option<&'a str>,
+    /// (P5-UX-11, C-990) The limit of a new organization account (`read` | `ask` | `act`); `None`
+    /// for a workspace's account and for a reconnect (which keeps the limit it has).
+    pub limit_level: Option<&'a str>,
 }
 
 pub async fn insert<'e, E: PgExecutor<'e>>(exec: E, n: &NewConnection<'_>) -> Result<(), DbError> {
     sqlx::query(
         "INSERT INTO app_connections (id, org_id, workspace_id, app_id, package_id, app_version, \
          label, status, credentials_ref, credentials_expires_at, scopes, metadata, tenant_host, \
-         oauth_client_id, connected_by, requested_scopes, instance_id, credential_keys, connect_method, access) \
-         VALUES ($1,$2,$3,$4,$5,$6,$7,'active',$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,COALESCE($19,'write'))",
+         oauth_client_id, connected_by, requested_scopes, instance_id, credential_keys, connect_method, access, \
+         limit_level) \
+         VALUES ($1,$2,$3,$4,$5,$6,$7,'active',$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,COALESCE($19,'write'),\
+         CASE WHEN $3 IS NULL THEN COALESCE($20, CASE WHEN COALESCE($19,'write') = 'read' THEN 'read' ELSE 'act' END) END)",
     )
     .bind(n.id)
     .bind(n.org_id)
@@ -264,9 +272,49 @@ pub async fn insert<'e, E: PgExecutor<'e>>(exec: E, n: &NewConnection<'_>) -> Re
     .bind(n.credential_keys)
     .bind(n.connect_method)
     .bind(n.access)
+    .bind(n.limit_level)
     .execute(exec)
     .await?;
     Ok(())
+}
+
+/// (P5-UX-11, SEC-131) Takes the row shared until the transaction ends: it waits for a limit change
+/// in flight and holds one off.
+pub async fn lock_shared<'e, E: PgExecutor<'e>>(exec: E, id: Uuid) -> Result<(), DbError> {
+    sqlx::query("SELECT 1 FROM app_connections WHERE id = $1 FOR SHARE")
+        .bind(id)
+        .execute(exec)
+        .await?;
+    Ok(())
+}
+
+/// (P5-UX-11, SEC-131) Takes the row exclusively until the transaction ends (a limit change).
+pub async fn lock_for_update<'e, E: PgExecutor<'e>>(exec: E, id: Uuid) -> Result<(), DbError> {
+    sqlx::query("SELECT 1 FROM app_connections WHERE id = $1 FOR UPDATE")
+        .bind(id)
+        .execute(exec)
+        .await?;
+    Ok(())
+}
+
+/// (P5-UX-11, C-990) Sets an organization account's limit and, with it, the `access` the gateway
+/// enforces (`read` for `read`, `write` otherwise). Only organization-scoped rows are touched.
+pub async fn set_limit<'e, E: PgExecutor<'e>>(
+    exec: E,
+    id: Uuid,
+    limit: &str,
+) -> Result<bool, DbError> {
+    Ok(sqlx::query(
+        "UPDATE app_connections SET limit_level = $2, \
+         access = CASE WHEN $2 = 'read' THEN 'read' ELSE 'write' END, updated_at = now() \
+         WHERE id = $1 AND workspace_id IS NULL",
+    )
+    .bind(id)
+    .bind(limit)
+    .execute(exec)
+    .await?
+    .rows_affected()
+        > 0)
 }
 
 /// (P5-UX-14, C-943) Stores the result of Test: `ok` | `rejected` | `unreachable` | `unexpected`.
@@ -311,6 +359,7 @@ pub async fn reconnect_cas<'e, E: PgExecutor<'e>>(
          credentials_expires_at = $4, scopes = $5, metadata = $6, tenant_host = $7, oauth_client_id = $8, \
          package_id = $9, app_version = $10, connected_by = $11, requested_scopes = $12, \
          credential_keys = $14, connect_method = $15, access = COALESCE($16, access), \
+         limit_level = CASE WHEN workspace_id IS NULL THEN COALESCE($17, limit_level) END, \
          status_reason = CASE WHEN status IN ('reauth_required','orphaned') THEN NULL ELSE status_reason END, \
          status = CASE WHEN status IN ('reauth_required','orphaned') THEN 'active' ELSE status END, \
          reauth_required_at = NULL, last_check_at = NULL, last_check_result = NULL, updated_at = now() \
@@ -332,6 +381,7 @@ pub async fn reconnect_cas<'e, E: PgExecutor<'e>>(
     .bind(n.credential_keys)
     .bind(n.connect_method)
     .bind(n.access)
+    .bind(n.limit_level)
     .execute(exec)
     .await?
     .rows_affected()

@@ -2694,6 +2694,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/connections/{id}/limit-preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Who a lower limit would change (C-990): org owners and admins; nothing is written. */
+        get: operations["previewConnectionLimit"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/connector-availability": {
         parameters: {
             query?: never;
@@ -7051,6 +7068,7 @@ export interface components {
              *     `default_host`.
              */
             instance_id?: string | null;
+            limit?: components["schemas"]["Level"] | null;
             method_id: string;
             /** Format: uuid */
             oauth_client_id?: string | null;
@@ -7117,6 +7135,7 @@ export interface components {
             label: string;
             /** Format: date-time */
             last_used_at?: string | null;
+            limit?: components["schemas"]["Level"] | null;
             metadata: {
                 [key: string]: string;
             };
@@ -8777,6 +8796,9 @@ export interface components {
             /** @description Why an `invalid` proposal cannot be applied (repository text: untrusted). */
             reason?: string | null;
         };
+        LimitPreview: {
+            lowered: components["schemas"]["LoweredAgentView"][];
+        };
         /** @enum {string} */
         LinkMethod: "verified_email" | "sign_in_link" | "admin";
         LinkPeer: {
@@ -8860,6 +8882,27 @@ export interface components {
             entry_id?: string | null;
             key: string;
             reason: string;
+        };
+        LoweredAgentRef: {
+            handle: string;
+            /** Format: uuid */
+            id: string;
+            name: string;
+        };
+        /**
+         * @description An agent a lower limit would change (C-990). `from` and `to` are `read` | `ask` | `act` |
+         *     `custom`; `to` is `none` when nothing of the agent's access is left.
+         */
+        LoweredAgentView: {
+            agent: components["schemas"]["LoweredAgentRef"];
+            from: string;
+            to: string;
+            workspace: components["schemas"]["LoweredWorkspaceRef"];
+        };
+        LoweredWorkspaceRef: {
+            /** Format: uuid */
+            id: string;
+            name: string;
         };
         Me: {
             /** @description (phase 2, RFE-011a) E-mail me approvals nobody is watching (default `true`). */
@@ -9919,6 +9962,7 @@ export interface components {
                 label: string;
                 /** Format: date-time */
                 last_used_at?: string | null;
+                limit?: components["schemas"]["Level"] | null;
                 metadata: {
                     [key: string]: string;
                 };
@@ -10630,6 +10674,7 @@ export interface components {
                 name: string;
                 /** Format: uuid */
                 org_id: string;
+                personal_of?: components["schemas"]["PersonalOf"] | null;
                 slug: string;
                 timezone: string;
                 /** Format: date-time */
@@ -10685,6 +10730,7 @@ export interface components {
             /** @description (FIX-133, D-240) `read` | `write`; whoever can manage the connection may change it. */
             access?: string | null;
             label?: string | null;
+            limit?: components["schemas"]["Level"] | null;
             /**
              * @description (FIX-136, D-241) Replace the scopes the connection has: only for a connection made with a
              *     `fields` method that declares scopes (a pasted token's scopes are declared by the person, an
@@ -13444,6 +13490,7 @@ export interface components {
             name: string;
             /** Format: uuid */
             org_id: string;
+            personal_of?: components["schemas"]["PersonalOf"] | null;
             slug: string;
             timezone: string;
             /** Format: date-time */
@@ -24998,6 +25045,77 @@ export interface operations {
             };
             /** @description grant_invalid, as the agent-side route (details.agent_id) */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    previewConnectionLimit: {
+        parameters: {
+            query?: {
+                /** @description The limit being considered (required; checked after the caller is authorized). */
+                limit?: components["schemas"]["Level"] | null;
+            };
+            header?: never;
+            path: {
+                /** @description Connection id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Agents the limit would lower */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LimitPreview"];
+                };
+            };
+            /** @description Invalid */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not found */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
