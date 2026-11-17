@@ -1520,6 +1520,46 @@ async fn eval_turn_keeps_read_tools_and_refuses_write_tools_on_an_app_host() {
     assert_eq!(r.status, 200, "{}", r.body);
 }
 
+/// (P4-EVAL-2 review, C-868) A request "whose effect is a write" is refused whatever its method: an
+/// app tool tagged write that is called by GET (a "trigger" endpoint) is refused `eval_read_only`
+/// in an eval turn, while a plain GET with no tool match and a GET read tool still pass.
+#[tokio::test]
+async fn eval_turn_refuses_a_write_tool_called_by_get() {
+    let tools = json!({"read": {"items": [
+        {"id": "read_item", "name": "r", "host": "127.0.0.1", "path": "/items", "methods": ["GET"]}
+    ]}, "write": {"items": [
+        {"id": "run_export", "name": "x", "host": "127.0.0.1", "path": "/export/run", "methods": ["GET"]}
+    ]}});
+    let snap = snapshot(
+        vec![app_json("demo", tools, false)],
+        vec![host_json(
+            "demo",
+            None,
+            json!({"inject": [{"bearer": "{credentials.tok}"}]}),
+        )],
+    );
+    let (env, ..) = start(snap, &[("c1", r#"{"tok":"T0K"}"#)], |w| {
+        let c = conn(w, "demo", "c1", None);
+        let mut r = Rows::default();
+        r.ws.rules.push(allow_conn(&c, None));
+        r.conns.push(c);
+        r
+    })
+    .await;
+    let r = send_as(&env, EVAL_CTX, "GET", "/export/run", "", "").await;
+    assert_eq!(r.status, 403, "write tool by GET: {}", r.body);
+    assert_eq!(r.code(), "eval_read_only", "{}", r.body);
+    assert!(!r.body.contains("T0K"), "{}", r.body);
+    // Reads still pass: a read tool by GET, and a GET that matches no tool.
+    for path in ["/items", "/untooled"] {
+        let r = send_as(&env, EVAL_CTX, "GET", path, "", "").await;
+        assert_eq!(r.status, 200, "GET {path}: {}", r.body);
+    }
+    // The agent credential is not refused by this rule.
+    let r = send(&env, "GET", "/export/run", "", "").await;
+    assert_eq!(r.status, 200, "{}", r.body);
+}
+
 /// FIX-133 (D-240): a read-only connection allows the app's read tools and blocks its write tools
 /// and untooled requests under a `full` grant; an existing (`write`) connection is unchanged.
 #[tokio::test]
