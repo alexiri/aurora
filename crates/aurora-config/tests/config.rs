@@ -326,17 +326,8 @@ fn approvals_max_timeout_bounds_and_turn_ceiling() {
     assert_eq!(raw.approvals.max_timeout_secs, 3600);
     assert!(raw.approvals.email_notifications);
     assert_eq!(raw.api_config().unwrap().approvals.max_timeout_secs, 3600);
-    // (P4-011B, D-265(c)) The park threshold (default 900 s) must not exceed the maximum, so the
-    // lowest maxima come with a lower threshold.
     for ok in ["300", "14400"] {
-        let raw = load_with(
-            BASE,
-            &[
-                ("AURORA__APPROVALS__MAX_TIMEOUT_SECS", ok),
-                ("AURORA__APPROVALS__PARK__THRESHOLD_SECS", "300"),
-            ],
-        )
-        .unwrap();
+        let raw = load_with(BASE, &[("AURORA__APPROVALS__MAX_TIMEOUT_SECS", ok)]).unwrap();
         assert!(raw.api_config().is_ok(), "{ok}");
     }
     for bad in ["299", "14401", "0"] {
@@ -381,8 +372,13 @@ fn approvals_park_defaults_bounds_and_cross_key_rule() {
     );
     assert!(raw.api_config().is_ok());
     assert!(raw.gateway_config().is_ok());
+    // The cross-key rule applies only while parking is on (D-357), so every case runs with it on.
     let key = |k: &str, v: &str| {
-        let raw = load_with(BASE, &[(k, v)]).unwrap();
+        let raw = load_with(
+            BASE,
+            &[("AURORA__APPROVALS__PARK__ENABLED", "true"), (k, v)],
+        )
+        .unwrap();
         raw.api_config().unwrap_err()
     };
     for (k, v, field) in [
@@ -439,6 +435,7 @@ fn approvals_park_defaults_bounds_and_cross_key_rule() {
     let raw = load_with(
         BASE,
         &[
+            ("AURORA__APPROVALS__PARK__ENABLED", "true"),
             ("AURORA__APPROVALS__MAX_TIMEOUT_SECS", "3700"),
             ("AURORA__APPROVALS__PARK__MAX_TIMEOUT_SECS", "3600"),
             ("AURORA__APPROVALS__PARK__THRESHOLD_SECS", "900"),
@@ -459,6 +456,29 @@ fn approvals_park_defaults_bounds_and_cross_key_rule() {
     )
     .unwrap();
     assert!(ok.api_config().is_ok());
+}
+
+// D-357: with parking off (the default) a hold maximum below the default 900 s threshold starts.
+#[test]
+fn approvals_cross_key_rule_is_skipped_while_parking_is_off() {
+    let raw = load_with(BASE, &[("AURORA__APPROVALS__MAX_TIMEOUT_SECS", "600")]).unwrap();
+    assert!(raw.api_config().is_ok());
+    assert!(raw.gateway_config().is_ok());
+}
+
+// D-357: the same configuration with parking on fails on the threshold.
+#[test]
+fn approvals_cross_key_rule_applies_when_parking_is_on() {
+    let raw = load_with(
+        BASE,
+        &[
+            ("AURORA__APPROVALS__MAX_TIMEOUT_SECS", "600"),
+            ("AURORA__APPROVALS__PARK__ENABLED", "true"),
+        ],
+    )
+    .unwrap();
+    let e = raw.api_config().unwrap_err();
+    assert!(e.has_key("approvals.park.threshold_secs"), "{e}");
 }
 
 #[test]

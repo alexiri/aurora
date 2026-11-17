@@ -6,7 +6,7 @@
 //! `approval_grants.rs`, which reuses this harness.
 
 use async_trait::async_trait;
-use aurora_config::{LlmSection, SecretsSection};
+use aurora_config::{LlmEndpoint, LlmSection, SecretsSection};
 use aurora_db::repo::gateway::{AppConnectionRow, RequestLogRow, ScopePolicyRows, SecretMetaRow};
 use aurora_gateway::auth::{CredentialKind, CredentialResolver, RequestIdentity, ResolveError};
 use aurora_gateway::ca;
@@ -56,6 +56,8 @@ pub(crate) struct Who {
     pub conversation: Option<Uuid>,
     pub turn: Option<Uuid>,
     pub speaker: Option<Uuid>,
+    /// A BYO admission (the agent brings its own LLM key).
+    pub byo: bool,
 }
 
 pub(crate) struct Static {
@@ -83,7 +85,18 @@ impl CredentialResolver for Static {
             speaker_user_id: who.speaker,
             speaker_group_ids: Vec::new(),
             capabilities: vec![],
-            byo: None,
+            byo: who.byo.then(|| aurora_gateway::auth::ByoAdmission {
+                effective: aurora_llm::governance::EffectiveByo {
+                    posture: aurora_llm::governance::ByoPosture::Enabled,
+                    posture_level: aurora_llm::governance::ByoLevel::Instance,
+                    source_cidrs: None,
+                    source_level: None,
+                    require_context: false,
+                    require_context_level: None,
+                },
+                org_slug: "acme".into(),
+                ws_slug: "main".into(),
+            }),
         }))
     }
 }
@@ -171,6 +184,7 @@ pub(crate) struct Opts {
     /// `approvals.timeout_secs`: the timeout of requests whose rules set none.
     pub default_timeout_secs: u64,
     pub park_cfg: Option<ParkConfig>,
+    pub llm_host: bool,
 }
 
 impl Default for Opts {
@@ -179,6 +193,7 @@ impl Default for Opts {
             park: true,
             default_timeout_secs: 7200,
             park_cfg: None,
+            llm_host: false,
         }
     }
 }
@@ -309,12 +324,26 @@ pub(crate) async fn start(pool: sqlx::PgPool, o: Opts) -> Env {
     });
     let store = SnapshotStore::new();
     store.install(parse("h1", snapshot()).unwrap());
+    // `llm_host`: the mock upstream is a governed LLM endpoint (its host is an endpoint host).
     let llm = Arc::new(
         aurora_llm::ProviderRegistry::from_config(&LlmSection {
-            enabled_providers: vec![],
+            enabled_providers: if o.llm_host {
+                vec!["openai_compatible".into()]
+            } else {
+                vec![]
+            },
             provider_preference: vec![],
             dev_upstream_overrides: Default::default(),
-            endpoints: vec![],
+            endpoints: if o.llm_host {
+                vec![LlmEndpoint {
+                    id: "mock".into(),
+                    provider: "openai_compatible".into(),
+                    base_url: Some(format!("http://{up}")),
+                    ..LlmEndpoint::default()
+                }]
+            } else {
+                vec![]
+            },
         })
         .unwrap(),
     );
@@ -372,6 +401,7 @@ pub(crate) async fn start(pool: sqlx::PgPool, o: Opts) -> Env {
             conversation: Some(conv),
             turn: Some(Uuid::now_v7()),
             speaker: None,
+            byo: false,
         }),
     });
     let p = Proxy::new(ProxyParts {
@@ -791,6 +821,51 @@ async fn a_verdict_that_depends_on_the_speaker_is_held() {
         send(&env, "POST", "/items", "{}").await.code(),
         "approval_parked"
     );
+}
+
+// D-264(c): LLM traffic never parks — a governed LLM endpoint's request that needs approval is
+// held, even with a long deadline and every other condition met.
+#[tokio::test]
+async fn a_governed_llm_endpoint_request_is_held_never_parked() {
+    let db = aurora_testkit::TestDb::new().await;
+    let env = Arc::new(
+        start(
+            db.pool().clone(),
+            Opts {
+                llm_host: true,
+                ..Opts::default()
+            },
+        )
+        .await,
+    );
+    env.edit(|ws, _| {
+        ws.derived.clear();
+        ws.default_action = "allow".into();
+        ws.rules.push(aurora_db::repo::gateway::PolicyRuleRow {
+            logical_id: Uuid::now_v7(),
+            name: "ask-llm".into(),
+            enabled: true,
+            identities: json!([]),
+            targets: json!([{"type":"network","host":"127.0.0.1","path":"/items"}]),
+            action: "allow".into(),
+            require_approval: true,
+            approval_timeout_secs: None,
+            rate_limit: None,
+            conditions: json!([]),
+        });
+    });
+    assert_held(&env, "POST", "/items", false, "{}".into()).await;
+    assert!(rows(&env.pool, env.w.ws).await.iter().all(|r| !r.2));
+}
+
+// D-264 (eligibility 1): a BYO-admitted agent's request is held, never parked.
+#[tokio::test]
+async fn a_byo_request_is_held_never_parked() {
+    let db = aurora_testkit::TestDb::new().await;
+    let env = Arc::new(start(db.pool().clone(), Opts::default()).await);
+    env.set_who(|w| w.byo = true);
+    assert_held(&env, "POST", "/items", false, "{}".into()).await;
+    assert!(rows(&env.pool, env.w.ws).await.iter().all(|r| !r.2));
 }
 
 #[tokio::test]

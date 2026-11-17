@@ -3005,6 +3005,11 @@ fn check_approvals_park(c: &mut Ctx, a: &ApprovalsSection) {
         60,
         p.max_timeout_secs.max(60),
     );
+    // D-357: the cross-key rule decides nothing while parking is off, so it must not break an
+    // existing deployment's start (a hold maximum below the 900 s default threshold).
+    if !p.enabled {
+        return;
+    }
     if p.threshold_secs > a.max_timeout_secs {
         c.err(
             "approvals.park.threshold_secs",
