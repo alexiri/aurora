@@ -1,12 +1,14 @@
 "use client";
 
-import { useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { useEffect, useRef, useState } from "react";
 
 import { fmtDate } from "@/components/account/key-table";
 import { Avatar } from "@/components/agent-avatar";
 import { EmptyState, ErrorState, Loading } from "@/components/states";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { DataTable, Td, Th } from "@/components/ui/data-table";
 import { inputClass } from "@/components/ui/field";
 import { MoreNotShown } from "@/components/ui/more-not-shown";
@@ -33,8 +35,10 @@ import {
   type ActionApproval,
 } from "@/lib/api/action-approvals";
 import { errorMessage } from "@/lib/api/errors";
+import { cn } from "@/lib/utils";
 
 import { OwnSendApprovals } from "./own-send-approvals";
+import { ParkedChip, ParkedNote, ResumeBadge } from "./parked";
 
 /** Summary text is untrusted data: React text nodes only, never HTML. */
 export function ApprovalCard({
@@ -43,19 +47,37 @@ export function ApprovalCard({
   onDecide,
   pending,
   message,
+  focused = false,
 }: {
   approval: Approval;
   now: number;
   onDecide: (d: Decision) => void;
   pending: boolean;
   message?: string;
+  /** `?focus=<id>` (a notification's link): scrolled into view and outlined. */
+  focused?: boolean;
 }) {
+  const [confirming, setConfirming] = useState(false);
+  const ref = useRef<HTMLLIElement>(null);
+  useEffect(() => {
+    if (focused) ref.current?.scrollIntoView?.({ block: "center" });
+  }, [focused]);
   return (
-    <li className="space-y-3 rounded-card border border-line bg-surface p-4 text-ink shadow-card sm:p-5">
+    <li
+      ref={ref}
+      id={`approval-${a.id}`}
+      tabIndex={focused ? -1 : undefined}
+      aria-current={focused ? "true" : undefined}
+      className={cn(
+        "space-y-3 rounded-card border border-line bg-surface p-4 text-ink shadow-card sm:p-5",
+        focused && "ring-2 ring-accent",
+      )}
+    >
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
         {a.agent ? <Avatar name={a.agent.name} tintKey={a.agent.id} size={24} /> : null}
         <span className="font-semibold">{a.agent ? a.agent.name : "Unknown agent"}</span>
         {a.agent ? <span className="font-mono text-muted">@{a.agent.handle}</span> : null}
+        {a.parked ? <ParkedChip /> : null}
         <span className="ml-auto font-medium tabular-nums text-pending-ink">Expires in {countdown(a.deadline, now)}</span>
       </div>
       <p className="font-display text-base font-semibold">{a.summary.title}</p>
@@ -77,6 +99,7 @@ export function ApprovalCard({
           ))}
         </dl>
       ) : null}
+      {a.parked ? <ParkedNote /> : null}
       {a.rule_name ? <p className="text-xs text-muted">Rule: {a.rule_name}</p> : null}
       {a.context_label ? (
         <p className="text-xs text-muted" data-testid="context-label">
@@ -92,10 +115,31 @@ export function ApprovalCard({
         <Button size="lg" variant="outline" disabled={pending} onClick={() => onDecide("deny")}>
           Block
         </Button>
-        <Button size="lg" variant="approve" disabled={pending} onClick={() => onDecide("approve")}>
+        <Button
+          size="lg"
+          variant="approve"
+          disabled={pending}
+          // A parked approval repeats its sentence before it is decided: the agent is told, not resumed in place.
+          onClick={() => (a.parked ? setConfirming(true) : onDecide("approve"))}
+        >
           Allow once
         </Button>
       </div>
+      {a.parked ? (
+        <ConfirmDialog
+          open={confirming}
+          onOpenChange={setConfirming}
+          title="Allow this request once?"
+          confirmLabel="Allow once"
+          busy={pending}
+          onConfirm={() => {
+            setConfirming(false);
+            onDecide("approve");
+          }}
+        >
+          <ParkedNote className="text-sm text-ink-2" />
+        </ConfirmDialog>
+      ) : null}
     </li>
   );
 }
@@ -137,6 +181,8 @@ function PendingTab({ wsId }: { wsId: string }) {
   const batch = useDecideBatch(wsId);
   const [messages, setMessages] = useState<Record<string, string>>({});
   const [batchError, setBatchError] = useState<string | null>(null);
+  // A notification's link (in-tab or push) opens `…/approvals?focus=<id>`.
+  const focus = useSearchParams()?.get("focus") ?? null;
 
   function onDecide(id: string, decision: Decision) {
     setMessages((m) => ({ ...m, [id]: "" }));
@@ -203,6 +249,7 @@ function PendingTab({ wsId }: { wsId: string }) {
                 now={now}
                 pending={decide.isPending && decide.variables?.id === a.id}
                 message={messages[a.id]}
+                focused={focus === a.id}
                 onDecide={(d) => onDecide(a.id, d)}
               />
             ))}
@@ -389,6 +436,12 @@ function HistoryTab({ wsId }: { wsId: string }) {
                 <Td>{a.summary.title}</Td>
                 <Td>
                   <Badge tone={a.status === "approved" ? "accent" : a.status === "denied" ? "danger" : "neutral"}>{a.status}</Badge>
+                  {a.parked ? (
+                    <span className="mt-1 flex flex-wrap items-center gap-1">
+                      <ParkedChip />
+                      <ResumeBadge approval={a} />
+                    </span>
+                  ) : null}
                 </Td>
                 <Td>{a.decided_by?.display_name ?? "—"}</Td>
               </tr>

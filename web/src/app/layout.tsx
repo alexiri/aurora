@@ -37,6 +37,8 @@ export const dynamic = "force-dynamic";
 export const metadata: Metadata = {
   title: "Aurora",
   icons: { icon: "/icon.svg", apple: "/apple-icon.png" },
+  // (P4-011B-4, C-835) The static manifest: iOS only offers Web Push to a site added to the Home Screen.
+  manifest: "/manifest.webmanifest",
 };
 
 export default async function RootLayout({ children }: { children: ReactNode }) {

@@ -6,9 +6,11 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Field, inputClass } from "@/components/ui/field";
+import { effectiveMax, limitsHint } from "@/lib/approval-limits";
 import {
   newTarget,
   normalizeRule,
+  useApprovalLimits,
   TARGET_TYPES,
   type Condition,
   type Identity,
@@ -218,6 +220,8 @@ export function RuleEditorDialog({
 }) {
   const [rule, setRule] = useState<RuleInput>(initial);
   const [error, setError] = useState<string | null>(null);
+  // (P4-011B-4, C-829) The timeout bound and hint come from the live limits.
+  const limits = useApprovalLimits().data;
   const patch = (p: Partial<RuleInput>) => setRule((r) => ({ ...r, ...p }));
   const identities = rule.identities ?? [];
   const targets = rule.targets ?? [];
@@ -306,15 +310,14 @@ export function RuleEditorDialog({
                     id="rule-approval-timeout"
                     type="number"
                     min={60}
+                    max={effectiveMax(limits)}
                     inputMode="numeric"
                     placeholder="default"
                     className={inputClass + " w-28"}
                     value={rule.approval_timeout_secs ?? ""}
                     onChange={(e) => patch({ approval_timeout_secs: e.target.value === "" ? null : Number(e.target.value) })}
                   />
-                  <span className="text-xs text-muted">
-                    Empty = the instance default (5 min). At least 60 s, at most the instance maximum (1 h unless raised).
-                  </span>
+                  <span className="text-xs text-muted">{limitsHint(limits)}</span>
                 </div>
               ) : null}
               <div className="flex items-center gap-2 text-sm">
