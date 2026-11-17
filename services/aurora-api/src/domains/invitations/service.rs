@@ -30,7 +30,7 @@ fn max_members(settings: &serde_json::Value) -> Option<i64> {
     OrgSettings::from_json(settings).max_members
 }
 
-fn valid_email(e: &str) -> bool {
+pub(crate) fn valid_email(e: &str) -> bool {
     e.len() <= 254
         && !e.chars().any(|c| c.is_whitespace() || c.is_control())
         && e.split_once('@').is_some_and(|(l, d)| {

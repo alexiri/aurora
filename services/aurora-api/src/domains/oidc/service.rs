@@ -751,6 +751,20 @@ async fn sign_in(
             Fail("oidc_failed")
         })?;
 
+    // (P5-UX-5, D-325, SEC-128, C-920) Pending workspace access added by e-mail: applied last, once every step above
+    // has made or confirmed the person's organization membership, and only for a verified e-mail of this person.
+    // Never creates a membership.
+    crate::domains::tenancy::pending_access::apply_on_sign_in(
+        &mut tx,
+        &user,
+        v.email_verified.then_some(v.email.as_str()),
+    )
+    .await
+    .map_err(|e| {
+        tracing::error!("oidc: pending workspace access: {e:?}");
+        Fail("oidc_failed")
+    })?;
+
     user = users::record_login(&mut *tx, user.id).await?;
     let token = auth::issue_session(&mut tx, state, user.id, client)
         .await

@@ -75,6 +75,7 @@ mod oidc_roles;
 mod onboarding;
 mod peer_tasks;
 mod peers_rig;
+mod pending_access;
 mod permission_matrix;
 mod placement;
 mod plugins;
