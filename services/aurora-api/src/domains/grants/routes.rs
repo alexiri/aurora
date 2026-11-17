@@ -155,20 +155,20 @@ async fn agent_effective(
 #[utoipa::path(
     put, path = "/agents/{agent}/grants/connections/{conn}", operation_id = "grantConnection", tag = "grants",
     params(("agent" = Uuid, Path, description = "Agent id"), ("conn" = Uuid, Path, description = "Connection id")),
-    request_body = PutConnectionGrant,
+    request_body = PutConnectionAccess,
     responses((status = 200, description = "Grant", body = ConnectionGrant),
               (status = 403, description = "Forbidden", body = ErrorEnvelope),
               (status = 404, description = "Agent, or connection not in the agent's workspace or org", body = ErrorEnvelope),
-              (status = 422, description = "grant_invalid (details.reason: empty_custom | tool_in_both | unknown_tool)", body = ErrorEnvelope)),
+              (status = 422, description = "grant_invalid (details.reason: empty_custom | tool_in_both | unknown_tool | level_or_mode | level_with_tools), full_grant_forbidden, or above_account_limit (an organization's account; details.who_can, details.limit)", body = ErrorEnvelope)),
     security(("session" = []), ("api_key" = []))
 )]
 async fn put_connection_grant(
     caller: Caller,
     State(state): State<AppState>,
     Path((agent, conn)): Path<(Uuid, Uuid)>,
-    Json(req): Json<PutConnectionGrant>,
+    Json(req): Json<PutConnectionAccess>,
 ) -> Result<Json<ConnectionGrant>, ApiError> {
-    let g = service::grant_connection(&state, &caller, agent, conn, req).await?;
+    let g = service::grant_connection_access(&state, &caller, agent, conn, req).await?;
     Ok(Json(g))
 }
 

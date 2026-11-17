@@ -3,7 +3,6 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ConnectDialog } from "@/components/apps/connect-dialog";
-import { ConnectionsTab } from "@/components/apps/connections-tab";
 import { InstancesView } from "@/components/apps/instances-view";
 import { OAuthClientsPanel } from "@/components/apps/oauth-clients-panel";
 
@@ -362,27 +361,7 @@ describe("connect dialog instance picker", () => {
   });
 });
 
-describe("instance on connections and OAuth clients", () => {
-  it("shows the instance host on a connection and no enable button once its instance is deleted", async () => {
-    const base = { org_id: "o1", workspace_id: "w1", scope: "workspace", app_id: "desk", package_id: "selfhost", app_version: "1", scopes: [], missing_scopes: [], metadata: {}, tenant_host: null, oauth_client_id: null, credentials_expires_at: null, connected_by: null, last_used_at: null, created_at: "", updated_at: "", injecting: [] };
-    stub({
-      "GET /v1/workspaces/w1/connections": () =>
-        json(200, {
-          items: [
-            { ...base, id: "k1", label: "Acme GitLab", status: "active", status_reason: null, instance: { id: "i1", host: "desk.acme.example", base_path: "/jira", base_url: "https://desk.acme.example/jira", label: "Acme desk" } },
-            { ...base, id: "k2", label: "Gone", status: "disabled", status_reason: "instance_deleted", instance: null },
-          ],
-          next_cursor: null,
-        }),
-    });
-    wrap(<ConnectionsTab scope={{ kind: "workspace", id: "w1" }} canOwn />);
-    // the connection's instance line names the registration by its base URL (D-231)
-    expect(await screen.findByText("https://desk.acme.example/jira")).toBeInTheDocument();
-    expect(screen.getByText(/self-hosted app of this connection was deleted/)).toBeInTheDocument();
-    // k1 can be disabled, k2 (instance deleted) cannot be re-enabled
-    expect(screen.getAllByRole("button", { name: /^(Turn off|Turn on)$/ })).toHaveLength(1);
-  });
-
+describe("instance on OAuth clients", () => {
   it("an OAuth client row names its instance, and the create form binds a client to one", async () => {
     const calls = stub({
       ...catalogue,

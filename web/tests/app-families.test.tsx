@@ -98,7 +98,7 @@ describe("app names", () => {
   // Every list, picker and dialog that names an app goes through the shared helper (replace ad-hoc `app.name`).
   it("every app-naming surface imports the shared helper", () => {
     for (const f of [
-      "components/agents/connection-grants.tsx",
+      "components/accounts/free-apps.tsx",
       "components/agents/grant-editor.tsx",
       "components/credentials/give-access.tsx",
       "components/apps/availability-view.tsx",

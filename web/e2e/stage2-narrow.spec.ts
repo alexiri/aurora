@@ -74,7 +74,7 @@ test.describe("390 px", () => {
     test(`agent Access tab › ${s} has no horizontal page scroll`, async ({ page }) => {
       await openAccess(page, s, "light");
       expect(await noPageScroll(page)).toBe(true);
-      if (s !== "connections") {
+      if (s !== "list") {
         const dlg = page.getByRole("dialog");
         expect(await dlg.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
       }

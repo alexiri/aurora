@@ -5,7 +5,7 @@ import type { ReactNode } from "react";
 
 import { AppsTab } from "@/components/apps/apps-tab";
 import { OAuthClientsPanel } from "@/components/apps/oauth-clients-panel";
-import { AccountsPanel } from "@/components/credentials/credentials-view";
+import { AccountsPanel } from "@/components/accounts/accounts-panel";
 import { WorkspaceFreeze } from "@/components/freeze/freeze-sections";
 import { WorkspaceInternet } from "@/components/internet/workspace-internet";
 import { AccessTab } from "@/components/settings/access-tab";
@@ -15,8 +15,6 @@ import { GeneralTab } from "@/components/settings/general-tab";
 import { KeysTab } from "@/components/settings/keys-tab";
 import { ErrorState, Loading } from "@/components/states";
 import { TopicPage, type TopicTab } from "@/components/topic-page";
-import { Notice } from "@/components/ui/notice";
-import { WhoCan } from "@/components/ui/who-can";
 import { PageHeader } from "@/components/ui/page-header";
 import { Section } from "@/components/ui/section";
 import { useResolve, useWorkspace, type Workspace } from "@/lib/api/queries";
@@ -48,13 +46,8 @@ export function WorkspaceAppsPage() {
           {
             id: "accounts",
             label: "Accounts",
-            content: canOwn ? (
-              <AccountsPanel scope={{ kind: "workspace", id: w.id }} orgId={w.org_id} canOwn />
-            ) : (
-              <Notice role="status">
-                <WhoCan lead value={whoCanFromContacts("workspace_owner", w.contacts, "add_account")} className="text-inherit" />
-              </Notice>
-            ),
+            // (C-917) Members read the same list as text, with no controls.
+            content: <AccountsPanel scope={{ kind: "workspace", id: w.id }} orgId={w.org_id} canOwn={canOwn} />,
           },
           {
             id: "apps",

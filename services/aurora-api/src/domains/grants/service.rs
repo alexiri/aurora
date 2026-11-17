@@ -2,8 +2,9 @@ use super::compile::{compile_connection_grant, compile_secret_grant};
 use super::dto::{
     AppRestrictions, BulkConnectionGrantItem, BulkConnectionGrantRequest, BulkSecretGrantItem,
     BulkStatus, ConnectionGrant, ConnectionGrantView, GRANT_BULK_MAX, GrantMode, GrantedApp,
-    PutConnectionGrant, SecretGrant, SecretGrantView,
+    PutConnectionAccess, PutConnectionGrant, SecretGrant, SecretGrantView,
 };
+use super::levels;
 use crate::app::AppState;
 use crate::audit::{self, AuditActor, AuditEvent, Outcome};
 use crate::domains::apps::service as apps;
@@ -526,6 +527,102 @@ pub async fn grant_connection(
     Ok(w.grant)
 }
 
+/// (P5-UX-4, C-980) `PUT /agents/{agent}/grants/connections/{conn}` with a body that is either a
+/// `level` or a `mode` with tool lists. A level is expanded here, inside the transaction, from
+/// the app's tools in the snapshot; everything after that is the one writer of connection
+/// grants, so a level obeys the same rules as a custom grant (limit, `custom_only`, access).
+pub async fn grant_connection_access(
+    state: &AppState,
+    caller: &Caller,
+    agent_id: Uuid,
+    connection_id: Uuid,
+    body: PutConnectionAccess,
+) -> Result<ConnectionGrant, ApiError> {
+    // Authorization first: nothing about the connection is answered to a caller who may not
+    // own the agent's workspace.
+    let (_, auth) = visible_agent(caller, state, agent_id).await?;
+    crate::http::auth::require_own(&auth)?;
+    let mut tx = state.pool.begin().await.map_err(DbError::from)?;
+    let req = match (body.level, body.mode) {
+        (Some(level), None) => {
+            if !body.allow_tools.is_empty()
+                || !body.ask_tools.is_empty()
+                || body.ask_timeout_secs.is_some()
+            {
+                return Err(invalid(
+                    "level_with_tools",
+                    "A level carries no tool list: choose a level, or custom with tools.",
+                ));
+            }
+            let conn = connections::get(&mut *tx, connection_id)
+                .await?
+                .ok_or_else(|| ApiError::not_found("Connection not found."))?;
+            let snap = crate::domains::plugins::registry::active_typed_on(&mut tx).await?;
+            let tools = snap
+                .as_ref()
+                .and_then(|s| s.app(&conn.app_id))
+                .map(apps::tools)
+                .unwrap_or_default();
+            levels::expand(level, &tools)
+        }
+        (None, Some(mode)) => PutConnectionGrant {
+            mode,
+            allow_tools: body.allow_tools,
+            ask_tools: body.ask_tools,
+            ask_timeout_secs: body.ask_timeout_secs,
+        },
+        _ => {
+            return Err(invalid(
+                "level_or_mode",
+                "Send a level, or a mode with its tools.",
+            ));
+        }
+    };
+    let w = grant_connection_in_tx(
+        &mut tx,
+        state,
+        caller,
+        agent_id,
+        connection_id,
+        req,
+        Origin::Agent,
+    )
+    .await?;
+    if let Some(ev) = &w.event {
+        audit::commit_critical(tx, ev).await?;
+    }
+    Ok(w.grant)
+}
+
+/// (P5-UX-4, C-980) A workspace's account has no access setting of its own: the connection's
+/// `access` follows every agent's saved choice (`write` when any grant is `full` or allows or
+/// asks a write tool, else `read`). Called in the transaction of every grant change and removal.
+async fn sync_connection_access(
+    tx: &mut audit::Tx,
+    connection_id: Uuid,
+    app_id: &str,
+    current: &str,
+) -> Result<(), ApiError> {
+    let snap = crate::domains::plugins::registry::active_typed_on(tx).await?;
+    let tools = snap
+        .as_ref()
+        .and_then(|s| s.app(app_id))
+        .map(apps::tools)
+        .unwrap_or_default();
+    let rows = grants::list_for_connection(&mut **tx, connection_id).await?;
+    let want = if rows.iter().any(|g| {
+        levels::access_for_saved(g.mode == "full", &g.allow_tools, &g.ask_tools, &tools) == "write"
+    }) {
+        "write"
+    } else {
+        "read"
+    };
+    if want != current {
+        connections::update(&mut **tx, connection_id, None, None, Some(want), None).await?;
+    }
+    Ok(())
+}
+
 /// (FIX-154, D-306(c), C-896) `PUT /agents/{agent}/grants/apps/{app}`: give an agent a
 /// credential-free app in one step. Checks before any write (404 `app_not_found`, 403
 /// `app_unavailable`, 422 `app_not_credential_free`), then in ONE transaction, serialized per
@@ -786,6 +883,32 @@ async fn write_connection_grant(
             ));
         }
     }
+    let app_tools: Vec<crate::domains::apps::dto::Tool> = snap
+        .as_ref()
+        .and_then(|s| s.app(&conn.app_id))
+        .map(apps::tools)
+        .unwrap_or_default();
+    // (P5-UX-4, C-980, SEC-131) An organization's account has a limit; no grant above it is
+    // written, whichever path asked (levels, custom lists, the bulk route, the journey). The
+    // starter grants (`by == None`, written as the system) are the platform's own and unchecked.
+    if conn.workspace_id.is_none() && by.is_some() {
+        let limit = levels::limit_from_access(&conn.access);
+        if levels::exceeds_limit(limit, req.mode == GrantMode::Full, &allow, &ask, &app_tools) {
+            return Err(ApiError::unprocessable(
+                "above_account_limit",
+                "This account's limit does not allow that choice.",
+            )
+            .with_details({
+                let mut d = crate::http::who_can::stub(
+                    crate::http::who_can::WhoCanRole::OrgAdmin,
+                    Some(conn.org_id),
+                    None,
+                );
+                d["limit"] = json!(limit.as_str());
+                d
+            }));
+        }
+    }
     // (FIX-084) The previous grant, to tell a narrowing replace from a widening one.
     let previous = if origin.replaces() {
         grants::get_connection_grant(&mut **tx, agent.id, conn.id).await?
@@ -865,6 +988,9 @@ async fn write_connection_grant(
         ask_timeout,
     )
     .await?;
+    if conn.workspace_id.is_some() {
+        sync_connection_access(tx, conn.id, &conn.app_id, &conn.access).await?;
+    }
     credentials::notify_gateway_invalidate(&mut **tx, "agent", agent.id).await?;
     let ev = event_by(
         actor,
@@ -916,6 +1042,12 @@ pub async fn revoke_connection(
         .await?
         .ok_or_else(|| ApiError::not_found("Grant not found."))?;
     derived_rules::delete_for_source(&mut *tx, "grant", id).await?;
+    // (P5-UX-4, C-980) Removing an agent's access recomputes the workspace account's `access`.
+    if let Some(conn) = connections::get(&mut *tx, connection_id).await?
+        && conn.workspace_id.is_some()
+    {
+        sync_connection_access(&mut tx, conn.id, &conn.app_id, &conn.access).await?;
+    }
     // (FIX-084) Held requests of this agent that would use the connection end with the grant.
     approvals::abandon_pending_depending_on(
         &mut tx,

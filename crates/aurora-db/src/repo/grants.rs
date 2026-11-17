@@ -398,3 +398,40 @@ pub async fn delete_connection_grant<'e, E: PgExecutor<'e>>(
     .fetch_optional(exec)
     .await?)
 }
+
+/// One agent's grant on an account (a connection or a secret) with the agent's and workspace's
+/// names (P5-UX-4, C-917): the accounts lists read every grant of a scope in one query.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct AccountGrantRow {
+    pub connection_id: Option<Uuid>,
+    pub secret_id: Option<Uuid>,
+    pub agent_id: Uuid,
+    pub agent_name: String,
+    pub agent_handle: String,
+    pub workspace_id: Uuid,
+    pub workspace_name: String,
+    pub mode: Option<String>,
+    pub allow_tools: Vec<String>,
+    pub ask_tools: Vec<String>,
+}
+
+/// Every grant of the agents of one workspace (`workspace = Some`) or of the whole organization
+/// (`None`), oldest first.
+pub async fn list_account_grants<'e, E: PgExecutor<'e>>(
+    exec: E,
+    org: Uuid,
+    workspace: Option<Uuid>,
+) -> Result<Vec<AccountGrantRow>, DbError> {
+    Ok(sqlx::query_as(
+        "SELECT g.connection_id, g.secret_id, g.agent_id, a.name AS agent_name, \
+                a.handle AS agent_handle, g.workspace_id, w.name AS workspace_name, \
+                g.mode, g.allow_tools, g.ask_tools \
+         FROM grants g JOIN agents a ON a.id = g.agent_id JOIN workspaces w ON w.id = g.workspace_id \
+         WHERE a.org_id = $1 AND ($2::uuid IS NULL OR g.workspace_id = $2) \
+         ORDER BY g.created_at, g.id",
+    )
+    .bind(org)
+    .bind(workspace)
+    .fetch_all(exec)
+    .await?)
+}

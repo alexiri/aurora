@@ -197,8 +197,16 @@ async fn simulate_connection_custom_grant_matches_gateway() {
     let a = setup(&h).await;
     install(&a).await;
     let w = world(&h).await;
-    let conn = w.conn("read").await;
+    // (P5-UX-4, C-980) A grant above an organization account's limit can no longer be written, so
+    // the state this case needs (writes asked on a read-limited account: data saved before the
+    // limit, or a limit lowered later) is made the way it arises: grant first, lower the limit.
+    let conn = w.conn("write").await;
     w.grant(conn).await;
+    sqlx::query("UPDATE app_connections SET access = 'read' WHERE id = $1")
+        .bind(conn)
+        .execute(h.pool())
+        .await
+        .unwrap();
 
     let cases = [
         Case {

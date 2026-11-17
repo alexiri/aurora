@@ -61,7 +61,10 @@ export function useCreateSecret(scope: SecretScope) {
       scope.kind === "workspace"
         ? unwrap(api.POST("/v1/workspaces/{ws}/secrets", { params: { path: { ws: scope.id } }, body }))
         : unwrap(api.POST("/v1/orgs/{org}/secrets", { params: { path: { org: scope.id } }, body })),
-    onSuccess: () => qc.invalidateQueries({ queryKey: secretKeys.list(scope) }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["accounts"] });
+      return qc.invalidateQueries({ queryKey: secretKeys.list(scope) });
+    },
   });
 }
 
@@ -214,12 +217,15 @@ export function buildLlmCreate(s: {
   endpointId: string;
   authMode: string;
   value: string;
+  /** (C-988) Agents of the workspace that can use the key from the start; none (or an organization) sends no grant. */
+  agentIds?: string[];
 }): CreateSecretRequest {
   return {
     name: s.name.trim(),
     kind: "llm",
     llm: { endpoint_id: s.endpointId, ...(s.authMode ? { auth_mode: s.authMode } : {}) },
     value: s.value,
+    ...(s.agentIds && s.agentIds.length > 0 ? { grant: { agent_ids: s.agentIds } } : {}),
   };
 }
 

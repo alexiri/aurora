@@ -199,6 +199,25 @@ pub struct PutConnectionGrant {
     pub ask_timeout_secs: Option<i64>,
 }
 
+/// (P5-UX-4, C-980) Body of `PUT /agents/{agent}/grants/connections/{conn}`: a `level`, or a
+/// `mode` with its tool lists (the Custom editor). Exactly one of the two; a level carries no tool
+/// list (the tools come from the app's catalogue, never from the request).
+#[derive(Debug, Clone, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PutConnectionAccess {
+    /// `read` | `ask` | `act`: replaces what was saved, always-allowed changes included.
+    #[serde(default)]
+    pub level: Option<super::levels::Level>,
+    #[serde(default)]
+    pub mode: Option<GrantMode>,
+    #[serde(default)]
+    pub allow_tools: Vec<String>,
+    #[serde(default)]
+    pub ask_tools: Vec<String>,
+    #[serde(default)]
+    pub ask_timeout_secs: Option<i64>,
+}
+
 /// (FIX-154, C-896) Answer of `PUT /agents/{agent}/grants/apps/{app}`.
 #[derive(Debug, Serialize, ToSchema)]
 pub struct GrantedApp {
