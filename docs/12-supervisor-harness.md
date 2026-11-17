@@ -438,14 +438,17 @@ version does not have is removed here, never emulated. Exact names are pinned in
   otherwise the skills are listed in `AGENTS.md`. **Roles**: `subagent_role` → `GOOSE_SUBAGENT_PROVIDER`
   and `GOOSE_SUBAGENT_MODEL` (same endpoint), so `model_roles` lists the roles that slot can take.
 
-**`opencode`** (release binary, checksum verified; the line GitHub marks Latest, Q-HARN-2):
-- **Drive**: one `opencode run --format json --standalone --auto` child per turn, prompt on stdin,
-  resumed with `--session <id>`. Never the shared per-user background service. Its database (`OPENCODE_DB`
-  or the data directory) is in the conversation's directory.
-- **Config**: `opencode.json` (path given through the pinned config variable). One provider for the
-  dialect, with `baseURL` from `ModelChoice` and `apiKey: "{env:…}"` naming the placeholder. The model has
-  `limit.context` from `model_meta`. Also: updates `disable`, sharing off, the model catalogue fetch off,
-  permissions that allow everything, the `aurora` local MCP server, and Code Mode off.
+**`opencode`** (release binary, checksum verified; **pinned on the v1.19.x line**, D-363, so the v1 CLI
+and config schema of `opencode.ai/v1/docs` apply, not the v2 docs):
+- **Drive**: one `opencode run --format json` child per turn, prompt on stdin, resumed with
+  `--session <id>`. If the pinned version can attach to a shared or background server, the adapter uses the
+  private in-process mode, never a server another process started. Its data directory (sessions and
+  storage) is in the conversation's directory.
+- **Config** (v1 schema): `opencode.json` (path given through the pinned config variable). One provider
+  under `provider.<id>` for the dialect (its AI SDK package, `options.baseURL` from `ModelChoice`,
+  `options.apiKey: "{env:…}"` naming the placeholder), and the model's `limit.context` from `model_meta`.
+  Also `autoupdate: false`, `share: "disabled"`, the model catalogue fetch off, a `permission` block that
+  allows everything without asking, and `mcp.aurora` as a `local` server (the bridge command, enabled).
 - **Capabilities**: `resume`, `tool_events`, `thinking_deltas`, `platform_tools`; `steer = false`.
   `skills_dir = ".agents/skills"`. **Roles**: `roles.small` → the small/title model, and
   `subagent_role` → the built-in general subagent's model, if the pinned version has those slots.
