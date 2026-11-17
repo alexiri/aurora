@@ -250,7 +250,11 @@ async fn started(
         return Ok(res(r, ReportStatus::Fenced, Some("other_boot")));
     }
     Ok(match conv::start_turn(tx, turn, Some(r.boot_id)).await? {
-        Some(_) => res(r, ReportStatus::Applied, None),
+        Some(row) => {
+            // (FIX-158, D-319) The platform shows the agent is working while the turn runs.
+            crate::domains::channels::mirror::on_turn_started(tx, &row).await?;
+            res(r, ReportStatus::Applied, None)
+        }
         None => res(r, ReportStatus::Duplicate, None),
     })
 }

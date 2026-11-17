@@ -90,6 +90,8 @@ pub struct Platform {
     pub messages: Vec<PostedMessage>,
     pub failures: Failures,
     pub counter: u64,
+    /// Threads currently showing the working status (`status.set`, FIX-158): `space|thread`.
+    pub working: BTreeSet<String>,
 }
 
 impl Platform {

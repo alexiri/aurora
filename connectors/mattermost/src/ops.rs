@@ -360,6 +360,26 @@ async fn reaction(integ: &Arc<Integ>, r: ReactionOp, add: bool) -> R<Value> {
     Ok(json!({}))
 }
 
+/// `status.set` / `status.clear`: the sender "is typing…" in the thread until cleared (docs/20
+/// §Typing indicator). The refresher lives in the connector; a bad id is refused, a sender that
+/// may not post there (403/404) just never types.
+async fn status(integ: &Arc<Integ>, s: &StatusOp, set: bool) -> R<Value> {
+    let (token, user) = sender(integ, &s.sender)?;
+    need_id(&s.space_ref, "space")?;
+    let parent = s.thread_ref.clone().unwrap_or_default();
+    if !parent.is_empty() {
+        need_id(&parent, "thread")?;
+    }
+    if set {
+        integ
+            .typing
+            .start(integ.mm.clone(), token, user, s.space_ref.clone(), parent);
+    } else {
+        integ.typing.stop(&user, &s.space_ref, &parent);
+    }
+    Ok(json!({}))
+}
+
 async fn file_fetch(
     integ: &Arc<Integ>,
     core: Option<Arc<CoreClient>>,
@@ -550,9 +570,13 @@ pub async fn execute(
         OpPayload::MessageDelete(m) => message_delete(integ, m).await,
         OpPayload::ReactionAdd(r) => reaction(integ, r, true).await,
         OpPayload::ReactionRemove(r) => reaction(integ, r, false).await,
-        OpPayload::StatusSet(_) | OpPayload::StatusClear(_) => {
+        OpPayload::StatusSet(s) => {
             need(integ, Capability::NativeStatus)?;
-            Ok(json!({}))
+            status(integ, &s, true).await
+        }
+        OpPayload::StatusClear(s) => {
+            need(integ, Capability::NativeStatus)?;
+            status(integ, &s, false).await
         }
         OpPayload::FileFetch(f) => file_fetch(integ, core, op, f).await,
         OpPayload::UserLookup(l) => user_lookup(integ, l).await,

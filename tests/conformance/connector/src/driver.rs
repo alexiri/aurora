@@ -266,6 +266,12 @@ pub trait PlatformDriver: Send + Sync {
         Ok(None)
     }
 
+    /// Does the platform show the working status ("is typing…") in this thread now? `None`: the
+    /// driver cannot observe it (FIX-158).
+    async fn working(&self, _space_ref: &str, _thread_ref: &str) -> Result<Option<bool>> {
+        Ok(None)
+    }
+
     /// Everything posted on the platform (optionally one space), oldest first.
     async fn posts(&self, space_ref: Option<&str>) -> Result<Vec<Post>>;
     /// Bytes of a file attached to a post the connector made.

@@ -389,6 +389,22 @@ done when its tests exist, pass in CI, and the security invariants it touches
   non-member refused (`not_org_member`), messaging tools with
   platform resolution and `proactive_messaging` modes, op error code handling,
   ownership failover between two fake connector replicas.
+- (phase 5, FIX-158, D-319, C-908) **Receipt lifetime and working indicator**
+  (`api/it/channels_inbox`): the receipt `reaction.add` is done and no
+  `reaction.remove` exists until the `answer:<turn_id>` op is enqueued; a turn
+  ending with no text while follow-on work is pending leaves the receipt open
+  until a later post to the same thread link clears it; with nothing pending it
+  clears with reason `no_followon`; an add still `pending` at clear time is
+  dropped with no remove; a remove is not claimed while its add is in flight;
+  the sweep clears an open receipt after `RECEIPT_ORPHAN_SECS`; `status.set`
+  on `running` and `status.clear` before the answer, none without
+  `native_status` and none for web/API turns. Mattermost unit tests (mock
+  server): the refresher calls `/users/{id}/typing` every `TYPING_REFRESH_SECS`
+  with the sender's token, `channel_id`/`parent_id`; it stops on clear, at the
+  ceiling and on 403; two sets are one refresher. Conformance s19 (fake: the
+  working status shows past one refresh and ends with the answer; Mattermost
+  driver: the ops are accepted). The typing endpoint was checked by hand on
+  Mattermost 11.7.15 (see FIX-158 §Evidence).
 
 ### Conversation data lifecycle (phase 2, RFE-010)
 - Delete: authorization matrix (direct user, owner, member, key of each) per

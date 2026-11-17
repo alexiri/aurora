@@ -247,6 +247,8 @@ overridden by the named configuration key (`15`).
 | `BACKGROUND_CAP` | 12 h | `hosted.background_cap_secs` | 11 |
 | `TURN_CEILING` | 6 h | `hosted.turn_ceiling_secs` | 10 |
 | `TURN_CEILING_WARNING` | 15 min | — | 10 |
+| `TYPING_REFRESH_SECS` | (phase 5, FIX-158, D-319) 4 s between the Mattermost connector's `typing` calls for a running turn (clients drop the indicator after about 5 s). A refresher whose `status.clear` was lost stops after `TURN_CEILING_WARNING` | — | 13, 20 |
+| `RECEIPT_ORPHAN_SECS` | (phase 5, FIX-158, D-319) 600 s: an open chat receipt of a conversation with no active turn and no pending follow-on work is cleared by the channel-op sweep | — | 13 |
 | `TURN_STALL` | 10 min | `hosted.turn_stall_secs` | 10 |
 | turn progress interval | **not implemented as a limit** (FIX-119): the supervisor emits progress every 10 s (`SupervisorConfig.progress_interval`, `services/aurora-supervisor/src/supervisor.rs`); the 60 s draft constant (`turn progress interval`) was never read and was removed. A configurable interval, if wanted, is a new task | — | 12 |
 | `STALE_DISPATCH` | 90 s | — | 10 |

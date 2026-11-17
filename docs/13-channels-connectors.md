@@ -232,7 +232,7 @@ code `reserved_event_id`.
 | `message.update` | `{ space_ref, message_ref, sender, content }` → `{}` |
 | `message.delete` | `{ space_ref, message_ref, sender }` → `{}` |
 | `reaction.add` / `reaction.remove` | `{ space_ref, message_ref, sender, emoji: neutral name }` |
-| `status.set` / `status.clear` | `{ space_ref, thread_ref?, sender, text? }` (native status only) |
+| `status.set` / `status.clear` | `{ space_ref, thread_ref?, sender, text? }` (native status only). (phase 5, FIX-158, D-319) The core sends `status.set` (`working:<turn_id>`) when a chat-thread turn goes `running` and `status.clear` (`working-clear:<turn_id>`) before the answer posts, to the thread link the set went to; the connector shows "typing" for that thread until the clear, and drops it itself after a ceiling so a lost clear never types forever. Both are idempotent per key; neither is a post |
 | `file.fetch` | `{ file_ref, max_bytes }` → `{ upload_url_used: true, attachment_id }` (connector uploads the bytes to `PUT /v1/connector/files/{op_id}`) |
 | `user.lookup` | `{ user_ref } | { query, limit }` → `{ users: [{ ref, display_name, handle, email?, email_verified, is_bot }] }` |
 | `spaces.list` / `space.members` | `{ query?, limit }` / `{ space_ref }` → lists |
@@ -443,7 +443,9 @@ must match the event's. The connector never interprets tokens.
 | `buttons` / `menus` / `text_input` | card shows a dashboard link, plus `approve <code>` / `deny <code>` commands when `commands` exists (code = first 8 base32 chars of the approval id) |
 | `reactions` | seen-receipt becomes a "Working…" placeholder post, deleted (or edited to the answer) when done |
 | `ephemeral` | DM the person, naming the space it concerns by its label ("In #general: …", "In your group message with Ann, Bob: …"; FIX-128, D-194): never by an internal id, and with no prefix at all when the notice goes to the DM it is about |
-| `native_status` | placeholder post as above |
+| `native_status` | placeholder post as above. (Phase 5, FIX-158, D-319) Also the working indicator: when a turn of a chat thread goes `running` the core enqueues `status.set` (dedupe `working:<turn_id>`) to that thread link (a doorless turn: the latest link), and `status.clear` (`working-clear:<turn_id>`) before the turn's answer posts. A platform with `reactions` and `native_status` shows both: the 👀 at once, "is typing…" while the turn runs. No status op without the capability, none for web/API turns |
+
+**Receipt lifetime (phase 5, FIX-158, D-319, C-908).** The seen-receipt belongs to the message. It is removed only when the thread link gets the answer or the failure line (that post also removes the still-open receipts of earlier finished messages of the link), or the turn is aborted, or the turn ended with nothing posted and no follow-on work is pending (armed watch, pending approval or gateway hold of that turn, `joining` follow-up, queued/dispatched/running turn). Otherwise it stays open; the channel-op sweep clears an open receipt after `RECEIPT_ORPHAN_SECS` without an active turn or pending work. A `reaction.remove` is never claimed while its `reaction.add` is `pending`/`claimed`; an add still `pending` at clear time is dropped and no remove is queued. Every add and clear logs one `info` line on target `aurora_api::channels::receipt` (`event_id`, `turn_id`, `integration_id`, `reason`: `message_received`, `answer_posted`, `failed`, `aborted`, `no_followon`, `follow_on_pending`, `orphan`).
 | `presence_dedicated` / `presence_shared` | only the other mode is offered |
 | `user_tokens` | read-as-user / send-as-user features hidden (phase 0 implements none). (phase 5, P4-UTOK, D-281) `true` on Mattermost: `send_as_me` is offered where a person has added a token and granted the agent (§5.11); read-as-user stays hidden (Q-UTOK-1) |
 | `email_verified` | linking always uses the sign-in link (phase 1, RFE-001: also whenever the integration's `verified_email_autolink` is `false`, which is the default; the platform email then only pre-fills the flow) |
@@ -539,7 +541,7 @@ idempotent). Steps:
 10. **Turn**: create the turn (door `thread`, `source_event_id = event_id`; (phase 3, RFE-018) event ids starting with the reserved prefix `api:` were already rejected at ingest, `§POST /events`,
     speaker). A turn already created by a crashed earlier attempt is found by
     `source_event_id` and not duplicated.
-11. **Receipt**: `reaction.add` (neutral `eyes`) or `status.set` or placeholder.
+11. **Receipt**: `reaction.add` (neutral `eyes`) or `status.set` or placeholder. (phase 5, FIX-158, D-319, C-908) The receipt stays until the thread's answer or failure line posts (§5.2); a platform with `reactions` and `native_status` also gets the working indicator when the turn goes `running` (§4.5). Each add logs one `info` line on target `aurora_api::channels::receipt`.
 
 Other events: `bot.added` → binding flow (5.3); `bot.removed` → deactivate the
 space's binding, set space reach grants `left`; `action.invoked` → action
@@ -553,7 +555,9 @@ no behaviour in phase 0.
   door `thread` finishes, its durable `text` events are posted once, complete
   (no streaming edits) to that thread link (`dedupe_key =
   answer:<turn_id>`); attachments sent with `send_file` follow as files. The
-  receipt is removed / placeholder resolved. (phase 5, FIX-142) The answer is
+  receipt is removed / placeholder resolved (phase 5, FIX-158, D-319, C-908:
+  only when this post lands, never earlier; §4.5 *Receipt lifetime*; the
+  working indicator is cleared just before it). (phase 5, FIX-142) The answer is
   an agent's message body (§4.3). One longer than a post is split only
   between top-level blocks: a fenced block cut is closed and reopened with the
   same info string, a table is split by rows with the header and delimiter

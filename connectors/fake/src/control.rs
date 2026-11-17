@@ -66,6 +66,7 @@ pub fn router(f: Arc<FakeConnector>) -> Router {
         .route("/fake/status", get(status))
         .route("/fake/link-start", post(link_start))
         .route("/fake/posted", get(posted))
+        .route("/fake/working", get(working))
         .route("/fake/failures", post(set_failures))
         .route("/fake/reset", post(reset))
         .with_state(f)
@@ -356,6 +357,13 @@ async fn posted(State(f): Ctl, Query(q): Query<PostedQuery>) -> Reply {
         .filter(|m| q.include_deleted || !m.deleted)
         .collect();
     (StatusCode::OK, Json(json!({"messages": msgs})))
+}
+
+/// Threads showing the working status now, as `space|thread` (empty thread for a space).
+async fn working(State(f): Ctl) -> Reply {
+    let p = lock(&f.platform);
+    let w: Vec<&String> = p.working.iter().collect();
+    (StatusCode::OK, Json(json!({"working": w})))
 }
 
 async fn set_failures(State(f): Ctl, Json(x): Json<Failures>) -> Reply {
