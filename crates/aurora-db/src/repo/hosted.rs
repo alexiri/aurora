@@ -260,10 +260,14 @@ pub async fn mint_turn_credential(
     sqlx::query(
         "INSERT INTO gateway_credentials
             (id, kind, token_hash, display_prefix, agent_id, conversation_id, turn_id,
-             context_label, expires_at, speaker_user_id, trace_context)
+             context_label, expires_at, speaker_user_id, trace_context, capabilities)
          VALUES ($1,'context',$2,$3,$4,$5,$6,'turn', now() + make_interval(secs => $7), $8,
                  -- (FIX-146) the gateway has no grant on `turns`: the turn's context is copied here.
-                 (SELECT trace_context FROM turns WHERE id = $6))",
+                 (SELECT trace_context FROM turns WHERE id = $6),
+                 -- (P4-EVAL-2, C-868) the same for the conversation's kind: a turn of an `eval`
+                 -- conversation carries `eval_read_only`, which the gateway enforces on every write.
+                 COALESCE((SELECT ARRAY['eval_read_only']::text[] FROM conversations
+                           WHERE id = $5 AND kind = 'eval'), '{}'::text[]))",
     )
     .bind(Uuid::now_v7())
     .bind(token_hash)

@@ -9,6 +9,7 @@ export type AgentPageId =
   | "instructions"
   | "memory"
   | "skills"
+  | "evals"
   | "schedules"
   | "webhooks"
   | "channels"
@@ -29,6 +30,7 @@ export const AGENT_PAGE_IDS: readonly AgentPageId[] = [
   "instructions",
   "memory",
   "skills",
+  "evals",
   "schedules",
   "webhooks",
   "channels",
@@ -47,6 +49,7 @@ export const PAGE_LABEL: Record<AgentPageId, string> = {
   instructions: "Instructions",
   memory: "Memory",
   skills: "Skills",
+  evals: "Evals",
   schedules: "Schedules",
   webhooks: "Webhooks",
   channels: "Channels",
@@ -63,7 +66,7 @@ export const PAGE_LABEL: Record<AgentPageId, string> = {
 /** Sections in order, each with its pages in order. */
 export const SECTIONS: readonly { id: SectionId; label: string; pages: readonly AgentPageId[] }[] = [
   { id: "chat", label: "Chat", pages: ["chat"] },
-  { id: "behaviour", label: "Behaviour", pages: ["instructions", "memory", "skills"] },
+  { id: "behaviour", label: "Behaviour", pages: ["instructions", "memory", "skills", "evals"] },
   { id: "triggers", label: "Triggers", pages: ["schedules", "webhooks", "channels", "peers"] },
   { id: "computer", label: "Computer", pages: ["computer", "terminal", "files", "previews", "ssh", "connect"] },
   { id: "access", label: "Access", pages: ["access"] },

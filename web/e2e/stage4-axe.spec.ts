@@ -2,6 +2,7 @@ import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Page } from "@playwright/test";
 
 import { ACCESS_SCREENS, openAccess } from "./support/access";
+import { EVAL_SCREENS, openEvals } from "./support/evals";
 import { ROUTES } from "./support/mock-api";
 import { CONNECTOR_SCREENS, openConnectorScreen } from "./support/connectors";
 import { openRoute, titled } from "./support/open";
@@ -70,6 +71,19 @@ for (const scheme of ["light", "dark"] as const) {
       for (const s of ACCESS_SCREENS) {
         test(`${s} has no serious or critical violations`, async ({ page }) => {
           await openAccess(page, s, scheme);
+          expect(await serious(page)).toEqual([]);
+        });
+      }
+    });
+  }
+
+  // P4-EVAL-4: the agent's Evals page, a run's page and the two dialogs.
+  for (const width of [1280, 390]) {
+    test.describe(`${scheme} theme, agent Evals page, ${width} px`, () => {
+      test.use({ viewport: { width, height: 900 } });
+      for (const s of EVAL_SCREENS) {
+        test(`${s} has no serious or critical violations`, async ({ page }) => {
+          await openEvals(page, s, scheme);
           expect(await serious(page)).toEqual([]);
         });
       }

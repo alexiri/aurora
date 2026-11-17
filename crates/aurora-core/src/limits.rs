@@ -558,6 +558,45 @@ pub const USER_TOKENS_PER_PERSON: usize = 5;
 /// (P4-UTOK, D-284(c), C-856) pending `send_as_me` approvals per token (the sixth is refused
 /// `pending_limit`).
 pub const USER_TOKEN_PENDING_MAX: usize = 5;
+/// (phase 5, P4-EVAL-1, D-293(c), C-861, C-872) eval questions per agent (422 `eval_question_limit`).
+pub const EVAL_QUESTIONS_PER_AGENT: usize = 100;
+/// (P4-EVAL-1, C-861) characters of an eval question (422 `invalid`).
+pub const EVAL_QUESTION_CHARS: usize = 2000;
+/// (P4-EVAL-1, C-861) characters of an expected text answer (422 `invalid`).
+pub const EVAL_EXPECTED_TEXT_CHARS: usize = 1000;
+/// (P4-EVAL-1, C-861) characters of judged criteria (422 `invalid`).
+pub const EVAL_CRITERIA_CHARS: usize = 1000;
+/// (P4-EVAL-2, C-867) characters of an answer kept on an eval result (sanitised).
+pub const EVAL_ANSWER_CHARS: usize = 4000;
+/// (P4-EVAL-2, D-290, C-865) per eval question: the turn is aborted and the question is `error`
+/// (`timeout`) after this long.
+pub const EVAL_TURN_TIMEOUT: Duration = Duration::from_secs(900);
+/// (P4-EVAL-2, D-290(d), C-864) active (`queued` or `running`) eval runs per agent (409
+/// `eval_run_active`).
+pub const EVAL_RUNS_ACTIVE_PER_AGENT: usize = 1;
+/// (P4-EVAL-2, D-293(c), C-864) eval run starts per agent per UTC day, manual and scheduled
+/// together (429 `eval_runs_limited`).
+pub const EVAL_RUNS_PER_AGENT_DAY: usize = 20;
+/// (P4-EVAL-2, D-293(b), C-870) the smallest gap between eval schedule occurrences.
+pub const EVAL_SCHEDULE_MIN_INTERVAL: Duration = Duration::from_secs(3600);
+/// (P4-EVAL-2, C-870) eval schedules per agent (422 `eval_schedule_limit`).
+pub const EVAL_SCHEDULES_PER_AGENT: usize = 5;
+/// (P4-EVAL-2, D-294, C-872) a finished run, its results and its eval conversations are deleted
+/// this long after it finishes.
+pub const EVAL_RUN_RETENTION: Duration = Duration::from_secs(90 * 24 * 3600);
+/// (P4-EVAL-2, D-293(d), C-871) percentage points of pass rate below the previous finished run
+/// of the same question-set version at which a regression is recorded.
+pub const EVAL_REGRESSION_DROP: f64 = 10.0;
+/// (P4-EVAL-3, D-292, C-869) one judge call (the request through `PlatformLlm`) is abandoned after
+/// this long: `judge_timeout`, an `error` for that question.
+pub const EVAL_JUDGE_TIMEOUT: Duration = Duration::from_secs(60);
+/// (P4-EVAL-3, C-869) `max_tokens` of a judge request.
+pub const EVAL_JUDGE_MAX_TOKENS: u32 = 512;
+/// (P4-EVAL-3, SEC-115) bytes of the question's own answer sent to the judge; the rest is cut.
+pub const EVAL_JUDGE_INPUT_MAX: usize = 8 * 1024;
+/// (P4-EVAL-3, C-869) characters of the judge's rationale kept (one line, sanitised); longer is
+/// cut, never a failure.
+pub const EVAL_RATIONALE_CHARS: usize = 300;
 /// (P4-SSH-1, C-791) default validity of a minted SSH user certificate; `ssh.cert_ttl_secs`
 /// (60 … 86 400 s) overrides it. `valid_after` is backdated 60 s for clock skew.
 pub const SSH_CERT_TTL: Duration = Duration::from_secs(900);
@@ -680,6 +719,23 @@ mod tests {
         assert_eq!(SSH_KEYS_PER_USER, 10);
         assert_eq!(USER_TOKENS_PER_PERSON, 5);
         assert_eq!(USER_TOKEN_PENDING_MAX, 5);
+        assert_eq!(EVAL_QUESTIONS_PER_AGENT, 100);
+        assert_eq!(EVAL_QUESTION_CHARS, 2000);
+        assert_eq!(EVAL_EXPECTED_TEXT_CHARS, 1000);
+        assert_eq!(EVAL_CRITERIA_CHARS, 1000);
+        assert_eq!(EVAL_ANSWER_CHARS, 4000);
+        assert_eq!(EVAL_TURN_TIMEOUT, Duration::from_secs(900));
+        assert!(EVAL_TURN_TIMEOUT <= TURN_CEILING);
+        assert_eq!(EVAL_RUNS_ACTIVE_PER_AGENT, 1);
+        assert_eq!(EVAL_RUNS_PER_AGENT_DAY, 20);
+        assert_eq!(EVAL_SCHEDULE_MIN_INTERVAL, Duration::from_secs(3600));
+        assert_eq!(EVAL_SCHEDULES_PER_AGENT, 5);
+        assert_eq!(EVAL_RUN_RETENTION, Duration::from_secs(90 * 24 * 3600));
+        assert!((EVAL_REGRESSION_DROP - 10.0).abs() < f64::EPSILON);
+        assert_eq!(EVAL_JUDGE_TIMEOUT, Duration::from_secs(60));
+        assert_eq!(EVAL_JUDGE_MAX_TOKENS, 512);
+        assert_eq!(EVAL_JUDGE_INPUT_MAX, 8192);
+        assert_eq!(EVAL_RATIONALE_CHARS, 300);
         assert_eq!(SSH_CERT_TTL, Duration::from_secs(900));
         assert_eq!(SSH_MINTS_PER_USER_AGENT_HOUR, 30);
         const { assert!(CONDITION_BODY_BUFFER_MIN <= CONDITION_BODY_BUFFER) };
