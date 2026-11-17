@@ -38534,7 +38534,8 @@
           "probe_scopes",
           "audience",
           "scope_presets",
-          "show_context"
+          "show_context",
+          "has_probe"
         ],
         "properties": {
           "access_levels": {
@@ -38578,6 +38579,10 @@
             "items": {
               "$ref": "#/components/schemas/FormField"
             }
+          },
+          "has_probe": {
+            "type": "boolean",
+            "description": "(P5-UX-14, C-945) Whether connecting with this method already probes the upstream. The\njourney tests a new account once afterwards only when it does not."
           },
           "id": {
             "type": "string"

@@ -6700,6 +6700,11 @@ export interface components {
             /** @description One or two sentences: what the method is and when to use it. */
             description?: string | null;
             fields: components["schemas"]["FormField"][];
+            /**
+             * @description (P5-UX-14, C-945) Whether connecting with this method already probes the upstream. The
+             *     journey tests a new account once afterwards only when it does not.
+             */
+            has_probe: boolean;
             id: string;
             /** @description `oauth2` | `fields` | `hook`. */
             kind: string;

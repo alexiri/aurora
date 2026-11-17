@@ -140,6 +140,121 @@ async fn a_401_records_rejected_a_later_success_records_ok_and_the_status_never_
     assert_eq!(fx.row().await.2, "active");
 }
 
+/// A generic secret (a website's token) injected by host: its own row records the health, through the same role.
+#[tokio::test]
+async fn a_secret_account_records_its_health_in_its_own_row() {
+    let mut db = aurora_testkit::TestDb::new().await;
+    let role_url = db.gateway_role_url().await.unwrap();
+    let pool = aurora_db::PgPool::connect(&role_url).await.unwrap();
+    let w = World {
+        org: Uuid::now_v7(),
+        ws: Uuid::now_v7(),
+        agent: Uuid::now_v7(),
+    };
+    sqlx::query(
+        "INSERT INTO organizations (id, slug, name, external_id) VALUES ($1,'o','O','ext')",
+    )
+    .bind(w.org)
+    .execute(db.pool())
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO workspaces (id, org_id, slug, name) VALUES ($1,$2,'w','W')")
+        .bind(w.ws)
+        .bind(w.org)
+        .execute(db.pool())
+        .await
+        .unwrap();
+    let s = SecretMetaRow {
+        id: Uuid::now_v7(),
+        workspace_id: Some(w.ws),
+        name: "weather".into(),
+        kind: "generic".into(),
+        llm_provider: None,
+        llm_auth_mode: None,
+        llm_endpoint_id: None,
+        host_pattern: "127.0.0.1".into(),
+        path_pattern: None,
+        injection: json!({"kind": "bearer"}),
+        value_ref: SecretRef::ext("mem", "s1", None, "1").unwrap().to_column(),
+        value_version: 1,
+        origin: None,
+    };
+    sqlx::query(
+        "INSERT INTO secrets (id, org_id, workspace_id, name, kind, host_pattern, injection, value_source, value_ref) \
+         VALUES ($1,$2,$3,'weather','generic','127.0.0.1','{\"kind\":\"bearer\"}','managed','x:')",
+    )
+    .bind(s.id)
+    .bind(w.org)
+    .bind(w.ws)
+    .execute(db.pool())
+    .await
+    .unwrap();
+    let id = s.id;
+    let (env, ..) = start_in(
+        w,
+        one_app(json!([])),
+        &[("s1", "S")],
+        move |w| {
+            let mut r = Rows::default();
+            r.ws.rules.push(rule(
+                "g",
+                "allow",
+                json!([{"type":"secret","id":id}]),
+                false,
+            ));
+            r.secrets.push(s);
+            let _ = w;
+            r
+        },
+        None,
+        Some(pool),
+        Some(Arc::new(AccountHealth::with_min_interval(Duration::ZERO))),
+    )
+    .await;
+    let row = || async {
+        sqlx::query_as::<
+            _,
+            (
+                Option<String>,
+                Option<chrono::DateTime<chrono::Utc>>,
+                String,
+            ),
+        >("SELECT last_check_result, last_check_at, status FROM secrets WHERE id = $1")
+        .bind(id)
+        .fetch_one(db.pool())
+        .await
+        .unwrap()
+    };
+    let wait = |want: &'static str| {
+        let row = &row;
+        async move {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            loop {
+                let (r, ..) = row().await;
+                if r.as_deref() == Some(want) {
+                    return;
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "result never became {want}: {r:?}"
+                );
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        }
+    };
+
+    let r = get(&env, "/x/401", "").await;
+    assert_eq!(r.status, 401, "{}", r.body);
+    wait("rejected").await;
+    let (_, at, status) = row().await;
+    assert!(at.is_some());
+    assert_eq!(status, "active", "recording never changes the status");
+
+    let r = get(&env, "/x/fine", "").await;
+    assert_eq!(r.status, 200, "{}", r.body);
+    wait("ok").await;
+}
+
 #[tokio::test]
 async fn a_403_records_nothing() {
     let fx = start_health(Duration::ZERO).await;

@@ -182,6 +182,8 @@ export function ConnectJourney({
   useEffect(() => {
     if (step !== "done" || !done || done.kind !== "connection" || tested.current === done.accountId) return;
     tested.current = done.accountId;
+    // A method with a probe was checked while connecting; only the others are tested here (D-335).
+    if (app?.connect.find((m) => m.id === done.methodId)?.has_probe) return;
     testAccount.mutate(
       { ref: { type: "connection", id: done.accountId } },
       {

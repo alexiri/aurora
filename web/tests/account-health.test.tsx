@@ -10,7 +10,7 @@ vi.mock("next/navigation", () => ({
 }));
 
 import { AccountHealth } from "@/components/accounts/account-health";
-import { AccountsBanner, AgentAttentionChip } from "@/components/accounts/attention";
+import { AccountsBanner, AgentAttentionChip, OverviewAccountsAttention } from "@/components/accounts/attention";
 import { attentionCount, healthClause, healthLine, needsAttention, savedButText, testOutcomeText } from "@/lib/account-health";
 
 afterEach(() => {
@@ -130,6 +130,25 @@ describe("where a broken account shows up", () => {
     expect(await screen.findByText(/Daneel can't use GitHub: the sign-in expired\./)).toBeTruthy();
     const fix = screen.getByRole("link", { name: "Reconnect" });
     expect(fix.getAttribute("href")).toBe("/o/acme/w/main/agents/a1?tab=access&reconnect=c1");
+  });
+
+  it("lists the workspace's broken accounts on the Overview with the row's line and fix, and nothing when all work", async () => {
+    mockAccounts([
+      acct({ state: "sign_in_expired" }),
+      acct({ state: "rejected", detail: "password" }, { ref: { type: "connection", id: "c2" }, name: "analytics", app: { app_id: "postgresql", name: "PostgreSQL", custom_only: false } }),
+      acct({ state: "ok" }, { ref: { type: "connection", id: "c3" } }),
+    ]);
+    const { unmount } = wrap(<OverviewAccountsAttention workspaceId="ws1" base="/o/acme/w/main" />);
+    expect(await screen.findByRole("heading", { name: "2 accounts need attention" })).toBeTruthy();
+    expect(screen.getByText(/: The sign-in to GitHub expired/)).toBeTruthy();
+    expect(screen.getByText(/analytics/).parentElement?.textContent).toContain("PostgreSQL no longer accepts this password");
+    expect(screen.getByRole("link", { name: "Reconnect" }).getAttribute("href")).toBe("/o/acme/w/main/apps?tab=accounts&reconnect=c1");
+    expect(screen.getByRole("link", { name: "Replace password" }).getAttribute("href")).toBe("/o/acme/w/main/apps?tab=accounts");
+    unmount();
+    mockAccounts([acct({ state: "ok" })]);
+    wrap(<OverviewAccountsAttention workspaceId="ws1" base="/o/acme/w/main" />);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(screen.queryByRole("heading")).toBeNull();
   });
 
   it("shows who can fix it instead of the fix to someone who cannot", async () => {
