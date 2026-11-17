@@ -6,6 +6,13 @@ agents.default_brief
 agents.default_name
 approvals.email_notifications
 approvals.max_timeout_secs
+approvals.park.deny_cooldown_secs
+approvals.park.enabled
+approvals.park.max_body_bytes
+approvals.park.max_pending_per_agent
+approvals.park.max_timeout_secs
+approvals.park.resume_window_secs
+approvals.park.threshold_secs
 approvals.timeout_secs
 attachments.days_max
 attachments.default_org_quota_mib

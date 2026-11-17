@@ -4,6 +4,7 @@
 pub mod bus;
 pub mod dto;
 pub mod notify;
+pub mod resume;
 mod routes;
 pub mod service;
 

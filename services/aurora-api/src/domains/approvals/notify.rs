@@ -241,7 +241,39 @@ pub async fn notify_once(s: &AppState) -> Result<usize, ApiError> {
             }
         }
     }
+    // (P4-011B-2, C-828) The reminder of a parked approval at half its waiting time: its own claim
+    // per (approval, user), whatever the initial delivery was, to deciders with no live watcher.
+    for u in
+        &repo::unseen_reminders(&s.pool, APPROVAL_WATCHER_TTL.as_secs_f64(), SWEEP_LIMIT).await?
+    {
+        let deciders = repo::deciders(&s.pool, u.org_id, u.workspace_id, u.conversation_id).await?;
+        for d in &deciders {
+            if repo::claim_reminder(&s.pool, u.id, d.user_id).await? {
+                deliver(s, reminder_mail(&ext, &d.email, u)).await;
+                sent += 1;
+            }
+        }
+    }
     Ok(sent)
+}
+
+/// (P4-011B-2) The half-time reminder of a parked approval: same content rules as
+/// [`approval_mail`] plus the fact that the agent has stopped waiting.
+pub fn reminder_mail(external_url: &str, to: &str, u: &repo::Unseen) -> Mail {
+    let title = clean(&u.title);
+    let agent = clean(&u.agent_name);
+    let workspace = clean(&u.workspace_name);
+    Mail::new(
+        to,
+        &format!("Reminder, approval still needed: {title}"),
+        &format!(
+            "{agent} in the workspace \"{workspace}\" asked for an approval that is still open: the \
+             agent has stopped waiting and will resume when you approve.\n\nWhat: {title}\nExpires: {}\n\n\
+             Open the approvals page to review it. You need to be signed in to decide.",
+            u.expires_at.format("%Y-%m-%d %H:%M UTC")
+        ),
+        &dashboard_link(external_url, u),
+    )
 }
 
 async fn deliver(s: &AppState, mail: Mail) {

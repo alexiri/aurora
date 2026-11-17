@@ -106,6 +106,26 @@ async fn a_pending_hold_past_its_deadline_does_not_exempt() {
     );
 }
 
+// (P4-011B-2) A parked approval is not a hold: the agent has stopped waiting for it, so it never
+// exempts its turn from the stall rule.
+#[tokio::test]
+async fn a_pending_parked_approval_does_not_exempt() {
+    let (r, lv, turn) = stale_turn("stall-parked").await;
+    hold(&r, &lv, &turn, "pending", 20 * 60, None).await;
+    sqlx::query(
+        "UPDATE approvals SET parked = true, fp_salt = '\\x01'::bytea, fingerprint = '\\x02'::bytea \
+         WHERE turn_id = $1::uuid",
+    )
+    .bind(&turn)
+    .execute(r.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        status(&r, &turn).await,
+        ("failed".into(), Some("turn_stalled".into()))
+    );
+}
+
 #[tokio::test]
 async fn ceiling_still_fails_a_turn_with_a_pending_approval() {
     let (r, lv, turn) = stale_turn("stall-ceiling").await;

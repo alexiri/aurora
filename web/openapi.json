@@ -25024,6 +25024,55 @@
         ]
       }
     },
+    "/v1/policy/approval-limits": {
+      "get": {
+        "tags": [
+          "policy"
+        ],
+        "summary": "(P4-011B-2, C-829) The live approval timeouts and parking facts the dashboard bounds its\ntimeout fields with; any signed-in caller, nothing else of the instance's configuration.",
+        "operationId": "getApprovalLimits",
+        "responses": {
+          "200": {
+            "description": "The effective approval limits",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApprovalLimits"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
     "/v1/presences/{id}": {
       "delete": {
         "tags": [
@@ -34955,6 +35004,7 @@
           "kind",
           "is_default",
           "subagent_model",
+          "narration_cards",
           "proactive_messaging",
           "brief",
           "effective_frozen",
@@ -35060,6 +35110,10 @@
           },
           "name": {
             "type": "string"
+          },
+          "narration_cards": {
+            "type": "boolean",
+            "description": "(P4-NARR, C-846) Show a live steps card for this agent's turns on chat platforms that can\nedit messages; default `false`."
           },
           "org_id": {
             "type": "string",
@@ -36068,7 +36122,8 @@
           "summary",
           "status",
           "deadline",
-          "created_at"
+          "created_at",
+          "parked"
         ],
         "properties": {
           "agent": {
@@ -36103,6 +36158,13 @@
               "null"
             ],
             "format": "uuid"
+          },
+          "consumed_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
           },
           "context_label": {
             "type": [
@@ -36164,8 +36226,37 @@
             "type": "string",
             "format": "uuid"
           },
+          "parked": {
+            "type": "boolean",
+            "description": "(P4-011B, C-822) The gateway refused the request at once and keeps this approval for the\nagent's identical repeat."
+          },
           "path": {
             "type": "string"
+          },
+          "resume": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ApprovalResume",
+                "description": "Only on the decision response of an approved parked approval: `{ state: \"ready\", expires_at }`."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "resume_expires_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "resume_state": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`ready` | `consumed` | `expired` | `revoked`; only for approved parked approvals."
           },
           "rule_logical_id": {
             "type": [
@@ -36294,6 +36385,61 @@
           }
         }
       },
+      "ApprovalLimits": {
+        "type": "object",
+        "description": "(P4-011B-2, C-829) `GET /v1/policy/approval-limits`: the live effective values, no other key.",
+        "required": [
+          "timeout_secs",
+          "max_timeout_secs",
+          "park"
+        ],
+        "properties": {
+          "max_timeout_secs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "`approvals.max_timeout_secs`",
+            "minimum": 0
+          },
+          "park": {
+            "$ref": "#/components/schemas/ApprovalLimitsPark"
+          },
+          "timeout_secs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "`approvals.timeout_secs`",
+            "minimum": 0
+          }
+        }
+      },
+      "ApprovalLimitsPark": {
+        "type": "object",
+        "required": [
+          "enabled",
+          "threshold_secs",
+          "max_timeout_secs",
+          "resume_window_secs"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "max_timeout_secs": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "resume_window_secs": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "threshold_secs": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
       "ApprovalNotice": {
         "type": "object",
         "description": "(phase 2, RFE-011a) The sanitized facts of a new approval: `{ id, workspace, agent, title,\nkind, expires_at }`. No summary fields, no request body, no decision link.",
@@ -36302,7 +36448,8 @@
           "workspace",
           "title",
           "kind",
-          "expires_at"
+          "expires_at",
+          "parked"
         ],
         "properties": {
           "agent": {
@@ -36326,6 +36473,10 @@
           "kind": {
             "type": "string",
             "description": "`gateway` | `action`"
+          },
+          "parked": {
+            "type": "boolean",
+            "description": "(P4-011B, C-822) The agent has stopped waiting; deciding is for a later repeat."
           },
           "title": {
             "type": "string"
@@ -36356,6 +36507,24 @@
           },
           "slug": {
             "type": "string"
+          }
+        }
+      },
+      "ApprovalResume": {
+        "type": "object",
+        "description": "(C-822) What an approval of a parked request leaves the agent: one repeat before `expires_at`.",
+        "required": [
+          "state",
+          "expires_at"
+        ],
+        "properties": {
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "state": {
+            "type": "string",
+            "description": "`ready`"
           }
         }
       },
@@ -40127,11 +40296,21 @@
           "app_id",
           "tool_id",
           "decision",
-          "inert"
+          "inert",
+          "approval_parks",
+          "approval_timeout_clamped"
         ],
         "properties": {
           "app_id": {
             "type": "string"
+          },
+          "approval_parks": {
+            "type": "boolean",
+            "description": "(P4-011B-2, C-829) Only for `needs_approval`: the call parks (see `Simulation`)."
+          },
+          "approval_timeout_clamped": {
+            "type": "boolean",
+            "description": "(P4-011B-2, C-829) Only for `needs_approval`: the wanted timeout was cut to the maximum."
           },
           "approval_timeout_secs": {
             "type": [
@@ -45575,6 +45754,7 @@
                 "kind",
                 "is_default",
                 "subagent_model",
+                "narration_cards",
                 "proactive_messaging",
                 "brief",
                 "effective_frozen",
@@ -45680,6 +45860,10 @@
                 },
                 "name": {
                   "type": "string"
+                },
+                "narration_cards": {
+                  "type": "boolean",
+                  "description": "(P4-NARR, C-846) Show a live steps card for this agent's turns on chat platforms that can\nedit messages; default `false`."
                 },
                 "org_id": {
                   "type": "string",
@@ -45998,7 +46182,8 @@
                 "summary",
                 "status",
                 "deadline",
-                "created_at"
+                "created_at",
+                "parked"
               ],
               "properties": {
                 "agent": {
@@ -46033,6 +46218,13 @@
                     "null"
                   ],
                   "format": "uuid"
+                },
+                "consumed_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "date-time"
                 },
                 "context_label": {
                   "type": [
@@ -46094,8 +46286,37 @@
                   "type": "string",
                   "format": "uuid"
                 },
+                "parked": {
+                  "type": "boolean",
+                  "description": "(P4-011B, C-822) The gateway refused the request at once and keeps this approval for the\nagent's identical repeat."
+                },
                 "path": {
                   "type": "string"
+                },
+                "resume": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/ApprovalResume",
+                      "description": "Only on the decision response of an approved parked approval: `{ state: \"ready\", expires_at }`."
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "resume_expires_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "date-time"
+                },
+                "resume_state": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "`ready` | `consumed` | `expired` | `revoked`; only for approved parked approvals."
                 },
                 "rule_logical_id": {
                   "type": [
@@ -47888,7 +48109,8 @@
                 "injected",
                 "latency_ms",
                 "bytes_up",
-                "bytes_down"
+                "bytes_down",
+                "resumed"
               ],
               "properties": {
                 "agent_id": {
@@ -47900,6 +48122,14 @@
                     "string",
                     "null"
                   ]
+                },
+                "approval_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "uuid",
+                  "description": "(P4-011B, C-827) The approval this request held on, parked on, or consumed."
                 },
                 "bytes_down": {
                   "type": "integer",
@@ -47974,6 +48204,10 @@
                 },
                 "path": {
                   "type": "string"
+                },
+                "resumed": {
+                  "type": "boolean",
+                  "description": "(P4-011B, C-827) The request was let through by a parked approval's single-use grant."
                 },
                 "rule_logical_id": {
                   "type": [
@@ -49093,6 +49327,13 @@
               "string",
               "null"
             ]
+          },
+          "narration_cards": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "(P4-NARR, C-846) A non-boolean is refused with 422 `invalid`."
           },
           "proactive_messaging": {
             "type": [
@@ -52141,7 +52382,8 @@
           "injected",
           "latency_ms",
           "bytes_up",
-          "bytes_down"
+          "bytes_down",
+          "resumed"
         ],
         "properties": {
           "agent_id": {
@@ -52153,6 +52395,14 @@
               "string",
               "null"
             ]
+          },
+          "approval_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "(P4-011B, C-827) The approval this request held on, parked on, or consumed."
           },
           "bytes_down": {
             "type": "integer",
@@ -52227,6 +52477,10 @@
           },
           "path": {
             "type": "string"
+          },
+          "resumed": {
+            "type": "boolean",
+            "description": "(P4-011B, C-827) The request was let through by a parked approval's single-use grant."
           },
           "rule_logical_id": {
             "type": [
@@ -54929,6 +55183,8 @@
       "Simulation": {
         "type": "object",
         "required": [
+          "approval_parks",
+          "approval_timeout_clamped",
           "verdict",
           "candidates",
           "trace"
@@ -54944,6 +55200,14 @@
                 "type": "null"
               }
             ]
+          },
+          "approval_parks": {
+            "type": "boolean",
+            "description": "(P4-011B-2, C-829) Only for `needs_approval`: parking is on and the timeout is above its\nthreshold, so the agent is refused at once and resumes when a person approves."
+          },
+          "approval_timeout_clamped": {
+            "type": "boolean",
+            "description": "(P4-011B-2, C-829) Only for `needs_approval`: the wanted timeout was cut to the instance's\ncurrent maximum."
           },
           "approval_timeout_secs": {
             "type": [

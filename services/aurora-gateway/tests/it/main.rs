@@ -1,4 +1,6 @@
 //! Single integration-test binary for this crate (OPS-016): one link instead of one per file.
+mod approval_grants;
+mod approval_park;
 mod apps;
 mod ask_tool_hold;
 mod byo;

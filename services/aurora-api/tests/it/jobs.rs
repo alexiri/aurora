@@ -84,6 +84,43 @@ async fn expiry_and_abandon_transitions() {
     assert_eq!(jobs::sweep_approvals(h.pool()).await.unwrap(), (0, 0));
 }
 
+/// Marks a row as a parked approval (no holder: salt and fingerprint set, `parked`).
+async fn make_parked(h: &Harness, id: Uuid) {
+    sqlx::query(
+        "UPDATE approvals SET parked = true, fp_salt = '\\x00'::bytea, fingerprint = '\\x00'::bytea \
+         WHERE id = $1",
+    )
+    .bind(id)
+    .execute(h.pool())
+    .await
+    .unwrap();
+}
+
+// P4-011B-1 (C-828): a parked approval has no gateway holding it, so the expiry job expires it at
+// its deadline (no 30 s grace) and the stale-holder sweep never abandons it, while held rows of a
+// dead gateway instance are still abandoned.
+#[tokio::test]
+async fn parked_rows_expire_at_the_deadline_and_are_never_abandoned_as_unseen() {
+    let h = Harness::new().await;
+    let dead = gw(&h, -120).await;
+    let parked_overdue = put(&h, dead, -5).await; // inside the hold grace: only a parked row expires
+    make_parked(&h, parked_overdue).await;
+    let held_overdue = put(&h, dead, -5).await; // held: grace not over, but its gateway is dead
+    let parked_open = put(&h, dead, 3600).await;
+    make_parked(&h, parked_open).await;
+    let held_orphan = put(&h, dead, 3600).await;
+
+    assert_eq!(jobs::sweep_approvals(h.pool()).await.unwrap(), (1, 2));
+    assert_eq!(status(&h, parked_overdue).await, "expired");
+    assert_eq!(status(&h, parked_open).await, "pending");
+    // Held rows of the dead instance are abandoned as before.
+    assert_eq!(status(&h, held_overdue).await, "abandoned");
+    assert_eq!(status(&h, held_orphan).await, "abandoned");
+    // The dead gateway instance never abandons the open parked row, however often we sweep.
+    assert_eq!(jobs::sweep_approvals(h.pool()).await.unwrap(), (0, 0));
+    assert_eq!(status(&h, parked_open).await, "pending");
+}
+
 #[tokio::test]
 async fn partition_job_idempotent_moves_default_rows_and_drops_old() {
     let h = Harness::new().await;

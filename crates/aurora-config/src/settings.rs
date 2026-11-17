@@ -679,7 +679,7 @@ fn agents_defs() -> Vec<SettingDef> {
     ]
 }
 
-/// The `approvals` section (SET-5, D-237). `approvals.park.*` joins when P4-011B lands.
+/// The `approvals` section (SET-5, D-237), with `approvals.park.*` (P4-011B-2).
 fn approvals_defs() -> Vec<SettingDef> {
     use serde_json::json;
     const S: &str = "approvals";
@@ -697,6 +697,35 @@ fn approvals_defs() -> Vec<SettingDef> {
             SettingType::Bool,
             json!(true),
         ),
+        // (P4-011B-2, D-265(c), C-829) Parking. The cross-key rule applies only while
+        // `approvals.park.enabled` is true (D-357); `validate.rs` names it.
+        SettingDef::new(S, "approvals.park.enabled", SettingType::Bool, json!(false))
+            .loosening(Loosening::Bool { loosens_when: true }),
+        // A shorter threshold parks more requests: a looser setting is a lower number.
+        SettingDef::new(
+            S,
+            "approvals.park.threshold_secs",
+            SettingType::Int {
+                min: 60,
+                max: 604_800,
+            },
+            json!(900),
+        )
+        .loosening(Loosening::Number { up_loosens: false }),
+        up(S, "approvals.park.max_timeout_secs", 604_800, 86_400),
+        up(S, "approvals.park.resume_window_secs", 86_400, 1800),
+        SettingDef::new(
+            S,
+            "approvals.park.deny_cooldown_secs",
+            SettingType::Int {
+                min: 0,
+                max: 86_400,
+            },
+            json!(900),
+        )
+        .loosening(Loosening::Number { up_loosens: false }),
+        up(S, "approvals.park.max_body_bytes", 1_048_576, 262_144),
+        up(S, "approvals.park.max_pending_per_agent", 200, 20),
     ]
 }
 

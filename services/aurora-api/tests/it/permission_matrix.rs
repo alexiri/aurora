@@ -767,6 +767,8 @@ const ROWS: &[Row] = &[
         G::WsOwn,
         false,
     ),
+    // (P4-011B-2, C-829) The live approval limits: any signed-in caller.
+    r("GET", "/v1/policy/approval-limits", G::Auth, false),
     r(
         "GET",
         "/v1/workspaces/{ws}/policy/warnings",

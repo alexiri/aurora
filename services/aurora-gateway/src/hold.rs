@@ -166,14 +166,16 @@ fn millis(d: Duration) -> u64 {
 }
 
 pub struct Holds {
-    pool: PgPool,
+    pub(crate) pool: PgPool,
     hub: Arc<Hub>,
     instance_id: Uuid,
+    /// (P4-011B) the live `approvals.park.*` values (`park.rs`).
+    pub(crate) park: crate::park::ParkSettings,
     /// `approvals.timeout_secs`: the timeout of holds whose rules set none.
     /// Milliseconds; replaced live when the `approvals` settings change (SET-5).
     timeout: AtomicU64,
     /// (RFE-011a) bounds of a rule-level timeout: `APPROVAL_TIMEOUT_MIN ..= approvals.max_timeout_secs`.
-    min_timeout: Duration,
+    pub(crate) min_timeout: Duration,
     /// Milliseconds; replaced live with `timeout` (SET-5).
     max_timeout: AtomicU64,
     poll: Duration,
@@ -245,6 +247,7 @@ impl Holds {
             pool,
             hub,
             instance_id,
+            park: crate::park::ParkSettings::new(crate::park::ParkConfig::default()),
             timeout: AtomicU64::new(millis(timeout)),
             min_timeout: aurora_core::limits::APPROVAL_TIMEOUT_MIN,
             max_timeout: AtomicU64::new(millis(aurora_core::limits::APPROVAL_TIMEOUT_MAX)),
@@ -263,11 +266,23 @@ impl Holds {
         self
     }
 
-    fn db_down(&self) -> bool {
+    pub(crate) fn db_down(&self) -> bool {
         self.health.as_ref().is_some_and(|h| h.db_unreachable())
     }
 
-    fn report(&self, e: &aurora_db::DbError) {
+    /// (P4-011B) Starts from these `approvals.park.*` values (the loaded configuration).
+    #[must_use]
+    pub fn with_park(self, c: crate::park::ParkConfig) -> Self {
+        self.park.store(c);
+        self
+    }
+
+    /// The default hold timeout (`approvals.timeout_secs`), live.
+    pub(crate) fn default_timeout(&self) -> Duration {
+        Duration::from_millis(self.timeout.load(Ordering::Relaxed))
+    }
+
+    pub(crate) fn report(&self, e: &aurora_db::DbError) {
         if let Some(h) = &self.health
             && crate::health::is_db_connection_error(e)
         {
@@ -378,7 +393,7 @@ impl Holds {
         self.instance_id
     }
 
-    async fn emit(&self, id: Uuid, workspace_id: Uuid, event: &str) {
+    pub(crate) async fn emit(&self, id: Uuid, workspace_id: Uuid, event: &str) {
         let payload = json!({ "id": id, "workspace_id": workspace_id, "event": event });
         if let Err(e) = notify(&self.pool, Channel::Approval, &payload).await {
             tracing::warn!(error = %e, approval_id = %id, event, "approval notify failed");
@@ -400,11 +415,19 @@ impl Holds {
     /// `approval hold` span, a child of the request's `gateway` span: its duration is the time the
     /// request was parked, and the resumed request continues under the same parent.
     pub async fn hold(&self, r: HoldRequest<'_>) -> HoldOutcome {
-        let span = tracing::info_span!("approval_hold", otel.name = "approval hold");
-        tracing::Instrument::instrument(self.hold_inner(r), span).await
+        self.hold_with_id(r).await.1
     }
 
-    async fn hold_inner(&self, r: HoldRequest<'_>) -> HoldOutcome {
+    /// [`Holds::hold`], also returning the id of the approval row once one was recorded (the
+    /// request-log row of every hold carries it, C-827); `None` when nothing was stored.
+    pub async fn hold_with_id(&self, r: HoldRequest<'_>) -> (Option<Uuid>, HoldOutcome) {
+        let span = tracing::info_span!("approval_hold", otel.name = "approval hold");
+        let mut recorded = None;
+        let out = tracing::Instrument::instrument(self.hold_inner(r, &mut recorded), span).await;
+        (recorded, out)
+    }
+
+    async fn hold_inner(&self, r: HoldRequest<'_>, recorded: &mut Option<Uuid>) -> HoldOutcome {
         // (RFE-014) A new hold cannot be persisted while the database is unreachable.
         if self.db_down() {
             return HoldOutcome::StoreUnavailable;
@@ -414,30 +437,8 @@ impl Holds {
         let timeout = self.effective_timeout(r.rule_timeout_secs);
         // Register before inserting so a fast decision cannot be missed.
         let waiter = self.hub.approval_waiter(id);
-        let summary = match serde_json::to_value(r.summary) {
-            Ok(v) => v,
-            Err(_) => return HoldOutcome::StoreUnavailable,
-        };
-        let row = NewApproval {
-            id,
-            org_id: r.identity.org_id,
-            workspace_id: ws,
-            agent_id: r.identity.agent_id,
-            conversation_id: r.identity.conversation_id,
-            turn_id: r.identity.turn_id,
-            gateway_instance_id: self.instance_id,
-            method: r.method.to_owned(),
-            host: r.host.to_owned(),
-            path: r.path.to_owned(),
-            connection_id: r.connection_id,
-            rule_logical_id: r.rule.map(|x| x.0),
-            rule_name: r.rule.map(|x| x.1.to_owned()),
-            summary,
-            batch_id: r.batch.batch_id.as_deref().map(clip),
-            batch_label: r.batch.batch_label.as_deref().map(clip),
-            context_label: r.identity.context_label.as_deref().map(clip),
-            batch_total: r.batch.batch_total.and_then(|n| i32::try_from(n).ok()),
-            timeout_secs: timeout.as_secs_f64(),
+        let Some(row) = self.approval_row(id, &r, timeout) else {
+            return HoldOutcome::StoreUnavailable;
         };
         // The row is visible to everyone (the approvals UI, a freeze reacting to it) as soon as
         // it commits, before this future has seen the reply. If the request is dropped in that
@@ -478,6 +479,7 @@ impl Holds {
                 return HoldOutcome::StoreUnavailable;
             }
         }
+        *recorded = Some(id);
         self.emit(id, ws, "created").await;
 
         let deadline = Instant::now() + timeout;
@@ -549,6 +551,37 @@ impl Holds {
         };
         guard.armed = false;
         out
+    }
+
+    /// The `pending` row of a hold or a park (`None` when the summary cannot be serialized).
+    pub(crate) fn approval_row(
+        &self,
+        id: Uuid,
+        r: &HoldRequest<'_>,
+        timeout: Duration,
+    ) -> Option<NewApproval> {
+        let summary = serde_json::to_value(r.summary).ok()?;
+        Some(NewApproval {
+            id,
+            org_id: r.identity.org_id,
+            workspace_id: r.identity.workspace_id,
+            agent_id: r.identity.agent_id,
+            conversation_id: r.identity.conversation_id,
+            turn_id: r.identity.turn_id,
+            gateway_instance_id: self.instance_id,
+            method: r.method.to_owned(),
+            host: r.host.to_owned(),
+            path: r.path.to_owned(),
+            connection_id: r.connection_id,
+            rule_logical_id: r.rule.map(|x| x.0),
+            rule_name: r.rule.map(|x| x.1.to_owned()),
+            summary,
+            batch_id: r.batch.batch_id.as_deref().map(clip),
+            batch_label: r.batch.batch_label.as_deref().map(clip),
+            context_label: r.identity.context_label.as_deref().map(clip),
+            batch_total: r.batch.batch_total.and_then(|n| i32::try_from(n).ok()),
+            timeout_secs: timeout.as_secs_f64(),
+        })
     }
 
     fn queue_expiry(&self, id: Uuid, ws: Uuid) {

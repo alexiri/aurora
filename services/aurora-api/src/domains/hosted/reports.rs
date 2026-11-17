@@ -296,6 +296,20 @@ async fn events(
     }
     if applied {
         hosted::set_last_event_n(tx, turn, i32::try_from(n_done).unwrap_or(i32::MAX)).await?;
+        // (P4-NARR) The turn's narration card follows its tool steps; a failure never fails the
+        // report.
+        {
+            use aurora_db::DbError;
+            use sqlx::Connection;
+            let mut sp = tx.begin().await.map_err(DbError::from)?;
+            match crate::domains::channels::narration::refresh(&mut sp, &t).await {
+                Ok(()) => sp.commit().await.map_err(DbError::from)?,
+                Err(e) => {
+                    tracing::warn!(turn = %turn, error = %e.message(), "narration update not queued");
+                    sp.rollback().await.map_err(DbError::from)?;
+                }
+            }
+        }
         if !staged.is_empty() {
             let mut buf = load_answers(tx, turn).await?;
             for (_, op) in staged {

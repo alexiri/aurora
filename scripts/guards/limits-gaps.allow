@@ -14,7 +14,6 @@
 # P4-011B (spec batch, 2026-11-14) — P4-011B-2 adds PARK_FOLLOWUP_LINES_MAX; P4-011B-3 adds the PUSH_*
 # below. The earlier RFE-011b entries (PARK_*, PUSH_*, APPROVAL_PUSH_DELAY, listed below) close with
 # P4-011B-1 (gateway PARK_*), P4-011B-2 (PARK_RESUME_WINDOW) and P4-011B-3 (PUSH_*, APPROVAL_PUSH_DELAY):
-PARK_FOLLOWUP_LINES_MAX doc-only
 PUSH_DISABLE_AFTER_FAILURES doc-only
 PUSH_ENDPOINT_MAX doc-only
 PUSH_RETRY_MAX doc-only
@@ -72,14 +71,6 @@ OP_BACKOFF_INITIAL no-row
 OP_BACKOFF_MAX no-row
 PACKAGE_ICON_MAX no-row
 PACKAGE_SETUP_GUIDE_MAX no-row
-PARK_BODY_MAX doc-only
-PARK_BODY_READ_TIMEOUT doc-only
-PARK_DENY_COOLDOWN doc-only
-PARK_MAX_TIMEOUT doc-only
-PARK_PENDING_PER_AGENT doc-only
-PARK_PER_AGENT_HOUR doc-only
-PARK_RESUME_WINDOW doc-only
-PARK_THRESHOLD doc-only
 PREVIEW_AUTH_CACHE_NEG no-row
 PREVIEW_CWD_MAX no-row
 PREVIEW_LABEL_CHARS no-row
@@ -126,11 +117,6 @@ TERMINALS_PER_AGENT no-row
 TERMINALS_PER_USER no-row
 TERMINAL_WAKE_WAIT no-row
 # P4-NARR / P4-UTOK spec batch (2026-11-15): doc-only until the named task defines them in limits.rs (P4-NARR, P4-UTOK remove their lines)
-NARR_MIN_INTERVAL doc-only
-NARR_SPACE_UPDATES_PER_MINUTE doc-only
-NARR_CARDS_PER_SPACE doc-only
-NARR_MAX_STEPS doc-only
-NARR_STEP_CHARS doc-only
 USER_TOKENS_PER_PERSON doc-only
 USER_TOKEN_PENDING_MAX doc-only
 # P4-EVAL spec batch (2026-11-15) — the EVAL_* limits of docs/02 are specified; their briefs
@@ -175,3 +161,4 @@ PENDING_ACCESS_TTL doc-only
 ACCESS_REQUEST_TTL doc-only
 # P5-USAGE spec step (2026-11-17, D-359): P5-USAGE-1 adds USAGE_RANGE_MAX_DAYS:
 USAGE_RANGE_MAX_DAYS doc-only
+USAGE_TOP_MAX doc-only
