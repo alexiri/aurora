@@ -237,6 +237,36 @@ const EXEMPT: &[(&str, &str, &str)] = &[
     ("GET", "/v1/ssh", "P4-SSH-1 (C-792): see GET /me/ssh-keys"),
     (
         "GET",
+        "/v1/push/config",
+        "P4-011B-3 (C-830): 404 `push_unavailable` for everyone, before authentication, while `push.enabled` is off (this harness leaves it off); the auth matrix (session and key allowed, anonymous 401) is it/web_push.rs routes_validate_limit_and_stay_session_only",
+    ),
+    (
+        "GET",
+        "/v1/me/push-subscriptions",
+        "P4-011B-3 (C-831): see GET /push/config; session only (a key is 403), own rows only (another person's id is 404): it/web_push.rs",
+    ),
+    (
+        "POST",
+        "/v1/me/push-subscriptions",
+        "P4-011B-3: see GET /me/push-subscriptions",
+    ),
+    (
+        "PATCH",
+        "/v1/me/push-subscriptions/{id}",
+        "P4-011B-3: see GET /me/push-subscriptions",
+    ),
+    (
+        "DELETE",
+        "/v1/me/push-subscriptions/{id}",
+        "P4-011B-3: see GET /me/push-subscriptions",
+    ),
+    (
+        "POST",
+        "/v1/me/push-subscriptions/{id}/test",
+        "P4-011B-3: see GET /me/push-subscriptions; rate limit it/web_push.rs the_test_route_sends_the_test_payload_and_is_rate_limited",
+    ),
+    (
+        "GET",
         "/v1/me/ssh-sessions",
         "P4-SSH-2 (C-793): 404 `ssh_disabled` for everyone while `ssh.enabled` is off (this harness leaves it off); the authority matrix (own list, `can_own` all with the person, `can_use` own only, stranger 404, disconnect by person or owner) is it/ssh_sessions.rs ssh_sessions_lists_and_disconnect_authority",
     ),
