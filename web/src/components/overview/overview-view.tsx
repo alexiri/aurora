@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 
+import { OverviewAccountsAttention } from "@/components/accounts/attention";
 import { Avatar } from "@/components/agent-avatar";
 import { CreateAgentDialog } from "@/components/agents/create-agent-dialog";
 import { decisionTone } from "@/components/approvals/activity-view";
@@ -115,6 +116,8 @@ function OverviewBody({
           </ul>
         </section>
       ) : null}
+
+      <OverviewAccountsAttention workspaceId={wsId} base={base} />
 
       <Section id="agents" title="Agents">
         {agents.isPending ? <Loading /> : null}

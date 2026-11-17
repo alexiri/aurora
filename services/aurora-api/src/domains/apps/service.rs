@@ -163,6 +163,11 @@ fn method(c: &Connect) -> ConnectMethod {
         audience: super::setup::audience_of(c),
         scope_presets: super::setup::presets(c),
         show_context: c.show_context().to_vec(),
+        has_probe: match c {
+            Connect::Oauth2(o) => o.probe.is_some(),
+            Connect::Fields(f) => f.probe.is_some(),
+            Connect::Hook(_) => false,
+        },
     };
     match c {
         // (FIX-136) A `fields` method that declares scopes asks the person which the pasted

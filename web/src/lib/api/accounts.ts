@@ -38,6 +38,18 @@ export function useAccounts(scope: AccountsScope, enabled = true) {
   });
 }
 
+export type TestAnswer = S["AccountTestAnswer"];
+
+/** C-943: check one account now. The result is stored by the server (except `not_testable`), so the lists refresh. */
+export function useTestAccount() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ ref }: { ref: Account["ref"] }) =>
+      unwrap(api.POST("/v1/accounts/{type}/{id}/test", { params: { path: { type: ref.type, id: ref.id } } })),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: accountKeys.all }),
+  });
+}
+
 /** Anything that changed an agent's access to an account refreshes the lists and the agent's grant views. */
 function useAccessInvalidation() {
   const qc = useQueryClient();

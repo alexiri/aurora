@@ -4,6 +4,28 @@
  */
 
 export interface paths {
+    "/v1/accounts/{type}/{id}/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Check one account now (C-943, SEC-129): the connect method's probe, a gateway database login, a hook mint or the AI-key
+         *     verify, in that order of what the account has. `can_own` of the account's workspace, or an organization owner or admin
+         *     for an organization's account. Never returns anything the upstream sent; stores the result (except `not_testable`) and
+         *     is audited `account.test`.
+         */
+        post: operations["testAccount"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/action-approvals/{id}/decision": {
         parameters: {
             query?: never;
@@ -5657,6 +5679,25 @@ export interface components {
         };
         /** @enum {string} */
         AccountRefType: "connection" | "secret";
+        /** @description C-943: the answer of `POST /v1/accounts/{type}/{id}/test`. */
+        AccountTestAnswer: {
+            /** Format: date-time */
+            checked_at: string;
+            detail?: components["schemas"]["AccountTestDetail"] | null;
+            result: components["schemas"]["AccountTestResult"];
+        };
+        /** @description At most a host, an HTTP status or a protocol code: never an upstream body, header or credential (SEC-129). */
+        AccountTestDetail: {
+            code?: string | null;
+            host?: string | null;
+            /** Format: int32 */
+            status?: number | null;
+        };
+        /**
+         * @description (C-943) What Test found.
+         * @enum {string}
+         */
+        AccountTestResult: "ok" | "rejected" | "unreachable" | "unexpected" | "not_testable";
         AccountWorkspace: {
             /** Format: uuid */
             id: string;
@@ -6697,6 +6738,11 @@ export interface components {
             /** @description One or two sentences: what the method is and when to use it. */
             description?: string | null;
             fields: components["schemas"]["FormField"][];
+            /**
+             * @description (P5-UX-14, C-945) Whether connecting with this method already probes the upstream. The
+             *     journey tests a new account once afterwards only when it does not.
+             */
+            has_probe: boolean;
             id: string;
             /** @description `oauth2` | `fields` | `hook`. */
             kind: string;
@@ -13102,6 +13148,76 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    testAccount: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description `connection` or `secret` */
+                type: string;
+                /** @description Account id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description What the check found */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccountTestAnswer"];
+                };
+            };
+            /** @description Unknown account type */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Rate limited (class `check`) */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     decideActionApproval: {
         parameters: {
             query?: never;

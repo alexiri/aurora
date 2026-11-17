@@ -130,8 +130,14 @@ struct Env {
     _src: Arc<Src>,
     role: String,
     role_pw: String,
+    vault: Arc<SecretVault>,
+    plaintext: Arc<PlaintextCache>,
+    snapshots: Arc<SnapshotStore>,
     _shutdown: tokio::sync::watch::Sender<bool>,
 }
+
+#[path = "account_test.rs"]
+mod account_test;
 
 fn rule(name: &str, tools: &[&str], conn: Uuid, agent: Uuid, approval: bool) -> PolicyRuleRow {
     PolicyRuleRow {
@@ -286,8 +292,9 @@ async fn start_with(
         })
         .unwrap(),
     );
-    let resolver = Arc::new(Resolver::new(src.clone(), llm).with_snapshots(store));
-    let plaintext = Arc::new(PlaintextCache::new(Arc::new(SecretVault::new(reg))));
+    let resolver = Arc::new(Resolver::new(src.clone(), llm).with_snapshots(store.clone()));
+    let vault = Arc::new(SecretVault::new(reg));
+    let plaintext = Arc::new(PlaintextCache::new(vault.clone()));
     let captured = Arc::new(Capture::default());
     let log = RequestLog::new(captured.clone());
     let hub = Hub::new();
@@ -308,7 +315,7 @@ async fn start_with(
     let handler = Arc::new(
         PolicyHandler::new(PolicyHandlerParts {
             resolver,
-            plaintext,
+            plaintext: plaintext.clone(),
             log: log.clone(),
             external_url: "https://aurora.test/".into(),
             holds,
@@ -344,6 +351,9 @@ async fn start_with(
         _src: src,
         role: user,
         role_pw: pw,
+        vault,
+        plaintext,
+        snapshots: store,
         _shutdown: shutdown,
     }
 }

@@ -128,7 +128,9 @@ async fn message_class_burst_then_429_with_full_envelope() {
 /// refill instead: the burst sizes under test are the defaults, only the refill rate differs.
 fn real_bursts_no_refill(c: &mut ApiConfig) {
     c.ratelimit.api.multiplier = 1.0;
-    for name in ["write", "message", "upload", "simulate", "search", "export"] {
+    for name in [
+        "write", "message", "upload", "simulate", "search", "export", "check",
+    ] {
         c.ratelimit.api.classes.insert(
             name.into(),
             RateClassOverride {
@@ -143,7 +145,14 @@ fn real_bursts_no_refill(c: &mut ApiConfig) {
 async fn each_class_has_its_own_limit() {
     let w = world(real_bursts_no_refill).await;
     let ws = Uuid::now_v7();
-    let cases: [(Method, String, u32, &str); 5] = [
+    let cases: [(Method, String, u32, &str); 6] = [
+        // (P5-UX-14, C-943) Test of an account contacts an upstream: its own small bucket.
+        (
+            Method::POST,
+            format!("/v1/accounts/connection/{ws}/test"),
+            3,
+            "check",
+        ),
         (
             Method::POST,
             format!("/v1/conversations/{ws}/attachments"),

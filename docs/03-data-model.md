@@ -338,6 +338,8 @@ Audit writes are best-effort and never fail the action (logged on failure). (pha
 | proposed_by_agent_id | uuid null FK→agents (set null) | agent-proposed custom connection |
 | created_by | uuid null FK→users (set null) | |
 | last_used_at | timestamptz null | churn column (gateway, ≤1 write/min/secret) |
+| last_check_at | timestamptz null | (phase 5, P5-UX-14, D-335, D-350, C-944) when the account's health was last recorded: by Test (C-943) or by the gateway from real use (C-985) |
+| last_check_result | text null CHECK in (`ok`,`rejected`,`unreachable`,`unexpected`) | what was recorded then; `not_testable` is answered but never stored. Informational: it never changes what an agent may do |
 
 ### `app_connections`
 | Column | Type | Notes |
@@ -367,6 +369,8 @@ Audit writes are best-effort and never fail the action (logged on failure). (pha
 | connected_by | uuid null FK→users (set null) | |
 | reauth_required_at | timestamptz null | set by gateway on `invalid_grant` |
 | last_used_at | timestamptz null | churn column |
+| last_check_at | timestamptz null | (phase 5, P5-UX-14, D-335, D-350, C-944) when the account's health was last recorded: by Test (C-943) or by the gateway from real use (C-985) |
+| last_check_result | text null CHECK in (`ok`,`rejected`,`unreachable`,`unexpected`) | what was recorded then; informational, never changes `status` or what an agent may do |
 | index | (org_id, workspace_id, app_id) | |
 
 ### `app_oauth_clients` (BYOC)
@@ -1668,13 +1672,7 @@ the workspace is created.
 
 (Landed, FIX-146 Part B: `turns.trace_context` and `gateway_credentials.trace_context` are in §6 and §3 with migration `20261201000150_turn_trace_context.sql`. The gateway role gets no grant on `turns`: the value is copied onto the context credential at mint.)
 
-#### `app_connections` and `secrets` (account health; phase 5, P5-UX-14, D-335, D-350)
-| Planned column | Type | Notes | Phase |
-|---|---|---|---|
-| last_check_at | timestamptz null | on both tables. Set by `POST /v1/accounts/{type}/{id}/test` and the post-connect test (C-943, C-945), and by the gateway when real use shows a change (C-985): an upstream 401 on a request with this account's credential, or a later success. The gateway writes only on a change of state, at most once a minute per account, in the batch that writes `last_used_at` | 5 (P5-UX-14) |
-| last_check_result | text null | on both tables. CHECK in (`ok`, `rejected`, `unreachable`, `unexpected`); `not_testable` is answered but never stored | 5 (P5-UX-14) |
-
-The gateway role gains `UPDATE (last_check_at, last_check_result)` on both tables, next to the `last_used_at` grant it has.
+(Landed, P5-UX-14, D-335, D-350: `last_check_at` and `last_check_result` are in the `secrets` and `app_connections` sections above, migration `20261201000248_account_health.sql`. They are set by `POST /v1/accounts/{type}/{id}/test` and the post-connect test (C-943, C-945), and by the gateway when real use shows a change (C-985): an upstream 401 on a request with this account's credential, or a later success; the gateway writes only on a change of state, at most once a minute per account, next to its `last_used_at` write. The gateway role has `UPDATE (last_check_at, last_check_result)` on both tables, next to its `last_used_at` grant.)
 
 #### `agent_access_requests` (an agent asks for access; phase 5, P5-UX-17, D-348)
 | Planned column | Type | Notes | Phase |

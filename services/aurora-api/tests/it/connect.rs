@@ -106,6 +106,9 @@ apps:
           - bearer: "{credentials.access_token}"
 "#;
 
+#[path = "account_test.rs"]
+mod account_test;
+
 struct W {
     h: Harness,
     org: Uuid,

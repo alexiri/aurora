@@ -1,6 +1,6 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "./client";
 import type { components } from "./schema";
@@ -89,6 +89,35 @@ export function usePutSettings(section: string) {
       qc.setQueryData([...INDEX_KEY, section], v);
       void qc.invalidateQueries({ queryKey: INDEX_KEY });
     },
+  });
+}
+
+/**
+ * Preview and replace any section by id (P5-IA-3: a stacked page saves several sections from one Save, so the section
+ * is an argument rather than a hook parameter).
+ */
+export function useSettingsSaver() {
+  const qc = useQueryClient();
+  return {
+    preview: (section: string, body: { generation: number; values: SettingValues }) =>
+      unwrap(api.POST("/v1/admin/settings/{section}/preview", { params: { path: { section } }, body: body as never })),
+    put: async (section: string, body: { generation: number; values: SettingValues }) => {
+      const v = await unwrap(api.PUT("/v1/admin/settings/{section}", { params: { path: { section } }, body: body as never }));
+      qc.setQueryData([...INDEX_KEY, section], v);
+      void qc.invalidateQueries({ queryKey: INDEX_KEY });
+      return v;
+    },
+  };
+}
+
+/** Several sections at once, in the order asked (the stacked pages). */
+export function useSettingsSections(sections: string[]) {
+  return useQueries({
+    queries: sections.map((section) => ({
+      queryKey: [...INDEX_KEY, section] as const,
+      queryFn: () => unwrap(api.GET("/v1/admin/settings/{section}", { params: { path: { section } } })),
+      retry: false,
+    })),
   });
 }
 
