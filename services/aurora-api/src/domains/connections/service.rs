@@ -1,5 +1,6 @@
 use super::dto::*;
 use crate::app::AppState;
+use crate::domains::approvals::resume;
 use crate::domains::plugins::registry;
 use crate::http::auth::{Caller, require_own};
 use crate::http::pagination::{Page, Pagination};
@@ -227,7 +228,7 @@ pub async fn patch(
     repo::update(&mut *tx, row.id, label, status, access, scopes).await?;
     if status == Some("disabled") {
         // (FIX-084) A held request that would use this credential must not be released.
-        approvals::abandon_pending_depending_on(
+        let ended = approvals::abandon_pending_depending_on(
             &mut tx,
             approvals::Dependency::Connection {
                 connection_id: row.id,
@@ -235,6 +236,7 @@ pub async fn patch(
             },
         )
         .await?;
+        resume::notify_ended(&mut tx, &ended, "access_removed").await?;
     }
     credentials::notify_gateway_invalidate(&mut *tx, "connection", row.id).await?;
     let updated = repo::get(&mut *tx, row.id)
@@ -266,7 +268,7 @@ pub async fn delete(
     repo::delete_many(&mut tx, &ids).await?;
     for id in &ids {
         // (FIX-084) Held requests that would use the deleted credential must not be released.
-        approvals::abandon_pending_depending_on(
+        let ended = approvals::abandon_pending_depending_on(
             &mut tx,
             approvals::Dependency::Connection {
                 connection_id: *id,
@@ -274,6 +276,7 @@ pub async fn delete(
             },
         )
         .await?;
+        resume::notify_ended(&mut tx, &ended, "access_removed").await?;
     }
     for id in &ids {
         credentials::notify_gateway_invalidate(&mut *tx, "connection", *id).await?;

@@ -27,6 +27,7 @@ pub async fn run_once(state: &AppState) -> Result<usize, ApiError> {
     let mut n = sync_posting(state).await?;
     n += post_new(state).await?;
     n += settle_resolved(state).await?;
+    n += resettle_ended(state).await?;
     let mut conn = state.pool.acquire().await.map_err(DbError::from)?;
     repo::prune_tokens(&mut conn).await?;
     Ok(n)
@@ -107,7 +108,12 @@ async fn post_approval(state: &AppState, id: Uuid) -> Result<bool, ApiError> {
         integration_id: link.integration_id,
     };
     // D-178: only a 1:1 conversation (`direct`) gets the request's details on the card.
-    let card = build::approval(&m, &row, link.kind != "direct")?;
+    let card = build::approval(
+        &m,
+        &row,
+        link.kind != "direct",
+        state.ops().approvals.park.resume_window_secs,
+    )?;
     let approvals_url =
         super::workspace_page_url(&mut tx, state, row.workspace_id, "approvals").await?;
     let posted = post_card(
@@ -200,6 +206,45 @@ fn how(via: Option<&str>) -> &'static str {
     }
 }
 
+/// (C-825) Card text once a parked approval's window ended unused.
+fn window_ended_card_text() -> String {
+    "Approval window ended: the approved request was not repeated in time.".into()
+}
+
+/// (C-825) Card text once an approved parked grant was revoked.
+fn revoked_card_text() -> String {
+    "Revoked: the approval can no longer be used.".into()
+}
+
+/// (C-825) Edit the settled card of a parked approval once more when its grant ended afterwards.
+pub async fn resettle_ended(state: &AppState) -> Result<usize, ApiError> {
+    let mut n = 0;
+    let mut caps: HashMap<Uuid, CapabilitySet> = HashMap::new();
+    for c in repo::settled_with_ended_grant(&state.pool, 100).await? {
+        let Some(a) = approvals::get(&state.pool, c.subject_id).await? else {
+            continue;
+        };
+        let text = match a.resume_state.as_deref() {
+            Some("revoked") => revoked_card_text(),
+            Some("expired") => window_ended_card_text(),
+            _ => continue,
+        };
+        let mut tx = state.pool.begin().await.map_err(DbError::from)?;
+        let cs = match caps.get(&c.integration_id) {
+            Some(x) => x.clone(),
+            None => {
+                let x = capabilities(&mut tx, c.integration_id).await?;
+                caps.insert(c.integration_id, x.clone());
+                x
+            }
+        };
+        super::resettle_card(&mut tx, &c, &cs, &text).await?;
+        n += 1;
+        tx.commit().await.map_err(DbError::from)?;
+    }
+    Ok(n)
+}
+
 /// Settle text of a card whose subject is resolved; `None` while it is still open.
 pub async fn settle_text(state: &AppState, c: &CardRow) -> Result<Option<String>, ApiError> {
     Ok(match c.subject_kind.as_str() {
@@ -208,14 +253,26 @@ pub async fn settle_text(state: &AppState, c: &CardRow) -> Result<Option<String>
                 return Ok(Some("This request no longer exists.".into()));
             };
             let by = who(a.decided_by_name.as_deref());
-            match a.status.as_str() {
-                "pending" => None,
-                "approved" => Some(format!(
+            let agent = who(a.agent_name.as_deref());
+            match (a.status.as_str(), a.parked) {
+                ("pending", _) => None,
+                // (C-825) A parked grant that ended before this settle shows its end directly.
+                ("approved", true) => Some(match a.resume_state.as_deref() {
+                    Some("revoked") => revoked_card_text(),
+                    Some("expired") => window_ended_card_text(),
+                    _ => format!(
+                        "Approved by {by} {} — {agent} will be told.",
+                        how(a.decided_via.as_deref())
+                    ),
+                }),
+                ("approved", false) => Some(format!(
                     "Approved by {by} {}.",
                     how(a.decided_via.as_deref())
                 )),
-                "denied" => Some(format!("Denied by {by} {}.", how(a.decided_via.as_deref()))),
-                "expired" => Some("Expired without a decision.".into()),
+                ("denied", _) => Some(format!("Denied by {by} {}.", how(a.decided_via.as_deref()))),
+                ("expired", _) => Some("Expired without a decision.".into()),
+                // (C-825) A parked approval abandoned by a revocation event.
+                ("abandoned", true) => Some("No longer needed.".into()),
                 _ => Some("Cancelled: the request was abandoned.".into()),
             }
         }

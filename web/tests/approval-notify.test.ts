@@ -7,6 +7,7 @@ const notice = {
   kind: "gateway",
   title: "Deploy to prod",
   expires_at: "2026-11-14T10:00:00Z",
+  parked: false,
   agent: { id: "g", name: "Daneel", handle: "daneel" },
   workspace: { id: "w", name: "Main", slug: "main", org_slug: "acme" },
 };

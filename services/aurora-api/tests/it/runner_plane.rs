@@ -1552,6 +1552,106 @@ async fn background_process_holds_awake_until_the_cap() {
     );
 }
 
+/// P4-011B-2 (D-264(e), `07 §Sandbox lifecycle`): a pending **parked** approval is not a
+/// keep-awake reason, so the sandbox stops after `IDLE_STOP`; approving writes a system follow-up
+/// whose queued turn starts a **new boot**, and the conversation still carries the harness
+/// session reference the new boot restores (nothing of the old boot is needed).
+#[tokio::test]
+async fn a_parked_approval_does_not_keep_the_sandbox_awake_and_the_resume_turn_boots_a_new_one() {
+    let r = rig().await;
+    let rep = r.register("runner-a", 4).await;
+    let agent = r.agent_with_turn("parked").await;
+    let (sb, boot) = r.boot_running(rep).await;
+    let conv: Uuid = sqlx::query_scalar("SELECT conversation_id FROM turns WHERE agent_id = $1")
+        .bind(agent)
+        .fetch_one(r.h.pool())
+        .await
+        .unwrap();
+    sqlx::query("UPDATE conversations SET harness_session_ref = 'sess-1' WHERE id = $1")
+        .bind(conv)
+        .execute(r.h.pool())
+        .await
+        .unwrap();
+    r.finish_turns(agent).await;
+    // The agent was refused `approval_parked` and ended its turn: a pending parked approval.
+    let gw = Uuid::now_v7();
+    sqlx::query("INSERT INTO gateway_instances (id, hostname, version, started_at, last_seen_at) VALUES ($1,'h','0',now(),now())")
+        .bind(gw)
+        .execute(r.h.pool())
+        .await
+        .unwrap();
+    let approval = Uuid::now_v7();
+    sqlx::query(
+        "INSERT INTO approvals (id, org_id, workspace_id, agent_id, conversation_id, \
+            gateway_instance_id, method, host, path, summary, status, deadline, parked, \
+            fp_salt, fingerprint) \
+         VALUES ($1,$2,$3,$4,$5,$6,'POST','api.example.com','/items', \
+            jsonb_build_object('title','Deploy','fields','[]'::jsonb,'source','generic'), \
+            'pending', now() + interval '1 day', true, '\\x0102'::bytea, '\\x0304'::bytea)",
+    )
+    .bind(approval)
+    .bind(r.org)
+    .bind(r.ws)
+    .bind(agent)
+    .bind(conv)
+    .bind(gw)
+    .execute(r.h.pool())
+    .await
+    .unwrap();
+    // Idle past IDLE_STOP with the parked approval pending: the box stops, reason `idle`.
+    r.age(&sb, 1).await;
+    let w = r.work(rep, 0).await;
+    let stop = first(&w, "sandbox.stop");
+    assert_eq!(
+        (stop["reason"].as_str(), stop["boot_id"].as_str()),
+        (Some("idle"), Some(boot.as_str())),
+        "a parked approval is not a keep-awake reason: {w}"
+    );
+    r.report(rep, Uuid::now_v7(), &sb, &boot, "stopped").await;
+    assert_eq!(r.sandbox_state(&sb).await, "stopped");
+    // An approver decides: the follow-up is a queued system turn that needs a box.
+    let approver = r.h.user("ap@x.io", false).await;
+    r.h.member(r.org, approver, "member", "active").await;
+    r.h.bind_ws(r.ws, approver, "approver").await;
+    let (_, t) = r.h.good_session(approver).await;
+    let (s, _, v) =
+        r.h.send(
+            Method::POST,
+            &format!("/v1/approvals/{approval}/decision"),
+            &[("cookie", &cookie(&t)), ("origin", ORIGIN)],
+            Some(json!({"decision": "approve"})),
+        )
+        .await;
+    assert_eq!(s.as_u16(), 200, "{v}");
+    let queued: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM turns WHERE conversation_id = $1 AND speaker_kind = 'system' \
+         AND status = 'queued'",
+    )
+    .bind(conv)
+    .fetch_one(r.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(queued, 1);
+    let w = r.work(rep, 0).await;
+    let start = first(&w, "sandbox.start");
+    assert_ne!(
+        start["boot_id"].as_str(),
+        Some(boot.as_str()),
+        "a new boot, not the old one: {w}"
+    );
+    let session: Option<String> =
+        sqlx::query_scalar("SELECT harness_session_ref FROM conversations WHERE id = $1")
+            .bind(conv)
+            .fetch_one(r.h.pool())
+            .await
+            .unwrap();
+    assert_eq!(
+        session.as_deref(),
+        Some("sess-1"),
+        "the session is restored"
+    );
+}
+
 /// TEST-014 (arm 2): with a start waiting and held-awake boxes over the ceiling, the
 /// longest-idle one is evicted.
 #[tokio::test]

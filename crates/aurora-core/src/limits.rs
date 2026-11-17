@@ -21,6 +21,26 @@ pub const APPROVAL_NOTIFY_DELAY: Duration = Duration::from_secs(20);
 pub const APPROVAL_WATCHER_TTL: Duration = Duration::from_secs(45);
 /// (RFE-011a) e-mails per user per hour; the rest fold into a digest.
 pub const APPROVAL_EMAIL_PER_USER_HOUR: u32 = 20;
+/// (P4-011B, RFE-011b) default `approvals.park.threshold_secs`: effective timeouts above it park.
+pub const PARK_THRESHOLD: Duration = Duration::from_secs(900);
+/// (P4-011B) default `approvals.park.max_timeout_secs`: the longest deadline of a parked approval.
+pub const PARK_MAX_TIMEOUT: Duration = Duration::from_secs(86_400);
+/// (P4-011B) default `approvals.park.deny_cooldown_secs`: a denied fingerprint repeated within it
+/// is answered `manual_approval_denied` without a new approval.
+pub const PARK_DENY_COOLDOWN: Duration = Duration::from_secs(900);
+/// (P4-011B) default `approvals.park.max_body_bytes`: the largest request body that may be parked.
+pub const PARK_BODY_MAX: usize = 256 * KIB;
+/// (P4-011B) the whole request body must be read within this to be parked (else it is held).
+pub const PARK_BODY_READ_TIMEOUT: Duration = Duration::from_secs(10);
+/// (P4-011B) default `approvals.park.max_pending_per_agent`: parked pending approvals per agent.
+pub const PARK_PENDING_PER_AGENT: u32 = 20;
+/// (P4-011B) new parked approvals per agent per hour (not configurable).
+pub const PARK_PER_AGENT_HOUR: u32 = 60;
+/// (P4-011B-2) default `approvals.park.resume_window_secs`: how long an approved parked approval
+/// can be consumed by the identical repeat.
+pub const PARK_RESUME_WINDOW: Duration = Duration::from_secs(1800);
+/// (P4-011B-2, D-264(e), C-824) approvals listed in one resume follow-up, then "…and N more".
+pub const PARK_FOLLOWUP_LINES_MAX: usize = 10;
 /// (RFE-011a) The effective hold timeout in seconds: the rule-level minimum clamped to
 /// `[min, max]`, else `default` (`approvals.timeout_secs`). One definition for the gateway hold
 /// and for the simulate / effective views, so they cannot disagree.

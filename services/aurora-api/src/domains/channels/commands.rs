@@ -483,14 +483,30 @@ impl Cmd<'_> {
             }));
         };
         let mut tx = audit::begin(self.state).await.retry()?;
-        let done = approvals::decide(&mut tx, a.id, approve, user, "channel")
-            .await
-            .retry()?;
+        let done = approvals::decide(
+            &mut tx,
+            a.id,
+            approve,
+            user,
+            "channel",
+            self.state.ops().approvals.park.resume_window_secs,
+        )
+        .await
+        .retry()?;
         let Some(done) = done else {
             self.reply("That approval has already been resolved.")
                 .await?;
             return Ok(outcome("already_decided"));
         };
+        // (P4-011B-2) A parked approval's follow-up is part of the decision transaction.
+        crate::domains::approvals::resume::after_decide(
+            &mut tx,
+            self.state,
+            std::slice::from_ref(&done),
+            approve,
+        )
+        .await
+        .retry()?;
         // RFE-008: the decision commits with its audit row; an audit failure retries the event.
         audit::commit_critical(
             tx,

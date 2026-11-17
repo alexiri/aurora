@@ -443,6 +443,10 @@ pub struct RequestLogRow {
     pub context_label: Option<String>,
     /// (RFE-005) the person whose turn made the request, when attributed.
     pub speaker_user_id: Option<Uuid>,
+    /// (P4-011B, C-827) the approval the request was held, parked or resumed under.
+    pub approval_id: Option<Uuid>,
+    /// (P4-011B, C-827) a parked approval's grant was consumed by this request.
+    pub resumed: bool,
     /// (P5-MODELS-2, C-880) the model an LLM request with an injected key asked for; audit only.
     pub llm_model: Option<String>,
 }
@@ -459,7 +463,8 @@ pub async fn insert_request_log(
         "INSERT INTO request_log (id, ts, org_id, workspace_id, agent_id, conversation_id, turn_id, \
          credential_kind, lane, method, host, path, app_id, tool_id, connection_id, secret_id, \
          decision, rule_logical_id, rule_name, upstream_status, status, error_code, injected, \
-         latency_ms, bytes_up, bytes_down, context_label, speaker_user_id, llm_model) ",
+         latency_ms, bytes_up, bytes_down, context_label, speaker_user_id, approval_id, resumed, \
+         llm_model) ",
     );
     qb.push_values(rows, |mut b, r| {
         b.push_bind(r.id)
@@ -490,6 +495,8 @@ pub async fn insert_request_log(
             .push_bind(r.bytes_down)
             .push_bind(&r.context_label)
             .push_bind(r.speaker_user_id)
+            .push_bind(r.approval_id)
+            .push_bind(r.resumed)
             .push_bind(&r.llm_model);
     });
     qb.build().execute(pool).await?;
@@ -597,19 +604,227 @@ pub async fn abandon_approval<'e, E: PgExecutor<'e>>(exec: E, id: Uuid) -> Resul
         == 1)
 }
 
-/// Abandons every pending hold of this gateway instance; returns the count.
+/// Abandons every pending hold of this gateway instance; returns the count. Parked approvals
+/// have no holder: SIGTERM never touches them (P4-011B, D-264).
 pub async fn abandon_approvals<'e, E: PgExecutor<'e>>(
     exec: E,
     instance_id: Uuid,
 ) -> Result<u64, DbError> {
     Ok(sqlx::query(
         "UPDATE approvals SET status = 'abandoned', resolved_at = now(), updated_at = now() \
-         WHERE gateway_instance_id = $1 AND status = 'pending'",
+         WHERE gateway_instance_id = $1 AND status = 'pending' AND NOT parked",
     )
     .bind(instance_id)
     .execute(exec)
     .await?
     .rows_affected())
+}
+
+// ---- parked approvals and grants (P4-011B-1, docs/07 §Park and resume, C-820, C-821) ----
+
+/// A `ready` single-use grant of an agent's conversation: the row's salt and stored fingerprint,
+/// for the gateway to recompute against the retried request.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct GrantRow {
+    pub id: Uuid,
+    pub fp_salt: Vec<u8>,
+    pub fingerprint: Vec<u8>,
+}
+
+/// The open grants (`resume_state = 'ready'`, window not over) of one agent and conversation.
+pub async fn ready_grants<'e, E: PgExecutor<'e>>(
+    exec: E,
+    agent_id: Uuid,
+    conversation_id: Uuid,
+) -> Result<Vec<GrantRow>, DbError> {
+    Ok(sqlx::query_as::<_, GrantRow>(
+        "SELECT id, fp_salt, fingerprint FROM approvals \
+         WHERE agent_id = $1 AND conversation_id = $2 AND resume_state = 'ready' \
+           AND resume_expires_at > now() AND fp_salt IS NOT NULL AND fingerprint IS NOT NULL \
+         ORDER BY resume_expires_at",
+    )
+    .bind(agent_id)
+    .bind(conversation_id)
+    .fetch_all(exec)
+    .await?)
+}
+
+/// Consumes a grant: one compare-and-set, so concurrent retries of the same request cannot both
+/// pass. True for exactly one caller.
+pub async fn consume_grant<'e, E: PgExecutor<'e>>(exec: E, id: Uuid) -> Result<bool, DbError> {
+    Ok(sqlx::query(
+        "UPDATE approvals SET resume_state = 'consumed', consumed_at = now(), updated_at = now() \
+         WHERE id = $1 AND resume_state = 'ready' AND resume_expires_at > now()",
+    )
+    .bind(id)
+    .execute(exec)
+    .await?
+    .rows_affected()
+        == 1)
+}
+
+/// The limits a park is checked against (`approvals.park.*`, `PARK_PER_AGENT_HOUR`).
+#[derive(Debug, Clone, Copy)]
+pub struct ParkLimits {
+    pub max_pending_per_agent: u32,
+    pub per_agent_hour: u32,
+    /// Seconds a denied fingerprint is answered without a new approval.
+    pub deny_cooldown_secs: f64,
+}
+
+/// What a park attempt did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParkOutcome {
+    /// A new `pending` parked approval was inserted; `expires_at` is its deadline.
+    Parked {
+        id: Uuid,
+        expires_at: chrono::DateTime<chrono::Utc>,
+    },
+    /// An identical request is already pending: the same answer, nothing inserted.
+    Existing {
+        id: Uuid,
+        expires_at: chrono::DateTime<chrono::Utc>,
+    },
+    /// The identical request was denied within the cooldown.
+    Cooldown {
+        id: Uuid,
+        until: chrono::DateTime<chrono::Utc>,
+    },
+    /// A per-agent cap: `per` is `pending` or `hour`.
+    Limit { limit: u32, per: &'static str },
+}
+
+/// Parks an approval in one transaction under a per-conversation advisory lock: an identical
+/// pending request answers with its row, an identical denied one inside the cooldown with the
+/// denial, the caps are checked, then the row is inserted with `parked = true` and no holder.
+/// `matches(salt, fingerprint)` is the caller's constant-time comparison of a stored row with the
+/// request being parked (the fingerprint is never computed in SQL).
+pub async fn insert_parked(
+    pool: &sqlx::PgPool,
+    a: &NewApproval,
+    fp_salt: &[u8],
+    fingerprint: &[u8],
+    limits: ParkLimits,
+    matches: &(dyn Fn(&[u8], &[u8]) -> bool + Sync),
+) -> Result<ParkOutcome, DbError> {
+    let conversation = a.conversation_id;
+    let mut tx = pool.begin().await?;
+    // Serialises parks of one conversation so two identical requests cannot both insert.
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))")
+        .bind(format!("park:{}:{:?}", a.agent_id, conversation))
+        .execute(&mut *tx)
+        .await?;
+    type Open = (Uuid, Vec<u8>, Vec<u8>, chrono::DateTime<chrono::Utc>);
+    let pending: Vec<Open> = sqlx::query_as(
+        "SELECT id, fp_salt, fingerprint, deadline FROM approvals \
+         WHERE agent_id = $1 AND conversation_id IS NOT DISTINCT FROM $2 \
+           AND parked AND status = 'pending'",
+    )
+    .bind(a.agent_id)
+    .bind(conversation)
+    .fetch_all(&mut *tx)
+    .await?;
+    for (id, salt, fp, deadline) in &pending {
+        if matches(salt, fp) {
+            tx.rollback().await?;
+            return Ok(ParkOutcome::Existing {
+                id: *id,
+                expires_at: *deadline,
+            });
+        }
+    }
+    if limits.deny_cooldown_secs > 0.0 {
+        let denied: Vec<Open> = sqlx::query_as(
+            "SELECT id, fp_salt, fingerprint, \
+                    decided_at + make_interval(secs => $4) \
+             FROM approvals \
+             WHERE workspace_id = $1 AND status = 'denied' AND parked AND agent_id = $2 \
+               AND conversation_id IS NOT DISTINCT FROM $3 \
+               AND decided_at + make_interval(secs => $4) > now() \
+             ORDER BY decided_at DESC",
+        )
+        .bind(a.workspace_id)
+        .bind(a.agent_id)
+        .bind(conversation)
+        .bind(limits.deny_cooldown_secs)
+        .fetch_all(&mut *tx)
+        .await?;
+        for (id, salt, fp, until) in &denied {
+            if matches(salt, fp) {
+                tx.rollback().await?;
+                return Ok(ParkOutcome::Cooldown {
+                    id: *id,
+                    until: *until,
+                });
+            }
+        }
+    }
+    let pending_count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM approvals WHERE agent_id = $1 AND parked AND status = 'pending'",
+    )
+    .bind(a.agent_id)
+    .fetch_one(&mut *tx)
+    .await?;
+    if pending_count >= i64::from(limits.max_pending_per_agent) {
+        tx.rollback().await?;
+        return Ok(ParkOutcome::Limit {
+            limit: limits.max_pending_per_agent,
+            per: "pending",
+        });
+    }
+    let hour_count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM approvals \
+         WHERE workspace_id = $1 AND agent_id = $2 AND parked \
+           AND created_at > now() - interval '1 hour'",
+    )
+    .bind(a.workspace_id)
+    .bind(a.agent_id)
+    .fetch_one(&mut *tx)
+    .await?;
+    if hour_count >= i64::from(limits.per_agent_hour) {
+        tx.rollback().await?;
+        return Ok(ParkOutcome::Limit {
+            limit: limits.per_agent_hour,
+            per: "hour",
+        });
+    }
+    let expires_at: chrono::DateTime<chrono::Utc> = sqlx::query_scalar(
+        "INSERT INTO approvals (id, org_id, workspace_id, agent_id, conversation_id, turn_id, \
+         gateway_instance_id, method, host, path, connection_id, rule_logical_id, rule_name, \
+         summary, batch_id, batch_label, batch_total, context_label, status, deadline, \
+         parked, fp_salt, fingerprint) \
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$19,'pending', \
+                 now() + make_interval(secs => $18), true, $20, $21) \
+         RETURNING deadline",
+    )
+    .bind(a.id)
+    .bind(a.org_id)
+    .bind(a.workspace_id)
+    .bind(a.agent_id)
+    .bind(a.conversation_id)
+    .bind(a.turn_id)
+    .bind(a.gateway_instance_id)
+    .bind(&a.method)
+    .bind(&a.host)
+    .bind(&a.path)
+    .bind(a.connection_id)
+    .bind(a.rule_logical_id)
+    .bind(&a.rule_name)
+    .bind(&a.summary)
+    .bind(&a.batch_id)
+    .bind(&a.batch_label)
+    .bind(a.batch_total)
+    .bind(a.timeout_secs)
+    .bind(&a.context_label)
+    .bind(fp_salt)
+    .bind(fingerprint)
+    .fetch_one(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(ParkOutcome::Parked {
+        id: a.id,
+        expires_at,
+    })
 }
 
 // ---- LLM governance (docs/08 §11) ----

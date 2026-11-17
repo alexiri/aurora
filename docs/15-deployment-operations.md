@@ -1031,7 +1031,7 @@ keep working until they end (D-264(b)). Turn it on only after every gateway runs
 P4-011B (an older gateway ignores the setting and holds). Operators should know the trade-off: the agent is *told* "not sent, wait for a
 message", so agents that cannot repeat a request byte-identically (timestamps or nonces in the body)
 will need a second approval. Metrics: `aurora_gateway_approvals_parked_total`,
-`aurora_gateway_approval_grants_consumed_total{result="consumed"|"no_match"|"expired"}`,
+`aurora_gateway_approval_grants_total{result="consumed"|"no_match"|"expired"}` (C-828; the gateway emits `expired` for a matched grant whose window ended or that another retry consumed first, the API's resume-window job counts the rest),
 `aurora_approvals_parked_pending`, `aurora_approvals_resume_expired_total`. Alert on a growing
 `aurora_approvals_parked_pending` (nobody is deciding).
 

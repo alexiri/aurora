@@ -318,6 +318,7 @@ async fn render_inputs(
         "schedules": schedules,
         "purges": purges,
         "timezone": inputs.timezone,
+        "approval_parking": state.ops().approvals.park.enabled,
     }))
 }
 

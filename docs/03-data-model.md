@@ -560,7 +560,7 @@ Only consulted when `organizations.app_posture = 'restricted'`.
 | require_approval | bool not null default false | allow only |
 | rate_limit | jsonb null | `{ "count": int, "per": "minute"|"hour"|"day" }`; allow only |
 | conditions | jsonb not null default `[]` | `[Condition]` |
-| approval_timeout_secs | int null | (phase 2, RFE-011a) only with `require_approval`; 60 … `approvals.max_timeout_secs` (CHECK 60…14400, the instance maximum is checked at authoring); null = no preference (`07 §Approval deadlines`) |
+| approval_timeout_secs | int null | (phase 2, RFE-011a) only with `require_approval`; 60 … `approvals.max_timeout_secs` (`approvals.park.max_timeout_secs` while parking is on; CHECK 60…604800 since P4-011B-2, the instance maximum in force is checked at authoring); null = no preference (`07 §Approval deadlines`) |
 
 Shapes of `Identity`, `Target`, `Condition`: `07 §Rule anatomy`.
 
@@ -575,7 +575,7 @@ Shapes of `Identity`, `Target`, `Condition`: `07 §Rule anatomy`.
 | mode | text CHECK in (`full`,`custom`) null | connections only |
 | allow_tools | text[] not null default `{}` | custom mode |
 | ask_tools | text[] not null default `{}` | custom mode |
-| ask_timeout_secs | int null | (phase 2, RFE-011a) custom connection grants with `ask_tools`; compiled into the derived ask rule as `approval_timeout_secs` (CHECK 60…14400; the instance maximum is checked at authoring) |
+| ask_timeout_secs | int null | (phase 2, RFE-011a) custom connection grants with `ask_tools`; compiled into the derived ask rule as `approval_timeout_secs` (CHECK 60…604800 since P4-011B-2; the instance maximum in force is checked at authoring) |
 | created_by | uuid null FK→users (set null) | |
 | unique | (agent_id, connection_id), (agent_id, secret_id) | |
 
@@ -620,6 +620,17 @@ Rules compiled from grants and app blocklists; always live (not drafted).
 | context_label | text null | (phase 2, RFE-025) label of the BYO context credential that made the request, ≤128, sanitized; shown on the approval card (`08 §11.9`) |
 | deadline | timestamptz not null | `created + effective timeout` (`07 §Approval deadlines`) |
 | resolved_at | timestamptz null | (phase 2, RFE-011a) set on every terminal transition (approve, deny, expire, abandon); the stall clock restarts here (`07 §Approval deadlines`). Gateway role may write it with `status` |
+| parked | bool not null default false | (phase 5, RFE-011b, D-138) true for a parked approval: nobody holds the request (`07 §Park and resume`); excluded from the stale-holder sweep and from the stall exemption |
+| fp_salt | bytea null | 16 random bytes; set iff `parked` |
+| fingerprint | bytea null | `SHA-256(fp_salt ‖ canonical request)` (32 bytes), canonical form in `07`/C-821; never the request itself; set iff `parked` |
+| resume_state | text null CHECK in (`ready`,`consumed`,`expired`,`revoked`) | null while `pending`/`denied`/`expired`; `ready` from approval until the window ends; consumed by exactly one request (compare-and-set) |
+| resume_expires_at | timestamptz null | `decided_at + approvals.park.resume_window_secs` |
+| consumed_at | timestamptz null | set with `resume_state = 'consumed'` |
+| resume_turn_id | uuid null | the system follow-up/turn queued at approval (tracing only; no FK, history survives) |
+
+Indexes: `(agent_id, conversation_id) WHERE resume_state = 'ready'` (grant lookup); `(resume_expires_at) WHERE resume_state = 'ready'` (window expiry); `(agent_id, conversation_id) WHERE parked AND status = 'pending'` (pending-per-agent limit, de-duplication). CHECK `(parked = (fp_salt IS NOT NULL)) AND (parked = (fingerprint IS NOT NULL))`.
+
+The gateway database role's column-level `SELECT (id, status, gateway_instance_id)` on `approvals` gains `agent_id, conversation_id, parked, fp_salt, fingerprint, resume_state, resume_expires_at, method, host, path, rule_logical_id` and `UPDATE` stays as granted (it consumes with `resume_state`, `consumed_at`); it never writes `fingerprint`/`fp_salt` of a row it did not insert. Pending approval stays a closed `status` vocabulary: the resume lifecycle is `resume_state`, not a new status. `resume_state` moves to `revoked` by the API only (C-826). Migration `20261201000220_approval_park.sql` (P4-011B-1).
 
 ### `approval_watchers`
 (phase 2, RFE-011a) A live `approvals/stream` or `approvals/pending` connection; a *live delivery surface* (`07 §Approvals`).
@@ -636,6 +647,7 @@ Rules compiled from grants and app blocklists; always live (not drafted).
 |---|---|---|
 | approval_id | uuid | gateway or action approval id; pk part (no FK: approval history survives) |
 | user_id | uuid FK→users (cascade) | pk part |
+| stage | text not null default `initial` CHECK in (`initial`,`reminder`) | (P4-011B-2) pk part: the primary key is `(approval_id, user_id, stage)`; the parked reminder e-mail (`07 §Park and resume`) is its own idempotent claim |
 | kind | text CHECK in (`gateway`,`action`) | |
 | sent_at | timestamptz not null default now() | insert-on-conflict claim makes the e-mail idempotent across replicas; pruned with the daily retention pruning; index (user_id, sent_at) |
 | delivery | text not null default `mail` CHECK in (`mail`,`batch`,`digest_mail`,`digest`) | how the claim was served: its own e-mail; folded into the e-mail of its `batch_id`; the "N more waiting" digest e-mail; or folded silently into a digest already sent this hour (hourly cap `APPROVAL_EMAIL_PER_USER_HOUR`, D-81) |
@@ -654,7 +666,9 @@ Rules compiled from grants and app blocklists; always live (not drafted).
 | path | text | redacted |
 | app_id, tool_id | text null | |
 | connection_id, secret_id | uuid null | |
-| decision | text | `allow`,`blocked`,`default_denied`,`egress_denied`,`governance_refused`,`rate_limited`,`approval_denied`,`approval_expired`,`approved`,`guard_refused`,`error` |
+| decision | text | `allow`,`blocked`,`default_denied`,`egress_denied`,`governance_refused`,`rate_limited`,`approval_denied`,`approval_expired`,`approved`,`guard_refused`,`error`, and (phase 5, P4-011B, D-265(a)) `approval_parked` (a parked refusal and its identical repeats) |
+| approval_id | uuid null | (phase 5, P4-011B) the approval a request was held, parked or resumed under (no FK, ledger table); set by every hold, park and grant consumption (C-827) |
+| resumed | bool not null default false | (phase 5, P4-011B) true when a parked approval's grant was consumed by this request |
 | rule_logical_id | uuid null | |
 | rule_name | text null | denormalized; survives rule deletion |
 | upstream_status | int null | |
@@ -1673,36 +1687,6 @@ The gateway role gains `UPDATE (last_check_at, last_check_result)` on both table
 | created_at, resolved_at | timestamptz | `resolved_by uuid null FK → users` beside them | 5 (P5-UX-17) |
 
 UNIQUE (agent_id, app_id) WHERE status = `open` and kind = `app`; UNIQUE (agent_id, secret_id) WHERE status = `open` and kind = `website`. Open rows expire after `ACCESS_REQUEST_TTL` (14 days). The gateway role gets nothing on this table.
-
-#### `approvals` (park and resume; phase 5, D-138)
-| Planned column | Type | Notes | Phase |
-|---|---|---|---|
-| parked | bool not null default false | true for a parked approval: nobody holds the request (`07 §Park and resume`); excluded from the stale-holder sweep and from the stall exemption | 5 (RFE-011b, D-138) |
-| fp_salt | bytea null | 16 random bytes; set iff `parked` | 5 (RFE-011b, D-138) |
-| fingerprint | bytea null | `SHA-256(fp_salt ‖ canonical request)` (32 bytes), canonical form in `07`; never the request itself | 5 (RFE-011b, D-138) |
-| resume_state | text null CHECK in (`ready`,`consumed`,`expired`,`revoked`) | null while `pending`/`denied`/`expired`; `ready` from approval until the window ends; consumed by exactly one request (compare-and-set) | 5 (RFE-011b, D-138) |
-| resume_expires_at | timestamptz null | `decided_at + approvals.park.resume_window_secs` | 5 (RFE-011b, D-138) |
-| consumed_at | timestamptz null | | 5 (RFE-011b, D-138) |
-| resume_turn_id | uuid null | the system follow-up/turn queued at approval (tracing only; no FK, history survives) | 5 (RFE-011b, D-138) |
-| indexes | `(agent_id, conversation_id) WHERE resume_state = 'ready'`; `(resume_expires_at) WHERE resume_state = 'ready'`; `(agent_id, conversation_id) WHERE parked AND status = 'pending'` | grant lookup, resume-window expiry, pending-per-agent limits and de-duplication | 5 (RFE-011b, D-138) |
-
-The gateway database role's column-level `SELECT (id, status, gateway_instance_id)` on `approvals` gains `agent_id, conversation_id, parked, fp_salt, fingerprint, resume_state, resume_expires_at, method, host, path, rule_logical_id` and `UPDATE` stays as granted (it consumes with `resume_state`, `consumed_at`); it never writes `fingerprint`/`fp_salt` of a row it did not insert. Pending approval stays a closed `status` vocabulary: the resume lifecycle is `resume_state`, not a new status. (P4-011B spec batch, D-265) Migration `20261201000220_approval_park.sql` (block `000220..229`, P4-011B-1) adds these columns, the CHECK `(parked = (fp_salt IS NOT NULL)) AND (parked = (fingerprint IS NOT NULL))`, the three partial indexes and the gateway role's column grants (`SELECT` on the listed columns, `UPDATE (resume_state, consumed_at)` added to its existing `UPDATE` columns); `resume_state` moves to `revoked` by the API only (C-826).
-
-#### `request_log` (approval references; phase 5, P4-011B, D-265(a))
-| Planned column | Type | Notes | Phase |
-|---|---|---|---|
-| approval_id | uuid null | the approval a request was held, parked or resumed under (no FK, ledger table); set by every hold, park and grant consumption (C-827) | 5 (P4-011B) |
-| resumed | bool not null default false | true when a parked approval's grant was consumed by this request | 5 (P4-011B) |
-| decision | (existing CHECK) | gains `approval_parked` (a parked refusal and its identical repeats) | 5 (P4-011B) |
-
-Migration `20261201000221_request_log_approval.sql` (P4-011B-1) adds both columns to the partitioned parent (inherited by every partition) and replaces the decision CHECK with the widened one. The gateway role's existing `INSERT` on `request_log` covers the new columns.
-
-#### `approval_notifications` (reminder stage; phase 5, P4-011B, D-265(b))
-| Planned column | Type | Notes | Phase |
-|---|---|---|---|
-| stage | text not null default `initial` CHECK in (`initial`,`reminder`) | pk part: the primary key becomes `(approval_id, user_id, stage)`; the parked reminder e-mail (`07 §Park and resume`) is its own idempotent claim | 5 (P4-011B) |
-
-Migration `20261201000222_approval_notification_stage.sql` (P4-011B-2): add the column (existing rows become `initial`), drop and re-create the primary key.
 
 #### `approval_push_claims` (new table; phase 5, D-138)
 | Planned column | Type | Notes | Phase |

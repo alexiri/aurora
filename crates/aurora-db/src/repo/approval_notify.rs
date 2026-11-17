@@ -146,7 +146,8 @@ pub async fn unseen(
          JOIN organizations o ON o.id = w.org_id LEFT JOIN agents ag ON ag.id = a.agent_id \
          WHERE a.status = 'pending' AND a.deadline > now() \
            AND a.created_at <= now() - make_interval(secs => $1) \
-           AND NOT EXISTS (SELECT 1 FROM approval_notifications n WHERE n.approval_id = a.id) \
+           AND NOT EXISTS (SELECT 1 FROM approval_notifications n \
+                           WHERE n.approval_id = a.id AND n.stage = 'initial') \
            AND NOT {} AND NOT {watcher}",
         card("approval")
     );
@@ -160,7 +161,8 @@ pub async fn unseen(
          JOIN organizations o ON o.id = w.org_id LEFT JOIN agents ag ON ag.id = a.agent_id \
          WHERE a.status = 'pending' AND a.expires_at > now() \
            AND a.created_at <= now() - make_interval(secs => $1) \
-           AND NOT EXISTS (SELECT 1 FROM approval_notifications n WHERE n.approval_id = a.id) \
+           AND NOT EXISTS (SELECT 1 FROM approval_notifications n \
+                           WHERE n.approval_id = a.id AND n.stage = 'initial') \
            AND NOT {} AND NOT {watcher}",
         card("action_approval")
     );
@@ -237,7 +239,8 @@ pub async fn claim(
 ) -> Result<bool, DbError> {
     Ok(sqlx::query(
         "INSERT INTO approval_notifications (approval_id, user_id, kind, sent_at, delivery) \
-         VALUES ($1, $2, $3, now(), $4) ON CONFLICT (approval_id, user_id) DO NOTHING",
+         VALUES ($1, $2, $3, now(), $4) \
+         ON CONFLICT (approval_id, user_id, stage) DO NOTHING",
     )
     .bind(approval)
     .bind(user)
@@ -249,6 +252,57 @@ pub async fn claim(
         == 1)
 }
 
+/// (P4-011B-2, C-828) Claim the **reminder** of a parked approval for `user`; `true` only for the
+/// replica whose insert won.
+pub async fn claim_reminder(pool: &PgPool, approval: Uuid, user: Uuid) -> Result<bool, DbError> {
+    Ok(sqlx::query(
+        "INSERT INTO approval_notifications (approval_id, user_id, kind, sent_at, delivery, stage) \
+         VALUES ($1, $2, 'gateway', now(), 'mail', 'reminder') \
+         ON CONFLICT (approval_id, user_id, stage) DO NOTHING",
+    )
+    .bind(approval)
+    .bind(user)
+    .execute(pool)
+    .await?
+    .rows_affected()
+        == 1)
+}
+
+/// (P4-011B-2, C-828) Parked approvals still `pending` past half of their waiting time whose
+/// reminder nobody has claimed and that no live surface shows (no watcher of a decider of the
+/// workspace). Reuses [`Unseen`].
+pub async fn unseen_reminders(
+    pool: &PgPool,
+    ttl_secs: f64,
+    limit: i64,
+) -> Result<Vec<Unseen>, DbError> {
+    let watcher = format!(
+        "EXISTS (SELECT 1 FROM approval_watchers wt WHERE wt.workspace_id = a.workspace_id \
+           AND wt.last_seen_at > now() - make_interval(secs => $1) AND {})",
+        may_decide("wt.user_id")
+    );
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT a.id, 'gateway'::text AS kind, a.org_id, a.workspace_id, a.agent_id, \
+            a.conversation_id, a.batch_id, \
+            COALESCE(NULLIF(a.summary->>'title', ''), a.method || ' ' || a.host) AS title, \
+            a.rule_name, a.deadline AS expires_at, \
+            COALESCE(ag.name, 'An agent') AS agent_name, w.name AS workspace_name, \
+            w.slug AS workspace_slug, o.name AS org_name, o.slug AS org_slug \
+         FROM approvals a JOIN workspaces w ON w.id = a.workspace_id \
+         JOIN organizations o ON o.id = w.org_id LEFT JOIN agents ag ON ag.id = a.agent_id \
+         WHERE a.status = 'pending' AND a.parked AND a.deadline > now() \
+           AND now() >= a.created_at + (a.deadline - a.created_at) / 2 \
+           AND NOT EXISTS (SELECT 1 FROM approval_notifications n \
+                           WHERE n.approval_id = a.id AND n.stage = 'reminder') \
+           AND NOT {watcher} \
+         ORDER BY a.created_at LIMIT $2"
+    )))
+    .bind(ttl_secs)
+    .bind(limit)
+    .fetch_all(pool)
+    .await?)
+}
+
 /// Has `user` already been served (mailed or folded) for another approval of this batch?
 pub async fn batch_served(
     pool: &PgPool,
@@ -258,7 +312,7 @@ pub async fn batch_served(
 ) -> Result<bool, DbError> {
     Ok(sqlx::query_scalar(
         "SELECT EXISTS (SELECT 1 FROM approval_notifications n JOIN approvals a ON a.id = n.approval_id \
-         WHERE n.user_id = $1 AND a.agent_id = $2 AND a.batch_id = $3)",
+         WHERE n.user_id = $1 AND a.agent_id = $2 AND a.batch_id = $3 AND n.stage = 'initial')",
     )
     .bind(user)
     .bind(agent)

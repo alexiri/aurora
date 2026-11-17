@@ -227,6 +227,18 @@ async fn compute_inner(
                                 d.approval_timeout_secs,
                             )
                         }),
+                        approval_parks: crate::domains::policy::simulate::timeout_flags(
+                            &state.ops().approvals,
+                            d.approval_timeout_secs,
+                            d.verdict == Verdict::NeedsApproval,
+                        )
+                        .0,
+                        approval_timeout_clamped: crate::domains::policy::simulate::timeout_flags(
+                            &state.ops().approvals,
+                            d.approval_timeout_secs,
+                            d.verdict == Verdict::NeedsApproval,
+                        )
+                        .1,
                     });
                 }
             }
@@ -243,6 +255,8 @@ async fn compute_inner(
                             inert: true,
                             org_ceiling: None,
                             approval_timeout_secs: None,
+                            approval_parks: false,
+                            approval_timeout_clamped: false,
                         });
                     }
                 }
