@@ -164,3 +164,13 @@ Commits: `b5837c2f` (C-923), `7862afd3` (backfill + setup reasons), `a54bd2fc` (
   `scripts/guards/run-all.sh` (exit 0), `extract-schema.py --check` (ok), `pnpm typecheck`, vitest on the touched files.
   **Not run:** the batch gate (full aurora-api it + lib, workspace clippy, web full vitest/lint/build, Playwright, axe,
   upgrade.sh — no migration was added).
+- **Batch gate (run 2026-11-17, after `git merge master`)**: `cargo test -p aurora-db -p aurora-api` (all targets, fixtures
+  built): api lib 141 ok, it 1382 ok / 1 failed → `permission_matrix::coverage_every_openapi_route_is_listed` (the
+  backfill route was not in the matrix) — fixed (commit "the permission matrix lists …"), `permission_matrix` filter rerun
+  5/5 ok. Workspace clippy all-targets/all-features `-D warnings` ok; guards exit 0; `extract-schema.py --check` ok;
+  `gen:api` no drift (openapi test passes); web typecheck ok, lint 0 errors (5 warnings), vitest 132 files / 2202 ok,
+  `pnpm build` ok. Playwright `mocked`: 1116 passed; the `real-stack` project (needs a live stack, not part of this gate)
+  failed 4 specs; `stage4-routes` FIX-029 "Computer tab with a failed start (390 px)" failed in both themes and again alone:
+  P5-UX-14's "1 account needs attention" chip made the agent header's pill row 1 px too wide — fixed (flex-wrap, commit
+  "the agent header's pill row wraps"), stage4-routes + ia-navigation 260/260 ok after. Production project 11/11 ok.
+  No migration → `upgrade.sh` not run.
