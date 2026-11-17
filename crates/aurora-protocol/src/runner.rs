@@ -1500,6 +1500,36 @@ mod report_id_tests {
 }
 
 #[cfg(test)]
+mod turn_result_usage_tests {
+    use super::*;
+
+    /// (P5-MODELS-2, C-879) `usage` is open JSON: a per-model breakdown crosses the wire untouched.
+    #[test]
+    fn turn_result_usage_carries_by_model_unchanged() {
+        let usage = serde_json::json!({
+            "input_tokens": 400, "output_tokens": 130,
+            "cache_read_tokens": 10, "cache_write_tokens": 5,
+            "by_model": [
+                {"model": "m-main", "input_tokens": 100, "output_tokens": 40,
+                 "cache_read_tokens": 10, "cache_write_tokens": 5},
+                {"model": "m-small", "input_tokens": 300, "output_tokens": 90,
+                 "cache_read_tokens": 0, "cache_write_tokens": 0},
+            ],
+        });
+        let r = TurnResult {
+            turn_id: Uuid::from_u128(1),
+            status: TurnStatus::Done,
+            error_code: None,
+            error_message: None,
+            usage: Some(usage.clone()),
+        };
+        let wire = serde_json::to_string(&r).unwrap();
+        let back: TurnResult = serde_json::from_str(&wire).unwrap();
+        assert_eq!(back.usage, Some(usage));
+    }
+}
+
+#[cfg(test)]
 mod terminal_models_tests {
     use super::*;
 
