@@ -1,6 +1,6 @@
 "use client";
 
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import type { ReactNode } from "react";
 
 import { AppsTab } from "@/components/apps/apps-tab";
@@ -16,7 +16,7 @@ import { ErrorState, Loading } from "@/components/states";
 import { TopicPage, type TopicTab } from "@/components/topic-page";
 import { PageHeader } from "@/components/ui/page-header";
 import { useResolve, useWorkspace, type Workspace } from "@/lib/api/queries";
-import { orgRoutes, type TABS } from "@/lib/routes";
+import { orgRoutes, wsRoutes, type TABS } from "@/lib/routes";
 import { forbiddenError, whoCanFromContacts } from "@/lib/who-can";
 
 type Tabs<K extends keyof typeof TABS> = (typeof TABS)[K][number];
@@ -74,13 +74,15 @@ export function WorkspaceInternetAccessPage() {
 
 /** People: who can use this workspace (workspace owners). */
 export function WorkspacePeoplePage() {
+  // `?add=1` (Welcome's **Add people**) opens the dialog.
+  const addOpen = useSearchParams().get("add") === "1";
   return (
     <WorkspaceGate>
-      {(w) =>
+      {(w, org, ws) =>
         w.my_role === "owner" ? (
           <div className="max-w-page space-y-4">
             <PageHeader title="People" description="Who can use this workspace." className="mb-2" />
-            <AccessTab wsId={w.id} orgId={w.org_id} canOwn />
+            <AccessTab wsId={w.id} orgId={w.org_id} canOwn people={{ workspacePath: wsRoutes(org, ws).base, initiallyOpen: addOpen }} />
           </div>
         ) : (
           <ErrorState error={forbiddenError(whoCanFromContacts("workspace_owner", w.contacts, "view_this"))} />
