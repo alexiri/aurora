@@ -161,6 +161,18 @@ describe("push service worker", () => {
     expect(w.opened).toEqual([]);
   });
 
+  it("navigates even when focus is refused, and opens a window when the client cannot be navigated", async () => {
+    const navigate = vi.fn(() => Promise.resolve());
+    const w1 = await click("/o/a/w/b/approvals", [{ url: "https://aurora.example/o/a", focus: () => Promise.reject(new Error("no")), navigate }]);
+    expect(navigate).toHaveBeenCalledWith("/o/a/w/b/approvals");
+    expect(w1.opened).toEqual([]);
+    // A tab opened before the opt-in is not controlled by the worker: navigate() rejects.
+    const w2 = await click("/o/a/w/b/approvals", [
+      { url: "https://aurora.example/o/a", focus: () => Promise.resolve({ navigate: () => Promise.reject(new TypeError("uncontrolled")) }), navigate },
+    ]);
+    expect(w2.opened).toEqual(["/o/a/w/b/approvals"]);
+  });
+
   it("opens a window when no Aurora client exists", async () => {
     const w = await click("/o/a/w/b/approvals", [{ url: "https://elsewhere.example/", focus: vi.fn(), navigate: vi.fn() }]);
     expect(w.opened).toEqual(["/o/a/w/b/approvals"]);

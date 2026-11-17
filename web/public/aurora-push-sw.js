@@ -93,7 +93,13 @@ self.addEventListener("notificationclick", (event) => {
     self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((list) => {
       const mine = list.find((c) => c.url && new URL(c.url).origin === self.location.origin);
       if (mine) {
-        return mine.focus().then((c) => (c || mine).navigate(url));
+        // A refused focus still navigates; a tab this worker does not control (opened before the opt-in) refuses
+        // navigate(), and a new window is opened instead.
+        return mine
+          .focus()
+          .catch(() => mine)
+          .then((c) => (c || mine).navigate(url))
+          .catch(() => self.clients.openWindow(url));
       }
       return self.clients.openWindow(url);
     }),

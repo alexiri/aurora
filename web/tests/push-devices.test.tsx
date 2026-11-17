@@ -97,7 +97,7 @@ function browser(
   const subscribe = vi.fn(async (o: { applicationServerKey: Uint8Array }) => (current = mkSub(o.applicationServerKey)));
   const unregister = vi.fn(async () => true);
   const reg = { pushManager: { subscribe, getSubscription: vi.fn(async () => current) }, unregister };
-  const register = vi.fn(async (_url: string, _o: unknown) => reg);
+  const register = vi.fn<(url: string, o: unknown) => Promise<typeof reg>>(async () => reg);
   let registered = over.registered ?? false;
   Object.defineProperty(window, "isSecureContext", { value: over.secure ?? true, configurable: true });
   Object.defineProperty(navigator, "userAgent", { value: over.ua ?? "Mozilla/5.0 (X11; Linux x86_64) Chrome/130.0 Safari/537.36", configurable: true });

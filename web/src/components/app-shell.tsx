@@ -464,7 +464,7 @@ function SidebarContent({
 export function AppShell({ children }: { children: ReactNode }) {
   useUnauthorizedRedirect();
   // (P4-011B-4, C-836) With the local Web Push opt-in marker: re-sync the browser's subscription once per load.
-  usePushResync(useMe().data !== undefined);
+  usePushResync(true);
   const params = useParams<{ org?: string; ws?: string }>();
   const pathname = usePathname();
   const [navOpen, setNavOpen] = useState(false);

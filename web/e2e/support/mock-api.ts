@@ -60,6 +60,13 @@ const approval = {
   summary: { source: "app", title: "Merge pull request #42", fields: [{ label: "Repository", value: "acme/web" }] },
 };
 
+/** P4-011B-4: an approval the gateway parked (the agent stopped waiting): the Parked chip and sentence render. */
+const parkedApproval = {
+  ...approval, id: id(61), parked: true, deadline: new Date(Date.now() + 7_200_000).toISOString(),
+  summary: { source: "app", title: "Delete repository acme/old", fields: [] },
+  method: "DELETE", path: "/repos/acme/old",
+};
+
 const generation = (status: string) => ({
   id: id(80), number: 1, status, created_at: now, default_action: "none", open_lane_posture: "enabled", rules: [], uncredentialed_allowlist: [],
   uncredentialed_default: "none", draft_revision: 1,
@@ -462,10 +469,23 @@ export async function mockApi(
         permissions: { hooks: [], context: [], egress: { "api.github.com": ["GET"] } },
       });
     }
+    // P4-011B-4: Web Push is on (the Account card and its device list render) and parking is on (the limits route).
+    if (p === "/v1/push/config") return json({ available: true, vapid_public_key: "B".repeat(87), allowed_hosts: ["fcm.googleapis.com"] });
+    if (p === "/v1/me/push-subscriptions") {
+      return json({
+        subscriptions: [
+          { id: id(700), label: "Chrome on Linux", show_details: false, paused: false, state: "active", this_session: false, created_at: now, last_success_at: now, last_failure_at: null },
+          { id: id(701), label: "Firefox on Windows", show_details: true, paused: false, state: "disabled", this_session: false, created_at: now, last_success_at: null, last_failure_at: now },
+        ],
+      });
+    }
+    if (p === "/v1/policy/approval-limits") {
+      return json({ timeout_secs: 300, max_timeout_secs: 3600, park: { enabled: true, threshold_secs: 900, max_timeout_secs: 86400, resume_window_secs: 1800 } });
+    }
     if (p === "/v1/instance") {
       return json({
         version: "0.1.0", signup_mode: "closed", setup_errors: [],
-        features: { hosted: true, previews: true, terminal: true },
+        features: { hosted: true, previews: true, terminal: true, push: true },
         previews: { enabled: true, domain: "previews.example.org" },
         oidc_providers: [{ id: "corp", display_name: "Corporate SSO", groups: true }],
       });
@@ -646,7 +666,7 @@ export async function mockApi(
       }
       return json({ section, title: section, description: "", generation: 1, updated_at: now, updated_by_label: null, extra: null, settings: [] });
     }
-    if (p.endsWith("/approvals")) return json({ items: url.searchParams.get("status") === "pending" ? [approval] : [], next_cursor: null });
+    if (p.endsWith("/approvals")) return json({ items: url.searchParams.get("status") === "pending" ? [approval, parkedApproval] : [], next_cursor: null });
     if (p.endsWith("/workspaces")) return json({ items: [ws] });
     if (p.endsWith("/agents")) return json({ items: [agent] });
     // P4-PRV-1: the agent's preview shares (the Previews tab; the sandbox view marks port 3000 shared).
