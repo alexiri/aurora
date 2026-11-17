@@ -61,7 +61,7 @@ function flatten(fp: unknown): Map<string, string> {
   return out;
 }
 
-const labelOf = (key: string): string => {
+const fieldLabel = (key: string): string => {
   if (key.startsWith("skill:")) return `Skill ${key.slice(6)}`;
   if (key.startsWith("rule:")) return `Granted rule ${key.slice(5)}`;
   return LABEL[key] ?? key;
@@ -89,7 +89,7 @@ export function diffFingerprints(before: unknown, after: unknown): FieldChange[]
     const absent = key.startsWith("skill:") ? "not installed" : key.startsWith("rule:") ? "not granted" : NONE;
     changes.push({
       key,
-      field: labelOf(key),
+      field: fieldLabel(key),
       before: x ?? absent,
       after: y ?? absent,
       hash: HASHY.has(key) || key.startsWith("skill:") || key.startsWith("rule:"),

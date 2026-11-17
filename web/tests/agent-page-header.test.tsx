@@ -91,7 +91,7 @@ describe("agent page frame (D-200)", () => {
     expect(await screen.findByTestId("instructions-tab")).toBeInTheDocument();
     expect(window.location.search).toBe("?tab=instructions");
     const pages = screen.getByRole("tablist", { name: "Behaviour pages" });
-    expect(within(pages).getAllByRole("tab").map((t) => t.textContent)).toEqual(["Instructions", "Memory", "Skills"]);
+    expect(within(pages).getAllByRole("tab").map((t) => t.textContent)).toEqual(["Instructions", "Memory", "Skills", "Evals"]);
     fireEvent.click(within(pages).getByRole("tab", { name: "Memory" }));
     expect(await screen.findByTestId("memory-tab")).toBeInTheDocument();
     expect(window.location.search).toBe("?tab=memory");
