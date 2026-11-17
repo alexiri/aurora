@@ -63,6 +63,8 @@ export function useCreateSecret(scope: SecretScope) {
         : unwrap(api.POST("/v1/orgs/{org}/secrets", { params: { path: { org: scope.id } }, body })),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["accounts"] });
+      // A key saved with its access (C-988) changes what the agents can think with: the guide's "AI key" step reads it.
+      void qc.invalidateQueries({ queryKey: ["model-readiness"] });
       return qc.invalidateQueries({ queryKey: secretKeys.list(scope) });
     },
   });

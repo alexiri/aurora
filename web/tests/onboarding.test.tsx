@@ -107,35 +107,39 @@ describe("getting-started guide: every state", () => {
   it("key provided by the org: collapsed with what provides it, no form, hello is next", async () => {
     world({ readiness: readiness([keyRow()]), orgKeys: [llmSecret("k1", "AIGW", "organization")] });
     guide();
-    expect(await screen.findByText("Your organization provides an LLM key: AIGW")).toBeInTheDocument();
+    expect(await screen.findByText("Your organization provides an AI key: AIGW")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Get Daneel talking" })).toBeInTheDocument();
     expect(screen.queryByLabelText("New LLM key")).not.toBeInTheDocument();
     expect(screen.queryByText("Choose a model")).not.toBeInTheDocument();
     const hello = await screen.findByRole("link", { name: "Say hello to Daneel" });
     expect(hello).toHaveAttribute("href", expect.stringContaining("/o/acme/w/ops/agents/daneel?tab=chat&draft="));
-    expect(screen.getByText("2 of 3 done")).toBeInTheDocument();
+    // Two steps (C-927): the key is done, one left.
+    expect(screen.getByText("1 of 2 done")).toBeInTheDocument();
+    expect(screen.queryByText(/Give Daneel access to/)).not.toBeInTheDocument();
   });
 
-  it("key missing: explains what a key is and opens the form in place", async () => {
+  it("key missing: explains what an AI key is and opens the form in place, with the agent ticked", async () => {
     world({ readiness: readiness([]) });
     guide();
-    expect(await screen.findByText(/An LLM key is the password to the AI service/)).toBeInTheDocument();
+    expect(await screen.findByText(/An AI key is the password to the AI service/)).toBeInTheDocument();
     expect(await screen.findByLabelText("New LLM key")).toBeInTheDocument();
-    expect(screen.getByText("0 of 3 done")).toBeInTheDocument();
-    expect(screen.getByText("Comes after the key.")).toBeInTheDocument();
+    expect(screen.getByText("0 of 2 done")).toBeInTheDocument();
+    expect(screen.getByText("Comes after the steps above.")).toBeInTheDocument();
   });
 
   it("not granted: the access step names the key and preselects the agent", async () => {
     world({ readiness: readiness([]), wsKeys: [llmSecret("k2", "my-key", "workspace")] });
     routes["GET /v1/secrets/k2/grants"] = () => json(200, { items: [] });
     guide();
-    expect(await screen.findByText("my-key")).toBeInTheDocument();
+    // The step is titled with the key it gives (C-927) and appears only for a key the agent cannot use.
+    expect(await screen.findByText("Give Daneel access to my-key")).toBeInTheDocument();
+    expect(screen.queryByText("AI key")).not.toBeInTheDocument();
     const box = await screen.findByRole("checkbox", { name: /Daneel/ });
     await waitFor(() => expect(box).toBeChecked());
     expect(screen.getByRole("button", { name: "Give Daneel access" })).toBeEnabled();
   });
 
-  it("no model: shows the model step, and saving the choice patches the agent", async () => {
+  it("no default model: the AI key step holds the model picker, and saving the choice patches the agent", async () => {
     world({ readiness: readiness([keyRow()], false), orgKeys: [llmSecret("k1", "AIGW", "organization")] });
     routes["GET /v1/agents/a1/models"] = () =>
       json(200, { items: [{ endpoint_id: "litellm", provider: "litellm", model_id: "claude-sonnet", display_name: "Claude Sonnet", dialects: [] }] });
@@ -152,7 +156,7 @@ describe("getting-started guide: every state", () => {
   it("done: an answer from the agent completes it, whatever else is missing", async () => {
     world({ readiness: readiness([keyRow()]), orgKeys: [llmSecret("k1", "AIGW", "organization")], replied: true });
     guide();
-    expect(await screen.findByText("3 of 3 done")).toBeInTheDocument();
+    expect(await screen.findByText("2 of 2 done")).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Say hello to Daneel" })).not.toBeInTheDocument();
   });
 
@@ -161,19 +165,18 @@ describe("getting-started guide: every state", () => {
     routes["GET /v1/conversations/c1/events"] = () =>
       json(200, { items: [{ seq: 1, type: "turn.queued", ts: "2026-11-10T09:00:00Z", payload: {} }, { seq: 2, type: "error", ts: "2026-11-10T09:00:05Z", payload: { code: "no_model_key" } }], last_seq: 2 });
     guide();
-    expect(await screen.findByText("2 of 3 done")).toBeInTheDocument();
+    expect(await screen.findByText("1 of 2 done")).toBeInTheDocument();
   });
 
-  it("member: sees who can do the key and access steps, never a form, and does not read readiness", async () => {
+  it("member: sees who can do the key step, never a form, and does not read readiness", async () => {
     // The owners come from the workspace's `contacts` (C-981): a member can read them, no access list is needed.
     world({ contacts: { owners: [{ name: "Ada Lovelace" }] } });
     guide({ isOwner: false });
     expect(await screen.findByText("Only workspace owners can add an account. Ask Ada Lovelace.")).toBeInTheDocument();
-    expect(screen.getByText("Only workspace owners can give agents access. Ask Ada Lovelace.")).toBeInTheDocument();
     expect(calls.some((c) => c.key === "GET /v1/workspaces/w1/access")).toBe(false);
     expect(screen.queryByLabelText("New LLM key")).not.toBeInTheDocument();
     expect(calls.some((c) => c.key === "GET /v1/agents/a1/model-readiness")).toBe(false);
-    expect(screen.getAllByText("Needs an owner")).toHaveLength(2);
+    expect(screen.getAllByText("Needs an owner")).toHaveLength(1);
   });
 
   it("member of a workspace whose contacts are not known still gets a sentence, not a dead button", async () => {
@@ -185,7 +188,7 @@ describe("getting-started guide: every state", () => {
   it("Overview: one line once complete, and expandable", async () => {
     world({ readiness: readiness([keyRow()]), orgKeys: [llmSecret("k1", "AIGW", "organization")], replied: true });
     guide({ variant: "overview" });
-    expect(await screen.findByText(/Getting started — 3\/3/)).toBeInTheDocument();
+    expect(await screen.findByText(/Getting started — 2\/2/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Show again" }));
     expect(await screen.findByRole("heading", { name: "Get Daneel talking" })).toBeInTheDocument();
   });
@@ -200,7 +203,7 @@ describe("getting-started guide: every state", () => {
     };
     guide({ variant: "overview" });
     fireEvent.click(await screen.findByRole("button", { name: "Dismiss" }));
-    expect(await screen.findByText(/Getting started — 0\/3/)).toBeInTheDocument();
+    expect(await screen.findByText(/Getting started — 0\/2/)).toBeInTheDocument();
     expect(calls.find((c) => c.key === "PATCH /v1/me/onboarding")?.body).toEqual({ guide_dismissed: ["w1"] });
     expect(screen.getByRole("button", { name: "Show" })).toBeInTheDocument();
   });
@@ -241,7 +244,7 @@ describe("getting-started guide: every state", () => {
   it("never shows a secret value", async () => {
     world({ readiness: readiness([keyRow()]), orgKeys: [llmSecret("k1", "AIGW", "organization")] });
     const { container } = guide();
-    await screen.findByText("Your organization provides an LLM key: AIGW");
+    await screen.findByText("Your organization provides an AI key: AIGW");
     expect(container.textContent).not.toMatch(/sk-/);
     expect(container.querySelector("input[type=password]")).toBeNull();
   });
