@@ -41,9 +41,9 @@ const agent = (kind: "byo" | "hosted", harness: string | null = "claude-code") =
   created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z", subagent_model: "inherit", narration_cards: false,
 });
 
-const claude = { id: "claude-code", display_name: "Claude Code", dialects: ["anthropic_messages"], available: true };
+const claude = { id: "claude-code", display_name: "Claude Code", dialects: ["anthropic_messages"], available: true, model_roles: ["large", "medium", "small"] };
 const codex = (available: boolean) => ({
-  id: "codex", display_name: "OpenAI Codex", dialects: ["openai_responses"], available,
+  id: "codex", display_name: "OpenAI Codex", dialects: ["openai_responses"], available, model_roles: [],
 });
 
 /** The picker replaces the read-only field once `/v1/harnesses` answers. */
