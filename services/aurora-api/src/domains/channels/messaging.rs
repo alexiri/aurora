@@ -453,6 +453,7 @@ fn compose(
     Content {
         text: Some(text),
         card: None,
+        narration: None,
     }
 }
 

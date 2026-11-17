@@ -24,6 +24,8 @@ pub struct AgentRow {
     pub model_roles: Option<serde_json::Value>,
     /// (P5-MODELS-1, C-876) `inherit` | `large` | `medium` | `small`.
     pub subagent_model: String,
+    /// (P4-NARR, C-846) Live narration cards on chat platforms that can edit messages.
+    pub narration_cards: bool,
     pub proactive_messaging: String,
     pub brief: String,
     pub avatar_blob_key: Option<String>,
@@ -37,7 +39,7 @@ pub struct AgentRow {
 }
 
 const COLS: &str = "id, org_id, workspace_id, handle, name, kind, is_default, harness, model_provider, \
-    model_endpoint_id, model_id, effort, model_roles, subagent_model, proactive_messaging, brief, avatar_blob_key, avatar_public_key, \
+    model_endpoint_id, model_id, effort, model_roles, subagent_model, narration_cards, proactive_messaging, brief, avatar_blob_key, avatar_public_key, \
     byo_source_cidrs, byo_require_context, created_at, updated_at";
 
 pub struct NewDefaultAgent<'a> {
@@ -198,6 +200,7 @@ pub struct AgentPatch<'a> {
     /// (C-876) `None` = unchanged; `Some(None)` = clear; `Some(Some(v))` = replace.
     pub model_roles: Option<Option<&'a serde_json::Value>>,
     pub subagent_model: Option<&'a str>,
+    pub narration_cards: Option<bool>,
 }
 
 pub async fn update<'e, E: PgExecutor<'e>>(
@@ -213,7 +216,8 @@ pub async fn update<'e, E: PgExecutor<'e>>(
             resource_overrides = COALESCE($9, resource_overrides),
             model_provider = COALESCE($10, model_provider),
             model_roles = CASE WHEN $11 THEN $12 ELSE model_roles END,
-            subagent_model = COALESCE($13, subagent_model), updated_at = now()
+            subagent_model = COALESCE($13, subagent_model),
+            narration_cards = COALESCE($14, narration_cards), updated_at = now()
          WHERE id = $1 RETURNING {COLS}"
     )))
     .bind(id)
@@ -229,6 +233,7 @@ pub async fn update<'e, E: PgExecutor<'e>>(
     .bind(p.model_roles.is_some())
     .bind(p.model_roles.flatten())
     .bind(p.subagent_model)
+    .bind(p.narration_cards)
     .fetch_one(exec)
     .await?)
 }

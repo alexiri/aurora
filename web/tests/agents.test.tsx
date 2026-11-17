@@ -40,7 +40,7 @@ const agent = (kind: "byo" | "hosted") => ({
   id: "a1", org_id: "o1", workspace_id: "w1", handle: "bot", name: "Bot", kind,
   is_default: false, harness: null, model_provider: null, model_endpoint_id: null, model_id: null,
   effort: null, proactive_messaging: "ask", brief: "", effective_frozen: false, created_at: "2026-01-01T00:00:00Z",
-  updated_at: "2026-01-01T00:00:00Z", subagent_model: "inherit",
+  updated_at: "2026-01-01T00:00:00Z", subagent_model: "inherit", narration_cards: false,
 });
 const config = {
   proxy_url: "https://aug_SECRET@gw:1", env: { A: "b" }, ca_pem: "", ca_path: "/ca.pem", proxy_ca_path: "/ca.pem", proxy_tls: null, llm_env: {}, stubs: [],

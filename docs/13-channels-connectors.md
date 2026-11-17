@@ -813,7 +813,16 @@ stays hidden until Q-UTOK-1 is answered.
 
 - **Creation.** When a turn with a thread-link door starts and the agent's `narration_cards` is on
   and the connector declares `edits`, the core posts the card (`message.post`, `op_marker`
-  `narr:<turn_id>`, content of C-847) in place of the reaction or placeholder receipt.
+  `narr:<turn_id>`, content of C-847) when the supervisor reports `turn.started`. (Implementation, P4-NARR:
+  the seen-receipt of §4.5 (👀, native status, placeholder) is posted by the inbox at message receipt,
+  before the turn exists, and since FIX-158 (D-319) stays until the thread's answer; the card is shown
+  **in addition** to it, never instead, so a queued turn is still acknowledged. A turn that starts
+  with no card (setting off, no `edits`, the space at its cap) shows the receipt alone.)
+  The projector keeps no state: it rebuilds the card from the turn's durable tool events and its own
+  `narr:*` ops (`services/aurora-api/src/domains/channels/narration.rs`); the per-space counters are
+  those ops' rows, serialized by an advisory lock, so the caps hold across replicas. An update waits
+  for the card's post to be delivered (it needs the message ref); the sweep queues a collapse or a
+  trailing update that had to wait.
 - **Updates.** Each change of the step list is a `message.update`, coalesced within the bounds of
   C-849 (`NARR_MIN_INTERVAL`, `NARR_SPACE_UPDATES_PER_MINUTE`, `NARR_CARDS_PER_SPACE`). A pending
   update that a newer state supersedes is dropped, never sent late.

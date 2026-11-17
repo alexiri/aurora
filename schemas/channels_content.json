@@ -214,6 +214,105 @@
       ],
       "type": "object"
     },
+    "Narration": {
+      "description": "The narration card (C-847): the running form lists the last steps; the collapsed form\n(D-286, `collapsed: true`) carries only the counts and the elapsed time.",
+      "properties": {
+        "collapsed": {
+          "type": "boolean"
+        },
+        "earlier": {
+          "default": 0,
+          "description": "Steps cut from the front of `steps` (\"N earlier\").",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "elapsed_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "failed_count": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "status": {
+          "$ref": "#/$defs/NarrationStatus"
+        },
+        "step_count": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "steps": {
+          "items": {
+            "$ref": "#/$defs/NarrationStep"
+          },
+          "type": "array"
+        },
+        "turn_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "turn_id",
+        "status"
+      ],
+      "type": "object"
+    },
+    "NarrationStatus": {
+      "description": "Where a narration card's turn stands (C-847).",
+      "enum": [
+        "running",
+        "done",
+        "failed",
+        "stopped"
+      ],
+      "type": "string"
+    },
+    "NarrationStep": {
+      "description": "One tool step of a narration card.",
+      "properties": {
+        "detail": {
+          "description": "The sanitized summary; present only in a `direct` conversation (C-850).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "description": "The tool's name, at most `NARR_STEP_CHARS`.",
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/NarrationStepStatus",
+          "description": "`running` | `ok` | `failed`."
+        }
+      },
+      "required": [
+        "name",
+        "status"
+      ],
+      "type": "object"
+    },
+    "NarrationStepStatus": {
+      "enum": [
+        "running",
+        "ok",
+        "failed"
+      ],
+      "type": "string"
+    },
     "SelectOption": {
       "properties": {
         "label": {
@@ -241,6 +340,17 @@
           "type": "null"
         }
       ]
+    },
+    "narration": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Narration"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "(P4-NARR, C-847) A platform-authored progress card, rendered as data by the connector."
     },
     "text": {
       "type": [

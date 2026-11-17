@@ -23,6 +23,7 @@ mod integrations;
 mod links;
 pub mod messaging;
 pub mod mirror;
+pub mod narration;
 pub mod presences;
 mod reach;
 mod routes;

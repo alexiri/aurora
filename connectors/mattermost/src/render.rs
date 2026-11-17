@@ -289,6 +289,70 @@ pub fn defuse(text: &str, lk: &Lookups) -> String {
 
 /// Keeps a person from smuggling neutral mention tokens through message text
 /// (`<@here>`, `<@user:…>`): a zero-width space breaks the token.
+/// A narration card (C-851, `20 §Rendering`): words only, no emoji, no ping, no link. Every
+/// platform-supplied label (a tool's name, a `direct` conversation's summary) goes into a code
+/// span, so a bare URL stays text (no link, no preview, D-270) and no mention inside it renders
+/// (`@here`, `@all`, `<@user:…>`, a group: D-271); a backtick or an `@` in a label is replaced
+/// or broken first, so a label can neither close its span nor ping where code spans do not
+/// protect. The result is final platform markdown: it never goes through [`render_text`].
+pub fn render_narration(n: &aurora_channels::Narration) -> String {
+    use aurora_channels::{NarrationStatus as S, NarrationStepStatus as St};
+    let header = match n.status {
+        S::Running => "Working on it",
+        S::Done => "Done",
+        S::Failed | S::Stopped => "Stopped",
+    };
+    if n.collapsed {
+        let steps = n.step_count.unwrap_or(0);
+        let mut line = format!(
+            "**{header}** · {steps} step{}",
+            if steps == 1 { "" } else { "s" }
+        );
+        let failed = n.failed_count.unwrap_or(0);
+        if failed > 0 {
+            line.push_str(&format!(", {failed} failed"));
+        }
+        let secs = n.elapsed_ms.unwrap_or(0) / 1000;
+        if secs >= 60 {
+            line.push_str(&format!(" · {} min {} s", secs / 60, secs % 60));
+        } else {
+            line.push_str(&format!(" · {secs} s"));
+        }
+        return line;
+    }
+    let mut out = format!("**{header}**");
+    for s in &n.steps {
+        let state = match s.status {
+            St::Running => "running",
+            St::Ok => "done",
+            St::Failed => "failed",
+        };
+        out.push_str(&format!("\n- {}: {state}", code_span(&s.name)));
+        if let Some(d) = s.detail.as_deref().filter(|d| !d.is_empty()) {
+            out.push_str(&format!(" · {}", code_span(d)));
+        }
+    }
+    if n.earlier > 0 {
+        out.push_str(&format!("\n- {} earlier", n.earlier));
+    }
+    out
+}
+
+/// `label` as a Markdown code span that cannot be closed from inside and carries no mention.
+fn code_span(label: &str) -> String {
+    let clean: String = label
+        .chars()
+        .map(|c| match c {
+            '`' => '\'',
+            '\n' | '\r' => ' ',
+            c => c,
+        })
+        .collect::<String>()
+        .replace('@', "@\u{200B}")
+        .replace("<@", "<\u{200B}@");
+    format!("`{clean}`")
+}
+
 pub fn neutralize_tokens(text: &str) -> String {
     text.replace("<@", "<\u{200b}@").replace("<#", "<\u{200b}#")
 }
@@ -749,6 +813,99 @@ mod tests {
         assert!(!verify(b"other-key", "v1.token", &s));
         assert!(!verify(&key, "v1.token", ""));
         assert!(!verify(&key, "v1.token", "not base64 !!"));
+    }
+
+    fn step(
+        name: &str,
+        detail: Option<&str>,
+        status: aurora_channels::NarrationStepStatus,
+    ) -> aurora_channels::NarrationStep {
+        aurora_channels::NarrationStep {
+            name: name.to_owned(),
+            detail: detail.map(str::to_owned),
+            status,
+        }
+    }
+
+    fn card(
+        steps: Vec<aurora_channels::NarrationStep>,
+        earlier: u32,
+    ) -> aurora_channels::Narration {
+        aurora_channels::Narration {
+            turn_id: Uuid::nil().to_string(),
+            status: aurora_channels::NarrationStatus::Running,
+            steps,
+            earlier,
+            collapsed: false,
+            step_count: None,
+            failed_count: None,
+            elapsed_ms: None,
+        }
+    }
+
+    #[test]
+    fn a_narration_card_lists_steps_as_code_spans_with_no_ping_and_no_link() {
+        use aurora_channels::NarrationStepStatus as St;
+        let n = card(
+            vec![
+                step("@here", None, St::Ok),
+                step(
+                    "@all <@user:U1> @devs",
+                    Some("see https://evil.example/x `x`"),
+                    St::Running,
+                ),
+                step("Bash", None, St::Failed),
+            ],
+            4,
+        );
+        let t = render_narration(&n);
+        assert!(
+            t.starts_with("**Working on it**\n- `@\u{200B}here`: done"),
+            "{t}"
+        );
+        assert!(t.contains("- `Bash`: failed"), "{t}");
+        assert!(t.ends_with("\n- 4 earlier"), "{t}");
+        assert!(
+            t.contains("`see https://evil.example/x 'x'`"),
+            "the URL stays inside a code span: {t}"
+        );
+        // After defusing, no `@name`, `<@user:…>` token or hereless broadcast is left active.
+        assert!(
+            !t.contains("@here") && !t.contains("@all") && !t.contains("<@user"),
+            "{t}"
+        );
+        assert!(
+            !t.contains('😀') && !t.contains("]("),
+            "no emoji, no link: {t}"
+        );
+        assert!(
+            mention_refs(&t).users.is_empty() && mention_refs(&t).names.is_empty(),
+            "{t}"
+        );
+    }
+
+    #[test]
+    fn a_full_card_fits_the_post_limit_and_the_collapsed_form_is_one_line() {
+        use aurora_channels::NarrationStepStatus as St;
+        let long = "x".repeat(120);
+        let steps = (0..12).map(|_| step(&long, Some(&long), St::Ok)).collect();
+        let t = render_narration(&card(steps, 99));
+        assert!(t.chars().count() < 16_383, "{}", t.chars().count());
+        let mut c = card(Vec::new(), 0);
+        c.status = aurora_channels::NarrationStatus::Done;
+        c.collapsed = true;
+        c.step_count = Some(4);
+        c.failed_count = Some(1);
+        c.elapsed_ms = Some(75_000);
+        assert_eq!(
+            render_narration(&c),
+            "**Done** · 4 steps, 1 failed · 1 min 15 s"
+        );
+        c.status = aurora_channels::NarrationStatus::Failed;
+        c.step_count = Some(1);
+        c.failed_count = Some(0);
+        c.elapsed_ms = Some(2_000);
+        assert_eq!(render_narration(&c), "**Stopped** · 1 step · 2 s");
     }
 
     fn ctx(key: &[u8]) -> CardCtx<'_> {

@@ -73,6 +73,14 @@ fn sender(integ: &Integ, s: &Sender) -> R<(String, String)> {
 async fn render_content(integ: &Integ, content: &Value) -> R<(String, Vec<Value>)> {
     let c: Content = serde_json::from_value(content.clone())
         .map_err(|e| err(ErrorCode::Invalid, e.to_string()))?;
+    // (P4-NARR, C-851) A narration card is a platform-authored post, rendered as data.
+    if let Some(n) = &c.narration {
+        let message = crate::render::render_narration(n);
+        if message.chars().count() > MESSAGE_MAX_CHARS {
+            return Err(err(ErrorCode::TooLarge, "message too long"));
+        }
+        return Ok((message, Vec::new()));
+    }
     let actions_url = integ.settings.actions_url();
     let mut caps_vec: Vec<Capability> = integ
         .snapshot()
