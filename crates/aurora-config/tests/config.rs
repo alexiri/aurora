@@ -1322,6 +1322,65 @@ fn connector_host_config_defaults_token_and_overrides() {
     assert!(!format!("{c:?}").contains("auh_abc123"));
 }
 
+/// (P4-SSH-2) The terminator's slice: `aut_` token and host key (both formats) required, defaults
+/// from `aurora_core::limits`, positive ceilings, the key never quoted in an error.
+#[test]
+fn terminator_config_requires_token_and_host_key_in_either_format() {
+    use base64::Engine as _;
+    let seed = base64::engine::general_purpose::STANDARD.encode([9u8; 32]);
+    let key = format!("ed25519:{seed}");
+    let env = [
+        ("AURORA_TERMINATOR_TOKEN", "aut_abc123"),
+        ("AURORA_SSH_HOST_KEY", key.as_str()),
+    ];
+    let c = load_with(BASE, &env).unwrap().terminator_config().unwrap();
+    assert_eq!(c.api_url, "http://127.0.0.1:4101");
+    assert_eq!(c.listen, "0.0.0.0:2222");
+    assert_eq!(c.ops_port, 4194);
+    assert_eq!(c.max_preauth, aurora_core::limits::SSH_PREAUTH_MAX);
+    assert_eq!(
+        c.max_preauth_per_ip,
+        aurora_core::limits::SSH_PREAUTH_PER_IP
+    );
+    assert_eq!(c.token.expose(), "aut_abc123");
+    // Overrides (an operator behind a balancer that hides client addresses raises them).
+    let c = load_with(
+        &format!(
+            "{BASE}\n[terminator]\napi_url = \"http://aurora-api:4101/\"\nmax_preauth_per_ip = 64\n"
+        ),
+        &env,
+    )
+    .unwrap()
+    .terminator_config()
+    .unwrap();
+    assert_eq!(c.api_url, "http://aurora-api:4101");
+    assert_eq!(c.max_preauth_per_ip, 64);
+    // Missing or malformed secrets are named; the key itself never appears.
+    let e = load_with(BASE, &[])
+        .unwrap()
+        .terminator_config()
+        .unwrap_err();
+    assert!(
+        e.has_key("AURORA_TERMINATOR_TOKEN") && e.has_key("AURORA_SSH_HOST_KEY"),
+        "{e}"
+    );
+    let e = load_with(
+        BASE,
+        &[
+            ("AURORA_TERMINATOR_TOKEN", "abc"),
+            ("AURORA_SSH_HOST_KEY", "ed25519:not-base64!!"),
+        ],
+    )
+    .unwrap()
+    .terminator_config()
+    .unwrap_err();
+    assert!(
+        e.has_key("AURORA_TERMINATOR_TOKEN") && e.has_key("AURORA_SSH_HOST_KEY"),
+        "{e}"
+    );
+    assert!(!e.to_string().contains("not-base64"), "{e}");
+}
+
 /// `relay.trusted_proxies` (FIX-090): empty by default, strict CIDRs, `/0` refused.
 #[test]
 fn relay_trusted_proxies_default_empty_and_validated() {
@@ -2588,4 +2647,46 @@ fn ssh_section_defaults_bounds_and_ca_key_refusal() {
         assert!(e.has_key(key), "{extra}: {e}");
     }
     api("[ssh]\ncert_ttl_secs = 86400\n", &[]).unwrap();
+}
+
+/// (P4-SSH-2) the session caps and clocks default to the limits, only lower them, and the
+/// terminator anchor token must carry the `aut_` prefix.
+#[test]
+fn ssh_session_caps_clocks_and_terminator_token() {
+    let api = |extra: &str, env: &[(&str, &str)]| {
+        load_with(&format!("{BASE}{extra}"), env)
+            .unwrap()
+            .api_config()
+    };
+    let c = api("", &[]).unwrap();
+    assert_eq!((c.ssh.sessions_per_user, c.ssh.sessions_per_agent), (4, 8));
+    assert_eq!((c.ssh.idle_timeout_secs, c.ssh.wake_wait_secs), (600, 90));
+    assert_eq!(c.ssh.awake_cap_secs, 4 * 3600);
+    assert!(c.bootstrap_terminator_token.is_none());
+    let c = api(
+        "[ssh]\nsessions_per_user = 1\nsessions_per_agent = 2\nidle_timeout_secs = 60\nawake_cap_secs = 600\nwake_wait_secs = 30\n",
+        &[("AURORA_BOOTSTRAP_TERMINATOR_TOKEN", "aut_abc")],
+    )
+    .unwrap();
+    assert_eq!((c.ssh.sessions_per_user, c.ssh.sessions_per_agent), (1, 2));
+    assert_eq!(c.ssh.awake_cap_secs, 600);
+    assert!(c.bootstrap_terminator_token.is_some());
+    for (extra, key) in [
+        ("sessions_per_user = 0\n", "ssh.sessions_per_user"),
+        ("sessions_per_user = 5\n", "ssh.sessions_per_user"),
+        ("sessions_per_agent = 9\n", "ssh.sessions_per_agent"),
+        ("idle_timeout_secs = 601\n", "ssh.idle_timeout_secs"),
+        ("awake_cap_secs = 0\n", "ssh.awake_cap_secs"),
+        ("awake_cap_secs = 43201\n", "ssh.awake_cap_secs"),
+        ("wake_wait_secs = 91\n", "ssh.wake_wait_secs"),
+    ] {
+        let e = api(&format!("[ssh]\n{extra}"), &[]).unwrap_err();
+        assert!(e.has_key(key), "{extra}: {e}");
+    }
+    let e = api(
+        "",
+        &[("AURORA_BOOTSTRAP_TERMINATOR_TOKEN", "aul_wrongprefix")],
+    )
+    .unwrap_err();
+    assert!(e.has_key("AURORA_BOOTSTRAP_TERMINATOR_TOKEN"), "{e}");
 }

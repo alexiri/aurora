@@ -730,6 +730,7 @@ impl Backend for KubernetesBackend {
             // registration from the answered `terminal` config flag.
             terminal: false,
             files: false,
+            ssh: false,
         }
     }
 

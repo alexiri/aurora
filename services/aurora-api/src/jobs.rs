@@ -318,6 +318,29 @@ pub async fn preview_housekeeping(pool: &PgPool) -> Result<u64, aurora_db::DbErr
     Ok(cleared)
 }
 
+/// (P4-SSH-2, C-794) The stale-session sweep: every API replica, every 30 s, closes the open
+/// `ssh_sessions` rows whose lease passed (`SKIP LOCKED`, the guarded close-exactly-once
+/// transition, one `agent.ssh.close` row each). A no-op while `ssh.enabled` is off.
+pub const SSH_SWEEP_EVERY: Duration = Duration::from_secs(30);
+
+pub fn spawn_ssh_sweep(state: crate::app::AppState) {
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(SSH_SWEEP_EVERY);
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            tick.tick().await;
+            if !state.config.ssh.enabled {
+                continue;
+            }
+            match crate::domains::ssh::sessions::sweep(&state).await {
+                Ok(0) => {}
+                Ok(n) => tracing::info!(closed = n, "ssh sessions closed: lease expired"),
+                Err(e) => tracing::warn!(error = %e.message(), "ssh session sweep failed"),
+            }
+        }
+    });
+}
+
 /// Run the preview-housekeeping arm on this replica every [`PREVIEW_HOUSEKEEPING_EVERY`].
 pub const PREVIEW_HOUSEKEEPING_EVERY: Duration = Duration::from_secs(60);
 

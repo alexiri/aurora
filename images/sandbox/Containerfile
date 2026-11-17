@@ -47,8 +47,10 @@ FROM ${SANDBOX_BASE_IMAGE} AS os
 # (P5-FILES-1, D-316) `openssh-server` provides `/usr/libexec/openssh/sftp-server`, the binary the
 # supervisor starts for a Files / SFTP session (`12 §SSH channels`: fixed path). Only that binary is
 # used: `sshd` is never enabled or started (the assertion below), the sandbox gains no listener.
+# (P4-SSH-2) `openssh-clients` is here too (the `base` stage had it already): the `scp` binary that a legacy
+# `scp -O` runs on the remote side (`exec` of `scp -t`), also in the slim e2e image (`sandbox-min`).
 RUN dnf -y install --setopt=install_weak_deps=False shadow-utils glibc-common postgresql rpm \
-         bash bash-completion zsh which ncurses openssh-server \
+         bash bash-completion zsh which ncurses openssh-server openssh-clients \
     && useradd --uid 1000 --user-group --home-dir /workspace --no-create-home --shell /bin/bash agent \
     && mkdir -p /workspace /run/aurora /opt/aurora /opt/aurora/bin \
     && chown 1000:1000 /workspace \

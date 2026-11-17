@@ -19,6 +19,11 @@
 {{- if .Values.relay.enabled }}
 {{- $apiEnv = printf "%s\n- name: AURORA_BOOTSTRAP_RELAY_TOKEN\n  valueFrom: {secretKeyRef: {name: %s, key: AURORA_RELAY_TOKEN}}" $apiEnv (include "aurora.secretName" .) }}
 {{- end }}
+{{- if .Values.ssh.enabled }}
+{{- /* (P4-SSH-2) the CA private key goes into the api pods ONLY; the terminator's anchor token is the same
+       secret key the terminator reads as AURORA_TERMINATOR_TOKEN. */}}
+{{- $apiEnv = printf "%s\n- name: AURORA_SSH_CA_KEY\n  valueFrom: {secretKeyRef: {name: %s, key: AURORA_SSH_CA_KEY}}\n- name: AURORA_BOOTSTRAP_TERMINATOR_TOKEN\n  valueFrom: {secretKeyRef: {name: %s, key: AURORA_TERMINATOR_TOKEN}}" $apiEnv (include "aurora.secretName" .) (include "aurora.secretName" .) }}
+{{- end }}
 {{ include "aurora.workload" (dict "root" . "name" "api" "probePort" 4101 "spec" .Values.api "caCert" true "vaultToken" true "image" (include "aurora.image" (dict "root" . "name" "aurora-api")) "args" (list "serve") "env" $apiEnv "pluginsMount" true "ports" (list (dict "name" "http" "port" 4101) (dict "name" "internal" "port" 4111))) }}
 ---
 {{ include "aurora.workload" (dict "root" . "name" "hookhost" "probePort" 4104 "spec" .Values.hookhost "image" (include "aurora.image" (dict "root" . "name" "aurora-hookhost")) "args" (list "serve") "env" (include "aurora.env" (dict "root" . "keys" (list "AURORA_INTERNAL_SECRET") "optionalKeys" (list "AURORA_INTERNAL_ACTIVE_KEY"))) "ports" (list (dict "name" "http" "port" 4104))) }}
@@ -68,6 +73,40 @@ metadata:
 {{/* port-previews relay (P4-PRV-2): edge 4112 (Service, wildcard-routed by routing.yaml),
      ops 4193 (health/metrics, no Service). The relay token is the AURORA_RELAY_TOKEN secret. */}}
 {{ include "aurora.workload" (dict "root" . "name" "relay" "probePort" 4193 "spec" .Values.relay "image" (include "aurora.image" (dict "root" . "name" "aurora-relay")) "args" (list "serve") "env" (include "aurora.env" (dict "root" . "keys" (list "AURORA_RELAY_TOKEN"))) "ports" (list (dict "name" "edge" "port" 4112) (dict "name" "ops" "port" 4193 "skipService" true))) }}
+{{- end }}
+{{- if .Values.ssh.enabled }}
+---
+{{/* SSH terminator (P4-SSH-2, docs/15 §SSH access): SSH on 2222 (published by the LoadBalancer/NodePort
+     Service below, not by the workload's own Service), ops 4194 (headless Service for the metrics). No
+     service-account token (the helper's default), no database URL, no Vault; the host key and the
+     anchor token are the only secrets it gets. */}}
+{{ include "aurora.workload" (dict "root" . "name" "terminator" "probePort" 4194 "headless" true "spec" .Values.terminator "image" (include "aurora.image" (dict "root" . "name" "aurora-terminator")) "args" (list "serve") "env" (include "aurora.env" (dict "root" . "keys" (list "AURORA_TERMINATOR_TOKEN" "AURORA_SSH_HOST_KEY"))) "ports" (list (dict "name" "ssh" "port" 2222 "skipService" true) (dict "name" "ops" "port" 4194))) }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $full }}-terminator-ssh
+  labels: {{- include "aurora.labels" . | nindent 4 }}
+    app.kubernetes.io/component: terminator
+  {{- with .Values.terminator.service.annotations }}
+  annotations: {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.terminator.service.type }}
+  {{- if eq .Values.terminator.service.type "LoadBalancer" }}
+  externalTrafficPolicy: {{ .Values.terminator.service.externalTrafficPolicy }}
+  {{- end }}
+  selector: {{- include "aurora.selector" (dict "root" . "component" "terminator") | nindent 4 }}
+  ports:
+    - name: ssh
+      port: {{ .Values.terminator.service.port }}
+      targetPort: 2222
+      {{- if and (eq .Values.terminator.service.type "NodePort") .Values.terminator.service.nodePort }}
+      nodePort: {{ .Values.terminator.service.nodePort }}
+      {{- end }}
+  {{- with .Values.terminator.service.loadBalancerSourceRanges }}
+  loadBalancerSourceRanges: {{- toYaml . | nindent 4 }}
+  {{- end }}
 {{- end }}
 {{- if .Values.connectorHost.enabled }}
 ---

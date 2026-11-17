@@ -21,7 +21,15 @@ const KEYS = [
   },
 ];
 
-async function mockSsh(page: Page, over: { terminators?: number; keys?: typeof KEYS } = {}) {
+// (P4-SSH-2, C-793) Open sessions: one of the caller's own (account list), and the agent page's list with the person.
+const SESSION = {
+  id: "00000000-0000-4000-8000-0000000000b1", agent: { id: "00000000-0000-4000-8000-0000000000c1", name: "Daneel" },
+  workspace_id: "00000000-0000-4000-8000-0000000000d1",
+  key: { id: KEYS[0]!.id, name: KEYS[0]!.name, fingerprint: KEYS[0]!.fingerprint }, client_address: "203.0.113.0",
+  opened_at: "2026-11-16T10:00:00Z", last_activity_at: "2026-11-16T10:05:00Z", channels_open: 0, channels_total: 3,
+};
+
+async function mockSsh(page: Page, over: { terminators?: number; keys?: typeof KEYS; sessions?: (typeof SESSION)[] } = {}) {
   await mockApi(page);
   const reply = (route: import("@playwright/test").Route, body: unknown, status = 200) =>
     route.fulfill({ status, contentType: "application/json", body: JSON.stringify(body) });
@@ -34,6 +42,18 @@ async function mockSsh(page: Page, over: { terminators?: number; keys?: typeof K
     }),
   );
   await page.route("**/v1/me/ssh-keys", (route) => reply(route, { keys: over.keys ?? KEYS }));
+  await page.route("**/v1/me/ssh-sessions", (route) => reply(route, { sessions: over.sessions ?? [SESSION] }));
+  await page.route("**/v1/agents/*/ssh-sessions", (route) =>
+    reply(route, { sessions: (over.sessions ?? [SESSION]).map((s) => ({ ...s, user: { id: "00000000-0000-4000-8000-0000000000e1", label: "Bob Builder" } })) }),
+  );
+  await page.route("**/v1/admin/terminators", (route) =>
+    reply(route, {
+      terminators: [{
+        id: "00000000-0000-4000-8000-0000000000f1", version: "0.1.0", host_key_fingerprint: "SHA256:hostkeyfingerprintaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        sessions_open: 1, last_seen_at: "2026-11-16T10:00:00Z", live: (over.terminators ?? 1) > 0,
+      }],
+    }),
+  );
   const live = over.terminators ?? 1;
   await page.route("**/v1/ssh", (route) =>
     reply(route, {
@@ -70,7 +90,7 @@ for (const scheme of ["light", "dark"] as const) {
         await mockSsh(page);
         await open(page, "/account/ssh", scheme);
         await expect(page.getByRole("heading", { name: "SSH keys", level: 2 })).toBeVisible();
-        await expect(page.getByText("work laptop with a rather long descriptive name")).toBeVisible();
+        await expect(page.getByRole("table", { name: "SSH keys" }).getByText("work laptop with a rather long descriptive name")).toBeVisible();
         await expect(page.getByRole("button", { name: "Add key" })).toBeVisible();
         expect(await serious(page)).toEqual([]);
         if (width === 390) expect(await overflow(page)).toBeLessThanOrEqual(0);
@@ -88,6 +108,50 @@ for (const scheme of ["light", "dark"] as const) {
         await expect(page.getByRole("heading", { name: "Host key" })).toBeVisible();
         await expect(page.getByRole("heading", { name: "What works" })).toBeVisible();
         await expect(page.getByLabel("the known_hosts lines", { exact: true })).toContainText("ssh.example.org ssh-ed25519 AAAAHOSTKEY");
+        expect(await serious(page)).toEqual([]);
+        if (width === 390) expect(await overflow(page)).toBeLessThanOrEqual(0);
+      });
+
+      test("Account › SSH keys: the active sessions list and its disconnect confirmation", async ({ page }) => {
+        await mockSsh(page);
+        let deleted = false;
+        await page.route("**/v1/ssh-sessions/*", (route) => {
+          deleted = true;
+          return route.fulfill({ status: 202, contentType: "application/json", body: JSON.stringify({ disconnecting: true }) });
+        });
+        await open(page, "/account/ssh", scheme);
+        await expect(page.getByRole("heading", { name: "Active SSH sessions", level: 2 })).toBeVisible();
+        const table = page.getByRole("table", { name: "Active SSH sessions" });
+        await expect(table.getByText("Daneel")).toBeVisible();
+        expect(await serious(page)).toEqual([]);
+        if (width === 390) expect(await overflow(page)).toBeLessThanOrEqual(0);
+        await page.getByRole("button", { name: /Disconnect the session on Daneel/ }).click();
+        const dialog = page.getByRole("dialog", { name: "Disconnect SSH session" });
+        await expect(dialog).toBeVisible();
+        expect(await serious(page)).toEqual([]);
+        if (width === 390) expect(await overflow(page)).toBeLessThanOrEqual(0);
+        await dialog.getByRole("button", { name: "Disconnect" }).click();
+        await expect(page.getByText(/The session ends within 30 seconds/)).toBeVisible();
+        expect(deleted).toBe(true);
+      });
+
+      test("agent page › SSH: the active sessions list shows the person", async ({ page }) => {
+        await mockSsh(page);
+        await open(page, "/o/acme/w/main/agents/daneel?tab=ssh", scheme);
+        await expect(page.getByRole("heading", { name: "Active sessions", level: 2 })).toBeVisible();
+        const table = page.getByRole("table", { name: "Active SSH sessions" });
+        await expect(table.getByText("Bob Builder")).toBeVisible();
+        expect(await serious(page)).toEqual([]);
+        if (width === 390) expect(await overflow(page)).toBeLessThanOrEqual(0);
+      });
+
+      test("Admin › Overview: the SSH line", async ({ page }) => {
+        await mockSsh(page);
+        await open(page, "/admin", scheme);
+        const line = page.getByTestId("ssh-line");
+        await expect(line).toBeVisible();
+        await expect(line).toContainText("Terminator up");
+        await expect(line).toContainText("1 terminator replica live, 1 open session");
         expect(await serious(page)).toEqual([]);
         if (width === 390) expect(await overflow(page)).toBeLessThanOrEqual(0);
       });

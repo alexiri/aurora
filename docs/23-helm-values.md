@@ -22,6 +22,7 @@ that is not in this table does not exist.
 |---|---|---|
 | `terminal.enabled` | `config.terminal.enabled` (an instance setting: set it only to lock it) | the runner's stream listener :4108 and the NetworkPolicy flows to it; `config.terminal.available = true` |
 | `relay.enabled` | `config.previews.enabled` | the preview relay workload, its Service and flows |
+| `ssh.enabled` | `config.ssh.enabled` | the SSH terminator workload, its LoadBalancer and ops Services, the SSH NetworkPolicies, the generated SSH keys and the runner's :4108 |
 | `scim.enabled` | `config.scim.enabled` (an instance setting: set it only to lock it) | the `/scim/v2` edge route; `config.scim.available = true` |
 | `vault.*` | `config.secrets.stores` (the Vault entry) | service-account tokens and Vault wiring for api and gateway |
 | `counters.*` | `config.ratelimit.counters` | the Redis connection and NetworkPolicy peers |
@@ -107,6 +108,7 @@ a conflicting `config` entry is merged away or fails the render:
 | `config.terminal.available` | `terminal.enabled` | (phase 5, SET-5, D-237(d)) `true` when the top-level value is on, else not rendered; `config.terminal.enabled` is not mirrored any more — `config.terminal.enabled: true` without the top-level value fails the render, and an operator-set `config.terminal.enabled` (either value) locks the setting |
 | `config.scim.available` | `scim.enabled` | (phase 5, SET-5, D-237(d)) `true` when the top-level value is on, else not rendered |
 | `config.scim.rate_per_minute` | `scim.ratePerMinute` | rendered only when the value is set (it then locks the setting) |
+| `ssh.enabled` / `[terminator]` | `ssh.enabled`, `terminator.max_preauth`, `.max_preauth_per_ip` | (phase 5, P4-SSH-2) `ssh.enabled` is mirrored from the top-level value; `config.ssh.enabled=true` alone, or both set and unequal, fails the render. With it on the chart also renders `[terminator]` (`api_url`, `listen = 0.0.0.0:2222`, `ops_port = 4194`, the two limits) — a `config.terminator.*` entry wins |
 | `previews.enabled` | `relay.enabled` | mirrored from the top-level value (FIX-056): rendered only when the config side is unset; both set and unequal — or `config.previews.enabled` alone — fails the render |
 | `ratelimit.counters` | `counters.*` | rendered only when `backend ≠ memory` |
 | `secrets.stores[]` (Vault) | `vault.*` | api and gateway each get their own store config |
@@ -340,6 +342,38 @@ The generic per-service keys `<svc>.replicas`, `.resources`, `.nodeSelector`, `.
 | `relay.request_body_max_bytes` | bytes | `33554432` (32 MiB) | `[relay] request_body_max_bytes`: request-body cap on a preview request | previews that upload large bodies |
 | `relay.trusted_proxies` | CIDR list | `[]` | `[relay] trusted_proxies` (same semantics and default as `server.trusted_proxies`): the edge proxies / ingress pods in front of the relay. When the socket peer is inside one, the visitor's address is the rightmost untrusted `X-Forwarded-For` entry; without it the peer address is the client address (every visitor behind an ingress would share one grant-redemption bucket). `/0` is refused | an ingress or load balancer sits in front of the relay |
 
+## SSH access (terminator)
+
+The SSH terminator (P4-SSH-2, D-239, C-797; [15 §SSH access](15-deployment-operations.md#ssh-access-phase-5-p4-ssh-1-p4-ssh-2-d-239-sec-92sec-96),
+[16 §W20](16-wire-protocols.md)). `ssh.enabled` is the **single switch**: it renders the `aurora-terminator`
+Deployment, its LoadBalancer Service (published port → 2222) and a headless ops Service (4194), a
+PodDisruptionBudget (from two replicas) and the terminator NetworkPolicy, adds the api ingress from the terminator and
+the runner ingress on :4108, opens the runner's :4108 beside previews and the terminal, makes the `secrets` hook
+generate `AURORA_TERMINATOR_TOKEN`, `AURORA_SSH_CA_KEY` and `AURORA_SSH_HOST_KEY` when absent (never overwriting;
+with `secrets.existingSecret` create them yourself), mounts the CA key into the **api pods only** (and the `migrate` hook Job, which runs the API image and
+validates the same configuration) and the host key into the **terminator pods only**, and mirrors `config.ssh.enabled`. **SSH needs the web terminal enabled, because the sandbox boot document carries the exec capability only with it**
+(`domains/runner_plane/boot.rs`: `terminal` is added only when `terminal.enabled`; the supervisor refuses every exec
+without it) — an open follow-up is to widen that gate so SSH can run without the web terminal. The render **fails**
+when `ssh.enabled` is set without `runner.enabled`, without `terminal.enabled` or — while `networkPolicy.enabled` — with an empty `networkPolicy.sshFrom`; and when
+`config.ssh.enabled=true` stands alone or disagrees. The terminator has no service-account token, no database URL and no
+Vault; the sandboxes namespace gains nothing. The generic per-service keys (`replicas`, `resources`, `nodeSelector`,
+`tolerations`, `extraEnv`) apply to `terminator` too.
+
+| Value | Type / values | Default | What it does | Set it when / details |
+|---|---|---|---|---|
+| `ssh.enabled` | bool | `false` | the single SSH switch (above); mirrors `config.ssh.enabled` — set only this | turning SSH access on (`config.ssh.public_host` is the name people connect to) |
+| `terminator.replicas` | int ≥ 1 | `2` | terminator Deployment replicas (each holds its own connections; a node loss cuts only its own) | one replica on a small cluster |
+| `terminator.resources` | resources | requests `100m` / `128Mi`, memory limit `512Mi` | terminator pod resources | many concurrent sessions |
+| `terminator.nodeSelector` / `terminator.tolerations` | map / list | `{}` / `[]` | scheduling of the terminator pods | an edge node pool |
+| `terminator.extraEnv` | list of env entries | `[]` | extra environment for the terminator container (`valueFrom` supported) | tracing variables |
+| `terminator.service.type` | `LoadBalancer` \| `NodePort` | `LoadBalancer` | the published SSH Service type | `NodePort` on kind (`deploy/kind`, host port 2222) |
+| `terminator.service.port` | int | `22` | the published SSH port (container port 2222) | set `config.ssh.public_port` to the same value when it is not 22 |
+| `terminator.service.nodePort` | int / null | `null` | with `type: NodePort`: the fixed node port | kind maps 2222 |
+| `terminator.service.annotations` | map | `{}` | annotations of the SSH Service (cloud load-balancer options) | a cloud load balancer |
+| `terminator.service.loadBalancerSourceRanges` | CIDR list | `[]` | the balancer's source ranges (no restriction when empty; `networkPolicy.sshFrom` still applies) | restricting at the balancer |
+| `terminator.service.externalTrafficPolicy` | `Local` \| `Cluster` | `Local` | keeps the client address for the per-address limits; with a balancer that cannot keep it every client shares one address | `Cluster` when `Local` is not available (then raise `terminator.max_preauth_per_ip`) |
+| `terminator.max_preauth` / `terminator.max_preauth_per_ip` | int | `256` / `8` | `[terminator] max_preauth` / `max_preauth_per_ip` (`SSH_PREAUTH_MAX`, `SSH_PREAUTH_PER_IP`): unauthenticated connections in total and per client address | many clients behind one address |
+
 ## SCIM
 
 | Value | Type / values | Default | What it does | Set it when / details |
@@ -380,7 +414,8 @@ nothing opens the sandboxes to the cluster.
 | `networkPolicy.kubeApiCidrs` / `.kubeApiPorts` | CIDR list / port list | `[]` (= the addresses of the `kubernetes` EndpointSlice in `default`, read at install/upgrade; no rule where unreadable) / `[443, 6443]` | runner and `secrets` hook → Kubernetes API egress | pinned API-server endpoints; any cluster where the installing identity cannot read endpointslices |
 | `networkPolicy.kubeApiOpen` | bool | `false` | explicitly allow any:`kubeApiPorts` for the runner and the `secrets` hook (the pre-FIX-102 default); never silent | only when the API server addresses cannot be pinned |
 | `networkPolicy.telemetryTo` | list of raw NetworkPolicy `to` entries | `[]` | (phase 5, FIX-146, D-232, C-732 (5)) where the OTLP collector named by `config.telemetry.otlp_endpoint` lives. Rendered as one egress-only policy `<release>-telemetry` for the exporting workloads: api, gateway, hookhost, runner, relay, connector host and the connector Deployments. Never the web workload (its browser spans go through the API) and never the sandboxes namespace (sandboxes and the supervisor export nothing). Empty (default): no policy, so the default-deny policies block the collector | set it whenever `config.telemetry.otlp_endpoint` is set; `NOTES.txt` warns when an endpoint is set and this is empty. The kind dev stack sets it in `deploy/kind/values-tracing.yaml` (`just kind-up --tracing`) |
-| `networkPolicy.monitoringFrom` | list of NetworkPolicy peers | `[]` | peers allowed to scrape every ops/metrics port (4101, 4103, 4104, 4106, 4192, 4193); nothing opens them by default | Prometheus in another namespace |
+| `networkPolicy.monitoringFrom` | list of NetworkPolicy peers | `[]` | peers allowed to scrape every ops/metrics port (4101, 4103, 4104, 4106, 4192, 4193, 4194); nothing opens them by default | Prometheus in another namespace |
+| `networkPolicy.sshFrom` | list of NetworkPolicy peers | `[]` (**required when `ssh.enabled` and `networkPolicy.enabled`**: the render fails while empty) | (phase 5, P4-SSH-2) who may reach the terminator's port 2222. The terminator's egress is the api (:4101), the runner (:4108) and DNS only — no Postgres, gateway, sandboxes or Internet | admitting everyone is explicit: `[{ipBlock: {cidr: 0.0.0.0/0}}, {ipBlock: {cidr: "::/0"}}]` |
 | `monitoring.podMonitor.enabled` / `.interval` / `.labels` | bool / duration / map | `false` / `30s` / `{}` | one Prometheus Operator `PodMonitor` per component (ops listeners have no Service); needs the Prometheus Operator CRDs (API group monitoring.coreos.com) | Prometheus Operator |
 | `secrets.allowRegenerate` | bool | `false` | let an **upgrade** create fresh encryption keys when the generated Secret is absent (otherwise the hook refuses: stored credentials would become undecryptable) | deliberately starting over after a restore without the Secret |
 | `networkPolicy.cilium.enabled` | bool | `false` | add CiliumNetworkPolicies for runner and `secrets` hook → kube-apiserver (Cilium matches those as entities, not ipBlocks) and admit the `ingress` entity on the edge ports | Cilium cluster (`15 §Production`) |
@@ -418,7 +453,8 @@ Many `aurora.toml` keys look like chart values but are **not** — they go in
   (limits `terminal.awake_cap_secs`, … are instance settings; the chart value
   `terminal.enabled` renders `config.terminal.available`), SSH access
   (phase 5: `ssh.public_host`, `ssh.cert_ttl_secs`, `ssh.ca.previous_public_keys`, … in
-  `config.ssh.*`; the switch will be the chart value `ssh.enabled`), SCIM
+  `config.ssh.*`; the switch is the chart value `ssh.enabled`,
+  [§SSH access (terminator)](#ssh-access-terminator)), SCIM
   (`scim.enabled`, …), Web Push (`push.*`),
   the S3 blob store (`blobs.*`), approval parking (`approvals.park.*`) —
   set these in `config`, the sections' keys and limits are in
@@ -447,16 +483,6 @@ feature:
   - `push.vapid.subject`, `push.concurrency`, `push.timeout_secs` are config keys (`config.push.*`); `push.dev_endpoint_overrides` is never rendered.
 - Approval parking (phase 5, P4-011B): **no chart values** — `approvals.park.*` are instance settings edited in Admin › Approvals (D-265(c)); set `config.approvals.park.*` only to lock them.
 - S3 blob store (phase 6, D-318; not in the chart yet): `blobs.s3.existingSecret`, `blobs.s3.networkPolicy` (P4-S3; `15 §S3-compatible blob store`)
-- SSH access (phase 5, P4-SSH-2, D-239, C-797; not in the chart yet — P4-SSH-2 adds them to `values.yaml`, moves these rows into a new `## SSH access (terminator)` section and into §NetworkPolicy, and adds `ssh`/`terminator` to the chart-key list of §The config block; `15 §SSH access`):
-  - `ssh.enabled` — bool, default `false`. The single switch: renders the terminator Deployment, its LoadBalancer and ops Services, PodDisruptionBudget and NetworkPolicies, makes the `secrets` hook generate `AURORA_TERMINATOR_TOKEN`, `AURORA_SSH_CA_KEY` and `AURORA_SSH_HOST_KEY` when absent, mounts the CA key into the api pods and the host key into the terminator pods only, opens the runner's :4108 (beside previews and the terminal) and mirrors `config.ssh.enabled` (both set and unequal, or the config key alone, fails the render).
-  - `terminator.replicas` (int ≥ 1, default `2`), `terminator.resources` (requests `100m`/`128Mi`, memory limit `512Mi`), `terminator.nodeSelector` / `terminator.tolerations` (`{}` / `[]`), `terminator.extraEnv` (`[]`) — the generic per-service keys.
-  - `terminator.service.port` — int, default `22`: the published SSH port (container port 2222); set `config.ssh.public_port` to the same value when it is not 22.
-  - `terminator.service.annotations` — map, default `{}` (cloud load-balancer annotations).
-  - `terminator.service.loadBalancerSourceRanges` — CIDR list, default `[]` (no restriction at the balancer; `networkPolicy.sshFrom` still applies).
-  - `terminator.service.externalTrafficPolicy` — `Local` \| `Cluster`, default `Local` (keeps the client address for the per-address limits).
-  - `terminator.service.type` — `LoadBalancer` \| `NodePort`, default `LoadBalancer` (`NodePort` on kind, `deploy/kind`).
-  - `terminator.max_preauth` / `terminator.max_preauth_per_ip` — ints, defaults `256` / `8`, rendered into `[terminator]`.
-  - `networkPolicy.sshFrom` — list of NetworkPolicy peers, default `[]`; **required** when `ssh.enabled` (the render fails while empty, so admitting the whole Internet is an explicit `0.0.0.0/0` + `::/0`, never a silent default, FIX-102 posture).
 
 - instance settings (phase 5, SET-1, SET-5; [§Instance settings and Helm locks](#instance-settings-and-helm-locks-phase-5-set-1-d-195c-d-236d-238)): `scim.ratePerMinute` defaults to unset; `terminal.enabled` and `scim.enabled` render `config.terminal.available` / `config.scim.available` instead of the feature switch (built in SET-5; `scripts/guards/chart-ops.sh` checks the rendering); `values.yaml`'s `config` block loses `hosted.enabled`; a chart guard (`scripts/guards/settings-chart.sh`) checks that the default render contains no movable key. No new chart value.
 

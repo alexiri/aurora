@@ -1784,3 +1784,576 @@ async fn k8_files_journey() {
         "no agent.files.* audit rows: {audited}"
     );
 }
+
+// ---------------------------------------------------------------------------------------------------------------
+// P4-SSH-2 (D-239, SEC-92..SEC-96, C-799): SSH access end to end — the real `ssh`, `sftp` and `scp` clients of this
+// machine against the chart's terminator (reached through a port-forward), the API's session plane, the runner's
+// `auz_` legs and the supervisor's exec engine, in a sandbox Pod. Needs the chart installed with `ssh.enabled`
+// (`scripts/e2e/ssh.sh`, which sets AURORA_KIND_SSH=127.0.0.1:<port> and AURORA_E2E_CLI=<the aurora binary>).
+// ---------------------------------------------------------------------------------------------------------------
+
+/// One person's SSH identity for one agent: a key registered through the API and a certificate minted for it.
+struct SshId {
+    dir: std::path::PathBuf,
+    port: u16,
+    agent: String,
+}
+
+impl SshId {
+    fn path(&self, n: &str) -> String {
+        self.dir.join(n).display().to_string()
+    }
+
+    /// The options every client gets: the identity and certificate files, our own `known_hosts` (strict), the port.
+    fn opts(&self) -> Vec<String> {
+        let mut v = vec!["-F".into(), "/dev/null".into()];
+        for o in [
+            format!("CertificateFile={}", self.path("id-cert.pub")),
+            "IdentitiesOnly=yes".into(),
+            "BatchMode=yes".into(),
+            "StrictHostKeyChecking=yes".into(),
+            format!("UserKnownHostsFile={}", self.path("known_hosts")),
+            format!("Port={}", self.port),
+            "ConnectTimeout=20".into(),
+        ] {
+            v.push("-o".into());
+            v.push(o);
+        }
+        v.push("-i".into());
+        v.push(self.path("id"));
+        v
+    }
+
+    fn dest(&self) -> String {
+        format!("{}@127.0.0.1", self.agent)
+    }
+
+    fn command(&self, prog: &str, pre: &[&str], post: &[&str]) -> Command {
+        let mut c = Command::new(prog);
+        c.args(self.opts()).args(pre).arg(self.dest()).args(post);
+        c
+    }
+}
+
+/// Runs a client to the end (stdin from `input`), at most `secs`: (exit code, stdout, stderr).
+async fn run_client(mut c: Command, input: &[u8], secs: u64) -> (i32, String, String) {
+    use std::io::Write;
+    use std::process::Stdio;
+    let input = input.to_vec();
+    tokio::task::spawn_blocking(move || {
+        let mut ch = c
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut si = ch.stdin.take().unwrap();
+        let w = std::thread::spawn(move || {
+            let _ = si.write_all(&input);
+        });
+        let end = Instant::now() + Duration::from_secs(secs);
+        loop {
+            if ch.try_wait().unwrap().is_some() {
+                break;
+            }
+            if Instant::now() > end {
+                let _ = ch.kill();
+                panic!("a client ran longer than {secs} s");
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        let _ = w.join();
+        let o = ch.wait_with_output().unwrap();
+        (
+            o.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&o.stdout).into_owned(),
+            String::from_utf8_lossy(&o.stderr).into_owned(),
+        )
+    })
+    .await
+    .unwrap()
+}
+
+/// Registers a fresh ed25519 key for the signed-in person and mints a certificate for `agent`; writes `id`, `id.pub`,
+/// `id-cert.pub` and the strict `known_hosts` (the host key the API publishes) into a new directory.
+async fn ssh_identity(api: &Api, agent: &str, port: u16, host_key: &str) -> SshId {
+    let dir =
+        std::env::temp_dir().join(format!("aurora-e2e-ssh-{}", uuid::Uuid::now_v7().simple()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let st = Command::new("ssh-keygen")
+        .args(["-q", "-t", "ed25519", "-N", "", "-C", "aurora-e2e", "-f"])
+        .arg(dir.join("id"))
+        .status()
+        .unwrap();
+    assert!(st.success(), "ssh-keygen");
+    let public = std::fs::read_to_string(dir.join("id.pub")).unwrap();
+    let (s, v) = api
+        .post(
+            "/v1/me/ssh-keys",
+            json!({"public_key": public.trim(), "name": "e2e"}),
+        )
+        .await;
+    assert_eq!(s, 201, "register key: {v}");
+    let (s, v) = api
+        .post(
+            &format!("/v1/agents/{agent}/ssh-certificate"),
+            json!({"public_key": public.trim()}),
+        )
+        .await;
+    assert_eq!(s, 201, "mint: {v}");
+    std::fs::write(
+        dir.join("id-cert.pub"),
+        format!("{}\n", v["certificate"].as_str().unwrap().trim()),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("known_hosts"),
+        format!("[127.0.0.1]:{port} {host_key}\n"),
+    )
+    .unwrap();
+    SshId {
+        dir,
+        port,
+        agent: agent.to_owned(),
+    }
+}
+
+/// Waits for the person's open sessions on the agent to number `n`; returns them.
+async fn open_sessions(
+    api: &Api,
+    n: usize,
+    secs: u64,
+    mut client: Option<&mut std::process::Child>,
+) -> Vec<Value> {
+    let end = Instant::now() + Duration::from_secs(secs);
+    loop {
+        let (s, v) = api.get("/v1/me/ssh-sessions").await;
+        assert_eq!(s, 200, "{v}");
+        let items = v["sessions"].as_array().cloned().unwrap_or_default();
+        if items.len() == n {
+            return items;
+        }
+        if Instant::now() >= end {
+            // What the client that should hold the session said (it is piped, and ended if it already failed).
+            let said = client
+                .as_mut()
+                .map_or(String::new(), |c| match c.try_wait() {
+                    Ok(Some(st)) => {
+                        use std::io::Read;
+                        let mut e = String::new();
+                        if let Some(mut se) = c.stderr.take() {
+                            let _ = se.read_to_string(&mut e);
+                        }
+                        format!("; the client exited with {st}: {e}")
+                    }
+                    Ok(None) => "; the client is still running".to_owned(),
+                    Err(e) => format!("; the client: {e}"),
+                });
+            panic!(
+                "expected {n} open SSH sessions, have {}: {v}{said}",
+                items.len()
+            );
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+}
+
+/// A long-lived client (`sleep 300` in the sandbox): the process, to be waited on or killed.
+fn spawn_sleeper(id: &SshId) -> std::process::Child {
+    use std::process::Stdio;
+    id.command("ssh", &[], &["sleep 300"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap()
+}
+
+/// Waits until `child` exits (at most `secs`), returns (exit code, seconds it took).
+async fn wait_child(child: &mut std::process::Child, secs: u64) -> (i32, u64) {
+    let t0 = Instant::now();
+    loop {
+        if let Some(st) = child.try_wait().unwrap() {
+            return (st.code().unwrap_or(-1), t0.elapsed().as_secs());
+        }
+        if t0.elapsed() > Duration::from_secs(secs) {
+            let _ = child.kill();
+            panic!("the SSH client was still connected after {secs} s");
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+}
+
+#[tokio::test]
+async fn k9_ssh_journey() {
+    if !enabled() {
+        return;
+    }
+    let Ok(target) = std::env::var("AURORA_KIND_SSH") else {
+        eprintln!(
+            "SKIPPED: ssh.enabled is off in this cluster (no AURORA_KIND_SSH); run scripts/e2e/ssh.sh, which turns it on"
+        );
+        return;
+    };
+    let port: u16 = target.rsplit(':').next().unwrap().parse().unwrap();
+    let api = connect().await;
+    let agent = api.daneel.clone();
+    let canary = format!("AURORA-CANARY-{}", uuid::Uuid::now_v7().simple());
+
+    // The terminator has registered and published its host key; the instance says SSH is on.
+    let (_, inst) = api.get("/v1/instance").await;
+    assert_eq!(inst["features"]["ssh"], true, "features.ssh: {inst}");
+    let facts = eventually("a live terminator in GET /v1/ssh", 120, || async {
+        let (s, v) = api.get("/v1/ssh").await;
+        (s == 200 && v["terminators_live"].as_u64().unwrap_or(0) > 0).then_some(v)
+    })
+    .await;
+    let host_key = facts["host_keys"][0]["public_key"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    // The agent's sandbox is running (one turn boots it); the person has a key and a certificate.
+    let conv = api.direct().await;
+    say_and_finish(&api, &conv, "[[say: ssh journey]]").await;
+    let id = ssh_identity(&api, &agent, port, &host_key).await;
+
+    // 1. A remote command; stdout and stderr stay separate; the exit status propagates.
+    let (rc, out, err) = run_client(id.command("ssh", &[], &["echo aurora-ssh"]), b"", 60).await;
+    assert_eq!((rc, out.trim()), (0, "aurora-ssh"), "stderr: {err}");
+    let (rc, out, err) = run_client(
+        id.command("ssh", &[], &["echo to-out; echo to-err >&2; exit 7"]),
+        b"",
+        60,
+    )
+    .await;
+    assert_eq!(rc, 7, "exit status: {err}");
+    assert_eq!(out.trim(), "to-out");
+    assert!(
+        err.contains("to-err") && !out.contains("to-err"),
+        "{out} / {err}"
+    );
+
+    // 2. A shell (no tty and with one): the canary typed into it; a command carrying it.
+    let (rc, out, err) = run_client(
+        id.command("ssh", &["-T"], &[]),
+        format!("echo typed-{canary}\nexit 3\n").as_bytes(),
+        60,
+    )
+    .await;
+    assert_eq!(rc, 3, "{err}");
+    assert!(out.contains(&format!("typed-{canary}")), "{out}");
+    let (rc, out, err) = run_client(
+        id.command("ssh", &["-tt"], &[]),
+        b"tty -s && echo has-tty; stty size; exit 0\n",
+        60,
+    )
+    .await;
+    assert_eq!(rc, 0, "{err}");
+    assert!(out.contains("has-tty"), "{out}");
+    let (rc, out, err) = run_client(
+        id.command("ssh", &[], &[&format!("echo cmd-{canary}")]),
+        b"",
+        60,
+    )
+    .await;
+    assert_eq!(
+        (rc, out.trim()),
+        (0, format!("cmd-{canary}").as_str()),
+        "{err}"
+    );
+
+    // 3. sftp put/get and scp (SFTP mode and `-O`) of a 5 MiB file: the digests match.
+    let blob = noise(5 * 1024 * 1024, 99);
+    let want = sha_hex(&blob);
+    std::fs::write(id.dir.join("up.bin"), &blob).unwrap();
+    std::fs::write(
+        id.dir.join("batch"),
+        format!(
+            "put {up} /workspace/ssh-up.bin\nget /workspace/ssh-up.bin {down}\n",
+            up = id.path("up.bin"),
+            down = id.path("down-sftp.bin")
+        ),
+    )
+    .unwrap();
+    let mut c = Command::new("sftp");
+    c.args(id.opts())
+        .arg("-b")
+        .arg(id.path("batch"))
+        .arg(id.dest());
+    let (rc, out, err) = run_client(c, b"", 180).await;
+    assert_eq!(rc, 0, "sftp: {out} {err}");
+    assert_eq!(
+        sha_hex(&std::fs::read(id.dir.join("down-sftp.bin")).unwrap()),
+        want,
+        "sftp round trip differs"
+    );
+    for (flag, name) in [(None, "scp"), (Some("-O"), "scp-O")] {
+        let remote = format!("/workspace/{name}.bin");
+        let mut up = Command::new("scp");
+        up.args(id.opts());
+        if let Some(f) = flag {
+            up.arg(f);
+        }
+        up.arg(id.path("up.bin"))
+            .arg(format!("{}:{remote}", id.dest()));
+        let (rc, out, err) = run_client(up, b"", 180).await;
+        assert_eq!(rc, 0, "{name} up: {out} {err}");
+        let mut down = Command::new("scp");
+        down.args(id.opts());
+        if let Some(f) = flag {
+            down.arg(f);
+        }
+        down.arg(format!("{}:{remote}", id.dest()))
+            .arg(id.path(&format!("down-{name}.bin")));
+        let (rc, out, err) = run_client(down, b"", 180).await;
+        assert_eq!(rc, 0, "{name} down: {out} {err}");
+        assert_eq!(
+            sha_hex(&std::fs::read(id.dir.join(format!("down-{name}.bin"))).unwrap()),
+            want,
+            "{name} round trip differs"
+        );
+    }
+
+    // 4. Forwarding is refused while the shell works: -R (setup fails), -L (the channel is refused), -A and -X
+    // (nothing reaches the sandbox).
+    let (rc, _, err) = run_client(
+        id.command(
+            "ssh",
+            &["-o", "ExitOnForwardFailure=yes", "-R", "0:127.0.0.1:22"],
+            &["echo should-not-run"],
+        ),
+        b"",
+        60,
+    )
+    .await;
+    assert_ne!(rc, 0, "-R must fail when forwarding is refused: {err}");
+    let lport = {
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        l.local_addr().unwrap().port()
+    };
+    let mut lc = id.command(
+        "ssh",
+        &["-L", &format!("{lport}:127.0.0.1:22")],
+        &["sleep 6; echo l-done"],
+    );
+    let lhandle = tokio::task::spawn_blocking(move || {
+        use std::process::Stdio;
+        let ch = lc
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        ch.wait_with_output().unwrap()
+    });
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    if let Ok(mut s) = std::net::TcpStream::connect(("127.0.0.1", lport)) {
+        use std::io::Read;
+        s.set_read_timeout(Some(Duration::from_secs(5))).ok();
+        let mut buf = [0u8; 8];
+        let _ = s.read(&mut buf); // the refused channel closes the connection
+    }
+    let o = lhandle.await.unwrap();
+    let (lout, lerr) = (
+        String::from_utf8_lossy(&o.stdout).into_owned(),
+        String::from_utf8_lossy(&o.stderr).into_owned(),
+    );
+    assert!(
+        lout.contains("l-done"),
+        "the shell must keep working: {lout} {lerr}"
+    );
+    assert!(
+        lerr.contains("open failed") || lerr.contains("administratively prohibited"),
+        "-L must be refused: {lerr}"
+    );
+    // -A: a local agent is offered; the sandbox sees no agent socket.
+    let agent_sock = id.dir.join("agent.sock");
+    let mut agent_proc = Command::new("ssh-agent")
+        .arg("-D")
+        .arg("-a")
+        .arg(&agent_sock)
+        .spawn()
+        .unwrap();
+    for _ in 0..50 {
+        if agent_sock.exists() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    let mut ac = id.command("ssh", &["-A"], &["echo agent=${SSH_AUTH_SOCK:-none}"]);
+    ac.env("SSH_AUTH_SOCK", &agent_sock);
+    let (rc, out, err) = run_client(ac, b"", 60).await;
+    let _ = agent_proc.kill();
+    let _ = agent_proc.wait();
+    assert_eq!((rc, out.trim()), (0, "agent=none"), "-A: {err}");
+    let mut xc = id.command("ssh", &["-X"], &["echo display=${DISPLAY:-none}"]);
+    xc.env("DISPLAY", "localhost:99.0");
+    let (rc, out, err) = run_client(xc, b"", 60).await;
+    assert_eq!((rc, out.trim()), (0, "display=none"), "-X: {err}");
+
+    // 5. A wrong pinned host key is refused by the client; a plain key (no certificate) gets the hint-free refusal.
+    let other = std::process::Command::new("ssh-keygen")
+        .args(["-q", "-t", "ed25519", "-N", "", "-f"])
+        .arg(id.dir.join("other"))
+        .status()
+        .unwrap();
+    assert!(other.success());
+    let other_pub = std::fs::read_to_string(id.dir.join("other.pub")).unwrap();
+    // (ssh keeps the FIRST value of an option, so the files themselves are swapped for the duration of each check.)
+    std::fs::rename(id.dir.join("known_hosts"), id.dir.join("known_hosts-good")).unwrap();
+    std::fs::write(
+        id.dir.join("known_hosts"),
+        format!("[127.0.0.1]:{port} {}\n", other_pub.trim()),
+    )
+    .unwrap();
+    let (rc, _, err) = run_client(id.command("ssh", &[], &["echo not-here"]), b"", 60).await;
+    std::fs::rename(id.dir.join("known_hosts-good"), id.dir.join("known_hosts")).unwrap();
+    assert_eq!(rc, 255, "{err}");
+    assert!(
+        err.contains("Host key verification failed")
+            || err.contains("REMOTE HOST IDENTIFICATION HAS CHANGED"),
+        "a wrong host key must be refused by the client: {err}"
+    );
+    std::fs::rename(id.dir.join("id-cert.pub"), id.dir.join("id-cert.pub.off")).unwrap();
+    let (rc, out, err) = run_client(id.command("ssh", &[], &["echo not-here"]), b"", 60).await;
+    std::fs::rename(id.dir.join("id-cert.pub.off"), id.dir.join("id-cert.pub")).unwrap();
+    assert_eq!(rc, 255, "{out} {err}");
+    assert!(err.contains("Permission denied (publickey)"), "{err}");
+    assert!(!out.contains("not-here"));
+
+    // 6. `aurora ssh <agent> -- echo aurora-ssh` (C-798): a workspace API key in a config directory of its own.
+    if let Ok(cli) = std::env::var("AURORA_E2E_CLI") {
+        let (s, k) = api
+            .post(
+                &format!("/v1/workspaces/{}/api-keys", api.ws),
+                json!({"name": "e2e ssh"}),
+            )
+            .await;
+        assert_eq!(s, 201, "{k}");
+        let (_, me) = api.get("/v1/me").await;
+        let m = &me["memberships"][0];
+        let sv = |v: &Value, f: &str| v[f].as_str().unwrap_or("x").to_owned();
+        let cfg_dir = id.dir.join("cli");
+        std::fs::create_dir_all(&cfg_dir).unwrap();
+        let cfg = format!(
+            "url = \"{}\"\napi_key = \"{}\"\n\n[workspace]\nid = \"{}\"\nslug = \"{}\"\nname = \"{}\"\norg_id = \"{}\"\norg_slug = \"{}\"\n",
+            env("AURORA_KIND_API"),
+            k["key"].as_str().unwrap(),
+            api.ws,
+            sv(&m["workspaces"][0], "slug"),
+            sv(&m["workspaces"][0], "name"),
+            api.org,
+            sv(&m["org"], "slug"),
+        );
+        std::fs::write(cfg_dir.join("config.toml"), cfg).unwrap();
+        let mut c = Command::new(cli);
+        c.env("AURORA_CONFIG_DIR", &cfg_dir)
+            .arg("ssh")
+            .arg(&agent)
+            .arg("--key")
+            .arg(id.path("id.pub"))
+            .arg("--")
+            .arg("echo aurora-ssh");
+        let (rc, out, err) = run_client(c, b"", 90).await;
+        assert_eq!((rc, out.trim()), (0, "aurora-ssh"), "aurora ssh: {err}");
+    } else {
+        eprintln!("note: AURORA_E2E_CLI not set; the `aurora ssh` leg was not run");
+    }
+
+    // 7. Sessions are listed and a person's disconnect ends one within a heartbeat (≤ 35 s).
+    let mut s1 = spawn_sleeper(&id);
+    let list = open_sessions(&api, 1, 60, Some(&mut s1)).await;
+    assert_eq!(list[0]["agent"]["id"], agent.as_str(), "{list:?}");
+    let sid = list[0]["id"].as_str().unwrap().to_owned();
+    let (s, v) = api.delete(&format!("/v1/ssh-sessions/{sid}")).await;
+    assert_eq!(s, 202, "{v}");
+    let (_, took) = wait_child(&mut s1, 60).await;
+    assert!(took <= 40, "disconnect took {took} s");
+    open_sessions(&api, 0, 40, None).await;
+
+    // 8. Freeze closes an open session within 35 s and refuses a new one (423 -> the hint-free failure); unfreeze
+    // lets the next connect through.
+    let mut s2 = spawn_sleeper(&id);
+    open_sessions(&api, 1, 60, Some(&mut s2)).await;
+    let (s, v) = api
+        .post(
+            &format!("/v1/agents/{agent}/freeze"),
+            json!({"reason": "ssh journey"}),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let (_, took) = wait_child(&mut s2, 60).await;
+    assert!(took <= 40, "freeze took {took} s to close the session");
+    open_sessions(&api, 0, 40, None).await;
+    let (rc, _, err) = run_client(id.command("ssh", &[], &["echo frozen"]), b"", 60).await;
+    assert_eq!(rc, 255, "{err}");
+    assert!(err.contains("Permission denied (publickey)"), "{err}");
+    let (s, v) = api
+        .post(&format!("/v1/agents/{agent}/unfreeze"), json!({}))
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let (rc, out, err) = run_client(id.command("ssh", &[], &["echo unfrozen"]), b"", 60).await;
+    assert_eq!((rc, out.trim()), (0, "unfrozen"), "{err}");
+
+    // 9. Deleting the key ends the trust of its certificate at once (SEC-94): the same certificate is refused.
+    let (s, keys) = api.get("/v1/me/ssh-keys").await;
+    assert_eq!(s, 200, "{keys}");
+    let kid = keys["keys"][0]["id"].as_str().unwrap().to_owned();
+    let (s, v) = api.delete(&format!("/v1/me/ssh-keys/{kid}")).await;
+    assert_eq!(s, 204, "{v}");
+    let (rc, _, err) = run_client(id.command("ssh", &[], &["echo deleted-key"]), b"", 60).await;
+    assert_eq!(rc, 255, "{err}");
+    assert!(err.contains("Permission denied (publickey)"), "{err}");
+
+    // 10. A parked sandbox wakes on connect: wait for the park, then connect and run a command.
+    let id2 = ssh_identity(&api, &agent, port, &host_key).await;
+    api.wait_sandbox_state("stopped", 420).await;
+    let end = Instant::now() + Duration::from_secs(180);
+    let woke = loop {
+        let (rc, out, err) = run_client(id2.command("ssh", &[], &["echo woke"]), b"", 150).await;
+        if rc == 0 {
+            break out;
+        }
+        assert!(
+            Instant::now() < end,
+            "the parked sandbox did not wake on connect: {out} {err}"
+        );
+        tokio::time::sleep(Duration::from_secs(3)).await;
+    };
+    assert_eq!(woke.trim(), "woke");
+
+    // 11. The secret-grep: the canary (typed in a shell and passed as a command) is in no API, terminator, runner or
+    // sandbox log, in no audit row and in no request-log row; the sessions themselves are audited.
+    let mut hits = vec![];
+    for ns in [env("AURORA_KIND_NS"), sbx_ns()] {
+        let (_, pods) = kubectl(&["-n", &ns, "get", "pods", "-o", "name"]);
+        for p in pods.lines().filter(|l| l.starts_with("pod/")) {
+            let (_, logs) = kubectl(&["-n", &ns, "logs", p, "--all-containers", "--tail=-1"]);
+            if logs.contains(&canary) {
+                hits.push(format!("{ns}/{p}"));
+            }
+        }
+    }
+    assert!(
+        hits.is_empty(),
+        "the canary appeared in the logs of: {hits:?}"
+    );
+    for t in ["audit_log", "request_log"] {
+        assert_eq!(
+            psql_value(&format!(
+                "SELECT count(*) FROM {t} WHERE {t}::text LIKE '%{canary}%'"
+            )),
+            "0",
+            "the canary is in {t}"
+        );
+    }
+    for a in ["agent.ssh.open", "agent.ssh.close"] {
+        let n = psql_value(&format!(
+            "SELECT count(*) FROM audit_log WHERE action = '{a}'"
+        ));
+        assert!(n.parse::<u64>().unwrap() > 0, "no {a} audit rows");
+    }
+    let _ = std::fs::remove_dir_all(&id.dir);
+    let _ = std::fs::remove_dir_all(&id2.dir);
+}

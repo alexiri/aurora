@@ -15,3 +15,5 @@ nodes:
             node-labels: "ingress-ready=true"
     extraPortMappings:
       - {containerPort: 80, hostPort: 4000, listenAddress: "127.0.0.1", protocol: TCP}
+      # (P4-SSH-2) `kind-dev.sh up --ssh` on a NEW cluster appends the SSH mapping here: the terminator's
+      # NodePort 32222 on 127.0.0.1:${AURORA_DEV_SSH_PORT:-2222} (values-ssh.yaml). A plain `up` claims no port.

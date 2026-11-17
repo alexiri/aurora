@@ -7,6 +7,7 @@ use crate::connector as c;
 use crate::host as h;
 use crate::runner as r;
 use crate::supervisor as s;
+use crate::terminator as tm;
 use crate::tools as t;
 use crate::version::ProtocolVersion;
 use crate::vocab::ExampleKind;
@@ -215,5 +216,42 @@ pub fn all() -> Vec<(&'static str, Schema)> {
         ("tools_tool_call", schema_for!(t::ToolCall)),
         ("tools_tool_result", schema_for!(t::ToolResult)),
         ("tools_tool_descriptor", schema_for!(t::ToolDescriptor)),
+        // W20 terminator plane (P4-SSH-2)
+        (
+            "terminator_register_request",
+            schema_for!(tm::RegisterRequest),
+        ),
+        (
+            "terminator_register_response",
+            schema_for!(tm::RegisterResponse),
+        ),
+        (
+            "terminator_session_open_request",
+            schema_for!(tm::SessionOpenRequest),
+        ),
+        (
+            "terminator_session_open_response",
+            schema_for!(tm::SessionOpenResponse),
+        ),
+        (
+            "terminator_channel_grant_request",
+            schema_for!(tm::ChannelGrantRequest),
+        ),
+        (
+            "terminator_channel_grant_response",
+            schema_for!(tm::ChannelGrantResponse),
+        ),
+        (
+            "terminator_heartbeat_request",
+            schema_for!(tm::HeartbeatRequest),
+        ),
+        (
+            "terminator_heartbeat_response",
+            schema_for!(tm::HeartbeatResponse),
+        ),
+        (
+            "terminator_session_close_request",
+            schema_for!(tm::SessionCloseRequest),
+        ),
     ]
 }

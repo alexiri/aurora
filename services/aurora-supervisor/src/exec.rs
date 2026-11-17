@@ -6,8 +6,14 @@
 //! ended is answered with `exec.exit { status | signal }` (after its pipes drained) followed by
 //! `pty.close { eof }`. P5-FILES-1 implements mode `sftp` only (the image's `sftp-server` at a
 //! fixed path, no argv, agent uid/gid, cwd `/workspace`, the container environment minus every
-//! `AURORA_*` variable and the boot document); `shell`/`exec`/`tty` are answered
-//! `exec.refused { unsupported }` until P4-SSH-2 extends [`ExecTable::open`].
+//! `AURORA_*` variable and the boot document).
+//!
+//! (P4-SSH-2) `shell` (the image's shell reading commands from stdin) and `exec` (`<shell> -c
+//! <command>`) run over the same pipes; with `tty` they run under a PTY instead (the terminal's
+//! `PtySession` and `__pty-exec` bootstrap: own session, controlling terminal, window size from
+//! `tty`), where stdout and stderr are one stream (`0x02`) and the exit status is read from the
+//! reaped bootstrap, which is the shell itself. The image shell is `bash` when present, else
+//! `sh`. A `command` is never logged. `sftp` is unchanged and never has a `tty`.
 //!
 //! The table lives inside the PTY pump (`crate::pty::PtyEngine`): `pty_id`s are one id space and
 //! `pty.credit`/`pty.close`/binary data arrive on the same side-channel, so a single pump
@@ -19,16 +25,20 @@ use std::time::Duration;
 
 use aurora_core::limits::{EXECS_PER_SANDBOX, TERMINAL_CHUNK, TERMINAL_STREAM_WINDOW};
 use aurora_protocol::runner::{
-    ExecExit, ExecMode, ExecOpen, ExecRefuseReason, PtyCloseReason, PtyCredit,
+    EXEC_COMMAND_MAX, ExecExit, ExecMode, ExecOpen, ExecRefuseReason, PtyCloseReason, PtyCredit,
 };
 use aurora_protocol::supervisor::SupervisorToRunner;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 use tokio::task::AbortHandle;
 
 use crate::channel::{self, StreamOut, StreamSender};
+use crate::pty::{PtySession, ResolvedShell, ShellPaths};
 use crate::streams::{Credit, DATA_QUEUE};
+
+/// The `TERM` of a `tty` whose `term` is not up to 64 printable ASCII characters.
+const DEFAULT_TERM: &str = "xterm-256color";
 
 /// The image's `sftp-server` (`12 §SSH channels`: fixed; never a path a client names).
 pub const SFTP_SERVER: &str = "/usr/libexec/openssh/sftp-server";
@@ -58,6 +68,8 @@ struct Live {
     data_tx: mpsc::Sender<ExecIn>,
     credit: Arc<Credit>,
     abort: AbortHandle,
+    /// `tty` execs only: the window size the PTY task applies.
+    resize: Option<watch::Sender<(u16, u16)>>,
 }
 
 /// What [`ExecTable::data`] did with a payload.
@@ -75,13 +87,42 @@ pub(crate) enum DataOutcome {
 pub(crate) struct ExecTable {
     live: HashMap<u32, Live>,
     sftp_server: std::path::PathBuf,
+    shells: ShellPaths,
+    /// This supervisor's own executable: a `tty` exec reaches its shell through the
+    /// `__pty-exec` re-exec (`crate::pty_exec`).
+    bootstrap: std::path::PathBuf,
 }
 
 impl ExecTable {
-    pub fn new(sftp_server: std::path::PathBuf) -> Self {
+    pub fn new(
+        sftp_server: std::path::PathBuf,
+        shells: ShellPaths,
+        bootstrap: std::path::PathBuf,
+    ) -> Self {
         Self {
             live: HashMap::new(),
             sftp_server,
+            shells,
+            bootstrap,
+        }
+    }
+
+    /// `pty.resize` for a `tty` exec; ignored for any other id.
+    pub fn resize(&self, id: u32, cols: u16, rows: u16) {
+        if cols == 0 || rows == 0 {
+            return;
+        }
+        if let Some(tx) = self.live.get(&id).and_then(|l| l.resize.as_ref()) {
+            tx.send_replace((cols, rows));
+        }
+    }
+
+    /// The image shell: `bash` when present, else `sh` (fixed paths, never from the wire).
+    fn image_shell(&self) -> std::path::PathBuf {
+        if self.shells.bash.is_file() {
+            self.shells.bash.clone()
+        } else {
+            self.shells.sh.clone()
         }
     }
 
@@ -153,42 +194,105 @@ impl ExecTable {
         if self.live.len() >= EXECS_PER_SANDBOX as usize {
             return Err(ExecRefuseReason::Limit);
         }
-        // P5-FILES-1: `sftp` only. `shell`/`exec`/`tty` come with P4-SSH-2.
-        if o.mode != ExecMode::Sftp
-            || o.command.is_some()
-            || o.tty.is_some()
-            || o.env.keys().any(|k| !env_name_allowed(k))
-        {
+        if o.env.keys().any(|k| !env_name_allowed(k)) {
             return Err(ExecRefuseReason::Unsupported);
         }
-        if !self.sftp_server.is_file() {
-            return Err(ExecRefuseReason::Unsupported);
-        }
-        let proc = match ExecProc::spawn_sftp(&self.sftp_server, uid, cwd, &o.env) {
-            Ok(p) => p,
-            Err(e) => {
-                // The OS's error kind only, never anything about the session's bytes.
-                tracing::warn!(error = e.kind().to_string(), "exec spawn failed");
-                return Err(ExecRefuseReason::Error);
+        // The program per mode; every other shape is refused (`12 §SSH channels`).
+        let (program, args, is_shell): (std::path::PathBuf, Vec<String>, bool) = match o.mode {
+            ExecMode::Sftp => {
+                if o.command.is_some() || o.tty.is_some() || !self.sftp_server.is_file() {
+                    return Err(ExecRefuseReason::Unsupported);
+                }
+                (self.sftp_server.clone(), Vec::new(), false)
             }
+            ExecMode::Shell => {
+                if o.command.is_some() {
+                    return Err(ExecRefuseReason::Unsupported);
+                }
+                (self.image_shell(), Vec::new(), true)
+            }
+            ExecMode::Exec => match &o.command {
+                Some(c) if c.len() <= EXEC_COMMAND_MAX && !c.contains('\0') => {
+                    (self.image_shell(), vec!["-c".to_owned(), c.clone()], true)
+                }
+                _ => return Err(ExecRefuseReason::Unsupported),
+            },
+            _ => return Err(ExecRefuseReason::Unsupported),
         };
         let (data_tx, data_rx) = mpsc::channel(DATA_QUEUE);
         let credit = Arc::new(Credit::default());
-        let task = tokio::spawn(exec_task(
-            o.pty_id,
-            proc,
-            o.window as usize,
-            data_rx,
-            credit.clone(),
-            out.clone(),
-            report.clone(),
-        ));
+        let (abort, resize) = if let Some(tty) = &o.tty {
+            if tty.cols == 0 || tty.rows == 0 {
+                return Err(ExecRefuseReason::Unsupported);
+            }
+            let term = if !tty.term.is_empty()
+                && tty.term.len() <= 64
+                && tty.term.bytes().all(|b| (0x21..=0x7e).contains(&b))
+            {
+                tty.term.as_str()
+            } else {
+                DEFAULT_TERM
+            };
+            let shell = ResolvedShell {
+                program,
+                args,
+                notice: None,
+            };
+            let pty = match PtySession::spawn(
+                &shell,
+                uid,
+                cwd,
+                &self.bootstrap,
+                tty.cols,
+                tty.rows,
+                term,
+                &o.env,
+            ) {
+                Ok(p) => p,
+                Err(e) => {
+                    tracing::warn!(error = e.kind().to_string(), "exec pty spawn failed");
+                    return Err(ExecRefuseReason::Error);
+                }
+            };
+            let (resize_tx, resize_rx) = watch::channel((tty.cols, tty.rows));
+            let task = tokio::spawn(exec_tty_task(
+                o.pty_id,
+                pty,
+                o.window as usize,
+                data_rx,
+                credit.clone(),
+                resize_rx,
+                out.clone(),
+                report.clone(),
+            ));
+            (task.abort_handle(), Some(resize_tx))
+        } else {
+            let proc = match ExecProc::spawn(&program, &args, is_shell, uid, cwd, &o.env) {
+                Ok(p) => p,
+                Err(e) => {
+                    // The OS's error kind only, never anything about the session's bytes.
+                    tracing::warn!(error = e.kind().to_string(), "exec spawn failed");
+                    return Err(ExecRefuseReason::Error);
+                }
+            };
+            let task = tokio::spawn(exec_task(
+                o.pty_id,
+                proc,
+                o.window as usize,
+                data_rx,
+                credit.clone(),
+                out.clone(),
+                report.clone(),
+            ));
+            (task.abort_handle(), None)
+        };
         self.live.insert(
             o.pty_id,
             Live {
                 data_tx,
                 credit,
-                abort: task.abort_handle(),
+                abort,
+                resize,
             },
         );
         Ok(())
@@ -219,20 +323,26 @@ struct ExecProc {
 }
 
 impl ExecProc {
-    /// `sftp-server` over pipes: own process group, agent uid when the supervisor is root,
-    /// cwd `/workspace`, no argv, the container environment minus `AURORA_*` and the boot
-    /// document (`spawn::child_env`) plus the accepted `LANG`/`LC_*`. Pipe ends are `CLOEXEC`
-    /// (std/tokio's pipes), so no other child inherits them (FIX-059 posture).
-    fn spawn_sftp(
+    /// `sftp-server` (no argv) or the image shell (`shell`/`exec`, with `SHELL` set) over pipes:
+    /// own process group, agent uid when the supervisor is root, cwd `/workspace`, the container
+    /// environment minus `AURORA_*` and the boot document (`spawn::child_env`) plus the accepted
+    /// `LANG`/`LC_*`. Pipe ends are `CLOEXEC` (std/tokio's pipes), so no other child inherits
+    /// them (FIX-059 posture).
+    fn spawn(
         path: &std::path::Path,
+        args: &[String],
+        is_shell: bool,
         uid: Option<u32>,
         cwd: &std::path::Path,
         env: &std::collections::BTreeMap<String, String>,
     ) -> std::io::Result<Self> {
+        let shell_var = is_shell.then(|| ("SHELL", path.to_string_lossy().into_owned()));
         let extra = [("PATH", crate::spawn::IMAGE_PATH.to_owned())]
             .into_iter()
+            .chain(shell_var)
             .chain(env.iter().map(|(k, v)| (k.as_str(), v.clone())));
         let mut cmd = crate::spawn::tokio_command(path, extra);
+        cmd.args(args);
         for (k, _) in std::env::vars_os() {
             if k.to_str().is_some_and(|k| k.starts_with("AURORA_")) {
                 cmd.env_remove(&k);
@@ -469,6 +579,97 @@ async fn exec_task(
     };
     proc.child = None; // reaped: nothing for `Drop` to kill
     tracing::debug!(pty_id = id, bytes_in, bytes_out, "exec closed");
+    let _ = report.send(crate::pty::TaskMsg::ExecFinished(ExecDone {
+        id,
+        exit: Some(status.map_or(
+            ExecExit {
+                pty_id: id,
+                status: Some(255),
+                signal: None,
+            },
+            |s| exit_of(id, s),
+        )),
+        reason: PtyCloseReason::Eof,
+        bytes_in,
+        bytes_out,
+    }));
+}
+
+/// Ends the adapter task with its exec.
+struct AbortOnDrop(AbortHandle);
+
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+/// A `tty` exec: the terminal's PTY copy loop (`crate::pty::pty_io`), then the child's exit
+/// status. `exec.eof` is dropped (a PTY has no half-close; the client's `^D` is a byte), and the
+/// window size follows `pty.resize`.
+#[allow(clippy::too_many_arguments)]
+async fn exec_tty_task(
+    id: u32,
+    mut pty: PtySession,
+    send_credit: usize,
+    mut data_rx: mpsc::Receiver<ExecIn>,
+    credit_cell: Arc<Credit>,
+    resize_rx: watch::Receiver<(u16, u16)>,
+    out: StreamSender,
+    report: mpsc::UnboundedSender<crate::pty::TaskMsg>,
+) {
+    tracing::debug!(pty_id = id, "exec pty open");
+    // The PTY loop takes plain byte chunks; `exec.eof` has no meaning here.
+    let (pty_tx, pty_rx) = mpsc::channel::<Vec<u8>>(DATA_QUEUE);
+    let adapter = tokio::spawn(async move {
+        while let Some(m) = data_rx.recv().await {
+            if let ExecIn::Data(d) = m
+                && pty_tx.send(d).await.is_err()
+            {
+                break;
+            }
+        }
+    });
+    let _adapter = AbortOnDrop(adapter.abort_handle());
+    let (reason, bytes_in, bytes_out) =
+        crate::pty::pty_io(id, &pty, send_credit, pty_rx, credit_cell, resize_rx, &out).await;
+    if matches!(reason, PtyCloseReason::ChannelLost) {
+        tracing::debug!(
+            pty_id = id,
+            bytes_in,
+            bytes_out,
+            "exec pty closed (channel)"
+        );
+        let _ = report.send(crate::pty::TaskMsg::ExecFinished(ExecDone {
+            id,
+            exit: None,
+            reason: PtyCloseReason::ChannelLost,
+            bytes_in,
+            bytes_out,
+        }));
+        return; // `pty` drops: hang-up then kill
+    }
+    // The master read ended: the session is over. Reap the shell for its status; a straggler
+    // gets the process-group kill after the grace.
+    let status = match pty.take_child() {
+        Some(mut child) => {
+            let group = child
+                .id()
+                .and_then(|p| rustix::process::Pid::from_raw(p as i32));
+            match tokio::time::timeout(KILL_GRACE, child.wait()).await {
+                Ok(s) => s.ok(),
+                Err(_) => {
+                    if let Some(g) = group {
+                        let _ =
+                            rustix::process::kill_process_group(g, rustix::process::Signal::KILL);
+                    }
+                    child.wait().await.ok()
+                }
+            }
+        }
+        None => None,
+    };
+    tracing::debug!(pty_id = id, bytes_in, bytes_out, "exec pty closed");
     let _ = report.send(crate::pty::TaskMsg::ExecFinished(ExecDone {
         id,
         exit: Some(status.map_or(

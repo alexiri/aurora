@@ -1,0 +1,35 @@
+{
+  "$defs": {
+    "ChannelMode": {
+      "description": "The channel's mode.",
+      "enum": [
+        "shell",
+        "exec",
+        "sftp"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "`POST /v1/terminator/sessions/{id}/channels`.",
+  "properties": {
+    "mode": {
+      "$ref": "#/$defs/ChannelMode"
+    },
+    "wait_secs": {
+      "default": null,
+      "description": "How long the API may hold the call while a stopped sandbox wakes (≤ 45).",
+      "format": "uint32",
+      "minimum": 0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "mode"
+  ],
+  "title": "ChannelGrantRequest",
+  "type": "object"
+}

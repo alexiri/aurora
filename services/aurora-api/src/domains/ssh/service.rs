@@ -133,11 +133,23 @@ pub async fn delete_key(s: &AppState, c: &Caller, id: Uuid) -> Result<(), ApiErr
 
 // ---- connection facts (C-792) --------------------------------------------------------------
 
-/// The live terminator replicas and their distinct host keys. **P4-SSH-2 replaces this** with the
-/// `ssh_terminator_replicas` query (`last_seen_at > now − 90 s`); until the table exists no
-/// terminator can have registered.
-pub(crate) async fn terminator_facts(_s: &AppState) -> Result<(u32, Vec<HostKey>), ApiError> {
-    Ok((0, Vec::new()))
+/// The live terminator replicas (`last_seen_at` within `SSH_SESSION_LEASE`) and their distinct
+/// host keys (P4-SSH-2, C-792).
+pub(crate) async fn terminator_facts(s: &AppState) -> Result<(u32, Vec<HostKey>), ApiError> {
+    let (live, keys) = aurora_db::repo::ssh_sessions::live_host_keys(
+        &s.pool,
+        aurora_core::limits::SSH_SESSION_LEASE.as_secs() as i64,
+    )
+    .await?;
+    Ok((
+        u32::try_from(live).unwrap_or(u32::MAX),
+        keys.into_iter()
+            .map(|(public_key, fingerprint)| HostKey {
+                public_key,
+                fingerprint,
+            })
+            .collect(),
+    ))
 }
 
 /// `known_hosts` lines for the instance's public address and the live host keys.

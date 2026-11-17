@@ -236,6 +236,26 @@ const EXEMPT: &[(&str, &str, &str)] = &[
     ),
     ("GET", "/v1/ssh", "P4-SSH-1 (C-792): see GET /me/ssh-keys"),
     (
+        "GET",
+        "/v1/me/ssh-sessions",
+        "P4-SSH-2 (C-793): 404 `ssh_disabled` for everyone while `ssh.enabled` is off (this harness leaves it off); the authority matrix (own list, `can_own` all with the person, `can_use` own only, stranger 404, disconnect by person or owner) is it/ssh_sessions.rs ssh_sessions_lists_and_disconnect_authority",
+    ),
+    (
+        "GET",
+        "/v1/agents/{agent}/ssh-sessions",
+        "P4-SSH-2: see GET /me/ssh-sessions",
+    ),
+    (
+        "DELETE",
+        "/v1/ssh-sessions/{id}",
+        "P4-SSH-2: see GET /me/ssh-sessions",
+    ),
+    (
+        "GET",
+        "/v1/admin/terminators",
+        "P4-SSH-2 (C-793): instance admin only, 404 `ssh_disabled` while off; it/ssh_sessions.rs ssh_sessions_terminator_facts_and_admin_list",
+    ),
+    (
         "POST",
         "/v1/telemetry/traces",
         "FIX-146 D (C-732): any session may post browser spans, but the route is 404 for everyone \

@@ -413,6 +413,12 @@ pub const TERMINALS_PER_USER: u32 = 2;
 pub const EXECS_PER_SANDBOX: u32 = 12;
 /// (phase 5, P5-FILES-1) live `auf_` files legs per sandbox at the runner (close 4409).
 pub const FILE_SESSIONS_PER_SANDBOX: u32 = 4;
+/// (phase 5, P4-SSH-2, D-239) live `auz_` SSH channels per sandbox at the runner (close 4409).
+pub const SSH_CHANNELS_PER_SANDBOX: u32 = 8;
+/// (16 §W20) the longest `exec` command line (no NUL) and the most `env` variables a channel
+/// passes (each ≤ 256 bytes); checked by the terminator, the runner and the supervisor.
+pub const SSH_EXEC_COMMAND_MAX: usize = 8 * KIB;
+pub const SSH_ENV_VARS_MAX: usize = 16;
 /// (phase 5, P5-FILES-1, C-901) single-use `auf_` files grant lifetime.
 pub const FILES_GRANT_TTL: Duration = Duration::from_secs(30);
 /// (C-901) a pooled SFTP session without a request closes after this.
@@ -481,6 +487,51 @@ pub const SSH_CERT_TTL: Duration = Duration::from_secs(900);
 /// (P4-SSH-1, D-239(c)) certificate mints per person per agent per clock hour (429
 /// `ssh_mint_rate_limited`); counted exactly across replicas in `ssh_mint_counters`.
 pub const SSH_MINTS_PER_USER_AGENT_HOUR: u32 = 30;
+/// (phase 5, P4-SSH-2, D-239, C-794) an SSH session is alive while its lease is current; every
+/// heartbeat that keeps it renews it to `now() + SSH_SESSION_LEASE`.
+pub const SSH_SESSION_LEASE: Duration = Duration::from_secs(90);
+/// (C-794) the terminator's heartbeat period (`TerminatorConfig.heartbeat_secs`).
+pub const SSH_HEARTBEAT: Duration = Duration::from_secs(30);
+/// (C-794) open SSH sessions per person / per agent, counted over open lease-current rows
+/// (global); `ssh.sessions_per_user` / `ssh.sessions_per_agent` may only lower them.
+pub const SSH_SESSIONS_PER_USER: u32 = 4;
+pub const SSH_SESSIONS_PER_AGENT: u32 = 8;
+/// (C-794, 16 §W20) concurrent session channels per SSH connection (the terminator enforces it;
+/// the API reports it in `TerminatorConfig`).
+pub const SSH_CHANNELS_PER_SESSION: u32 = 4;
+/// (C-794) single-use `auz_` channel grant lifetime.
+pub const SSH_GRANT_TTL: Duration = Duration::from_secs(30);
+/// (C-794) default idle timeout and maximum lifetime of one SSH connection;
+/// `ssh.idle_timeout_secs` may only lower the idle value.
+pub const SSH_IDLE_TIMEOUT: Duration = Duration::from_secs(600);
+pub const SSH_MAX_LIFETIME: Duration = Duration::from_secs(4 * 3600);
+/// (C-796, D-239(h)) SSH keep-awake: grace after the last channel byte and the cap per boot
+/// (`ssh.awake_cap_secs`, at most `BACKGROUND_CAP`).
+pub const SSH_AWAKE_GRACE: Duration = Duration::from_secs(120);
+pub const SSH_AWAKE_CAP: Duration = Duration::from_secs(4 * 3600);
+/// (C-794) how long a channel waits for a waking sandbox (`ssh.wake_wait_secs` may only lower it).
+pub const SSH_WAKE_WAIT: Duration = Duration::from_secs(90);
+/// (C-794) one long-poll of `POST /v1/terminator/sessions/{id}/channels` (`wait_secs` ≤ this).
+pub const SSH_CHANNEL_POLL_MAX: Duration = Duration::from_secs(45);
+/// (C-794) terminator-plane requests per second per replica, burst `2 ×` it.
+pub const SSH_API_RATE: u32 = 50;
+/// (phase 5, P4-SSH-2, 16 §W20, D-356) the terminator's authentication limits: real attempts per
+/// connection before it ends (the `none` probe is not one; russh's own backstop is one more),
+/// the delay of every refusal, and the time from accept to authenticated.
+pub const SSH_AUTH_ATTEMPTS: usize = 6;
+pub const SSH_AUTH_FAILURE_DELAY: Duration = Duration::from_secs(1);
+pub const SSH_AUTH_TIMEOUT: Duration = Duration::from_secs(20);
+/// (16 §W20) per replica: unauthenticated connections in total / per client address, and the
+/// per-address token bucket (connections per minute, burst); `[terminator]` may raise them.
+pub const SSH_PREAUTH_MAX: u32 = 256;
+pub const SSH_PREAUTH_PER_IP: u32 = 8;
+pub const SSH_CONNECT_RATE: u32 = 30;
+pub const SSH_CONNECT_BURST: u32 = 10;
+/// (16 §W20) consecutive failed heartbeats after which the terminator closes every session and
+/// refuses new authentications until one succeeds.
+pub const SSH_HEARTBEAT_FAILURES: u32 = 3;
+/// (03 §ssh_sessions) closed session rows are kept this long; grants are pruned after 24 h.
+pub const SSH_SESSION_RETENTION: Duration = Duration::from_secs(30 * 24 * 3600);
 
 #[cfg(test)]
 mod tests {

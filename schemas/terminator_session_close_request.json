@@ -1,0 +1,65 @@
+{
+  "$defs": {
+    "ChannelsByMode": {
+      "properties": {
+        "exec": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "sftp": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "shell": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "`POST /v1/terminator/sessions/{id}/close` (idempotent: the first close wins).",
+  "properties": {
+    "bytes_in": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "bytes_out": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "channels_by_mode": {
+      "$ref": "#/$defs/ChannelsByMode",
+      "default": {
+        "exec": 0,
+        "sftp": 0,
+        "shell": 0
+      }
+    },
+    "channels_total": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "reason": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "reason",
+    "channels_total",
+    "bytes_in",
+    "bytes_out"
+  ],
+  "title": "SessionCloseRequest",
+  "type": "object"
+}

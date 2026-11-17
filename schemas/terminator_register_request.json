@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "`POST /v1/terminator/register`.",
+  "properties": {
+    "host_public_key": {
+      "description": "The replica's SSH host public key, `ssh-ed25519 <base64>`.",
+      "type": "string"
+    },
+    "version": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "version",
+    "host_public_key"
+  ],
+  "title": "RegisterRequest",
+  "type": "object"
+}

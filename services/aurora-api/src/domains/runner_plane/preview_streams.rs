@@ -127,7 +127,12 @@ pub async fn open(
     if matches!(req.kind.as_deref(), Some("files")) {
         return crate::domains::files::service::open(s, runner, req).await;
     }
-    if req.grant.expose().starts_with("auf_") {
+    // (P4-SSH-2, C-796) `auz_` grants redeem from `ssh_stream_grants` only, as kind `ssh`; any
+    // other pairing never finds its row and is 403 `grant_invalid`.
+    if matches!(req.kind.as_deref(), Some("ssh")) {
+        return crate::domains::ssh::sessions::redeem(s, req).await;
+    }
+    if req.grant.expose().starts_with("auf_") || req.grant.expose().starts_with("auz_") {
         return Err(ApiError::new(
             axum::http::StatusCode::FORBIDDEN,
             "grant_invalid",

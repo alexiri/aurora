@@ -1,0 +1,34 @@
+{
+  "$defs": {
+    "SecretString": {
+      "description": "A secret-bearing string: serializes transparently, never printed by `Debug`.",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "`POST /v1/terminator/sessions`: the client's signature was verified by the terminator; the\nAPI re-verifies the certificate and decides.",
+  "properties": {
+    "certificate": {
+      "$ref": "#/$defs/SecretString",
+      "description": "The OpenSSH certificate line the client authenticated with."
+    },
+    "client_address": {
+      "default": null,
+      "description": "The client's address as the terminator saw it (coarsened by the API at insert).",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "username": {
+      "description": "The SSH username (the agent id).",
+      "type": "string"
+    }
+  },
+  "required": [
+    "certificate",
+    "username"
+  ],
+  "title": "SessionOpenRequest",
+  "type": "object"
+}

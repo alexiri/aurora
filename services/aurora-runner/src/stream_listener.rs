@@ -22,8 +22,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use aurora_core::limits::{
-    PREVIEW_CHUNK, PREVIEW_STREAM_WINDOW, TERMINAL_AWAKE_GRACE, TERMINAL_CHUNK,
-    TERMINAL_STREAM_WINDOW,
+    PREVIEW_CHUNK, PREVIEW_STREAM_WINDOW, SSH_AWAKE_GRACE, SSH_CHANNELS_PER_SANDBOX,
+    TERMINAL_AWAKE_GRACE, TERMINAL_CHUNK, TERMINAL_STREAM_WINDOW,
 };
 use aurora_protocol::common::SecretString;
 use aurora_protocol::runner::{
@@ -113,6 +113,9 @@ struct RouteEnd {
     /// (P5-FILES-1, D-316) Set on an `auf_` files leg: an exec leg of `16 §W21` (never stamps
     /// keep-awake; the supervisor side is `exec.*` + `pty.credit`/`pty.close`).
     files: bool,
+    /// (P4-SSH-2, D-239) Set on an `auz_` SSH leg: an exec leg like the files one, whose bytes
+    /// stamp keep-awake as kind `ssh` (`16 §W20`).
+    ssh: bool,
     /// Sandbox → browser bytes the supervisor has sent and the runner has not yet credited
     /// back (FIX-060: its own counter, separate from the browser → sandbox window). The pump
     /// raises it on arrival, the leg lowers it when it returns credit after writing onward.
@@ -126,8 +129,17 @@ struct Target {
     to_leg: mpsc::Sender<LegIn>,
     terminal: bool,
     files: bool,
+    ssh: bool,
     from_sandbox: Arc<AtomicUsize>,
     recv_window: usize,
+}
+
+/// Which keep-awake column a delivered message's leg stamps (if any).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Keep {
+    No,
+    Terminal,
+    Ssh,
 }
 
 /// The listener: owns the routes, accepts connections, enforces the binding.
@@ -135,7 +147,8 @@ pub struct StreamListener {
     server: ChannelServer,
     routes: Arc<Mutex<Routes>>,
     /// (P4-TERM, C-620) Last keep-awake stamp per sandbox (rate limit).
-    last_stamp: Arc<Mutex<HashMap<Uuid, std::time::Instant>>>,
+    /// Keyed by (sandbox, ssh): the terminal and SSH columns are separate (C-796).
+    last_stamp: Arc<Mutex<HashMap<(Uuid, bool), std::time::Instant>>>,
     /// Idle and lifetime limits of a leg (production: [`IDLE_TIMEOUT`], [`LIFETIME`]; tests
     /// build the listener with shortened ones through [`StreamListener::with_limits`]).
     idle: Duration,
@@ -160,6 +173,8 @@ pub struct Bounds {
     pub max_ptys: usize,
     /// (P5-FILES-1) Live `auf_` files legs per sandbox (`FILE_SESSIONS_PER_SANDBOX`, 4409).
     pub max_files: usize,
+    /// (P4-SSH-2) Live `auz_` SSH legs per sandbox (`SSH_CHANNELS_PER_SANDBOX`, 4409).
+    pub max_ssh: usize,
     /// `pty.resize` from the browser is coalesced to the latest size and sent at most this
     /// often.
     pub resize_flush: Duration,
@@ -173,6 +188,7 @@ impl Default for Bounds {
             max_streams: 64,
             max_ptys: 2,
             max_files: aurora_core::limits::FILE_SESSIONS_PER_SANDBOX as usize,
+            max_ssh: SSH_CHANNELS_PER_SANDBOX as usize,
             resize_flush: Duration::from_millis(50),
         }
     }
@@ -345,19 +361,22 @@ impl StreamListener {
         pty_id: u32,
         payload: Vec<u8>,
     ) {
-        let terminal = self
+        match self
             .deliver(pty_id, sandbox, boot, LegIn::Data(payload))
             .await
-            .unwrap_or(false);
-        if terminal {
+            .unwrap_or(Keep::No)
+        {
             // Best effort and off the hot path: a keep-awake stamp per data chunk would
             // hammer the API; at most one per grace per sandbox (the grace outlives the gap).
-            self.stamp_awake(sandbox).await;
+            Keep::Terminal => self.stamp_awake(sandbox, false).await,
+            Keep::Ssh => self.stamp_awake(sandbox, true).await,
+            Keep::No => {}
         }
     }
 
     /// (P5-FILES-1, `16 §W20`) An exec's stderr from a supervisor `[0x03][pty_id BE][payload]`:
-    /// routed like the other data (same window), never a keep-awake stamp.
+    /// routed like the other data (same window). Never a keep-awake stamp for a files leg; an
+    /// SSH leg's stderr is bytes like any other (`16 §W20`).
     pub(crate) async fn supervisor_stderr(
         &self,
         sandbox: Uuid,
@@ -365,32 +384,43 @@ impl StreamListener {
         pty_id: u32,
         payload: Vec<u8>,
     ) {
-        self.deliver(pty_id, sandbox, boot, LegIn::Stderr(payload))
-            .await;
+        if self
+            .deliver(pty_id, sandbox, boot, LegIn::Stderr(payload))
+            .await
+            == Some(Keep::Ssh)
+        {
+            self.stamp_awake(sandbox, true).await;
+        }
     }
 
-    /// (P4-TERM, C-620) Best-effort keep-awake stamp, rate-limited to one per
-    /// [`TERMINAL_AWAKE_GRACE`] per sandbox (the grace already outlives the gap). Never
-    /// blocks the leg: the API call is detached, failures are ignored (a missed stamp only
-    /// shortens the grace the previous one bought).
-    async fn stamp_awake(&self, sandbox: Uuid) {
-        if !self.stamp_due(sandbox).await {
+    /// (P4-TERM, C-620; P4-SSH-2, C-796) Best-effort keep-awake stamp, rate-limited to one per
+    /// grace per sandbox and kind (the grace already outlives the gap). Never blocks the leg:
+    /// the API call is detached, failures are ignored (a missed stamp only shortens the grace
+    /// the previous one bought).
+    async fn stamp_awake(&self, sandbox: Uuid, ssh: bool) {
+        if !self.stamp_due(sandbox, ssh).await {
             return;
         }
         if let Some(api) = self.server.api() {
             let api = api.clone();
-            tokio::spawn(async move { api.terminal_keep_awake(sandbox).await });
+            tokio::spawn(async move { api.keep_awake(sandbox, ssh).await });
         }
     }
 
-    /// Rate-limit gate: `true` at most once per [`TERMINAL_AWAKE_GRACE`] per sandbox.
-    async fn stamp_due(&self, sandbox: Uuid) -> bool {
+    /// Rate-limit gate: `true` at most once per [`TERMINAL_AWAKE_GRACE`] / [`SSH_AWAKE_GRACE`]
+    /// per sandbox and kind.
+    async fn stamp_due(&self, sandbox: Uuid, ssh: bool) -> bool {
+        let grace = if ssh {
+            SSH_AWAKE_GRACE
+        } else {
+            TERMINAL_AWAKE_GRACE
+        };
         let mut last = self.last_stamp.lock().await;
         let now = std::time::Instant::now();
-        match last.get(&sandbox) {
-            Some(t) if now.duration_since(*t) < TERMINAL_AWAKE_GRACE => false,
+        match last.get(&(sandbox, ssh)) {
+            Some(t) if now.duration_since(*t) < grace => false,
             _ => {
-                last.insert(sandbox, now);
+                last.insert((sandbox, ssh), now);
                 true
             }
         }
@@ -430,6 +460,7 @@ impl StreamListener {
                 to_leg: end.to_leg.clone(),
                 terminal: end.terminal,
                 files: end.files,
+                ssh: end.ssh,
                 from_sandbox: end.from_sandbox.clone(),
                 recv_window: end.recv_window,
             })
@@ -451,7 +482,7 @@ impl StreamListener {
     }
 
     /// Hands one message to the leg `id` of `(sandbox, boot)` without ever waiting
-    /// (FIX-060). Returns whether the leg is a terminal leg when the message was queued.
+    /// (FIX-060). Returns which keep-awake column the leg stamps when the message was queued.
     ///
     /// **Design: `try_send`, and close the leg on `Full`** — not "clone the sender and
     /// `send().await` outside the lock". This function runs on the sandbox's channel pump,
@@ -469,11 +500,17 @@ impl StreamListener {
     /// Data is also checked against the window the runner announced for sandbox → browser
     /// (`from_sandbox`, counted on **arrival**, so a supervisor that ignores credit is caught
     /// even while the leg is busy or stalled): exceeding it closes the leg like a full queue.
-    async fn deliver(&self, id: u32, sandbox: Uuid, boot: Uuid, msg: LegIn) -> Option<bool> {
+    async fn deliver(&self, id: u32, sandbox: Uuid, boot: Uuid, msg: LegIn) -> Option<Keep> {
         let t = self.owned_target(id, sandbox, boot).await?;
-        let terminal = t.terminal;
-        // A files leg's close frames are the PTY's (`pty.close`), without any stamping.
-        let pty_like = t.terminal || t.files;
+        let keep = if t.terminal {
+            Keep::Terminal
+        } else if t.ssh {
+            Keep::Ssh
+        } else {
+            Keep::No
+        };
+        // An exec leg's close frames are the PTY's (`pty.close`); only terminals and SSH stamp.
+        let pty_like = t.terminal || t.files || t.ssh;
         if let LegIn::Data(b) | LegIn::Stderr(b) = &msg {
             let after = t.from_sandbox.fetch_add(b.len(), Ordering::AcqRel) + b.len();
             if after > t.recv_window {
@@ -486,7 +523,7 @@ impl StreamListener {
             }
         }
         match t.to_leg.try_send(msg) {
-            Ok(()) => Some(terminal),
+            Ok(()) => Some(keep),
             // The leg task is ending; its own release path frees the route.
             Err(mpsc::error::TrySendError::Closed(_)) => None,
             Err(mpsc::error::TrySendError::Full(_)) => {
@@ -537,12 +574,14 @@ impl StreamListener {
         routes.next_id
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn register_route(
         &self,
         id: u32,
         binding: &PreviewStreamOpenResponse,
         terminal: bool,
         files: bool,
+        ssh: bool,
         to_leg: mpsc::Sender<LegIn>,
         from_sandbox: Arc<AtomicUsize>,
     ) -> Option<oneshot::Receiver<u16>> {
@@ -550,15 +589,20 @@ impl StreamListener {
         let mut routes = self.routes.lock().await;
         // Per-sandbox live-leg cap (FIX-092): the supervisor's own limits, enforced here too so
         // the runner's memory is bounded however the supervisor behaves. Each kind (port,
-        // terminal, files) counts and is capped on its own.
+        // terminal, files, ssh) counts and is capped on its own.
         let live = routes
             .legs
             .values()
             .filter(|e| {
-                e.sandbox == binding.sandbox_id && e.terminal == terminal && e.files == files
+                e.sandbox == binding.sandbox_id
+                    && e.terminal == terminal
+                    && e.files == files
+                    && e.ssh == ssh
             })
             .count();
-        let cap = if files {
+        let cap = if ssh {
+            self.bounds.max_ssh
+        } else if files {
             self.bounds.max_files
         } else if terminal {
             self.bounds.max_ptys
@@ -577,8 +621,9 @@ impl StreamListener {
                 boot: binding.boot_id,
                 terminal,
                 files,
+                ssh,
                 from_sandbox,
-                recv_window: if terminal || files {
+                recv_window: if terminal || files || ssh {
                     TERMINAL_STREAM_WINDOW
                 } else {
                     PREVIEW_STREAM_WINDOW
@@ -802,6 +847,15 @@ async fn handle(
     } else if grant.starts_with("auf_") {
         // (P5-FILES-1, D-316, `16 §W21`) a files grant: an `sftp` exec, never a PTY or a port.
         Some("files")
+    } else if grant.starts_with("auz_") {
+        // (P4-SSH-2, D-239, `16 §W20`) an SSH channel grant: an exec (`shell`/`exec`/`sftp`),
+        // never a PTY-terminal or a port. A runner the API did not enable for SSH never even
+        // redeems it (the grant is left to expire).
+        if !state.server.ssh_enabled() {
+            http_close(&mut tcp, CLOSE_NOT_ALLOWED).await;
+            return;
+        }
+        Some("ssh")
     } else {
         None
     };
@@ -903,9 +957,10 @@ async fn open_and_serve(
     // ---- 3. ask the supervisor to open the byte stream (5 s round trip), or for a terminal
     // grant the PTY (`P4-TERM`, C-617); then complete the handshake and copy.
     let terminal = binding.port.is_none();
-    if kind == Some("files") {
-        // (P5-FILES-1, `16 §W21`) The exec is opened *after* the 101: the API's first message
-        // names it. A files grant that comes back with a port is a relay/API fault: refuse.
+    if kind == Some("files") || kind == Some("ssh") {
+        // (P5-FILES-1, `16 §W21`; P4-SSH-2, `16 §W20`) The exec is opened *after* the 101: the
+        // first message names it. A files or SSH grant that comes back with a port is a
+        // relay/API fault: refuse.
         if binding.port.is_some() {
             http_close(&mut tcp, CLOSE_NOT_ALLOWED).await;
             return;
@@ -914,7 +969,7 @@ async fn open_and_serve(
         else {
             return;
         };
-        serve_files_leg(state, binding, ws).await;
+        serve_exec_leg(state, binding, ws, kind == Some("ssh")).await;
         return;
     }
     if let Some(port) = binding.port {
@@ -1086,7 +1141,15 @@ async fn open_supervisor_stream(
     let from_sandbox = Arc::new(AtomicUsize::new(0));
     // Register the route before sending `stream.open` so the answer cannot race us.
     let Some(close_rx) = state
-        .register_route(id, binding, false, false, leg_tx, from_sandbox.clone())
+        .register_route(
+            id,
+            binding,
+            false,
+            false,
+            false,
+            leg_tx,
+            from_sandbox.clone(),
+        )
         .await
     else {
         return Err(CLOSE_LIMIT);
@@ -1151,7 +1214,15 @@ async fn open_supervisor_pty(
     // Register the route before sending `pty.open` so the answer cannot race us; the leg is
     // stamped terminal so its bytes drive the keep-awake (`C-620`).
     let Some(close_rx) = state
-        .register_route(id, binding, true, false, leg_tx, from_sandbox.clone())
+        .register_route(
+            id,
+            binding,
+            true,
+            false,
+            false,
+            leg_tx,
+            from_sandbox.clone(),
+        )
         .await
     else {
         return Err(CLOSE_LIMIT);
@@ -1283,7 +1354,7 @@ async fn serve_terminal_leg(
                         if state.send_data(&r, 0x02, pty_id, &b).await.is_err() {
                             break CLOSE_CHANNEL_LOST;
                         }
-                        state.stamp_awake(sandbox).await;
+                        state.stamp_awake(sandbox, false).await;
                     }
                     // (P4-TERM, C-619) The one text control the dashboard sends: resize.
                     // `{"kind":"pty.resize","pty_id":0,"cols":…,"rows":…}` — the browser
@@ -1318,7 +1389,7 @@ async fn serve_terminal_leg(
                         if ws_send(&mut ws_sink, Message::binary(b)).await.is_err() {
                             break CLOSE_NORMAL;
                         }
-                        state.stamp_awake(sandbox).await;
+                        state.stamp_awake(sandbox, false).await;
                         // Return credit after writing onward, at least every `window / 4`.
                         if from_pty_unacked >= TERMINAL_STREAM_WINDOW / 4 {
                             let n = from_pty_unacked as u32;
@@ -1462,6 +1533,71 @@ fn is_bare_sftp_open(text: &str) -> bool {
     })
 }
 
+/// What an exec leg asked for in its first message.
+struct ExecSpec {
+    mode: aurora_protocol::runner::ExecMode,
+    command: Option<String>,
+    tty: Option<aurora_protocol::runner::ExecTty>,
+    env: std::collections::BTreeMap<String, String>,
+}
+
+/// The first message of an `auz_` leg (`16 §W20`): `{"kind":"exec.open","mode":…,"command"?,
+/// "tty"?,"env":{…}}`. Unknown fields are refused.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SshOpen {
+    kind: String,
+    mode: String,
+    #[serde(default)]
+    command: Option<String>,
+    #[serde(default)]
+    tty: Option<aurora_protocol::runner::ExecTty>,
+    #[serde(default)]
+    env: std::collections::BTreeMap<String, String>,
+}
+
+/// Parses and validates an SSH leg's `exec.open` (frame validation: a bad frame closes the leg
+/// 4502): the shape per mode (`exec` needs a command without NUL, `shell`/`sftp` take none,
+/// `sftp` has no `tty`), `tty` bounds, and the `LANG`/`LC_*` environment allow-list.
+fn parse_ssh_open(text: &str) -> Option<ExecSpec> {
+    use aurora_core::limits::{SSH_ENV_VARS_MAX, SSH_EXEC_COMMAND_MAX};
+    use aurora_protocol::runner::ExecMode;
+    let o: SshOpen = serde_json::from_str(text).ok()?;
+    if o.kind != "exec.open" {
+        return None;
+    }
+    let mode = match o.mode.as_str() {
+        "shell" => ExecMode::Shell,
+        "exec" => ExecMode::Exec,
+        "sftp" => ExecMode::Sftp,
+        _ => return None,
+    };
+    let shape_ok = match mode {
+        ExecMode::Exec => o
+            .command
+            .as_deref()
+            .is_some_and(|c| c.len() <= SSH_EXEC_COMMAND_MAX && !c.contains('\0')),
+        ExecMode::Sftp => o.command.is_none() && o.tty.is_none(),
+        _ => o.command.is_none(),
+    };
+    let tty_ok = o.tty.as_ref().is_none_or(|t| {
+        (1..=64).contains(&t.term.len())
+            && t.term.bytes().all(|b| (0x20..=0x7e).contains(&b))
+            && (1..=1000).contains(&t.cols)
+            && (1..=1000).contains(&t.rows)
+    });
+    let env_ok = o.env.len() <= SSH_ENV_VARS_MAX
+        && o.env
+            .iter()
+            .all(|(k, v)| (k == "LANG" || k.starts_with("LC_")) && k.len() <= 64 && v.len() <= 256);
+    (shape_ok && tty_ok && env_ok).then_some(ExecSpec {
+        mode,
+        command: o.command,
+        tty: o.tty,
+        env: o.env,
+    })
+}
+
 /// The WebSocket closing handshake of every leg exit: our Close frame, then up to 2 s for the
 /// peer's.
 async fn close_ws(sink: &mut WsSink, stream: &mut futures::stream::SplitStream<Ws>, code: u16) {
@@ -1494,7 +1630,18 @@ async fn close_ws(sink: &mut WsSink, stream: &mut futures::stream::SplitStream<W
 /// (the SFTP stream) and `[0x03][…]` runner → API (the server's stderr), text is `exec.eof`
 /// (API → runner) and `exec.exit` (runner → API, then 1000). Any other frame closes the leg
 /// 4502 without being forwarded. No keep-awake stamp, ever: the API stamps its own.
-async fn serve_files_leg(state: Arc<StreamListener>, binding: PreviewStreamOpenResponse, ws: Ws) {
+///
+/// (P4-SSH-2, D-239, `16 §W20`) With `ssh` the same leg serves an `auz_` SSH channel: the first
+/// message is the full `exec.open` (`shell`/`exec`/`sftp`, `tty`, the `LANG`/`LC_*` env), at most
+/// `SSH_CHANNELS_PER_SANDBOX` legs per sandbox (4409), a `pty.resize` text frame is accepted
+/// when the channel has a `tty`, bytes in either direction stamp the SSH keep-awake (at most
+/// one per `SSH_AWAKE_GRACE`), and the idle and lifetime limits are the API's answer's.
+async fn serve_exec_leg(
+    state: Arc<StreamListener>,
+    binding: PreviewStreamOpenResponse,
+    ws: Ws,
+    ssh: bool,
+) {
     use aurora_protocol::runner::{ExecEof, ExecMode, ExecOpen};
     let (mut sink, mut stream) = ws.split();
     let (sandbox, boot) = (binding.sandbox_id, binding.boot_id);
@@ -1504,22 +1651,39 @@ async fn serve_files_leg(state: Arc<StreamListener>, binding: PreviewStreamOpenR
     };
     // ---- 1. the first message, within 5 s
     let first = tokio::time::timeout(PTY_OPEN_WAIT, stream.next()).await;
-    let bad = match first {
-        Err(_) => Some(CLOSE_TIMEOUT),
-        Ok(Some(Ok(Message::Text(t)))) if t.len() <= 12 * 1024 && is_bare_sftp_open(&t) => None,
-        Ok(Some(Ok(Message::Close(_))) | Some(Err(_)) | None) => Some(CLOSE_NORMAL),
-        Ok(_) => Some(CLOSE_REFUSED),
+    let spec = match first {
+        Err(_) => Err(CLOSE_TIMEOUT),
+        Ok(Some(Ok(Message::Text(t)))) if t.len() <= 12 * 1024 => {
+            if ssh {
+                parse_ssh_open(&t).ok_or(CLOSE_REFUSED)
+            } else if is_bare_sftp_open(&t) {
+                Ok(ExecSpec {
+                    mode: ExecMode::Sftp,
+                    command: None,
+                    tty: None,
+                    env: std::collections::BTreeMap::new(),
+                })
+            } else {
+                Err(CLOSE_REFUSED)
+            }
+        }
+        Ok(Some(Ok(Message::Close(_))) | Some(Err(_)) | None) => Err(CLOSE_NORMAL),
+        Ok(_) => Err(CLOSE_REFUSED),
     };
-    if let Some(code) = bad {
-        close_ws(&mut sink, &mut stream, code).await;
-        return;
-    }
+    let spec = match spec {
+        Ok(s) => s,
+        Err(code) => {
+            close_ws(&mut sink, &mut stream, code).await;
+            return;
+        }
+    };
+    let has_tty = spec.tty.is_some();
     // ---- 2. register the route (the cap) and ask the supervisor for the exec
     let id = state.alloc_id().await;
     let (leg_tx, mut leg_rx) = mpsc::channel(DATA_Q);
     let from_sandbox = Arc::new(AtomicUsize::new(0));
     let Some(mut close_rx) = state
-        .register_route(id, &binding, false, true, leg_tx, from_sandbox.clone())
+        .register_route(id, &binding, false, !ssh, ssh, leg_tx, from_sandbox.clone())
         .await
     else {
         close_ws(&mut sink, &mut stream, CLOSE_LIMIT).await;
@@ -1528,10 +1692,10 @@ async fn serve_files_leg(state: Arc<StreamListener>, binding: PreviewStreamOpenR
     let open = ExecOpen {
         pty_id: id,
         window: TERMINAL_STREAM_WINDOW as u32,
-        mode: ExecMode::Sftp,
-        command: None,
-        tty: None,
-        env: std::collections::BTreeMap::new(),
+        mode: spec.mode,
+        command: spec.command,
+        tty: spec.tty,
+        env: spec.env,
     };
     if state
         .send_to_supervisor(&r, RunnerToSupervisor::ExecOpen(open))
@@ -1581,12 +1745,30 @@ async fn serve_files_leg(state: Arc<StreamListener>, binding: PreviewStreamOpenR
     let mut from_sup_unacked: usize = 0;
     let mut bytes_in: u64 = 0;
     let mut bytes_out: u64 = 0;
+    // An SSH leg ends with its connection's idle and lifetime limits (the API's answer),
+    // never later than the listener's own.
+    let (idle_limit, life_limit) = if ssh {
+        (
+            state
+                .idle
+                .min(Duration::from_secs(u64::from(binding.idle_secs))),
+            state
+                .lifetime
+                .min(Duration::from_secs(u64::from(binding.max_lifetime_secs))),
+        )
+    } else {
+        (state.idle, state.lifetime)
+    };
     tokio::pin! {
-        let idle = tokio::time::sleep(state.idle);
-        let lifetime = tokio::time::sleep(state.lifetime);
+        let idle = tokio::time::sleep(idle_limit);
+        let lifetime = tokio::time::sleep(life_limit);
     }
     let mut ping = tokio::time::interval(PING_INTERVAL);
     ping.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    // `pty.resize` (SSH legs with a `tty`), coalesced to the latest size like the terminal's.
+    let mut pending_resize: Option<(u16, u16)> = None;
+    let mut resize_flush = tokio::time::interval(state.bounds.resize_flush);
+    resize_flush.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     // Forwards one supervisor → API message; `false` when the socket failed.
     async fn forward(sink: &mut WsSink, msg: LegIn, unacked: &mut usize, out: &mut u64) -> bool {
         let (tag, b) = match msg {
@@ -1611,16 +1793,41 @@ async fn serve_files_leg(state: Arc<StreamListener>, binding: PreviewStreamOpenR
         framed.extend_from_slice(&b);
         ws_send(sink, Message::binary(framed)).await.is_ok()
     }
+    // (P4-SSH-2) An SSH channel is a bulk path (`scp`, `sftp` uploads): a chunk that does not fit
+    // the supervisor's remaining credit is held, the leg stops reading the socket meanwhile (TCP
+    // backpressure to the terminator, `16 §W18`) and the chunk is sent when credit returns. The
+    // files leg keeps its strict rule: over-window data is a violation.
+    let mut held: Option<Vec<u8>> = None;
     let reason = loop {
         tokio::select! {
-            msg = stream.next() => match msg {
+            _ = resize_flush.tick(), if pending_resize.is_some() => {
+                if let Some((cols, rows)) = pending_resize.take()
+                    && state
+                        .send_to_supervisor(
+                            &r,
+                            RunnerToSupervisor::PtyResize(PtyResize { pty_id: id, cols, rows }),
+                        )
+                        .await
+                        .is_err()
+                {
+                    break CLOSE_CHANNEL_LOST;
+                }
+            }
+            msg = stream.next(), if held.is_none() => match msg {
                 Some(Ok(Message::Binary(b))) => {
-                    idle.as_mut().reset(tokio::time::Instant::now() + state.idle);
+                    idle.as_mut().reset(tokio::time::Instant::now() + idle_limit);
                     // `[0x02][payload ≤ 16 KiB]` only; any other tag is a violation.
                     let Some((&0x02, payload)) = b.split_first() else {
                         break CLOSE_REFUSED;
                     };
-                    if payload.len() > TERMINAL_CHUNK || to_sup_credit < payload.len() {
+                    if payload.len() > TERMINAL_CHUNK {
+                        break CLOSE_REFUSED;
+                    }
+                    if to_sup_credit < payload.len() {
+                        if ssh {
+                            held = Some(payload.to_vec());
+                            continue;
+                        }
                         break CLOSE_REFUSED;
                     }
                     if payload.is_empty() {
@@ -1631,15 +1838,40 @@ async fn serve_files_leg(state: Arc<StreamListener>, binding: PreviewStreamOpenR
                     if state.send_data(&r, 0x02, id, payload).await.is_err() {
                         break CLOSE_CHANNEL_LOST;
                     }
+                    if ssh {
+                        state.stamp_awake(sandbox, true).await;
+                    }
                 }
                 Some(Ok(Message::Text(t))) => {
-                    idle.as_mut().reset(tokio::time::Instant::now() + state.idle);
-                    let eof = t.len() <= 256
-                        && serde_json::from_str::<serde_json::Value>(&t).is_ok_and(|v| {
-                            v.as_object().is_some_and(|o| {
-                                o.len() == 1 && o.get("kind").and_then(|k| k.as_str()) == Some("exec.eof")
-                            })
-                        });
+                    idle.as_mut().reset(tokio::time::Instant::now() + idle_limit);
+                    let ctl = (t.len() <= 256)
+                        .then(|| serde_json::from_str::<serde_json::Value>(&t).ok())
+                        .flatten()
+                        .and_then(|v| v.as_object().cloned());
+                    // (P4-SSH-2) `{"kind":"pty.resize","cols","rows"}` on an SSH leg with a
+                    // `tty`: 1…1000 each, coalesced to the latest. Anything else but `exec.eof`
+                    // is a violation.
+                    if ssh
+                        && has_tty
+                        && let Some(o) = &ctl
+                        && o.len() == 3
+                        && o.get("kind").and_then(|k| k.as_str()) == Some("pty.resize")
+                    {
+                        let dim = |k: &str| {
+                            o.get(k)
+                                .and_then(serde_json::Value::as_u64)
+                                .filter(|n| (1..=1000).contains(n))
+                                .map(|n| n as u16)
+                        };
+                        let (Some(cols), Some(rows)) = (dim("cols"), dim("rows")) else {
+                            break CLOSE_REFUSED;
+                        };
+                        pending_resize = Some((cols, rows));
+                        continue;
+                    }
+                    let eof = ctl.is_some_and(|o| {
+                        o.len() == 1 && o.get("kind").and_then(|k| k.as_str()) == Some("exec.eof")
+                    });
                     if !eof {
                         break CLOSE_REFUSED;
                     }
@@ -1652,14 +1884,14 @@ async fn serve_files_leg(state: Arc<StreamListener>, binding: PreviewStreamOpenR
                     }
                 }
                 Some(Ok(Message::Pong(_) | Message::Ping(_))) => {
-                    idle.as_mut().reset(tokio::time::Instant::now() + state.idle);
+                    idle.as_mut().reset(tokio::time::Instant::now() + idle_limit);
                 }
                 Some(Ok(Message::Frame(_))) => {}
                 Some(Ok(Message::Close(_))) | Some(Err(_)) | None => break CLOSE_NORMAL,
             },
             chunk = leg_rx.recv() => match chunk {
                 Some(m @ (LegIn::Data(_) | LegIn::Stderr(_) | LegIn::Exit(_))) => {
-                    idle.as_mut().reset(tokio::time::Instant::now() + state.idle);
+                    idle.as_mut().reset(tokio::time::Instant::now() + idle_limit);
                     if !forward(&mut sink, m, &mut from_sup_unacked, &mut bytes_out).await {
                         break CLOSE_NORMAL;
                     }
@@ -1676,6 +1908,16 @@ async fn serve_files_leg(state: Arc<StreamListener>, binding: PreviewStreamOpenR
                 }
                 Some(LegIn::Credit(c)) => {
                     to_sup_credit = (to_sup_credit + c as usize).min(window);
+                    if let Some(h) = held.take_if(|h| h.len() <= to_sup_credit) {
+                        to_sup_credit -= h.len();
+                        bytes_in += h.len() as u64;
+                        if state.send_data(&r, 0x02, id, &h).await.is_err() {
+                            break CLOSE_CHANNEL_LOST;
+                        }
+                        if ssh {
+                            state.stamp_awake(sandbox, true).await;
+                        }
+                    }
                 }
                 Some(LegIn::Opened { .. }) => {}
                 // The route was removed: the supervisor's `pty.close` already queued the code.
@@ -1964,6 +2206,7 @@ mod tests {
                 boot,
                 terminal: true,
                 files: false,
+                ssh: false,
                 from_sandbox: Arc::new(AtomicUsize::new(0)),
                 recv_window: TERMINAL_STREAM_WINDOW,
             },
@@ -1983,7 +2226,7 @@ mod tests {
 
         assert_eq!(
             l.deliver(1, sb, boot, LegIn::Data(vec![1])).await,
-            Some(true)
+            Some(Keep::Terminal)
         );
         // The queue (depth 1) is full and nobody drains it: must return, not block.
         let second = tokio::time::timeout(
@@ -1999,7 +2242,7 @@ mod tests {
         // The neighbour is untouched and still deliverable.
         assert_eq!(
             l.deliver(2, sb, boot, LegIn::Data(vec![3])).await,
-            Some(true)
+            Some(Keep::Terminal)
         );
         assert!(matches!(rx_b.recv().await, Some(LegIn::Data(d)) if d == [3]));
         assert!(close_b.try_recv().is_err());

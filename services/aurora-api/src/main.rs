@@ -468,6 +468,8 @@ async fn serve(
     aurora_api::jobs::spawn_counters_prune(pool.clone());
     // (P4-PRV-1) preview housekeeping: stale wake/start stamps and the shares gauge.
     aurora_api::jobs::spawn_preview_housekeeping(pool.clone());
+    // (P4-SSH-2) the stale-session sweep of the SSH terminator plane.
+    aurora_api::jobs::spawn_ssh_sweep(state.clone());
     aurora_api::jobs::spawn(pool, state.ops_live.clone(), quota_mail);
     aurora_api::domains::approvals::notify::spawn(state.clone());
     // (FIX-025, D-158) No turn waits forever for a sandbox, runner connected or not.
