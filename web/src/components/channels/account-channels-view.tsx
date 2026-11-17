@@ -2,6 +2,7 @@
 
 import { useQueries } from "@tanstack/react-query";
 
+import { SendAsMeSection } from "@/components/account/send-as-me";
 import { EmptyState, ErrorState, Loading } from "@/components/states";
 import { Button } from "@/components/ui/button";
 import { inputClass } from "@/components/ui/field";
@@ -44,7 +45,7 @@ export function AccountChannelsView() {
   const dmFor = (integrationId: string, ref: string) =>
     defaults.data.items.find((d) => d.integration_id === integrationId && d.platform_user_ref === ref);
 
-  return (
+  const linked = (
     <Section
       id="my-channels"
       title="Linked chat accounts"
@@ -107,5 +108,12 @@ export function AccountChannelsView() {
         <MutationError error={unlink.error ?? setDefault.error} />
       </div>
     </Section>
+  );
+
+  return (
+    <div className="space-y-8">
+      {linked}
+      <SendAsMeSection links={links.data.items} agents={agents} />
+    </div>
   );
 }

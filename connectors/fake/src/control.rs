@@ -53,6 +53,7 @@ async fn emit<T: serde::Serialize>(
 pub fn router(f: Arc<FakeConnector>) -> Router {
     Router::new()
         .route("/fake/users", post(put_user))
+        .route("/fake/person-tokens", post(put_person_token))
         .route("/fake/spaces", post(put_space))
         .route("/fake/messages", post(inject_message))
         .route("/fake/messages/edit", post(inject_edit))
@@ -75,6 +76,30 @@ pub fn router(f: Arc<FakeConnector>) -> Router {
 async fn put_user(State(f): Ctl, Json(u): Json<FakeUser>) -> Reply {
     lock(&f.platform).upsert_user(u);
     (StatusCode::OK, Json(json!({"ok": true})))
+}
+
+#[derive(Deserialize)]
+struct PersonToken {
+    user_ref: String,
+    /// Revoke instead of create (a later use answers `credential_dead`).
+    #[serde(default)]
+    revoke: Option<String>,
+}
+
+/// (P4-UTOK) Mint a personal access token for a platform user: the value the person would paste
+/// into Aurora. `{"revoke": "<token>"}` kills one.
+async fn put_person_token(State(f): Ctl, Json(t): Json<PersonToken>) -> Reply {
+    let mut p = lock(&f.platform);
+    if let Some(dead) = t.revoke {
+        p.person_tokens.remove(&dead);
+        return (StatusCode::OK, Json(json!({"ok": true})));
+    }
+    if !p.users.contains_key(&t.user_ref) {
+        return bad("no such user");
+    }
+    let token = format!("fake-pat-{}", Uuid::now_v7().simple());
+    p.person_tokens.insert(token.clone(), t.user_ref);
+    (StatusCode::OK, Json(json!({"token": token})))
 }
 
 async fn put_space(State(f): Ctl, Json(s): Json<FakeSpace>) -> Reply {

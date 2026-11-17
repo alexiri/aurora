@@ -381,6 +381,20 @@ Vault; the sandboxes namespace gains nothing. The generic per-service keys (`rep
 | `scim.enabled` | bool | `false` | the instance switch for the SCIM plane (P4-GRP-2, SEC-72): `true` routes `/scim` to the API in the Ingress and the HTTPRoute; `false` renders no `/scim` route and the API answers 404 for the whole surface | directory sync (IdP → Aurora provisioning; [15 §SCIM directory sync](15-deployment-operations.md)). (phase 5, SET-5, D-237(d)) (phase 5, SET-5, D-237(d)) It renders `config.scim.available = true` (nothing else of `[scim]`); the SCIM switch itself is an instance setting (Admin › Settings › Directory sync) defaulting to it, and a `config.scim.enabled` you set locks it |
 | `scim.ratePerMinute` | int | unset | `[scim] rate_per_minute`: the per-SCIM-token limit (burst is a fifth of it; the application default is 600). (phase 5, SET-5) Unset by default: edit it on Admin › Settings › Directory sync; a set value is rendered and locks the setting | an IdP that syncs in large bursts |
 
+## Web Push
+
+(phase 5, P4-011B-3; RFE-011b, D-134, D-266(a), C-837; `15 §Approval park-and-resume and Web Push`, SEC-75, SEC-76.) Off by default. The api sends end-to-end encrypted, fixed-field pushes to the browser vendors' push services, so it needs outbound HTTPS to them; nothing else of push is a chart value.
+
+| Value | Type / values | Default | What it does | Set it when / details |
+|---|---|---|---|---|
+| `push.enabled` | bool | `false` | the single switch: renders `config.push.enabled` (mirrored like `relay.enabled`: both set and unequal, or `config.push.enabled=true` alone, fails the render) and the api's egress NetworkPolicy rule to `push.networkPolicy.egressTo` (TCP 443) | deciders should be woken in the browser when an approval waits and no Aurora tab is open |
+| `push.networkPolicy.egressTo` | list of NetworkPolicy peers | `[]` | the peers the api may reach on TCP 443; **required** while `push.enabled` (the render fails while empty); default deny stays. The push services are public hosts, so the usual value is an explicit `0.0.0.0/0` with the private ranges in `except` (or your egress proxy) | always with `push.enabled` |
+| `push.vapid.existingSecret` | string | unset | a Secret holding an operator-managed VAPID private key (PKCS#8 PEM or the base64url raw 32-byte P-256 scalar) under the key `push.vapid.key`; mounted into the api pods **and the migrate Job** (which checks the same configuration) as `AURORA_PUSH_VAPID_KEY`, and `config.push.vapid.private_key_env` names it. Unset = Aurora generates its own key (first api replica) and seals it in the api's own store; `aurora-api push rotate-vapid` then rotates it, and is refused (exit 3) for an operator key | your security policy wants the signing key in your secret manager; rotate by replacing the Secret and restarting |
+| `push.vapid.key` | string | `AURORA_PUSH_VAPID_KEY` | the key inside that Secret | the Secret uses another key name |
+| `push.allowedEndpointHosts` | list | `[]` (the application's list: FCM, Mozilla, Apple, Windows) | rendered into `config.push.allowed_endpoint_hosts` only when set; re-checked before every send | narrowing or adding a push service |
+
+`config.push.vapid.subject` (a `mailto:` or `https:` contact; the default is `server.external_url` when it is https), `config.push.concurrency` and `config.push.timeout_secs` are config keys (`15`). `config.push.dev_endpoint_overrides` (a loopback test seam) is **never rendered**: the chart refuses it, and so does the config layer inside a cluster. None of this is an instance setting (D-237(b)).
+
 ## Plugin packages
 
 | Value | Type / values | Default | What it does | Set it when / details |
@@ -475,12 +489,7 @@ feature:
 - previews: `previews.domain` is a **config** key (set via `config.previews.domain`, `15 §Port previews`); the chart values are `relay.*` ([§Port previews (relay)](#port-previews-relay)). There are no `previews.tls.*` chart values: the wildcard certificate is the operator's own edge configuration (the chart renders no TLS block for `*.<relay.domain>`), and the relay's egress is fixed (api, runners, DNS).
 - web terminal: `terminal.awake_cap_secs`, `terminal.wake_window_secs`, `terminal.wake_wait_secs` (P4-TERM, D-161; `15`, `11 §Web terminal` — note: instance settings since SET-5, set via `config.terminal.*` only to lock them; the deployment switch is the chart value `terminal.enabled`, above — it renders `config.terminal.available`)
 - SCIM: `scim.enabled` (renders `config.scim.available`) and `scim.ratePerMinute` (rendered only when set) are implemented ([§SCIM](#scim)); the remaining SCIM keys (`scim.allowed_email_domains`, `scim.token_max_days`) are instance settings (`config.scim.*` locks them, `15 §SCIM directory sync`)
-- Web Push (phase 5, D-138; not in the chart yet — P4-011B-3 adds them to `values.yaml` and moves these rows into a new `## Web Push` section; RFE-011b, D-266(a), C-837; `15 §Approval park-and-resume and Web Push`):
-  - `push.enabled` — bool, default `false`. The single switch: renders `config.push.enabled` (mirrored like `relay.enabled`: both set and unequal, or `config.push.enabled` alone, fails the render) and the api's egress NetworkPolicy rule to `push.networkPolicy.egressTo`.
-  - `push.networkPolicy.egressTo` — list of NetworkPolicy peers, default `[]`; **required** while `push.enabled` (the render fails while empty; the push services are public hosts, so an explicit `0.0.0.0/0` with the private-range `except` is the usual value).
-  - `push.vapid.existingSecret` / `push.vapid.key` — strings, default unset: an operator-managed VAPID private key, mounted into the api pods only as `AURORA_PUSH_VAPID_KEY` and named in `config.push.vapid.private_key_env`; unset = Aurora generates and rotates its own (sealed in the database).
-  - `push.allowedEndpointHosts` — list, default unset (the application's list of `15` applies); rendered into `config.push.allowed_endpoint_hosts` only when set.
-  - `push.vapid.subject`, `push.concurrency`, `push.timeout_secs` are config keys (`config.push.*`); `push.dev_endpoint_overrides` is never rendered.
+- Web Push (phase 5, P4-011B-3): implemented, see [§Web Push](#web-push).
 - Approval parking (phase 5, P4-011B): **no chart values** — `approvals.park.*` are instance settings edited in Admin › Approvals (D-265(c)); set `config.approvals.park.*` only to lock them.
 - S3 blob store (phase 6, D-318; not in the chart yet): `blobs.s3.existingSecret`, `blobs.s3.networkPolicy` (P4-S3; `15 §S3-compatible blob store`)
 

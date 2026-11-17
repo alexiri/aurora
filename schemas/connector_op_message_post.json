@@ -36,6 +36,19 @@
             "presence_id"
           ],
           "type": "object"
+        },
+        {
+          "description": "(phase 5, P4-UTOK, C-857) Post as a person: the `user_tokens` id. Only a `message.post`\ncarries it; the claim delivers the person's token as `Operation.user_credential`.",
+          "properties": {
+            "user_token": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          "required": [
+            "user_token"
+          ],
+          "type": "object"
         }
       ]
     },
@@ -77,6 +90,22 @@
           "type": "object"
         }
       ]
+    },
+    "UserFooter": {
+      "description": "Who a post made with a person's token is credited to in its footer (C-851).",
+      "properties": {
+        "agent_name": {
+          "type": "string"
+        },
+        "owner_label": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "agent_name",
+        "owner_label"
+      ],
+      "type": "object"
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -104,6 +133,17 @@
     },
     "target": {
       "$ref": "#/$defs/Target"
+    },
+    "user_footer": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/UserFooter"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "(P4-UTOK, C-857, C-851) With `sender.user_token`: the names the connector puts in the\npost's footer, added at send time and never part of what the owner approved."
     }
   },
   "required": [

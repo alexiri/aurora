@@ -73,6 +73,8 @@ struct State {
     /// scenario event id → the post whose delivery it names.
     event_posts: HashMap<String, String>,
     ephemerals: Vec<Post>,
+    /// Personal access token value → its id (the platform shows the value once).
+    person_tokens: HashMap<String, String>,
 }
 
 pub struct MattermostDriver {
@@ -1142,6 +1144,54 @@ impl PlatformDriver for MattermostDriver {
         bail!(
             "no Mattermost action triggers POST /link-start in shared mode (PlatformQuirks::link_start_action)"
         )
+    }
+
+    /// A personal access token created the way a person does: the server allows them, the user
+    /// may create one, and `POST /users/{id}/tokens` issues it (its value is shown once).
+    async fn person_token(&self, user_ref: &str) -> Result<Option<String>> {
+        let p = self.person(user_ref)?;
+        // Best effort: the pinned dev server may already allow them.
+        let _ = self
+            .admin(
+                Method::PUT,
+                "/config/patch",
+                Some(json!({"ServiceSettings": {"EnableUserAccessTokens": true}})),
+            )
+            .await;
+        let _ = self
+            .admin(
+                Method::PUT,
+                &format!("/users/{}/roles", p.id),
+                Some(json!({"roles": "system_user system_user_access_token"})),
+            )
+            .await;
+        let v = self
+            .admin(
+                Method::POST,
+                &format!("/users/{}/tokens", p.id),
+                Some(json!({"description": "aurora conformance"})),
+            )
+            .await?;
+        let token = v["token"].as_str().context("no token")?.to_owned();
+        let id = v["id"].as_str().context("no token id")?.to_owned();
+        lock(&self.st).person_tokens.insert(token.clone(), id);
+        Ok(Some(token))
+    }
+
+    async fn revoke_person_token(&self, token: &str) -> Result<()> {
+        // `POST /users/tokens/revoke` takes the token's id, which the platform gave at creation.
+        let id = lock(&self.st)
+            .person_tokens
+            .get(token)
+            .cloned()
+            .context("the driver issued no such token")?;
+        self.admin(
+            Method::POST,
+            "/users/tokens/revoke",
+            Some(json!({"token_id": id})),
+        )
+        .await?;
+        Ok(())
     }
 
     async fn posts(&self, space_ref: Option<&str>) -> Result<Vec<Post>> {

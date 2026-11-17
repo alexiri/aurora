@@ -4,6 +4,7 @@
 {{- $apiKeys := concat $common (list "AURORA_SIGNING_KEY" "AURORA_RUNNER_SESSION_KEY") -}}
 {{- $apiEnv := include "aurora.env" (dict "root" . "db" true "keys" $apiKeys "optionalKeys" (list "AURORA_SIGNING_ACTIVE_KEY" "AURORA_INTERNAL_ACTIVE_KEY")) -}}
 {{- $apiEnv = printf "%s%s%s" $apiEnv (include "aurora.vaultEnv" (dict "root" . "svc" "api")) (include "aurora.countersEnv" .) -}}
+{{- $apiEnv = printf "%s%s" $apiEnv (include "aurora.pushEnv" .) -}}
 {{- /* The gateway reads its own config file when Vault is on (its own Vault role). */ -}}
 {{- $gwConfig := ternary "aurora-gateway.toml" "aurora.toml" .Values.vault.enabled -}}
 {{- if .Values.api.bootstrap.runnerToken }}

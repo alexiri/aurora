@@ -31,6 +31,7 @@ pub const DEFAULT_CAPABILITIES: &[&str] = &[
     "history",
     "files",
     "native_status",
+    "user_tokens",
 ];
 
 pub const MESSAGE_MAX_CHARS: u32 = 16_000;
@@ -310,7 +311,50 @@ impl FakeConnector {
         }
         let ok = |v: Value| Ok(Some(v));
         match payload {
-            OpPayload::MessagePost(m) => {
+            // (P4-UTOK, C-854) The token's owner, or `credential_dead` for a token the platform
+            // does not know (revoked, never issued).
+            OpPayload::UserTokenVerify(_) => {
+                self.need(Capability::UserTokens)?;
+                let who = op
+                    .user_credential
+                    .as_deref()
+                    .and_then(|t| p.person_tokens.get(t))
+                    .and_then(|r| p.users.get(r))
+                    .ok_or_else(|| OpError::new(ErrorCode::CredentialDead, "token rejected"))?;
+                ok(json!({"platform_user_ref": who.reference, "handle": who.handle}))
+            }
+            OpPayload::MessagePost(mut m) => {
+                // (P4-UTOK, C-857) A post as a person: their token, the footer, no ephemeral or file.
+                let mut person: Option<String> = None;
+                if matches!(m.sender, Sender::UserToken { .. }) {
+                    self.need(Capability::UserTokens)?;
+                    if m.ephemeral_to.is_some() || !m.files.is_empty() {
+                        return Err(OpError::new(
+                            ErrorCode::Invalid,
+                            "a post as a person has no ephemeral or file part",
+                        ));
+                    }
+                    person = Some(
+                        op.user_credential
+                            .as_deref()
+                            .and_then(|t| p.person_tokens.get(t))
+                            .cloned()
+                            .ok_or_else(|| {
+                                OpError::new(ErrorCode::CredentialDead, "token rejected")
+                            })?,
+                    );
+                    let f = m.user_footer.take().ok_or_else(|| {
+                        OpError::new(ErrorCode::Invalid, "a post as a person needs its footer")
+                    })?;
+                    if let Some(t) = m.content.get_mut("text")
+                        && let Some(s) = t.as_str()
+                    {
+                        *t = json!(format!(
+                            "{s}\n\n_Sent by {} for {}_",
+                            f.agent_name, f.owner_label
+                        ));
+                    }
+                }
                 // At-most-once in practice: honour the invisible marker on re-claim.
                 if op.maybe_sent
                     && let Some(prev) = p
@@ -357,6 +401,7 @@ impl FakeConnector {
                 let author = match &m.sender {
                     Sender::Presence { presence_id } => format!("presence-{presence_id}"),
                     Sender::Shared(_) => "shared-bot".to_owned(),
+                    Sender::UserToken { .. } => person.clone().unwrap_or_default(),
                 };
                 for (name, bytes) in downloads {
                     p.attachments.insert((message_ref.clone(), name), bytes);
@@ -405,7 +450,7 @@ impl FakeConnector {
                 let add = op.kind == OpKind::ReactionAdd;
                 let by = match &r.sender {
                     Sender::Presence { presence_id } => format!("presence-{presence_id}"),
-                    Sender::Shared(_) => "shared-bot".to_owned(),
+                    Sender::Shared(_) | Sender::UserToken { .. } => "shared-bot".to_owned(),
                 };
                 let msg = p
                     .find(&r.message_ref)

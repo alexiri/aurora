@@ -42,6 +42,13 @@
             "string",
             "null"
           ]
+        },
+        "user_credential": {
+          "description": "(phase 5, P4-UTOK, C-854, C-857, SEC-112) A person's platform token, opened at claim for\nthis one operation: present only on a `user_token.verify` and on a `message.post` whose\n`sender` is a `user_token`. The connector uses it for that call alone and never stores or\nlogs it. Never log.",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [

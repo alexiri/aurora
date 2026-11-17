@@ -145,7 +145,27 @@ struct Source {
     update: &'static str,
 }
 
-const SOURCES: [Source; 9] = [
+const SOURCES: [Source; 11] = [
+    // (phase 5, P4-UTOK, D-282) A person's chat-platform token (set only while `active`) and the
+    // per-op copy a queued send or verify holds; the copy's org is kept in the op's payload.
+    Source {
+        purpose: Purpose::UserToken,
+        select: "SELECT t.id, i.org_id, NULL::uuid, t.token_ref FROM user_tokens t \
+                 JOIN channel_integrations i ON i.id = t.integration_id \
+                 WHERE t.token_ref IS NOT NULL AND t.id > $1 ORDER BY t.id LIMIT $2",
+        update: "UPDATE user_tokens SET token_ref = $2, updated_at = now() \
+                 WHERE id = $1 AND token_ref = $3",
+    },
+    Source {
+        purpose: Purpose::ChannelOpUserToken,
+        select: "SELECT id, (payload->>'user_org_id')::uuid, NULL::uuid, \
+                 payload->>'user_credential_ref' FROM channel_ops \
+                 WHERE payload->>'user_credential_ref' IS NOT NULL AND id > $1 \
+                 ORDER BY id LIMIT $2",
+        update: "UPDATE channel_ops SET payload = jsonb_set(payload, '{user_credential_ref}', \
+                 to_jsonb($2::text)), updated_at = now() \
+                 WHERE id = $1 AND payload->>'user_credential_ref' = $3",
+    },
     // (phase 5, SET-1, D-236(g)) Every `{ "$secret": { ref, owner } }` field anywhere in a settings
     // section (top-level keys and fields inside keyed-list entries); the field's own uuid is the
     // owner. Refs are unique strings, so the update replaces the old ref text. The generation is

@@ -241,6 +241,8 @@ pub struct ApiConfig {
     pub scim: ScimConfig,
     /// (phase 4, P4-PRV-1) validated `[previews]` (off means inert; on requires a domain).
     pub previews: PreviewsSection,
+    /// (phase 5, P4-011B-3, D-134) validated `[push]` (off means every push route 404s).
+    pub push: PushSection,
     /// (phase 4, P4-TERM, D-161) validated `[terminal]` (off means every route 404s).
     pub terminal: TerminalSection,
     pub plugins: PluginsSection,
@@ -601,6 +603,7 @@ impl RawConfig {
             self.hosted.background_cap_secs,
         );
         let previews = check_previews(&mut c, &self.previews, self, &external_url);
+        check_push(&mut c, &self.push, &external_url);
         // (P4-TERM, C-623) the terminal's operator-tunable clocks; the limits live in
         // `aurora_core::limits`.
         if self.terminal.awake_cap_secs == 0
@@ -753,6 +756,7 @@ impl RawConfig {
                 token_max_days: self.scim.token_max_days,
             },
             previews,
+            push: self.push.clone(),
             terminal: self.terminal.clone(),
             plugins: self.plugins.clone(),
             retention: self.retention.clone(),
@@ -3098,6 +3102,129 @@ fn check_hosted(c: &mut Ctx, h: &HostedSection) {
     }
     if h.default_timezone.is_empty() {
         c.err("hosted.default_timezone", "must not be empty");
+    }
+}
+
+/// (C-837, SEC-75) One `push.allowed_endpoint_hosts` entry: a lower-case DNS name, or `*.` plus a name of at
+/// least two labels (`*.com` would allow every site). No port, path, scheme or IP literal.
+pub fn valid_push_host_pattern(p: &str) -> bool {
+    let name = p.strip_prefix("*.").unwrap_or(p);
+    let labels: Vec<&str> = name.split('.').collect();
+    labels.len() >= 2
+        && labels.iter().all(|l| {
+            !l.is_empty()
+                && l.len() <= 63
+                && !l.starts_with('-')
+                && !l.ends_with('-')
+                && l.bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+        })
+        && !labels
+            .last()
+            .is_some_and(|t| t.bytes().all(|b| b.is_ascii_digit()))
+}
+
+/// (C-837, D-266(a), D-267(b)) `[push]` validation. Numbers are checked always; the rest only when `enabled`
+/// (so an existing configuration is unchanged). Whether the operator key is readable is the API's startup check;
+/// here its variable must exist and have a plausible shape.
+fn check_push(c: &mut Ctx, p: &PushSection, external_url: &Option<String>) {
+    if p.concurrency == 0 || p.concurrency > 64 {
+        c.err("push.concurrency", "must be between 1 and 64");
+    }
+    if p.timeout_secs < 2 || p.timeout_secs > 30 {
+        c.err("push.timeout_secs", "must be between 2 and 30 seconds");
+    }
+    for (i, h) in p.allowed_endpoint_hosts.iter().enumerate() {
+        if !valid_push_host_pattern(h) {
+            c.err(
+                format!("push.allowed_endpoint_hosts[{i}]"),
+                "must be a lower-case DNS name, or `*.` and a name of at least two labels",
+            );
+        }
+    }
+    if !p.dev_endpoint_overrides.is_empty() {
+        let key = "push.dev_endpoint_overrides";
+        if std::env::var_os("KUBERNETES_SERVICE_HOST").is_some() {
+            c.err(
+                key,
+                "tests and development only: refused inside a Kubernetes cluster",
+            );
+        }
+        let ext_loopback = external_url
+            .as_deref()
+            .and_then(host_of)
+            .is_some_and(|h| is_loopback_host(&h));
+        if !ext_loopback {
+            c.err(
+                key,
+                "tests and development only: needs a loopback server.external_url",
+            );
+        }
+        for (host, target) in &p.dev_endpoint_overrides {
+            if !p.allowed_endpoint_hosts.iter().any(|a| a == host) {
+                c.err(
+                    format!("{key}.{host}"),
+                    "the key must be a host listed in push.allowed_endpoint_hosts",
+                );
+            }
+            let loopback = target
+                .strip_prefix("http://")
+                .map(|r| r.split('/').next().unwrap_or(""))
+                .is_some_and(|authority| {
+                    let h = authority
+                        .strip_prefix('[')
+                        .and_then(|v| v.split_once(']'))
+                        .map_or_else(|| authority.split(':').next().unwrap_or(""), |(h, _)| h);
+                    is_loopback_host(h)
+                })
+                && !target.contains(['@', '?', '#']);
+            if !loopback {
+                c.err(
+                    format!("{key}.{host}"),
+                    "the target must be a loopback http URL (127.0.0.0/8, ::1, localhost)",
+                );
+            }
+        }
+    }
+    if !p.enabled {
+        return;
+    }
+    if p.allowed_endpoint_hosts.is_empty() {
+        c.err(
+            "push.allowed_endpoint_hosts",
+            "must not be empty while push.enabled is true",
+        );
+    }
+    let subject = p
+        .vapid
+        .subject
+        .clone()
+        .or_else(|| external_url.clone())
+        .unwrap_or_default();
+    let subject_ok = subject.starts_with("mailto:") && subject.len() > "mailto:".len()
+        || subject.starts_with("https://") && host_of(&subject).is_some();
+    if !subject_ok {
+        c.err(
+            "push.vapid.subject",
+            "must be a mailto: or https: contact (the default, server.external_url, is only valid when https)",
+        );
+    }
+    if let Some(var) = p.vapid.private_key_env.as_deref() {
+        let name_ok = !var.is_empty()
+            && var
+                .bytes()
+                .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_');
+        if !name_ok {
+            c.err(
+                "push.vapid.private_key_env",
+                "must be an environment variable name (upper-case letters, digits and `_`)",
+            );
+        } else if std::env::var(var).map_or(true, |v| v.trim().is_empty()) {
+            c.err(
+                "push.vapid.private_key_env",
+                format!("the environment variable {var} is unset or empty"),
+            );
+        }
     }
 }
 

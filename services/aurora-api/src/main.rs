@@ -61,6 +61,27 @@ enum Command {
         #[command(subcommand)]
         command: SettingsCommand,
     },
+    /// Web Push keys (C-833): rotate the generated VAPID key, show the key and device counts.
+    /// `rotate-vapid` exits 3 when the key is operator-managed.
+    Push {
+        #[command(subcommand)]
+        command: PushCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum PushCommand {
+    /// Generate a new active VAPID key and retire the old one (generated keys only).
+    RotateVapid {
+        /// Report what would happen; change nothing.
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Key mode, keys and subscription counts; never key material.
+    Status {
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -189,6 +210,9 @@ async fn main() -> ExitCode {
     if let Command::Settings { command } = &cli.command {
         return settings_command(cfg, source, command).await;
     }
+    if let Command::Push { command } = &cli.command {
+        return push_command(cfg, source, command).await;
+    }
     let instance = service::init_telemetry(
         SERVICE,
         &cfg.telemetry.log_level,
@@ -215,13 +239,48 @@ async fn main() -> ExitCode {
         Command::Secrets {
             command: SecretsCommand::Rekey { purpose, dry_run },
         } => secrets_rekey(cfg, source, purpose, dry_run).await,
-        Command::Openapi { .. } | Command::Keys { .. } | Command::Settings { .. } => Ok(()),
+        Command::Openapi { .. }
+        | Command::Keys { .. }
+        | Command::Settings { .. }
+        | Command::Push { .. } => Ok(()),
     };
     service::telemetry_shutdown();
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             tracing::error!(error = %e, "fatal");
+            eprintln!("error: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// `aurora-api push …` (C-833). Exit 0 done, 1 error (or push off), 3 `rotate-vapid` with an
+/// operator-managed key.
+async fn push_command(
+    cfg: ApiConfig,
+    source: aurora_config::ConfigSource,
+    command: &PushCommand,
+) -> ExitCode {
+    let run = async {
+        let pool = aurora_db::connect(cfg.database_url.expose(), 4)
+            .await
+            .map_err(|e| e.to_string())?;
+        let state = secrets_state(&pool, cfg, source)
+            .await
+            .map_err(|e| e.to_string())?;
+        match command {
+            PushCommand::RotateVapid { dry_run } => {
+                aurora_api::domains::push::cli::rotate(&state, *dry_run).await
+            }
+            PushCommand::Status { json } => aurora_api::domains::push::cli::status(&state, *json)
+                .await
+                .map(|()| 0),
+        }
+    };
+    match run.await {
+        Ok(code) => ExitCode::from(code),
+        Err(e) => {
             eprintln!("error: {e}");
             ExitCode::FAILURE
         }
@@ -470,6 +529,9 @@ async fn serve(
     aurora_api::jobs::spawn_preview_housekeeping(pool.clone());
     // (P4-SSH-2) the stale-session sweep of the SSH terminator plane.
     aurora_api::jobs::spawn_ssh_sweep(state.clone());
+    // (P4-UTOK) discard the sealed values of finished sends and ended person tokens.
+    aurora_api::jobs::spawn_user_token_sweep(state.clone());
+    aurora_api::domains::push::jobs::spawn(state.clone());
     aurora_api::jobs::spawn(pool, state.ops_live.clone(), quota_mail);
     aurora_api::domains::approvals::notify::spawn(state.clone());
     // (FIX-025, D-158) No turn waits forever for a sandbox, runner connected or not.

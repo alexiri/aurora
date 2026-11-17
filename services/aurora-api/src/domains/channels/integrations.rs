@@ -568,6 +568,13 @@ pub async fn delete(s: &AppState, c: &Caller, id: Uuid) -> Result<(), ApiError> 
             .ok_or_else(|| ApiError::not_found("Integration not found."))?;
         dep.enqueue(&mut tx).await?;
         presences::bump_integration_agents(&mut tx, id).await?;
+        // (P4-UTOK, D-284(a)) Every person's token on this integration ends with it.
+        let token_discards = crate::domains::user_tokens::end::for_integration(
+            &mut tx,
+            id,
+            &AuditActor::from_caller(c),
+        )
+        .await?;
         repo::delete(&mut *tx, id).await?;
         let ev = AuditEvent::new(
             AuditActor::from_caller(c),
@@ -576,14 +583,19 @@ pub async fn delete(s: &AppState, c: &Caller, id: Uuid) -> Result<(), ApiError> 
         )
         .org(row.org_id)
         .target("channel_integration", id);
-        audit::commit_critical(tx, &ev).await
+        audit::commit_critical(tx, &ev).await?;
+        Ok::<_, ApiError>(token_discards)
     }
     .await;
-    if let Err(e) = done {
-        dep.rollback(s).await;
-        return Err(e);
-    }
+    let token_discards = match done {
+        Ok(d) => d,
+        Err(e) => {
+            dep.rollback(s).await;
+            return Err(e);
+        }
+    };
     dep.committed(s).await;
+    token_discards.run(s).await;
     for (presence, sealed) in refs {
         match presence {
             Some(p) => discard(s, row.org_id, p, true, &sealed).await,

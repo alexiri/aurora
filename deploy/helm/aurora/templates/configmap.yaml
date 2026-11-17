@@ -106,6 +106,22 @@
 {{- $tm2 := dict "api_url" (printf "http://%s-api:4101" $full) "listen" "0.0.0.0:2222" "ops_port" 4194 "max_preauth" (int .Values.terminator.max_preauth) "max_preauth_per_ip" (int .Values.terminator.max_preauth_per_ip) -}}
 {{- $_ := set $cfg "terminator" (merge $tm2 (default (dict) $cfg.terminator)) -}}
 {{- end -}}
+{{- /* (P4-011B-3, D-266(a), C-837) Web Push: `push.enabled` (top-level) is the single switch and MIRRORS
+      `config.push.enabled` like `relay.enabled`/`config.previews.enabled`: it renders the api's egress
+      rule to `push.networkPolicy.egressTo`, so `config.push.enabled=true` alone is refused (the api
+      would start with no way to reach a push service) and so is a disagreement. The development key
+      `push.dev_endpoint_overrides` (a loopback test seam) is never rendered. */ -}}
+{{- $ps := default (dict) $cfg.push -}}
+{{- if hasKey $ps "dev_endpoint_overrides" }}{{ fail "config.push.dev_endpoint_overrides is for tests only and cannot be set through the chart (docs/15)" }}{{ end -}}
+{{- if and (not .Values.push.enabled) (get $ps "enabled") }}{{ fail "config.push.enabled=true alone does not turn Web Push on: set the top-level push.enabled — config alone leaves the api's egress rule to the push services off" }}{{ end -}}
+{{- if .Values.push.enabled }}
+{{- if and (hasKey $ps "enabled") (not (get $ps "enabled")) }}{{ fail "push.enabled (top-level) mirrors config.push.enabled and they disagree; set only push.enabled, or make both equal" }}{{ end -}}
+{{- if not .Values.push.networkPolicy.egressTo }}{{ fail "push.networkPolicy.egressTo is required when push.enabled: the api's NetworkPolicy peers for TCP 443 to the push services (docs/23 §Web Push)" }}{{ end -}}
+{{- $_ := set $ps "enabled" true -}}
+{{- if .Values.push.allowedEndpointHosts }}{{- $_ := set $ps "allowed_endpoint_hosts" .Values.push.allowedEndpointHosts -}}{{- end -}}
+{{- if .Values.push.vapid.existingSecret }}{{- $_ := set $ps "vapid" (merge (dict "private_key_env" "AURORA_PUSH_VAPID_KEY") (default (dict) $ps.vapid)) -}}{{- end -}}
+{{- $_ := set $cfg "push" $ps -}}
+{{- end -}}
 {{- /* (P4-GSL, D-154) the API reaches the gateway's internal port (library fetch) by this release's Service name */ -}}
 {{- $_ := set $cfg "api" (merge (dict "gateway_internal_url" (printf "http://%s-gateway:4103" $full)) (default (dict) $cfg.api)) -}}
 {{- $_ := set $cfg "database" (merge (dict "max_connections" .Values.database.maxConnections.api) (default (dict) $cfg.database)) -}}

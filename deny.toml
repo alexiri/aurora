@@ -11,6 +11,11 @@ ignore = [
   { id = "RUSTSEC-2023-0071", reason = "public-key verification only (OIDC); no private RSA operations" },
   # unsafe-libyaml (via serde_yaml, pinned by docs/02 for manifests) is unmaintained.
   { id = "RUSTSEC-2024-0449", reason = "serde_yaml pinned by spec 02; parses size-limited signed manifests; track migration" },
+  # chrono and chrono-tz were declared unmaintained (2026-11, no vulnerability, "no safe upgrade
+  # available"). chrono is the workspace's date-time type (sqlx, serde, every timestamp); moving
+  # to another crate (e.g. jiff) is a planned task, not a version bump.
+  { id = "RUSTSEC-2026-0543", reason = "chrono unmaintained notice, no vulnerability; workspace-wide date-time type; replacement is a planned task" },
+  { id = "RUSTSEC-2026-0555", reason = "chrono-tz unmaintained notice, no vulnerability; follows chrono's replacement" },
 ]
 
 [licenses]

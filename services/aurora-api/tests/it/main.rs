@@ -120,6 +120,9 @@ mod tools;
 mod trace_e2e;
 mod turn_trace_context;
 mod usage_by_model;
+mod user_tokens;
+mod web_push;
+mod web_push_ssrf;
 mod webhooks;
 mod who_can;
 

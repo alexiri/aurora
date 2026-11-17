@@ -117,6 +117,31 @@ impl Ctx {
         Ok((id, r))
     }
 
+    /// Queues an op that acts with a person's token (P4-UTOK): the token travels as
+    /// `Operation.user_credential`, never in the payload.
+    async fn op_as_person(
+        &self,
+        kind: &str,
+        payload: Value,
+        token: &str,
+    ) -> anyhow::Result<(Uuid, OpResult)> {
+        let id = Uuid::now_v7();
+        self.0.core.enqueue_with_user_credential(
+            id,
+            kind,
+            Some(self.0.integration),
+            payload,
+            token,
+        );
+        let r = self
+            .0
+            .core
+            .wait_result(id, T)
+            .await
+            .ok_or_else(|| anyhow::anyhow!("no result for {kind} {id}"))?;
+        Ok((id, r))
+    }
+
     async fn op(&self, kind: &str, payload: Value) -> anyhow::Result<OpResult> {
         let id = self.0.core.enqueue(kind, Some(self.0.integration), payload);
         self.0
@@ -1548,6 +1573,92 @@ async fn s20_narration_card_is_created_updated_and_collapsed() -> R {
         "no step list after the collapse"
     );
     assert_eq!(c.0.driver.live_broadcasts(&after), Vec::<String>::new());
+    c.0.finish().await?;
+    Ok(())
+}
+
+/// (P4-UTOK, C-854, C-857, SEC-112, SEC-113) A person's token verifies to its own platform user,
+/// posts as that person with the footer as the post's last line, carries no ephemeral part or
+/// file, and once the platform kills it every use answers `credential_dead`. Skipped on a driver
+/// that cannot mint a personal token.
+#[tokio::test]
+async fn s21_a_persons_token_verifies_and_posts_as_that_person() -> R {
+    let c = ctx(StartOptions::default()).await?;
+    let Some(token) = c.0.driver.person_token("U1").await? else {
+        c.0.finish().await?;
+        return Ok(());
+    };
+    if !c
+        .0
+        .driver
+        .capabilities()
+        .await?
+        .iter()
+        .any(|n| n == "user_tokens")
+    {
+        c.0.finish().await?;
+        return Ok(());
+    }
+    // Verify: the account the token belongs to.
+    let (_, r) = c
+        .op_as_person("user_token.verify", json!({"config": {}}), &token)
+        .await?;
+    assert_eq!(ok_data(&r)["platform_user_ref"], "U1");
+    // A post as that person.
+    let post_payload = |extra: Value| {
+        let id = Uuid::now_v7();
+        let mut p = json!({
+            "target": space_target("C1", None),
+            "sender": {"user_token": Uuid::now_v7()},
+            "content": text("Quarterly numbers are ready"),
+            "op_marker": id.to_string(),
+            "user_footer": {"agent_name": "Report Bot", "owner_label": "Alice"},
+        });
+        for (k, v) in extra.as_object().cloned().unwrap_or_default() {
+            p[k] = v;
+        }
+        p
+    };
+    let (_, r) = c
+        .op_as_person("message.post", post_payload(json!({})), &token)
+        .await?;
+    let res: MessagePostResult = serde_json::from_value(ok_data(&r))?;
+    let post = c.find_post(&res.message_ref).await?;
+    assert_eq!(post.author_ref, "U1", "posted under the person's account");
+    assert!(
+        post.text.starts_with("Quarterly numbers are ready"),
+        "{:?}",
+        post.text
+    );
+    assert_eq!(
+        post.text.lines().last(),
+        Some("_Sent by Report Bot for Alice_"),
+        "the footer is the last line: {:?}",
+        post.text
+    );
+    assert!(post.files.is_empty() && post.ephemeral_to.is_none());
+    // No ephemeral part, no file: refused, and nothing is posted.
+    let before = c.0.driver.posts(Some("C1")).await?.len();
+    let (_, r) = c
+        .op_as_person(
+            "message.post",
+            post_payload(json!({"ephemeral_to": "U1"})),
+            &token,
+        )
+        .await?;
+    assert_eq!(err_code(&r), ErrorCode::Invalid);
+    assert_eq!(c.0.driver.posts(Some("C1")).await?.len(), before);
+    // A dead token: `credential_dead` for a verify and for a post, and no post appears.
+    c.0.driver.revoke_person_token(&token).await?;
+    let (_, r) = c
+        .op_as_person("user_token.verify", json!({"config": {}}), &token)
+        .await?;
+    assert_eq!(err_code(&r), ErrorCode::CredentialDead);
+    let (_, r) = c
+        .op_as_person("message.post", post_payload(json!({})), &token)
+        .await?;
+    assert_eq!(err_code(&r), ErrorCode::CredentialDead);
+    assert_eq!(c.0.driver.posts(Some("C1")).await?.len(), before);
     c.0.finish().await?;
     Ok(())
 }

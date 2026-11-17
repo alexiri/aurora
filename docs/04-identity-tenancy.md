@@ -1366,11 +1366,12 @@ strings are the ones the API already used and are listed in `SECURITY_CRITICAL_A
 `plugin.host_claim.decide`, `user.instance_admin_grant\|revoke` and `user.disable\|enable` as
 `admin.user_update`, `approval.batch_decide` as one `approval.decide` row per approval
 (`batch: true`); also critical: `invitation.accept` (including first sign-in),
-`connection.reconnect`, `cli_login.consume`, `member.add` (SSO provisioning):
+`connection.reconnect`, `cli_login.consume`, `member.add` (SSO provisioning),
+`push.vapid_rotate` (the Web Push signing key rotated by the CLI, C-833):
 
 | Area | Actions |
 |------|---------|
-| Keys and credentials | `api_key.create`, `api_key.revoke` (personal, workspace, org), (phase 5, P4-SSH-1) `ssh_key.create`, `ssh_key.delete`, `agent.token_regenerate`, `agent.byo_settings.update` (source CIDRs, require-context; RFE-025), `workspace.byo_posture.update` (RFE-025), `cli_login.approve`, `secret.create`, `secret.update`, `secret.value_replace`, `secret.delete`, `secret.accept`, `connection.create`, `connection.update`, `connection.delete`, `oauth_client.create\|update\|delete`, `app_instance.create\|update\|delete` (D-74), `runner.provision\|token\|delete`, `connector.provision\|token\|approve\|delete` |
+| Keys and credentials | `api_key.create`, `api_key.revoke` (personal, workspace, org), (phase 5, P4-SSH-1) `ssh_key.create`, `ssh_key.delete`, (phase 5, P4-UTOK) `user_token.revoke`, `agent.token_regenerate`, `agent.byo_settings.update` (source CIDRs, require-context; RFE-025), `workspace.byo_posture.update` (RFE-025), `cli_login.approve`, `secret.create`, `secret.update`, `secret.value_replace`, `secret.delete`, `secret.accept`, `connection.create`, `connection.update`, `connection.delete`, `oauth_client.create\|update\|delete`, `app_instance.create\|update\|delete` (D-74), `runner.provision\|token\|delete`, `connector.provision\|token\|approve\|delete` |
 | Grants | `grant.put`, `grant.delete` (connection and secret grants) |
 | Policy | `policy.publish`, `policy.rollback` (org and workspace) |
 | Plugins and registry | `plugin.approve\|reject\|disable\|enable\|uninstall`, `plugin.supersede` (FIX-123: connections of a superseded app moved to its successor, counts only), `trusted_key.add\|remove`, `host_claim.decide`, (phase 5, P5-ASRC, D-250, C-608; all security-critical) `addon_source.add\|update\|remove\|check`, `addon.ingest` |
@@ -1412,3 +1413,11 @@ best-effort. SSH channel bytes and `exec` command lines are never recorded anywh
 are truncated to 1,024 bytes; file contents are never recorded anywhere and listings are not audited.
 (phase 5, P4-SSH-1) `ssh_key.create` and `ssh_key.delete` (metadata: name, fingerprint; never the key
 blob) are **security-critical** (Keys and credentials).
+(phase 5, P4-UTOK, D-284(b), C-858) A person's chat-platform token: `user_token.revoke` is
+**security-critical** (Keys and credentials; written in the transaction of every end of standing, one row per
+token: metadata `reason` (`owner`, `link_removed`, `owner_deleted`, `scim_deprovision`, `integration_deleted`,
+`org_deleted`), the integration id and the counts of cancelled approvals and sends). The rest are best-effort:
+`user_token.create`, `user_token.grant` and `user_token.ungrant` (also written, in the deleting transaction, when an
+agent or workspace goes), `user_token.invalid` (system, after a platform `401`) and `user_token.send` (one per
+attempted send: outcome `sent` or `failed`, error code, agent id, conversation id and approval id). None of them
+carries the message text, the token or a platform user id by value.

@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "`user_token.verify` (P4-UTOK, C-854): the token itself arrives in `Operation.user_credential`.",
+  "properties": {
+    "config": {
+      "default": null,
+      "description": "The integration's non-secret setup fields (e.g. a server URL)."
+    }
+  },
+  "title": "UserTokenVerifyOp",
+  "type": "object"
+}

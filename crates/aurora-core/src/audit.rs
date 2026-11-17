@@ -36,6 +36,8 @@ pub const SECURITY_CRITICAL_ACTIONS: &[&str] = &[
     "app_instance.update",
     "cli_login.approve",
     "cli_login.consume",
+    // (P4-011B-3, C-833) the instance's Web Push signing key rotated (CLI)
+    "push.vapid_rotate",
     "connection.create",
     "connection.delete",
     "connection.disable",
@@ -48,6 +50,8 @@ pub const SECURITY_CRITICAL_ACTIONS: &[&str] = &[
     // (P4-SSH-1, D-239(b), C-790) a person's registered SSH public keys
     "ssh_key.create",
     "ssh_key.delete",
+    // (P4-UTOK, D-284(b), C-858) a person's chat-platform token ends (owner, link, SCIM, delete)
+    "user_token.revoke",
     "secret.accept",
     "secret.create",
     "secret.delete",

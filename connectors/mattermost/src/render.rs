@@ -338,6 +338,38 @@ pub fn render_narration(n: &aurora_channels::Narration) -> String {
     out
 }
 
+/// The footer of a post made with a person's token (D-283(c), C-851): the last line, italic,
+/// platform-authored: `_Sent by <agent> for <owner>_`. Both labels are escaped so a name can
+/// neither close the italics, nor form a link, mention or channel reference, nor start a line of
+/// its own; the model never writes it and the owner approved the text without it.
+pub fn user_footer(agent: &str, owner: &str) -> String {
+    format!(
+        "_Sent by {} for {}_",
+        footer_label(agent),
+        footer_label(owner)
+    )
+}
+
+fn footer_label(label: &str) -> String {
+    let mut out = String::new();
+    for c in label.chars() {
+        match c {
+            '\n' | '\r' | '\t' => out.push(' '),
+            c if c.is_control() => {}
+            '@' => out.push_str("@\u{200B}"),
+            '~' => out.push_str("~\u{200B}"),
+            ':' => out.push_str(":\u{200B}"),
+            '\\' | '`' | '*' | '_' | '{' | '}' | '[' | ']' | '(' | ')' | '#' | '+' | '-' | '.'
+            | '!' | '|' | '<' | '>' | '&' | '=' | '^' => {
+                out.push('\\');
+                out.push(c);
+            }
+            c => out.push(c),
+        }
+    }
+    out.trim().to_owned()
+}
+
 /// `label` as a Markdown code span that cannot be closed from inside and carries no mention.
 fn code_span(label: &str) -> String {
     let clean: String = label

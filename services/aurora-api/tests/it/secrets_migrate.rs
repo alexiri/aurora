@@ -19,7 +19,15 @@ use std::time::Duration;
 use uuid::Uuid;
 
 /// Where each purpose's ref lives: `(purpose, "SELECT <ref> FROM … WHERE id = $1")`.
-const REF_SQL: [(Purpose, &str); 9] = [
+const REF_SQL: [(Purpose, &str); 11] = [
+    (
+        Purpose::UserToken,
+        "SELECT token_ref FROM user_tokens WHERE id = $1",
+    ),
+    (
+        Purpose::ChannelOpUserToken,
+        "SELECT payload->>'user_credential_ref' FROM channel_ops WHERE id = $1",
+    ),
     (
         Purpose::SecretValue,
         "SELECT value_ref FROM secrets WHERE id = $1",
@@ -165,6 +173,18 @@ async fn world(vault: SecretVault) -> World {
                     .bind(json!({"credentials_ref": r, "org_id": org}))
                     .execute(pool).await.unwrap();
             }
+            Purpose::UserToken => {
+                let user = h.user(&format!("tok-{id}@example.com"), false).await;
+                sqlx::query("INSERT INTO user_tokens (id, user_id, integration_id, platform_user_ref, platform_user_label, token_ref, status) VALUES ($1,$2,$3,'pu','pu',$4,'active')")
+                    .bind(id).bind(user).bind(integration).bind(&r).execute(pool).await.unwrap();
+            }
+            Purpose::ChannelOpUserToken => {
+                sqlx::query("INSERT INTO channel_ops (id, connector_id, integration_id, kind, payload, status) VALUES ($1,'chat',$2,'user_token.verify',$3,'pending')")
+                    .bind(id)
+                    .bind(integration)
+                    .bind(json!({"user_credential_ref": r, "user_org_id": org}))
+                    .execute(pool).await.unwrap();
+            }
             Purpose::ConnectorSettings => {
                 sqlx::query("INSERT INTO connectors (id, display_name, status, managed, type_id, settings, secret_owner, secret_refs) VALUES ('managed-one','m','active',true,'managed-one','{}',$1,$2)")
                     .bind(id)
@@ -181,6 +201,10 @@ async fn world(vault: SecretVault) -> World {
                     .bind(id).bind(agent).bind(vec![9u8; 32])
                     .bind(json!({"kind": "hmac", "header": "x-sig", "secret_ref": r}))
                     .execute(pool).await.unwrap();
+            }
+            // (P4-011B-3, D-266(b)) Inline-only: never in `Purpose::ALL`, never migrated.
+            Purpose::WebpushVapid | Purpose::WebpushSubscription => {
+                unreachable!("the Web Push purposes are not migratable")
             }
         }
         seeds.push(Seed { ctx, value });
@@ -490,7 +514,7 @@ async fn context_mismatch_fails_that_row_only() {
         .unwrap();
     assert_eq!(counts(&s, Purpose::OauthClientSecret), (0, 0, 1, 0));
     assert_eq!(s.failed(), 1);
-    assert_eq!(s.moved(), 8);
+    assert_eq!(s.moved(), 10);
     assert_eq!(
         w.col(&w.seeds[2]).await,
         bad,
@@ -787,7 +811,7 @@ async fn rekey_context_failure_fails_only_that_row_and_leaves_other_stores_alone
     let s = run(w.h.pool(), &rotated, &o).await.unwrap();
     assert_eq!(counts(&s, Purpose::OauthClientSecret), (0, 0, 1, 0));
     assert_eq!(s.failed(), 1);
-    assert_eq!(s.moved(), 8);
+    assert_eq!(s.moved(), 10);
     assert_eq!(
         w.col(&w.seeds[2]).await,
         bad,
@@ -836,7 +860,7 @@ async fn racing_migrators_leave_one_valid_ref_per_row_memory() {
     sr.register(mem.clone());
     let w = world(SecretVault::new(sr)).await;
     race(&w, "memory").await;
-    assert_eq!(mem.managed_count(), 9, "a losing migrator leaked a value");
+    assert_eq!(mem.managed_count(), 11, "a losing migrator leaked a value");
 }
 
 #[tokio::test]

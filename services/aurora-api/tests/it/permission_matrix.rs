@@ -220,6 +220,41 @@ const EXEMPT: &[(&str, &str, &str)] = &[
     ),
     ("POST", "/v1/me/ssh-keys", "P4-SSH-1: see GET /me/ssh-keys"),
     (
+        "GET",
+        "/v1/me/user-tokens",
+        "P4-UTOK (C-853): a person's own tokens only (another person's is 404 on every route); writes are session-only; the matrix of who may do what is it/user_tokens.rs",
+    ),
+    (
+        "POST",
+        "/v1/me/user-tokens",
+        "P4-UTOK: see GET /me/user-tokens",
+    ),
+    (
+        "PATCH",
+        "/v1/me/user-tokens/{}",
+        "P4-UTOK: see GET /me/user-tokens",
+    ),
+    (
+        "DELETE",
+        "/v1/me/user-tokens/{}",
+        "P4-UTOK: see GET /me/user-tokens",
+    ),
+    (
+        "PUT",
+        "/v1/me/user-tokens/{}/agents/{}",
+        "P4-UTOK: see GET /me/user-tokens",
+    ),
+    (
+        "DELETE",
+        "/v1/me/user-tokens/{}/agents/{}",
+        "P4-UTOK: see GET /me/user-tokens",
+    ),
+    (
+        "GET",
+        "/v1/me/user-token-approvals",
+        "P4-UTOK (C-856): the caller's own proposed posts with their text (session only); nobody else's rows, it/user_tokens.rs only_the_owner_decides…",
+    ),
+    (
         "PATCH",
         "/v1/me/ssh-keys/{id}",
         "P4-SSH-1: see GET /me/ssh-keys",
@@ -235,6 +270,36 @@ const EXEMPT: &[(&str, &str, &str)] = &[
         "P4-SSH-1 (C-791, SEC-93): see GET /me/ssh-keys; the mint's own matrix (session, auk inside/outside its workspace, auo, service key, agent token, anonymous, non-can_use, BYO, frozen, unregistered key) is it/ssh.rs ssh_cert_auth_matrix",
     ),
     ("GET", "/v1/ssh", "P4-SSH-1 (C-792): see GET /me/ssh-keys"),
+    (
+        "GET",
+        "/v1/push/config",
+        "P4-011B-3 (C-830): 404 `push_unavailable` for everyone, before authentication, while `push.enabled` is off (this harness leaves it off); the auth matrix (session and key allowed, anonymous 401) is it/web_push.rs routes_validate_limit_and_stay_session_only",
+    ),
+    (
+        "GET",
+        "/v1/me/push-subscriptions",
+        "P4-011B-3 (C-831): see GET /push/config; session only (a key is 403), own rows only (another person's id is 404): it/web_push.rs",
+    ),
+    (
+        "POST",
+        "/v1/me/push-subscriptions",
+        "P4-011B-3: see GET /me/push-subscriptions",
+    ),
+    (
+        "PATCH",
+        "/v1/me/push-subscriptions/{id}",
+        "P4-011B-3: see GET /me/push-subscriptions",
+    ),
+    (
+        "DELETE",
+        "/v1/me/push-subscriptions/{id}",
+        "P4-011B-3: see GET /me/push-subscriptions",
+    ),
+    (
+        "POST",
+        "/v1/me/push-subscriptions/{id}/test",
+        "P4-011B-3: see GET /me/push-subscriptions; rate limit it/web_push.rs the_test_route_sends_the_test_payload_and_is_rate_limited",
+    ),
     (
         "GET",
         "/v1/me/ssh-sessions",

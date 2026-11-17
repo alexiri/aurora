@@ -14,6 +14,7 @@ pub fn tools() -> Vec<Box<dyn PlatformTool>> {
     vec![
         Box::new(FindRecipient),
         Box::new(SendMessage),
+        Box::new(SendAsMe),
         Box::new(ReadConversation),
         Box::new(ListMyMessages),
         Box::new(EditMyMessage),
@@ -179,6 +180,76 @@ impl PlatformTool for SendMessage {
                 platform: a.platform.as_deref(),
                 call_id: &ctx.call_id,
             },
+        )
+        .await?;
+        Ok(out(v))
+    }
+}
+
+/// (phase 5, P4-UTOK, D-281, D-283, C-856) Post in a channel or thread as the person you are
+/// answering, after they approve the text. Never `allow`-able: it only ever creates a held
+/// approval (see [`crate::domains::user_tokens::send`]).
+struct SendAsMe;
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SendAsMeArgs {
+    to: String,
+    text: String,
+}
+
+#[async_trait::async_trait]
+impl PlatformTool for SendAsMe {
+    fn name(&self) -> &'static str {
+        "send_as_me"
+    }
+    fn description(&self, _: &ToolContext) -> String {
+        "Post in a channel or thread as the person you are talking to, under their own chat \
+         account, after they approve the exact text (you get status `pending_approval`). Only \
+         for what that person asked you to post, only while answering them in their own \
+         conversation with you, and only if they allowed you. Refusals: `not_eligible`, \
+         `not_granted`, `token_inactive`, `pending_limit`."
+            .into()
+    }
+    fn input_schema(&self) -> Value {
+        json!({"type": "object", "additionalProperties": false, "required": ["to", "text"],
+               "properties": {
+                 "to": {"type": "string",
+                        "description": "Where to post: `here` (this conversation's own thread), an alias from find_recipient, a recipient id, or a channel's exact name. A channel or thread, not a person."},
+                 "text": {"type": "string", "description": "The post, in Markdown, exactly as the person will read and approve it. A footer naming you is added for you."}}})
+    }
+    fn available(&self, _: &ToolContext) -> bool {
+        true
+    }
+    /// Offered only to an agent that holds a grant of an active person's token.
+    async fn enabled(&self, ctx: &ToolContext) -> bool {
+        if !enabled(ctx).await {
+            return false;
+        }
+        match aurora_db::repo::user_tokens::agent_holds_active_grant(&ctx.pool, ctx.agent_id).await
+        {
+            Ok(b) => b,
+            Err(e) => {
+                tracing::error!(error = %e, "send_as_me availability check failed");
+                false
+            }
+        }
+    }
+    fn unavailable_reason(&self) -> &'static str {
+        "Nobody has allowed you to post as them, so send_as_me is unavailable."
+    }
+    async fn call(
+        &self,
+        ctx: &ToolCallContext,
+        args: Value,
+    ) -> Result<Vec<ToolContent>, ToolError> {
+        let a: SendAsMeArgs = parse(args)?;
+        let v = crate::domains::user_tokens::send::send_as_me(
+            &ctx.state,
+            ctx.agent.agent_id,
+            &here(ctx),
+            &a.to,
+            &a.text,
         )
         .await?;
         Ok(out(v))

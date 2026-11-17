@@ -22,7 +22,7 @@ pub fn router() -> OpenApiRouter<AppState> {
     security(("session" = [])))]
 async fn logout(State(s): State<AppState>, c: SessionCaller) -> Result<Response, ApiError> {
     if let Principal::Session { id } = c.principal {
-        service::logout(&s, id).await?;
+        let push = service::logout(&s, id).await?;
         crate::audit::record(
             &s,
             crate::audit::AuditEvent::new(
@@ -30,7 +30,8 @@ async fn logout(State(s): State<AppState>, c: SessionCaller) -> Result<Response,
                 "user.logout",
                 crate::audit::Outcome::Success,
             )
-            .target("user", c.user_id),
+            .target("user", c.user_id)
+            .metadata(serde_json::json!({ "push_subscriptions_removed": push })),
         );
     }
     let mut r = StatusCode::NO_CONTENT.into_response();

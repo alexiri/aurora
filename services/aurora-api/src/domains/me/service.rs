@@ -151,6 +151,7 @@ pub async fn delete_me(
     }
     let mut blobs = Vec::new();
     let mut done_ws: Vec<Uuid> = Vec::new();
+    let mut token_discards = crate::domains::user_tokens::custody::Discards::default();
     let done = async {
         let mut tx = state.pool.begin().await.map_err(DbError::from)?;
         let sole = account::sole_owner_orgs(&mut tx, user_id).await?;
@@ -210,6 +211,14 @@ pub async fn delete_me(
             );
         }
         notify_auth_revoked(&mut *tx, "user", user_id).await?;
+        // (P4-UTOK, D-284(a)) The person's chat-platform tokens end with the person.
+        token_discards = crate::domains::user_tokens::end::for_user(
+            &mut tx,
+            user_id,
+            &ev.actor,
+            "owner_deleted",
+        )
+        .await?;
         account::delete_user(&mut tx, user_id).await?;
         events.push(ev.clone());
         crate::audit::commit_critical_many(tx, &events).await
@@ -228,6 +237,7 @@ pub async fn delete_me(
             p.rollback(state).await;
         }
     }
+    token_discards.run(state).await;
     crate::domains::conversations::lifecycle::remove_blobs(&state.pool, &blobs).await;
     state
         .session_cache
