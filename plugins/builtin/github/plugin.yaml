@@ -1,6 +1,6 @@
 package:
   id: github
-  version: 2.2.2
+  version: 2.2.3
   contract: 1
   min_core: 0.1.0
   publisher: aurora
@@ -244,7 +244,7 @@ apps:
           - { id: git_push, description: "Pushes commits to a repository over HTTPS.", name: Push code over HTTPS, host: github.com, path: "/*/*/**", methods: [GET, POST], git: push }
     approvals:
       create_issue:
-        title: Create issue
+        title: create an issue
         fields:
           - { label: Owner, source: path, segment: 2 }
           - { label: Repository, source: path, segment: 3 }
@@ -252,7 +252,7 @@ apps:
           - { label: Body, source: body, steps: [ { json: /body } ] }
         link: "https://github.com/{path.2}/{path.3}/issues"
       update_issue:
-        title: Update issue
+        title: update an issue
         fields:
           - { label: Owner, source: path, segment: 2 }
           - { label: Repository, source: path, segment: 3 }
@@ -261,7 +261,7 @@ apps:
           - { label: Body, source: body, steps: [ { json: /body } ] }
         link: "https://github.com/{path.2}/{path.3}/issues/{path.5}"
       create_issue_comment:
-        title: Comment on issue or pull request
+        title: comment on an issue or pull request
         fields:
           - { label: Owner, source: path, segment: 2 }
           - { label: Repository, source: path, segment: 3 }
@@ -269,7 +269,7 @@ apps:
           - { label: Comment, source: body, steps: [ { json: /body } ] }
         link: "https://github.com/{path.2}/{path.3}/issues/{path.5}"
       create_pull:
-        title: Create pull request
+        title: create a pull request
         fields:
           - { label: Owner, source: path, segment: 2 }
           - { label: Repository, source: path, segment: 3 }
@@ -279,7 +279,7 @@ apps:
           - { label: Into, source: body, steps: [ { json: /base } ] }
         link: "https://github.com/{path.2}/{path.3}/pulls"
       merge_pull:
-        title: Merge pull request
+        title: merge a pull request
         fields:
           - { label: Owner, source: path, segment: 2 }
           - { label: Repository, source: path, segment: 3 }
@@ -287,7 +287,7 @@ apps:
           - { label: Method, source: body, steps: [ { json: /merge_method } ] }
         link: "https://github.com/{path.2}/{path.3}/pull/{path.5}"
       write_contents:
-        title: Change repository file
+        title: change a file in a repository
         fields:
           - { label: Owner, source: path, segment: 2 }
           - { label: Repository, source: path, segment: 3 }
@@ -296,19 +296,19 @@ apps:
           - { label: Message, source: body, steps: [ { json: /message } ] }
           - { label: Content, source: body, steps: [ { json: /content }, { base64: {} } ] }
       create_ref:
-        title: Create branch or tag
+        title: create a branch or tag
         fields:
           - { label: Owner, source: path, segment: 2 }
           - { label: Repository, source: path, segment: 3 }
           - { label: Ref, source: body, steps: [ { json: /ref } ] }
           - { label: From, source: body, steps: [ { json: /sha } ] }
       graphql_mutation:
-        title: Make a change through GraphQL
+        title: make a change through GraphQL
         fields:
           - { label: Operation, source: body, steps: [ { graphql: operation_name } ] }
           - { label: Fields, source: body, steps: [ { graphql: field_names } ] }
       git_push:
-        title: Push code
+        title: push code
         fields:
           - { label: Owner, source: path, segment: 1 }
           - { label: Repository, source: path, segment: 2 }
@@ -504,7 +504,7 @@ apps:
           - { id: git_push, description: "Pushes commits to a repository over HTTPS.", name: Push code over HTTPS, host: "{instance}", path: "/*/*/**", methods: [GET, POST], git: push }
     approvals:
       create_issue:
-        title: Create issue
+        title: create an issue
         fields:
           - { label: Owner, source: path, segment: 4 }
           - { label: Repository, source: path, segment: 5 }
@@ -512,7 +512,7 @@ apps:
           - { label: Body, source: body, steps: [ { json: /body } ] }
         link: "https://{request.host}/{path.4}/{path.5}/issues"
       update_issue:
-        title: Update issue
+        title: update an issue
         fields:
           - { label: Owner, source: path, segment: 4 }
           - { label: Repository, source: path, segment: 5 }
@@ -521,7 +521,7 @@ apps:
           - { label: Body, source: body, steps: [ { json: /body } ] }
         link: "https://{request.host}/{path.4}/{path.5}/issues/{path.7}"
       create_issue_comment:
-        title: Comment on issue or pull request
+        title: comment on an issue or pull request
         fields:
           - { label: Owner, source: path, segment: 4 }
           - { label: Repository, source: path, segment: 5 }
@@ -529,7 +529,7 @@ apps:
           - { label: Comment, source: body, steps: [ { json: /body } ] }
         link: "https://{request.host}/{path.4}/{path.5}/issues/{path.7}"
       create_pull:
-        title: Create pull request
+        title: create a pull request
         fields:
           - { label: Owner, source: path, segment: 4 }
           - { label: Repository, source: path, segment: 5 }
@@ -539,7 +539,7 @@ apps:
           - { label: Into, source: body, steps: [ { json: /base } ] }
         link: "https://{request.host}/{path.4}/{path.5}/pulls"
       merge_pull:
-        title: Merge pull request
+        title: merge a pull request
         fields:
           - { label: Owner, source: path, segment: 4 }
           - { label: Repository, source: path, segment: 5 }
@@ -547,7 +547,7 @@ apps:
           - { label: Method, source: body, steps: [ { json: /merge_method } ] }
         link: "https://{request.host}/{path.4}/{path.5}/pull/{path.7}"
       write_contents:
-        title: Change repository file
+        title: change a file in a repository
         fields:
           - { label: Owner, source: path, segment: 4 }
           - { label: Repository, source: path, segment: 5 }
@@ -556,19 +556,19 @@ apps:
           - { label: Message, source: body, steps: [ { json: /message } ] }
           - { label: Content, source: body, steps: [ { json: /content }, { base64: {} } ] }
       create_ref:
-        title: Create branch or tag
+        title: create a branch or tag
         fields:
           - { label: Owner, source: path, segment: 4 }
           - { label: Repository, source: path, segment: 5 }
           - { label: Ref, source: body, steps: [ { json: /ref } ] }
           - { label: From, source: body, steps: [ { json: /sha } ] }
       graphql_mutation:
-        title: Make a change through GraphQL
+        title: make a change through GraphQL
         fields:
           - { label: Operation, source: body, steps: [ { graphql: operation_name } ] }
           - { label: Fields, source: body, steps: [ { graphql: field_names } ] }
       git_push:
-        title: Push code
+        title: push code
         fields:
           - { label: Owner, source: path, segment: 1 }
           - { label: Repository, source: path, segment: 2 }

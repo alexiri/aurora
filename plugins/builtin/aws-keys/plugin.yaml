@@ -1,6 +1,6 @@
 package:
   id: aws-keys
-  version: 2.0.1
+  version: 2.0.2
   contract: 1
   min_core: 0.1.0
   publisher: aurora
@@ -174,19 +174,19 @@ apps:
           - { id: ec2_call, description: "Any EC2 action that is not a read-only Describe: changes, and reads the Describe tool does not cover.", name: "Any other EC2 action (changes, and reads not covered above)", host: "ec2.*.amazonaws.com", path: /, methods: [GET, POST] }
     approvals:
       s3_put_object:
-        title: Upload a file to a bucket
+        title: upload a file to a bucket
         fields:
           - { label: Bucket, source: path, segment: 1 }
           - { label: Key, source: path, segment: 2 }
         link: "https://console.aws.amazon.com/s3/"
       s3_delete_object:
-        title: Delete a file from a bucket
+        title: delete a file from a bucket
         fields:
           - { label: Bucket, source: path, segment: 1 }
           - { label: Key, source: path, segment: 2 }
         link: "https://console.aws.amazon.com/s3/"
       ec2_call:
-        title: Run an EC2 action
+        title: run an EC2 action
         fields:
           - { label: Action, source: query, name: Action }
           - { label: Action in form, source: body, steps: [ { form: Action } ] }

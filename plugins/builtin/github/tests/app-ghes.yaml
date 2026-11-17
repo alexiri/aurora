@@ -83,7 +83,7 @@
   expect:
     app: github-ghes
     tool: create_issue
-    summary: { title: "Create issue", fields: { Owner: example, Repository: demo, Title: "Broken build" } }
+    summary: { title: "create an issue", fields: { Owner: example, Repository: demo, Title: "Broken build" } }
 - name: "github app: ghes update_issue"
   connection: { method: github_app, instance_host: github.example.com, credentials: { access_token: "tok-fixture-1" } }
   request:
@@ -94,7 +94,7 @@
   expect:
     app: github-ghes
     tool: update_issue
-    summary: { title: "Update issue", fields: { Owner: example, Repository: demo, Issue: "7", State: closed } }
+    summary: { title: "update an issue", fields: { Owner: example, Repository: demo, Issue: "7", State: closed } }
 - name: "github app: ghes create_issue_comment"
   connection: { method: github_app, instance_host: github.example.com, credentials: { access_token: "tok-fixture-1" } }
   request:
@@ -105,7 +105,7 @@
   expect:
     app: github-ghes
     tool: create_issue_comment
-    summary: { title: "Comment on issue or pull request", fields: { Owner: example, Repository: demo, Issue: "7", Comment: "Fixed in the next release" } }
+    summary: { title: "comment on an issue or pull request", fields: { Owner: example, Repository: demo, Issue: "7", Comment: "Fixed in the next release" } }
 - name: "github app: ghes create_pull"
   connection: { method: github_app, instance_host: github.example.com, credentials: { access_token: "tok-fixture-1" } }
   request:
@@ -116,7 +116,7 @@
   expect:
     app: github-ghes
     tool: create_pull
-    summary: { title: "Create pull request", fields: { Owner: example, Repository: demo, Title: "Add feature", From: feature-x, Into: main } }
+    summary: { title: "create a pull request", fields: { Owner: example, Repository: demo, Title: "Add feature", From: feature-x, Into: main } }
 - name: "github app: ghes merge_pull"
   connection: { method: github_app, instance_host: github.example.com, credentials: { access_token: "tok-fixture-1" } }
   request:
@@ -127,7 +127,7 @@
   expect:
     app: github-ghes
     tool: merge_pull
-    summary: { title: "Merge pull request", fields: { Owner: example, Repository: demo, "Pull request": "12", Method: squash } }
+    summary: { title: "merge a pull request", fields: { Owner: example, Repository: demo, "Pull request": "12", Method: squash } }
 - name: "github app: ghes write_contents"
   connection: { method: github_app, instance_host: github.example.com, credentials: { access_token: "tok-fixture-1" } }
   request:
@@ -138,7 +138,7 @@
   expect:
     app: github-ghes
     tool: write_contents
-    summary: { title: "Change repository file", fields: { Owner: example, Repository: demo, File: "README.md", Branch: feature-x, Message: "Update readme" } }
+    summary: { title: "change a file in a repository", fields: { Owner: example, Repository: demo, File: "README.md", Branch: feature-x, Message: "Update readme" } }
 - name: "github app: ghes create_ref"
   connection: { method: github_app, instance_host: github.example.com, credentials: { access_token: "tok-fixture-1" } }
   request:
@@ -149,7 +149,7 @@
   expect:
     app: github-ghes
     tool: create_ref
-    summary: { title: "Create branch or tag", fields: { Owner: example, Repository: demo, Ref: "refs/heads/feature-x", From: abc123 } }
+    summary: { title: "create a branch or tag", fields: { Owner: example, Repository: demo, Ref: "refs/heads/feature-x", From: abc123 } }
 - name: "github app: ghes graphql_mutation"
   connection: { method: github_app, instance_host: github.example.com, credentials: { access_token: "tok-fixture-1" } }
   request:
@@ -160,14 +160,14 @@
   expect:
     app: github-ghes
     tool: graphql_mutation
-    summary: { title: "Make a change through GraphQL", fields: { Operation: AddStar, Fields: addStar } }
+    summary: { title: "make a change through GraphQL", fields: { Operation: AddStar, Fields: addStar } }
 - name: "github app: ghes git_push"
   connection: { method: github_app, instance_host: github.example.com, credentials: { access_token: "tok-git-1" } }
   request: { method: POST, url: "https://github.example.com/example/demo.git/git-receive-pack" }
   expect:
     app: github-ghes
     tool: git_push
-    summary: { title: "Push code", fields: { Owner: example, Repository: demo.git } }
+    summary: { title: "push code", fields: { Owner: example, Repository: demo.git } }
 - name: "github app: ghes negative get_repo: the SaaS path layout selects no tool on a registered host"
   connection: { method: github_app, instance_host: github.example.com, credentials: { access_token: "tok-fixture-1" } }
   request: { method: GET, url: "https://github.example.com/repos/example/demo" }

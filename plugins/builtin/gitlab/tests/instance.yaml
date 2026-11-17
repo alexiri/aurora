@@ -32,7 +32,7 @@
     body: '{"title":"Broken build"}'
   expect:
     tool: create_issue
-    summary: { title: "Create issue", fields: { Project: "42", Title: "Broken build" } }
+    summary: { title: "create an issue", fields: { Project: "42", Title: "Broken build" } }
 - name: "instance: the default host still works for a connection without an instance"
   connection: { credentials: { access_token: "tok-fixture-1" } }
   request: { method: GET, url: "https://gitlab.com/api/v4/user" }

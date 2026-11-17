@@ -9,7 +9,7 @@
   expect:
     app: gitlab
     tool: create_issue
-    summary: { title: "Create issue", fields: { Project: "42", Title: "Fix the login redirect" } }
+    summary: { title: "create an issue", fields: { Project: "42", Title: "Fix the login redirect" } }
 - name: "negative create_issue: PATCH selects no tool"
   connection: { credentials: { access_token: "tok-fixture-1" } }
   request: { method: PATCH, url: "https://gitlab.com/api/v4/projects/42/issues" }
@@ -23,7 +23,7 @@
     body: '{"state_event":"close"}'
   expect:
     tool: update_issue
-    summary: { title: "Update issue", fields: { Project: "42", Issue: "7", Change: "close" } }
+    summary: { title: "update an issue", fields: { Project: "42", Issue: "7", Change: "close" } }
 - name: "negative update_issue: PATCH selects no tool"
   connection: { credentials: { access_token: "tok-fixture-1" } }
   request: { method: PATCH, url: "https://gitlab.com/api/v4/projects/42/issues/7" }
@@ -37,7 +37,7 @@
     body: '{"body":"Looks fixed on main"}'
   expect:
     tool: create_issue_note
-    summary: { title: "Comment on issue", fields: { Project: "42", Issue: "7", Comment: "Looks fixed on main" } }
+    summary: { title: "comment on an issue", fields: { Project: "42", Issue: "7", Comment: "Looks fixed on main" } }
 - name: "negative create_issue_note: PATCH selects no tool"
   connection: { credentials: { access_token: "tok-fixture-1" } }
   request: { method: PATCH, url: "https://gitlab.com/api/v4/projects/42/issues/7/notes" }
@@ -52,7 +52,7 @@
   expect:
     tool: create_merge_request
     summary:
-      title: "Create merge request"
+      title: "create a merge request"
       fields: { Project: "group%2Fdemo", Title: "Fix login", From: "fix-login", Into: "main" }
 - name: "negative create_merge_request: PATCH selects no tool"
   connection: { credentials: { access_token: "tok-fixture-1" } }
@@ -67,7 +67,7 @@
     body: '{"state_event":"close"}'
   expect:
     tool: update_merge_request
-    summary: { title: "Update merge request", fields: { Project: "42", "Merge request": "3", Change: "close" } }
+    summary: { title: "update a merge request", fields: { Project: "42", "Merge request": "3", Change: "close" } }
 - name: "negative update_merge_request: PATCH selects no tool"
   connection: { credentials: { access_token: "tok-fixture-1" } }
   request: { method: PATCH, url: "https://gitlab.com/api/v4/projects/42/merge_requests/3" }
@@ -77,7 +77,7 @@
   request: { method: PUT, url: "https://gitlab.com/api/v4/projects/42/merge_requests/3/merge" }
   expect:
     tool: merge_merge_request
-    summary: { title: "Merge merge request", fields: { Project: "42", "Merge request": "3" } }
+    summary: { title: "merge a merge request", fields: { Project: "42", "Merge request": "3" } }
 - name: "negative merge_merge_request: PATCH selects no tool"
   connection: { credentials: { access_token: "tok-fixture-1" } }
   request: { method: PATCH, url: "https://gitlab.com/api/v4/projects/42/merge_requests/3/merge" }
@@ -91,7 +91,7 @@
     body: '{"body":"Approved from my side"}'
   expect:
     tool: create_merge_request_note
-    summary: { title: "Comment on merge request", fields: { Project: "42", "Merge request": "3", Comment: "Approved from my side" } }
+    summary: { title: "comment on a merge request", fields: { Project: "42", "Merge request": "3", Comment: "Approved from my side" } }
 - name: "negative create_merge_request_note: PATCH selects no tool"
   connection: { credentials: { access_token: "tok-fixture-1" } }
   request: { method: PATCH, url: "https://gitlab.com/api/v4/projects/42/merge_requests/3/notes" }
@@ -101,7 +101,7 @@
   request: { method: POST, url: "https://gitlab.com/api/v4/projects/42/pipeline?ref=main" }
   expect:
     tool: create_pipeline
-    summary: { title: "Run pipeline", fields: { Project: "42", Ref: "main" } }
+    summary: { title: "run a pipeline", fields: { Project: "42", Ref: "main" } }
 - name: "negative create_pipeline: PATCH selects no tool"
   connection: { credentials: { access_token: "tok-fixture-1" } }
   request: { method: PATCH, url: "https://gitlab.com/api/v4/projects/42/pipeline" }
@@ -111,7 +111,7 @@
   request: { method: POST, url: "https://gitlab.com/api/v4/projects/42/pipelines/900/retry" }
   expect:
     tool: retry_pipeline
-    summary: { title: "Retry pipeline", fields: { Project: "42", Pipeline: "900" } }
+    summary: { title: "retry a pipeline", fields: { Project: "42", Pipeline: "900" } }
 - name: "negative retry_pipeline: PATCH selects no tool"
   connection: { credentials: { access_token: "tok-fixture-1" } }
   request: { method: PATCH, url: "https://gitlab.com/api/v4/projects/42/pipelines/900/retry" }
@@ -121,7 +121,7 @@
   request: { method: POST, url: "https://gitlab.com/api/v4/projects/42/pipelines/900/cancel" }
   expect:
     tool: cancel_pipeline
-    summary: { title: "Cancel pipeline", fields: { Project: "42", Pipeline: "900" } }
+    summary: { title: "cancel a pipeline", fields: { Project: "42", Pipeline: "900" } }
 - name: "negative cancel_pipeline: PATCH selects no tool"
   connection: { credentials: { access_token: "tok-fixture-1" } }
   request: { method: PATCH, url: "https://gitlab.com/api/v4/projects/42/pipelines/900/cancel" }
@@ -135,7 +135,7 @@
     body: '{"branch":"feature-x","ref":"main"}'
   expect:
     tool: create_branch
-    summary: { title: "Create branch", fields: { Project: "42", Branch: "feature-x", From: "main" } }
+    summary: { title: "create a branch", fields: { Project: "42", Branch: "feature-x", From: "main" } }
 - name: "negative create_branch: PATCH selects no tool"
   connection: { credentials: { access_token: "tok-fixture-1" } }
   request: { method: PATCH, url: "https://gitlab.com/api/v4/projects/42/repository/branches" }
@@ -145,7 +145,7 @@
   request: { method: DELETE, url: "https://gitlab.com/api/v4/projects/42/repository/branches/feature-x" }
   expect:
     tool: delete_branch
-    summary: { title: "Delete branch", fields: { Project: "42", Branch: "feature-x" } }
+    summary: { title: "delete a branch", fields: { Project: "42", Branch: "feature-x" } }
 - name: "negative delete_branch: PATCH selects no tool"
   connection: { credentials: { access_token: "tok-fixture-1" } }
   request: { method: PATCH, url: "https://gitlab.com/api/v4/projects/42/repository/branches/feature-x" }
@@ -159,7 +159,7 @@
     body: '{"branch":"feature-x","commit_message":"Add notes","actions":[{"action":"create","file_path":"NOTES.md","content":"hi"}]}'
   expect:
     tool: create_commit
-    summary: { title: "Commit changes", fields: { Project: "42", Branch: "feature-x", Message: "Add notes" } }
+    summary: { title: "commit changes", fields: { Project: "42", Branch: "feature-x", Message: "Add notes" } }
 - name: "negative create_commit: PATCH selects no tool"
   connection: { credentials: { access_token: "tok-fixture-1" } }
   request: { method: PATCH, url: "https://gitlab.com/api/v4/projects/42/repository/commits" }
@@ -173,7 +173,7 @@
     body: '{"branch":"feature-x","commit_message":"Update setup","content":"text"}'
   expect:
     tool: write_repository_file
-    summary: { title: "Change repository file", fields: { Project: "42", File: "docs%2Fsetup.md", Branch: "feature-x", Message: "Update setup" } }
+    summary: { title: "change a file in a repository", fields: { Project: "42", File: "docs%2Fsetup.md", Branch: "feature-x", Message: "Update setup" } }
 - name: "negative write_repository_file: PATCH selects no tool"
   connection: { credentials: { access_token: "tok-fixture-1" } }
   request: { method: PATCH, url: "https://gitlab.com/api/v4/projects/42/repository/files/docs%2Fsetup.md" }
@@ -184,7 +184,7 @@
   expect:
     tool: git_push
     upstream: { headers: { authorization: "Basic b2F1dGgyOnRvay1maXh0dXJlLTE=" } }
-    summary: { title: "Push code", fields: { "Group or user": "group" } }
+    summary: { title: "push code", fields: { "Group or user": "group" } }
 - name: "negative git_push: upload-pack is a fetch, not a push"
   connection: { credentials: { access_token: "tok-fixture-1" } }
   request: { method: POST, url: "https://gitlab.com/group/demo.git/git-upload-pack" }

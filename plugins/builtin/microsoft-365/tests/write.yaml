@@ -11,7 +11,7 @@
   expect:
     app: microsoft-365
     tool: send_mail
-    summary: { title: "Send mail", fields: { To: "bob@example.com, dana@example.com", Cc: "erin@example.com", Bcc: "spy@evil.example", Subject: "Quarterly report", Message: "Attached.", Attachments: "1" } }
+    summary: { title: "send an email", fields: { To: "bob@example.com, dana@example.com", Cc: "erin@example.com", Bcc: "spy@evil.example", Subject: "Quarterly report", Message: "Attached.", Attachments: "1" } }
 - name: "negative send_mail: GET selects no tool"
   connection: { credentials: { access_token: "tok-fixture-1" } }
   request: { method: GET, url: "https://graph.microsoft.com/v1.0/me/sendMail" }
@@ -25,7 +25,7 @@
     body: '{"subject":"Design review","start":{"dateTime":"2026-03-02T10:00:00","timeZone":"UTC"},"end":{"dateTime":"2026-03-02T11:00:00","timeZone":"UTC"},"attendees":[{"emailAddress":{"address":"bob@example.com"},"type":"required"},{"emailAddress":{"address":"eve@example.org"},"type":"optional"}]}'
   expect:
     tool: create_event
-    summary: { title: "Create calendar event", fields: { Subject: "Design review", Starts: "2026-03-02T10:00:00", Attendees: "bob@example.com, eve@example.org" } }
+    summary: { title: "create a calendar event", fields: { Subject: "Design review", Starts: "2026-03-02T10:00:00", Attendees: "bob@example.com, eve@example.org" } }
 - name: "negative create_event: PATCH selects no tool"
   connection: { credentials: { access_token: "tok-fixture-1" } }
   request: { method: PATCH, url: "https://graph.microsoft.com/v1.0/me/events" }
@@ -39,7 +39,7 @@
     body: '{"subject":"Planning","start":{"dateTime":"2026-03-03T09:00:00","timeZone":"UTC"},"end":{"dateTime":"2026-03-03T09:30:00","timeZone":"UTC"},"attendees":[{"emailAddress":{"address":"frank@example.net"}}]}'
   expect:
     tool: create_calendar_event
-    summary: { title: "Create calendar event", fields: { Calendar: "AAMkAGcal=", Subject: "Planning", Starts: "2026-03-03T09:00:00", Attendees: "frank@example.net" } }
+    summary: { title: "create a calendar event", fields: { Calendar: "AAMkAGcal=", Subject: "Planning", Starts: "2026-03-03T09:00:00", Attendees: "frank@example.net" } }
 - name: "negative create_calendar_event: PATCH selects no tool"
   connection: { credentials: { access_token: "tok-fixture-1" } }
   request: { method: PATCH, url: "https://graph.microsoft.com/v1.0/me/calendars/AAMkAGcal=/events" }
@@ -53,7 +53,7 @@
     body: "new content"
   expect:
     tool: upload_drive_item_content
-    summary: { title: "Upload file content", fields: { Item: "01EXAMPLEITEM", Conflict: "replace" } }
+    summary: { title: "upload a file", fields: { Item: "01EXAMPLEITEM", Conflict: "replace" } }
 - name: "negative upload_drive_item_content: PATCH selects no tool"
   connection: { credentials: { access_token: "tok-fixture-1" } }
   request: { method: PATCH, url: "https://graph.microsoft.com/v1.0/me/drive/items/01EXAMPLEITEM/content" }
@@ -67,7 +67,7 @@
     body: '{"name":"Reports","folder":{},"@microsoft.graph.conflictBehavior":"rename"}'
   expect:
     tool: create_drive_root_folder
-    summary: { title: "Create OneDrive folder", fields: { Name: "Reports" } }
+    summary: { title: "create a OneDrive folder", fields: { Name: "Reports" } }
 - name: "negative create_drive_root_folder: PATCH selects no tool"
   connection: { credentials: { access_token: "tok-fixture-1" } }
   request: { method: PATCH, url: "https://graph.microsoft.com/v1.0/me/drive/root/children" }
@@ -81,7 +81,7 @@
     body: '{"name":"2026","folder":{}}'
   expect:
     tool: create_drive_item_folder
-    summary: { title: "Create OneDrive folder", fields: { Parent: "01EXAMPLEITEM", Name: "2026" } }
+    summary: { title: "create a OneDrive folder", fields: { Parent: "01EXAMPLEITEM", Name: "2026" } }
 - name: "negative create_drive_item_folder: PATCH selects no tool"
   connection: { credentials: { access_token: "tok-fixture-1" } }
   request: { method: PATCH, url: "https://graph.microsoft.com/v1.0/me/drive/items/01EXAMPLEITEM/children" }
@@ -95,7 +95,7 @@
     body: "new content"
   expect:
     tool: upload_shared_drive_item_content
-    summary: { title: "Upload file to document library", fields: { Drive: "b!exampledrive", Item: "01EXAMPLEITEM", Conflict: "fail" } }
+    summary: { title: "upload a file to a document library", fields: { Drive: "b!exampledrive", Item: "01EXAMPLEITEM", Conflict: "fail" } }
 - name: "negative upload_shared_drive_item_content: PATCH selects no tool"
   connection: { credentials: { access_token: "tok-fixture-1" } }
   request: { method: PATCH, url: "https://graph.microsoft.com/v1.0/drives/b!exampledrive/items/01EXAMPLEITEM/content" }

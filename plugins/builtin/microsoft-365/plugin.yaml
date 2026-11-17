@@ -1,6 +1,6 @@
 package:
   id: microsoft-365
-  version: 1.0.3
+  version: 1.0.4
   contract: 1
   min_core: 0.1.0
   publisher: aurora
@@ -122,7 +122,7 @@ apps:
           - { id: upload_shared_drive_item_content, description: "Uploads a file to a document library, or replaces a file's content.", name: Upload or replace a file in a document library, host: graph.microsoft.com, path: "/v1.0/drives/*/items/*/content", methods: [PUT] }
     approvals:
       send_mail:
-        title: Send mail
+        title: send an email
         fields:
           # Every recipient, a clamped body preview and the attachment count: the approval is the
           # only control on outbound mail (FIX-118, 09 §approvals).
@@ -134,35 +134,35 @@ apps:
           - { label: Attachments, source: body, steps: [ { json_count: /message/attachments } ] }
         link: "https://outlook.office.com/mail/"
       create_event:
-        title: Create calendar event
+        title: create a calendar event
         fields:
           - { label: Subject, source: body, steps: [ { json: /subject } ] }
           - { label: Starts, source: body, steps: [ { json: /start/dateTime } ] }
           - { label: Attendees, source: body, steps: [ { json: "/attendees/*/emailAddress/address" } ] }
         link: "https://outlook.office.com/calendar/"
       create_calendar_event:
-        title: Create calendar event
+        title: create a calendar event
         fields:
           - { label: Calendar, source: path, segment: 4 }
           - { label: Subject, source: body, steps: [ { json: /subject } ] }
           - { label: Starts, source: body, steps: [ { json: /start/dateTime } ] }
           - { label: Attendees, source: body, steps: [ { json: "/attendees/*/emailAddress/address" } ] }
       upload_drive_item_content:
-        title: Upload file content
+        title: upload a file
         fields:
           - { label: Item, source: path, segment: 5 }
           - { label: Conflict, source: query, name: "@microsoft.graph.conflictBehavior" }
       create_drive_root_folder:
-        title: Create OneDrive folder
+        title: create a OneDrive folder
         fields:
           - { label: Name, source: body, steps: [ { json: /name } ] }
       create_drive_item_folder:
-        title: Create OneDrive folder
+        title: create a OneDrive folder
         fields:
           - { label: Parent, source: path, segment: 5 }
           - { label: Name, source: body, steps: [ { json: /name } ] }
       upload_shared_drive_item_content:
-        title: Upload file to document library
+        title: upload a file to a document library
         fields:
           - { label: Drive, source: path, segment: 3 }
           - { label: Item, source: path, segment: 5 }
