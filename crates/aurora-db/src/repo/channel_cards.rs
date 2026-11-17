@@ -95,6 +95,28 @@ pub async fn unsettled<'e, E: PgExecutor<'e>>(
     .await?)
 }
 
+/// (P4-011B-2, C-825) Settled cards of **parked** approvals whose grant ended (`expired` window or
+/// `revoked`) after the card was settled: the settled card is edited once more ("approval window
+/// ended" / "revoked"). Bounded to the last two days; the caller's dedupe key makes the edit
+/// exactly-once.
+pub async fn settled_with_ended_grant<'e, E: PgExecutor<'e>>(
+    exec: E,
+    limit: i64,
+) -> Result<Vec<CardRow>, DbError> {
+    Ok(sqlx::query_as(
+        "SELECT c.id, c.subject_kind, c.subject_id, c.integration_id, c.post_op_id, c.space_ref,
+                c.thread_ref, c.message_ref, c.addressee_ref, c.state, c.created_at
+           FROM channel_cards c JOIN approvals a ON a.id = c.subject_id
+          WHERE c.subject_kind = 'approval' AND c.state = 'settled' AND a.parked
+            AND a.resume_state IN ('expired', 'revoked')
+            AND a.resolved_at > c.updated_at AND a.resolved_at > now() - interval '2 days'
+          ORDER BY a.resolved_at LIMIT $1",
+    )
+    .bind(limit)
+    .fetch_all(exec)
+    .await?)
+}
+
 /// `posting` -> `posted` with the platform message reference.
 pub async fn set_posted<'e, E: PgExecutor<'e>>(
     exec: E,

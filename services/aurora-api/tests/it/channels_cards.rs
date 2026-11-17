@@ -420,6 +420,111 @@ async fn dashboard_decision_and_expiry_settle_the_card() {
     );
 }
 
+/// Marks the approval as parked (the columns the gateway sets when it parks).
+async fn make_parked(w: &W, id: Uuid) {
+    sqlx::query(
+        "UPDATE approvals SET parked=true, fp_salt='\\x0102'::bytea, fingerprint='\\x0304'::bytea \
+         WHERE id=$1",
+    )
+    .bind(id)
+    .execute(w.pool())
+    .await
+    .unwrap();
+}
+
+fn update_text(op: &Value) -> String {
+    op["content"]["card"]["blocks"][0]["text"]
+        .as_str()
+        .unwrap()
+        .to_owned()
+}
+
+/// P4-011B-2 (C-825, `13 §5.6`): a parked approval's card carries the parked sentence and no
+/// request detail in a shared space; it settles as "will be told"; when the grant ends unused or
+/// revoked after that, the settled card is edited once more (never a second time).
+#[tokio::test]
+async fn a_parked_approval_card_says_so_and_is_edited_when_its_grant_ends() {
+    let w = W::new(&FULL).await;
+    let id = w.approval(None).await;
+    make_parked(&w, id).await;
+    w.fanout().await;
+    let op = w.ops("message.post").await.pop().unwrap().1;
+    let text = card_text(&op);
+    assert!(
+        text.contains("The agent has stopped waiting and will resume when this is approved")
+            && text.contains("valid for 30 min after approval"),
+        "{text}"
+    );
+    assert!(!text.contains("api.example.com"), "{text}");
+    w.deliver().await;
+    // Approved: the card settles with "will be told".
+    sqlx::query("UPDATE approvals SET status='approved', decided_via='dashboard', decided_at=now(), decided_by_user_id=$2, resume_state='ready', resume_expires_at=now()+interval '30 minutes' WHERE id=$1")
+        .bind(id).bind(w.owner).execute(w.pool()).await.unwrap();
+    w.fanout().await;
+    let upd = w.ops("message.update").await;
+    assert_eq!(upd.len(), 1);
+    let t = update_text(&upd[0].1);
+    assert!(
+        t.starts_with("Approved by Olivia") && t.ends_with("— bot will be told."),
+        "{t}"
+    );
+    // The window ends unused: the settled card is edited once.
+    sqlx::query("UPDATE approvals SET resume_state='expired', resolved_at=now() WHERE id=$1")
+        .bind(id)
+        .execute(w.pool())
+        .await
+        .unwrap();
+    w.fanout().await;
+    w.fanout().await;
+    let upd = w.ops("message.update").await;
+    assert_eq!(upd.len(), 2, "one more edit, exactly once");
+    assert!(update_text(&upd[1].1).starts_with("Approval window ended"));
+}
+
+#[tokio::test]
+async fn a_revoked_grant_and_an_abandoned_parked_approval_settle_their_cards() {
+    let w = W::new(&FULL).await;
+    let id = w.approval(None).await;
+    make_parked(&w, id).await;
+    let id2 = w.approval(None).await;
+    make_parked(&w, id2).await;
+    w.fanout().await;
+    w.deliver().await;
+    sqlx::query("UPDATE approvals SET status='approved', decided_via='dashboard', decided_at=now(), decided_by_user_id=$2, resume_state='ready', resume_expires_at=now()+interval '30 minutes' WHERE id=$1")
+        .bind(id).bind(w.owner).execute(w.pool()).await.unwrap();
+    sqlx::query("UPDATE approvals SET status='abandoned', resolved_at=now() WHERE id=$1")
+        .bind(id2)
+        .execute(w.pool())
+        .await
+        .unwrap();
+    w.fanout().await;
+    let texts: Vec<String> = w
+        .ops("message.update")
+        .await
+        .iter()
+        .map(|(_, p, _)| update_text(p))
+        .collect();
+    assert_eq!(texts.len(), 2, "{texts:?}");
+    assert!(texts.iter().any(|t| t == "No longer needed."), "{texts:?}");
+    sqlx::query("UPDATE approvals SET resume_state='revoked', resolved_at=now() WHERE id=$1")
+        .bind(id)
+        .execute(w.pool())
+        .await
+        .unwrap();
+    w.fanout().await;
+    let texts: Vec<String> = w
+        .ops("message.update")
+        .await
+        .iter()
+        .map(|(_, p, _)| update_text(p))
+        .collect();
+    assert_eq!(texts.len(), 3, "{texts:?}");
+    assert!(
+        texts.iter().any(|t| t.starts_with("Revoked")),
+        "the settled card is edited to Revoked: {texts:?}"
+    );
+}
+
 #[tokio::test]
 async fn unlinked_clicker_gets_a_link_prompt_and_nothing_happens() {
     let w = W::new(&FULL).await;

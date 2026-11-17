@@ -53,12 +53,22 @@ pub fn invalid(fields: Vec<FieldError>) -> ApiError {
 
 /// (RFE-011a) The authoring error when a timeout is outside
 /// `[APPROVAL_TIMEOUT_MIN, approvals.max_timeout_secs]`: same `details.fields` as `policy_invalid`.
-pub fn timeout_out_of_range(fields: Vec<FieldError>) -> ApiError {
+pub fn timeout_out_of_range(fields: Vec<FieldError>, max_secs: u64) -> ApiError {
     ApiError::unprocessable(
         "approval_timeout_out_of_range",
         "The approval timeout is outside the allowed range.",
     )
-    .with_details(json!({ "fields": fields }))
+    .with_details(json!({ "fields": fields, "max": max_secs }))
+}
+
+/// (P4-011B-2, C-829) The longest timeout a rule or grant may ask for **now**: the parking maximum
+/// while parking is on, else the hold maximum.
+pub fn timeout_bound(ops: &aurora_config::ApiConfig) -> u64 {
+    if ops.approvals.park.enabled {
+        ops.approvals.park.max_timeout_secs
+    } else {
+        ops.approvals.max_timeout_secs
+    }
 }
 
 /// (RFE-011a) `Some(secs)` must lie in `[APPROVAL_TIMEOUT_MIN, max]`; returns the message of a
@@ -430,13 +440,14 @@ pub async fn check(
 ) -> Result<Checked, ApiError> {
     let mut e = Errs(Vec::new());
     check_shape(&mut req, scope, &mut e);
-    let range = check_timeouts(&req, state.ops().approvals.max_timeout_secs, &mut e);
+    let bound = timeout_bound(&state.ops());
+    let range = check_timeouts(&req, bound, &mut e);
     if e.0.is_empty() {
         check_scope(state, &req, scope, &mut e).await?;
     }
     if !e.0.is_empty() {
         return Err(if range {
-            timeout_out_of_range(e.0)
+            timeout_out_of_range(e.0, bound)
         } else {
             invalid(e.0)
         });

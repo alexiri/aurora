@@ -334,17 +334,19 @@ async fn apply_effects(
     if agents.is_empty() {
         return Ok(Vec::new());
     }
-    for (id, ws) in repo::abandon_pending_approvals(tx, &agents).await? {
+    let ended = repo::abandon_pending_approvals(tx, &agents).await?;
+    for e in &ended {
         aurora_db::bus::notify(
             &mut *tx,
             aurora_db::bus::Channel::Approval,
             // (FIX-109) A freeze-abandoned approval is not an expired one: the dashboard shows
             // its own copy for the `abandoned` event (docs/05 SSE `approval` events).
-            &json!({"id": id, "workspace_id": ws, "event": "abandoned"}),
+            &json!({"id": e.id, "workspace_id": e.workspace_id, "event": "abandoned"}),
         )
         .await
         .map_err(|e| DbError::Other(sqlx::Error::Protocol(e.to_string())))?;
     }
+    crate::domains::approvals::resume::notify_ended(tx, &ended, "frozen").await?;
     repo::reject_pending_action_approvals(tx, &agents).await?;
     let mut flush = Vec::new();
     // Ending a turn promotes its `joining` follow-ups into queued turns; repeat until none remain.

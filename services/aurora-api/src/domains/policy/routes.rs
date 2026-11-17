@@ -29,6 +29,29 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(org_generations))
         .routes(routes!(org_warnings))
         .routes(routes!(simulate_policy))
+        .routes(routes!(approval_limits))
+}
+
+/// (P4-011B-2, C-829) The live approval timeouts and parking facts the dashboard bounds its
+/// timeout fields with; any signed-in caller, nothing else of the instance's configuration.
+#[utoipa::path(
+    get, path = "/policy/approval-limits", operation_id = "getApprovalLimits", tag = "policy",
+    responses((status = 200, description = "The effective approval limits", body = ApprovalLimits),
+              (status = 401, description = "Unauthenticated", body = ErrorEnvelope)),
+    security(("session" = []), ("api_key" = []))
+)]
+async fn approval_limits(_caller: Caller, State(state): State<AppState>) -> Json<ApprovalLimits> {
+    let a = &state.ops().approvals;
+    Json(ApprovalLimits {
+        timeout_secs: a.timeout_secs,
+        max_timeout_secs: a.max_timeout_secs,
+        park: ApprovalLimitsPark {
+            enabled: a.park.enabled,
+            threshold_secs: a.park.threshold_secs,
+            max_timeout_secs: a.park.max_timeout_secs,
+            resume_window_secs: a.park.resume_window_secs,
+        },
+    })
 }
 
 /// Workspace policy reads and writes alike need `can_own` (I-27).

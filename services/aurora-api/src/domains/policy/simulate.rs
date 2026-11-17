@@ -68,7 +68,36 @@ pub fn effective_timeout_secs(a: &aurora_config::ApprovalsSection, rule: Option<
         rule,
         a.timeout_secs,
         aurora_core::limits::APPROVAL_TIMEOUT_MIN.as_secs(),
-        a.max_timeout_secs,
+        timeout_ceiling(a),
+    )
+}
+
+/// (P4-011B-2, C-829) The longest timeout a question may be given now: the parking maximum while
+/// parking is on, else the hold maximum.
+fn timeout_ceiling(a: &aurora_config::ApprovalsSection) -> u64 {
+    if a.park.enabled {
+        a.park.max_timeout_secs
+    } else {
+        a.max_timeout_secs
+    }
+}
+
+/// `(approval_parks, approval_timeout_clamped)` of a `needs_approval` verdict (C-829): whether its
+/// effective timeout is above the parking threshold with parking on (the request parks, if it is
+/// otherwise eligible), and whether the wanted timeout was cut to the ceiling.
+pub fn timeout_flags(
+    a: &aurora_config::ApprovalsSection,
+    rule: Option<u32>,
+    needs_approval: bool,
+) -> (bool, bool) {
+    if !needs_approval {
+        return (false, false);
+    }
+    let secs = effective_timeout_secs(a, rule);
+    let wanted = rule.map_or(a.timeout_secs, u64::from);
+    (
+        a.park.enabled && secs > a.park.threshold_secs,
+        wanted > timeout_ceiling(a),
     )
 }
 
@@ -546,6 +575,8 @@ pub async fn run(
         let same_app = kept[0].app_id.is_some() && kept.iter().all(|c| c.app_id == kept[0].app_id);
         return Ok(Simulation {
             approval_timeout_secs: None,
+            approval_parks: false,
+            approval_timeout_clamped: false,
             verdict: SimVerdict::Block,
             reason: None,
             guidance_code: Some(
@@ -567,6 +598,8 @@ pub async fn run(
     if winner.is_none() && app_unavailable {
         return Ok(Simulation {
             approval_timeout_secs: None,
+            approval_parks: false,
+            approval_timeout_clamped: false,
             verdict: SimVerdict::Block,
             reason: None,
             guidance_code: Some("app_unavailable".into()),
@@ -599,10 +632,15 @@ pub async fn run(
             Some("blocked_by_egress_policy"),
         ),
     };
-    let approval_timeout_secs = (d.verdict == Verdict::NeedsApproval)
-        .then(|| effective_timeout_secs(&state.ops().approvals, d.approval_timeout_secs));
+    let needs = d.verdict == Verdict::NeedsApproval;
+    let approval_timeout_secs =
+        needs.then(|| effective_timeout_secs(&state.ops().approvals, d.approval_timeout_secs));
+    let (approval_parks, approval_timeout_clamped) =
+        timeout_flags(&state.ops().approvals, d.approval_timeout_secs, needs);
     Ok(Simulation {
         approval_timeout_secs,
+        approval_parks,
+        approval_timeout_clamped,
         verdict: sim_verdict(d.verdict),
         reason,
         guidance_code: guidance.map(str::to_owned),
@@ -681,6 +719,8 @@ async fn open_lane(state: &AppState, i: OpenInput<'_>) -> Result<Simulation, Api
     };
     let refused = |reason, code: &str| Simulation {
         approval_timeout_secs: None,
+        approval_parks: false,
+        approval_timeout_clamped: false,
         verdict: SimVerdict::Block,
         reason: Some(reason),
         guidance_code: Some(code.to_owned()),
@@ -738,6 +778,8 @@ async fn open_lane(state: &AppState, i: OpenInput<'_>) -> Result<Simulation, Api
     };
     Ok(Simulation {
         approval_timeout_secs: None,
+        approval_parks: false,
+        approval_timeout_clamped: false,
         verdict,
         reason,
         guidance_code: guidance.map(str::to_owned),
@@ -746,4 +788,32 @@ async fn open_lane(state: &AppState, i: OpenInput<'_>) -> Result<Simulation, Api
         app: None,
         trace,
     })
+}
+
+#[cfg(test)]
+mod timeout_flag_tests {
+    use super::*;
+
+    fn cfg(enabled: bool) -> aurora_config::ApprovalsSection {
+        let mut a = aurora_config::ApprovalsSection::default();
+        a.park.enabled = enabled;
+        a.max_timeout_secs = 3600;
+        a
+    }
+
+    // C-829: the timeout bound follows the switch; `approval_parks` needs parking on and a
+    // timeout above the threshold; `approval_timeout_clamped` says the wanted value was cut.
+    #[test]
+    fn the_bound_and_the_flags_follow_the_parking_switch() {
+        let off = cfg(false);
+        assert_eq!(effective_timeout_secs(&off, Some(7200)), 3600);
+        assert_eq!(timeout_flags(&off, Some(7200), true), (false, true));
+        assert_eq!(timeout_flags(&off, Some(600), true), (false, false));
+        let on = cfg(true);
+        assert_eq!(effective_timeout_secs(&on, Some(7200)), 7200);
+        assert_eq!(timeout_flags(&on, Some(7200), true), (true, false));
+        assert_eq!(timeout_flags(&on, Some(600), true), (false, false));
+        assert_eq!(timeout_flags(&on, Some(200_000), true), (true, true));
+        assert_eq!(timeout_flags(&on, Some(7200), false), (false, false));
+    }
 }

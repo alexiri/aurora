@@ -75,6 +75,8 @@ pub struct RenderInputs {
     pub memory_language: String,
     pub schedules: Option<String>,
     pub timezone: Option<String>,
+    /// (P4-011B-2) `approvals.park.enabled`: the preamble carries the parking paragraph.
+    pub approval_parking: bool,
     /// (C-884) Absent unless a role resolves or a subagent role is set.
     pub models: Option<ModelsInfo>,
 }
@@ -90,6 +92,7 @@ impl Default for RenderInputs {
             memory_language: "english".into(),
             schedules: None,
             timezone: None,
+            approval_parking: false,
             models: None,
         }
     }
@@ -219,6 +222,16 @@ injects credentials into your requests for connected apps. If a request is refus
 refusal message: it explains what is missing (for example a connection that needs approval) and \
 what to do next.\n\n",
     );
+    // (P4-011B-2, `10 §Agent instructions`) Only while parking is enabled.
+    if i.approval_parking {
+        o.push_str(
+            "If a request is refused with `approval_parked`, it was not sent: a person must \
+approve it and that may take hours. Do not retry it and do not look for another route. Finish what \
+you can, tell the user what you are waiting for, and end your turn. When you get a message saying \
+it was approved, repeat exactly the same request once, byte for byte; if it was denied, do not try \
+again.\n\n",
+        );
+    }
 
     // 2. Operator's brief.
     if let Some(b) = i.brief.as_deref().filter(|b| !b.trim().is_empty()) {
@@ -428,8 +441,20 @@ mod tests {
             memory_language: "german".into(),
             schedules: Some("1 schedule: daily-report".into()),
             timezone: Some("Europe/Berlin".into()),
+            approval_parking: false,
             models: None,
         }
+    }
+
+    // (P4-011B-2) The parking paragraph is rendered only while parking is enabled.
+    #[test]
+    fn parking_paragraph_only_when_enabled() {
+        let mut i = sample();
+        assert!(!render(&i).contains("approval_parked"));
+        i.approval_parking = true;
+        let r = render(&i);
+        assert!(r.contains("refused with `approval_parked`"));
+        assert!(r.contains("repeat exactly the same request once, byte for byte"));
     }
 
     #[test]

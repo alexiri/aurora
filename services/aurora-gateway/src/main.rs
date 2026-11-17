@@ -249,6 +249,7 @@ async fn serve(
             Some(rx.clone()),
         )
         .with_max_timeout(Duration::from_secs(cfg.approvals.max_timeout_secs))
+        .with_park(aurora_gateway::park::ParkConfig::from(&cfg.approvals.park))
         .with_health(health.clone()),
     );
     // (P4-CNT, D-119) Shared rule quotas: `memory` (the default) keeps them per replica.

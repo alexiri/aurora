@@ -4087,6 +4087,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/policy/approval-limits": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * (P4-011B-2, C-829) The live approval timeouts and parking facts the dashboard bounds its
+         *     timeout fields with; any signed-in caller, nothing else of the instance's configuration.
+         */
+        get: operations["getApprovalLimits"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/presences/{id}": {
         parameters: {
             query?: never;
@@ -6058,6 +6078,8 @@ export interface components {
             batch?: components["schemas"]["ApprovalBatch"] | null;
             /** Format: uuid */
             connection_id?: string | null;
+            /** Format: date-time */
+            consumed_at?: string | null;
             /**
              * @description (phase 2, RFE-025) Label of the BYO context credential (a labelled `aurora run`) that
              *     made the request, if any.
@@ -6080,7 +6102,17 @@ export interface components {
             method: string;
             /** Format: uuid */
             org_id: string;
+            /**
+             * @description (P4-011B, C-822) The gateway refused the request at once and keeps this approval for the
+             *     agent's identical repeat.
+             */
+            parked: boolean;
             path: string;
+            resume?: components["schemas"]["ApprovalResume"] | null;
+            /** Format: date-time */
+            resume_expires_at?: string | null;
+            /** @description `ready` | `consumed` | `expired` | `revoked`; only for approved parked approvals. */
+            resume_state?: string | null;
             /** Format: uuid */
             rule_logical_id?: string | null;
             rule_name?: string | null;
@@ -6117,6 +6149,29 @@ export interface components {
             event: string;
             notice?: components["schemas"]["ApprovalNotice"] | null;
         };
+        /** @description (P4-011B-2, C-829) `GET /v1/policy/approval-limits`: the live effective values, no other key. */
+        ApprovalLimits: {
+            /**
+             * Format: int64
+             * @description `approvals.max_timeout_secs`
+             */
+            max_timeout_secs: number;
+            park: components["schemas"]["ApprovalLimitsPark"];
+            /**
+             * Format: int64
+             * @description `approvals.timeout_secs`
+             */
+            timeout_secs: number;
+        };
+        ApprovalLimitsPark: {
+            enabled: boolean;
+            /** Format: int64 */
+            max_timeout_secs: number;
+            /** Format: int64 */
+            resume_window_secs: number;
+            /** Format: int64 */
+            threshold_secs: number;
+        };
         /**
          * @description (phase 2, RFE-011a) The sanitized facts of a new approval: `{ id, workspace, agent, title,
          *     kind, expires_at }`. No summary fields, no request body, no decision link.
@@ -6129,6 +6184,8 @@ export interface components {
             id: string;
             /** @description `gateway` | `action` */
             kind: string;
+            /** @description (P4-011B, C-822) The agent has stopped waiting; deciding is for a later repeat. */
+            parked: boolean;
             title: string;
             workspace: components["schemas"]["ApprovalNoticeWorkspace"];
         };
@@ -6138,6 +6195,13 @@ export interface components {
             name: string;
             org_slug: string;
             slug: string;
+        };
+        /** @description (C-822) What an approval of a parked request leaves the agent: one repeat before `expires_at`. */
+        ApprovalResume: {
+            /** Format: date-time */
+            expires_at: string;
+            /** @description `ready` */
+            state: string;
         };
         ApprovalSummary: {
             fields: components["schemas"]["SummaryField"][];
@@ -7298,6 +7362,10 @@ export interface components {
         };
         EffectiveTool: {
             app_id: string;
+            /** @description (P4-011B-2, C-829) Only for `needs_approval`: the call parks (see `Simulation`). */
+            approval_parks: boolean;
+            /** @description (P4-011B-2, C-829) Only for `needs_approval`: the wanted timeout was cut to the maximum. */
+            approval_timeout_clamped: boolean;
             /**
              * Format: int64
              * @description (phase 2, RFE-011a) Only for `needs_approval`: the hold timeout in seconds a call of this
@@ -9125,6 +9193,8 @@ export interface components {
                 batch?: components["schemas"]["ApprovalBatch"] | null;
                 /** Format: uuid */
                 connection_id?: string | null;
+                /** Format: date-time */
+                consumed_at?: string | null;
                 /**
                  * @description (phase 2, RFE-025) Label of the BYO context credential (a labelled `aurora run`) that
                  *     made the request, if any.
@@ -9147,7 +9217,17 @@ export interface components {
                 method: string;
                 /** Format: uuid */
                 org_id: string;
+                /**
+                 * @description (P4-011B, C-822) The gateway refused the request at once and keeps this approval for the
+                 *     agent's identical repeat.
+                 */
+                parked: boolean;
                 path: string;
+                resume?: components["schemas"]["ApprovalResume"] | null;
+                /** Format: date-time */
+                resume_expires_at?: string | null;
+                /** @description `ready` | `consumed` | `expired` | `revoked`; only for approved parked approvals. */
+                resume_state?: string | null;
                 /** Format: uuid */
                 rule_logical_id?: string | null;
                 rule_name?: string | null;
@@ -9635,6 +9715,11 @@ export interface components {
                 /** Format: uuid */
                 agent_id: string;
                 app_id?: string | null;
+                /**
+                 * Format: uuid
+                 * @description (P4-011B, C-827) The approval this request held on, parked on, or consumed.
+                 */
+                approval_id?: string | null;
                 /** Format: int64 */
                 bytes_down: number;
                 /** Format: int64 */
@@ -9662,6 +9747,8 @@ export interface components {
                 llm_model?: string | null;
                 method: string;
                 path: string;
+                /** @description (P4-011B, C-827) The request was let through by a parked approval's single-use grant. */
+                resumed: boolean;
                 /** Format: uuid */
                 rule_logical_id?: string | null;
                 rule_name?: string | null;
@@ -10917,6 +11004,11 @@ export interface components {
             /** Format: uuid */
             agent_id: string;
             app_id?: string | null;
+            /**
+             * Format: uuid
+             * @description (P4-011B, C-827) The approval this request held on, parked on, or consumed.
+             */
+            approval_id?: string | null;
             /** Format: int64 */
             bytes_down: number;
             /** Format: int64 */
@@ -10944,6 +11036,8 @@ export interface components {
             llm_model?: string | null;
             method: string;
             path: string;
+            /** @description (P4-011B, C-827) The request was let through by a parked approval's single-use grant. */
+            resumed: boolean;
             /** Format: uuid */
             rule_logical_id?: string | null;
             rule_name?: string | null;
@@ -11778,6 +11872,16 @@ export interface components {
         };
         Simulation: {
             app?: components["schemas"]["SimApp"] | null;
+            /**
+             * @description (P4-011B-2, C-829) Only for `needs_approval`: parking is on and the timeout is above its
+             *     threshold, so the agent is refused at once and resumes when a person approves.
+             */
+            approval_parks: boolean;
+            /**
+             * @description (P4-011B-2, C-829) Only for `needs_approval`: the wanted timeout was cut to the instance's
+             *     current maximum.
+             */
+            approval_timeout_clamped: boolean;
             /**
              * Format: int64
              * @description (phase 2, RFE-011a) Only for `needs_approval`: the hold timeout in seconds the request
@@ -30660,6 +30764,44 @@ export interface operations {
                 };
             };
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    getApprovalLimits: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The effective approval limits */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApprovalLimits"];
+                };
+            };
+            /** @description Unauthenticated */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -825,12 +825,14 @@ dependencies = [
 name = "aurora-policy"
 version = "0.1.0"
 dependencies = [
+ "aws-lc-rs",
  "graphql-parser",
  "percent-encoding",
  "proptest",
  "serde",
  "serde_json",
  "serde_yaml",
+ "sha2 0.11.1",
  "thiserror 2.0.21",
  "uuid",
 ]

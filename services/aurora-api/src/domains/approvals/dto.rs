@@ -70,6 +70,36 @@ pub struct Approval {
     pub decided_at: Option<DateTime<Utc>>,
     pub deadline: DateTime<Utc>,
     pub created_at: DateTime<Utc>,
+    /// (P4-011B, C-822) The gateway refused the request at once and keeps this approval for the
+    /// agent's identical repeat.
+    pub parked: bool,
+    /// `ready` | `consumed` | `expired` | `revoked`; only for approved parked approvals.
+    pub resume_state: Option<String>,
+    pub resume_expires_at: Option<DateTime<Utc>>,
+    pub consumed_at: Option<DateTime<Utc>>,
+    /// Only on the decision response of an approved parked approval: `{ state: "ready", expires_at }`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resume: Option<ApprovalResume>,
+}
+
+/// (C-822) What an approval of a parked request leaves the agent: one repeat before `expires_at`.
+#[derive(Serialize, ToSchema)]
+pub struct ApprovalResume {
+    /// `ready`
+    pub state: String,
+    pub expires_at: DateTime<Utc>,
+}
+
+impl Approval {
+    /// The decision response: carries `resume` when a parked approval was approved.
+    pub fn with_resume(mut self) -> Self {
+        if let (Some(state), Some(expires_at)) = (self.resume_state.clone(), self.resume_expires_at)
+            && state == "ready"
+        {
+            self.resume = Some(ApprovalResume { state, expires_at });
+        }
+        self
+    }
 }
 
 impl From<ApprovalRow> for Approval {
@@ -120,6 +150,11 @@ impl From<ApprovalRow> for Approval {
             decided_at: r.decided_at,
             deadline: r.deadline,
             created_at: r.created_at,
+            parked: r.parked,
+            resume_state: r.resume_state,
+            resume_expires_at: r.resume_expires_at,
+            consumed_at: r.consumed_at,
+            resume: None,
         }
     }
 }
@@ -193,6 +228,8 @@ pub struct ApprovalNotice {
     /// `gateway` | `action`
     pub kind: String,
     pub expires_at: DateTime<Utc>,
+    /// (P4-011B, C-822) The agent has stopped waiting; deciding is for a later repeat.
+    pub parked: bool,
 }
 
 #[derive(Serialize, ToSchema)]
