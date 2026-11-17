@@ -97,6 +97,12 @@ for (const scheme of ["light", "dark"] as const) {
         await page.getByRole("button", { name: "Edit team" }).click();
         const dialog = page.getByRole("dialog");
         await expect(dialog.getByRole("button", { name: "Test connection" })).toBeVisible();
+        // P5-MODELS-3 (C-875): roles and model details, and the no-roles notice of a non-Anthropic endpoint.
+        await expect(dialog.getByRole("group", { name: "Model roles" })).toBeVisible();
+        await expect(dialog.getByRole("group", { name: "Model details" })).toBeVisible();
+        await expect(dialog.getByTestId("no-roles-notice")).toBeVisible();
+        await dialog.getByRole("button", { name: "Add model details" }).click();
+        await expect(dialog.getByLabel("Model id 1")).toBeVisible();
         expect(await overflow(page)).toBeLessThanOrEqual(0);
         expect(await axeClean(page)).toEqual([]);
       });

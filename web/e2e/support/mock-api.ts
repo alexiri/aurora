@@ -20,6 +20,7 @@ export const agent = {
   id: id(11), org_id: id(1), workspace_id: id(2), handle: "daneel", name: "Daneel", kind: "hosted", is_default: true,
   avatar_url: null, brief: "Triage the team's pull requests and issues.", harness: null, model_provider: null, model_endpoint_id: null, model_id: null,
   effort: null, proactive_messaging: "ask", frozen: null, effective_frozen: false, created_at: now, updated_at: now,
+  model_roles: null, subagent_model: "inherit",
 };
 
 /** Real built-in packages: id, display name (plugin.yaml `name:`). Every one ships icon.png and icon-dark.png. */
