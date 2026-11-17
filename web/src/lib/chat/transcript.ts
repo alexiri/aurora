@@ -146,16 +146,37 @@ export function pendingFollowups(followups: Followup[], state: TranscriptState):
 }
 
 /** Approval status derived from the durable decided/expired events. */
-export function approvalStatus(state: TranscriptState, approvalId: string): { status: "pending" | "approve" | "deny" | "expired"; by?: string } {
+export interface ApprovalStatus {
+  status: "pending" | "approve" | "deny" | "expired";
+  by?: string;
+  /** (P4-011B-4, C-825) The approval was parked: the agent stopped waiting. */
+  parked?: boolean;
+  /** (C-825) Approved and parked: the agent's repeat is welcome until this time. */
+  resumeExpiresAt?: string;
+  /** (C-825) `approval.expired { reason: "resume_window" }`: approved, but the repeat never came. */
+  windowEnded?: boolean;
+}
+
+export function approvalStatus(state: TranscriptState, approvalId: string): ApprovalStatus {
+  let out: ApprovalStatus = { status: "pending" };
+  let parked = false;
   for (const e of state.events) {
     if (str(e.payload.approval_id) !== approvalId) continue;
-    if (e.type === "approval.expired") return { status: "expired" };
-    if (e.type === "approval.decided") {
+    if (e.type === "approval.pending") parked = e.payload.parked === true;
+    if (e.type === "approval.expired") {
+      if (str(e.payload.reason) === "resume_window") out = { ...out, windowEnded: true };
+      else if (out.status === "pending") out = { status: "expired" };
+    }
+    if (e.type === "approval.decided" && out.status === "pending") {
       const d = str(e.payload.decision);
-      return { status: d === "deny" || d === "denied" ? "deny" : "approve", by: str(e.payload.decided_by_label) || undefined };
+      out = {
+        status: d === "deny" || d === "denied" ? "deny" : "approve",
+        by: str(e.payload.decided_by_label) || undefined,
+        resumeExpiresAt: str(e.payload.resume_expires_at) || undefined,
+      };
     }
   }
-  return { status: "pending" };
+  return parked ? { ...out, parked } : out;
 }
 
 /** Where an error link goes: the Credentials page (with `?tab=`), or a tab of the agent page the chat sits on (C-506). */

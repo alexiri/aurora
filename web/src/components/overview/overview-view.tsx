@@ -14,6 +14,7 @@ import { GettingStarted } from "@/components/onboarding/getting-started";
 import { PageHeader } from "@/components/ui/page-header";
 import { Section } from "@/components/ui/section";
 import { StatusDot } from "@/components/ui/status-dot";
+import { ParkedChip } from "@/components/approvals/parked";
 import { countdown, useActivity, useApprovalsStream, useCanApprove, useNow, usePendingApprovals } from "@/lib/api/approvals";
 import { useAgents, useResolve, useWorkspace } from "@/lib/api/queries";
 import { cn } from "@/lib/utils";
@@ -107,6 +108,7 @@ function OverviewBody({
             {urgent.map((a) => (
               <li key={a.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-control bg-surface px-3 py-2 text-sm">
                 <span className="min-w-0 flex-1 truncate font-medium">{a.summary.title}</span>
+                {a.parked ? <ParkedChip /> : null}
                 <span className="font-mono text-xs text-muted">{a.agent ? `@${a.agent.handle}` : "Unknown agent"}</span>
                 <span className="text-xs font-medium tabular-nums text-pending-ink">{countdown(a.deadline, clock)}</span>
               </li>

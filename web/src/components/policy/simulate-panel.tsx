@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Field, inputClass } from "@/components/ui/field";
 import { Section } from "@/components/ui/section";
 import { useSimulate, type Simulation } from "@/lib/api/policy";
+import { fmtSecs } from "@/lib/approval-limits";
 import type { Agent } from "@/lib/api/queries";
 
 function TraceList({ title, trace }: { title: string; trace: Simulation["trace"]["workspace"] }) {
@@ -37,6 +38,15 @@ export function SimulationResult({ sim }: { sim: Simulation }) {
         Verdict: <strong data-testid="verdict">{sim.verdict}</strong>
         {sim.reason ? <span className="text-ink-2"> ({sim.reason})</span> : null}
       </p>
+      {sim.verdict === "needs_approval" && (sim.approval_parks || sim.approval_timeout_clamped) ? (
+        // (P4-011B-4, C-829) What the approval would do: park (the agent stops waiting) and/or a timeout cut to the maximum.
+        <p className="text-sm" data-testid="approval-timing">
+          {sim.approval_parks ? <span>Parks: the agent stops waiting and is told when a person decides. </span> : null}
+          {sim.approval_timeout_clamped ? (
+            <span>Timeout clamped to {fmtSecs(sim.approval_timeout_secs ?? 0)}, the instance maximum.</span>
+          ) : null}
+        </p>
+      ) : null}
       {sim.guidance_code ? (
         <p className="text-sm">
           Guidance: <code className="font-mono">{sim.guidance_code}</code>

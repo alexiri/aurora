@@ -348,6 +348,10 @@ plugins:
 
 Packages still need approval in the admin API before they take effect.
 
+### Web Push (optional)
+
+Approval notifications on a person's phone or laptop while Aurora is closed are off by default. Set `push.enabled: true` and `push.networkPolicy.egressTo` (required while on) to let the API reach the browser vendors' push services; the VAPID key is generated and sealed by the instance unless you supply one with `push.vapid.existingSecret`. Requirements, keys, rotation, troubleshooting and the **manual release check** (Chrome, Firefox, Android Chrome, iOS Home Screen app) are in [web-push.md](web-push.md); the values are in `docs/23` (*Web Push*).
+
 ## Workloads
 
 | Component | Values | Default | Notes |

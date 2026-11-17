@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 
+import { ParkedChip, ParkedNote } from "@/components/approvals/parked";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ApiError } from "@/lib/api/client";
@@ -49,8 +50,17 @@ export function ApprovalCard({ ev, state, wsId }: { ev: TranscriptEvent; state: 
   const now = useNow(!settled && !!detail);
   const left = settled ? null : countdown(detail?.deadline, now);
 
+  const parked = st.parked === true || ev.payload.parked === true || detail?.parked === true;
+
   if (settled) {
     const label = st.status === "expired" ? "Expired" : st.status === "approve" ? "Approved" : "Denied";
+    // (P4-011B-4, C-825) A parked approval's story goes on after the decision: waiting for the agent's repeat, or not used.
+    const after =
+      parked && st.status === "approve"
+        ? st.windowEnded
+          ? "Not used (window ended)"
+          : `The agent will be told${st.resumeExpiresAt ? ` and can repeat the request until ${new Date(st.resumeExpiresAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : ""}.`
+        : null;
     return (
       <div
         id={approvalAnchorId(id)}
@@ -61,7 +71,13 @@ export function ApprovalCard({ ev, state, wsId }: { ev: TranscriptEvent; state: 
           {label}
           {st.by ? ` by ${st.by}` : ""}
         </Badge>
+        {parked ? <ParkedChip /> : null}
         <span className="min-w-0 break-words text-ink-2">{s(ev.payload.summary)}</span>
+        {after ? (
+          <span className="w-full text-xs text-ink-2" data-testid="parked-after">
+            {after}
+          </span>
+        ) : null}
       </div>
     );
   }
@@ -71,11 +87,12 @@ export function ApprovalCard({ ev, state, wsId }: { ev: TranscriptEvent; state: 
       tabIndex={-1}
       className="max-w-chat-card space-y-2 rounded-card rounded-tl-sm border border-pending-line bg-pending-panel p-3 text-sm text-ink outline-none focus-visible:ring-2 focus-visible:ring-accent">
       <div className="flex flex-wrap items-center gap-2">
-        <Badge tone="pending">Held</Badge>
+        {parked ? <ParkedChip /> : <Badge tone="pending">Held</Badge>}
         <p className="font-semibold text-pending-ink">Approval requested</p>
         {left ? <span className="ml-auto text-xs tabular-nums text-ink-2">Expires in {left}</span> : null}
       </div>
       <p className="break-words">{s(ev.payload.summary)}</p>
+      {parked ? <ParkedNote className="text-xs text-ink-2" /> : null}
       {detail ? (
         <p className="flex min-w-0 flex-wrap items-center gap-2 text-xs text-ink-2">
           <Badge>{detail.method}</Badge>

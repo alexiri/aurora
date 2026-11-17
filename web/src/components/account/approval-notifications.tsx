@@ -2,6 +2,7 @@
 
 import { useState, useSyncExternalStore } from "react";
 
+import { PushDevices } from "@/components/account/push-devices";
 import { Button } from "@/components/ui/button";
 import { Notice } from "@/components/ui/notice";
 import { useUpdateMe } from "@/lib/api/account";
@@ -36,6 +37,7 @@ export function ApprovalNotifications({ me }: { me: Me }) {
   }
 
   return (
+    <>
     <div className="space-y-4 max-w-md">
       <label className="flex items-start gap-2 text-sm">
         <input
@@ -84,5 +86,8 @@ export function ApprovalNotifications({ me }: { me: Me }) {
         </Button>
       ) : null}
     </div>
+    {/* (P4-011B-4, C-836) Web Push for this device and the device list; nothing while push is not available. */}
+    <PushDevices />
+    </>
   );
 }

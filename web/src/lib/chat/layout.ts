@@ -226,8 +226,12 @@ export function buildRows(state: TranscriptState, now: Date): Row[] {
     switch (ev.type) {
       case "turn.queued": {
         const door = str(p.door);
-        const name = str(p.speaker_label) || "You";
-        push("person", `p:${name}`, name, door && door !== "dashboard" ? door : "", ev, { kind: "bubble", ev });
+        const label = str(p.speaker_label);
+        // (P4-011B-4, C-824, C-836) The resume follow-up (door `system`, ref `approval:<id>`, speaker "Approval"): the
+        // transcript event carries the door's name, so the chip is read from that speaker label, shown as "Approval".
+        const approval = door === "system" && label === "Approval";
+        const name = approval ? "Aurora" : label || "You";
+        push("person", `p:${name}`, name, approval ? "Approval" : door && door !== "dashboard" ? door : "", ev, { kind: "bubble", ev });
         break;
       }
       case "text":

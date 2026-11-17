@@ -32,6 +32,16 @@ export const policyKeys = {
   effective: (agentId: string) => ["effective", agentId] as const,
 };
 
+/** (P4-011B-4, C-829) The live approval-timeout bounds and parking facts; any signed-in user. */
+export function useApprovalLimits() {
+  return useQuery({
+    queryKey: ["policy", "approval-limits"] as const,
+    queryFn: () => unwrap(api.GET("/v1/policy/approval-limits")),
+    staleTime: 60_000,
+    retry: false,
+  });
+}
+
 export function usePolicy(scope: PolicyScope, enabled = true) {
   return useQuery({
     queryKey: policyKeys.doc(scope),

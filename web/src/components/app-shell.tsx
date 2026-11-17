@@ -11,6 +11,7 @@ import { logout, useMe, useOrg, useOrgs, useResolve, useWorkspace, useWorkspaces
 import { visibleTopics } from "@/lib/api/roles";
 import { loginUrl, useUnauthorizedRedirect } from "@/lib/auth/use-unauthorized-redirect";
 import { showWhatMoved } from "@/lib/moved";
+import { removeThisDevicePush, usePushResync } from "@/lib/web-push";
 import { accountRoutes, adminRoutes, TOPIC_LABEL, topicHref, orgRoutes, wsRoutes } from "@/lib/routes";
 import { cn } from "@/lib/utils";
 
@@ -240,6 +241,8 @@ function UserMenu() {
     // Composer drafts belong to the signed-in person (P5-CHAT-3): they go with the session.
     clearDrafts();
     try {
+      // (C-836) This device's push registration goes before the session does (best effort, bounded).
+      await removeThisDevicePush();
       await logout();
     } finally {
       window.location.assign(loginUrl("/"));
@@ -460,6 +463,8 @@ function SidebarContent({
 
 export function AppShell({ children }: { children: ReactNode }) {
   useUnauthorizedRedirect();
+  // (P4-011B-4, C-836) With the local Web Push opt-in marker: re-sync the browser's subscription once per load.
+  usePushResync(true);
   const params = useParams<{ org?: string; ws?: string }>();
   const pathname = usePathname();
   const [navOpen, setNavOpen] = useState(false);
