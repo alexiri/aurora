@@ -7,7 +7,7 @@ import { ConnectTab } from "@/components/agents/connect-tab";
 import { CreateAgentDialog } from "@/components/agents/create-agent-dialog";
 import { AgentsList } from "@/components/agents-list";
 import { GovernanceView } from "@/components/governance/governance-view";
-import { PolicyView } from "@/components/policy/policy-view";
+import { InternetLevel } from "@/components/internet/internet-level";
 import { GeneralTab } from "@/components/settings/general-tab";
 import {
   byoOptionsFrom,
@@ -324,7 +324,19 @@ describe("rules that apply to all agents", () => {
         return json(200, gen([broad, scoped]));
       },
     });
-    wrap(<PolicyView title="Policy" scope={{ kind: "workspace", id: "w1" }} canEdit orgId="o1" />);
+    wrap(
+      <InternetLevel
+        level="workspace"
+        scope={{ kind: "workspace", id: "w1" }}
+        orgId="o1"
+        orgSlug="acme"
+        wsSlug="main"
+        canEdit
+        eff={eff({ posture: { value: "enabled", source: "instance" } })}
+        whoCanHere={{ role: "workspace_owner", action: "change_this", people: [], can: false } as never}
+        whoCanOrg={{ role: "org_admin", action: "change_this", people: [], can: false } as never}
+      />,
+    );
     const notes = await screen.findAllByTestId("all-agents-note");
     expect(notes).toHaveLength(1);
     await waitFor(() => expect(notes[0].textContent).toContain("members creating BYO agents"));

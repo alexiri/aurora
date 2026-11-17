@@ -32,9 +32,10 @@ export const policyKeys = {
   effective: (agentId: string) => ["effective", agentId] as const,
 };
 
-export function usePolicy(scope: PolicyScope) {
+export function usePolicy(scope: PolicyScope, enabled = true) {
   return useQuery({
     queryKey: policyKeys.doc(scope),
+    enabled,
     queryFn: () =>
       scope.kind === "workspace"
         ? unwrap(api.GET("/v1/workspaces/{ws}/policy", { params: { path: { ws: scope.id } } }))
@@ -43,9 +44,10 @@ export function usePolicy(scope: PolicyScope) {
   });
 }
 
-export function usePolicyWarnings(scope: PolicyScope) {
+export function usePolicyWarnings(scope: PolicyScope, enabled = true) {
   return useQuery({
     queryKey: policyKeys.warnings(scope),
+    enabled,
     queryFn: () =>
       scope.kind === "workspace"
         ? unwrap(api.GET("/v1/workspaces/{ws}/policy/warnings", { params: { path: { ws: scope.id } } }))

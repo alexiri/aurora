@@ -128,10 +128,7 @@ describe("UI text rules (C-974)", () => {
     "src/components/credentials/credentials-view.tsx": "P5-UX-4 (removed there)",
     "src/components/credentials/llm-form.tsx": "P5-UX-4, P5-UX-7, P5-UX-3",
     "src/components/governance/governance-view.tsx": "P5-IA-3 (deleted there), P5-IA-2 (the Internet access panel)",
-    "src/components/policy/policy-view.tsx": "P5-IA-2",
     "src/components/policy/rule-editor.tsx": "P5-IA-2",
-    "src/components/policy/simulate-panel.tsx": "P5-IA-2 (after FIX-159)",
-    "src/components/policy/workspace-policy.tsx": "P5-IA-2, P5-UX-1",
   };
 
   /**

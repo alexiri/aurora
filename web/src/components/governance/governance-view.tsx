@@ -318,7 +318,7 @@ function TextArea({ id, label, hint, value, locked, readOnly, onChange, errors }
   );
 }
 
-function EgressTab({ form, patch, issues, readOnly, eff, orgId }: {
+export function EgressTab({ form, patch, issues, readOnly, eff, orgId }: {
   form: GovForm; patch: (p: Partial<GovForm>) => void; issues: GovIssues; readOnly: boolean; eff: EffectiveGovernance; orgId: string;
 }) {
   const workspaces = useWorkspaces(orgId);
@@ -329,34 +329,32 @@ function EgressTab({ form, patch, issues, readOnly, eff, orgId }: {
   return (
     <>
       <PostureSelect
-        label="Egress posture"
+        label="Which websites agents may reach"
         value={form.egressPosture}
         locked={form.egressPostureLocked}
         setting="governance.egress.minimum_posture"
         readOnly={readOnly}
         onChange={(v) => patch({ egressPosture: v })}
         options={[
-          { value: "open", label: "Open: agents may reach hosts without a credential" },
-          { value: "credentialed_only", label: "Credentialed only: only hosts covered by a credential or the allow-list" },
+          { value: "open", label: "Any website: except what is blocked above and by your rules" },
+          { value: "credentialed_only", label: "Only listed websites: agents reach their accounts' apps and the allow-list" },
         ]}
       />
       <Errors messages={issuesUnder(issues, "/egress/posture")} />
       <PostureSelect
-        label="Browser tunnels (open lane)"
+        label="Browser connections (not inspected)"
         value={form.openLane}
         locked={form.openLaneLocked}
         setting="governance.egress.open_lane_minimum"
         readOnly={readOnly}
         onChange={(v) => patch({ openLane: v })}
         options={[
-          { value: "enabled", label: "Enabled: browsers may open tunnels" },
-          { value: "allowlist_only", label: "Allow-list only: tunnels reach only allow-listed hosts" },
-          { value: "disabled", label: "Disabled: no browser tunnels" },
+          { value: "enabled", label: "Allowed: browsers may connect to any website" },
+          { value: "allowlist_only", label: "Only listed websites: browsers reach only the allow-list" },
+          { value: "disabled", label: "Turned off: no browser connections" },
         ]}
       />
-      <p className="text-xs text-muted">
-        Tunnels cannot be inspected or given credentials; <code className="font-mono">allowlist_only</code> limits them to the allow-list.
-      </p>
+      <p className="text-xs text-muted">Aurora can&apos;t see inside these or give them an account, so the allow-list is the only limit.</p>
       <Errors messages={issuesUnder(issues, "/egress/open_lane")} />
       <section aria-label="Organization allow-list" className="space-y-3">
         <h2 className="font-display text-base font-semibold text-ink">Organization allow-list</h2>
@@ -378,7 +376,7 @@ function EgressTab({ form, patch, issues, readOnly, eff, orgId }: {
         <Errors messages={issuesUnder(issues, "/egress/allowlist").filter((m) => !/^\d+/.test(m))} />
         {!readOnly ? (
           <Button variant="outline" size="sm" onClick={() => patch({ allowlist: [...form.allowlist, { host: "", path: "" }] })}>
-            Add host
+            Add website
           </Button>
         ) : null}
       </section>

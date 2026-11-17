@@ -357,6 +357,58 @@ pub async fn list_generations<'e, E: PgExecutor<'e>>(
     .await?)
 }
 
+/// One workspace's published Internet-access settings below its organization (C-964).
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct WorkspaceOverrideRow {
+    pub id: Uuid,
+    pub name: String,
+    pub created_at: DateTime<Utc>,
+    pub personal_owner_id: Option<Uuid>,
+    pub personal_owner_name: Option<String>,
+    pub uncredentialed_default: String,
+    pub open_lane_posture: String,
+    pub default_action: String,
+    pub rule_count: i64,
+}
+
+/// The workspaces of `org`, newest first, with what their published policy generation sets for
+/// requests without an account, browser connections and the default rule, and its rule count.
+/// Unless `all`, only those where any of the three differs from "follow the organization"
+/// (`uncredentialed_default = block`, `open_lane_posture <> enabled`, `default_action <> none`).
+pub async fn workspace_overrides<'e, E: PgExecutor<'e>>(
+    exec: E,
+    org: Uuid,
+    all: bool,
+    after: After,
+    limit: i64,
+) -> Result<Vec<WorkspaceOverrideRow>, DbError> {
+    let (t, id) = split(after);
+    Ok(sqlx::query_as(
+        "SELECT w.id, w.name, w.created_at, \
+                u.id AS personal_owner_id, u.display_name AS personal_owner_name, \
+                COALESCE(g.uncredentialed_default, 'none') AS uncredentialed_default, \
+                COALESCE(g.open_lane_posture, 'enabled') AS open_lane_posture, \
+                COALESCE(g.default_action, 'none') AS default_action, \
+                COALESCE((SELECT count(*) FROM policy_rules r WHERE r.generation_id = g.id), 0) AS rule_count \
+         FROM workspaces w \
+         LEFT JOIN users u ON u.id = w.personal_owner_user_id \
+         LEFT JOIN policy_generations g ON g.workspace_id = w.id AND g.status = 'published' \
+         WHERE w.org_id = $1 \
+           AND ($2 OR COALESCE(g.uncredentialed_default, 'none') <> 'none' \
+                   OR COALESCE(g.open_lane_posture, 'enabled') <> 'enabled' \
+                   OR COALESCE(g.default_action, 'none') <> 'none') \
+           AND ($3::timestamptz IS NULL OR (w.created_at, w.id) < ($3, $4)) \
+         ORDER BY w.created_at DESC, w.id DESC LIMIT $5",
+    )
+    .bind(org)
+    .bind(all)
+    .bind(t)
+    .bind(id)
+    .bind(limit)
+    .fetch_all(exec)
+    .await?)
+}
+
 /// Rows the evaluator needs for one scope: the published generation (or the draft when
 /// `use_draft`) plus the derived rules. Same shape the gateway loads.
 pub async fn load_scope_rows(

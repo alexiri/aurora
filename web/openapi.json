@@ -24403,6 +24403,120 @@
         ]
       }
     },
+    "/v1/orgs/{org}/workspace-overrides": {
+      "get": {
+        "tags": [
+          "workspaces"
+        ],
+        "summary": "What the workspaces tightened in Internet access below the organization (C-964): their\npublished defaults and rule count; only the differing ones unless `?all=true`.",
+        "operationId": "listWorkspaceOverrides",
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "description": "Organization id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "all",
+            "in": "query",
+            "description": "Every workspace, not only those that differ from the organization.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_WorkspaceOverride"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
     "/v1/orgs/{org}/workspaces": {
       "get": {
         "tags": [
@@ -43917,6 +44031,33 @@
           }
         }
       },
+      "OverrideWorkspace": {
+        "type": "object",
+        "required": [
+          "id",
+          "name"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "personal_of": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PersonalOf",
+                "description": "Present on a personal workspace: the person it was made for."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
       "OverviewPreviews": {
         "type": "object",
         "description": "(FIX-148, C-841) `previews` of `GET /v1/admin/overview`: the relay replicas the API has\nseen (the rows of `GET /v1/admin/relays`: last seen within 15 minutes).",
@@ -47660,6 +47801,55 @@
           }
         }
       },
+      "Page_WorkspaceOverride": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "(C-964) What one workspace's published policy sets below its organization.",
+              "required": [
+                "workspace",
+                "uncredentialed",
+                "open_lane",
+                "default_rule",
+                "rule_count"
+              ],
+              "properties": {
+                "default_rule": {
+                  "type": "string",
+                  "description": "The workspace's default rule: `none`, `allow` or `block`."
+                },
+                "open_lane": {
+                  "type": "string",
+                  "description": "`allowlist_only` or `disabled` when browser connections are tightened."
+                },
+                "rule_count": {
+                  "type": "integer",
+                  "format": "int64"
+                },
+                "uncredentialed": {
+                  "type": "string",
+                  "description": "`block` when requests without an account are blocked unless allow-listed."
+                },
+                "workspace": {
+                  "$ref": "#/components/schemas/OverrideWorkspace"
+                }
+              }
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
       "PatchAdminUserRequest": {
         "type": "object",
         "properties": {
@@ -48469,6 +48659,22 @@
           "hour",
           "day"
         ]
+      },
+      "PersonalOf": {
+        "type": "object",
+        "required": [
+          "id",
+          "name"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
       },
       "PersonalOrgView": {
         "type": "object",
@@ -55942,6 +56148,38 @@
           "updated_at": {
             "type": "string",
             "format": "date-time"
+          }
+        }
+      },
+      "WorkspaceOverride": {
+        "type": "object",
+        "description": "(C-964) What one workspace's published policy sets below its organization.",
+        "required": [
+          "workspace",
+          "uncredentialed",
+          "open_lane",
+          "default_rule",
+          "rule_count"
+        ],
+        "properties": {
+          "default_rule": {
+            "type": "string",
+            "description": "The workspace's default rule: `none`, `allow` or `block`."
+          },
+          "open_lane": {
+            "type": "string",
+            "description": "`allowlist_only` or `disabled` when browser connections are tightened."
+          },
+          "rule_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "uncredentialed": {
+            "type": "string",
+            "description": "`block` when requests without an account are blocked unless allow-listed."
+          },
+          "workspace": {
+            "$ref": "#/components/schemas/OverrideWorkspace"
           }
         }
       },

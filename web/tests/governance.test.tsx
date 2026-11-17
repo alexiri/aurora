@@ -139,7 +139,7 @@ describe("GovernanceView", () => {
     }));
     wrap(<GovernanceView orgId="o1" orgSlug="acme" canEdit />);
     fireEvent.click(await screen.findByRole("tab", { name: "Egress" }));
-    const sel = screen.getByLabelText(/Browser tunnels/) as HTMLSelectElement;
+    const sel = screen.getByLabelText(/Browser connections/) as HTMLSelectElement;
     expect(sel.value).toBe("allowlist_only");
     fireEvent.change(sel, { target: { value: "disabled" } });
     fireEvent.click(screen.getByRole("button", { name: "Save governance" }));

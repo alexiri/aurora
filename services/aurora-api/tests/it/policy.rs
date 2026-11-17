@@ -320,6 +320,113 @@ async fn draft_validation_stale_publish_rollback() {
 }
 
 #[tokio::test]
+async fn workspace_overrides_list_only_what_differs_from_the_organization() {
+    // C-964: the workspaces that tightened Internet access below the organization, from their
+    // published generations; a draft that is not applied is not a difference; org owner/admin only.
+    let w = world().await;
+    let ow = |tail: &str| format!("/v1/orgs/{}/workspace-overrides{tail}", w.org);
+    let (s, v) = w.call(Method::GET, &ow(""), &w.owner, None).await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(
+        v["items"],
+        json!([]),
+        "a fresh workspace follows the organization: {v}"
+    );
+    let (s, v) = w.call(Method::GET, &ow("?all=true"), &w.owner, None).await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["items"].as_array().unwrap().len(), 1);
+    assert_eq!(v["items"][0]["workspace"]["id"], w.ws.to_string());
+    assert_eq!(
+        (
+            v["items"][0]["uncredentialed"].as_str(),
+            v["items"][0]["open_lane"].as_str(),
+            v["items"][0]["default_rule"].as_str(),
+            v["items"][0]["rule_count"].as_i64()
+        ),
+        (Some("inherit"), Some("inherit"), Some("none"), Some(0)),
+    );
+    assert!(
+        v["items"][0]["workspace"].get("personal_of").is_none(),
+        "{v}"
+    );
+
+    // A draft alone changes nothing; publishing makes the workspace differ.
+    let draft = json!({"revision": 0, "default_action": "none", "uncredentialed_default": "block",
+        "open_lane_posture": "allowlist_only", "rules": [{"name": "r1", "action": "block", "targets": net("a.example.com")}]});
+    let (s, v) = w
+        .call(Method::PUT, &w.wsu("/draft"), &w.owner, Some(draft))
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let (_, v) = w.call(Method::GET, &ow(""), &w.owner, None).await;
+    assert_eq!(
+        v["items"],
+        json!([]),
+        "an unpublished draft is not a difference: {v}"
+    );
+    let (s, v) = w
+        .call(
+            Method::POST,
+            &w.wsu("/publish"),
+            &w.owner,
+            Some(json!({"revision": 1})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let (_, v) = w.call(Method::GET, &ow(""), &w.owner, None).await;
+    let item = &v["items"][0];
+    assert_eq!(v["items"].as_array().unwrap().len(), 1, "{v}");
+    assert_eq!(
+        (
+            item["uncredentialed"].as_str(),
+            item["open_lane"].as_str(),
+            item["default_rule"].as_str(),
+            item["rule_count"].as_i64()
+        ),
+        (Some("block"), Some("allowlist_only"), Some("none"), Some(1)),
+        "{v}"
+    );
+
+    // Pagination: a second workspace that follows the organization shows with ?all=true, one per page.
+    let ws2 = w.h.workspace(w.org).await;
+    let (_, p1) = w
+        .call(Method::GET, &ow("?all=true&limit=1"), &w.owner, None)
+        .await;
+    assert_eq!(p1["items"].as_array().unwrap().len(), 1, "{p1}");
+    let cursor = p1["next_cursor"]
+        .as_str()
+        .expect("a second page")
+        .to_owned();
+    let (_, p2) = w
+        .call(
+            Method::GET,
+            &ow(&format!("?all=true&limit=1&cursor={cursor}")),
+            &w.owner,
+            None,
+        )
+        .await;
+    assert_eq!(p2["items"].as_array().unwrap().len(), 1, "{p2}");
+    assert!(p2["next_cursor"].is_null(), "{p2}");
+    let mut ids = vec![
+        p1["items"][0]["workspace"]["id"].clone(),
+        p2["items"][0]["workspace"]["id"].clone(),
+    ];
+    ids.sort_by_key(ToString::to_string);
+    let mut want = vec![json!(w.ws.to_string()), json!(ws2.to_string())];
+    want.sort_by_key(ToString::to_string);
+    assert_eq!(ids, want);
+    let (s, _) = w.call(Method::GET, &ow("?limit=0"), &w.owner, None).await;
+    assert_eq!(s, 400);
+
+    // A member, even a bound one, is refused.
+    let (s, v) = w.call(Method::GET, &ow(""), &w.member, None).await;
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (403, Some("forbidden")),
+        "{v}"
+    );
+}
+
+#[tokio::test]
 async fn member_cannot_read_simulate_or_edit() {
     // I-27: policy reads, generations, warnings and simulation (whose trace discloses the
     // rules) follow the matrix: workspace `can_own`, org owner/admin.
