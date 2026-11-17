@@ -10,7 +10,8 @@ vi.mock("next/navigation", () => ({
 }));
 
 import { AccountHealth } from "@/components/accounts/account-health";
-import { AccountsBanner, AgentAttentionChip, OverviewAccountsAttention } from "@/components/accounts/attention";
+import { AccountsBanner, AgentAttentionChip } from "@/components/accounts/attention";
+import { NeedsYou } from "@/components/overview/needs-you";
 import { attentionCount, healthClause, healthLine, needsAttention, savedButText, testOutcomeText } from "@/lib/account-health";
 
 afterEach(() => {
@@ -138,15 +139,17 @@ describe("where a broken account shows up", () => {
       acct({ state: "rejected", detail: "password" }, { ref: { type: "connection", id: "c2" }, name: "analytics", app: { app_id: "postgresql", name: "PostgreSQL", custom_only: false } }),
       acct({ state: "ok" }, { ref: { type: "connection", id: "c3" } }),
     ]);
-    const { unmount } = wrap(<OverviewAccountsAttention workspaceId="ws1" base="/o/acme/w/main" />);
-    expect(await screen.findByRole("heading", { name: "2 accounts need attention" })).toBeTruthy();
+    const { unmount } = wrap(<NeedsYou wsId="ws1" base="/o/acme/w/main" />);
+    // The block lives in the Overview's "Needs you" card (P5-UX-7), counted with anything else that waits.
+    expect(await screen.findByRole("heading", { name: /^Needs you/ })).toBeTruthy();
+    expect(screen.getByLabelText("2 waiting")).toBeTruthy();
     expect(screen.getByText(/: The sign-in to GitHub expired/)).toBeTruthy();
     expect(screen.getByText(/analytics/).parentElement?.textContent).toContain("PostgreSQL no longer accepts this password");
     expect(screen.getByRole("link", { name: "Reconnect" }).getAttribute("href")).toBe("/o/acme/w/main/apps?tab=accounts&reconnect=c1");
     expect(screen.getByRole("link", { name: "Replace password" }).getAttribute("href")).toBe("/o/acme/w/main/apps?tab=accounts");
     unmount();
     mockAccounts([acct({ state: "ok" })]);
-    wrap(<OverviewAccountsAttention workspaceId="ws1" base="/o/acme/w/main" />);
+    wrap(<NeedsYou wsId="ws1" base="/o/acme/w/main" />);
     await new Promise((r) => setTimeout(r, 50));
     expect(screen.queryByRole("heading")).toBeNull();
   });
