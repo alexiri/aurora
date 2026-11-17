@@ -612,6 +612,13 @@ const ROWS: &[Row] = &[
     r("PUT", "/v1/admin/placement", G::Inst, false),
     r("GET", "/v1/admin/placement/preview", G::Inst, false),
     r("GET", "/v1/admin/placement/choices", G::Inst, false),
+    // (P5-UX-6, C-922) give the starter grants to people who signed in before
+    r(
+        "POST",
+        "/v1/admin/placement/starter-grants/backfill",
+        G::Inst,
+        false,
+    ),
     // (phase 5, SET-1) instance settings and (FIX-124) secret stores: instance administrators only; session-only (an API key gets 403 `session_required`)
     r("GET", "/v1/admin/settings", G::Inst, true),
     r("GET", "/v1/admin/settings/export", G::Inst, true),
