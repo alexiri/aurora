@@ -192,6 +192,8 @@ export interface GenericFormState {
   source: "value" | "reference";
   value: string;
   ref: { store_id: string; path: string; field: string };
+  /** (C-988) Agents of the workspace that can use the website from the start; none sends no grant. */
+  agentIds?: string[];
 }
 
 export function buildGenericCreate(s: GenericFormState): CreateSecretRequest {
@@ -209,6 +211,7 @@ export function buildGenericCreate(s: GenericFormState): CreateSecretRequest {
       ...(s.ref.field.trim() ? { field: s.ref.field.trim() } : {}),
     };
   } else body.value = s.value;
+  if (s.agentIds && s.agentIds.length > 0) body.grant = { agent_ids: s.agentIds };
   return body;
 }
 

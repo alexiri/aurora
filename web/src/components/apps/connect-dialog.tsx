@@ -2,7 +2,7 @@
 
 import { useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useState, type FormEvent } from "react";
 
 import { ErrorState, Loading } from "@/components/states";
 import { Button } from "@/components/ui/button";
@@ -16,33 +16,27 @@ import { errorMessage } from "@/lib/api/errors";
 import { useMe } from "@/lib/api/queries";
 import { adminRoutes } from "@/lib/routes";
 import {
-  ackConnect,
   buildConnectFields,
   connectApp,
   defaultValues,
-  navigateSignIn,
-  openSignInWindow,
   useApp,
   useApps,
   useAppGuide,
   useAppInstances,
   appIsCustomOnly,
-  useConnectChannel,
   useConnections,
   useOAuthClients,
   validateFields,
   type AppDetail,
   type AppSummary,
-  type ConnectChannelMessage,
   type ConnectMethod,
   type FieldValues,
 } from "@/lib/api/apps";
 
 import { GiveAccessPanel, WorkspaceAgents } from "@/components/credentials/give-access";
 import { grantApp } from "@/lib/api/credential-grants";
-import { ScopeGroups } from "@/components/grants/scope-groups";
-import { Segmented } from "@/components/ui/segmented";
-
+import { InstanceField, OAuthClientField, RequestedScopes, TokenScopes } from "./connect-journey/advanced-fields";
+import { useSignInWindow } from "./connect-journey/use-sign-in-window";
 import { DynamicForm } from "./dynamic-form";
 import { Markdown, safeHref } from "@/components/ui/markdown";
 
@@ -51,7 +45,7 @@ import { Markdown, safeHref } from "@/components/ui/markdown";
  * deployment (github.com), then every registered server of the family's instance-bound apps, then
  * how to register one. Each choice is one app (and instance); the gateway guarantee is unchanged.
  */
-function DeploymentStep({
+export function DeploymentStep({
   family,
   siblings,
   orgId,
@@ -175,12 +169,22 @@ function ConnectForm({
   // `scopes` is unknown when the result came over the channel after an OAuth sign-in; the step looks it up.
   const [done, setDone] = useState<{ missing: string[]; connectionId: string; scopes?: string[] } | null>(null);
   const [accessDone, setAccessDone] = useState(false);
+  const refreshLists = useCallback(() => {
+    void qc.invalidateQueries({ queryKey: ["apps"] });
+    void qc.invalidateQueries({ queryKey: ["connections"] });
+  }, [qc]);
   // (C-842) OAuth: the provider's sign-in runs in a separate window while the dialog waits for its result.
-  const [phase, setPhase] = useState<"form" | "waiting">("form");
-  const [blocked, setBlocked] = useState(false);
-  const [flowNotice, setFlowNotice] = useState<{ tone: "pending" | "danger"; text: string } | null>(null);
-  const signIn = useRef<Window | null>(null);
-  const signInUrl = useRef<string | null>(null);
+  const signIn = useSignInWindow(
+    app.app_id,
+    useCallback(
+      (m) => {
+        refreshLists();
+        setDone({ missing: m.missingScopes, connectionId: m.connectionId });
+      },
+      [refreshLists],
+    ),
+  );
+  const { phase, blocked, notice: flowNotice } = signIn;
   const guide = useAppGuide(app.app_id);
   const clients = useOAuthClients({ kind: "workspace", id: workspaceId });
   // An OAuth client bound to an instance serves only that instance; the default host uses unbound ones.
@@ -202,75 +206,9 @@ function ConnectForm({
     setErrors({});
   }
 
-  const refreshLists = useCallback(() => {
-    void qc.invalidateQueries({ queryKey: ["apps"] });
-    void qc.invalidateQueries({ queryKey: ["connections"] });
-  }, [qc]);
-
-  function closeSignIn() {
-    signIn.current?.close();
-    signIn.current = null;
-  }
-
-  // The dialog going away takes the sign-in window with it; nothing waits for a result any more.
-  useEffect(() => () => closeSignIn(), []);
-
-  // The callback page's result for the one flow this dialog is waiting for (C-842).
-  const onResult = useCallback(
-    (m: ConnectChannelMessage) => {
-      if (phase !== "waiting") return;
-      if (m.type === "connected") {
-        if (m.appId !== app.app_id) return;
-        ackConnect({ connectionId: m.connectionId });
-        signIn.current = null;
-        refreshLists();
-        setDone({ missing: m.missingScopes, connectionId: m.connectionId });
-        setPhase("form");
-      } else {
-        if (m.appId !== null && m.appId !== app.app_id) return;
-        ackConnect({ error: m.error });
-        signIn.current = null;
-        setPhase("form");
-        setFlowNotice({ tone: "danger", text: `The sign-in did not complete (${m.error}). Try again.` });
-      }
-    },
-    [phase, app.app_id, refreshLists],
-  );
-  useConnectChannel(onResult);
-
-  // A sign-in window closed without a result: back to the form.
-  useEffect(() => {
-    if (phase !== "waiting") return;
-    const timer = setInterval(() => {
-      if (signIn.current?.closed) {
-        signIn.current = null;
-        setPhase("form");
-        setFlowNotice({ tone: "pending", text: "Sign-in was cancelled." });
-      }
-    }, 1000);
-    return () => clearInterval(timer);
-  }, [phase]);
-
-  function reopenSignIn() {
-    if (signIn.current && !signIn.current.closed) {
-      signIn.current.focus();
-      return;
-    }
-    const w = openSignInWindow();
-    if (!w || !signInUrl.current) {
-      w?.close();
-      setBlocked(true);
-      return;
-    }
-    navigateSignIn(w, signInUrl.current);
-    signIn.current = w;
-  }
-
-  function cancelSignIn() {
-    closeSignIn();
-    setPhase("form");
-    setFlowNotice(null);
-  }
+  const closeSignIn = signIn.close;
+  const reopenSignIn = signIn.reopen;
+  const cancelSignIn = signIn.cancel;
 
   function submit(e: FormEvent) {
     e.preventDefault();
@@ -279,17 +217,14 @@ function ConnectForm({
     if (instanceBound && !defaultHost && !instanceId) errs.__instance = "Choose an instance.";
     setErrors(errs);
     if (Object.keys(errs).length) return;
-    setFlowNotice(null);
-    setBlocked(false);
     // The sign-in window is opened here, synchronously in the click, so popup blockers allow it (C-842).
     let w: Window | null = null;
     if (method.kind === "oauth2") {
-      w = openSignInWindow();
-      if (!w) {
-        setBlocked(true);
-        return;
-      }
-      signIn.current = w;
+      w = signIn.open();
+      if (!w) return;
+    } else {
+      signIn.setNotice(null);
+      signIn.setBlocked(false);
     }
     void send(method, w);
   }
@@ -316,10 +251,7 @@ function ConnectForm({
       if (res.kind === "redirect") {
         const url = safeHref(res.url);
         if (!url || !w) throw new Error("The server returned an invalid redirect.");
-        // The provider's page must not get a handle on the dashboard window (reverse tabnabbing, WEBC-3).
-        navigateSignIn(w, url);
-        signInUrl.current = url;
-        setPhase("waiting");
+        signIn.navigate(w, url);
         return;
       }
       closeSignIn();
@@ -402,43 +334,18 @@ function ConnectForm({
         </details>
       ) : null}
       {instanceBound && !initialInstanceId ? (
-        <Field
-          id="cm-instance"
+        <InstanceField
           label={app.instances?.label ?? "Instance"}
           error={errors.__instance}
-          hint={
-            choices.length === 0 && !defaultHost
-              ? "No self-hosted server is registered yet. Ask an organization admin to register one (Self-hosted apps)."
-              : builtinChoices.length > 0
-                ? "Credentials are only sent to the host you choose here, so pick the one your organization lives on. A self-hosted server must be registered first (Self-hosted apps)."
-                : "Credentials are only sent to the host you choose here."
-          }
-        >
-          <select
-            id="cm-instance"
-            className={inputClass}
-            value={instanceId}
-            onChange={(e) => {
-              setInstanceId(e.target.value);
-              setClientId("");
-            }}
-          >
-            {defaultHost ? <option value="">{`${defaultHost} (default)`}</option> : <option value="">Select…</option>}
-            {/* (FIX-134, D-243) The package's own preset instances (a vendor's regions), then servers an admin registered. */}
-            {builtinChoices.map((i) => (
-              <option key={i.id} value={i.id}>{`${i.label} (${i.host})`}</option>
-            ))}
-            {registeredChoices.length > 0 && builtinChoices.length > 0 ? (
-              <optgroup label="Registered servers">
-                {registeredChoices.map((i) => (
-                  <option key={i.id} value={i.id}>{`${i.label} (${i.base_url})`}</option>
-                ))}
-              </optgroup>
-            ) : (
-              registeredChoices.map((i) => <option key={i.id} value={i.id}>{`${i.label} (${i.base_url})`}</option>)
-            )}
-          </select>
-        </Field>
+          value={instanceId}
+          onChange={(v) => {
+            setInstanceId(v);
+            setClientId("");
+          }}
+          defaultHost={defaultHost}
+          builtin={builtinChoices}
+          registered={registeredChoices}
+        />
       ) : null}
       {needsInstanceClient ? (
         <Notice tone="pending" role="status">
@@ -472,38 +379,10 @@ function ConnectForm({
             </Field>
           ) : null}
           {method.scopes.length > 0 && method.kind !== "fields" ? (
-            <fieldset className="min-w-0 space-y-3">
-              <legend className="mb-1 text-sm font-medium text-ink">Requested scopes</legend>
-              <ScopeGroups scopes={method.scopes} selected={scopes} onChange={setScopes} disabled={busy} />
-            </fieldset>
+            <RequestedScopes method={method} selected={scopes} onChange={setScopes} disabled={busy} />
           ) : null}
           {method.scopes.length > 0 && method.kind === "fields" ? (
-            <fieldset className="min-w-0 space-y-3">
-              <legend className="mb-1 text-sm font-medium text-ink">Which scopes did you give this token?</legend>
-              <p className="text-xs text-muted">
-                A pasted token does not tell Aurora what it may do. Aurora uses this only to hide tools the token cannot serve
-                (they would fail upstream); it never gives the token more than it has. You can change it later on the connection.
-              </p>
-              {method.probe_scopes.length > 0 ? (
-                <Segmented<"detect" | "choose">
-                  label="Token scopes"
-                  value={scopeMode}
-                  onChange={setScopeMode}
-                  options={[
-                    { value: "detect", label: "Detect read scopes" },
-                    { value: "choose", label: "I will tick them" },
-                  ]}
-                />
-              ) : null}
-              {scopeMode === "choose" || method.probe_scopes.length === 0 ? (
-                <ScopeGroups scopes={method.scopes} selected={scopes} onChange={setScopes} disabled={busy} />
-              ) : (
-                <p className="text-xs text-muted">
-                  Aurora checks each read scope with a harmless read request using this token. Write scopes are never checked:
-                  tick them yourself afterwards on the connection if the token has them.
-                </p>
-              )}
-            </fieldset>
+            <TokenScopes method={method} mode={scopeMode} onMode={setScopeMode} selected={scopes} onChange={setScopes} disabled={busy} />
           ) : null}
           {hasWriteTools && !reconnect ? (
             <ChoiceCards
@@ -527,14 +406,7 @@ function ConnectForm({
             />
           ) : null}
           {method.kind === "oauth2" && method.client_key ? (
-            <Field id="cm-client" label="OAuth client" hint="Leave on automatic to use the most specific enabled client.">
-              <select id="cm-client" className={inputClass} value={clientId} onChange={(e) => setClientId(e.target.value)}>
-                <option value="">Automatic</option>
-                {matching.map((c) => (
-                  <option key={c.id} value={c.id}>{c.scope} client ({c.fields.client_id ?? c.client_key})</option>
-                ))}
-              </select>
-            </Field>
+            <OAuthClientField value={clientId} onChange={setClientId} clients={matching} />
           ) : null}
         </>
       ) : null}

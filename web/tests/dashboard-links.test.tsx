@@ -180,9 +180,9 @@ describe("Connections empty state", () => {
     expect(screen.queryByRole("link")).toBeNull();
   });
 
-  it("at workspace scope the empty list links to the Apps tab", async () => {
+  it("at workspace scope the empty list opens the connect journey", async () => {
     mockFetch(empty());
     wrap(<AccountsList scope={{ kind: "workspace", id: "w1" }} orgId="o1" canOwn />);
-    expect(await screen.findByRole("link", { name: "Connect an app or website" })).toHaveAttribute("href", "?tab=apps");
+    expect(await screen.findByRole("button", { name: "Connect an app or website" })).toBeInTheDocument();
   });
 });

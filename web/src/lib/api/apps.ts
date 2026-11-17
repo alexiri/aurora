@@ -298,6 +298,23 @@ export type ConnectRequest = components["schemas"]["ConnectRequest"];
 export type ConnectResult = components["schemas"]["ConnectResponse"];
 export type OAuthClientDefinition = components["schemas"]["AppOauthClient"];
 
+export type ConnectPlan = components["schemas"]["ConnectPlan"];
+export type SetupMethod = components["schemas"]["SetupMethod"];
+
+/**
+ * (C-955) What the journey needs to know about an app before it asks anything: which methods work for people here,
+ * the suggested one, and who can fix a blocked app. Read when a tile is focused or chosen, never for every app at once.
+ */
+export function useConnectPlan(app: string | undefined, workspaceId: string | undefined) {
+  return useQuery({
+    queryKey: ["app-connect-plan", app ?? "", workspaceId ?? ""] as const,
+    queryFn: () =>
+      unwrap(api.GET("/v1/apps/{app}/connect-plan", { params: { path: { app: app! }, query: { workspace_id: workspaceId! } } })),
+    enabled: !!app && !!workspaceId,
+    retry: false,
+  });
+}
+
 export function connectApp(app: string, body: ConnectRequest): Promise<ConnectResult> {
   return traceAction("app_connect", () => unwrap(api.POST("/v1/apps/{app}/connect", { params: { path: { app } }, body })));
 }
@@ -308,7 +325,16 @@ export const CONNECT_CHANNEL = "aurora-connect";
 
 /** What the OAuth callback page reports on the channel (ids and scope names; nothing secret). */
 export type ConnectChannelMessage =
-  | { type: "connected"; appId: string; connectionId: string; missingScopes: string[] }
+  | {
+      type: "connected";
+      appId: string;
+      connectionId: string;
+      missingScopes: string[];
+      /** (C-957) The agents the sign-in gave access to; empty when none was asked for or it failed. */
+      grantedAgentIds: string[];
+      /** (C-957) The code of the access part's failure: the account was made, the access was not. */
+      grantFailed: string | null;
+    }
   | { type: "failed"; appId: string | null; error: string };
 
 /** Accept only the callback page's two message shapes; anything else (including our own acks) is null. */
@@ -317,7 +343,13 @@ export function parseConnectMessage(data: unknown): ConnectChannelMessage | null
   const d = data as Record<string, unknown>;
   if (d.type === "aurora:connected" && typeof d.app_id === "string" && typeof d.connection_id === "string") {
     const missing = Array.isArray(d.missing_scopes) ? d.missing_scopes.filter((s): s is string => typeof s === "string") : [];
-    return { type: "connected", appId: d.app_id, connectionId: d.connection_id, missingScopes: missing };
+    const granted = Array.isArray(d.granted_agent_ids) ? d.granted_agent_ids.filter((s): s is string => typeof s === "string") : [];
+    const failed = d.grant_failed;
+    const grantFailed =
+      typeof failed === "object" && failed !== null && typeof (failed as { code?: unknown }).code === "string"
+        ? (failed as { code: string }).code
+        : null;
+    return { type: "connected", appId: d.app_id, connectionId: d.connection_id, missingScopes: missing, grantedAgentIds: granted, grantFailed };
   }
   if (d.type === "aurora:connect-failed" && typeof d.error === "string") {
     return { type: "failed", appId: typeof d.app_id === "string" ? d.app_id : null, error: d.error };

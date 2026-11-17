@@ -1,23 +1,21 @@
 "use client";
 
-import Link from "next/link";
 import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useState, type ReactNode } from "react";
 
 import { ConnectDialog } from "@/components/apps/connect-dialog";
+import { ConnectJourney } from "@/components/apps/connect-journey/connect-journey";
 import { useUrlDialog } from "@/components/apps/use-url-dialog";
 import { Notice } from "@/components/ui/notice";
 import { appKeys, useConnectChannel } from "@/lib/api/apps";
 import { LlmKeyForm } from "@/components/credentials/llm-form";
 import { EmptyState, ErrorState, Loading } from "@/components/states";
 import { Button } from "@/components/ui/button";
-import { buttonVariants } from "@/components/ui/button";
 import { Menu, MenuContent, MenuItem, MenuTrigger } from "@/components/ui/menu";
 import { accountKeys, useAccounts, type Account } from "@/lib/api/accounts";
 import type { SecretScope } from "@/lib/api/secrets";
 import { useWhoCan } from "@/lib/api/who-can";
 import { splitGiven } from "@/lib/accounts";
-import { cn } from "@/lib/utils";
 
 import { AccountRow } from "./account-row";
 import { FreeApps } from "./free-apps";
@@ -34,7 +32,6 @@ export function AccountsList({
   agent,
   banner,
   kind,
-  appsHref = "?tab=apps",
 }: {
   scope: SecretScope;
   orgId: string;
@@ -43,13 +40,14 @@ export function AccountsList({
   agent?: { id: string; name: string };
   banner?: ReactNode;
   kind?: "app" | "website" | "ai_key" | null;
-  /** Where **Connect an app or website** / **Give <Agent> an app** leads in this wave (the Apps tab). */
-  appsHref?: string;
 }) {
   const accounts = useAccounts(scope.kind === "workspace" ? { kind: "workspace", id: scope.id, agentId: agent?.id } : { kind: "organization", id: scope.id });
   const [addingKey, setAddingKey] = useState(false);
   // The Reconnect dialog (D-272, C-842): opened by a row's menu or the deep link `?reconnect=<connection id>`.
   const [reconnecting, setReconnecting] = useUrlDialog("reconnect");
+  // The connect journey (C-914, `14 §3`): **Give <Agent> an app**, **Connect an app or website**, or the deep link
+  // `?tab=access&connect=<app>` ("" opens it at the App step).
+  const [connecting, setConnecting] = useUrlDialog("connect");
   const qc = useQueryClient();
   const refresh = useCallback(() => {
     void qc.invalidateQueries({ queryKey: accountKeys.all });
@@ -82,9 +80,11 @@ export function AccountsList({
 
   const addEntries = agent ? (
     <>
-      <Link className={cn(buttonVariants({ size: "sm" }))} href={appsHref}>
-        Give {agent.name} an app
-      </Link>
+      {canOwn ? (
+        <Button size="sm" onClick={() => setConnecting("")}>
+          Give {agent.name} an app
+        </Button>
+      ) : null}
       {canOwn ? (
         <Button variant="outline" size="sm" onClick={() => setAddingKey(true)}>
           Add an AI key
@@ -98,9 +98,7 @@ export function AccountsList({
       </MenuTrigger>
       <MenuContent>
         {scope.kind === "workspace" ? (
-          <MenuItem asChild>
-            <Link href={appsHref}>Connect an app or website</Link>
-          </MenuItem>
+          <MenuItem onSelect={() => setConnecting("")}>Connect an app or website</MenuItem>
         ) : null}
         <MenuItem onSelect={() => setAddingKey(true)}>Add an AI key</MenuItem>
       </MenuContent>
@@ -136,9 +134,11 @@ export function AccountsList({
               title="Nothing is given yet"
               when={`${agent.name} cannot use any app, website or AI key yet.`}
               action={
-                <Link className={cn(buttonVariants({ size: "sm" }))} href={appsHref}>
-                  Give {agent.name} an app
-                </Link>
+                canOwn ? (
+                  <Button size="sm" onClick={() => setConnecting("")}>
+                    Give {agent.name} an app
+                  </Button>
+                ) : undefined
               }
               ask={{ whoCan: who, canAct: canOwn }}
             />
@@ -147,9 +147,11 @@ export function AccountsList({
               title="Nothing connected yet"
               when="Connect an app, a website or an AI key, and choose which agents can use it."
               action={
-                <Link className={cn(buttonVariants({ size: "sm" }))} href={appsHref}>
-                  Connect an app or website
-                </Link>
+                canOwn ? (
+                  <Button size="sm" onClick={() => setConnecting("")}>
+                    Connect an app or website
+                  </Button>
+                ) : undefined
               }
               ask={{ whoCan: who, canAct: canOwn }}
             />
@@ -179,6 +181,18 @@ export function AccountsList({
         </>
       )}
       {agent && canOwn && scope.kind === "workspace" ? <FreeApps agent={agent} workspaceId={scope.id} accounts={accounts.data.items} /> : null}
+      {connecting !== null && canOwn && scope.kind === "workspace" ? (
+        <ConnectJourney
+          workspaceId={scope.id}
+          orgId={orgId}
+          agent={agent}
+          appId={connecting || null}
+          onClose={() => {
+            setConnecting(null);
+            refresh();
+          }}
+        />
+      ) : null}
       {target && reconnectOk && target.app && scope.kind === "workspace" ? (
         <ConnectDialog
           appId={target.app.app_id}

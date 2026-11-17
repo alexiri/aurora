@@ -151,7 +151,7 @@ describe("AccountsList: one row per kind", () => {
     routes["GET /v1/orgs/o1"] = () => json(200, { id: "o1", my_role: "owner", settings: {} });
     list();
     fireEvent.keyDown(await screen.findByRole("button", { name: "Add" }), { key: "Enter" });
-    expect(await screen.findByRole("menuitem", { name: "Connect an app or website" })).toHaveAttribute("href", "?tab=apps");
+    expect(await screen.findByRole("menuitem", { name: "Connect an app or website" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("menuitem", { name: "Add an AI key" }));
     expect(await screen.findByRole("button", { name: "Close" })).toBeInTheDocument();
   });
@@ -178,7 +178,7 @@ describe("AccountsList: an agent's Access tab", () => {
     expect(within(used).getByText("Daneel thinks with claude-sonnet through this key.")).toBeInTheDocument();
     expect(within(used).getAllByRole("radio").length).toBeGreaterThan(0);
     expect(screen.getByText("Not given to Daneel (1)")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Give Daneel an app" })).toHaveAttribute("href", "?tab=apps");
+    expect(screen.getByRole("button", { name: "Give Daneel an app" })).toBeInTheDocument();
   });
 });
 
