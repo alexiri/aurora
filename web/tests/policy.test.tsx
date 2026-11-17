@@ -3,7 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { AccessTab } from "@/components/agents/access-tab";
-import { PolicyView } from "@/components/policy/policy-view";
+import { InternetLevel } from "@/components/internet/internet-level";
 import { SimulatePanel, SimulationResult } from "@/components/policy/simulate-panel";
 import { ApiError } from "@/lib/api/client";
 import {
@@ -88,7 +88,22 @@ describe("policy mapping", () => {
   });
 });
 
-describe("PolicyView", () => {
+const EFF = {
+  llm: { posture: { value: "open", source: "org" }, endpoints: [] },
+  egress: { posture: { value: "open", source: "org" }, open_lane: { value: "allowlist_only", source: "instance" }, org_allowlist: [], baseline_allowlist: [] },
+  byo: { posture: { value: "owners_only", source: "instance" } },
+  non_compliant_secrets: [],
+} as never;
+const WHO = { role: "workspace_owner", action: "change_this", people: [], can: false } as never;
+
+/** The Internet access page body of a level, with the effective limits given. */
+function PolicyView({ scope, canEdit, orgId, orgSlug = "acme" }: { title?: string; scope: { kind: "workspace" | "organization"; id: string }; canEdit: boolean; orgId: string; orgSlug?: string }) {
+  return (
+    <InternetLevel level={scope.kind === "workspace" ? "workspace" : "org"} scope={scope} orgId={orgId} orgSlug={orgSlug} wsSlug="main" canEdit={canEdit} eff={EFF} whoCanHere={WHO} whoCanOrg={WHO} />
+  );
+}
+
+describe("Internet access page (InternetLevel)", () => {
   const scope = { kind: "workspace", id: "w1" } as const;
   const base = (extra: Record<string, Handler> = {}) =>
     mockFetch({
@@ -102,12 +117,23 @@ describe("PolicyView", () => {
       ...extra,
     });
 
-  it("shows rules and warnings; read-only hides actions", async () => {
+  it("shows rules and warnings to an owner", async () => {
     base();
-    wrap(<PolicyView title="Policy" scope={scope} orgId="o1" canEdit={false} />);
+    wrap(<PolicyView title="Policy" scope={scope} orgId="o1" canEdit />);
     expect(await screen.findByText("Allow x")).toBeInTheDocument();
     expect(await screen.findByText(/Shadowed by Allow x/)).toBeInTheDocument();
-    expect(screen.queryByText("Apply changes")).toBeNull();
+    expect(screen.getByText("Rules people wrote")).toBeInTheDocument();
+  });
+
+  it("a member sees the limits from above and who to ask: no rules, no Common changes, no Tighten…, no policy reads", async () => {
+    const fn = base();
+    wrap(<PolicyView title="Policy" scope={scope} orgId="o1" canEdit={false} />);
+    expect(await screen.findByText("Browser connections (not inspected)")).toBeInTheDocument();
+    expect(screen.getByText("Only for listed websites")).toBeInTheDocument();
+    expect(screen.getByText("Set by Administration")).toBeInTheDocument();
+    for (const gone of ["Allow x", "Common changes", "Add rule", "Tighten…", "Apply changes"]) expect(screen.queryByText(gone)).toBeNull();
+    const urls = fn.mock.calls.map((c) => (c[0] as Request).url);
+    expect(urls.some((u) => u.includes("/policy"))).toBe(false);
   });
 
   it("reorders, applies (PUT draft then publish) with the revision", async () => {
@@ -125,7 +151,10 @@ describe("PolicyView", () => {
     });
     wrap(<PolicyView title="Policy" scope={scope} orgId="o1" canEdit />);
     fireEvent.click(await screen.findByLabelText("Move Other up"));
-    fireEvent.click(screen.getByText("Apply changes"));
+    // The move is written to the draft as it is made, not at Apply.
+    await waitFor(() => expect(putBody).not.toBeNull());
+    expect(pubBody).toBeNull();
+    fireEvent.click(await screen.findByText("Apply changes"));
     await waitFor(() => expect(pubBody).toEqual({ revision: 4 }));
     expect(putBody!.revision).toBe(3);
     expect(putBody!.rules.map((r) => r.name)).toEqual(["Other", "Allow x"]);
@@ -153,7 +182,7 @@ describe("PolicyView", () => {
     await waitFor(() => expect(rollbackBody).toEqual({ generation: 2, expect_revision: 7 }));
   });
 
-  it("edits the workspace open-lane posture and shows what the higher level enforces", async () => {
+  it("keeps the four controls behind Tighten… and writes an edit to the draft at once", async () => {
     let putBody: { open_lane_posture?: string } | null = null;
     base({
       "PUT /v1/workspaces/w1/policy/draft": async (req) => {
@@ -162,13 +191,19 @@ describe("PolicyView", () => {
       },
     });
     wrap(<PolicyView title="Policy" scope={scope} orgId="o1" canEdit />);
-    const sel = (await screen.findByLabelText("Open lane posture")) as HTMLSelectElement;
+    // What Administration set is a limit from above, in words; the controls are closed until Tighten… is opened.
+    expect((await screen.findAllByText("Set by Administration")).length).toBeGreaterThan(0);
+    expect(screen.queryByLabelText("Browser connections (not inspected)")).toBeNull();
+    expect(screen.queryByLabelText("Requests without an account")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Tighten…" }));
+    const sel = (await screen.findByLabelText("Browser connections (not inspected)")) as HTMLSelectElement;
     expect(sel.value).toBe("enabled");
-    expect((await screen.findByTestId("open-lane-enforced")).textContent).toMatch(/Enforced by instance: allowlist_only/);
+    expect(screen.getByLabelText("Requests without an account")).toBeInTheDocument();
+    expect(screen.getByLabelText("Default rule")).toBeInTheDocument();
     fireEvent.change(sel, { target: { value: "disabled" } });
-    fireEvent.click(screen.getByText("Save draft"));
     await waitFor(() => expect(putBody).not.toBeNull());
     expect(putBody!.open_lane_posture).toBe("disabled");
+    expect(screen.queryByText("Save draft")).toBeNull();
   });
 
   it("the Default Rule control carries the LLM-hosts note with a link to AI models (RFE-023)", async () => {
@@ -179,9 +214,10 @@ describe("PolicyView", () => {
     });
     for (const s of [scope, { kind: "organization", id: "o1" } as const]) {
       wrap(<PolicyView title="Policy" scope={s} orgId="o1" orgSlug="acme" canEdit />);
+      if (s.kind === "workspace") fireEvent.click(await screen.findByRole("button", { name: "Tighten…" }));
       const note = await screen.findByTestId("default-rule-llm-note");
-      expect(note.textContent).toMatch(/Does not affect LLM endpoints — see AI models/);
-      expect(note.getAttribute("title")).toMatch(/explicit block rule that names an LLM host still applies/);
+      expect(note.textContent).toMatch(/Does not affect AI endpoints\. See AI models/);
+      expect(note.getAttribute("title")).toMatch(/explicit block rule that names an AI host still applies/);
       expect(screen.getByRole("link", { name: "AI models" })).toHaveAttribute("href", "/o/acme/ai-models");
       expect(screen.getByLabelText("Default rule")).toHaveAttribute("aria-describedby", "default-rule-llm-note");
       cleanup();
@@ -194,8 +230,7 @@ describe("PolicyView", () => {
     });
     wrap(<PolicyView title="Policy" scope={scope} orgId="o1" canEdit />);
     fireEvent.click(await screen.findByLabelText("Move Other up"));
-    fireEvent.click(screen.getByText("Apply changes"));
-    expect(await screen.findByText("Reload policy")).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Reload" })).toBeInTheDocument();
   });
 
   it("maps policy_invalid errors onto the rule", async () => {
@@ -205,7 +240,6 @@ describe("PolicyView", () => {
     });
     wrap(<PolicyView title="Policy" scope={scope} orgId="o1" canEdit />);
     fireEvent.click(await screen.findByLabelText("Move Other up"));
-    fireEvent.click(screen.getByText("Apply changes"));
     expect(await screen.findByText("name: too long")).toBeInTheDocument();
   });
 });
@@ -295,7 +329,7 @@ describe("simulate speaker (RFE-005)", () => {
     fireEvent.change(screen.getByLabelText("Agent"), { target: { value: "a1" } });
     fireEvent.change(screen.getByLabelText("URL"), { target: { value: "https://api.x.com/v1" } });
     if (speakerLabel) fireEvent.change(screen.getByLabelText("Speaker"), { target: { value: speakerLabel } });
-    fireEvent.click(screen.getByRole("button", { name: "Simulate" }));
+    fireEvent.click(screen.getByRole("button", { name: "Check" }));
     await waitFor(() => expect(sent).not.toBeNull());
     return sent as unknown as Record<string, unknown>;
   }

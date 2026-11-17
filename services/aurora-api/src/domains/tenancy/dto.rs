@@ -377,3 +377,40 @@ pub struct MembersQuery {
     pub cursor: Option<String>,
     pub status: Option<MemberStatus>,
 }
+
+#[derive(Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
+pub struct WorkspaceOverridesQuery {
+    pub limit: Option<u32>,
+    pub cursor: Option<String>,
+    /// Every workspace, not only those that differ from the organization.
+    pub all: Option<bool>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct OverrideWorkspace {
+    pub id: Uuid,
+    pub name: String,
+    /// Present on a personal workspace: the person it was made for.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub personal_of: Option<PersonalOf>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct PersonalOf {
+    pub id: Uuid,
+    pub name: String,
+}
+
+/// (C-964) What one workspace's published policy sets below its organization.
+#[derive(Serialize, ToSchema)]
+pub struct WorkspaceOverride {
+    pub workspace: OverrideWorkspace,
+    /// `block` when requests without an account are blocked unless allow-listed.
+    pub uncredentialed: String,
+    /// `allowlist_only` or `disabled` when browser connections are tightened.
+    pub open_lane: String,
+    /// The workspace's default rule: `none`, `allow` or `block`.
+    pub default_rule: String,
+    pub rule_count: i64,
+}

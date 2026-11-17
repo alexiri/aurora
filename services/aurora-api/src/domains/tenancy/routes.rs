@@ -26,6 +26,7 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(list_members))
         .routes(routes!(patch_member, remove_member))
         .routes(routes!(list_workspaces, create_workspace))
+        .routes(routes!(list_workspace_overrides))
         .routes(routes!(get_workspace, patch_workspace, delete_workspace))
         .routes(routes!(list_access))
         .routes(routes!(put_access, delete_access))
@@ -339,6 +340,59 @@ async fn remove_member(
 }
 
 // ---- workspaces ----
+
+/// What the workspaces tightened in Internet access below the organization (C-964): their
+/// published defaults and rule count; only the differing ones unless `?all=true`.
+#[utoipa::path(get, path = "/orgs/{org}/workspace-overrides", operation_id = "listWorkspaceOverrides", tag = "workspaces",
+    params(("org" = Uuid, Path, description = "Organization id"), WorkspaceOverridesQuery),
+    responses((status = 200, body = Page<WorkspaceOverride>), (status = 400, body = ErrorEnvelope),
+        (status = 403, body = ErrorEnvelope), (status = 404, body = ErrorEnvelope)),
+    security(("session" = []), ("api_key" = [])))]
+async fn list_workspace_overrides(
+    c: Caller,
+    State(s): State<AppState>,
+    Path(org): Path<Uuid>,
+    Query(q): Query<WorkspaceOverridesQuery>,
+) -> Result<Json<Page<WorkspaceOverride>>, ApiError> {
+    let p = Pagination::new(q.limit, q.cursor.as_deref())?;
+    c.org(&s, org).await?.require_admin()?;
+    let rows = aurora_db::repo::policy::workspace_overrides(
+        &s.pool,
+        org,
+        q.all.unwrap_or(false),
+        after(&p),
+        p.fetch(),
+    )
+    .await?;
+    Ok(Json(page_of(
+        rows,
+        &p,
+        |r| (r.created_at, r.id),
+        |r| WorkspaceOverride {
+            workspace: OverrideWorkspace {
+                id: r.id,
+                name: r.name,
+                personal_of: r
+                    .personal_owner_id
+                    .zip(r.personal_owner_name)
+                    .map(|(id, name)| PersonalOf { id, name }),
+            },
+            uncredentialed: if r.uncredentialed_default == "block" {
+                "block"
+            } else {
+                "inherit"
+            }
+            .to_owned(),
+            open_lane: if r.open_lane_posture == "enabled" {
+                "inherit".to_owned()
+            } else {
+                r.open_lane_posture
+            },
+            default_rule: r.default_action,
+            rule_count: r.rule_count,
+        },
+    )))
+}
 
 /// List workspaces of an organization visible to the caller.
 #[utoipa::path(get, path = "/orgs/{org}/workspaces", operation_id = "listWorkspaces", tag = "workspaces",

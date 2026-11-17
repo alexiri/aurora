@@ -2,6 +2,7 @@
 
 import { AdminStorageView } from "@/components/account/admin-storage-view";
 import { AdminUsersView } from "@/components/account/admin-users-view";
+import { AdminInternet } from "@/components/internet/admin-internet";
 import { AdminGuard } from "@/components/admin/admin-guard";
 import { AddonSourcesView } from "@/components/admin/addon-sources-view";
 import { AdminAuditView } from "@/components/admin/audit-view";
@@ -140,18 +141,7 @@ export function AdminAiModelsPage() {
 export function AdminInternetAccessPage() {
   return (
     <AdminGuard>
-      <TopicPage
-        idBase="admin-internet"
-        title="Internet access"
-        description="Which websites agents can reach."
-        tabs={[
-          {
-            id: "limits",
-            label: "Limits",
-            content: <GovernanceFields part="internet" />,
-          },
-        ]}
-      />
+      <AdminInternet />
     </AdminGuard>
   );
 }

@@ -23,9 +23,10 @@ export const secretKeys = {
   providers: (orgId: string) => ["llm-providers", orgId] as const,
 };
 
-export function useSecrets(scope: SecretScope) {
+export function useSecrets(scope: SecretScope, enabled = true) {
   return useQuery({
     queryKey: secretKeys.list(scope),
+    enabled,
     queryFn: () =>
       scope.kind === "workspace"
         ? unwrap(api.GET("/v1/workspaces/{ws}/secrets", { params: { path: { ws: scope.id } } }))

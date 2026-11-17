@@ -7,7 +7,7 @@ import { AppsTab } from "@/components/apps/apps-tab";
 import { OAuthClientsPanel } from "@/components/apps/oauth-clients-panel";
 import { AccountsPanel } from "@/components/credentials/credentials-view";
 import { WorkspaceFreeze } from "@/components/freeze/freeze-sections";
-import { WorkspacePolicy } from "@/components/policy/workspace-policy";
+import { WorkspaceInternet } from "@/components/internet/workspace-internet";
 import { AccessTab } from "@/components/settings/access-tab";
 import { AuditTab } from "@/components/settings/audit-tab";
 import { DangerTab } from "@/components/settings/danger-tab";
@@ -85,22 +85,9 @@ export function WorkspaceAppsPage() {
   );
 }
 
-/** Internet access: the workspace's rules (owners edit; the rules are not readable by members until P5-IA-2). */
+/** Internet access (C-965): the summary, Common changes, rules, the limits from above with Tighten…, one Apply. */
 export function WorkspaceInternetAccessPage() {
-  return (
-    <WorkspaceGate>
-      {(w) =>
-        w.my_role === "owner" ? (
-          <WorkspacePolicy />
-        ) : (
-          <div className="max-w-page space-y-4">
-            <PageHeader title="Internet access" description="Which websites agents can reach, and the rules that ask or block." className="mb-2" />
-            <Notice role="status">Workspace owners set the rules for which websites agents can reach.</Notice>
-          </div>
-        )
-      }
-    </WorkspaceGate>
-  );
+  return <WorkspaceGate>{(w, org, ws) => <WorkspaceInternet workspace={w} orgSlug={org} wsSlug={ws} />}</WorkspaceGate>;
 }
 
 /** People: who can use this workspace (workspace owners). */

@@ -18,7 +18,7 @@ import { OrgGate } from "@/components/org/org-gate";
 import { MembersView } from "@/components/org/members-view";
 import { OrgDangerSections, GeneralForm, PreviewsForm, RetentionForm } from "@/components/org/settings-view";
 import { OrgStorageView } from "@/components/org/storage-view";
-import { OrgPolicy } from "@/components/policy/org-policy";
+import { OrgInternet } from "@/components/internet/org-internet";
 import { OrgSkills } from "@/components/skills/org-skills";
 import { TopicPage, type TopicTab } from "@/components/topic-page";
 import { EmbeddedPage, PageHeader } from "@/components/ui/page-header";
@@ -133,28 +133,12 @@ export function OrgAiModelsPage() {
   );
 }
 
-/** Internet access: the egress rules of the organization's governance, and for admins the policy editor below them. */
+/** Internet access (C-965): the summary, Common changes, rules, the limits above and below, one Apply. */
 export function OrgInternetAccessPage() {
   const slug = useOrgSlug();
   return (
     <OrgGate slug={slug} allow={ALL_ROLES}>
-      {(org) => (
-        <div className="max-w-page space-y-8">
-          <PageHeader
-            title="Internet access"
-            description={
-              isAdmin(org)
-                ? "Which websites agents can reach, and the rules that allow, ask or block."
-                : "Which websites agents can reach. Only owners and admins can change this."
-            }
-            className="mb-2"
-          />
-          <EmbeddedPage>
-            <Governance org={org} slug={slug} panels={["egress"]} />
-            {isAdmin(org) ? <OrgPolicy /> : null}
-          </EmbeddedPage>
-        </div>
-      )}
+      {(org) => <OrgInternet org={org} slug={slug} />}
     </OrgGate>
   );
 }

@@ -635,6 +635,7 @@ const ROWS: &[Row] = &[
     ),
     r("GET", "/v1/orgs/{org}/workspaces", G::Member, false),
     r("POST", "/v1/orgs/{org}/workspaces", G::Member, false),
+    r("GET", "/v1/orgs/{org}/workspace-overrides", G::Admin, false),
     r("GET", "/v1/orgs/{org}/api-keys", G::Admin, false),
     r("POST", "/v1/orgs/{org}/api-keys", G::Admin, true),
     r("GET", "/v1/orgs/{org}/app-availability", G::Admin, false),
