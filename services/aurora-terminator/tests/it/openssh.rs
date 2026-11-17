@@ -71,6 +71,60 @@ async fn run_ssh(port: u16, user: String, dir: &Path, with_cert: bool) -> (i32, 
     .unwrap()
 }
 
+/// `ssh -tt user@127.0.0.1` (a shell with a pty requested) with a piped stdin and, when `term` is `None`, no `TERM`
+/// in the environment: what a script or a CI job does. Returns (exit code, stderr).
+async fn run_ssh_tt(port: u16, user: String, dir: &Path, term: Option<&str>) -> (i32, String) {
+    use std::io::Write;
+    let dir = dir.to_owned();
+    let term = term.map(str::to_owned);
+    tokio::task::spawn_blocking(move || {
+        let mut c = Command::new("ssh");
+        c.args(["-F", "/dev/null", "-tt", "-p", &port.to_string()])
+            .arg("-i")
+            .arg(dir.join("id"))
+            .args([
+                "-o",
+                "IdentitiesOnly=yes",
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "StrictHostKeyChecking=no",
+                "-o",
+                "UserKnownHostsFile=/dev/null",
+                "-o",
+                "LogLevel=ERROR",
+                "-o",
+                "ConnectTimeout=10",
+                "-o",
+            ])
+            .arg(format!(
+                "CertificateFile={}",
+                dir.join("id-cert.pub").display()
+            ))
+            .arg(format!("{user}@127.0.0.1"));
+        match term {
+            Some(t) => c.env("TERM", t),
+            None => c.env_remove("TERM"),
+        };
+        let mut ch = c
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut si = ch.stdin.take().unwrap();
+        si.write_all(b"echo hi\n").unwrap();
+        drop(si);
+        let out = ch.wait_with_output().unwrap();
+        (
+            out.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&out.stderr).into_owned(),
+        )
+    })
+    .await
+    .unwrap()
+}
+
 fn write_identity(r: &Rig, cert: Option<&russh::keys::ssh_key::Certificate>) -> Dir {
     let dir = std::env::temp_dir().join(format!("aurora-term-openssh-{}", Uuid::new_v4()));
     std::fs::create_dir_all(&dir).unwrap();
@@ -104,6 +158,35 @@ async fn openssh_certificate_logs_in_and_gets_the_exit_status() {
     assert!(err.contains("bye"), "stderr: {err}");
     assert_eq!(r.stub.count("sessions"), 1);
     assert_eq!(r.runner.opens.lock().unwrap().len(), 1);
+}
+
+/// A script's `ssh -tt host` has a pipe for stdin (the client sends a 0×0 window) and often no `TERM` (it sends an
+/// empty one): both are "unspecified", so the pty is granted — 80×24 and a default terminal type — and the shell runs.
+/// (Found by the kind SSH e2e: "PTY allocation request failed on channel 0".)
+#[tokio::test(flavor = "multi_thread")]
+async fn openssh_tt_with_a_piped_stdin_and_no_term_still_gets_a_pty() {
+    if !have_ssh() {
+        eprintln!("SKIPPED: no ssh binary");
+        return;
+    }
+    for term in [None, Some("xterm")] {
+        let r = rig(RigOpts::default()).await;
+        let d = write_identity(&r, Some(&r.good()));
+        let (code, err) = run_ssh_tt(r.ssh.port(), r.agent.to_string(), &d.0, term).await;
+        assert!(
+            !err.contains("PTY allocation request failed"),
+            "TERM {term:?}: {err}"
+        );
+        // The stub runner ends the shell with status 7 at the client's EOF.
+        assert_eq!(code, 7, "TERM {term:?}: {err}");
+        let opens = r.runner.opens.lock().unwrap().clone();
+        assert_eq!(opens.len(), 1, "TERM {term:?}");
+        assert_eq!(opens[0]["mode"], "shell");
+        assert_eq!(opens[0]["tty"]["cols"], 80);
+        assert_eq!(opens[0]["tty"]["rows"], 24);
+        let t = opens[0]["tty"]["term"].as_str().unwrap();
+        assert!(!t.is_empty(), "the terminal type must not be empty: {t:?}");
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]

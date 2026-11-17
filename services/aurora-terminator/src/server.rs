@@ -43,6 +43,8 @@ const CHAN_QUEUE: usize = 64;
 /// The size a `pty-req` of 0×0 ("unspecified", RFC 4254 §6.2: a client whose stdin is not a terminal) gets.
 const DEFAULT_COLS: u32 = 80;
 const DEFAULT_ROWS: u32 = 24;
+/// The terminal type of a `pty-req` with an empty `TERM` (the supervisor's fallback for an unusable one).
+const DEFAULT_TERM: &str = "xterm-256color";
 /// The SSH channel window: small on purpose (bulk data is paced by the runner's credit through
 /// the leg's backpressure, not by a large window).
 const WINDOW: u32 = 256 * 1024;
@@ -379,6 +381,9 @@ impl Handler for Conn {
             if cols == 0 { DEFAULT_COLS } else { cols },
             if rows == 0 { DEFAULT_ROWS } else { rows },
         );
+        // An empty TERM is "unspecified" too (OpenSSH sends "" when TERM is unset: cron, CI, a script): the supervisor's
+        // own default, the one it falls back to for a type it does not accept.
+        let term = if term.is_empty() { DEFAULT_TERM } else { term };
         let ok = self.permit_pty
             && (1..=64).contains(&term.len())
             && term.bytes().all(|b| (0x20..=0x7e).contains(&b))

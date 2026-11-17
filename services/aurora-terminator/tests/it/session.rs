@@ -139,8 +139,14 @@ async fn refused_channels_and_requests_open_nothing_downstream() {
     assert!(!reply(&mut ch).await, "another subsystem");
     ch.exec(true, "a\0b").await.unwrap();
     assert!(!reply(&mut ch).await, "a command with NUL");
-    ch.request_pty(true, "", 80, 24, 0, 0, &[]).await.unwrap();
-    assert!(!reply(&mut ch).await, "an empty TERM");
+    ch.request_pty(true, &"x".repeat(65), 80, 24, 0, 0, &[])
+        .await
+        .unwrap();
+    assert!(!reply(&mut ch).await, "a 65-byte TERM");
+    ch.request_pty(true, "xt\u{7}erm", 80, 24, 0, 0, &[])
+        .await
+        .unwrap();
+    assert!(!reply(&mut ch).await, "a TERM with a control character");
     assert_eq!(
         r.stub.count("channels"),
         0,

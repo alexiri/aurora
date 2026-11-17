@@ -631,7 +631,7 @@ the differences. Off unless `ssh.enabled`.
   `externalTrafficPolicy: Local`, `15 §SSH access`).
 - *Channels* (D-239(g)): only `session` channels, at most `SSH_CHANNELS_PER_SESSION` (4) at once. On a
   session channel the terminator accepts `pty-req` (needs `permit-pty` in the certificate; `term` ≤ 64
-  printable ASCII, cols/rows 1…1000 — a zero dimension is "unspecified" (RFC 4254 §6.2; OpenSSH sends 0×0 when its stdin is not a terminal) and becomes 80×24 —, terminal modes ignored), `env` (`LANG`, `LC_*` only, ≤ 16 of
+  printable ASCII, cols/rows 1…1000 — a zero dimension is "unspecified" (RFC 4254 §6.2; OpenSSH sends 0×0 when its stdin is not a terminal) and becomes 80×24, and an empty `term` (OpenSSH sends it when `TERM` is unset) becomes `xterm-256color` —, terminal modes ignored), `env` (`LANG`, `LC_*` only, ≤ 16 of
   ≤ 256 bytes; other names get a failure reply), `window-change`, and exactly one of `shell`, `exec`
   (`SSH_EXEC_COMMAND_MAX`, no NUL), `subsystem sftp`. Refused with a failure reply: `x11-req`,
   `auth-agent-req@openssh.com`, `signal`, `break`, any other subsystem or request. Refused channel opens
