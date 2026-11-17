@@ -453,7 +453,12 @@ async fn apply_result(s: &AppState, c: &ConnectorCtx, r: OpResult) -> Result<(),
         (Outcome::Error, Some(e)) => {
             let code = e.code.as_str().to_owned();
             let mut terminal = Some("failed");
+            // (P4-NARR, C-849) A rate-limited narration update is dropped: the next state
+            // replaces it. The card's post and its collapse are retried like any op.
+            let narr_drop =
+                code == "rate_limited" && ops::is_droppable_narration_update(&mut *tx, op.id).await?;
             match code.as_str() {
+                "rate_limited" if narr_drop => terminal = Some("dropped"),
                 "rate_limited" => {
                     let secs = e.retry_after_secs.unwrap_or(RATE_LIMIT_DEFAULT_SECS);
                     ops::reschedule(

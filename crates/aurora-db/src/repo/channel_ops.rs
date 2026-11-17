@@ -449,6 +449,23 @@ pub async fn by_dedupe_key<'e, E: PgExecutor<'e>>(
     .await?)
 }
 
+/// (P4-NARR, C-849) A narration-card update that a `rate_limited` answer drops instead of
+/// retrying: dedupe key `narr:<turn>:<seq>`; the post (`narr:<turn>`) and the collapse
+/// (`narr:<turn>:end`) are retried like any op.
+pub async fn is_droppable_narration_update<'e, E: PgExecutor<'e>>(
+    exec: E,
+    id: Uuid,
+) -> Result<bool, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT coalesce(dedupe_key ~ '^narr:[0-9a-f-]{36}:[0-9]+$', false)
+           FROM channel_ops WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_optional(exec)
+    .await?
+    .unwrap_or(false))
+}
+
 /// A chat receipt (👀 reaction, native status or "Working…" placeholder) that has not been
 /// removed yet, with the thread link its message came in through (FIX-158, D-319).
 #[derive(Debug, Clone, sqlx::FromRow)]

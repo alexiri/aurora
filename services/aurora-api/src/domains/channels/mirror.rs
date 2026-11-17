@@ -67,6 +67,15 @@ pub async fn on_turn_finished(conn: &mut PgConnection, t: &TurnRow) -> Result<()
             sp.rollback().await.map_err(aurora_db::DbError::from)?;
         }
     }
+    // (P4-NARR, D-286) The turn's narration card is collapsed whatever became of the answer.
+    let mut sp = conn.begin().await.map_err(aurora_db::DbError::from)?;
+    match super::narration::finish(&mut sp, t).await {
+        Ok(()) => sp.commit().await.map_err(aurora_db::DbError::from)?,
+        Err(e) => {
+            tracing::warn!(turn = %t.id, error = %e.message(), "narration collapse failed; turn completion kept");
+            sp.rollback().await.map_err(aurora_db::DbError::from)?;
+        }
+    }
     Ok(())
 }
 
@@ -226,12 +235,21 @@ pub async fn on_turn_started(conn: &mut PgConnection, t: &TurnRow) -> Result<(),
             sp.rollback().await.map_err(aurora_db::DbError::from)?;
         }
     }
+    // (P4-NARR) The live narration card, for agents that opted in.
+    let mut sp = conn.begin().await.map_err(aurora_db::DbError::from)?;
+    match super::narration::start(&mut sp, t).await {
+        Ok(()) => sp.commit().await.map_err(aurora_db::DbError::from)?,
+        Err(e) => {
+            tracing::warn!(turn = %t.id, error = %e.message(), "narration card not posted; turn start kept");
+            sp.rollback().await.map_err(aurora_db::DbError::from)?;
+        }
+    }
     Ok(())
 }
 
 /// The thread link a turn's mirror goes to: its own (door `thread`), else the conversation's
 /// latest.
-async fn link_of(
+pub(super) async fn link_of(
     conn: &mut PgConnection,
     t: &TurnRow,
     proactive: bool,
@@ -251,7 +269,7 @@ async fn link_of(
 }
 
 /// `integration` with its manifest, when active.
-async fn ctx_of(conn: &mut PgConnection, integration: uuid::Uuid) -> Result<Option<Ctx>, ApiError> {
+pub(super) async fn ctx_of(conn: &mut PgConnection, integration: uuid::Uuid) -> Result<Option<Ctx>, ApiError> {
     let Some(integ) = integrations::get(&mut *conn, integration).await? else {
         return Ok(None);
     };
@@ -414,6 +432,7 @@ async fn post_answer(
                 content: Content {
                     text: Some(text),
                     card: None,
+                    narration: None,
                 },
                 files: Vec::new(),
                 ephemeral_to: None,

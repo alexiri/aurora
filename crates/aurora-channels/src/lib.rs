@@ -10,5 +10,5 @@ pub mod token;
 
 pub use capability::{Capability, CapabilitySet, FallbackContext, Rendered, render_card};
 pub use card::{Block, ButtonItem, ButtonStyle, Card, CardError, Field, SelectOption};
-pub use content::Content;
+pub use content::{Content, Narration, NarrationStatus, NarrationStep, NarrationStepStatus};
 pub use token::{ActionKind, ActionToken, Claims, Decision, TokenError};

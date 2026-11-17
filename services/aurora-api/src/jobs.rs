@@ -496,6 +496,10 @@ pub fn spawn(
                 Ok(_) => {}
                 Err(e) => tracing::warn!(error = %e.message(), "orphan receipt sweep failed"),
             }
+            // (P4-NARR) Late collapses and trailing card updates.
+            if let Err(e) = crate::domains::channels::narration::sweep(&cp).await {
+                tracing::warn!(error = %e.message(), "narration sweep failed");
+            }
         }
     });
     let p = pool.clone();

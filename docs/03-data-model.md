@@ -763,6 +763,7 @@ Pruning: the API's `counters_prune` due-work arm (every 60 s, any replica, `FOR 
 | model_id | text null | provider's model id; null ⇒ endpoint/provider default. (phase 5, P5-MODELS, D-302(a)) The harness's **default** model, not a limit |
 | model_roles | jsonb null | (phase 5, P5-MODELS-1, D-303) `{ endpoint_id, large?, medium?, small? }`: role models stamped with the endpoint they were chosen for; CHECK: an object with a string `endpoint_id`, only those keys, role ids matching `MODEL_ID_PATTERN` (migration `20261201000245`). Dropped per role under the override rule (`08 §Model roles`) |
 | subagent_model | text not null default `'inherit'` | (phase 5, P5-MODELS-1) CHECK in (`inherit`,`large`,`medium`,`small`); which role subagents use when their definition names no model |
+| narration_cards | bool not null default false | (phase 5, P4-NARR, D-279, migration `20261201000231`) the agent's live progress card on chat platforms that can edit messages (`10 §Live narration cards`); existing rows are `false` |
 | proactive_messaging | text CHECK in (`ask`,`allow`,`off`) default `ask` | `13 §Messaging tools` |
 | effort | text null CHECK in (`low`,`medium`,`high`,`max`) | |
 | brief | text not null default `''` | ≤20 000 chars |
@@ -1747,10 +1748,7 @@ The migrations land with P5-MODELS-1 and -2 (next free numbers when placed); the
 Migrations `20261201000231` (P4-NARR) and `…000232`, `…000233` (P4-UTOK); `…000234` and `…000235` are unused and
 returned to the block. No gateway database role grant: the gateway reads none of these.
 
-#### `agents` column: `narration_cards` (phase 5, P4-NARR, D-279, migration `20261201000231_agent_narration_cards.sql`)
-| Planned column | Type | Notes | Phase |
-|---|---|---|---|
-| narration_cards | boolean not null default false | the agent's progress card on chat platforms that can edit messages (`10 §Live narration cards`); existing rows become `false` | 5 (P4-NARR, D-279) |
+(P4-NARR landed: `agents.narration_cards` is in `§agents` above; migration `20261201000231_agent_narration_cards.sql`.)
 
 #### `user_tokens` (new table; a person's platform tokens; phase 5, P4-UTOK, D-281..D-284, migration `20261201000232_user_tokens.sql`)
 | Planned column | Type | Notes | Phase |

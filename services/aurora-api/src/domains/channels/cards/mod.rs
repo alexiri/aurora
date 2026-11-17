@@ -219,6 +219,7 @@ pub async fn post_card(
     let content = Content {
         text: rendered.text,
         card: rendered.card,
+        narration: None,
     };
     let (target, space_ref, thread_ref) = match p.target {
         Target::Space {

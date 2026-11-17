@@ -106,6 +106,16 @@ pub const TYPING_REFRESH_SECS: u64 = 4;
 /// (FIX-158, D-319) an open chat receipt (👀 or "Working…") whose conversation has had no active
 /// turn and no pending follow-on work for this long is cleared by the channel-op sweep.
 pub const RECEIPT_ORPHAN_SECS: u64 = 600;
+/// (P4-NARR, D-280) at most one narration-card update per turn per this interval.
+pub const NARR_MIN_INTERVAL: Duration = Duration::from_secs(5);
+/// (P4-NARR, D-280) narration writes (posts, updates, collapses) per space per minute.
+pub const NARR_SPACE_UPDATES_PER_MINUTE: usize = 10;
+/// (P4-NARR, D-280) narration cards open at a time in one space; a further turn gets none.
+pub const NARR_CARDS_PER_SPACE: usize = 3;
+/// (P4-NARR, D-280) steps listed per card, then "N earlier".
+pub const NARR_MAX_STEPS: usize = 12;
+/// (P4-NARR, D-280) characters per step name and per detail.
+pub const NARR_STEP_CHARS: usize = 120;
 pub const TURN_STALL: Duration = Duration::from_secs(600);
 pub const STALE_DISPATCH: Duration = Duration::from_secs(90);
 pub const TOOL_CALL_TIMEOUT: Duration = Duration::from_secs(25);

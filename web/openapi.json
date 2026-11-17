@@ -34955,6 +34955,7 @@
           "kind",
           "is_default",
           "subagent_model",
+          "narration_cards",
           "proactive_messaging",
           "brief",
           "effective_frozen",
@@ -35060,6 +35061,10 @@
           },
           "name": {
             "type": "string"
+          },
+          "narration_cards": {
+            "type": "boolean",
+            "description": "(P4-NARR, C-846) Show a live steps card for this agent's turns on chat platforms that can\nedit messages; default `false`."
           },
           "org_id": {
             "type": "string",
@@ -45502,6 +45507,7 @@
                 "kind",
                 "is_default",
                 "subagent_model",
+                "narration_cards",
                 "proactive_messaging",
                 "brief",
                 "effective_frozen",
@@ -45607,6 +45613,10 @@
                 },
                 "name": {
                   "type": "string"
+                },
+                "narration_cards": {
+                  "type": "boolean",
+                  "description": "(P4-NARR, C-846) Show a live steps card for this agent's turns on chat platforms that can\nedit messages; default `false`."
                 },
                 "org_id": {
                   "type": "string",
@@ -49020,6 +49030,13 @@
               "string",
               "null"
             ]
+          },
+          "narration_cards": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "(P4-NARR, C-846) A non-boolean is refused with 422 `invalid`."
           },
           "proactive_messaging": {
             "type": [

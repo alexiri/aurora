@@ -23,15 +23,83 @@ pub struct Content {
     pub text: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub card: Option<Card>,
+    /// (P4-NARR, C-847) A platform-authored progress card, rendered as data by the connector.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub narration: Option<Narration>,
+}
+
+/// Where a narration card's turn stands (C-847).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum NarrationStatus {
+    Running,
+    Done,
+    Failed,
+    Stopped,
+}
+
+/// One tool step of a narration card.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct NarrationStep {
+    /// The tool's name, at most `NARR_STEP_CHARS`.
+    pub name: String,
+    /// The sanitized summary; present only in a `direct` conversation (C-850).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+    /// `running` | `ok` | `failed`.
+    pub status: NarrationStepStatus,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum NarrationStepStatus {
+    Running,
+    Ok,
+    Failed,
+}
+
+/// The narration card (C-847): the running form lists the last steps; the collapsed form
+/// (D-286, `collapsed: true`) carries only the counts and the elapsed time.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct Narration {
+    pub turn_id: String,
+    pub status: NarrationStatus,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub steps: Vec<NarrationStep>,
+    /// Steps cut from the front of `steps` ("N earlier").
+    #[serde(default)]
+    pub earlier: u32,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub collapsed: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub step_count: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failed_count: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub elapsed_ms: Option<u64>,
+}
+
+fn is_false(b: &bool) -> bool {
+    !*b
 }
 
 impl Content {
+    /// A narration card (C-847). Core use only: never built from model or user text.
+    pub fn narration(n: Narration) -> Self {
+        Self {
+            text: None,
+            card: None,
+            narration: Some(n),
+        }
+    }
+
     /// Untrusted text rendered as data: controls/bidi stripped, markdown and
     /// mention syntax escaped so nothing becomes active (no links, no `<@here>`).
     pub fn untrusted(raw: &str) -> Self {
         Self {
             text: Some(sanitize::markdown_as_data(raw, MAX_TEXT_CHARS)),
             card: None,
+            narration: None,
         }
     }
 
@@ -48,6 +116,7 @@ impl Content {
                 MAX_TEXT_CHARS,
             ))),
             card: None,
+            narration: None,
         }
     }
 
@@ -57,6 +126,7 @@ impl Content {
         Self {
             text: Some(defuse_here(&sanitize::block(text, MAX_TEXT_CHARS))),
             card: None,
+            narration: None,
         }
     }
 
@@ -64,6 +134,7 @@ impl Content {
         Self {
             text: None,
             card: Some(card),
+            narration: None,
         }
     }
 
@@ -84,7 +155,9 @@ impl Content {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.text.as_deref().is_none_or(str::is_empty) && self.card.is_none()
+        self.text.as_deref().is_none_or(str::is_empty)
+            && self.card.is_none()
+            && self.narration.is_none()
     }
 }
 
