@@ -459,4 +459,139 @@ describe("Admin › Settings › LLM endpoints (SET-3)", () => {
     dialog = screen.getByRole("dialog");
     expect(dialog).toBeTruthy();
   });
+
+  // (phase 5, P5-MODELS-3, C-875)
+  describe("model roles and model details", () => {
+    const glm = {
+      id: "glm", provider: "litellm", base_url: "https://glm.example.test", models: ["glm-4.6", "glm-4.5-air"],
+      model_roles: { large: "glm-4.6", small: "glm-4.5-air" },
+      model_info: { "glm-4.6": { context_window: 200000, capabilities: ["thinking", "effort"] } },
+    };
+
+    it("sets roles and model details in the endpoint dialog and saves them as the C-875 keys", async () => {
+      let put: Record<string, unknown> | null = null;
+      await open({
+        "POST /v1/admin/settings/llm/preview": () => json(200, preview()),
+        "PUT /v1/admin/settings/llm": async (req) => {
+          put = (await bodyOf(req)).values;
+          return json(200, llm());
+        },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Add endpoint…" }));
+      const dialog = await screen.findByRole("dialog");
+      fireEvent.change(within(dialog).getByLabelText("Endpoint id"), { target: { value: "gw" } });
+      fireEvent.change(within(dialog).getByLabelText("Base URL"), { target: { value: "https://gw.example.test" } });
+      fireEvent.change(within(dialog).getByLabelText("Models"), { target: { value: "glm-4.6\nglm-4.5-air" } });
+      // a non-Anthropic endpoint without roles carries the notice until a role is set
+      expect(within(dialog).getByTestId("no-roles-notice")).toHaveTextContent("Set the roles.");
+      fireEvent.change(within(dialog).getByLabelText("Large"), { target: { value: "glm-4.6" } });
+      fireEvent.change(within(dialog).getByLabelText("Small"), { target: { value: " glm-4.5-air " } });
+      expect(within(dialog).queryByTestId("no-roles-notice")).toBeNull();
+      fireEvent.click(within(dialog).getByRole("button", { name: "Add model details" }));
+      fireEvent.change(within(dialog).getByLabelText("Model id 1"), { target: { value: "glm-4.6" } });
+      fireEvent.change(within(dialog).getByLabelText("Context window 1"), { target: { value: "200000" } });
+      fireEvent.click(within(dialog).getByRole("checkbox", { name: "Thinking" }));
+      fireEvent.click(within(dialog).getByRole("checkbox", { name: "Effort" }));
+      fireEvent.click(within(dialog).getByRole("button", { name: "Done" }));
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+      await waitFor(() => expect(put).not.toBeNull());
+      const gw = (put!["llm.endpoints"] as Record<string, unknown>[]).find((e) => e.id === "gw")!;
+      expect(gw.model_roles).toEqual({ large: "glm-4.6", small: "glm-4.5-air" });
+      expect(gw.model_info).toEqual({ "glm-4.6": { context_window: 200000, capabilities: ["effort", "thinking"] } });
+    });
+
+    it("edits an endpoint's roles and details in place, and clearing them removes the keys", async () => {
+      let put: Record<string, unknown> | null = null;
+      await open(
+        {
+          "POST /v1/admin/settings/llm/preview": () => json(200, preview()),
+          "PUT /v1/admin/settings/llm": async (req) => {
+            put = (await bodyOf(req)).values;
+            return json(200, llm());
+          },
+        },
+        { entries: [{ id: "glm", value: glm, source: "dashboard" }] },
+      );
+      expect(screen.getByTestId("endpoint-roles")).toHaveTextContent("Roles: Large glm-4.6 · Small glm-4.5-air");
+      fireEvent.click(screen.getByRole("button", { name: "Edit glm" }));
+      const dialog = await screen.findByRole("dialog");
+      expect(within(dialog).getByLabelText("Large")).toHaveValue("glm-4.6");
+      expect(within(dialog).getByLabelText("Context window 1")).toHaveValue("200000");
+      expect(within(dialog).getByRole("checkbox", { name: "Thinking" })).toBeChecked();
+      expect(within(dialog).getByRole("checkbox", { name: "Interleaved thinking" })).not.toBeChecked();
+      fireEvent.change(within(dialog).getByLabelText("Large"), { target: { value: "" } });
+      fireEvent.change(within(dialog).getByLabelText("Small"), { target: { value: "" } });
+      fireEvent.click(within(dialog).getByRole("button", { name: "Remove details of model 1" }));
+      fireEvent.click(within(dialog).getByRole("button", { name: "Done" }));
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+      await waitFor(() => expect(put).not.toBeNull());
+      const out = (put!["llm.endpoints"] as Record<string, unknown>[])[0]!;
+      expect(out).not.toHaveProperty("model_roles");
+      expect(out).not.toHaveProperty("model_info");
+    });
+
+    it("checks ids and the context window on the client and keeps Done disabled", async () => {
+      await open();
+      fireEvent.click(screen.getByRole("button", { name: "Add endpoint…" }));
+      const dialog = await screen.findByRole("dialog");
+      fireEvent.change(within(dialog).getByLabelText("Endpoint id"), { target: { value: "gw" } });
+      fireEvent.change(within(dialog).getByLabelText("Base URL"), { target: { value: "https://gw.example.test" } });
+      const done = within(dialog).getByRole("button", { name: "Done" }) as HTMLButtonElement;
+      expect(done.disabled).toBe(false);
+      fireEvent.change(within(dialog).getByLabelText("Medium"), { target: { value: "bad id!" } });
+      expect(within(dialog).getByText("Letters, digits and . _ : / @ - only, up to 200 characters.")).toBeTruthy();
+      expect(done.disabled).toBe(true);
+      fireEvent.change(within(dialog).getByLabelText("Medium"), { target: { value: "ok-id" } });
+      fireEvent.click(within(dialog).getByRole("button", { name: "Add model details" }));
+      fireEvent.change(within(dialog).getByLabelText("Model id 1"), { target: { value: "m" } });
+      fireEvent.change(within(dialog).getByLabelText("Context window 1"), { target: { value: "12" } });
+      expect(within(dialog).getByText(/A whole number from 1,000 to 10,000,000/)).toBeTruthy();
+      expect(done.disabled).toBe(true);
+      fireEvent.change(within(dialog).getByLabelText("Context window 1"), { target: { value: "" } });
+      expect(done.disabled).toBe(false);
+    });
+
+    it("shows the server's value_invalid on the roles and the details fields", async () => {
+      await open(
+        {
+          "POST /v1/admin/settings/llm/preview": () => json(200, preview()),
+          "PUT /v1/admin/settings/llm": () =>
+            json(422, {
+              error: {
+                code: "settings_invalid",
+                message: "Some settings are not valid.",
+                details: {
+                  fields: [
+                    { path: "/llm.endpoints/glm/model_roles", code: "value_invalid", message: "large must be one of the endpoint's models" },
+                    { path: "/llm.endpoints/glm/model_info", code: "value_invalid", message: "context_window out of range" },
+                  ],
+                },
+              },
+            }),
+        },
+        { entries: [{ id: "glm", value: glm, source: "dashboard" }] },
+      );
+      fireEvent.click(screen.getByRole("checkbox", { name: "OpenAI" }));
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+      await screen.findByText("Needs attention");
+      fireEvent.click(screen.getByRole("button", { name: "Edit glm" }));
+      const dialog = await screen.findByRole("dialog");
+      expect(within(dialog).getByText("large must be one of the endpoint's models")).toBeTruthy();
+      expect(within(dialog).getByText("context_window out of range")).toBeTruthy();
+    });
+
+    it("tells a non-Anthropic row without roles to set them, and Anthropic that roles come from the provider", async () => {
+      await open({}, {
+        entries: [
+          { id: "central", value: central, source: "helm" },
+          { id: "anth", value: { id: "anth", provider: "anthropic" }, source: "dashboard" },
+        ],
+      });
+      const rows = within(screen.getByRole("list", { name: "Endpoints" })).getAllByRole("listitem");
+      expect(within(rows[0]!).getByTestId("no-roles-notice")).toHaveTextContent("Agents on this endpoint will ask for Claude model names");
+      expect(within(rows[1]!).getByText("Roles from the provider")).toBeTruthy();
+    });
+  });
 });
