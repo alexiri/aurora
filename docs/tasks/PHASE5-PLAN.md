@@ -53,6 +53,11 @@ The twenty briefs run in four fixed waves (D-352, D-353; PROGRESS §Execution or
 - **Migrations:** P5-IA-1 has `20261201000244`; P5-UX-5, P5-UX-11, P5-UX-14 and P5-UX-17 take the next free number when they start.
 - **End check:** when wave 3 is done, the vocabulary test's exempt-file list (P5-IA-5, C-974) is empty.
 
+### New spec batches (2026-11-17)
+
+- **P5-HARN** (Pi, goose and OpenCode harnesses; D-361, D-363): one lane, parts A → B → C → D → E with gates between. Not beside a lane editing `services/aurora-supervisor/src/adapters/`, `images/sandbox/` or `domains/terminal/` (P4-NARR, P4-UTOK and P4-EVAL do not). Placed: `p5-platform` after P4-011B-5, or whichever lane frees first. Session aurora-31 reviews `docs/12` after Part A.
+- **P5-USAGE-1 → P5-USAGE-2** (usage, tokens and time; D-359, D-360; migration 000247): not placed yet; P5-USAGE-1 also builds the `GET /v1/workspaces/{ws}/usage` route that P5-MODELS-2 left C-879's per-model aggregate to.
+
 ## Coordinator (Opus) work, in order
 1. **Spec step 0** for FIX-142, FIX-145, FIX-146 (unblocks wave 1/2 lanes).
 2. **SPEC-SETTINGS** spec batch → SET-1..SET-5 briefs (owner answers its open classification questions).
