@@ -100,15 +100,7 @@ function OverviewBody({
                   </span>
                 </Link>
                 {/* The agent's summary (C-986): the same sentences as Welcome and the Access tab. */}
-                {workspace.data ? (
-                  <AgentSummary
-                    wsId={wsId}
-                    orgId={orgId}
-                    agent={a}
-                    canOwn={workspace.data.my_role === "owner"}
-                    className="space-y-1 border-t border-line px-4 py-3 text-sm text-ink-2"
-                  />
-                ) : null}
+                <AgentSummary wsId={wsId} orgId={orgId} agent={a} className="space-y-1 border-t border-line px-4 py-3 text-sm text-ink-2" />
               </li>
             ))}
             <li className="flex min-h-22 items-center justify-center rounded-card border border-dashed border-line-strong bg-surface p-4">

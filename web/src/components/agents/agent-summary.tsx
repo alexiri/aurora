@@ -5,23 +5,25 @@ import { useMemo } from "react";
 import { Loading, ErrorState } from "@/components/states";
 import { useAccounts } from "@/lib/api/accounts";
 import { useEffectiveGovernance } from "@/lib/api/governance";
-import { usePolicy } from "@/lib/api/policy";
+import { useInternetAccess } from "@/lib/api/policy";
 import { agentSummary } from "@/lib/summary/agent";
 import { internetAccessOf, type InternetAccess } from "@/lib/summary/internet";
 
 /**
- * The workspace's Internet access for the sentences (C-986), or `null` while it is unknown or the viewer cannot read it.
- * Owners read the workspace's published policy; the limits above come from the effective governance every member reads.
+ * The workspace's Internet access for the sentences (C-986): the **published** rules and defaults, which every member of
+ * the workspace reads (FIX-164, C-1020), and the limits above, which every member reads (effective governance).
+ * `access` is `null` while they load or when either cannot be read; the summary then says nothing about websites rather
+ * than guess.
  */
-export function useWorkspaceInternet(wsId: string, orgId: string, canOwn: boolean): { access: InternetAccess | null; pending: boolean } {
-  const policy = usePolicy({ kind: "workspace", id: wsId }, canOwn);
+export function useWorkspaceInternet(wsId: string, orgId: string): { access: InternetAccess | null; pending: boolean } {
+  const published = useInternetAccess(wsId);
   const eff = useEffectiveGovernance(orgId);
   const access = useMemo(() => {
-    if (!canOwn || !policy.data || !eff.data) return null;
+    if (!published.data || !eff.data) return null;
     const e = eff.data.egress;
-    return internetAccessOf(policy.data.published, e.posture.value === "credentialed_only", e.baseline_allowlist.length + e.org_allowlist.length);
-  }, [canOwn, policy.data, eff.data]);
-  return { access, pending: canOwn && (policy.isPending || eff.isPending) };
+    return internetAccessOf(published.data, e.posture.value === "credentialed_only", e.baseline_allowlist.length + e.org_allowlist.length);
+  }, [published.data, eff.data]);
+  return { access, pending: published.isPending || eff.isPending };
 }
 
 /**
@@ -32,18 +34,15 @@ export function AgentSummary({
   wsId,
   orgId,
   agent,
-  canOwn,
   className,
 }: {
   wsId: string;
   orgId: string;
   agent: { id: string; name: string };
-  /** Owner of the workspace: reads its Internet access policy. */
-  canOwn: boolean;
   className?: string;
 }) {
   const accounts = useAccounts({ kind: "workspace", id: wsId, agentId: agent.id });
-  const internet = useWorkspaceInternet(wsId, orgId, canOwn);
+  const internet = useWorkspaceInternet(wsId, orgId);
   const sentences = useMemo(
     () => (accounts.data ? agentSummary({ agent: agent.name, agentId: agent.id, accounts: accounts.data.items, internet: internet.access }) : []),
     [accounts.data, agent.id, agent.name, internet.access],

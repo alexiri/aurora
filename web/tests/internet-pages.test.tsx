@@ -167,6 +167,34 @@ describe("a workspace's Internet access page", () => {
     expect(screen.queryByRole("region", { name: "Changes not applied" })).toBeNull();
   });
 
+  it("FIX-164: a member reads the summary and the published rules as text, with no controls, from the member route only", async () => {
+    const fn = mockFetch({
+      "GET /v1/workspaces/w1/internet-access": () =>
+        json(200, {
+          number: 2, default_action: "none", uncredentialed_default: "none", uncredentialed_allowlist: [], open_lane_posture: "enabled",
+          rules: [
+            { logical_id: "r1", priority: 0, name: "No evil", description: "Never", enabled: true, identities: [], targets: [{ type: "network", host: "evil.example.com" }], action: "block", require_approval: false, conditions: [] },
+            { logical_id: "r2", priority: 1, name: "Ask for the bank", enabled: true, identities: [], targets: [{ type: "network", host: "bank.example.com" }], action: "allow", require_approval: true, conditions: [] },
+          ],
+        }),
+    });
+    wrap(<InternetLevel level="workspace" scope={scope} orgId="o1" orgSlug="acme" wsSlug="main" canEdit={false} eff={EFF as never} whoCanHere={WHO} whoCanOrg={WHO} />);
+    expect((await screen.findByTestId("internet-summary")).textContent).toBe("Agents here can reach any website, except where a rule blocks it. A rule asks you first on 1 website.");
+    const rules = await screen.findByRole("list", { name: "Rules people wrote" });
+    expect(within(rules).getByText("No evil")).toBeInTheDocument();
+    expect(within(rules).getByText("Blocks")).toBeInTheDocument();
+    expect(within(rules).getByText("Asks")).toBeInTheDocument();
+    expect(within(rules).getByText("evil.example.com")).toBeInTheDocument();
+    expect(screen.getByText("Only workspace owners can change this.")).toBeInTheDocument();
+    // Read-only: no Common changes, Add rule, Tighten…, Edit/Delete.
+    for (const name of [/Block a website/, /Ask before changes on a website/, /Add rule/, /Tighten/, /^Edit /, /^Delete /]) {
+      expect(screen.queryByRole("button", { name })).toBeNull();
+    }
+    // Only the member route was read: never the owner's policy document, its warnings or history.
+    const paths = fn.mock.calls.map((c) => new URL((c[0] as Request).url, "http://localhost").pathname);
+    expect(paths.some((p) => p === "/v1/workspaces/w1/policy" || p.endsWith("/policy/warnings") || p.endsWith("/policy/generations"))).toBe(false);
+  });
+
   it("Block a website shows the rule, adds it to the draft, and Apply publishes it", async () => {
     routes();
     const { puts, publishes } = srv;

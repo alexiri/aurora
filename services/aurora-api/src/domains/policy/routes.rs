@@ -17,6 +17,7 @@ use uuid::Uuid;
 pub fn router() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(get_ws_policy))
+        .routes(routes!(get_ws_internet_access))
         .routes(routes!(put_ws_draft))
         .routes(routes!(publish_ws))
         .routes(routes!(rollback_ws))
@@ -140,6 +141,30 @@ async fn get_ws_policy(
 ) -> Result<Json<PolicyDocument>, ApiError> {
     let s = ws_scope(&caller, &state, ws).await?;
     Ok(Json(service::document(&state, s).await?))
+}
+
+/// (FIX-164, C-1020, D-365; amends I-27 for this one read) A workspace member reads the workspace's **published**
+/// Internet access, read-only: defaults and rules of the active generation. No draft, history, warnings or write.
+#[utoipa::path(
+    get, path = "/workspaces/{ws}/internet-access", operation_id = "getWorkspaceInternetAccess", tag = "policy",
+    params(("ws" = Uuid, Path, description = "Workspace id")),
+    responses((status = 200, description = "The published generation", body = PublishedInternetAccess),
+              (status = 404, description = "Not found", body = ErrorEnvelope)),
+    security(("session" = []), ("api_key" = []))
+)]
+async fn get_ws_internet_access(
+    caller: Caller,
+    State(state): State<AppState>,
+    Path(ws): Path<Uuid>,
+) -> Result<Json<PublishedInternetAccess>, ApiError> {
+    // `can_use`: any member of the workspace. A caller who cannot see the workspace gets the 404 of every
+    // workspace route (`05 §Request scoping`).
+    let a = caller.workspace(&state, ws).await?;
+    let s = Scope {
+        org: a.org_id,
+        ws: Some(ws),
+    };
+    Ok(Json(service::published_internet_access(&state, s).await?))
 }
 
 /// Replace the workspace draft (`can_own`; C-08).

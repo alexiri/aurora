@@ -101,7 +101,7 @@ export function WelcomeView() {
         </InfoCard>
         <InfoCard id="welcome-agent" title={agent ? `${agent.name} is your agent` : "Your agent"}>
           {agent ? (
-            <AgentSummary wsId={workspace.id} orgId={workspace.org_id} agent={agent} canOwn={isOwner} className="space-y-1" />
+            <AgentSummary wsId={workspace.id} orgId={workspace.org_id} agent={agent} className="space-y-1" />
           ) : (
             <p>This workspace has no agent yet.</p>
           )}

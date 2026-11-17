@@ -682,6 +682,7 @@ by `id`, never by `host` alone.
 | GET `…/policy/generations` | S/K | history |
 | GET `/v1/policy/approval-limits` | S/K | (phase 5, P4-011B, D-265(d), C-829) any signed-in user: the live approval bounds `{ timeout_secs, max_timeout_secs, park: { enabled, threshold_secs, max_timeout_secs, resume_window_secs } }` for the rule editor and the grant ask timeout; not on the unauthenticated `/v1/instance` |
 | GET `…/policy/warnings` | S/K | overlap/inert-rule warnings for the draft; (phase 2, RFE-025) includes `rule_applies_to_all_agents` (`07 §Injection selection`) |
+| GET `/v1/workspaces/{ws}/internet-access` | S/K | (FIX-164, C-1020, D-365; amends I-27 for this read) **any member of the workspace** (`can_use`): the **published** generation only, `{ number, default_action, uncredentialed_default, uncredentialed_allowlist, open_lane_posture, rules }`; no draft, revision, history, publisher or warnings; a non-member gets 404 |
 | POST `/v1/workspaces/{ws}/policy/simulate` | S/K | `{ agent_id, method, url, body?, use_draft?, lane?, speaker_user_id? }` → decision trace (phase 2, RFE-005: `speaker_user_id` omitted = no speaker); (phase 1, RFE-003) `lane: "open"` evaluates CONNECT-time semantics (`07`) and the open-lane posture |
 
 ### Approvals

@@ -63,8 +63,9 @@ function world(o: { role?: string; personal?: boolean; name?: string; accounts?:
   routes["GET /v1/workspaces/w1/accounts"] = () => json(200, { items: o.accounts ?? [], next_cursor: null });
   routes["GET /v1/orgs/o1/governance/effective"] = () =>
     json(200, { egress: { posture: { value: "open", source: "default" }, baseline_allowlist: [], org_allowlist: [] } });
-  routes["GET /v1/workspaces/w1/policy"] = () =>
-    json(200, { published: { rules: o.rules ?? [], uncredentialed_default: "allow", uncredentialed_allowlist: [] }, draft: null, revision: 1 });
+  // (FIX-164, C-1020) The published rules: every member of the workspace reads them, and the summary says them.
+  routes["GET /v1/workspaces/w1/internet-access"] = () =>
+    json(200, { number: 1, default_action: "none", uncredentialed_default: "allow", uncredentialed_allowlist: [], open_lane_posture: "enabled", rules: o.rules ?? [] });
   routes["GET /v1/agents/a1/model-readiness"] = () => json(200, { harness: "claude-code", keys: [], override_dropped: false, default: null });
   routes["GET /v1/workspaces/w1/secrets"] = () => json(200, { items: [] });
   routes["GET /v1/orgs/o1/secrets"] = () => json(200, { items: [] });
@@ -99,7 +100,7 @@ describe("Welcome (C-927)", () => {
     expect(await screen.findByRole("heading", { name: "Welcome, Bob" })).toBeInTheDocument();
   });
 
-  it("a member reads their role in one sentence, and the summary says nothing about websites they cannot read", async () => {
+  it("a member reads their role in one sentence and the same summary, websites included, without the owner's policy", async () => {
     world({ role: "member", accounts: [account({ levels: ["read"], agents: [{ agent: { id: "a1", name: "Daneel", handle: "daneel" }, workspace: { id: "w1", name: "Ops" }, level: "use" }] })] });
     let policyRead = false;
     routes["GET /v1/workspaces/w1/policy"] = () => {
@@ -109,9 +110,17 @@ describe("Welcome (C-927)", () => {
     wrap(<WelcomeView />);
     expect(await screen.findByText(/You are a member here: you can chat with Daneel/)).toBeInTheDocument();
     const agent = screen.getByRole("region", { name: "Daneel is your agent" });
+    await waitFor(() => expect(agent.textContent).toContain("Daneel can read Linear. It can reach any website."));
+    expect(policyRead).toBe(false);
+  });
+
+  it("when the Internet access cannot be read the summary says nothing about websites rather than guess", async () => {
+    world({ role: "member", accounts: [account({ levels: ["read"], agents: [{ agent: { id: "a1", name: "Daneel", handle: "daneel" }, workspace: { id: "w1", name: "Ops" }, level: "use" }] })] });
+    routes["GET /v1/workspaces/w1/internet-access"] = () => json(403, { error: { code: "forbidden", message: "no" } });
+    wrap(<WelcomeView />);
+    const agent = await screen.findByRole("region", { name: "Daneel is your agent" });
     await waitFor(() => expect(agent.textContent).toContain("Daneel can read Linear."));
     expect(agent.textContent).not.toContain("website");
-    expect(policyRead).toBe(false);
   });
 
   it("the role sentence is for people who are not owners", () => {
