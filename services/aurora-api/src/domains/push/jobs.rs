@@ -27,6 +27,7 @@ pub fn spawn(state: AppState) {
     if !state.push.enabled {
         return;
     }
+    super::deliver::spawn(state.clone());
     tokio::spawn(async move {
         if let Err(e) = super::ensure_ready(&state).await {
             tracing::warn!(error = %e.message(), "Web Push key could not be prepared");

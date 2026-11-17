@@ -257,10 +257,7 @@ pub async fn insert(conn: &mut PgConnection, n: &NewSub<'_>) -> Result<(), DbErr
 pub async fn rebind(
     conn: &mut PgConnection,
     id: Uuid,
-    session: Uuid,
-    vapid_key_id: Option<Uuid>,
-    secret_ref: &str,
-    expires_at: Option<DateTime<Utc>>,
+    b: &Binding<'_>,
     label: Option<&str>,
     show_details: Option<bool>,
 ) -> Result<(), DbError> {
@@ -271,10 +268,10 @@ pub async fn rebind(
          WHERE id = $1",
     )
     .bind(id)
-    .bind(session)
-    .bind(vapid_key_id)
-    .bind(secret_ref)
-    .bind(expires_at)
+    .bind(b.session)
+    .bind(b.vapid_key_id)
+    .bind(b.secret_ref)
+    .bind(b.expires_at)
     .bind(label)
     .bind(show_details)
     .execute(conn)
@@ -288,10 +285,7 @@ pub async fn move_to(
     conn: &mut PgConnection,
     id: Uuid,
     user: Uuid,
-    session: Uuid,
-    vapid_key_id: Option<Uuid>,
-    secret_ref: &str,
-    expires_at: Option<DateTime<Utc>>,
+    b: &Binding<'_>,
     label: &str,
     show_details: bool,
 ) -> Result<(), DbError> {
@@ -303,15 +297,24 @@ pub async fn move_to(
     )
     .bind(id)
     .bind(user)
-    .bind(session)
-    .bind(vapid_key_id)
-    .bind(secret_ref)
-    .bind(expires_at)
+    .bind(b.session)
+    .bind(b.vapid_key_id)
+    .bind(b.secret_ref)
+    .bind(b.expires_at)
     .bind(label)
     .bind(show_details)
     .execute(conn)
     .await?;
     Ok(())
+}
+
+/// What a (re-)registration attaches a row to: the registering session, the key in force, the
+/// freshly sealed material and the browser's expiry.
+pub struct Binding<'a> {
+    pub session: Uuid,
+    pub vapid_key_id: Option<Uuid>,
+    pub secret_ref: &'a str,
+    pub expires_at: Option<DateTime<Utc>>,
 }
 
 pub async fn update(
@@ -467,4 +470,219 @@ pub async fn disable(pool: &PgPool, id: Uuid) -> Result<(), DbError> {
     .execute(pool)
     .await?;
     Ok(())
+}
+
+/// A pending approval a push may be about. Free text is limited to the agent and workspace names
+/// (sent only to a device with `show_details`) and the slugs of the dashboard path; never a title,
+/// summary, rule, host, path or body.
+#[derive(Debug, Clone, FromRow)]
+pub struct Waiting {
+    pub id: Uuid,
+    /// `gateway` | `action`
+    pub kind: String,
+    pub org_id: Uuid,
+    pub workspace_id: Uuid,
+    pub agent_id: Uuid,
+    pub conversation_id: Option<Uuid>,
+    pub batch_id: Option<String>,
+    pub expires_at: DateTime<Utc>,
+    pub parked: bool,
+    pub agent_name: String,
+    pub workspace_name: String,
+    pub workspace_slug: String,
+    pub org_slug: String,
+}
+
+const WAITING_GATEWAY: &str = "SELECT a.id, 'gateway'::text AS kind, a.org_id, a.workspace_id, \
+        a.agent_id, a.conversation_id, a.batch_id, a.deadline AS expires_at, a.parked, \
+        a.created_at, COALESCE(ag.name, 'An agent') AS agent_name, w.name AS workspace_name, \
+        w.slug AS workspace_slug, o.slug AS org_slug \
+     FROM approvals a JOIN workspaces w ON w.id = a.workspace_id \
+     JOIN organizations o ON o.id = w.org_id LEFT JOIN agents ag ON ag.id = a.agent_id";
+
+const WAITING_ACTION: &str = "SELECT a.id, 'action'::text AS kind, w.org_id, a.workspace_id, \
+        a.agent_id, a.conversation_id, NULL::text AS batch_id, a.expires_at, false AS parked, \
+        a.created_at, COALESCE(ag.name, 'An agent') AS agent_name, w.name AS workspace_name, \
+        w.slug AS workspace_slug, o.slug AS org_slug \
+     FROM action_approvals a JOIN workspaces w ON w.id = a.workspace_id \
+     JOIN organizations o ON o.id = w.org_id LEFT JOIN agents ag ON ag.id = a.agent_id";
+
+/// No decider of the approval's workspace holds a watcher row seen within `$1` seconds (a live
+/// Aurora tab: the dashboard already shows the approval).
+fn no_live_watcher() -> String {
+    format!(
+        "NOT EXISTS (SELECT 1 FROM approval_watchers wt WHERE wt.workspace_id = a.workspace_id \
+           AND wt.last_seen_at > now() - make_interval(secs => $1) AND {})",
+        super::approval_notify::may_decide("wt.user_id")
+    )
+}
+
+/// Approvals still `pending` and decidable that are at least `delay_secs` old and at most
+/// `catchup_secs` old (the delay plus the catch-up window of C-834), with no live watcher. Nothing
+/// is returned while no subscription exists at all (one indexed probe per sweep).
+pub async fn waiting(
+    pool: &PgPool,
+    delay_secs: f64,
+    catchup_secs: f64,
+    watcher_ttl_secs: f64,
+    limit: i64,
+) -> Result<Vec<Waiting>, DbError> {
+    let nw = no_live_watcher();
+    Ok(sqlx::query_as(sqlf!(
+        "SELECT id, kind, org_id, workspace_id, agent_id, conversation_id, batch_id, expires_at, \
+                parked, agent_name, workspace_name, workspace_slug, org_slug FROM ( \
+           {WAITING_GATEWAY} WHERE a.status = 'pending' AND a.deadline > now() AND {nw} \
+             AND a.created_at <= now() - make_interval(secs => $2) \
+             AND a.created_at > now() - make_interval(secs => $3) \
+           UNION ALL \
+           {WAITING_ACTION} WHERE a.status = 'pending' AND a.expires_at > now() AND {nw} \
+             AND a.created_at <= now() - make_interval(secs => $2) \
+             AND a.created_at > now() - make_interval(secs => $3)) u \
+         WHERE EXISTS (SELECT 1 FROM push_subscriptions) ORDER BY created_at LIMIT $4"
+    ))
+    .bind(watcher_ttl_secs)
+    .bind(delay_secs)
+    .bind(catchup_secs)
+    .bind(limit)
+    .fetch_all(pool)
+    .await?)
+}
+
+/// Parked gateway approvals past half of their waiting time, still `pending`, with no live
+/// watcher (the reminder stage, C-828/C-834).
+pub async fn reminders(
+    pool: &PgPool,
+    watcher_ttl_secs: f64,
+    limit: i64,
+) -> Result<Vec<Waiting>, DbError> {
+    let nw = no_live_watcher();
+    Ok(sqlx::query_as(sqlf!(
+        "SELECT id, kind, org_id, workspace_id, agent_id, conversation_id, batch_id, expires_at, \
+                parked, agent_name, workspace_name, workspace_slug, org_slug FROM ( \
+           {WAITING_GATEWAY} WHERE a.status = 'pending' AND a.parked AND a.deadline > now() \
+             AND now() >= a.created_at + (a.deadline - a.created_at) / 2 AND {nw}) u \
+         WHERE EXISTS (SELECT 1 FROM push_subscriptions) ORDER BY created_at LIMIT $2"
+    ))
+    .bind(watcher_ttl_secs)
+    .bind(limit)
+    .fetch_all(pool)
+    .await?)
+}
+
+/// Is the approval still `pending` and unexpired? Checked immediately before claiming (C-834).
+pub async fn still_pending(pool: &PgPool, id: Uuid, kind: &str) -> Result<bool, DbError> {
+    let table = if kind == "action" {
+        "SELECT 1 FROM action_approvals WHERE id = $1 AND status = 'pending' AND expires_at > now()"
+    } else {
+        "SELECT 1 FROM approvals WHERE id = $1 AND status = 'pending' AND deadline > now()"
+    };
+    Ok(sqlx::query_scalar::<_, i32>(table)
+        .bind(id)
+        .fetch_optional(pool)
+        .await?
+        .is_some())
+}
+
+/// Has `(approval, user, stage)` been claimed already (by any replica)?
+pub async fn claimed(
+    pool: &PgPool,
+    approval: Uuid,
+    user: Uuid,
+    stage: &str,
+) -> Result<bool, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM approval_push_claims \
+         WHERE approval_id = $1 AND user_id = $2 AND stage = $3)",
+    )
+    .bind(approval)
+    .bind(user)
+    .bind(stage)
+    .fetch_one(pool)
+    .await?)
+}
+
+/// Claim `(approval, user, stage)`; `true` only for the replica whose insert won. `delivery`:
+/// `push` | `batch` | `digest`.
+pub async fn claim(
+    pool: &PgPool,
+    approval: Uuid,
+    user: Uuid,
+    kind: &str,
+    stage: &str,
+    delivery: &str,
+) -> Result<bool, DbError> {
+    Ok(sqlx::query(
+        "INSERT INTO approval_push_claims (approval_id, user_id, stage, kind, delivery) \
+         VALUES ($1, $2, $3, $4, $5) ON CONFLICT (approval_id, user_id, stage) DO NOTHING",
+    )
+    .bind(approval)
+    .bind(user)
+    .bind(stage)
+    .bind(kind)
+    .bind(delivery)
+    .execute(pool)
+    .await?
+    .rows_affected()
+        == 1)
+}
+
+/// Has `user` already been served (pushed or folded) for another approval of this batch?
+pub async fn batch_served(
+    pool: &PgPool,
+    user: Uuid,
+    agent: Uuid,
+    batch_id: &str,
+) -> Result<bool, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM approval_push_claims n \
+         JOIN approvals a ON a.id = n.approval_id \
+         WHERE n.user_id = $1 AND a.agent_id = $2 AND a.batch_id = $3 AND n.stage = 'initial')",
+    )
+    .bind(user)
+    .bind(agent)
+    .bind(batch_id)
+    .fetch_one(pool)
+    .await?)
+}
+
+/// Other pending approvals of the batch (same agent): folded into one push.
+pub async fn batch_siblings(
+    pool: &PgPool,
+    agent: Uuid,
+    batch_id: &str,
+    except: Uuid,
+) -> Result<Vec<Uuid>, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT a.id FROM approvals a WHERE a.agent_id = $1 AND a.batch_id = $2 AND a.id <> $3 \
+           AND a.status = 'pending' AND a.deadline > now() ORDER BY a.created_at, a.id",
+    )
+    .bind(agent)
+    .bind(batch_id)
+    .bind(except)
+    .fetch_all(pool)
+    .await?)
+}
+
+/// Per-user counters for the hourly cap: individual pushes claimed in the last hour, and whether a
+/// digest was claimed in it.
+pub async fn hourly(pool: &PgPool, user: Uuid) -> Result<(i64, bool), DbError> {
+    Ok(sqlx::query_as(
+        "SELECT count(*) FILTER (WHERE delivery = 'push'), \
+                COALESCE(bool_or(delivery = 'digest'), false) \
+         FROM approval_push_claims WHERE user_id = $1 AND sent_at > now() - interval '1 hour'",
+    )
+    .bind(user)
+    .fetch_one(pool)
+    .await?)
+}
+
+/// Delete claims older than `days` (the daily retention pruning, with the e-mail claims).
+pub async fn prune_claims(pool: &PgPool, days: i32) -> Result<u64, DbError> {
+    Ok(sqlx::query(
+        "DELETE FROM approval_push_claims WHERE sent_at < now() - make_interval(days => $1)",
+    )
+    .bind(days)
+    .execute(pool)
+    .await?
+    .rows_affected())
 }

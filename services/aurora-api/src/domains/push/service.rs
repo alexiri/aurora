@@ -183,7 +183,7 @@ pub async fn create(
     let hash = endpoint_hash(&endpoint);
     let expires_at: Option<DateTime<Utc>> = req
         .expiration_time
-        .and_then(|ms| DateTime::<Utc>::from_timestamp_millis(ms));
+        .and_then(DateTime::<Utc>::from_timestamp_millis);
 
     let mut tx = state.pool.begin().await.map_err(aurora_db::DbError::from)?;
     let existing = repo::find_by_hash(&mut tx, &hash).await?;
@@ -199,10 +199,12 @@ pub async fn create(
             repo::rebind(
                 &mut tx,
                 row.id,
-                session,
-                key_id,
-                &secret_ref,
-                expires_at,
+                &repo::Binding {
+                    session,
+                    vapid_key_id: key_id,
+                    secret_ref: &secret_ref,
+                    expires_at,
+                },
                 label.as_deref(),
                 req.show_details,
             )
@@ -223,10 +225,12 @@ pub async fn create(
                 &mut tx,
                 row.id,
                 c.user_id,
-                session,
-                key_id,
-                &secret_ref,
-                expires_at,
+                &repo::Binding {
+                    session,
+                    vapid_key_id: key_id,
+                    secret_ref: &secret_ref,
+                    expires_at,
+                },
                 label.as_deref().unwrap_or(&row.label),
                 req.show_details.unwrap_or(false),
             )
@@ -323,6 +327,26 @@ pub async fn patch(
         &row.endpoint_host,
     );
     Ok(PushSubscription::from_row(&row, Some(session)))
+}
+
+/// `POST /{id}/test` (202): one test push to the caller's own device, `PUSH_TEST_PER_HOUR` per
+/// person per hour (per replica: the window lives in the process). The outcome shows in the row.
+pub async fn test(state: &AppState, c: &SessionCaller, id: Uuid) -> Result<(), ApiError> {
+    require_on(state)?;
+    session_of(c)?;
+    repo::get_owned(&state.pool, id, c.user_id)
+        .await?
+        .ok_or_else(not_found)?;
+    state.push.take_test_slot(c.user_id).map_err(|wait| {
+        ApiError::new(
+            StatusCode::TOO_MANY_REQUESTS,
+            "push_test_rate_limited",
+            "Too many test notifications. Try again later.",
+        )
+        .with_retry_after(wait)
+    })?;
+    super::deliver::spawn_test(state.clone(), id);
+    Ok(())
 }
 
 /// `DELETE`: idempotent (204 whether or not the row existed).

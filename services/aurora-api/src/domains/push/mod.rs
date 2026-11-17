@@ -9,6 +9,7 @@
 //! label, an error, an audit row or a snapshot.
 pub mod cli;
 pub mod crypto;
+pub mod deliver;
 mod dto;
 pub mod jobs;
 mod routes;
@@ -41,6 +42,9 @@ pub struct PushRuntime {
     loaded: Mutex<HashMap<Uuid, Arc<VapidKey>>>,
     jwts: Mutex<HashMap<(String, String), (String, i64)>>,
     tests: Mutex<HashMap<Uuid, VecDeque<Instant>>>,
+    /// The outbound side (C-834): destination-guarded client, the loopback-only test client and
+    /// the pool bound. Built only with push on.
+    pub(crate) sender: deliver::Sender,
 }
 
 impl PushRuntime {
@@ -69,6 +73,7 @@ impl PushRuntime {
             loaded: Mutex::default(),
             jwts: Mutex::default(),
             tests: Mutex::default(),
+            sender: deliver::Sender::from_config(cfg)?,
         })
     }
 

@@ -459,6 +459,15 @@ pub fn spawn(
             {
                 tracing::warn!(error = %e, "approval notification pruning failed");
             }
+            // (P4-011B-3) Web Push claims are pruned with them.
+            if let Err(e) = aurora_db::repo::push::prune_claims(
+                &rp,
+                crate::domains::approvals::notify::CLAIM_RETENTION_DAYS,
+            )
+            .await
+            {
+                tracing::warn!(error = %e, "approval push claim pruning failed");
+            }
             // The attachment sweep shares this daily tick (docs/05 §Background jobs).
             match sweep_attachment_storage(&rp, &attachments, quota_mail.as_ref()).await {
                 Ok(Some(r)) if r != Default::default() => {

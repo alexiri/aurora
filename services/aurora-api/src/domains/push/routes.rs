@@ -18,6 +18,24 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(get_config))
         .routes(routes!(list_subscriptions, create_subscription))
         .routes(routes!(update_subscription, delete_subscription))
+        .routes(routes!(test_subscription))
+}
+
+/// Send one test notification to one of the caller's devices (session only). The outcome shows in
+/// the device row (`last_success_at` / `last_failure_at`).
+#[utoipa::path(post, path = "/me/push-subscriptions/{id}/test", operation_id = "testPushSubscription",
+    tag = "push", params(("id" = Uuid, Path, description = "Subscription id")),
+    responses((status = 202), (status = 403, body = ErrorEnvelope), (status = 404, body = ErrorEnvelope),
+        (status = 429, body = ErrorEnvelope)),
+    security(("session" = [])))]
+async fn test_subscription(
+    _on: PushOn,
+    c: SessionCaller,
+    State(s): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode, ApiError> {
+    service::test(&s, &c, id).await?;
+    Ok(StatusCode::ACCEPTED)
 }
 
 /// Placed first in every handler: 404 `push_unavailable` while push is off.
