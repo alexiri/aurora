@@ -21,6 +21,7 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(connection_grants, bulk_connection_grants))
         .routes(routes!(secret_grants, bulk_secret_grants))
         .routes(routes!(agent_effective))
+        .routes(routes!(agent_app_access))
 }
 
 /// Grants of an agent (`can_own`; I-27). Members see what they need via `/agents/{agent}/effective`.
@@ -149,6 +150,30 @@ async fn agent_effective(
         }
     };
     Ok(Json(effective::compute_for(&state, &a, speaker).await?))
+}
+
+/// (P5-UX-10, C-934) What exactly an agent can do in one app, account by account: each tool with
+/// what actually happens, and a reason only when something other than the agent's access decided
+/// (`can_use`).
+#[utoipa::path(
+    get, path = "/agents/{agent}/apps/{app}/access", operation_id = "getAgentAppAccess", tag = "grants",
+    params(("agent" = Uuid, Path, description = "Agent id"), ("app" = String, Path, description = "App id")),
+    responses((status = 200, description = "Per-tool access", body = AppAccess),
+              (status = 404, description = "Not found", body = ErrorEnvelope)),
+    security(("session" = []), ("api_key" = []))
+)]
+async fn agent_app_access(
+    caller: Caller,
+    State(state): State<AppState>,
+    Path((agent, app)): Path<(Uuid, String)>,
+) -> Result<Json<AppAccess>, ApiError> {
+    let (a, _) = service::visible_agent(&caller, &state, agent).await?;
+    let speaker = gateway::can_use(&state.pool, a.workspace_id, caller.user_id)
+        .await?
+        .then_some(caller.user_id);
+    Ok(Json(
+        effective::app_access(&state, &a, &app, speaker).await?,
+    ))
 }
 
 /// Grant a connection to an agent, replacing any previous grant (`can_own`).

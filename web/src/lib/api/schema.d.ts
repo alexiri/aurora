@@ -1348,6 +1348,27 @@ export interface paths {
         patch: operations["updateAgent"];
         trace?: never;
     };
+    "/v1/agents/{agent}/apps/{app}/access": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * (P5-UX-10, C-934) What exactly an agent can do in one app, account by account: each tool with
+         *     what actually happens, and a reason only when something other than the agent's access decided
+         *     (`can_use`).
+         */
+        get: operations["getAgentAppAccess"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/agents/{agent}/avatar": {
         parameters: {
             query?: never;
@@ -5675,7 +5696,8 @@ export interface components {
         AccountRef: {
             /** Format: uuid */
             id: string;
-            type: components["schemas"]["AccountRefType"];
+            /** @description `connection`. */
+            type: string;
         };
         /** @enum {string} */
         AccountRefType: "connection" | "secret";
@@ -6144,6 +6166,25 @@ export interface components {
              * @description `null` for organization keys (`auo_`).
              */
             workspace_id?: string | null;
+        };
+        /** @description Answer of `GET /v1/agents/{agent}/apps/{app}/access` (C-934). */
+        AppAccess: {
+            accounts: components["schemas"]["AppAccessAccount"][];
+        };
+        AppAccessAccount: {
+            name: string;
+            ref: components["schemas"]["AccountRef"];
+            tools: components["schemas"]["AppAccessTool"][];
+        };
+        AppAccessTool: {
+            /** @description `read` | `write`. */
+            access: string;
+            /** @description What actually happens: `allow` | `ask` | `block`. */
+            decision: string;
+            description?: string | null;
+            name: string;
+            reason?: components["schemas"]["ToolReason"] | null;
+            tool_id: string;
         };
         AppAvailability: {
             allow: components["schemas"]["AllowEntry"][];
@@ -12780,6 +12821,18 @@ export interface components {
             scopes: string[];
             wildcard: boolean;
         };
+        /**
+         * @description (P5-UX-10, C-934) Why a tool is not what the agent's access says: only when something else
+         *     decided.
+         */
+        ToolReason: {
+            /** @description A sentence: "Limited by <org>", a rule's name, …. */
+            label: string;
+            /** @description `limit` | `workspace_rule` | `org_rule` | `organization` | `package`. */
+            layer: string;
+            /** @description `internet_access` for a rule people wrote (the dashboard builds the address). */
+            link?: string | null;
+        };
         TraceEntry: {
             matched: boolean;
             reason: string;
@@ -18725,6 +18778,58 @@ export interface operations {
             };
             /** @description Forbidden */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    getAgentAppAccess: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent id */
+                agent: string;
+                /** @description App id */
+                app: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Per-tool access */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppAccess"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };

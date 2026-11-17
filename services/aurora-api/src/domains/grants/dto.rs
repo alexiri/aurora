@@ -300,6 +300,52 @@ pub struct EffectiveTool {
     pub approval_timeout_clamped: bool,
 }
 
+/// (P5-UX-10, C-934) Why a tool is not what the agent's access says: only when something else
+/// decided.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct ToolReason {
+    /// `limit` | `workspace_rule` | `org_rule` | `organization` | `package`.
+    pub layer: String,
+    /// A sentence: "Limited by <org>", a rule's name, ….
+    pub label: String,
+    /// `internet_access` for a rule people wrote (the dashboard builds the address).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub link: Option<String>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct AppAccessTool {
+    pub tool_id: String,
+    pub name: String,
+    pub description: Option<String>,
+    /// `read` | `write`.
+    pub access: String,
+    /// What actually happens: `allow` | `ask` | `block`.
+    pub decision: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<ToolReason>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct AccountRef {
+    /// `connection`.
+    pub r#type: String,
+    pub id: Uuid,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct AppAccessAccount {
+    pub r#ref: AccountRef,
+    pub name: String,
+    pub tools: Vec<AppAccessTool>,
+}
+
+/// Answer of `GET /v1/agents/{agent}/apps/{app}/access` (C-934).
+#[derive(Debug, Serialize, ToSchema)]
+pub struct AppAccess {
+    pub accounts: Vec<AppAccessAccount>,
+}
+
 #[derive(Debug, Serialize, ToSchema)]
 pub struct Effective {
     pub credentials: Vec<EffectiveCredential>,

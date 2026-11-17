@@ -54,6 +54,16 @@ pub async fn slug_exists<'e, E: PgExecutor<'e>>(exec: E, slug: &str) -> Result<b
     )
 }
 
+/// The organization's display name.
+pub async fn name_of<'e, E: PgExecutor<'e>>(exec: E, org: Uuid) -> Result<Option<String>, DbError> {
+    Ok(
+        sqlx::query_scalar("SELECT name FROM organizations WHERE id = $1")
+            .bind(org)
+            .fetch_optional(exec)
+            .await?,
+    )
+}
+
 /// The org as seen by `user` (must be a member row).
 pub async fn get<'e, E: PgExecutor<'e>>(
     exec: E,

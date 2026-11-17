@@ -872,6 +872,13 @@ const ROWS: &[Row] = &[
         true,
     ),
     r("GET", "/v1/agents/{agent}/effective", G::WsUse, false),
+    // (P5-UX-10, C-934) what exactly an agent can do in an app
+    r(
+        "GET",
+        "/v1/agents/{agent}/apps/{app}/access",
+        G::WsUse,
+        false,
+    ),
     r("GET", "/v1/agents/{agent}/schedules", G::WsUse, false),
     r("POST", "/v1/agents/{agent}/schedules", G::WsUse, false),
     r("GET", "/v1/agents/{agent}/webhooks", G::WsUse, false),
