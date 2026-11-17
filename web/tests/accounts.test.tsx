@@ -196,12 +196,13 @@ describe("AccountsList: one row per kind", () => {
     expect(await screen.findByRole("button", { name: "Close" })).toBeInTheDocument();
   });
 
-  it("an organization's list has Add an AI key only and its own empty state", async () => {
+  it("an organization's list adds an app or website for the whole organization or an AI key, with its own empty state (P5-UX-11)", async () => {
     routes["GET /v1/orgs/o1/accounts"] = () => json(200, { items: [], next_cursor: null });
     wrap(<AccountsList scope={{ kind: "organization", id: "o1" }} orgId="o1" canOwn />);
     expect(await screen.findByText("No accounts for the whole organization yet")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Connect an app or website" })).toBeInTheDocument();
     fireEvent.keyDown(screen.getByRole("button", { name: "Add" }), { key: "Enter" });
-    expect((await screen.findAllByRole("menuitem")).map((m) => m.textContent)).toEqual(["Add an AI key"]);
+    expect((await screen.findAllByRole("menuitem")).map((m) => m.textContent)).toEqual(["Connect an app or website", "Add an AI key"]);
   });
 });
 

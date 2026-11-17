@@ -10,9 +10,11 @@ import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { ItemList, ListRow } from "@/components/ui/section";
 import { appDisplayName } from "@/lib/api/app-name";
 import { connectDeepLink, useApps, type AppSummary } from "@/lib/api/apps";
-import { useWorkspaces } from "@/lib/api/queries";
+import { useMe, useWorkspaces } from "@/lib/api/queries";
+import { splitWorkspaces } from "@/lib/accounts";
 
 import { AppLink } from "./app-link";
+import { OrgConnectJourney } from "./connect-journey/org-journey";
 
 /** One owned workspace in the Connect dialog: shows whether the app is available there (C-894). */
 function WorkspaceChoice({
@@ -55,38 +57,69 @@ function WorkspaceChoice({
   );
 }
 
+/**
+ * Where to connect (C-947, D-332): **For the whole organization** first (organization owners and admins), then the
+ * person's own and shared workspaces, then other people's personal workspaces under a collapsed group.
+ */
 export function ConnectInWorkspaceDialog({
   orgId,
   orgSlug,
   app,
+  canOrg = false,
+  onOrg,
   onClose,
 }: {
   orgId: string;
   orgSlug: string;
   app: Pick<AppSummary, "app_id" | "name" | "family">;
+  /** The person is an organization owner or admin: the whole-organization choice is offered. */
+  canOrg?: boolean;
+  onOrg?: () => void;
   onClose: () => void;
 }) {
   const workspaces = useWorkspaces(orgId);
+  const me = useMe();
   const owned = (workspaces.data?.items ?? []).filter((w) => w.my_role === "owner");
+  const { mine, others } = splitWorkspaces(owned, me.data?.user.id);
+  const choice = (w: (typeof owned)[number]) => <WorkspaceChoice key={w.id} orgSlug={orgSlug} workspace={w} appId={app.app_id} onChosen={onClose} />;
   return (
     <Dialog open onOpenChange={(o) => (o ? undefined : onClose())}>
-      <DialogContent
-        title={`Connect ${appDisplayName(app)}`}
-        description="An app is connected in a workspace. Choose one of your workspaces."
-      >
+      <DialogContent title={`Connect ${appDisplayName(app)}`} description="Choose where to connect it.">
         {workspaces.isPending ? (
           <p className="text-sm text-ink-2">Loading…</p>
-        ) : owned.length === 0 ? (
+        ) : owned.length === 0 && !canOrg ? (
           <p className="text-sm text-ink-2">
             Only a workspace owner can connect apps. You are not an owner of any workspace in this organization: ask an
             owner to connect {appDisplayName(app)}.
           </p>
         ) : (
-          <ItemList aria-label="Your workspaces">
-            {owned.map((w) => (
-              <WorkspaceChoice key={w.id} orgSlug={orgSlug} workspace={w} appId={app.app_id} onChosen={onClose} />
-            ))}
-          </ItemList>
+          <div className="space-y-3">
+            <ItemList aria-label="Where to connect">
+              {canOrg && onOrg ? (
+                <ListRow
+                  actions={
+                    <Button size="sm" variant="outline" aria-label="Connect for the whole organization" onClick={onOrg}>
+                      Choose
+                    </Button>
+                  }
+                >
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium text-ink">For the whole organization</p>
+                    <p className="text-xs text-muted">Any workspace&apos;s agents can be given it, within the limit you set.</p>
+                  </div>
+                </ListRow>
+              ) : null}
+              {mine.map(choice)}
+            </ItemList>
+            {others.length > 0 ? (
+              <details>
+                <summary className="cursor-pointer text-sm font-medium text-ink">Other people&apos;s personal workspaces ({others.length})</summary>
+                <ItemList aria-label="Other people's personal workspaces" className="mt-2">
+                  {others.map(choice)}
+                </ItemList>
+              </details>
+            ) : null}
+          </div>
         )}
       </DialogContent>
     </Dialog>
@@ -102,13 +135,17 @@ export function OrgAppsList({
   orgSlug,
   apps,
   switches,
+  canOrg = false,
 }: {
   orgId: string;
   orgSlug: string;
   apps: AppSummary[];
   switches?: { isOn: (appId: string) => boolean; onToggle: (appId: string) => void; disabled?: boolean };
+  /** Organization owners and admins may connect an app for the whole organization (C-936). */
+  canOrg?: boolean;
 }) {
   const [choosing, setChoosing] = useState<AppSummary | null>(null);
+  const [forOrg, setForOrg] = useState<string | null>(null);
   if (apps.length === 0)
     return (
       <EmptyState title="No apps installed">
@@ -153,8 +190,19 @@ export function OrgAppsList({
         ))}
       </ItemList>
       {choosing ? (
-        <ConnectInWorkspaceDialog orgId={orgId} orgSlug={orgSlug} app={choosing} onClose={() => setChoosing(null)} />
+        <ConnectInWorkspaceDialog
+          orgId={orgId}
+          orgSlug={orgSlug}
+          app={choosing}
+          canOrg={canOrg}
+          onOrg={() => {
+            setForOrg(choosing.app_id);
+            setChoosing(null);
+          }}
+          onClose={() => setChoosing(null)}
+        />
       ) : null}
+      {forOrg ? <OrgConnectJourney orgId={orgId} appId={forOrg} onClose={() => setForOrg(null)} /> : null}
     </>
   );
 }

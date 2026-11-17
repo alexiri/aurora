@@ -127,11 +127,14 @@ function ConnectForm({
   keepMethod,
   reconnect,
   initialInstanceId,
+  orgScope,
   onClose,
 }: {
   app: AppDetail;
   workspaceId: string;
   orgId: string;
+  /** (P5-UX-11, C-842, C-937) Reconnecting an organization's account: the request is organization-scoped. */
+  orgScope?: boolean;
   /** (FIX-135) The server already chosen in a family's "Where?" step: the instance picker is not asked again. */
   initialInstanceId?: string;
   /** A reconnect keeps the connection's method unless the person picks another (D-214). */
@@ -186,7 +189,7 @@ function ConnectForm({
   );
   const { phase, blocked, notice: flowNotice } = signIn;
   const guide = useAppGuide(app.app_id);
-  const clients = useOAuthClients({ kind: "workspace", id: workspaceId });
+  const clients = useOAuthClients(orgScope ? { kind: "organization", id: orgId } : { kind: "workspace", id: workspaceId });
   // An OAuth client bound to an instance serves only that instance; the default host uses unbound ones.
   const matching = (clients.data?.items ?? []).filter(
     (c) =>
@@ -235,8 +238,7 @@ function ConnectForm({
     try {
       const fields = buildConnectFields(method.fields, values);
       const res = await connectApp(app.app_id, {
-        scope: "workspace",
-        workspace_id: workspaceId,
+        ...(orgScope ? { scope: "organization" as const, org_id: orgId } : { scope: "workspace" as const, workspace_id: workspaceId }),
         method_id: method.id,
         ...(Object.keys(fields).length ? { fields } : {}),
         ...(clientId ? { oauth_client_id: clientId } : {}),
@@ -279,7 +281,7 @@ function ConnectForm({
         {done.missing.length ? (
           <Notice tone="pending">Some of the access you asked for was not given: {done.missing.join(", ")}.</Notice>
         ) : null}
-        {!accessDone ? (
+        {!accessDone && !orgScope ? (
           <ConnectedStep
             app={app}
             workspaceId={workspaceId}
@@ -601,11 +603,11 @@ function CredentialFreeForm({ app, workspaceId, onClose }: { app: AppDetail; wor
 }
 
 /** A reconnect opens on the method the connection was made with; wait for it (a failed load falls back). */
-function ReconnectForm({ app, workspaceId, orgId, reconnect, onClose }: { app: AppDetail; workspaceId: string; orgId: string; reconnect: string; onClose: () => void }) {
-  const conns = useConnections({ kind: "workspace", id: workspaceId });
+function ReconnectForm({ app, workspaceId, orgId, orgScope, reconnect, onClose }: { app: AppDetail; workspaceId: string; orgId: string; orgScope?: boolean; reconnect: string; onClose: () => void }) {
+  const conns = useConnections(orgScope ? { kind: "organization", id: orgId } : { kind: "workspace", id: workspaceId });
   if (conns.isPending) return <Loading />;
   const keep = conns.data?.items.find((c) => c.id === reconnect)?.connect_method ?? null;
-  return <ConnectForm app={app} workspaceId={workspaceId} orgId={orgId} keepMethod={keep} reconnect={reconnect} onClose={onClose} />;
+  return <ConnectForm app={app} workspaceId={workspaceId} orgId={orgId} orgScope={orgScope} keepMethod={keep} reconnect={reconnect} onClose={onClose} />;
 }
 
 /**
@@ -617,6 +619,7 @@ export function ConnectDialog({
   name,
   workspaceId,
   orgId,
+  orgScope,
   reconnect,
   onClose,
 }: {
@@ -625,6 +628,8 @@ export function ConnectDialog({
   name?: string;
   workspaceId: string;
   orgId: string;
+  /** (P5-UX-11) Reconnect an organization's account: nothing is read or written for `workspaceId`. */
+  orgScope?: boolean;
   /** The id of the connection to reconnect. */
   reconnect?: string;
   onClose: () => void;
@@ -632,13 +637,14 @@ export function ConnectDialog({
   // (FIX-135, D-242) An app of a family asks where the person's product runs first; the chosen
   // deployment is then the app (and, for a registered server, the instance) that is connected.
   const [where, setWhere] = useState<{ appId: string; instanceId?: string } | null>(null);
-  const entry = useApp(appId, workspaceId);
-  const apps = useApps(workspaceId);
+  const lookupWs = orgScope ? undefined : workspaceId;
+  const entry = useApp(appId, lookupWs);
+  const apps = useApps(lookupWs);
   const family = entry.data?.family ?? null;
   const siblings = family ? (apps.data?.items ?? []).filter((a) => a.family?.id === family.id && a.available) : [];
   const asking = !reconnect && !where && siblings.length > 1;
   const shownId = where?.appId ?? appId;
-  const detail = useApp(shownId, workspaceId);
+  const detail = useApp(shownId, lookupWs);
   const d = detail.data;
   const product = family?.name ?? d?.name ?? name ?? "app";
   const title = `${reconnect ? "Reconnect" : "Connect"} ${asking || where ? product : (d ? appDisplayName(d) : (name ?? "app"))}`;
@@ -650,7 +656,7 @@ export function ConnectDialog({
   else if (!d) body = <Loading />;
   else if (!d.available) body = <ErrorState error={{ code: "app_unavailable" }} />;
   else if (reconnect && d.connect.length > 1)
-    body = <ReconnectForm app={d} workspaceId={workspaceId} orgId={orgId} reconnect={reconnect} onClose={onClose} />;
+    body = <ReconnectForm app={d} workspaceId={workspaceId} orgId={orgId} orgScope={orgScope} reconnect={reconnect} onClose={onClose} />;
   else if (d.credential_free && !reconnect) body = <CredentialFreeForm key={shownId} app={d} workspaceId={workspaceId} onClose={onClose} />;
   else
     body = (
@@ -659,6 +665,7 @@ export function ConnectDialog({
         app={d}
         workspaceId={workspaceId}
         orgId={orgId}
+        orgScope={orgScope}
         reconnect={reconnect}
         initialInstanceId={where?.instanceId}
         onClose={onClose}

@@ -16,7 +16,9 @@ import { usePatchConnection } from "@/lib/api/apps";
 import type { HealthFix } from "@/lib/account-health";
 import type { SecretScope } from "@/lib/api/secrets";
 import { useWhoCan } from "@/lib/api/who-can";
+import { useOrg } from "@/lib/api/queries";
 import { entryText, kindLabel } from "@/lib/accounts";
+import { LimitControl } from "./limit-control";
 
 import { AccessControl } from "./access-control";
 import { AccountHealth } from "./account-health";
@@ -79,6 +81,7 @@ export function AccountRow({
   onReconnect?: () => void;
 }) {
   const shared = account.scope === "organization" && scope.kind === "workspace";
+  const org = useOrg(shared ? orgId : undefined);
   const own: SecretScope = account.scope === "organization" ? { kind: "organization", id: orgId } : scope;
   const mine = agent ? account.agents.find((a) => a.agent.id === agent.id) : undefined;
   const ws = workspaceId ?? (scope.kind === "workspace" ? scope.id : "");
@@ -129,7 +132,7 @@ export function AccountRow({
               )}
             </h3>
             <Badge>{kindLabel(account.kind)}</Badge>
-            {shared ? <Badge tone="accent">Shared by your organization</Badge> : null}
+            {shared ? <Badge tone="accent">Shared by {org.data?.name ?? "your organization"}</Badge> : null}
           </div>
           <AccountHealth
             account={account}
@@ -139,6 +142,8 @@ export function AccountRow({
           {account.status_reason === "instance_deleted" && account.health.state === "disabled" ? <InstanceRemoved orgId={orgId} /> : null}
           {test.isPending ? <p className="text-sm text-muted" role="status">Testing…</p> : null}
           {shared && account.managed_by ? <WhoCan value={account.managed_by} /> : null}
+          {/* (P5-UX-11, C-937) The limit of the organization's account, for the people who manage it. */}
+          {scope.kind === "organization" && account.scope === "organization" && account.can.manage ? <LimitControl account={account} orgId={orgId} /> : null}
         </div>
         {account.can.manage ? (
           <AccountMenu
