@@ -25,13 +25,14 @@ export const TABS = {
   adminApps: ["apps", "oauth-clients", "self-hosted", "advanced"],
   adminAiModels: ["endpoints", "rules"],
   adminPeople: ["users", "organizations", "sign-in", "new-users"],
-  adminData: ["retention", "storage", "audit"],
+  adminData: ["retention", "storage", "audit", "usage"],
   adminPlatform: ["runners", "secret-stores", "email", "limits"],
   orgAgents: ["byo", "skills", "previews"],
   orgApps: ["accounts", "apps", "oauth-clients", "self-hosted"],
   orgPeople: ["members", "groups", "directory-sync"],
-  orgData: ["retention", "storage", "audit"],
+  orgData: ["retention", "storage", "audit", "usage"],
   orgSettings: ["general", "api-keys", "danger"],
+  wsActivity: ["requests", "usage"],
   wsApps: ["accounts", "apps"],
   wsSettings: ["general", "api-keys", "audit", "danger"],
 } as const;
@@ -156,6 +157,8 @@ export function wsRoutes(org: string, ws: string) {
     internetAccess: () => `${base}/internet-access`,
     approvals: (query?: Query) => url(`${base}/approvals`, query),
     activity: (query?: Query) => url(`${base}/activity`, query),
+    /** (P5-USAGE-2, C-1004) Activity › Usage, optionally filtered to an agent (`agent=<id>`). */
+    usage: (agent?: string) => url(`${base}/activity`, { tab: "usage", agent }),
     people: (query?: Query) => url(`${base}/people`, query),
     settings: (tab?: TabOf<"wsSettings">) => url(`${base}/settings`, { tab }),
   };

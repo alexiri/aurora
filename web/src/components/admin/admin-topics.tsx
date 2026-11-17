@@ -24,6 +24,7 @@ import { ConnectorsAdminView } from "@/components/connectors/connectors-admin-vi
 import { TopicPage } from "@/components/topic-page";
 import { EmbeddedPage } from "@/components/ui/page-header";
 import { Section } from "@/components/ui/section";
+import { UsageView } from "@/components/usage/usage-view";
 import type { TABS } from "@/lib/routes";
 
 type Tabs<K extends keyof typeof TABS> = (typeof TABS)[K][number];
@@ -184,6 +185,7 @@ export function AdminDataPage() {
           { id: "retention", label: "Retention", content: section("retention") },
           { id: "storage", label: "Storage", content: <AdminStorageView /> },
           { id: "audit", label: "Audit log", content: <AdminAuditView /> },
+          { id: "usage", label: "Usage", content: <UsageView level={{ kind: "admin" }} /> },
         ]}
       />
     </AdminGuard>

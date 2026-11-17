@@ -278,6 +278,31 @@ export async function mockApi(
       if (route.request().method() === "PUT") retention = { ...retention, ...(route.request().postDataJSON() as Record<string, unknown>) };
       return json(retention);
     }
+    // (P5-USAGE-2, C-1000, C-1003, C-1006) Usage: a week with turns, one deleted agent, one unknown model.
+    if (/\/usage$/.test(p) && (p === "/v1/admin/usage" || /^\/v1\/(workspaces|orgs)\/[^/]+\/usage$/.test(p))) {
+      const from = url.searchParams.get("from") ?? "2026-10-19";
+      const to = url.searchParams.get("to") ?? "2026-11-17";
+      const zero = { turns: 0, turn_seconds: 0, awake_seconds: 0, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0 };
+      const days: Record<string, unknown>[] = [];
+      for (let d = new Date(`${from}T00:00:00Z`); d <= new Date(`${to}T00:00:00Z`) && days.length < 400; d = new Date(d.getTime() + 86_400_000)) {
+        const n = d.getUTCDate() % 5;
+        days.push({ day: d.toISOString().slice(0, 10), ...zero, turns: n, turn_seconds: n * 90, awake_seconds: n * 600, input_tokens: n * 12_000, output_tokens: n * 1_500 });
+      }
+      const sum = (k: string) => days.reduce((t, x) => t + (x[k] as number), 0);
+      const totals = Object.fromEntries(Object.keys(zero).map((k) => [k, sum(k)]));
+      const row = { ...zero, turns: 7, turn_seconds: 630, awake_seconds: 4200, input_tokens: 84_000, output_tokens: 10_500, cache_read_tokens: 2_000, cache_write_tokens: 300 };
+      const by_model = [
+        { provider: "litellm", endpoint_id: "gateway", model: "claude-sonnet", turns: 7, turn_seconds: 630, input_tokens: 80_000, output_tokens: 10_000, cache_read_tokens: 2_000, cache_write_tokens: 300 },
+        { provider: null, endpoint_id: null, model: null, turns: 0, turn_seconds: 0, input_tokens: 4_000, output_tokens: 500, cache_read_tokens: 0, cache_write_tokens: 0 },
+      ];
+      const common = { from, to, totals, by_day: days, by_model, runtime_as_of: now };
+      if (p === "/v1/admin/usage") {
+        return json({ ...common, by_org: [{ org_id: id(1), org_name: "Acme Labs", ...row }, { org_id: id(77), org_name: null, ...zero, input_tokens: 5 }],
+          by_workspace: [{ workspace_id: id(2), workspace_name: "Main workspace", org_id: id(1), org_name: "Acme Labs", ...row }], other_workspaces: { ...zero, input_tokens: 9 } });
+      }
+      if (p.startsWith("/v1/orgs/")) return json({ ...common, by_workspace: [{ workspace_id: id(2), workspace_name: "Main workspace", ...row }], other_workspaces: null });
+      return json({ ...common, by_agent: [{ agent_id: agent.id, agent_name: agent.name, ...row }, { agent_id: id(555), agent_name: null, ...zero, input_tokens: 7 }] });
+    }
     if (p === "/v1/admin/storage") {
       return json({
         attachment_bytes: 850_000_000, attachment_files: 12, blob_bytes: 1_200_000, blob_count: 4, purged_files: 3,
@@ -827,7 +852,7 @@ const TOPIC_ROUTES: RouteEntry[] = [
   ...tab("/admin/people", ["users", "organizations", "sign-in", "new-users"], "admin-people"),
   { name: "admin-organization", path: `/admin/people/organizations/${id(1)}` },
   { name: "admin-chat-platforms", path: "/admin/chat-platforms" },
-  ...tab("/admin/data", ["retention", "storage", "audit"], "admin-data"),
+  ...tab("/admin/data", ["retention", "storage", "audit", "usage"], "admin-data"),
   ...tab("/admin/platform", ["runners", "secret-stores", "email", "limits"], "admin-platform"),
   ...tab("/o/acme/agents", ["byo", "skills", "previews"], "org-agents"),
   { name: "org-skill-libraries", path: "/o/acme/agents/skills/libraries" },
@@ -838,7 +863,8 @@ const TOPIC_ROUTES: RouteEntry[] = [
   { name: "org-group-manual", path: `/o/acme/people/groups/${id(401)}` },
   { name: "org-group-idp", path: `/o/acme/people/groups/${id(402)}` },
   { name: "org-chat-platforms", path: "/o/acme/chat-platforms" },
-  ...tab("/o/acme/data", ["retention", "storage", "audit"], "org-data"),
+  ...tab("/o/acme/data", ["retention", "storage", "audit", "usage"], "org-data"),
+  ...tab("/o/acme/w/main/activity", ["requests", "usage"], "ws-activity"),
   ...tab("/o/acme/settings", ["general", "api-keys", "danger"], "org-settings"),
   ...tab("/o/acme/w/main/apps", ["accounts", "apps"], "ws-apps"),
   // (P5-UX-3) The connect journey: a given app (the Connect button, with the one agent preselected), the app step (empty

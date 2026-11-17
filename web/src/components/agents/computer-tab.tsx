@@ -16,6 +16,7 @@ import { useRetrySandbox, useRestartSandbox, useSandbox, useStartFailures } from
 import type { SandboxStartAttempt, StartLogEntry } from "@/lib/api/conversations";
 import { useInstance, useOrg, useResolve } from "@/lib/api/queries";
 import { useParams } from "next/navigation";
+import { UsageCard } from "@/components/usage/usage-card";
 import { ShareDialog } from "@/components/agents/previews-tab";
 import { clockTime } from "@/lib/chat/layout";
 import { errorCopy } from "@/lib/chat/transcript";
@@ -167,8 +168,11 @@ export function ComputerTab({
   agentId,
   frozen = false,
   terminal = false,
+  workspaceId,
 }: {
   agentId: string;
+  /** The agent's workspace: the Usage card reads its usage (C-1000). */
+  workspaceId?: string;
   frozen?: boolean;
   /** The instance's `terminal.enabled`: the Terminal card shows only where the Terminal page exists. */
   terminal?: boolean;
@@ -180,7 +184,7 @@ export function ComputerTab({
   // (P4-PRV-1) Share… opens the add-share dialog prefilled with a listening port. The action exists
   // only when the org has switched Port previews on (docs/14): the instance flag alone is not enough.
   const instance = useInstance();
-  const { org } = useParams<{ org: string }>();
+  const { org, ws } = useParams<{ org: string; ws: string }>();
   const resolved = useResolve(org);
   const orgQ = useOrg(resolved.data?.org.id);
   const previewsUsable = instance.data?.features.previews === true && orgQ.data?.settings.previews_enabled === true;
@@ -209,6 +213,7 @@ export function ComputerTab({
           State: <StatusDot tone={tone}>{v.state}</StatusDot>
         </div>
       </Section>
+      {workspaceId ? <UsageCard wsId={workspaceId} org={org} ws={ws} agentId={agentId} /> : null}
       {terminal ? <TerminalShellSection agentId={agentId} /> : null}
       {sharePort !== null ? <ShareDialog agentId={agentId} prefillPort={sharePort} onDone={() => setSharePort(null)} /> : null}
       {v.ports.length ? (
