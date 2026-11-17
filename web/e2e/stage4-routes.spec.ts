@@ -63,7 +63,7 @@ for (const width of [1280, 390]) {
             const dlg = page.getByRole("dialog");
             expect(await dlg.evaluate((el) => el.scrollWidth - el.clientWidth), `${s} dialog overflows`).toBeLessThanOrEqual(0);
           }
-          await page.screenshot({ path: `${ACCESS_SHOTS}/${s}-${scheme}-${width}.png`, fullPage: s === "connections" });
+          await page.screenshot({ path: `${ACCESS_SHOTS}/${s}-${scheme}-${width}.png`, fullPage: s === "list" });
         });
       }
     }

@@ -76,6 +76,12 @@ async function open(page: Page, path: string, scheme: "light" | "dark") {
   expect(errors, `${path} threw`).toEqual([]);
 }
 
+/** (P5-UX-4) The key form opens from the Accounts list's Add › Add an AI key. */
+async function openKeyForm(page: Page) {
+  await page.getByRole("button", { name: "Add", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Add an AI key" }).click();
+}
+
 async function clean(page: Page) {
   expect(await overflow(page), "horizontal page scroll").toBeLessThanOrEqual(0);
   expect(await serious(page)).toEqual([]);
@@ -88,6 +94,7 @@ for (const scheme of ["light", "dark"] as const) {
 
       test("Bedrock: assume a role first, with the external id and the trust policy", async ({ page }) => {
         await open(page, "/o/acme/w/main/apps?tab=accounts&kind=ai-key", scheme);
+        await openKeyForm(page);
         await page.getByLabel("Name").fill("Bedrock key");
         await page.getByLabel("Provider endpoint").selectOption("bed");
         const group = page.getByRole("radiogroup", { name: "How Aurora signs in to the provider" });
@@ -107,6 +114,7 @@ for (const scheme of ["light", "dark"] as const) {
 
       test("Azure: Entra fields and the no-harness notice; Vertex: the key file", async ({ page }) => {
         await open(page, "/o/acme/w/main/apps?tab=accounts&kind=ai-key", scheme);
+        await openKeyForm(page);
         await page.getByLabel("Provider endpoint").selectOption("az");
         await expect(page.getByText("No enabled harness speaks this endpoint's API", { exact: false })).toBeVisible();
         await expect(page.getByLabel("Tenant id")).toBeVisible();
