@@ -1019,7 +1019,7 @@ five tabs.
 | Internet access | `/admin/internet-access` | `/o/<org>/internet-access` | `…/internet-access` |
 | People | `/admin/people?tab=users\|organizations\|sign-in\|new-users` | `/o/<org>/people?tab=members\|groups\|directory-sync` | `…/people` |
 | Chat platforms | `/admin/chat-platforms` | `/o/<org>/chat-platforms` | (agent › Triggers › Channels) |
-| Data | `/admin/data?tab=retention\|storage\|audit\|usage` | `/o/<org>/data?tab=retention\|storage\|audit` | (Settings › Audit) |
+| Data | `/admin/data?tab=retention\|storage\|audit\|usage` | `/o/<org>/data?tab=retention\|storage\|audit\|usage` | (Settings › Audit) |
 | Platform | `/admin/platform?tab=runners\|secret-stores\|email\|limits` | — | — |
 | Settings | `/admin/settings`: **All settings** (index, search, Export, Import) | `/o/<org>/settings?tab=general\|api-keys\|danger` | `…/settings?tab=general\|api-keys\|audit\|danger` |
 
@@ -1693,11 +1693,12 @@ every other topic is owners/admins and is not listed for a member.)
   (phase 2, RFE-006) The danger zone offers
   **Freeze workspace**; frozen workspaces and orgs show a banner on every page.
 
-### Usage (phase 5, P5-USAGE-2, D-359, D-360, C-1000, C-1003..C-1005)
+### Usage (phase 5, P5-USAGE-2, D-359, D-360, C-1000, C-1003..C-1006)
 
 What agents used: AI tokens, the turns they answered, and how long their computers were awake. Owner,
 2026-11-17: "add dashboards, at agent, workspace, and instance level. No use collecting data nobody can
-see." No cost is shown anywhere (D-359(a)). One view, `UsageView`, serves the three places; it uses the
+see.", then "yes, add an organization-level view too". No cost is shown anywhere (D-359(a)). One view,
+`UsageView`, serves the four places; it uses the
 tokens, the shared primitives and two new ones (C-1005); both themes; no horizontal scroll at 390 px.
 
 **Where it is**
@@ -1713,14 +1714,20 @@ tokens, the shared primitives and two new ones (C-1005); both themes; no horizon
   (`USAGE_TOP_MAX`, then one "Other workspaces" row) and **By model**; an organization or workspace
   name opens the same view filtered to it (organization: `?org=<id>`; a workspace name links to that
   workspace's Activity › Usage when the admin can open it, otherwise plain text).
+- **Organization**: Data › **Usage** (`/o/<org>/data?tab=usage`, the topic's fourth tab), for org owners
+  and admins like the rest of Data. Data: C-1006. A workspace filter ("All workspaces", `?workspace=<id>`)
+  in place of the agent picker; tables **Top workspaces** (`USAGE_TOP_MAX`, then "Other workspaces") and
+  **By model**. A workspace name links to that workspace's Activity › Usage when the viewer can open it,
+  otherwise plain text.
 
 **The view, top to bottom**
 1. Opening sentence: "How much your agents used: AI tokens, the turns they answered, and how long their
    computers were awake. Days are in UTC."
 2. **Filters, one row**: range `Segmented` **7 days · 30 days · 90 days · Custom** (default 30 days;
    Custom shows two date `Field`s, at most 366 days; a 422 shows as the field's message), then the agent
-   picker ("All agents") or the organization picker ("All organizations"). The range and filter live in
-   the URL (`range=7d|30d|90d`, or `from=`/`to=`; `agent=`; `org=`).
+   picker ("All agents"), the workspace picker ("All workspaces") or the organization picker ("All
+   organizations"). The range and filter live in the URL (`range=7d|30d|90d`, or `from=`/`to=`;
+   `agent=`; `workspace=`; `org=`).
 3. **Four `StatTile`s**: **Tokens** (input + output; under it "Input · Output · Cache read · Cache write"
    with each count), **Turns**, **Turn time**, **Awake time** (under it "As of <time>" from
    `runtime_as_of`, or "Not counted yet" when it is null). On a phone they form a 2 × 2 grid.
@@ -1735,7 +1742,8 @@ tokens, the shared primitives and two new ones (C-1005); both themes; no horizon
    - **By model**: provider and model (null → "Unknown model"), the four token counts, Turns, Turn time.
      A note under it: "Turns count under the agent's main model; a model used only by helpers shows
      tokens and no turns."
-   - Administration: **By organization** and **Top workspaces** with the By-agent columns.
+   - Administration: **By organization** and **Top workspaces**; Organization: **Top workspaces**; both
+     with the By-agent columns.
 6. States: shared loading and error states; no usage in the range → the empty state "No usage in these
    days." with the range control still shown.
 

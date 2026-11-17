@@ -1912,7 +1912,7 @@ Briefs, in four fixed waves (D-352, order inside the waves per D-353; "→" mean
 
 ### Phase 5 — P5-USAGE (workspace usage: tokens and time, D-359)
 
-Reserved C-1000..C-1009 (C-1006..C-1009 spare).
+Reserved C-1000..C-1009 (C-1007..C-1009 spare).
 
 - C-1000 **`GET /v1/workspaces/{ws}/usage?from=&to=&agent_id=`** (**S/K**; whoever can read `…/activity`, i.e. the caller passes the workspace check; aggregates only, so invisible direct conversations are counted, `05`). Query: `from`, `to` UTC dates `YYYY-MM-DD`, both inclusive; default `to` = today (UTC), `from` = `to` − 29 days; `agent_id` optional (any id, also a deleted agent's; no 404). 400 `validation_error` for a malformed date; 422 `usage_range_invalid` with `details.reason` `from_after_to` | `too_long` (more than `USAGE_RANGE_MAX_DAYS` = 366 days). Response, unpaginated:
   ```
@@ -1946,10 +1946,11 @@ Reserved C-1000..C-1009 (C-1006..C-1009 spare).
   }
   ```
   Names are null once the organization or workspace is deleted (the ledgers keep their ids). Ordering as C-1000. Operation id `getInstanceUsage`. Built in P5-USAGE-1 with C-1000.
-- C-1004 **Where the usage view is** (P5-USAGE-2; `14 §Usage`). Workspace: Activity gains tabs `?tab=requests|usage` (`requests` the default, today's request log). Agent: the Computer page's Usage card (C-1000 with `agent_id`, last 30 days) and **See usage** → `…/activity?tab=usage&agent=<id>`. Administration: Data's fourth tab `?tab=usage` (C-1003). URL state: `range=7d|30d|90d` or `from=`/`to=` (UTC dates), `agent=`, `org=`. `routes.ts` gains the helpers; old links keep working (Activity without `tab` opens Requests).
+- C-1004 **Where the usage view is** (P5-USAGE-2; `14 §Usage`). Workspace: Activity gains tabs `?tab=requests|usage` (`requests` the default, today's request log). Agent: the Computer page's Usage card (C-1000 with `agent_id`, last 30 days) and **See usage** → `…/activity?tab=usage&agent=<id>`. Administration: Data's fourth tab `?tab=usage` (C-1003). Organization: Data's fourth tab `/o/<org>/data?tab=usage` (C-1006). URL state: `range=7d|30d|90d` or `from=`/`to=` (UTC dates), `agent=`, `org=`, `workspace=`. `routes.ts` gains the helpers; old links keep working (Activity without `tab` opens Requests).
 - C-1005 **Two primitives** in `web/src/components/ui` (`14 §Visual design`: tokens only, both themes):
   - `StatTile { label, value, detail?, title? }`: a label in `muted`, the value in `ink` with tabular figures, an optional detail line in `ink-2`; `title` carries the exact value.
   - `BarChart { data: { key, label, value }[], format(value) → string, unitLabel, onShowTable? }`: inline SVG, one series in `accent`; bars anchored to the baseline with 4 px rounded tops and a 2 px gap; gridlines in `line`, axis labels in `muted`, at most 5 y ticks with compact numbers; no legend (the heading names the measure); a tooltip per bar on hover and on keyboard focus (the bar group is one tab stop, arrow keys move between bars, each bar has an accessible name "<label>: <value>"); `role="img"` with a summary label; text never in the series colour; fills its container's width, so no horizontal scroll at 390 px. No chart library is added.
+- C-1006 **`GET /v1/orgs/{org}/usage?from=&to=&workspace_id=`** (**S/K**, org `owner`/`admin`, the guard of `GET /v1/orgs/{org}/storage`; D-360, owner follow-up 2026-11-17). Range rules, errors and `UsageCounters` as C-1000; `workspace_id` optional (any id, also a deleted workspace's; rows outside the org are never read). Response, unpaginated: `{ from, to, totals, by_day, by_workspace (top USAGE_TOP_MAX, items as C-1003 without the org fields), other_workspaces, by_model, runtime_as_of }`, ordering and null names as C-1003. Aggregates only, like C-1000: an org admin sees no conversation, agent or person through it. Operation id `getOrgUsage`. Built in P5-USAGE-1. (Phase 6 P6-ORGTREE will decide whether it sums a sub-org tree.)
 
 ## Shared schemas
 

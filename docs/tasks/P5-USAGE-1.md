@@ -11,7 +11,8 @@ counters. No cost (owner: "let's forget cost for now and just track tokens and t
 - D-359, D-360 (and D-304 for the trust rule, D-276(b) for "no money").
 - Contracts **C-1000** (workspace route), **C-1001** (`usage_daily` ledger and its write rule), **C-1002**
   (`runtime_daily.workspace_id`, the rollup job, `usage_rollup_state`), **C-1003** (instance route
-  `GET /v1/admin/usage`, instance admins). Read them in full in
+  `GET /v1/admin/usage`, instance admins), **C-1006** (organization route `GET /v1/orgs/{org}/usage`,
+  org owners and admins). Read them in full in
   `docs/API_CONTRACTS.md` §Phase 5 — P5-USAGE; they are normative and this brief does not repeat them.
 - Normative: `10 §Usage and metering`; `05` (route row, `§Background jobs` "Runtime daily rollup",
   the invisible-direct-conversation note near the top: `…/usage` is aggregates only); `03`
@@ -64,7 +65,11 @@ counters. No cost (owner: "let's forget cost for now and just track tokens and t
    `aurora-core::limits`; remove its `doc-only` line) workspaces plus `other_workspaces`, `by_model`;
    names null for deleted organizations and workspaces. Share the aggregation code with C-1000.
    Operation id `getInstanceUsage`; in the OpenAPI document.
-7. Docs: mark the "specified, not built" notes in `05` (route row, job row) and `10` as built;
+7. **Organization route** (C-1006): `GET /v1/orgs/{org}/usage`, org owners and admins (copy the guard
+   of `GET /v1/orgs/{org}/storage`), `workspace_id` filter, top `USAGE_TOP_MAX` workspaces plus
+   `other_workspaces`, `by_model`; never reads another organization's rows. Same aggregation code.
+   Operation id `getOrgUsage`.
+8. Docs: mark the "specified, not built" notes in `05` (route row, job row) and `10` as built;
    the coordinator does PROGRESS and FEATURES.
 
 ## Constraints / file ownership
@@ -95,7 +100,9 @@ counters. No cost (owner: "let's forget cost for now and just track tokens and t
    rows never appear, a non-member gets what `…/activity` gives, an API key works, `runtime_as_of`.
    Instance route: a non-admin gets what `GET /v1/admin/audit` gives; with 51 active workspaces the
    51st is in `other_workspaces` and the totals still add up; the `org_id` filter; a deleted
-   organization's name is `null`.
+   organization's name is `null`. Organization route: a plain org member and an outsider get what
+   `…/storage` gives them; a `workspace_id` of another organization returns zeros, never its rows;
+   the top-50 cut adds up as above.
 5. `cargo fmt --check`, clippy `-D warnings`, `scripts/guards/run-all.sh`, the OpenAPI test and
    `gen:api` (web typecheck) green; `upgrade.sh` applies the migration on a database with turns.
 

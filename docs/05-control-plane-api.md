@@ -553,6 +553,7 @@ OpenAPI document and the phase tags (FIX-119).
 | GET/POST `/v1/workspaces/{ws}/api-keys` | S (POST: SO) | workspace keys |
 | GET `/v1/workspaces/{ws}/audit` | S/K | same filters |
 | GET `/v1/orgs/{org}/storage` | S/K | (phase 2, RFE-015) org `owner`/`admin`: usage vs quota, breakdown by workspace and direction; (FIX-126) the file counts and breakdown come from a cached snapshot (`computed_at`), `used_bytes`/`notice` stay live |
+| GET `/v1/orgs/{org}/usage` | S/K | (phase 5, P5-USAGE-1, D-360, C-1006) org `owner`/`admin`: the organization's usage, `?from=&to=&workspace_id=` as C-1000 → `{ from, to, totals, by_day, by_workspace (top `USAGE_TOP_MAX`), other_workspaces, by_model, runtime_as_of }`; tokens, turns, turn time and awake time; no cost |
 | POST `/v1/orgs/{org}/storage/refresh` | S/K | (FIX-126) org `owner`/`admin`: recompute the org's snapshot now, same body as the GET; `export` class |
 | GET/PUT `/v1/orgs/{org}/retention` | S/K | (phase 2, RFE-010/015) org `owner`/`admin`; `{ conversations_days?, attachments_days?, attachment_quota_mib? }`, `null` = none; 422 `retention_invalid` / `retention_above_instance_maximum` |
 | GET `/v1/workspaces/{ws}/activity` | S/K | request log, filters: agent, conversation, decision, host, app |
