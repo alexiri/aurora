@@ -119,6 +119,13 @@ pub const IDLE_STOP: Duration = Duration::from_secs(1800);
 pub const BACKGROUND_CAP: Duration = Duration::from_secs(43200);
 pub const TURN_CEILING: Duration = Duration::from_secs(21600);
 pub const TURN_CEILING_WARNING: Duration = Duration::from_secs(900);
+/// (FIX-158, D-319) seconds between a chat connector's typing-indicator refreshes for a running turn;
+/// clients drop the indicator after about 5 s. A refresher without its `status.clear` stops after
+/// `TURN_CEILING_WARNING`.
+pub const TYPING_REFRESH_SECS: u64 = 4;
+/// (FIX-158, D-319) an open chat receipt (👀 or "Working…") whose conversation has had no active
+/// turn and no pending follow-on work for this long is cleared by the channel-op sweep.
+pub const RECEIPT_ORPHAN_SECS: u64 = 600;
 pub const TURN_STALL: Duration = Duration::from_secs(600);
 pub const STALE_DISPATCH: Duration = Duration::from_secs(90);
 pub const TOOL_CALL_TIMEOUT: Duration = Duration::from_secs(25);

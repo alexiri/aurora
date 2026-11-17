@@ -623,8 +623,8 @@ same identity in the sandbox (the agent uid). Routes and errors: API_CONTRACTS C
 
 People with access to an agent can `ssh <agent id>@<ssh host>` into its sandbox with an ordinary
 OpenSSH client: an interactive shell, a remote command, `sftp` and `scp`. Off unless the operator
-sets `ssh.enabled` (an internet-facing port is a deliberate deployment choice); independent of
-`terminal.enabled`. Who may connect is the web terminal's rule (`04 §SSH access`).
+sets `ssh.enabled` (an internet-facing port is a deliberate deployment choice); requires
+`terminal.enabled` (D-358: SSH runs on the terminal's exec path). Who may connect is the web terminal's rule (`04 §SSH access`).
 
 **Flow.** (1) The person registers an ed25519 public key once (Account › SSH keys). (2) Before
 connecting, `aurora ssh <agent>` (or the dashboard's "Connect with SSH" panel) asks the API for a

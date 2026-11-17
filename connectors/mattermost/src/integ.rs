@@ -115,6 +115,8 @@ pub struct Integ {
     recent_membership: Mutex<HashMap<String, (Instant, Option<Uuid>)>>,
     /// Per-channel ordered handling of socket events (docs/20 §Event ordering).
     lanes: Lanes<(WsEvent, Option<Uuid>)>,
+    /// The "is typing…" refreshers of running turns (`status.set`, FIX-158).
+    pub typing: crate::typing::Typing,
 }
 
 /// Capabilities left after the integration's own narrowing (`config._capabilities`).
@@ -214,6 +216,7 @@ impl Integ {
             bots_gen: tokio::sync::watch::channel(0).0,
             recent_membership: Mutex::new(HashMap::new()),
             lanes: Lanes::default(),
+            typing: crate::typing::Typing::default(),
         })
     }
 

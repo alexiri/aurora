@@ -296,7 +296,7 @@ describe("AccessTab", () => {
     wrap(<AccessTab agentId="a1" agentName="Daneel" wsId="w1" orgId="o1" canOwn />);
     expect(await screen.findByLabelText("Accounts Daneel can use")).toBeInTheDocument();
     expect(screen.getByText("Not given to Daneel (1)")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Give Daneel an app" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Give Daneel an app" })).toBeInTheDocument();
   });
 
   it("members see the same list as text and no controls", async () => {

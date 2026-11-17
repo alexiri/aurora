@@ -57,7 +57,8 @@ for (const scheme of ["light", "dark"] as const) {
       test("a workspace owner's empty Accounts list shows its Add action and no Ask line", async ({ page }) => {
         await open(page, "/o/acme/w/main/apps?tab=accounts&kind=website", scheme, "owner");
         await expect(page.getByRole("button", { name: "Add", exact: true })).toBeVisible();
-        await expect(page.getByRole("link", { name: "Connect an app or website" })).toBeVisible();
+        // (P5-UX-3) The empty state's button opens the connect journey; it was a link to the Apps tab.
+        await expect(page.getByRole("button", { name: "Connect an app or website" })).toBeVisible();
         await expect(page.getByText("Nothing connected yet")).toBeVisible();
         await expect(page.getByText(/Ask /)).toHaveCount(0);
         await expect(page.getByText(/Only workspace owners/)).toHaveCount(0);
@@ -69,7 +70,7 @@ for (const scheme of ["light", "dark"] as const) {
         await open(page, "/o/acme/w/main/apps?tab=accounts", scheme, "member");
         await expect(page.getByText("Only workspace owners can add an account. Ask Bob Builder or Ada Diaz.")).toBeVisible();
         await expect(page.getByRole("button", { name: /^Add$/ })).toHaveCount(0);
-        await expect(page.getByRole("link", { name: "Connect an app or website" })).toHaveCount(0);
+        await expect(page.getByRole("button", { name: "Connect an app or website" })).toHaveCount(0);
         expect(await overflow(page)).toBeLessThanOrEqual(0);
         expect(await serious(page)).toEqual([]);
       });

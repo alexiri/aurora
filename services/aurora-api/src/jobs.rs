@@ -517,6 +517,12 @@ pub fn spawn(
                 Ok(_) => {}
                 Err(e) => tracing::warn!(error = %e.message(), "connector op lease sweep failed"),
             }
+            // (FIX-158, D-319) A chat receipt never sticks: orphans are cleared here.
+            match crate::domains::channels::mirror::sweep_orphan_receipts(&cp).await {
+                Ok(n) if n > 0 => tracing::info!(cleared = n, "orphan receipt sweep"),
+                Ok(_) => {}
+                Err(e) => tracing::warn!(error = %e.message(), "orphan receipt sweep failed"),
+            }
         }
     });
     let p = pool.clone();

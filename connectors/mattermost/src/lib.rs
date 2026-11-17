@@ -15,6 +15,7 @@ pub mod ops;
 pub mod presence;
 pub mod render;
 pub mod tls;
+pub mod typing;
 pub mod ws;
 
 pub use connector::{DEFAULT_CAPABILITIES, MattermostConnector};

@@ -1019,11 +1019,12 @@ five tabs.
 | Internet access | `/admin/internet-access` | `/o/<org>/internet-access` | `…/internet-access` |
 | People | `/admin/people?tab=users\|organizations\|sign-in\|new-users` | `/o/<org>/people?tab=members\|groups\|directory-sync` | `…/people` |
 | Chat platforms | `/admin/chat-platforms` | `/o/<org>/chat-platforms` | (agent › Triggers › Channels) |
-| Data | `/admin/data?tab=retention\|storage\|audit` | `/o/<org>/data?tab=retention\|storage\|audit` | (Settings › Audit) |
+| Data | `/admin/data?tab=retention\|storage\|audit\|usage` | `/o/<org>/data?tab=retention\|storage\|audit\|usage` | (Settings › Audit) |
 | Platform | `/admin/platform?tab=runners\|secret-stores\|email\|limits` | — | — |
 | Settings | `/admin/settings`: **All settings** (index, search, Export, Import) | `/o/<org>/settings?tab=general\|api-keys\|danger` | `…/settings?tab=general\|api-keys\|audit\|danger` |
 
-The workspace also has **Approvals** and **Activity** (daily pages, not settings). Notes on the table:
+The workspace also has **Approvals** and **Activity** (daily pages, not settings); (phase 5, P5-USAGE-2,
+D-360, C-1004) Activity has two tabs, `?tab=requests|usage` (§Usage). Notes on the table:
 - **Accounts** is the same list everywhere (§Agents, accounts and access §1). A workspace's shows its own
   accounts and the organization's shared ones. An agent's **Access** tab is that list filtered to the
   agent. The organization's shows the accounts shared with the whole organization.
@@ -1422,7 +1423,8 @@ every other topic is owners/admins and is not listed for a member.)
     because…" shows "Preview in use". No horizontal scroll at 390 px (rows collapse to cards, the
     URL wraps), both themes, tokens and primitives only.
   - **Computer** — sandbox state, "awake because…" reasons, processes,
-    restart; (FIX-138, owner 2026-11-14) a **Terminal** card with the terminal's **Shell**
+    restart; (phase 5, P5-USAGE-2, D-360, C-1004) a **Usage** card (the agent's last 30 days, §Usage);
+    (FIX-138, owner 2026-11-14) a **Terminal** card with the terminal's **Shell**
     control (see Terminal) where the Terminal page exists; (FIX-025, D-158, C-584) a **Last start attempt** section when the
     sandbox has one: when it started, the last phase and detail the runner
     reported (`claimed`, `waiting_capacity`, `provisioning`, `scheduling`,
@@ -1666,7 +1668,7 @@ every other topic is owners/admins and is not listed for a member.)
 - **Policy** — workspace rules editor. (phase 3, RFE-023) Its Default Rule control carries the same note ("Does not affect LLM endpoints — see Governance"); simulate shows `default_rule_skipped_llm_host` when the carve-out applied.
 - **Skills** (phase 3, RFE-020; phase 4, P4-GSL: also **Add from library…**, library badges, read-only library skills and the update review, as on the agent Skills tab, with `can_own` as the authority) — workspace skills editor (owners; members read-only): same editor as the agent tier, a banner "Applies to every agent in this workspace", and a per-skill list of the agents it reaches and any agent-level skill that overrides it.
 - **Activity** — request log (decision, rule name, app/tool, conversation
-  link), usage. (phase 5, P5-MODELS-3, C-879, C-880) The request log shows an LLM request's model
+  link), usage ((phase 5, P5-USAGE-2) the **Usage** tab, §Usage below). (phase 5, P5-MODELS-3, C-879, C-880) The request log shows an LLM request's model
   (`llm_model`). Usage, wherever it is shown (a turn's details, and the usage view once its route
   exists), breaks tokens down by model. A turn with `unverified_models` is marked "model reported by the
   harness could not be verified".
@@ -1690,6 +1692,64 @@ every other topic is owners/admins and is not listed for a member.)
   confirms. The same table is how an owner sees why someone they never added can see the workspace.
   (phase 2, RFE-006) The danger zone offers
   **Freeze workspace**; frozen workspaces and orgs show a banner on every page.
+
+### Usage (phase 5, P5-USAGE-2, D-359, D-360, C-1000, C-1003..C-1006)
+
+What agents used: AI tokens, the turns they answered, and how long their computers were awake. Owner,
+2026-11-17: "add dashboards, at agent, workspace, and instance level. No use collecting data nobody can
+see.", then "yes, add an organization-level view too". No cost is shown anywhere (D-359(a)). One view,
+`UsageView`, serves the four places; it uses the
+tokens, the shared primitives and two new ones (C-1005); both themes; no horizontal scroll at 390 px.
+
+**Where it is**
+- **Workspace**: Activity › **Usage** (`…/activity?tab=usage`; Activity's first tab is **Requests**, the
+  request log as before, and stays the default). Who sees it: whoever sees Activity (C-961). Data: C-1000.
+- **Agent**: the Computer page's **Usage** card shows the agent's last 30 days as four values (Tokens,
+  Turns, Turn time, Awake time) and **See usage**, which opens Activity › Usage filtered to the agent
+  (`?tab=usage&agent=<id>`). Filtered to one agent, the page's heading names the agent, the **By agent**
+  table is left out and an agent chip with a clear button replaces the agent picker. The status rail is
+  unchanged.
+- **Administration**: Data › **Usage** (`/admin/data?tab=usage`, the topic's fourth tab). Data: C-1003.
+  An organization filter in place of the agent picker; tables **By organization**, **Top workspaces**
+  (`USAGE_TOP_MAX`, then one "Other workspaces" row) and **By model**; an organization or workspace
+  name opens the same view filtered to it (organization: `?org=<id>`; a workspace name links to that
+  workspace's Activity › Usage when the admin can open it, otherwise plain text).
+- **Organization**: Data › **Usage** (`/o/<org>/data?tab=usage`, the topic's fourth tab), for org owners
+  and admins like the rest of Data. Data: C-1006. A workspace filter ("All workspaces", `?workspace=<id>`)
+  in place of the agent picker; tables **Top workspaces** (`USAGE_TOP_MAX`, then "Other workspaces") and
+  **By model**. A workspace name links to that workspace's Activity › Usage when the viewer can open it,
+  otherwise plain text.
+
+**The view, top to bottom**
+1. Opening sentence: "How much your agents used: AI tokens, the turns they answered, and how long their
+   computers were awake. Days are in UTC."
+2. **Filters, one row**: range `Segmented` **7 days · 30 days · 90 days · Custom** (default 30 days;
+   Custom shows two date `Field`s, at most 366 days; a 422 shows as the field's message), then the agent
+   picker ("All agents"), the workspace picker ("All workspaces") or the organization picker ("All
+   organizations"). The range and filter live in the URL (`range=7d|30d|90d`, or `from=`/`to=`;
+   `agent=`; `workspace=`; `org=`).
+3. **Four `StatTile`s**: **Tokens** (input + output; under it "Input · Output · Cache read · Cache write"
+   with each count), **Turns**, **Turn time**, **Awake time** (under it "As of <time>" from
+   `runtime_as_of`, or "Not counted yet" when it is null). On a phone they form a 2 × 2 grid.
+4. **Per day**: a `BarChart` of one measure, chosen by a `Segmented` **Tokens · Turns · Turn time ·
+   Awake time** (one measure per chart, never two axes). Each bar shows on hover and keyboard focus its
+   day and value with unit; **Show as table** switches to a `DataTable` of the same days. When bars would
+   be narrower than 4 px (90 days or more on a phone), days are grouped by week and the chart says
+   "Shown by week".
+5. **Tables** (`DataTable`, sorted by tokens, largest first; on a phone each row becomes a stacked card):
+   - **By agent** (workspace, unfiltered): agent (link to its page; a deleted agent reads "Deleted agent"
+     in `muted`), Tokens in, Tokens out, Cache read, Cache write, Turns, Turn time, Awake time.
+   - **By model**: provider and model (null → "Unknown model"), the four token counts, Turns, Turn time.
+     A note under it: "Turns count under the agent's main model; a model used only by helpers shows
+     tokens and no turns."
+   - Administration: **By organization** and **Top workspaces**; Organization: **Top workspaces**; both
+     with the By-agent columns.
+6. States: shared loading and error states; no usage in the range → the empty state "No usage in these
+   days." with the range control still shown.
+
+**Numbers**: tabular figures; counts compact (1.2 M, 34 k) with the exact value in the tooltip and the
+table view; durations "3 h 20 min", "45 min", "under 1 min"; dates as the dashboard's other dates, with
+"UTC" in the opening sentence only.
 
 ### Instance administration (`/admin/*`, instance admins only)
 (phase 5, P5-ADMDEL, D-234) **Organizations** (`/admin/orgs`): a `DataTable` of every

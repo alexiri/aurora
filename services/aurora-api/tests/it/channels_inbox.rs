@@ -1121,6 +1121,8 @@ async fn mirror_posts_answer_once_then_clears_receipt() {
     w.presence(w.integ, a, "dedicated", Some("BD1")).await;
     w.link(w.integ, "U1", w.member).await;
     w.post(w.integ, "e1", dm("U1", "q", "BD1")).await;
+    // (FIX-158) A receipt whose add is still queued is dropped; this one was delivered.
+    w.mark_receipts_delivered().await;
     let turn = w
         .finish("done", Some("The *answer* <@here> <@user:U9>"), None)
         .await;
@@ -1453,6 +1455,378 @@ async fn mirror_clears_placeholder_and_status() {
     let del = w.ops("message.delete").await;
     assert_eq!(del.len(), 1);
     assert_eq!(del[0]["message_ref"], "PH1");
+}
+
+// ------------------------------------------- FIX-158: the receipt lives until the answer posts
+
+impl W {
+    /// Finishes one named turn the way `finish` does the latest one.
+    async fn finish_turn(&self, turn: Uuid, status: &str, answer: Option<&str>) {
+        let cid: Uuid = sqlx::query_scalar("SELECT conversation_id FROM turns WHERE id=$1")
+            .bind(turn)
+            .fetch_one(self.h.pool())
+            .await
+            .unwrap();
+        let mut tx = self.h.pool().begin().await.unwrap();
+        sqlx::query("UPDATE turns SET status='running' WHERE id=$1")
+            .bind(turn)
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        if let Some(a) = answer {
+            conv::append_event(
+                &mut tx,
+                cid,
+                Some(turn),
+                "text",
+                &json!({"turn_id": turn, "message_id": "m1", "text": a}),
+            )
+            .await
+            .unwrap();
+        }
+        lifecycle::finish(&mut tx, turn, status, None, None, None)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+    }
+
+    async fn turns(&self) -> Vec<Uuid> {
+        sqlx::query_scalar("SELECT id FROM turns WHERE role='turn' ORDER BY created_at, id")
+            .fetch_all(self.h.pool())
+            .await
+            .unwrap()
+    }
+
+    async fn mark_receipts_delivered(&self) {
+        sqlx::query("UPDATE channel_ops SET status='done' WHERE kind='reaction.add'")
+            .execute(self.h.pool())
+            .await
+            .unwrap();
+    }
+}
+
+#[tokio::test]
+async fn the_receipt_stays_until_the_answer_posts() {
+    let w = world().await;
+    let a = w.agent("rex").await;
+    w.presence(w.integ, a, "dedicated", Some("BD1")).await;
+    w.link(w.integ, "U1", w.member).await;
+    w.post(w.integ, "e1", dm("U1", "q", "BD1")).await;
+    w.mark_receipts_delivered().await;
+    // Nothing removes the reaction while the turn works.
+    assert_eq!(w.ops("reaction.add").await.len(), 1);
+    assert!(w.ops("reaction.remove").await.is_empty());
+    w.finish("done", Some("the answer"), None).await;
+    let rows: Vec<(String, Uuid)> = sqlx::query_as(
+        "SELECT kind, id FROM channel_ops WHERE kind IN ('message.post', 'reaction.remove') ORDER BY id",
+    )
+    .fetch_all(w.h.pool())
+    .await
+    .unwrap();
+    let kinds: Vec<&str> = rows.iter().map(|r| r.0.as_str()).collect();
+    assert_eq!(
+        kinds,
+        ["message.post", "reaction.remove"],
+        "answer, then remove"
+    );
+}
+
+#[tokio::test]
+async fn a_silent_turn_with_follow_on_work_keeps_the_receipt_until_a_later_post() {
+    let w = world().await;
+    let a = w.agent("rex").await;
+    w.presence(w.integ, a, "dedicated", Some("BD1")).await;
+    w.link(w.integ, "U1", w.member).await;
+    w.post(w.integ, "e1", dm("U1", "q1", "BD1")).await;
+    w.post(w.integ, "e2", dm("U1", "q2", "BD1")).await;
+    w.mark_receipts_delivered().await;
+    // The second message joined the running turn as a follow-up (its own receipt).
+    let first = w.turns().await[0];
+    // The first turn ends with no text while the follow-up is pending: its receipt stays, and
+    // the follow-up is promoted to a turn of its own.
+    w.finish_turn(first, "done", None).await;
+    assert!(w.ops("reaction.remove").await.is_empty(), "kept open");
+    let turns = w.turns().await;
+    assert_eq!(turns.len(), 2, "{turns:?}");
+    // The promoted turn's answer clears the receipts of both messages.
+    w.finish_turn(turns[1], "done", Some("both answered")).await;
+    assert_eq!(w.ops("reaction.remove").await.len(), 2);
+}
+
+#[tokio::test]
+async fn a_silent_turn_with_nothing_pending_clears_its_receipt() {
+    let w = world().await;
+    let a = w.agent("rex").await;
+    w.presence(w.integ, a, "dedicated", Some("BD1")).await;
+    w.link(w.integ, "U1", w.member).await;
+    w.post(w.integ, "e1", dm("U1", "q", "BD1")).await;
+    w.mark_receipts_delivered().await;
+    w.finish("done", None, None).await;
+    assert!(w.ops("message.post").await.is_empty());
+    assert_eq!(w.ops("reaction.remove").await.len(), 1);
+}
+
+#[tokio::test]
+async fn a_receipt_still_queued_at_clear_time_is_dropped_without_a_remove() {
+    let w = world().await;
+    let a = w.agent("rex").await;
+    w.presence(w.integ, a, "dedicated", Some("BD1")).await;
+    w.link(w.integ, "U1", w.member).await;
+    w.post(w.integ, "e1", dm("U1", "q", "BD1")).await;
+    // The add was never claimed.
+    w.finish("done", Some("fast"), None).await;
+    let st: String = sqlx::query_scalar("SELECT status FROM channel_ops WHERE kind='reaction.add'")
+        .fetch_one(w.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(st, "dropped");
+    assert!(w.ops("reaction.remove").await.is_empty());
+}
+
+#[tokio::test]
+async fn a_remove_is_not_claimed_while_its_add_is_in_flight() {
+    let w = world().await;
+    let a = w.agent("rex").await;
+    w.presence(w.integ, a, "dedicated", Some("BD1")).await;
+    w.link(w.integ, "U1", w.member).await;
+    w.post(w.integ, "e1", dm("U1", "q", "BD1")).await;
+    sqlx::query("UPDATE channel_ops SET status='claimed', lease_until = now() + interval '1 hour' WHERE kind='reaction.add'")
+        .execute(w.h.pool()).await.unwrap();
+    w.finish("done", Some("answer"), None).await;
+    assert_eq!(w.ops("reaction.remove").await.len(), 1);
+    let replica = w.replica;
+    async fn claimed_kinds(w: &W, replica: Uuid) -> Vec<String> {
+        let mut c = w.h.pool().acquire().await.unwrap();
+        aurora_db::repo::channel_ops::claim(&mut *c, "fake", replica, 50, 30.0, 5, 60.0)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|c| c.kind)
+            .collect()
+    }
+    assert!(
+        !claimed_kinds(&w, replica)
+            .await
+            .contains(&"reaction.remove".to_owned())
+    );
+    sqlx::query("UPDATE channel_ops SET status='done' WHERE kind='reaction.add'")
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+    assert!(
+        claimed_kinds(&w, replica)
+            .await
+            .contains(&"reaction.remove".to_owned())
+    );
+}
+
+#[tokio::test]
+async fn the_sweep_clears_a_receipt_left_open_when_nothing_is_pending_any_more() {
+    let w = world().await;
+    let a = w.agent("rex").await;
+    w.presence(w.integ, a, "dedicated", Some("BD1")).await;
+    w.link(w.integ, "U1", w.member).await;
+    w.post(w.integ, "e1", dm("U1", "q1", "BD1")).await;
+    w.post(w.integ, "e2", dm("U1", "q2", "BD1")).await;
+    w.mark_receipts_delivered().await;
+    w.finish_turn(w.turns().await[0], "done", None).await;
+    assert!(w.ops("reaction.remove").await.is_empty());
+    // The promoted turn ends without the mirror hook ever running, and time passes.
+    let promoted = w.turns().await[1];
+    sqlx::query("UPDATE turns SET status='failed', finished_at = now() WHERE id=$1")
+        .bind(promoted)
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+    let pool = w.h.pool();
+    let sweep = || aurora_api::domains::channels::mirror::sweep_orphan_receipts(pool);
+    assert_eq!(sweep().await.unwrap(), 0, "too recent");
+    sqlx::query("UPDATE channel_ops SET created_at = now() - interval '1 hour'")
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE turns SET finished_at = now() - interval '1 hour', created_at = now() - interval '1 hour'")
+        .execute(pool)
+        .await
+        .unwrap();
+    assert!(sweep().await.unwrap() >= 1);
+    assert_eq!(w.ops("reaction.remove").await.len(), 2);
+    assert_eq!(sweep().await.unwrap(), 0, "idempotent");
+}
+
+/// Collects formatted log lines (a scoped subscriber; the test runtime is current-thread, so
+/// every task of the request stays on the thread that owns it).
+#[derive(Clone, Default)]
+struct ReceiptLogs(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+impl std::io::Write for ReceiptLogs {
+    fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(b);
+        Ok(b.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for ReceiptLogs {
+    type Writer = ReceiptLogs;
+    fn make_writer(&'a self) -> ReceiptLogs {
+        self.clone()
+    }
+}
+impl ReceiptLogs {
+    /// The receipt lines as JSON objects (`fields.*`).
+    fn lines(&self) -> Vec<Value> {
+        let raw = String::from_utf8(self.0.lock().unwrap().clone()).unwrap();
+        raw.lines()
+            .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+            .filter(|v| v["target"] == "aurora_api::channels::receipt")
+            .collect()
+    }
+}
+
+#[tokio::test]
+async fn every_receipt_add_and_clear_logs_one_line_with_its_reason() {
+    let logs = ReceiptLogs::default();
+    let _g = tracing::subscriber::set_default(
+        tracing_subscriber::fmt()
+            .json()
+            .with_max_level(tracing::Level::INFO)
+            .with_writer(logs.clone())
+            .finish(),
+    );
+    // Other tests of this binary may have cached "disabled" interest for the callsites.
+    tracing::callsite::rebuild_interest_cache();
+    let w = world().await;
+    let a = w.agent("rex").await;
+    w.presence(w.integ, a, "dedicated", Some("BD1")).await;
+    w.link(w.integ, "U1", w.member).await;
+    w.post(w.integ, "e1", dm("U1", "q1", "BD1")).await;
+    w.post(w.integ, "e2", dm("U1", "q2", "BD1")).await;
+    w.mark_receipts_delivered().await;
+    let first = w.turns().await[0];
+    // Ends silent while the follow-up is pending: kept open, said so.
+    w.finish_turn(first, "done", None).await;
+    // The promoted turn dies without the mirror, and the sweep clears both: reason `orphan`.
+    let promoted = w.turns().await[1];
+    sqlx::query("UPDATE turns SET status='failed' WHERE id=$1")
+        .bind(promoted)
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+    sqlx::query("UPDATE channel_ops SET created_at = now() - interval '1 hour'")
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+    sqlx::query("UPDATE turns SET finished_at = now() - interval '1 hour', created_at = now() - interval '1 hour'")
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+    aurora_api::domains::channels::mirror::sweep_orphan_receipts(w.h.pool())
+        .await
+        .unwrap();
+    let lines = logs.lines();
+    let reasons = |r: &str| {
+        lines
+            .iter()
+            .filter(|l| l["fields"]["reason"] == r)
+            .collect::<Vec<_>>()
+    };
+    let added = reasons("message_received");
+    assert_eq!(added.len(), 2, "{lines:?}");
+    for l in added.iter().chain(reasons("follow_on_pending").iter()) {
+        assert!(l["fields"]["event_id"].is_string(), "{l}");
+        assert!(l["fields"]["integration_id"].is_string(), "{l}");
+        assert_eq!(l["level"], "INFO");
+    }
+    let kept = reasons("follow_on_pending");
+    assert_eq!(kept.len(), 1, "{lines:?}");
+    assert_eq!(kept[0]["fields"]["turn_id"], first.to_string());
+    let orphans = reasons("orphan");
+    assert_eq!(orphans.len(), 2, "one clear per open receipt: {lines:?}");
+    for l in orphans {
+        assert!(l["fields"]["event_id"].is_string(), "{l}");
+        assert!(l["fields"]["integration_id"].is_string(), "{l}");
+    }
+}
+
+#[tokio::test]
+async fn a_running_turn_sets_the_working_status_and_the_finish_clears_it_before_the_answer() {
+    let w = world().await;
+    let a = w.agent("rex").await;
+    w.presence(w.integ, a, "dedicated", Some("BD1")).await;
+    w.link(w.integ, "U1", w.member).await;
+    w.post(w.integ, "e1", dm("U1", "q", "BD1")).await;
+    let turn = w.turns().await[0];
+    assert!(
+        w.ops("status.set").await.is_empty(),
+        "queued is not running"
+    );
+    sqlx::query("UPDATE turns SET status='dispatched' WHERE id=$1")
+        .bind(turn)
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+    let row = {
+        let mut tx = w.h.pool().begin().await.unwrap();
+        let row = aurora_db::repo::turns::set_running(&mut tx, turn, None)
+            .await
+            .unwrap()
+            .unwrap();
+        aurora_api::domains::channels::mirror::on_turn_started(&mut tx, &row)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+        row
+    };
+    assert_eq!(row.id, turn);
+    assert_eq!(w.ops("status.set").await.len(), 1);
+    let key: String =
+        sqlx::query_scalar("SELECT dedupe_key FROM channel_ops WHERE kind='status.set'")
+            .fetch_one(w.h.pool())
+            .await
+            .unwrap();
+    assert_eq!(key, format!("working:{turn}"));
+    w.finish("done", Some("answer"), None).await;
+    let rows: Vec<(String, String)> = sqlx::query_as(
+        "SELECT kind, dedupe_key FROM channel_ops WHERE kind IN ('status.clear', 'message.post') ORDER BY id",
+    )
+    .fetch_all(w.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        rows[0],
+        ("status.clear".into(), format!("working-clear:{turn}")),
+        "{rows:?}"
+    );
+    assert_eq!(rows[1].0, "message.post");
+}
+
+#[tokio::test]
+async fn no_working_status_without_native_status() {
+    let w = world().await;
+    let i = w
+        .integration(json!({"_capabilities": {"native_status": false}}), true)
+        .await;
+    let a = w.agent("rex").await;
+    w.presence(i, a, "shared", None).await;
+    w.link(i, "U1", w.member).await;
+    w.post(i, "e1", dm("U1", "q", "B1")).await;
+    let turn = w.turns().await[0];
+    sqlx::query("UPDATE turns SET status='dispatched' WHERE id=$1")
+        .bind(turn)
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+    let mut tx = w.h.pool().begin().await.unwrap();
+    let row = aurora_db::repo::turns::set_running(&mut tx, turn, None)
+        .await
+        .unwrap()
+        .unwrap();
+    aurora_api::domains::channels::mirror::on_turn_started(&mut tx, &row)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    assert!(w.ops("status.set").await.is_empty());
 }
 
 // ------------------------------------------------------------------ other events

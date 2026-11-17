@@ -247,6 +247,8 @@ overridden by the named configuration key (`15`).
 | `BACKGROUND_CAP` | 12 h | `hosted.background_cap_secs` | 11 |
 | `TURN_CEILING` | 6 h | `hosted.turn_ceiling_secs` | 10 |
 | `TURN_CEILING_WARNING` | 15 min | — | 10 |
+| `TYPING_REFRESH_SECS` | (phase 5, FIX-158, D-319) 4 s between the Mattermost connector's `typing` calls for a running turn (clients drop the indicator after about 5 s). A refresher whose `status.clear` was lost stops after `TURN_CEILING_WARNING` | — | 13, 20 |
+| `RECEIPT_ORPHAN_SECS` | (phase 5, FIX-158, D-319) 600 s: an open chat receipt of a conversation with no active turn and no pending follow-on work is cleared by the channel-op sweep | — | 13 |
 | `TURN_STALL` | 10 min | `hosted.turn_stall_secs` | 10 |
 | turn progress interval | **not implemented as a limit** (FIX-119): the supervisor emits progress every 10 s (`SupervisorConfig.progress_interval`, `services/aurora-supervisor/src/supervisor.rs`); the 60 s draft constant (`turn progress interval`) was never read and was removed. A configurable interval, if wanted, is a new task | — | 12 |
 | `STALE_DISPATCH` | 90 s | — | 10 |
@@ -326,6 +328,8 @@ overridden by the named configuration key (`15`).
 | `MODEL_ID_MAX` | (phase 5, P5-MODELS-1, D-303) 200 chars per model id (default, role, `model_info` key); characters `[A-Za-z0-9._:/@-]` (`08 §Model roles`) | — | 08 |
 | `MODEL_INFO_MAX` | (phase 5, P5-MODELS-1) 64 `model_info` entries per LLM endpoint | — | 08, 15 |
 | `USAGE_BY_MODEL_MAX` | (phase 5, P5-MODELS-2, D-304) 16 `by_model` entries per turn; entries beyond the limit are folded into the default model's entry and `unverified_models` is set | — | 10 |
+| `USAGE_RANGE_MAX_DAYS` | (phase 5, P5-USAGE-1, C-1000) 366 days per `GET /v1/workspaces/{ws}/usage`; a longer range is 422 `usage_range_invalid` | — | 05 |
+| `USAGE_TOP_MAX` | (phase 5, P5-USAGE-1, C-1003, C-1006) 50 workspaces listed by `GET /v1/admin/usage` and `GET /v1/orgs/{org}/usage`; the rest are summed in `other_workspaces` | — | 05 |
 | `AVATAR_MAX` | 512 KiB (PNG/JPEG/WebP) | — | 10 |
 | `SSE_KEEPALIVE` | 15 s | — | 05 |
 | `API_RATE_*` | (phase 2, RFE-017) buckets of `05 §Conventions`: general 600/min (burst 120), write 120/min (30), message 30/min (10), upload 20/min (5), simulate 20/min (5), search 30/min (10), export 6/h (2), org 3 000/min (600); (phase 5, FIX-146, D-232) telemetry 60/min (20), the per-user limit of `POST /v1/telemetry/traces` | `ratelimit.api.*` | 05 |

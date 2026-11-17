@@ -292,19 +292,40 @@ fn parse_recipient_id(s: &str) -> Option<Recipient> {
     })
 }
 
+/// The outcome of resolving `to` without a platform call: a recipient, or a typed miss.
+pub enum Resolved {
+    Found(Recipient),
+    /// Not `here`, not an id and not a pinned alias (the query, sanitised for messages).
+    Unknown(String),
+}
+
 /// `to`: `here`, a recipient id, or an anchor alias pinned in this conversation.
 pub async fn resolve_to(conn: &mut PgConnection, w: &Where, to: &str) -> Result<Recipient, Fail> {
+    match resolve_pinned(conn, w, to).await? {
+        Resolved::Found(r) => Ok(r),
+        Resolved::Unknown(q) => invalid(format!(
+            "Nobody you may message matches `{q}`. Use find_recipient with part of their name or handle."
+        )),
+    }
+}
+
+/// [`resolve_to`] with the miss typed instead of an error.
+pub async fn resolve_pinned(
+    conn: &mut PgConnection,
+    w: &Where,
+    to: &str,
+) -> Result<Resolved, Fail> {
     let to = to.trim();
     if to.eq_ignore_ascii_case("here") {
         let Some(l) = current_link(&mut *conn, w).await? else {
             return invalid("This conversation has no chat thread; use find_recipient.");
         };
-        return Ok(Recipient {
+        return Ok(Resolved::Found(Recipient {
             integration_id: l.integration_id,
             kind: RKind::Space,
             label: "this thread".to_owned(),
             reference: l.space_ref,
-        });
+        }));
     }
     if let Some(r) = parse_recipient_id(to) {
         // Only through one of the agent's own presences; a label is recovered from the anchors.
@@ -313,24 +334,23 @@ pub async fn resolve_to(conn: &mut PgConnection, w: &Where, to: &str) -> Result<
             .into_iter()
             .find(|a| a.integration_id == r.integration_id && a.subject_ref == r.reference)
             .map_or(r.label.clone(), |a| a.label);
-        return Ok(Recipient { label, ..r });
+        return Ok(Resolved::Found(Recipient { label, ..r }));
     }
-    match anchors::resolve(&mut *conn, w.conversation_id, to).await? {
-        Some(a) => Ok(Recipient {
-            integration_id: a.integration_id,
-            kind: if a.kind == "space" {
-                RKind::Space
-            } else {
-                RKind::User
-            },
-            reference: a.subject_ref,
-            label: a.label,
-        }),
-        None => invalid(format!(
-            "Unknown recipient `{}`. Use find_recipient first.",
-            sanitize::one_line(to, 60)
-        )),
-    }
+    Ok(
+        match anchors::resolve(&mut *conn, w.conversation_id, to).await? {
+            Some(a) => Resolved::Found(Recipient {
+                integration_id: a.integration_id,
+                kind: if a.kind == "space" {
+                    RKind::Space
+                } else {
+                    RKind::User
+                },
+                reference: a.subject_ref,
+                label: a.label,
+            }),
+            None => Resolved::Unknown(sanitize::one_line(to, 60)),
+        },
+    )
 }
 
 /// May `agent` reach `r`? Users: linked with `can_use` on the agent's workspace, or an approved
@@ -538,6 +558,47 @@ pub async fn find_recipient(
     let mut conn = s.pool.acquire().await?;
     let p = resolve_platform(&mut conn, agent.id, w, platform).await?;
     drop(conn);
+    let found: Vec<Found> = lookup_and_pin(s, agent, w, &p, &query)
+        .await?
+        .into_iter()
+        .map(|c| c.found)
+        .collect();
+    Ok(json!({"platform": p.connector(), "recipients": found}))
+}
+
+/// A reachable search hit, already pinned as an anchor; `handle` is the platform handle of a
+/// user (never shown to the model), `found.label` is a space's name.
+pub struct Candidate {
+    pub found: Found,
+    handle: Option<String>,
+}
+
+impl Candidate {
+    /// Exact by handle or alias (users) or alias or name (spaces); a display name never counts.
+    fn is_exact(&self, q: &str) -> bool {
+        if self.found.alias == q {
+            return true;
+        }
+        match self.found.kind {
+            "user" => self
+                .handle
+                .as_deref()
+                .is_some_and(|h| anchors::normalize(h) == q),
+            _ => anchors::normalize(&self.found.label) == q,
+        }
+    }
+}
+
+/// Correlated `user.lookup` + `spaces.list` for `query`; the reachable hits are pinned as
+/// anchors of this conversation. No transaction is open during the platform wait.
+async fn lookup_and_pin(
+    s: &AppState,
+    agent: &AgentRow,
+    w: &Where,
+    p: &Platform,
+    query: &str,
+) -> Result<Vec<Candidate>, Fail> {
+    let query = query.to_owned();
     let integ = p.ctx.id();
     let presence_id = (p.presence.mode != "shared").then_some(p.presence.id);
     let call = |kind: &str, payload: Value| {
@@ -651,15 +712,114 @@ pub async fn find_recipient(
             subject_ref: r.reference.clone(),
             label: r.label.clone(),
         });
-        found.push(Found {
-            id: r.id(),
-            alias,
-            kind,
-            label: r.label,
+        found.push(Candidate {
+            found: Found {
+                id: r.id(),
+                alias,
+                kind,
+                label: r.label,
+            },
+            handle,
         });
     }
     tx.commit().await?;
-    Ok(json!({"platform": p.connector(), "recipients": found}))
+    Ok(found)
+}
+
+/// How a recipient the model named is turned into something `resolve_to` accepts, before any
+/// transaction opens (docs/13 §5.10, D-287).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum For {
+    Send,
+    Read,
+}
+
+/// `here`, an id or a pinned alias resolve as they are (no platform call). Anything else is
+/// looked up on the platform once: exactly one exact handle/alias/name match is used (it is
+/// pinned already, and returned as its alias); otherwise the refusal lists the candidates.
+async fn resolve_recipient(
+    s: &AppState,
+    agent: &AgentRow,
+    w: &Where,
+    to: &str,
+    platform: Option<&str>,
+    purpose: For,
+) -> Result<String, Fail> {
+    let mut conn = s.pool.acquire().await?;
+    let q = match resolve_pinned(&mut conn, w, to).await? {
+        Resolved::Found(_) => return Ok(to.to_owned()),
+        Resolved::Unknown(q) => q,
+    };
+    let p = resolve_platform(&mut conn, agent.id, w, platform).await?;
+    drop(conn);
+    let key = anchors::normalize(&q);
+    let nobody = || {
+        invalid(match purpose {
+            For::Send => format!(
+                "Nobody you may message matches `{q}`. Use find_recipient with part of their name or handle."
+            ),
+            For::Read => format!(
+                "No space you can read matches `{q}`. Use find_recipient with part of its name."
+            ),
+        })
+    };
+    if key.is_empty() {
+        return nobody();
+    }
+    let mut cands = lookup_and_pin(s, agent, w, &p, &key).await?;
+    if purpose == For::Read {
+        cands.retain(|c| c.found.kind == "space");
+    }
+    if cands.is_empty() {
+        return nobody();
+    }
+    let mut exact = cands.iter().filter(|c| c.is_exact(&key));
+    if let (Some(one), None) = (exact.next(), exact.next()) {
+        return Ok(one.found.alias.clone());
+    }
+    let list: Vec<String> = cands
+        .iter()
+        .take(FIND_LIMIT as usize)
+        .map(|c| format!("`{}` ({}, {})", c.found.alias, c.found.label, c.found.kind))
+        .collect();
+    let (what, tool) = match purpose {
+        For::Send => ("People and spaces you may message", "send_message"),
+        For::Read => ("Spaces you may read", "read_conversation"),
+    };
+    invalid(format!(
+        "No recipient `{q}` in this conversation yet. {what} that match: {}. \
+         Call {tool} again with one of these as `{}`.",
+        list.join("; "),
+        if purpose == For::Send { "to" } else { "target" }
+    ))
+}
+
+/// Who a send went to, for the transcript: the pinned alias (absent for `here` or an id with no
+/// anchor), the kind and the label.
+async fn recipient_json(
+    conn: &mut PgConnection,
+    w: &Where,
+    to: &str,
+    r: &Recipient,
+) -> Result<Value, Fail> {
+    let alias = if to.trim().eq_ignore_ascii_case("here") {
+        None
+    } else {
+        anchors::list_for_conversation(&mut *conn, w.conversation_id)
+            .await?
+            .into_iter()
+            .find(|a| {
+                a.integration_id == r.integration_id
+                    && a.subject_ref == r.reference
+                    && a.kind == r.kind.as_str()
+            })
+            .map(|a| a.alias)
+    };
+    let mut v = json!({"kind": r.kind.as_str(), "label": sanitize::label(&r.label)});
+    if let Some(alias) = alias {
+        v["alias"] = json!(alias);
+    }
+    Ok(v)
 }
 
 pub struct SendArgs<'a> {
@@ -677,11 +837,14 @@ pub async fn send_message(
     w: &Where,
     a: SendArgs<'_>,
 ) -> Result<Value, Fail> {
-    let mut tx = s.pool.begin().await?;
-    let agent = agents::get(&mut *tx, agent_id)
+    let agent = agents::get(&s.pool, agent_id)
         .await?
         .ok_or(Fail::Internal)?;
-    let r = resolve_to(&mut tx, w, a.to).await?;
+    // Before any transaction: an exact handle is looked up on the platform (correlated wait).
+    let to = resolve_recipient(s, &agent, w, a.to, a.platform, For::Send).await?;
+    let mut tx = s.pool.begin().await?;
+    let r = resolve_to(&mut tx, w, &to).await?;
+    let recipient = recipient_json(&mut tx, w, &to, &r).await?;
     let platform = load_platform(&mut tx, r.integration_id, agent_id).await?;
     if let Some(name) = a.platform
         && name != platform.connector()
@@ -709,7 +872,7 @@ pub async fn send_message(
         )
         .await?;
         tx.commit().await?;
-        return Ok(json!({"status": "sent", "message_id": op}));
+        return Ok(json!({"status": "sent", "message_id": op, "recipient": recipient}));
     }
     if !reachable(&mut tx, &agent, &r).await? {
         return denied(format!(
@@ -736,7 +899,7 @@ pub async fn send_message(
             )
             .await?;
             tx.commit().await?;
-            Ok(json!({"status": "sent", "message_id": op}))
+            Ok(json!({"status": "sent", "message_id": op, "recipient": recipient}))
         }
         _ => {
             let mut summary = format!(
@@ -778,7 +941,11 @@ pub async fn send_message(
             )
             .await?;
             tx.commit().await?;
-            Ok(json!({"status": "pending_approval", "approval_id": row.id}))
+            Ok(json!({
+                "status": "pending_approval",
+                "approval_id": row.id,
+                "recipient": recipient,
+            }))
         }
     }
 }
@@ -820,6 +987,11 @@ pub async fn read_conversation(
     limit: Option<u32>,
 ) -> Result<Value, Fail> {
     let limit = limit.unwrap_or(HISTORY_DEFAULT).clamp(1, HISTORY_MAX);
+    let target = match target {
+        Some(t) => Some(resolve_recipient(s, agent, w, t, None, For::Read).await?),
+        None => None,
+    };
+    let target = target.as_deref();
     let mut conn = s.pool.acquire().await?;
     let (integration, space_ref, thread_ref) = match target {
         None => {

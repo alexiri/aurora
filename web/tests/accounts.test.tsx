@@ -110,7 +110,27 @@ describe("AccountsList: one row per kind", () => {
     listWs([website()]);
     list();
     await openMenu("Stripe API");
-    expect((await screen.findAllByRole("menuitem")).map((m) => m.textContent)).toEqual(["Give access", "Rename", "Replace", "Test", "Remove"]);
+    expect((await screen.findAllByRole("menuitem")).map((m) => m.textContent)).toEqual(["Give access", "Rename", "Change website", "Replace", "Test", "Remove"]);
+  });
+
+  it("Change website edits the website, the path and the way the token is sent in one save, from the website's own record", async () => {
+    listWs([website()]);
+    routes["GET /v1/workspaces/w1/secrets"] = () =>
+      json(200, { items: [{ id: "s1", kind: "generic", name: "Stripe API", host_pattern: "api.stripe.com", path_pattern: null, injection: { kind: "bearer" } }], next_cursor: null });
+    routes["PATCH /v1/secrets/s1"] = () => json(200, {});
+    list();
+    await openMenu("Stripe API");
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Change website" }));
+    const site = await screen.findByLabelText("Website");
+    expect(site).toHaveValue("api.stripe.com");
+    fireEvent.change(site, { target: { value: "api.stripe.example" } });
+    fireEvent.click(screen.getByText(/^Advanced: path/));
+    fireEvent.change(screen.getByLabelText("Path (optional)"), { target: { value: "/v1/*" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(sent("PATCH /v1/secrets/s1")).toHaveLength(1));
+    expect(sent("PATCH /v1/secrets/s1")[0]!.body).toEqual({ host_pattern: "api.stripe.example", path_pattern: "/v1/*", injection: { kind: "bearer" } });
+    // The name is Rename's: it is not part of this save.
+    expect(sent("PATCH /v1/secrets/s1")[0]!.body).not.toHaveProperty("name");
   });
 
   it("says Turn on for a turned-off account and the health line says why an account stopped", async () => {
@@ -151,7 +171,7 @@ describe("AccountsList: one row per kind", () => {
     routes["GET /v1/orgs/o1"] = () => json(200, { id: "o1", my_role: "owner", settings: {} });
     list();
     fireEvent.keyDown(await screen.findByRole("button", { name: "Add" }), { key: "Enter" });
-    expect(await screen.findByRole("menuitem", { name: "Connect an app or website" })).toHaveAttribute("href", "?tab=apps");
+    expect(await screen.findByRole("menuitem", { name: "Connect an app or website" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("menuitem", { name: "Add an AI key" }));
     expect(await screen.findByRole("button", { name: "Close" })).toBeInTheDocument();
   });
@@ -178,7 +198,7 @@ describe("AccountsList: an agent's Access tab", () => {
     expect(within(used).getByText("Daneel thinks with claude-sonnet through this key.")).toBeInTheDocument();
     expect(within(used).getAllByRole("radio").length).toBeGreaterThan(0);
     expect(screen.getByText("Not given to Daneel (1)")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Give Daneel an app" })).toHaveAttribute("href", "?tab=apps");
+    expect(screen.getByRole("button", { name: "Give Daneel an app" })).toBeInTheDocument();
   });
 });
 

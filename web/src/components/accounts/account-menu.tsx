@@ -12,6 +12,8 @@ import { Menu, MenuContent, MenuItem, MenuTrigger } from "@/components/ui/menu";
 import { accountKeys, type Account } from "@/lib/api/accounts";
 import { useDeleteConnection, usePatchConnection } from "@/lib/api/apps";
 import { ValueInput } from "@/components/credentials/value-input";
+
+import { EditWebsite } from "./edit-website";
 import { useDeleteSecret, usePatchSecret, useSetSecretValue, useVerifySecret, type SecretScope } from "@/lib/api/secrets";
 
 /**
@@ -40,6 +42,7 @@ export function AccountMenu({
   const [renaming, setRenaming] = useState(false);
   const [removing, setRemoving] = useState(false);
   const [replacing, setReplacing] = useState(false);
+  const [editingSite, setEditingSite] = useState(false);
   const setValue = useSetSecretValue(scope, account.ref.id);
   const [newValue, setNewValue] = useState("");
   const [label, setLabel] = useState(account.name);
@@ -64,6 +67,7 @@ export function AccountMenu({
           {account.can.give_access ? <MenuItem onSelect={() => setGiving(true)}>Give access</MenuItem> : null}
           <MenuItem onSelect={() => setRenaming(true)}>Rename</MenuItem>
           {isConn && onReconnect ? <MenuItem onSelect={onReconnect}>Reconnect</MenuItem> : null}
+          {account.kind === "website" ? <MenuItem onSelect={() => setEditingSite(true)}>Change website</MenuItem> : null}
           {!isConn ? <MenuItem onSelect={() => setReplacing(true)}>Replace</MenuItem> : null}
           {!isConn ? <MenuItem onSelect={() => verify.mutate(undefined, { onSuccess: refresh })}>Test</MenuItem> : null}
           {isConn ? (
@@ -117,6 +121,9 @@ export function AccountMenu({
           </form>
         </DialogContent>
       </Dialog>
+      {account.kind === "website" ? (
+        <EditWebsite scope={scope} accountId={account.ref.id} name={account.name} open={editingSite} onOpenChange={setEditingSite} />
+      ) : null}
       <Dialog open={replacing} onOpenChange={(o) => { setReplacing(o); if (!o) setNewValue(""); }}>
         <DialogContent title={`Replace ${account.name}`}>
           <form

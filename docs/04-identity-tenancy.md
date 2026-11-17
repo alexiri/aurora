@@ -1113,7 +1113,8 @@ unauthenticated sources).
 
 Who may SSH into which sandbox is **the web terminal's rule** (`11 §Web terminal`, SEC-87), applied
 by the API at four points. No new role, no org toggle: the instance switch `ssh.enabled` (default
-off) is the deployment's choice, like `terminal.enabled`, and the two are independent.
+off) is the deployment's choice, like `terminal.enabled`, and requires it (D-358): SSH without the
+web terminal is refused at startup and by the chart.
 
 **The SSH access predicate** `can_ssh(user, agent)`: `ssh.enabled` **and** the user is not
 disabled **and** `can_use(user, agent.workspace)` (active membership, effective role, groups —

@@ -12,6 +12,8 @@ export interface ChoiceCardOption<T extends string> {
   description?: string;
   /** A short pill next to the label, for example "Recommended". */
   badge?: string;
+  /** The card cannot be chosen (its `description` says why). */
+  disabled?: boolean;
 }
 
 /**
@@ -44,13 +46,13 @@ export function ChoiceCards<T extends string>({
         {legend}
       </p>
       {options.map((o) => (
-        <label key={o.value} className={cn("relative block", disabled && "opacity-60")}>
+        <label key={o.value} className={cn("relative block", (disabled || o.disabled) && "opacity-60")}>
           <input
             type="radio"
             name={name}
             value={o.value}
             checked={value === o.value}
-            disabled={disabled}
+            disabled={disabled || o.disabled}
             onChange={() => onChange(o.value)}
             className="peer sr-only"
           />

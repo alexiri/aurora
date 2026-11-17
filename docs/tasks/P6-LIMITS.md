@@ -205,6 +205,9 @@ configurable; Admin › Limits › Load):
 
 ### Visibility
 
+- (Note 2026-11-17, D-360: phase 5 already ships a usage view, Administration › Data › Usage, a
+  workspace's Activity › Usage and an agent's Usage card (P5-USAGE-2). The views below extend those
+  pages rather than add new ones.)
 - **Admin › Usage:** top consumers by org/user/agent (awake hours, turns, fires, egress, LLM requests),
   current pressure level, refusals by resource, runner capacity; filters by org subtree.
 - **Org › Usage:** the org's (and its children's) use against limits, who is near them.
