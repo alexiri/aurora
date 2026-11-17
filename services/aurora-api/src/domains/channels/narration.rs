@@ -119,6 +119,7 @@ async fn open_cards(
           WHERE p.integration_id = $1 AND p.dedupe_key ~ '^narr:[0-9a-f-]{36}$'
             AND p.payload #>> '{target,space_ref}' = $2
             AND p.created_at > now() - interval '1 day'
+            AND p.status NOT IN ('failed', 'dropped')
             AND NOT EXISTS (SELECT 1 FROM channel_ops e WHERE e.dedupe_key = p.dedupe_key || ':end')",
     )
     .bind(integration)
