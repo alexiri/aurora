@@ -1487,6 +1487,8 @@ impl PolicyHandler {
                 path: &red_path,
                 rule: ctx.rule.as_ref().map(|(i, n)| (*i, n.as_str())),
                 connection_id: ctx.connection_id,
+                app_id: ctx.app_id.as_deref(),
+                tool_id: ctx.tool_id.as_deref(),
                 batch: &aurora_headers,
                 summary: &summary,
                 rule_timeout_secs: d.approval_timeout_secs,
@@ -2738,6 +2740,8 @@ impl DbSession {
                     path: &path,
                     rule: ctx.rule.as_ref().map(|(i, n)| (*i, n.as_str())),
                     connection_id: Some(self.conn.id),
+                    app_id: None,
+                    tool_id: None,
                     batch: &crate::hygiene::AuroraHeaders::default(),
                     summary: &summary,
                     // RFE-011a (D-56): the rule's approval timeout applies to statements too.

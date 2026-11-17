@@ -302,6 +302,8 @@ async fn a_database_outage_parks_and_consumes_nothing() {
                 path: "/items",
                 rule: None,
                 connection_id: None,
+                app_id: None,
+                tool_id: None,
                 batch: &Default::default(),
                 summary: &aurora_summary::generic(
                     "POST",

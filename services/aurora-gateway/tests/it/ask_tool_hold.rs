@@ -392,6 +392,16 @@ async fn ask_tool_holds_then_approval_proceeds_and_denial_refuses() {
     let id = pending(&env.pool, env.w.ws).await;
     tokio::time::sleep(Duration::from_millis(200)).await;
     assert!(!t.is_finished(), "request must stay held while pending");
+    // (P5-UX-16, C-982) The held row records the app, the tool and the account it would use.
+    let (app, tool, conn): (Option<String>, Option<String>, Option<Uuid>) =
+        sqlx::query_as("SELECT app_id, tool_id, connection_id FROM approvals WHERE id=$1")
+            .bind(id)
+            .fetch_one(&env.pool)
+            .await
+            .unwrap();
+    assert_eq!(app.as_deref(), Some("demo"));
+    assert_eq!(tool.as_deref(), Some("write_item"));
+    assert!(conn.is_some());
     decide(&env.pool, id, "approved", env.w.ws).await;
     let r = t.await.unwrap();
     assert_eq!(r.status, 200, "{}", r.body);
