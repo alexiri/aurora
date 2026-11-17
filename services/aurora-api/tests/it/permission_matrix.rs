@@ -772,6 +772,20 @@ const ROWS: &[Row] = &[
     r("PATCH", "/v1/workspaces/{ws}", G::WsOwn, false),
     r("DELETE", "/v1/workspaces/{ws}", G::WsOwn, false),
     r("GET", "/v1/workspaces/{ws}/access", G::WsOwn, false),
+    // (P5-UX-5, C-919, C-920, SEC-128) Adding people by e-mail: workspace owners only.
+    r(
+        "POST",
+        "/v1/workspaces/{ws}/access/by-email",
+        G::WsOwn,
+        false,
+    ),
+    r("GET", "/v1/workspaces/{ws}/access/pending", G::WsOwn, false),
+    r(
+        "DELETE",
+        "/v1/workspaces/{ws}/access/pending/{id}",
+        G::WsOwn,
+        false,
+    ),
     r("PUT", "/v1/workspaces/{ws}/access/{user}", G::WsOwn, false),
     r(
         "DELETE",
@@ -1497,6 +1511,10 @@ fn norm(path: &str) -> String {
 /// still answer 4xx (404 unknown id, 409, 422) after authorization, which counts as allowed.
 fn body_for(method: &str, path: &str, fx: &Fx) -> Value {
     match (method, path) {
+        // (P5-UX-5) one exact address; an authorized owner gets a 200, anyone else a refusal before the body is read.
+        ("POST", "/v1/workspaces/{ws}/access/by-email") => {
+            json!({"email": "matrix@example.test", "role": "member"})
+        }
         ("PUT", "/v1/admin/host-claims/{group_key}") => {
             json!({"winner_package_id": "x", "winner_app_id": "x", "fingerprint": "x"})
         }

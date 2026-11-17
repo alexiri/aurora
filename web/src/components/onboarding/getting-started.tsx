@@ -371,6 +371,8 @@ export function optionalNextLinks({
       : null,
     handle ? { href: w.agent(handle, { tab: "instructions" }), label: "Write instructions for the agent", text: "Tell it what you want it to do and how." } : null,
     handle ? { href: w.agent(handle, { tab: "schedules" }), label: "Set up a schedule", text: "Have it do something every morning." } : null,
+    // (P5-UX-5, C-919) Workspace owners add people by e-mail; the People page opens the dialog.
+    isOwner ? { href: w.people({ add: 1 }), label: "Add people", text: "Give a teammate access to this workspace by e-mail." } : null,
   ].filter((x): x is { href: string; label: string; text: string } => x !== null);
 }
 

@@ -33,7 +33,7 @@ const defaultWorkers = 4;
 // selected by `--project real-stack` (the scripts/e2e/*.sh wrappers pass spec paths, which match it).
 // The project's own `workers: 1` (a per-project cap under the global limit) keeps its files from
 // running on different workers at the same time.
-const REAL_STACK = [/first-run\.spec\.ts$/, /m1\.spec\.ts$/, /no-default-model\.spec\.ts$/, /onboarding-journeys\.spec\.ts$/];
+const REAL_STACK = [/first-run\.spec\.ts$/, /m1\.spec\.ts$/, /no-default-model\.spec\.ts$/, /onboarding-journeys\.spec\.ts$/, /add-people-journey\.spec\.ts$/];
 
 // FIX-098: a project that runs against the PRODUCTION build (`next build` + `next start`), the only
 // place the real Content-Security-Policy applies (dev adds 'unsafe-inline'/'unsafe-eval' and hid the

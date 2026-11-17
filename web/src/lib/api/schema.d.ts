@@ -5119,6 +5119,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/workspaces/{ws}/access/by-email": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Add one person to the workspace by e-mail (`can_own`; C-919). */
+        post: operations["addAccessByEmail"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/workspaces/{ws}/access/groups/{group}": {
         parameters: {
             query?: never;
@@ -5135,6 +5152,40 @@ export interface paths {
         post?: never;
         /** Unbind a group from a workspace (`can_own`; idempotent). */
         delete: operations["deleteGroupAccess"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/workspaces/{ws}/access/pending": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The workspace's people waiting for their first sign-in (`can_own`; C-920). */
+        get: operations["listPendingAccess"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/workspaces/{ws}/access/pending/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Remove one waiting person (`can_own`; C-920). A row of another workspace is a 404. */
+        delete: operations["deletePendingAccess"];
         options?: never;
         head?: never;
         patch?: never;
@@ -5801,6 +5852,16 @@ export interface components {
         ActionDecisionBody: {
             decision: components["schemas"]["ActionDecision"];
         };
+        AddByEmailRequest: {
+            email: string;
+            role: components["schemas"]["WorkspaceRole"];
+        };
+        AddByEmailResponse: {
+            org_entry: components["schemas"]["OrgEntry"];
+            result: components["schemas"]["AddResult"];
+        };
+        /** @enum {string} */
+        AddResult: "added" | "pending";
         AddonEntry: {
             description: string;
             id: string;
@@ -9150,6 +9211,11 @@ export interface components {
              */
             origin: components["schemas"]["OrgOrigin"];
         };
+        /**
+         * @description How the person can get into the organization (the dashboard says it when the access is pending).
+         * @enum {string}
+         */
+        OrgEntry: "member" | "open_signup" | "invitation_needed";
         /** @description Normalized organization governance document (`organizations.governance`). */
         OrgGovernance: {
             /**
@@ -10086,6 +10152,20 @@ export interface components {
             }[];
             next_cursor?: string | null;
         };
+        Page_PendingAccess: {
+            items: {
+                /** Format: date-time */
+                created_at: string;
+                /** @description The normalized address. */
+                email: string;
+                /** Format: date-time */
+                expires_at: string;
+                /** Format: uuid */
+                id: string;
+                role: components["schemas"]["WorkspaceRole"];
+            }[];
+            next_cursor?: string | null;
+        };
         Page_PluginPackage: {
             items: {
                 /** Format: date-time */
@@ -10694,6 +10774,18 @@ export interface components {
             display_name: string;
             /** Format: uuid */
             id: string;
+        };
+        /** @description One person waiting for their first sign-in. */
+        PendingAccess: {
+            /** Format: date-time */
+            created_at: string;
+            /** @description The normalized address. */
+            email: string;
+            /** Format: date-time */
+            expires_at: string;
+            /** Format: uuid */
+            id: string;
+            role: components["schemas"]["WorkspaceRole"];
         };
         PendingLibrarySkill: {
             /** Format: uuid */
@@ -36019,6 +36111,81 @@ export interface operations {
             };
         };
     };
+    addAccessByEmail: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                ws: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AddByEmailRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AddByEmailResponse"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     putGroupAccess: {
         parameters: {
             query?: never;
@@ -36098,6 +36265,119 @@ export interface operations {
                 ws: string;
                 /** @description Group id */
                 group: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Removed */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    listPendingAccess: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                ws: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_PendingAccess"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    deletePendingAccess: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                ws: string;
+                /** @description Pending access id */
+                id: string;
             };
             cookie?: never;
         };

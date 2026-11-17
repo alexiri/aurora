@@ -20,6 +20,7 @@ import {
   type AccessBinding,
 } from "@/lib/api/account";
 import { OffboardingDialog } from "@/components/automations/offboarding-dialog";
+import { AddPeople, WaitingList } from "./add-people";
 import { GroupAccess } from "./group-access";
 import { useWorkspaceOffboarding } from "@/lib/api/automations";
 import { errorMessage } from "@/lib/api/errors";
@@ -205,10 +206,13 @@ export function AccessTab({
   wsId,
   orgId,
   canOwn,
+  people,
 }: {
   wsId: string;
   orgId: string;
   canOwn: boolean;
+  /** The People page's **Add people** (P5-UX-5): the workspace's address to send, and whether `?add=1` opened it. */
+  people?: { workspacePath: string; initiallyOpen: boolean };
 }) {
   const access = useAccess(wsId);
   const [err, setErr] = useState<unknown>(null);
@@ -219,6 +223,17 @@ export function AccessTab({
   return (
     <div className="space-y-6">
       {!canOwn ? <Notice role="status">Only workspace owners can change who has access.</Notice> : null}
+      {canOwn && people ? (
+        <div className="flex justify-end">
+          <AddPeople
+            wsId={wsId}
+            orgId={orgId}
+            workspacePath={people.workspacePath}
+            hasApprover={items.some((b) => b.role === "approver")}
+            initiallyOpen={people.initiallyOpen}
+          />
+        </div>
+      ) : null}
       <ul aria-label="Roles" className="space-y-0.5 text-sm text-ink-2">
         {(Object.keys(ROLE_HELP) as Role[]).map((r) => (
           <li key={r}>{ROLE_HELP[r]}</li>
@@ -258,6 +273,7 @@ export function AccessTab({
           </tbody>
         </DataTable>
       )}
+      {canOwn && people ? <WaitingList wsId={wsId} orgId={orgId} /> : null}
       {canOwn ? <AddBinding wsId={wsId} orgId={orgId} bound={bound} /> : null}
       <GroupAccess wsId={wsId} orgId={orgId} canOwn={canOwn} data={access.data} />
     </div>

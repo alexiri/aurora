@@ -179,7 +179,7 @@ export function AgentPage() {
             <div className="flex min-w-0 flex-col md:flex-row md:items-center md:gap-x-3">
               <h1 className="min-w-0 truncate font-display text-base font-semibold leading-5 text-ink md:text-xl md:leading-7">{agent.name}</h1>
               {/* Each item keeps its words on one line; at 390 px the items wrap between themselves, never off the screen. */}
-              <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 whitespace-nowrap text-sm text-ink-2 md:shrink-0 md:flex-nowrap">
+              <span className="flex min-w-0 flex-wrap items-center gap-x-2 whitespace-nowrap text-sm text-ink-2 md:shrink-0 md:flex-nowrap">
                 <span className="hidden font-mono text-muted md:inline">@{agent.handle}</span>
                 {/* The kind and Default badges live in the rail's About part; a BYO agent has no rail. */}
                 {byo ? <Badge>{agent.kind}</Badge> : null}

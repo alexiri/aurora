@@ -1363,6 +1363,15 @@
       "user_id",
       "workspace_id"
     ],
+    "workspace_pending_access": [
+      "email_normalized",
+      "expires_at",
+      "id",
+      "invited_by",
+      "org_id",
+      "role",
+      "workspace_id"
+    ],
     "workspaces": [
       "byo_posture",
       "frozen_at",
@@ -2743,6 +2752,15 @@
       "role": "text",
       "user_id": "uuid",
       "workspace_id": "uuid"
+    },
+    "workspace_pending_access": {
+      "email_normalized": "text not null",
+      "expires_at": "timestamptz not null",
+      "id": "uuid not null",
+      "invited_by": "uuid null",
+      "org_id": "uuid not null",
+      "role": "text not null",
+      "workspace_id": "uuid not null"
     },
     "workspaces": {
       "byo_posture": "text null",

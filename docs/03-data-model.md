@@ -190,6 +190,18 @@ owner cannot be demoted or removed).
 | idp_source | text null | `idp:<provider>:<value>`; `null` exactly when `idp_role` is `null` |
 | base_role | text null CHECK in (`owner`,`approver`,`member`) | the manual role under a claim-raised one; `null` when the claim created the row |
 
+### `workspace_pending_access`
+(phase 5, P5-UX-5, D-325, SEC-128, C-919, C-920; migration `20261201000249_workspace_pending_access.sql`) Access a workspace owner gave to an e-mail address that is not yet an active member of the organization (`04 §Workspace access by e-mail`). Applied at a sign-in and deleted; it never makes anyone an organization member. The gateway role gets nothing on this table.
+| Column | Type | Notes |
+|---|---|---|
+| id | uuid pk | |
+| workspace_id | uuid not null FK→workspaces (cascade) | |
+| org_id | uuid not null FK→organizations (cascade) | the workspace's organization (denormalized for the sign-in lookup); index `(org_id, email_normalized)` |
+| email_normalized | text not null | trimmed and lower-cased like `invitations.email`; compared for equality only; unique `(workspace_id, email_normalized)` |
+| role | text not null CHECK in (`member`,`approver`) | a pending row never carries `owner` (SEC-128) |
+| invited_by | uuid FK→users (set null) | the owner who added it |
+| expires_at | timestamptz not null | `created_at + PENDING_ACCESS_TTL` (30 days); an index on it serves the sweeper |
+
 ### `groups`
 (phase 4, P4-GRP-1, D-130) Directory groups: flat, per org (`04 §Groups`). A table with no rows changes nothing about the access law.
 | Column | Type | Notes |
@@ -1648,19 +1660,7 @@ One row: the runtime rollup's watermark.
 
 `effective_access(user, workspace)` is one statement: the user's `org_members` row (active), the maximum of `org_members.role` and `groups.org_role` over the user's groups, the direct `workspace_access` row, and the maximum role over `group_workspace_access ⋈ group_members` for the workspace, returning the strongest role and the list of sources (`04 §Groups`). The gateway database role gains `SELECT` on `groups`, `group_members` and `group_workspace_access` (the speaker's group set is resolved at credential resolution, `06 §Credential authentication`); it never writes them. The `workspace_access` table, its CHECK and the `can_*` meaning are unchanged: a deployment without groups reads the same rows as before.
 
-#### `workspace_pending_access` (adding people by e-mail; phase 5, P5-UX-5, D-325)
-| Planned column | Type | Notes | Phase |
-|---|---|---|---|
-| id | uuid PK | | 5 (P5-UX-5) |
-| workspace_id | uuid FK → workspaces ON DELETE CASCADE | | 5 (P5-UX-5) |
-| org_id | uuid FK → organizations ON DELETE CASCADE | the workspace's org (denormalized for the sign-in lookup) | 5 (P5-UX-5) |
-| email_normalized | text not null | normalized like `invitations.email`; UNIQUE (workspace_id, email_normalized) | 5 (P5-UX-5) |
-| role | text not null | CHECK in (`member`, `approver`): a pending row never carries `owner` (SEC-128) | 5 (P5-UX-5) |
-| invited_by | uuid FK → users ON DELETE SET NULL | | 5 (P5-UX-5) |
-| created_at | timestamptz not null default now() | | 5 (P5-UX-5) |
-| expires_at | timestamptz not null | `created_at + PENDING_ACCESS_TTL` (30 days); an index on it serves the sweeper | 5 (P5-UX-5) |
-
-Index `(org_id, email_normalized)` serves the sign-in lookup. The gateway role gets nothing on this table.
+(Landed, P5-UX-5: `workspace_pending_access` is in §2 next to `workspace_access`, migration `20261201000249_workspace_pending_access.sql`.)
 C-923 (a personal workspace named after the person) adds no column and no setting: the name is derived when
 the workspace is created.
 
