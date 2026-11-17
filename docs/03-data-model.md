@@ -1285,7 +1285,7 @@ the agent's own generation; a share change bumps `agents.home_sync_generation`.
 | org_id, agent_id | uuid | pk part |
 | day | date | pk part (UTC) |
 | awake_seconds | bigint not null | rebuildable from intervals |
-| workspace_id | uuid not null | (phase 5, P5-USAGE-1, C-1002; migration `20261201000247`) index (workspace_id, day); the migration truncates the never-written table and the hourly rollup rebuilds it |
+| workspace_id | uuid not null | (phase 5, P5-USAGE-1, C-1002; migration `20261201000247`) indexes (workspace_id, day) and (day); the migration truncates the never-written table and the hourly rollup rebuilds it |
 
 ### `usage_daily` — *no FKs* (phase 5, P5-USAGE-1, D-359, C-1001; migration `20261201000247`)
 A ledger of tokens and turn time, added to at turn end and never decremented.
@@ -1297,7 +1297,7 @@ A ledger of tokens and turn time, added to at turn end and never decremented.
 | endpoint_id | uuid null | |
 | turns, turn_seconds | bigint not null default 0 | counted under the default model's key |
 | input_tokens, output_tokens, cache_read_tokens, cache_write_tokens | bigint not null default 0 | |
-| key | | `UNIQUE NULLS NOT DISTINCT (workspace_id, agent_id, day, provider, endpoint_id, model)`; index (workspace_id, day) |
+| key | | `UNIQUE NULLS NOT DISTINCT (workspace_id, agent_id, day, provider, endpoint_id, model)`; indexes (workspace_id, day), (org_id, day), (day) |
 
 ### `usage_rollup_state` (phase 5, P5-USAGE-1, C-1002; migration `20261201000247`)
 One row: the runtime rollup's watermark.

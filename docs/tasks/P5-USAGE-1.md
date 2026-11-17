@@ -8,9 +8,10 @@ counters. No cost (owner: "let's forget cost for now and just track tokens and t
 
 ## Linked requirements
 
-- D-359 (and D-304 for the trust rule, D-276(b) for "no money").
-- Contracts **C-1000** (route), **C-1001** (`usage_daily` ledger and its write rule), **C-1002**
-  (`runtime_daily.workspace_id`, the rollup job, `usage_rollup_state`). Read them in full in
+- D-359, D-360 (and D-304 for the trust rule, D-276(b) for "no money").
+- Contracts **C-1000** (workspace route), **C-1001** (`usage_daily` ledger and its write rule), **C-1002**
+  (`runtime_daily.workspace_id`, the rollup job, `usage_rollup_state`), **C-1003** (instance route
+  `GET /v1/admin/usage`, instance admins). Read them in full in
   `docs/API_CONTRACTS.md` §Phase 5 — P5-USAGE; they are normative and this brief does not repeat them.
 - Normative: `10 §Usage and metering`; `05` (route row, `§Background jobs` "Runtime daily rollup",
   the invisible-direct-conversation note near the top: `…/usage` is aggregates only); `03`
@@ -58,7 +59,12 @@ counters. No cost (owner: "let's forget cost for now and just track tokens and t
    specified, operation id `getWorkspaceUsage`, OpenAPI regenerated (`web/openapi.json`,
    `npm run gen:api` for `web/src/lib/api/schema.d.ts`). Workspace isolation: never read another
    workspace's rows, also for an `agent_id` from elsewhere.
-6. Docs: mark the "specified, not built" notes in `05` (route row, job row) and `10` as built;
+6. **Instance route** (C-1003): `GET /v1/admin/usage`, instance admins only (copy the guard of
+   `GET /v1/admin/audit`), the same range rules, `by_org`, the top `USAGE_TOP_MAX` (50, in
+   `aurora-core::limits`; remove its `doc-only` line) workspaces plus `other_workspaces`, `by_model`;
+   names null for deleted organizations and workspaces. Share the aggregation code with C-1000.
+   Operation id `getInstanceUsage`; in the OpenAPI document.
+7. Docs: mark the "specified, not built" notes in `05` (route row, job row) and `10` as built;
    the coordinator does PROGRESS and FEATURES.
 
 ## Constraints / file ownership
@@ -68,7 +74,7 @@ counters. No cost (owner: "let's forget cost for now and just track tokens and t
   registration; the job in `jobs.rs`; the usage branch of `domains/hosted/reports.rs`/`model.rs`
   only for scope item 3; `aurora-core` limits; `web/openapi.json`, `schema.d.ts`; the `05`/`10`
   sentences named above.
-- No web pages: a dashboard view is a separate follow-up (C-1003..C-1009 reserved).
+- No web pages: the views are P5-USAGE-2, which builds on this task's routes and generated types.
 - No cost anywhere, and never read `costUSD`/`total_cost_usd` (D-276(b), D-304).
 - The ledger only ever increments; no code path deletes from it (no FK, no cascade).
 
@@ -87,6 +93,9 @@ counters. No cost (owner: "let's forget cost for now and just track tokens and t
 4. Route: default range (30 days), `from_after_to` and `too_long` (422), malformed date (400),
    every day present with zeros, `agent_id` filter, deleted agent name `null`, another workspace's
    rows never appear, a non-member gets what `…/activity` gives, an API key works, `runtime_as_of`.
+   Instance route: a non-admin gets what `GET /v1/admin/audit` gives; with 51 active workspaces the
+   51st is in `other_workspaces` and the totals still add up; the `org_id` filter; a deleted
+   organization's name is `null`.
 5. `cargo fmt --check`, clippy `-D warnings`, `scripts/guards/run-all.sh`, the OpenAPI test and
    `gen:api` (web typecheck) green; `upgrade.sh` applies the migration on a database with turns.
 
