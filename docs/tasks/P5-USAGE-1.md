@@ -114,3 +114,15 @@ counters. No cost (owner: "let's forget cost for now and just track tokens and t
 
 Sonnet (`rust-developer`): a migration with a backfill, a change inside the turn-finish
 transaction and a new job; data integrity matters more than size.
+
+## Completion report (worker 33, 2026-11-17)
+
+Commits: ca60b91a (migration `20261201000247`, ledger write, reduce, rollup job + tests), 00048abb (three routes, limits, OpenAPI/`schema.d.ts`, docs 05/10), 71e31fb9 (the `usage_per_model_migration` test now stops before every later migration), 7c032e2f (permission matrix rows).
+
+- **Ledger**: `repo::usage::record_turn` (one `INSERT … SELECT … ON CONFLICT DO UPDATE` reading the finished turn row, conversation and agent) is called in `conversations::service::finish_turn` right after the fenced `turns::finish` succeeded (the only terminal path; `lifecycle::finish`, `fail_in` and the abort of a queued turn all go through it). The migration backfills with the same statement shape; `usage_ledger_migration::the_backfill_equals_what_the_live_rule_writes` truncates the ledger and replays `record_turn` over the same turns and compares.
+- **"Already reduced" (scope 3)**: decided differently from the brief's sketch: the streaming `usage` report is reduced by `model::usage_for_turn` when it is stored (`hosted/reports.rs`, `one_event`), so every stored `turns.usage` has passed the trust rule and no stamp test is needed at finish. A terminal usage replaces it as before. Pre-migration unreduced claims are backfilled as stored (P5-MODELS-2 merged days ago).
+- **Contract defect fixed**: `endpoint_id` is `text`, not `uuid` (endpoint ids are configured slugs, `03 agents.model_endpoint_id`); C-1000 and C-1001 and `03` say so now. The response field is `string|null`.
+- **Rollup**: `repo::usage::rollup_runtime(conn, at)` + `jobs::rollup_runtime_daily` (hourly singleton, first tick at start-up, database clock). Watermark and upserts in one transaction.
+- **Gate (batch)**: `cargo test -p aurora-core -p aurora-db` (79 + 8 + 43 it, incl. `migrated_schema_matches_03`) green; `cargo test -p aurora-api` full: 141 lib, 1418 it (one failure, `permission_matrix::coverage_every_openapi_route_is_listed`, fixed in 7c032e2f and re-run green), `managed_logs`, `ssh_logs`, `sec10_logs`, `db_spans`, `accounts_queries` green; workspace clippy `-D warnings`, fmt, guards (exit 0), `extract-schema --check`, OpenAPI drift (in the it-suite), `gen:api`, web typecheck, lint (0 errors, 5 old warnings), vitest 2279 tests, `pnpm build`; `bash scripts/e2e/upgrade.sh`: 36 passed, 0 failed. Playwright not run for this task (web changed only in the generated types).
+- **Fail-first**: the ledger, route and rollup tests cannot exist without the tables and routes; the streaming-claim test asserts `unverified_models` on the stored usage, which fails without the `reports.rs` change.
+- **Rule exceptions**: two `sed` one-liners in `API_CONTRACTS.md` (uuid → string) and one python replace folding the four repeated `CASE` expressions of the migration into `usage_has_breakdown()`; stated in the first commit.

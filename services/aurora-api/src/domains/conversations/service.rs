@@ -522,6 +522,9 @@ pub async fn finish_turn(
     else {
         return Ok(None);
     };
+    // (P5-USAGE-1, C-1001) The ledger grows in the transaction of the fenced transition; a replay returned
+    // above and writes nothing. The stored usage was reduced by the trust rule when it was stored.
+    aurora_db::repo::usage::record_turn(&mut *conn, turn_id).await?;
     let mut payload = json!({"turn_id": turn_id, "status": status});
     if let Some(code) = &row.error_code {
         payload["error_code"] = json!(code);

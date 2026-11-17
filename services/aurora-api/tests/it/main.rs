@@ -126,6 +126,8 @@ mod tools;
 mod trace_e2e;
 mod turn_trace_context;
 mod usage_by_model;
+mod usage_ledger;
+mod usage_routes;
 mod user_tokens;
 mod web_push;
 mod web_push_ssrf;

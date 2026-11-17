@@ -1241,6 +1241,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/admin/usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Usage of the whole instance: per day, organization, top workspaces and model (instance
+         *     administrators). No cost.
+         */
+        get: operations["getInstanceUsage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/admin/users": {
         parameters: {
             query?: never;
@@ -4430,6 +4450,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/orgs/{org}/usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Usage of an organization: per day, top workspaces and model (organization owners and admins). No
+         *     conversation, agent or person is visible through it. No cost.
+         */
+        get: operations["getOrgUsage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/orgs/{org}/workspace-overrides": {
         parameters: {
             query?: never;
@@ -5872,6 +5912,26 @@ export interface paths {
          *     froze it). Agents frozen on their own stay frozen.
          */
         post: operations["unfreezeWorkspace"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/workspaces/{ws}/usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Usage of a workspace: turns, turn time, awake time and tokens per day, agent and model (aggregates
+         *     only: invisible direct conversations are counted). No cost.
+         */
+        get: operations["getWorkspaceUsage"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -9002,6 +9062,22 @@ export interface components {
             key: string;
             section: string;
         };
+        /** @description `GET /v1/admin/usage` (C-1003). */
+        InstanceUsage: {
+            by_day: components["schemas"]["UsageDay"][];
+            by_model: components["schemas"]["UsageModel"][];
+            by_org: components["schemas"]["UsageOrg"][];
+            /** @description The top 50 by input + output tokens. */
+            by_workspace: components["schemas"]["UsageInstanceWorkspace"][];
+            /** Format: date */
+            from: string;
+            other_workspaces?: components["schemas"]["UsageCounters"] | null;
+            /** Format: date-time */
+            runtime_as_of?: string | null;
+            /** Format: date */
+            to: string;
+            totals: components["schemas"]["UsageCounters"];
+        };
         /** @enum {string} */
         IntegrationStatus: "validating" | "active" | "needs_attention" | "disabled";
         /** @description An invitation. The token is never part of any response. */
@@ -9823,6 +9899,21 @@ export interface components {
             id: string;
             name: string;
             slug: string;
+        };
+        /** @description `GET /v1/orgs/{org}/usage` (C-1006). */
+        OrgUsage: {
+            by_day: components["schemas"]["UsageDay"][];
+            by_model: components["schemas"]["UsageModel"][];
+            /** @description The top 50 by input + output tokens. */
+            by_workspace: components["schemas"]["UsageOrgWorkspace"][];
+            /** Format: date */
+            from: string;
+            other_workspaces?: components["schemas"]["UsageCounters"] | null;
+            /** Format: date-time */
+            runtime_as_of?: string | null;
+            /** Format: date */
+            to: string;
+            totals: components["schemas"]["UsageCounters"];
         };
         OriginRule: {
             allowed_organization_ids: string[];
@@ -13713,6 +13804,83 @@ export interface components {
              */
             unverified_models?: boolean;
         };
+        UsageAgent: components["schemas"]["UsageCounters"] & {
+            /** Format: uuid */
+            agent_id: string;
+            /** @description `null` once the agent is deleted (the ledger keeps its id). */
+            agent_name?: string | null;
+        };
+        /** @description The seven counters of C-1000 (`UsageCounters`). */
+        UsageCounters: {
+            /**
+             * Format: int64
+             * @description Seconds the agent's sandbox was awake (from the runtime rollup).
+             */
+            awake_seconds: number;
+            /** Format: int64 */
+            cache_read_tokens: number;
+            /** Format: int64 */
+            cache_write_tokens: number;
+            /** Format: int64 */
+            input_tokens: number;
+            /** Format: int64 */
+            output_tokens: number;
+            /**
+             * Format: int64
+             * @description Seconds turns ran (start to end, floored per turn).
+             */
+            turn_seconds: number;
+            /** Format: int64 */
+            turns: number;
+        };
+        UsageDay: components["schemas"]["UsageCounters"] & {
+            /** Format: date */
+            day: string;
+        };
+        /** @description A workspace row of the instance view. */
+        UsageInstanceWorkspace: components["schemas"]["UsageCounters"] & {
+            /** Format: uuid */
+            org_id: string;
+            org_name?: string | null;
+            /** Format: uuid */
+            workspace_id: string;
+            /** @description `null` once the workspace is deleted. */
+            workspace_name?: string | null;
+        };
+        /**
+         * @description Tokens and turns per model; no awake time. `turns` and `turn_seconds` count under the turn's default
+         *     model, so a model used only by subagents shows tokens and zero turns.
+         */
+        UsageModel: {
+            /** Format: int64 */
+            cache_read_tokens: number;
+            /** Format: int64 */
+            cache_write_tokens: number;
+            endpoint_id?: string | null;
+            /** Format: int64 */
+            input_tokens: number;
+            model?: string | null;
+            /** Format: int64 */
+            output_tokens: number;
+            provider?: string | null;
+            /** Format: int64 */
+            turn_seconds: number;
+            /** Format: int64 */
+            turns: number;
+        };
+        UsageOrg: components["schemas"]["UsageCounters"] & {
+            /** Format: uuid */
+            org_id: string;
+            /** @description `null` once the organization is deleted. */
+            org_name?: string | null;
+        };
+        /** @description A workspace row of the organization view. */
+        UsageOrgWorkspace: components["schemas"]["UsageCounters"] & {
+            /** Format: uuid */
+            workspace_id: string;
+            /** @description `null` once the workspace is deleted. */
+            workspace_name?: string | null;
+        };
         User: {
             /** Format: date-time */
             created_at: string;
@@ -13936,6 +14104,22 @@ export interface components {
             workspace_id: string;
             workspace_name: string;
             workspace_slug: string;
+        };
+        /** @description `GET /v1/workspaces/{ws}/usage` (C-1000). */
+        WorkspaceUsage: {
+            by_agent: components["schemas"]["UsageAgent"][];
+            by_day: components["schemas"]["UsageDay"][];
+            by_model: components["schemas"]["UsageModel"][];
+            /** Format: date */
+            from: string;
+            /**
+             * Format: date-time
+             * @description The last runtime rollup; awake time after it is not counted yet.
+             */
+            runtime_as_of?: string | null;
+            /** Format: date */
+            to: string;
+            totals: components["schemas"]["UsageCounters"];
         };
     };
     responses: never;
@@ -19048,6 +19232,74 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    getInstanceUsage: {
+        parameters: {
+            query?: {
+                /** @description First UTC day, `YYYY-MM-DD`, inclusive. Default: `to` − 29 days. */
+                from?: string;
+                /** @description Last UTC day, `YYYY-MM-DD`, inclusive. Default: today (UTC). */
+                to?: string;
+                /** @description Only this organization (any id, also a deleted organization's). */
+                org_id?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InstanceUsage"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -33791,6 +34043,88 @@ export interface operations {
             };
         };
     };
+    getOrgUsage: {
+        parameters: {
+            query?: {
+                /** @description First UTC day, `YYYY-MM-DD`, inclusive. Default: `to` − 29 days. */
+                from?: string;
+                /** @description Last UTC day, `YYYY-MM-DD`, inclusive. Default: today (UTC). */
+                to?: string;
+                /**
+                 * @description Only this workspace (any id, also a deleted workspace's; another organization's workspace has no
+                 *     rows here).
+                 */
+                workspace_id?: string;
+            };
+            header?: never;
+            path: {
+                /** @description Organization id */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrgUsage"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     listWorkspaceOverrides: {
         parameters: {
             query?: {
@@ -40369,6 +40703,77 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    getWorkspaceUsage: {
+        parameters: {
+            query?: {
+                /** @description First UTC day, `YYYY-MM-DD`, inclusive. Default: `to` − 29 days. */
+                from?: string;
+                /** @description Last UTC day, `YYYY-MM-DD`, inclusive. Default: today (UTC). */
+                to?: string;
+                /** @description Only this agent (any id, also a deleted agent's). */
+                agent_id?: string;
+            };
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                ws: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceUsage"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -506,6 +506,12 @@ pub const MODEL_ID_MAX: usize = 200;
 pub const MODEL_INFO_MAX: usize = 64;
 /// (P5-MODELS-2, D-304, C-879) `by_model` entries per turn; the rest are folded into the default's entry.
 pub const USAGE_BY_MODEL_MAX: usize = 16;
+/// (P5-USAGE-1, C-1000) Days a usage query may span (from..=to inclusive); a longer range is 422
+/// `usage_range_invalid` (`too_long`).
+pub const USAGE_RANGE_MAX_DAYS: i64 = 366;
+/// (P5-USAGE-1, C-1003, C-1006) Workspaces listed individually by the instance and organization usage
+/// routes; the rest are summed in `other_workspaces`.
+pub const USAGE_TOP_MAX: usize = 50;
 /// (C-900) concurrent content transfers per person per API replica (429 `too_many_transfers`).
 pub const FILE_TRANSFERS_PER_USER: u32 = 4;
 /// (C-900) a transfer with no progress this long is aborted.
@@ -704,6 +710,8 @@ mod tests {
         assert_eq!(MODEL_ID_MAX, 200);
         assert_eq!(MODEL_INFO_MAX, 64);
         assert_eq!(USAGE_BY_MODEL_MAX, 16);
+        assert_eq!(USAGE_RANGE_MAX_DAYS, 366);
+        assert_eq!(USAGE_TOP_MAX, 50);
         assert_eq!(FILE_TRANSFERS_PER_USER, 4);
         assert_eq!(FILES_TRANSFER_IDLE, Duration::from_secs(60));
         assert_eq!(FILES_AWAKE_GRACE, Duration::from_secs(120));

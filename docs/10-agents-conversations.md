@@ -956,7 +956,7 @@ An **eval** measures a hosted agent's answers to fixed questions with known answ
 
 - **Runtime intervals**: one row per boot (opened by the start report, closed by
 whatever ends it, plus a reconcile sweep), control-plane timestamps only, no
-foreign keys. `runtime_daily` is rebuilt hourly (phase 5, D-138; **specified, not built** — the table exists, nothing writes it, and `GET /v1/workspaces/{ws}/usage` has no route).
+foreign keys. `runtime_daily` is rebuilt hourly (phase 5, D-138; **built in P5-USAGE-1**, C-1002) and `usage_daily` is the token and turn-time ledger (C-1001); `GET /v1/workspaces/{ws}/usage` (C-1000), `GET /v1/admin/usage` (C-1003) and `GET /v1/orgs/{org}/usage` (C-1006) read them.
 - **Token usage** per turn (`turns.usage`) as reported by the harness;
 aggregated in `GET /v1/workspaces/{ws}/usage`. (phase 5 (D-138, moved from phase 4), P4-LLM) The API stamps
 `provider`, `endpoint_id` and `model` into `turns.usage` from the turn's `ModelChoice`

@@ -27,7 +27,8 @@ async fn insert(pool: &PgPool, id: Uuid, with_model: bool) {
 async fn the_migration_applies_on_a_partitioned_table_that_already_has_rows(pool: PgPool) {
     let before: Vec<_> = aurora_db::MIGRATOR
         .iter()
-        .filter(|m| m.version != VERSION)
+        // every migration before it: later ones (the usage ledger reads `turns.model_basis`) need it
+        .filter(|m| m.version < VERSION)
         .cloned()
         .collect();
     assert!(

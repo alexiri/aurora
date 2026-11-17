@@ -460,7 +460,11 @@ async fn one_event(
         }
         "usage" => {
             if let Some(u) = d.get("usage").filter(|u| u.is_object()) {
-                hosted::set_usage(tx, turn, u).await?;
+                // (P5-USAGE-1, C-1001, D-359(d)) Reduced by the trust rule when it is stored, so a turn
+                // that ends without a terminal usage (abort, dead dispatch) still holds a value the
+                // ledger may count.
+                let reduced = super::model::usage_for_turn(s, tx, turn, u).await?;
+                hosted::set_usage(tx, turn, &reduced).await?;
             }
         }
         _ => {} // unknown kinds are ignored
