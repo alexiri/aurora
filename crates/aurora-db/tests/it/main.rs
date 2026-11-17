@@ -7,3 +7,4 @@ mod gateway_grants;
 mod migration_order;
 mod schema_6_11;
 mod schema_matches_spec;
+mod usage_per_model_migration;

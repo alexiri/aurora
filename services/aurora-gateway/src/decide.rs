@@ -103,6 +103,8 @@ struct Ctx {
     injected: i16,
     app_id: Option<String>,
     tool_id: Option<String>,
+    /// (P5-MODELS-2, C-880) the model an LLM request with an injected key asked for (audit only).
+    llm_model: Option<String>,
     connection_id: Option<Uuid>,
     /// (P4-CNT, D-119) the rate-limit count of this request came from the local fallback because
     /// the shared counter backend was unreachable: the row carries `counter_fallback`.
@@ -143,6 +145,7 @@ impl Ctx {
             bytes_down: 0,
             context_label: i.context_label.clone(),
             speaker_user_id: i.speaker_user_id,
+            llm_model: self.llm_model.clone(),
         }
     }
 }
@@ -943,6 +946,7 @@ impl PolicyHandler {
             injected: 0,
             app_id: None,
             tool_id: None,
+            llm_model: None,
             connection_id: None,
             counter_fallback: false,
         };
@@ -1163,6 +1167,14 @@ impl PolicyHandler {
             )
         });
         ctx.tool_id = tool.map(|t| t.id.clone());
+        // (P5-MODELS-2, C-880) The model the request asks for, read the way the allow-list check reads it
+        // (same body prefix); logged for every request with an injected key on a governed LLM endpoint.
+        if let (Some(gov), Some(g)) = (&self.governance, &rv.governance)
+            && rv.is_llm_host
+        {
+            ctx.llm_model =
+                gov.llm_model(g, &host_port, &method, &path, &body_prefix, truncated, wsec);
+        }
         // 6a. LLM governance (cached effective governance; nothing decrypted).
         if let (Some(gov), Some(g)) = (&self.governance, &rv.governance)
             && rv.is_llm_host
@@ -1958,6 +1970,7 @@ impl RequestHandler for PolicyHandler {
             injected: 0,
             app_id: None,
             tool_id: None,
+            llm_model: None,
             connection_id: None,
             counter_fallback: false,
         };
@@ -1980,6 +1993,7 @@ impl RequestHandler for PolicyHandler {
             injected: 0,
             app_id: None,
             tool_id: None,
+            llm_model: None,
             connection_id: None,
             counter_fallback: false,
         };
@@ -2145,6 +2159,7 @@ impl RequestHandler for PolicyHandler {
             injected: 0,
             app_id: None,
             tool_id: None,
+            llm_model: None,
             connection_id: None,
             counter_fallback: false,
         };
@@ -2333,6 +2348,7 @@ impl DbSession {
             injected: 0,
             app_id: Some(self.conn.app_id.clone()),
             tool_id: None,
+            llm_model: None,
             connection_id: Some(self.conn.id),
             counter_fallback: false,
         };

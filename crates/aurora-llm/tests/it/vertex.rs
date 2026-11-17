@@ -28,6 +28,8 @@ fn endpoint() -> Endpoint {
         region: None,
         project_id: Some("inference-proj".into()),
         location: Some("us-east5".into()),
+        model_roles: Default::default(),
+        model_info: Default::default(),
     }
 }
 

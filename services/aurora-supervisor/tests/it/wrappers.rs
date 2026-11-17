@@ -140,6 +140,9 @@ fn choice(model: &str) -> ModelChoice {
         model: model.into(),
         effort: String::new(),
         client_env: vec![],
+        roles: None,
+        subagent_role: None,
+        model_meta: None,
     }
 }
 
@@ -169,7 +172,31 @@ fn golden(claude: bool) -> String {
         proxy_url: "http://127.0.0.1:3128".into(),
         ca_path: "/run/aurora/ca.pem".into(),
     };
-    render(&cfg, &models(claude, "m'1 \"q\" $(x) `y` \\z"))
+    render(&cfg, &models(claude, GOLDEN_MODEL))
+}
+
+/// (SEC-122) The most punctuation a model id may carry (`MODEL_ID_PATTERN`); shell metacharacters never reach
+/// the file, because the supervisor refuses such an id before writing it (see the next test).
+const GOLDEN_MODEL: &str = "m.1:q/r@s-t_u";
+
+/// A model id with shell metacharacters is refused: nothing of it is written, and no model is set for the
+/// harness (`harness.env` keeps only the placeholder key).
+#[test]
+fn a_model_id_with_shell_metacharacters_never_reaches_harness_env() {
+    let cfg = HarnessEnvConfig {
+        path: PathBuf::from("/run/aurora/harness.env"),
+        enabled: vec!["claude-code".into(), "codex".into()],
+        proxy_url: "http://127.0.0.1:3128".into(),
+        ca_path: "/run/aurora/ca.pem".into(),
+    };
+    for bad in ["m'1 \"q\" $(x) `y` \\z", "m$(id)", "a b", "x=y", "m\n1"] {
+        let file = render(&cfg, &models(true, bad));
+        assert!(!file.contains("ANTHROPIC_MODEL"), "{bad:?}: {file}");
+        assert!(
+            !file.contains("$(") && !file.contains("`y`"),
+            "{bad:?}: {file}"
+        );
+    }
 }
 
 fn names(file: &str) -> Vec<String> {
@@ -237,16 +264,17 @@ fn a_golden_harness_env_exports_what_sourcing_it_did() {
             compared += 1;
         }
         assert!(compared >= 8, "{which}: only {compared} variables compared");
-        // The model id with every shell metacharacter survived as data.
+        // The model id, with the most punctuation an id may carry, survived as data.
         if which == "claude" {
             assert_eq!(
                 seen.get("ANTHROPIC_MODEL").map(String::as_str),
-                Some("m'1 \"q\" $(x) `y` \\z")
+                Some(GOLDEN_MODEL)
             );
         } else {
             let args = rig.seen_args().unwrap();
             assert!(
-                args.iter().any(|a| a == "model=\"m'1 \"q\" $(x) `y` \\z\""),
+                args.iter()
+                    .any(|a| a == &format!("model=\"{GOLDEN_MODEL}\"")),
                 "{args:?}"
             );
         }

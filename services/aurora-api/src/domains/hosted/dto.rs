@@ -11,6 +11,8 @@ pub struct HarnessView {
     pub display_name: String,
     /// Declared dialects, in preference order.
     pub dialects: Vec<String>,
+    /// (P5-MODELS-1, C-882) The model roles the adapter maps (`large`, `medium`, `small`); empty = none.
+    pub model_roles: Vec<String>,
     /// At least one live runner replica lists the harness (its image contains the runtime).
     pub available: bool,
 }
@@ -135,6 +137,40 @@ pub struct DefaultModel {
     pub model_id: String,
     /// `override` | `endpoint_default` | `provider_default` | `allow_list` | `static_list`.
     pub source: String,
+    /// (P5-MODELS-1, C-878) The role resolution of this selection, from the dispatcher's function.
+    pub roles: RolesView,
+    /// Agent roles dropped for the next turn (`large` | `medium` | `small`).
+    pub roles_dropped: Vec<String>,
+    /// The agent's subagent default: `inherit` or a role.
+    pub subagent_model: String,
+    /// `subagent_role_unset` when the named role resolves to nothing on a non-`anthropic` endpoint.
+    pub subagent_warning: Option<String>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct RolesView {
+    pub large: RoleView,
+    pub medium: RoleView,
+    pub small: RoleView,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct RoleView {
+    pub model_id: Option<String>,
+    /// `agent` | `endpoint` | `none`.
+    pub source: String,
+    /// `role_unset` | `role_not_allowed`; null when none.
+    pub warning: Option<String>,
+}
+
+impl From<&super::model::RoleView> for RoleView {
+    fn from(v: &super::model::RoleView) -> Self {
+        Self {
+            model_id: v.model_id.clone(),
+            source: v.source.to_owned(),
+            warning: v.warning.map(str::to_owned),
+        }
+    }
 }
 
 #[derive(Serialize, ToSchema)]

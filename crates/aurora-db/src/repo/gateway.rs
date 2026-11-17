@@ -443,6 +443,8 @@ pub struct RequestLogRow {
     pub context_label: Option<String>,
     /// (RFE-005) the person whose turn made the request, when attributed.
     pub speaker_user_id: Option<Uuid>,
+    /// (P5-MODELS-2, C-880) the model an LLM request with an injected key asked for; audit only.
+    pub llm_model: Option<String>,
 }
 
 /// Multi-row insert of a batch (callers keep batches <= 1000 rows).
@@ -457,7 +459,7 @@ pub async fn insert_request_log(
         "INSERT INTO request_log (id, ts, org_id, workspace_id, agent_id, conversation_id, turn_id, \
          credential_kind, lane, method, host, path, app_id, tool_id, connection_id, secret_id, \
          decision, rule_logical_id, rule_name, upstream_status, status, error_code, injected, \
-         latency_ms, bytes_up, bytes_down, context_label, speaker_user_id) ",
+         latency_ms, bytes_up, bytes_down, context_label, speaker_user_id, llm_model) ",
     );
     qb.push_values(rows, |mut b, r| {
         b.push_bind(r.id)
@@ -487,7 +489,8 @@ pub async fn insert_request_log(
             .push_bind(r.bytes_up)
             .push_bind(r.bytes_down)
             .push_bind(&r.context_label)
-            .push_bind(r.speaker_user_id);
+            .push_bind(r.speaker_user_id)
+            .push_bind(&r.llm_model);
     });
     qb.build().execute(pool).await?;
     Ok(())

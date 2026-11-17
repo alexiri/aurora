@@ -12,6 +12,30 @@ pub struct Usage {
     pub output_tokens: i64,
     pub cache_read_tokens: Option<i64>,
     pub cost_usd: Option<f64>,
+    /// (P5-MODELS-2, C-879)
+    pub cache_write_tokens: Option<i64>,
+    /// The provider, endpoint and default model, stamped from the turn's model choice.
+    pub provider: Option<String>,
+    pub endpoint_id: Option<String>,
+    pub model: Option<String>,
+    /// Tokens per model, subagents included; the totals above are their sum. Absent on turns recorded
+    /// before per-model usage.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub by_model: Option<Vec<ModelUsage>>,
+    /// Set when the harness reported models outside what the turn could have used: those tokens were
+    /// folded into the default model's entry.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub unverified_models: bool,
+}
+
+/// One model's share of a turn's usage (C-879).
+#[derive(Serialize, ToSchema)]
+pub struct ModelUsage {
+    pub model: String,
+    pub input_tokens: i64,
+    pub output_tokens: i64,
+    pub cache_read_tokens: i64,
+    pub cache_write_tokens: i64,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -179,11 +203,39 @@ impl From<TurnRow> for Turn {
         let usage = t.usage.as_ref().and_then(|u| {
             let o = u.as_object()?;
             let int = |k: &str| o.get(k).and_then(|v| v.as_i64());
+            let text = |k: &str| o.get(k).and_then(|v| v.as_str()).map(str::to_owned);
             Some(Usage {
                 input_tokens: int("input_tokens").unwrap_or(0),
                 output_tokens: int("output_tokens").unwrap_or(0),
                 cache_read_tokens: int("cache_read_tokens"),
                 cost_usd: o.get("cost_usd").and_then(|v| v.as_f64()),
+                cache_write_tokens: int("cache_write_tokens"),
+                provider: text("provider"),
+                endpoint_id: text("endpoint_id"),
+                model: text("model"),
+                by_model: o.get("by_model").and_then(|v| v.as_array()).map(|a| {
+                    a.iter()
+                        .filter_map(|e| {
+                            Some(ModelUsage {
+                                model: e.get("model")?.as_str()?.to_owned(),
+                                input_tokens: e.get("input_tokens")?.as_i64()?,
+                                output_tokens: e.get("output_tokens")?.as_i64()?,
+                                cache_read_tokens: e
+                                    .get("cache_read_tokens")
+                                    .and_then(|v| v.as_i64())
+                                    .unwrap_or(0),
+                                cache_write_tokens: e
+                                    .get("cache_write_tokens")
+                                    .and_then(|v| v.as_i64())
+                                    .unwrap_or(0),
+                            })
+                        })
+                        .collect()
+                }),
+                unverified_models: o
+                    .get("unverified_models")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false),
             })
         });
         Turn {

@@ -330,13 +330,44 @@ impl Governance {
         Ok(())
     }
 
-    /// Whether step 6a needs the request body prefix for this winner.
+    /// Whether step 6a needs the request body prefix for this winner: any request that will carry an injected
+    /// key to a permitted, governed LLM endpoint (the model allow-list check, and (P5-MODELS-2, C-880) the
+    /// request log's `llm_model`).
     pub fn needs_body(gov: &EffectiveGovernance, host: &str, winner: Option<&SecretCand>) -> bool {
         winner.is_some_and(|c| matches!(c.injection, Injection::Llm(_)))
             && gov
                 .endpoint_for_host(host)
                 .and_then(|id| gov.endpoints.get(id))
-                .is_some_and(|e| e.permitted && !e.allowed_models.is_empty())
+                .is_some_and(|e| e.permitted)
+    }
+
+    /// (P5-MODELS-2, D-304, C-880) The model id the request asks for, for the request log: `Some(id)` for a
+    /// request that carries an injected LLM key to a governed endpoint, whether or not an allow-list applies;
+    /// `None` when there is no such key, or the provider cannot tell (`NoModel`/`Unknown`). Never a refusal,
+    /// and never a response read (`08`).
+    #[allow(clippy::too_many_arguments)]
+    pub fn llm_model(
+        &self,
+        gov: &EffectiveGovernance,
+        host: &str,
+        method: &Method,
+        path: &str,
+        body: &[u8],
+        truncated: bool,
+        winner: Option<&SecretCand>,
+    ) -> Option<String> {
+        winner.filter(|c| matches!(c.injection, Injection::Llm(_)))?;
+        let ep_id = gov.endpoint_for_host(host)?;
+        if !gov.endpoints.get(ep_id).is_some_and(|e| e.permitted) {
+            return None;
+        }
+        let registry = self.registry.load_full();
+        let ep = registry.endpoint(ep_id)?;
+        let provider = registry.provider_for(ep)?;
+        match provider.model_from_request(ep, method, path, body, truncated) {
+            ModelRef::Model(m) => Some(m),
+            ModelRef::NoModel | ModelRef::Unknown => None,
+        }
     }
 
     /// Open lane: nothing can be injected, so governed LLM hosts are refused when the

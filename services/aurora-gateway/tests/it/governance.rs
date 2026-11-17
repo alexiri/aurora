@@ -1844,6 +1844,97 @@ async fn azure_entra_mint_failures_answer_502_and_forward_nothing() {
     }
 }
 
+/// (P5-MODELS-2, D-304, C-880) The `llm_model` of the request-log row written for the next request: waits for
+/// the row (a deadline, no sleeping for its own sake).
+async fn next_llm_model(env: &Env, before: usize) -> (usize, Option<String>) {
+    for _ in 0..200 {
+        env.log.flush().await;
+        {
+            let rows = env.captured.0.lock().unwrap();
+            if rows.len() > before {
+                return (rows.len(), rows.last().unwrap().llm_model.clone());
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    panic!("no request-log row was written");
+}
+
+fn logged(env: &Env) -> usize {
+    env.captured.0.lock().unwrap().len()
+}
+
+/// The request log records the model each LLM request asked for, with and without an allow-list; a request whose
+/// model cannot be told is logged with null and is not refused when no allow-list applies.
+#[tokio::test]
+async fn request_log_records_the_requested_llm_model_with_and_without_an_allow_list() {
+    // No allow-list: nothing is refused, the model is still recorded.
+    let env = start(Opts::default()).await;
+    let r = msg(&env, "", &json!({"model": "claude-x", "messages": []})).await;
+    assert_eq!(r.status, 200, "{}", r.body);
+    let (n, m) = next_llm_model(&env, 0).await;
+    assert_eq!(m.as_deref(), Some("claude-x"));
+    // A body without a model, an unparsable one and a truncated one: null, and no refusal.
+    for body in [b"{}".to_vec(), b"{not json".to_vec()] {
+        let before = logged(&env);
+        let r = request(&env, env.llm, "POST", "/v1/messages", "", &body).await;
+        assert_eq!(r.status, 200, "{}", r.body);
+        assert_eq!(next_llm_model(&env, before).await.1, None);
+    }
+    let before = logged(&env);
+    let big = format!(
+        "{{\"pad\":\"{}\",\"model\":\"claude-a\"}}",
+        "a".repeat(300 * 1024)
+    );
+    let r = request(&env, env.llm, "POST", "/v1/messages", "", big.as_bytes()).await;
+    assert_eq!(r.status, 200, "{}", r.body);
+    assert_eq!(
+        next_llm_model(&env, before).await.1,
+        None,
+        "truncated: unknown"
+    );
+    assert!(n >= 1);
+
+    // With an allow-list: the allowed model is recorded, and so is the refused one (audit).
+    let env = start(Opts {
+        doc: json!({"llm": {"endpoints": {"anthropic": {"allowed": true, "allowed_models": ["claude-a", "claude-b"]}}}}),
+        ..Opts::default()
+    })
+    .await;
+    assert_eq!(
+        msg(&env, "", &json!({"model": "claude-b"})).await.status,
+        200
+    );
+    let (n, m) = next_llm_model(&env, 0).await;
+    assert_eq!(m.as_deref(), Some("claude-b"));
+    let r = msg(&env, "", &json!({"model": "claude-c"})).await;
+    assert_eq!(r.status, 403);
+    assert_eq!(next_llm_model(&env, n).await.1.as_deref(), Some("claude-c"));
+}
+
+/// The model of a Vertex request is in its path.
+#[tokio::test]
+async fn request_log_records_the_llm_model_of_a_vertex_path() {
+    for models in [vec!["claude-x"], vec![]] {
+        let env = vertex_env(&models).await;
+        let r = request(
+            &env,
+            env.llm,
+            "POST",
+            &format!("{VERTEX_PATH}:rawPredict"),
+            "",
+            b"{}",
+        )
+        .await;
+        assert_eq!(r.status, 200, "{models:?}: {}", r.body);
+        assert_eq!(
+            next_llm_model(&env, 0).await.1.as_deref(),
+            Some("claude-x"),
+            "allow-list {models:?}"
+        );
+    }
+}
+
 // (P4-LLM-4) Bedrock signing tests share this file's harness.
 #[path = "llm_bedrock.rs"]
 mod llm_bedrock;

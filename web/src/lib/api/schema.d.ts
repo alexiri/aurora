@@ -5645,11 +5645,17 @@ export interface components {
             model_endpoint_id?: string | null;
             model_id?: string | null;
             model_provider?: string | null;
+            model_roles?: components["schemas"]["ModelRoles"] | null;
             name: string;
             /** Format: uuid */
             org_id: string;
             /** @description `ask` | `allow` | `off`. */
             proactive_messaging: string;
+            /**
+             * @description (P5-MODELS-1, C-876) `inherit` | `large` | `medium` | `small`: the model of subagents whose
+             *     definition names none.
+             */
+            subagent_model: string;
             /** Format: date-time */
             updated_at: string;
             /** Format: uuid */
@@ -7027,8 +7033,16 @@ export interface components {
             endpoint_id: string;
             model_id: string;
             provider: string;
+            /** @description (P5-MODELS-1, C-878) The role resolution of this selection, from the dispatcher's function. */
+            roles: components["schemas"]["RolesView"];
+            /** @description Agent roles dropped for the next turn (`large` | `medium` | `small`). */
+            roles_dropped: string[];
             /** @description `override` | `endpoint_default` | `provider_default` | `allow_list` | `static_list`. */
             source: string;
+            /** @description The agent's subagent default: `inherit` or a role. */
+            subagent_model: string;
+            /** @description `subagent_role_unset` when the named role resolves to nothing on a non-`anthropic` endpoint. */
+            subagent_warning?: string | null;
         };
         /** @enum {string} */
         DefaultOrgRole: "member" | "admin";
@@ -7548,6 +7562,8 @@ export interface components {
             display_name: string;
             /** @description `claude-code` | `codex` (| `fake` when enabled). */
             id: string;
+            /** @description (P5-MODELS-1, C-882) The model roles the adapter maps (`large`, `medium`, `small`); empty = none. */
+            model_roles: string[];
         };
         HookAccepted: {
             /** Format: uuid */
@@ -8303,6 +8319,28 @@ export interface components {
             /** @description An agent model override exists but is not usable (the next turn drops it with a notice). */
             override_dropped: boolean;
         };
+        /**
+         * @description (P5-MODELS-1, C-876) The agent's role models; `endpoint_id` is the endpoint they were chosen for.
+         *     A role that is null or absent is unset.
+         */
+        ModelRoles: {
+            endpoint_id: string;
+            large?: string | null;
+            medium?: string | null;
+            small?: string | null;
+        };
+        /** @description One model's share of a turn's usage (C-879). */
+        ModelUsage: {
+            /** Format: int64 */
+            cache_read_tokens: number;
+            /** Format: int64 */
+            cache_write_tokens: number;
+            /** Format: int64 */
+            input_tokens: number;
+            model: string;
+            /** Format: int64 */
+            output_tokens: number;
+        };
         Models: {
             items: components["schemas"]["ModelItem"][];
         };
@@ -8820,11 +8858,17 @@ export interface components {
                 model_endpoint_id?: string | null;
                 model_id?: string | null;
                 model_provider?: string | null;
+                model_roles?: components["schemas"]["ModelRoles"] | null;
                 name: string;
                 /** Format: uuid */
                 org_id: string;
                 /** @description `ask` | `allow` | `off`. */
                 proactive_messaging: string;
+                /**
+                 * @description (P5-MODELS-1, C-876) `inherit` | `large` | `medium` | `small`: the model of subagents whose
+                 *     definition names none.
+                 */
+                subagent_model: string;
                 /** Format: date-time */
                 updated_at: string;
                 /** Format: uuid */
@@ -9457,6 +9501,8 @@ export interface components {
                 lane: string;
                 /** Format: int32 */
                 latency_ms: number;
+                /** @description (phase 5, P5-MODELS-2, C-880) The model an LLM request asked for, when the gateway could read it. */
+                llm_model?: string | null;
                 method: string;
                 path: string;
                 /** Format: uuid */
@@ -9760,10 +9806,13 @@ export interface components {
             harness?: string | null;
             model_endpoint_id?: string | null;
             model_id?: string | null;
+            model_roles?: components["schemas"]["ModelRoles"] | null;
             name?: string | null;
             proactive_messaging?: string | null;
             /** @description Instance admins only. */
             resource_overrides?: Record<string, never> | null;
+            /** @description (P5-MODELS-1, C-876) `inherit` | `large` | `medium` | `small`. */
+            subagent_model?: string | null;
         };
         /** @description The host is immutable: register a new instance instead. */
         PatchAppInstanceRequest: {
@@ -10718,6 +10767,8 @@ export interface components {
             lane: string;
             /** Format: int32 */
             latency_ms: number;
+            /** @description (phase 5, P5-MODELS-2, C-880) The model an LLM request asked for, when the gateway could read it. */
+            llm_model?: string | null;
             method: string;
             path: string;
             /** Format: uuid */
@@ -10797,6 +10848,18 @@ export interface components {
         RevokedResponse: {
             /** Format: int64 */
             revoked: number;
+        };
+        RoleView: {
+            model_id?: string | null;
+            /** @description `agent` | `endpoint` | `none`. */
+            source: string;
+            /** @description `role_unset` | `role_not_allowed`; null when none. */
+            warning?: string | null;
+        };
+        RolesView: {
+            large: components["schemas"]["RoleView"];
+            medium: components["schemas"]["RoleView"];
+            small: components["schemas"]["RoleView"];
         };
         RollbackRequest: {
             /**
@@ -12163,14 +12226,33 @@ export interface components {
             package: string;
         };
         Usage: {
+            /**
+             * @description Tokens per model, subagents included; the totals above are their sum. Absent on turns recorded
+             *     before per-model usage.
+             */
+            by_model?: components["schemas"]["ModelUsage"][] | null;
             /** Format: int64 */
             cache_read_tokens?: number | null;
+            /**
+             * Format: int64
+             * @description (P5-MODELS-2, C-879)
+             */
+            cache_write_tokens?: number | null;
             /** Format: double */
             cost_usd?: number | null;
+            endpoint_id?: string | null;
             /** Format: int64 */
             input_tokens: number;
+            model?: string | null;
             /** Format: int64 */
             output_tokens: number;
+            /** @description The provider, endpoint and default model, stamped from the turn's model choice. */
+            provider?: string | null;
+            /**
+             * @description Set when the harness reported models outside what the turn could have used: those tokens were
+             *     folded into the default model's entry.
+             */
+            unverified_models?: boolean;
         };
         User: {
             /** Format: date-time */

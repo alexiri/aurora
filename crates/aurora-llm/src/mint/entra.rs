@@ -241,6 +241,8 @@ mod tests {
             region: None,
             project_id: None,
             location: None,
+            model_roles: Default::default(),
+            model_info: Default::default(),
         }
     }
 

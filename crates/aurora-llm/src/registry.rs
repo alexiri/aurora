@@ -150,6 +150,8 @@ impl ProviderRegistry {
                 region: None,
                 project_id: None,
                 location: None,
+                model_roles: Default::default(),
+                model_info: Default::default(),
             });
         }
         Ok(Self {
@@ -335,6 +337,8 @@ fn resolve(e: &LlmEndpoint, provider: &dyn LlmProvider) -> Result<Endpoint> {
         region: e.region.clone(),
         project_id: e.project_id.clone(),
         location: e.location.clone(),
+        model_roles: e.model_roles.clone(),
+        model_info: e.model_info.clone(),
     };
     if provider.endpoint_kind() == crate::EndpointKind::Derived {
         ep.base_url = provider.base_url(&ep);

@@ -463,6 +463,21 @@ pub struct LlmEndpoint {
     pub region: Option<String>,
     pub project_id: Option<String>,
     pub location: Option<String>,
+    /// (P5-MODELS-1, C-875, D-303) `{ large?, medium?, small? }`: the models the harness's role aliases map to. The
+    /// role names are checked by `endpoint_field_errors` (`value_invalid`), not by the deserializer.
+    pub model_roles: BTreeMap<String, String>,
+    /// (P5-MODELS-1, C-875) Per model id: `context_window` and `capabilities`. Named so the entry's credential-name
+    /// check (`token…`) does not trip.
+    pub model_info: BTreeMap<String, ModelInfoEntry>,
+}
+
+/// (C-875) One `model_info` value. `context_window` is wide so an out-of-range number is `value_invalid`, not a
+/// deserialization failure.
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
+#[serde(default, deny_unknown_fields)]
+pub struct ModelInfoEntry {
+    pub context_window: Option<i64>,
+    pub capabilities: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]

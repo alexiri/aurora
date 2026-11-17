@@ -21,6 +21,11 @@ pub struct Agent {
     pub model_id: Option<String>,
     /// `low` | `medium` | `high` | `max`.
     pub effort: Option<String>,
+    /// (P5-MODELS-1, C-876) Role models, stamped with the endpoint they were chosen for; null = none.
+    pub model_roles: Option<ModelRoles>,
+    /// (P5-MODELS-1, C-876) `inherit` | `large` | `medium` | `small`: the model of subagents whose
+    /// definition names none.
+    pub subagent_model: String,
     /// `ask` | `allow` | `off`.
     pub proactive_messaging: String,
     pub brief: String,
@@ -53,6 +58,8 @@ impl From<AgentRow> for Agent {
             model_endpoint_id: a.model_endpoint_id,
             model_id: a.model_id,
             effort: a.effort,
+            model_roles: a.model_roles.as_ref().and_then(ModelRoles::from_json),
+            subagent_model: a.subagent_model,
             proactive_messaging: a.proactive_messaging,
             brief: a.brief,
             avatar_url: a
@@ -66,6 +73,51 @@ impl From<AgentRow> for Agent {
             updated_at: a.updated_at,
         }
     }
+}
+
+/// (P5-MODELS-1, C-876) The agent's role models; `endpoint_id` is the endpoint they were chosen for.
+/// A role that is null or absent is unset.
+#[derive(Serialize, Deserialize, ToSchema, Clone, Debug, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ModelRoles {
+    pub endpoint_id: String,
+    #[serde(default)]
+    pub large: Option<String>,
+    #[serde(default)]
+    pub medium: Option<String>,
+    #[serde(default)]
+    pub small: Option<String>,
+}
+
+impl ModelRoles {
+    /// The stored JSON (`agents.model_roles`): only the set roles are written.
+    pub fn to_json(&self) -> serde_json::Value {
+        let mut m = serde_json::Map::new();
+        m.insert("endpoint_id".into(), self.endpoint_id.clone().into());
+        for (k, v) in [
+            ("large", &self.large),
+            ("medium", &self.medium),
+            ("small", &self.small),
+        ] {
+            if let Some(v) = v {
+                m.insert(k.into(), v.clone().into());
+            }
+        }
+        serde_json::Value::Object(m)
+    }
+
+    pub fn from_json(v: &serde_json::Value) -> Option<Self> {
+        serde_json::from_value(v.clone()).ok()
+    }
+}
+
+/// `null` clears; an object replaces; an absent key is unchanged.
+fn double_option<'de, D, T>(d: D) -> Result<Option<Option<T>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(d).map(Some)
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -92,6 +144,13 @@ pub struct PatchAgentRequest {
     pub model_endpoint_id: Option<String>,
     pub model_id: Option<String>,
     pub effort: Option<String>,
+    /// (P5-MODELS-1, C-876) Absent = unchanged, `null` = clear, an object = replace (the roles it
+    /// names; the others become unset). Hosted agents only.
+    #[serde(default, deserialize_with = "double_option")]
+    #[schema(value_type = Option<ModelRoles>)]
+    pub model_roles: Option<Option<ModelRoles>>,
+    /// (P5-MODELS-1, C-876) `inherit` | `large` | `medium` | `small`.
+    pub subagent_model: Option<String>,
     pub proactive_messaging: Option<String>,
     /// Instance admins only.
     #[schema(value_type = Option<Object>)]

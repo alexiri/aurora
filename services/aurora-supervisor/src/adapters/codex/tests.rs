@@ -74,6 +74,9 @@ fn opts(dir: &Path, resume: Option<&str>) -> SessionOptions {
             model: "gpt-x".into(),
             effort: "medium".into(),
             client_env: vec![],
+            roles: None,
+            subagent_role: None,
+            model_meta: None,
         },
         proxy_url: "http://127.0.0.1:1".into(),
         mcp_bridge: McpBridgeSpec {

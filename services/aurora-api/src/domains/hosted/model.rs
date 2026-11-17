@@ -6,7 +6,8 @@ use aurora_core::ApiError;
 use aurora_db::repo::hosted::{self, LlmCandidate};
 use aurora_llm::governance::{EffectiveGovernance, OriginStatus, StoredOrigin};
 use aurora_llm::{AuthMode, Dialect, Endpoint, ModelRef, ProviderRegistry};
-use aurora_protocol::runner::ModelChoice;
+use aurora_protocol::runner::{ModelChoice, ModelMeta, ModelRoleIds};
+use serde_json::Value;
 use sqlx::PgConnection;
 use uuid::Uuid;
 
@@ -88,11 +89,15 @@ pub struct Usable<'a> {
     pub dialect: Dialect,
 }
 
+#[allow(clippy::large_enum_variant)] // one short-lived value per dispatch; the other variants are tiny
 pub enum Selection {
     Chosen {
         choice: ModelChoice,
         /// Platform notices for the next turn (e.g. a dropped model override).
         notices: Vec<String>,
+        /// (P5-MODELS-1) Set when agent roles were dropped: the dispatcher stores this back
+        /// (`Some(None)` clears the agent's roles). Selection itself writes nothing.
+        stored_roles: Option<Option<Value>>,
     },
     /// No usable key. The message lists reason counts, never key names (C-501).
     NoKey { message: String },
@@ -188,9 +193,175 @@ pub struct Readiness<'a> {
     /// The agent has a model override that is not usable (dropped, with a notice, next turn).
     pub override_dropped: Option<String>,
     pub effort: String,
+    /// (P5-MODELS-1, C-878) The role resolution of the default selection (`None` with no default).
+    pub roles: Option<RoleResolution>,
+}
+
+/// (C-878) One role: its model, where it came from, and why it is not sent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RoleView {
+    pub model_id: Option<String>,
+    /// `agent` | `endpoint` | `none`.
+    pub source: &'static str,
+    /// `role_unset` | `role_not_allowed`.
+    pub warning: Option<&'static str>,
+}
+
+impl RoleView {
+    fn none() -> Self {
+        Self {
+            model_id: None,
+            source: "none",
+            warning: None,
+        }
+    }
+}
+
+/// The roles in resolution order; also the vocabulary.
+pub const ROLES: [&str; 3] = ["large", "medium", "small"];
+
+/// What `08 §Model roles` makes of the agent's and the endpoint's roles for the turn's endpoint.
+#[derive(Debug, Clone)]
+pub struct RoleResolution {
+    /// `large`, `medium`, `small`.
+    pub roles: [RoleView; 3],
+    /// Agent roles dropped for this turn (their endpoint is no longer the turn's, or the model is no
+    /// longer usable); never re-pointed.
+    pub dropped: Vec<&'static str>,
+    /// What to store back after a drop: `Some(None)` clears the agent's roles, `Some(Some(v))` keeps the rest.
+    pub stored_after_drop: Option<Option<Value>>,
+    /// The agent's `subagent_model` (`inherit` or a role).
+    pub subagent_model: String,
+    /// `ModelChoice.subagent_role`.
+    pub subagent_role: Option<&'static str>,
+    /// `subagent_role_unset`.
+    pub subagent_warning: Option<&'static str>,
+    /// Metadata of the default model and of the resolved roles only.
+    pub model_meta: Vec<ModelMeta>,
+}
+
+impl RoleResolution {
+    /// The resolved role models, for `ModelChoice.roles`.
+    pub fn role_ids(&self) -> ModelRoleIds {
+        let get = |i: usize| self.roles[i].model_id.clone();
+        ModelRoleIds {
+            large: get(0),
+            medium: get(1),
+            small: get(2),
+        }
+    }
+}
+
+/// Whether a role model may be sent: a valid id (SEC-122), allowed for the org and on a static list when the
+/// endpoint has one.
+fn role_usable(eff: &EffectiveGovernance, ep: &Endpoint, model: &str) -> bool {
+    aurora_core::model_id::validate_model_id(model)
+        && model_ok(eff, &ep.id, model)
+        && (ep.models.is_empty() || ep.models.iter().any(|m| m == model))
+}
+
+/// The one role resolution (`08 §Model roles`): the agent's stamped role, then the endpoint's, then none;
+/// the allow-list applies at selection; an agent role that is not usable is dropped, never re-pointed.
+fn resolve_roles(
+    eff: &EffectiveGovernance,
+    ep: &Endpoint,
+    harness: &str,
+    default_model: &str,
+    agent_roles: Option<&Value>,
+    subagent_model: &str,
+) -> RoleResolution {
+    let maps_roles = !aurora_protocol::runner::harness_model_roles(harness).is_empty();
+    let (ep_roles, info) = (&ep.model_roles, &ep.model_info);
+    let stamped = agent_roles
+        .and_then(|v| v.get("endpoint_id"))
+        .and_then(Value::as_str);
+    let mut views = [RoleView::none(), RoleView::none(), RoleView::none()];
+    let mut dropped: Vec<&'static str> = Vec::new();
+    let mut kept = serde_json::Map::new();
+    for (i, role) in ROLES.iter().enumerate() {
+        if let Some(m) = agent_roles
+            .and_then(|v| v.get(*role))
+            .and_then(Value::as_str)
+        {
+            if stamped == Some(ep.id.as_str()) && role_usable(eff, ep, m) {
+                views[i] = RoleView {
+                    model_id: Some(m.to_owned()),
+                    source: "agent",
+                    warning: None,
+                };
+                kept.insert((*role).into(), m.into());
+            } else {
+                dropped.push(role);
+            }
+        }
+        if views[i].model_id.is_some() {
+            continue;
+        }
+        match ep_roles.get(*role) {
+            Some(m) if role_usable(eff, ep, m) => {
+                views[i] = RoleView {
+                    model_id: Some(m.clone()),
+                    source: "endpoint",
+                    warning: None,
+                };
+            }
+            // Not allowed for this org (or not a valid id): counts as unset, with a warning, and is not sent.
+            Some(_) => views[i].warning = Some("role_not_allowed"),
+            None if maps_roles && ep.provider != "anthropic" => {
+                views[i].warning = Some("role_unset");
+            }
+            None => {}
+        }
+    }
+    let stored_after_drop = (!dropped.is_empty()).then(|| {
+        (!kept.is_empty()).then(|| {
+            let mut m = serde_json::Map::new();
+            m.insert("endpoint_id".into(), ep.id.clone().into());
+            m.extend(kept);
+            Value::Object(m)
+        })
+    });
+    let (mut subagent_role, mut subagent_warning) = (None, None);
+    if maps_roles && let Some(i) = ROLES.iter().position(|r| *r == subagent_model) {
+        if views[i].model_id.is_some() || ep.provider == "anthropic" {
+            subagent_role = Some(ROLES[i]);
+        } else {
+            subagent_warning = Some("subagent_role_unset");
+        }
+    }
+    let mut ids: Vec<&str> = vec![default_model];
+    ids.extend(views.iter().filter_map(|v| v.model_id.as_deref()));
+    let mut model_meta: Vec<ModelMeta> = Vec::new();
+    for id in ids {
+        if model_meta.iter().any(|m| m.model == id) {
+            continue;
+        }
+        if let Some(i) = info.get(id) {
+            model_meta.push(ModelMeta {
+                model: id.to_owned(),
+                context_window: i.context_window.and_then(|w| u32::try_from(w).ok()),
+                capabilities: i.capabilities.clone(),
+            });
+        }
+    }
+    RoleResolution {
+        roles: views,
+        dropped,
+        stored_after_drop,
+        subagent_model: subagent_model.to_owned(),
+        subagent_role,
+        subagent_warning,
+        model_meta,
+    }
 }
 
 impl Readiness<'_> {
+    /// The endpoint of the default selection.
+    pub fn default_endpoint(&self) -> Option<&str> {
+        let d = self.default.as_ref()?;
+        self.keys.get(d.key)?.ep.map(|e| e.id.as_str())
+    }
+
     pub fn any_usable(&self) -> bool {
         self.keys.iter().any(|k| k.reason.is_none())
     }
@@ -435,11 +606,25 @@ pub async fn readiness<'a>(
             }
         }
     }
+    // (P5-MODELS-1) Roles of the default selection: the same function serves the dispatcher and the report.
+    let (agent_roles, subagent_model) = hosted::model_role_prefs(conn, agent).await?;
+    let roles = default.as_ref().and_then(|d| {
+        let ep = keys.get(d.key)?.ep?;
+        Some(resolve_roles(
+            &eff,
+            ep,
+            harness,
+            &d.model,
+            agent_roles.as_ref(),
+            &subagent_model,
+        ))
+    });
     Ok(Readiness {
         keys,
         default,
         override_dropped,
         effort,
+        roles,
     })
 }
 
@@ -450,12 +635,22 @@ fn choice(
     mode: AuthMode,
     model: String,
     effort: &str,
+    roles: Option<(&RoleResolution, &str)>,
 ) -> ModelChoice {
     let client_env = llm
         .provider_for(ep)
         .map(|p| p.client_env(ep, dialect, &mode))
         .unwrap_or_default();
+    // (C-877) Roles travel only to a harness that maps them (`harness_model_roles`), and only the resolved ones.
+    let mapped = roles.filter(|(_, h)| !aurora_protocol::runner::harness_model_roles(h).is_empty());
+    let role_ids = mapped.map(|(r, _)| r.role_ids()).filter(|r| !r.is_empty());
+    let meta = mapped
+        .map(|(r, _)| r.model_meta.clone())
+        .filter(|m| !m.is_empty());
     ModelChoice {
+        roles: role_ids,
+        subagent_role: mapped.and_then(|(r, _)| r.subagent_role).map(str::to_owned),
+        model_meta: meta,
         provider: ep.provider.clone(),
         endpoint_id: ep.id.clone(),
         base_url: ep.base_url.clone(),
@@ -486,8 +681,12 @@ pub async fn select(
                 model: "fake".into(),
                 effort: "medium".into(),
                 client_env: vec![],
+                roles: None,
+                subagent_role: None,
+                model_meta: None,
             },
             notices: vec![],
+            stored_roles: None,
         });
     }
     let llm = state.llm();
@@ -511,6 +710,18 @@ pub async fn select(
              the default model is used instead."
         ));
     }
+    if let Some(rr) = r.roles.as_ref().filter(|rr| !rr.dropped.is_empty()) {
+        let names = rr
+            .dropped
+            .iter()
+            .map(|n| format!("`{n}`"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        notices.push(format!(
+            "The model role(s) {names} of this agent are no longer usable (endpoint or model not permitted) \
+             and were removed; the endpoint's roles apply instead."
+        ));
+    }
     Ok(Selection::Chosen {
         choice: choice(
             &llm,
@@ -523,7 +734,147 @@ pub async fn select(
                 .unwrap_or(AuthMode::ApiKey),
             d.model.clone(),
             &r.effort,
+            r.roles.as_ref().map(|rr| (rr, harness)),
         ),
         notices,
+        stored_roles: r.roles.as_ref().and_then(|rr| rr.stored_after_drop.clone()),
     })
+}
+
+/// (P5-MODELS-2, D-304) What the dispatcher chose for a turn, stored with it (`turns.model_basis`): the
+/// trust rule at turn end reads the default and the roles from here, never from the harness.
+pub fn basis_of(c: &ModelChoice) -> Value {
+    let mut b = serde_json::json!({
+        "provider": c.provider, "endpoint_id": c.endpoint_id, "model": c.model,
+    });
+    if let Some(r) = &c.roles {
+        b["roles"] = serde_json::json!(r.set().map(|(_, m)| m).collect::<Vec<_>>());
+    }
+    b
+}
+
+/// Token counters of one `by_model` entry: input, output, cache read, cache write.
+type Counts = [i64; 4];
+
+fn counts_of(e: &Value) -> Counts {
+    let n = |k: &str| e.get(k).and_then(Value::as_i64).unwrap_or(0).max(0);
+    [
+        n("input_tokens"),
+        n("output_tokens"),
+        n("cache_read_tokens"),
+        n("cache_write_tokens"),
+    ]
+}
+
+/// (D-304, C-879, `08` *Error classification and usage*) The usage the API stores for a turn: the harness's
+/// claim, reduced by the trust rule. `provider` and `endpoint_id` come from the turn's basis, never from the
+/// claim. An entry is kept when its model is the default, a resolved role, or accepted by `allowed` (the
+/// effective allow-list at turn end; any pattern-valid id when none applies). Every other entry, and every
+/// entry past `USAGE_BY_MODEL_MAX`, is folded into the default model's entry and sets `unverified_models`.
+/// The totals are the sum of the kept entries. A claim with no breakdown becomes one entry for the default.
+pub fn fold_usage(basis: &Value, claim: &Value, allowed: impl Fn(&str) -> bool) -> Value {
+    let text = |k: &str| basis.get(k).and_then(Value::as_str).unwrap_or_default();
+    let default = text("model").to_owned();
+    let roles: Vec<&str> = basis
+        .get("roles")
+        .and_then(Value::as_array)
+        .map(|a| a.iter().filter_map(Value::as_str).collect())
+        .unwrap_or_default();
+    let trusted = |m: &str| {
+        m == default
+            || roles.contains(&m)
+            || (aurora_core::model_id::validate_model_id(m) && allowed(m))
+    };
+    let claimed: Vec<(String, Counts)> = match claim
+        .get("by_model")
+        .and_then(Value::as_array)
+        .filter(|a| !a.is_empty())
+    {
+        Some(a) => a
+            .iter()
+            .map(|e| {
+                let m = e.get("model").and_then(Value::as_str).unwrap_or_default();
+                (m.to_owned(), counts_of(e))
+            })
+            .collect(),
+        None => vec![(default.clone(), counts_of(claim))],
+    };
+    let add = |into: &mut Counts, c: Counts| {
+        for (t, d) in into.iter_mut().zip(c) {
+            *t = t.saturating_add(d);
+        }
+    };
+    let (mut kept, mut folded): (Vec<(String, Counts)>, Counts) = (Vec::new(), [0; 4]);
+    let mut unverified = false;
+    for (m, c) in claimed {
+        if !trusted(&m) {
+            add(&mut folded, c);
+            unverified = true;
+        } else if let Some((_, k)) = kept.iter_mut().find(|(km, _)| *km == m) {
+            add(k, c);
+        } else if m == default {
+            kept.insert(0, (m, c)); // the default is first, so the limit never drops it
+        } else {
+            kept.push((m, c));
+        }
+    }
+    // The limit counts the default's entry, which exists whenever something was folded.
+    let room = aurora_core::limits::USAGE_BY_MODEL_MAX
+        - usize::from(!kept.iter().any(|(m, _)| *m == default));
+    while kept.len() > room {
+        if let Some((_, c)) = kept.pop() {
+            add(&mut folded, c);
+            unverified = true;
+        }
+    }
+    if unverified {
+        match kept.iter_mut().find(|(m, _)| *m == default) {
+            Some((_, c)) => add(c, folded),
+            None => kept.insert(0, (default.clone(), folded)),
+        }
+    }
+    let mut total = [0_i64; 4];
+    for (_, c) in &kept {
+        add(&mut total, *c);
+    }
+    let mut out = serde_json::json!({
+        "input_tokens": total[0], "output_tokens": total[1],
+        "cache_read_tokens": total[2], "cache_write_tokens": total[3],
+        "provider": text("provider"), "endpoint_id": text("endpoint_id"), "model": default,
+        "by_model": kept.iter().map(|(m, c)| serde_json::json!({
+            "model": m, "input_tokens": c[0], "output_tokens": c[1],
+            "cache_read_tokens": c[2], "cache_write_tokens": c[3],
+        })).collect::<Vec<_>>(),
+    });
+    if let Some(r) = claim.get("reasoning_tokens").and_then(Value::as_i64) {
+        out["reasoning_tokens"] = r.max(0).into();
+    }
+    if unverified {
+        out["unverified_models"] = true.into();
+    }
+    out
+}
+
+/// The usage to store at turn end (see [`fold_usage`]): the turn's basis and the effective allow-list now.
+/// A turn without a recorded basis keeps its totals and loses the breakdown it cannot verify.
+pub async fn usage_for_turn(
+    state: &AppState,
+    conn: &mut PgConnection,
+    turn: Uuid,
+    claim: &Value,
+) -> Result<Value, ApiError> {
+    let Some((org, Some(basis))) = hosted::model_basis(conn, turn).await? else {
+        let mut u = claim.clone();
+        if let Some(o) = u.as_object_mut() {
+            o.remove("by_model");
+        }
+        return Ok(u);
+    };
+    let eff = gov::effective_for(state, org).await?;
+    let ep = basis
+        .get("endpoint_id")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
+    Ok(fold_usage(&basis, claim, |m| model_ok(&eff, &ep, m)))
 }

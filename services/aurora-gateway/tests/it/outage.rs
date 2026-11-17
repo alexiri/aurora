@@ -1450,6 +1450,7 @@ fn log_row(w: &World, n: usize) -> RequestLogRow {
         bytes_down: 0,
         context_label: None,
         speaker_user_id: None,
+        llm_model: None,
     }
 }
 

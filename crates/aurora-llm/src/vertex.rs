@@ -257,6 +257,8 @@ mod tests {
             region: None,
             project_id: Some("proj-1".into()),
             location: Some(location.into()),
+            model_roles: Default::default(),
+            model_info: Default::default(),
         }
     }
 

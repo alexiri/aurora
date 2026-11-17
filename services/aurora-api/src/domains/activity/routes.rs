@@ -46,6 +46,8 @@ pub struct RequestLogEntry {
     pub bytes_down: i64,
     /// (phase 2, RFE-025) Label of the BYO context credential (a labelled `aurora run`), if any.
     pub context_label: Option<String>,
+    /// (phase 5, P5-MODELS-2, C-880) The model an LLM request asked for, when the gateway could read it.
+    pub llm_model: Option<String>,
 }
 
 impl From<LogRow> for RequestLogEntry {
@@ -76,6 +78,7 @@ impl From<LogRow> for RequestLogEntry {
             bytes_up: r.bytes_up,
             bytes_down: r.bytes_down,
             context_label: r.context_label,
+            llm_model: r.llm_model,
         }
     }
 }

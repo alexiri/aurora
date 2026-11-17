@@ -314,3 +314,16 @@ async fn llm_bedrock_carve_out_does_not_open_other_aws_hosts() {
     let r = request(&env, env.llm, "POST", INVOKE, "", BODY).await;
     assert_eq!(r.status, 200, "{}", r.body);
 }
+
+/// (P5-MODELS-2, C-880) The model of a Bedrock request is in its path; recorded with no allow-list.
+#[tokio::test]
+async fn request_log_records_the_llm_model_of_a_bedrock_path() {
+    let env = env_with(BedrockMode::Sigv4, "ext-org-1").await;
+    let r = request(&env, env.llm, "POST", INVOKE, "", BODY).await;
+    assert_eq!(r.status, 200, "{}", r.body);
+    let m = next_llm_model(&env, 0).await.1.unwrap_or_default();
+    assert!(
+        m.starts_with("us.anthropic.claude-3-haiku-20240307-v1"),
+        "{m}"
+    );
+}

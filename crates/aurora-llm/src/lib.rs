@@ -28,6 +28,9 @@ pub use azure_openai::AzureOpenaiProvider;
 pub use bedrock::BedrockProvider;
 // (P4-LLM-5) The table lives in `aurora-core` so the sandbox's supervisor shares it without the provider stack.
 pub use aurora_core::llm_classify::{LlmErrorClass, classify};
+// (P5-MODELS-1, SEC-122) The one model-id validator; it lives in `aurora-core` so the configuration crate and the
+// sandbox's supervisor share it without the provider stack.
+pub use aurora_core::model_id::{MODEL_ID_PATTERN, validate_model_id};
 pub use endpoint::Endpoint;
 pub use error::{LlmError, Result};
 pub use litellm::LitellmProvider;
