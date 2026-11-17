@@ -61,7 +61,7 @@ export function AgentAttentionChip({ workspaceId, agentId, accessHref }: { works
   const text = attentionCount(useAgentAttention(workspaceId, agentId).length);
   if (!text) return null;
   return (
-    <Link href={accessHref} className="whitespace-nowrap text-sm font-medium text-danger-ink underline">
+    <Link href={accessHref} className="min-w-0 truncate whitespace-nowrap text-sm font-medium text-danger-ink underline">
       {text}
     </Link>
   );
