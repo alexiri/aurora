@@ -27,8 +27,12 @@ function wordOf(h: Health): string {
 }
 
 /** The line of `14 §7` for an account. `used` is the "used 2 hours ago" suffix of a working or unchecked account. */
-export function healthLine(a: Pick<Account, "app" | "name" | "health">, used?: string): HealthLine {
+export function healthLine(a: Pick<Account, "app" | "name" | "health"> & { status_reason?: Account["status_reason"] }, used?: string): HealthLine {
   const h = a.health;
+  // (FIX-163) The account's self-hosted app instance was deleted: it cannot be turned on again, so no fix is offered here.
+  if (h.state === "disabled" && a.status_reason === "instance_deleted") {
+    return { tone: "neutral", text: "Turned off: the instance of this app was removed" };
+  }
   switch (h.state) {
     case "rejected": {
       const w = wordOf(h);

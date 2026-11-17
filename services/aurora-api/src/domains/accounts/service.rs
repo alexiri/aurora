@@ -339,6 +339,9 @@ fn connection_row(
         limit,
         levels: levels::levels_for(&tools, custom_only, limit),
         health,
+        status_reason: (c.status == "disabled")
+            .then(|| c.status_reason.clone())
+            .flatten(),
         connected_by: c.connected_by_name.clone().map(|name| PersonName { name }),
         agents: Vec::new(),
         managed_by: org_account.then(|| managed_by.clone()).flatten(),
@@ -387,6 +390,7 @@ fn secret_row(
                     "token"
                 },
             ),
+            status_reason: None,
             connected_by: s.created_by_name.clone().map(|name| PersonName { name }),
             agents: Vec::new(),
             managed_by: org_account.then(|| managed_by.clone()).flatten(),

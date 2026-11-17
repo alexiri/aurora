@@ -35,6 +35,7 @@ export const ACTION_PHRASE: Record<string, string> = {
   invite_people: "invite people",
   add_people: "add people",
   set_up: "set this up",
+  add_instance: "add the app's instance again",
 };
 
 export function actionPhrase(action: string): string {

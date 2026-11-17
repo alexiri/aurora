@@ -5628,6 +5628,11 @@ export interface components {
             ref: components["schemas"]["AccountRef"];
             /** @description `workspace` | `organization`. */
             scope: string;
+            /**
+             * @description (FIX-163) Why a turned-off app account is off, when something other than a person's choice turned it
+             *     off: `instance_deleted` (its self-hosted app instance was removed; it cannot be turned on again).
+             */
+            status_reason?: string | null;
         };
         AccountAgent: {
             handle: string;
@@ -9248,6 +9253,11 @@ export interface components {
                 ref: components["schemas"]["AccountRef"];
                 /** @description `workspace` | `organization`. */
                 scope: string;
+                /**
+                 * @description (FIX-163) Why a turned-off app account is off, when something other than a person's choice turned it
+                 *     off: `instance_deleted` (its self-hosted app instance was removed; it cannot be turned on again).
+                 */
+                status_reason?: string | null;
             }[];
             next_cursor?: string | null;
         };

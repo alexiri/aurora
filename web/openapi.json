@@ -35139,6 +35139,13 @@
           "scope": {
             "type": "string",
             "description": "`workspace` | `organization`."
+          },
+          "status_reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "(FIX-163) Why a turned-off app account is off, when something other than a person's choice turned it\noff: `instance_deleted` (its self-hosted app instance was removed; it cannot be turned on again)."
           }
         }
       },
@@ -46688,6 +46695,13 @@
                 "scope": {
                   "type": "string",
                   "description": "`workspace` | `organization`."
+                },
+                "status_reason": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "(FIX-163) Why a turned-off app account is off, when something other than a person's choice turned it\noff: `instance_deleted` (its self-hosted app instance was removed; it cannot be turned on again)."
                 }
               }
             }
