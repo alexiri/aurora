@@ -99,6 +99,7 @@ spec:
     {{- end }}
     {{- include "aurora.vaultEgress" . | nindent 4 }}
     {{- with (include "aurora.countersEgress" .) }}{{ . | nindent 4 }}{{ end }}
+    {{- with (include "aurora.pushEgress" .) }}{{ . | nindent 4 }}{{ end }}
     {{- include "aurora.external" . | nindent 4 }}
 {{- if .Values.devIdp.enabled }}
 ---
