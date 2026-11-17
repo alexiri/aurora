@@ -89,9 +89,14 @@ if [ "${AURORA_E2EH_FULL_IMAGE:-}" = "1" ]; then
   podman image exists "$FULL_IMAGE" || { echo "missing $FULL_IMAGE" >&2; exit 1; }
   export AURORA_E2EH_FULL_IMAGE_TAG="$FULL_IMAGE"
 fi
-TARGETS=(--test hosted)
-[ "${AURORA_TEST_KIND:-}" = "1" ] && TARGETS+=(--test k8s)
-[ "${AURORA_TEST_LLM:-}" = "1" ] && TARGETS+=(--test llm)
+# AURORA_E2EH_ONLY=<test target> runs that one target (scripts/e2e/approvals-park.sh does).
+if [ -n "${AURORA_E2EH_ONLY:-}" ]; then
+  TARGETS=(--test "$AURORA_E2EH_ONLY")
+else
+  TARGETS=(--test hosted --test approvals_park)
+  [ "${AURORA_TEST_KIND:-}" = "1" ] && TARGETS+=(--test k8s)
+  [ "${AURORA_TEST_LLM:-}" = "1" ] && TARGETS+=(--test llm)
+fi
 cargo test -p aurora-e2e-hosted "${TARGETS[@]}" --no-run || exit 1
 
 podman network create --internal --disable-dns --subnet "$SBX_BASE.0/24" --gateway "$SBX_BASE.1" "$SBX_NET" >/dev/null || exit 1
