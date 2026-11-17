@@ -1,4 +1,4 @@
-use super::dto::{Account, AccountRefType, AccountsQuery, TestAnswer};
+use super::dto::{Account, AccountRefType, AccountTestAnswer, AccountsQuery};
 use super::service;
 use super::test;
 use crate::app::AppState;
@@ -26,7 +26,7 @@ pub fn router() -> OpenApiRouter<AppState> {
     post, path = "/accounts/{type}/{id}/test", operation_id = "testAccount", tag = "accounts",
     params(("type" = String, Path, description = "`connection` or `secret`"),
            ("id" = Uuid, Path, description = "Account id")),
-    responses((status = 200, description = "What the check found", body = TestAnswer),
+    responses((status = 200, description = "What the check found", body = AccountTestAnswer),
               (status = 400, description = "Unknown account type", body = ErrorEnvelope),
               (status = 403, description = "Forbidden", body = ErrorEnvelope),
               (status = 404, description = "Not found", body = ErrorEnvelope),
@@ -37,7 +37,7 @@ async fn test_account(
     caller: Caller,
     State(state): State<AppState>,
     Path((kind, id)): Path<(String, Uuid)>,
-) -> Result<Json<TestAnswer>, ApiError> {
+) -> Result<Json<AccountTestAnswer>, ApiError> {
     let kind = match kind.as_str() {
         "connection" => AccountRefType::Connection,
         "secret" => AccountRefType::Secret,

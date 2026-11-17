@@ -44,7 +44,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/TestAnswer"
+                  "$ref": "#/components/schemas/AccountTestAnswer"
                 }
               }
             }
@@ -34297,6 +34297,70 @@
           "secret"
         ]
       },
+      "AccountTestAnswer": {
+        "type": "object",
+        "description": "C-943: the answer of `POST /v1/accounts/{type}/{id}/test`.",
+        "required": [
+          "result",
+          "checked_at"
+        ],
+        "properties": {
+          "checked_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "detail": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/AccountTestDetail"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "result": {
+            "$ref": "#/components/schemas/AccountTestResult"
+          }
+        }
+      },
+      "AccountTestDetail": {
+        "type": "object",
+        "description": "At most a host, an HTTP status or a protocol code: never an upstream body, header or credential (SEC-129).",
+        "properties": {
+          "code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "host": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
+      "AccountTestResult": {
+        "type": "string",
+        "description": "(C-943) What Test found.",
+        "enum": [
+          "ok",
+          "rejected",
+          "unreachable",
+          "unexpected",
+          "not_testable"
+        ]
+      },
       "AccountWorkspace": {
         "type": "object",
         "required": [
@@ -56885,59 +56949,6 @@
             "items": {
               "$ref": "#/components/schemas/TerminatorInfo"
             }
-          }
-        }
-      },
-      "TestAnswer": {
-        "type": "object",
-        "description": "C-943: the answer of `POST /v1/accounts/{type}/{id}/test`.",
-        "required": [
-          "result",
-          "checked_at"
-        ],
-        "properties": {
-          "checked_at": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "detail": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/TestDetail"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "result": {
-            "$ref": "#/components/schemas/TestResult"
-          }
-        }
-      },
-      "TestDetail": {
-        "type": "object",
-        "description": "At most a host, an HTTP status or a protocol code: never an upstream body, header or credential (SEC-129).",
-        "properties": {
-          "code": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "host": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "status": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int32",
-            "minimum": 0
           }
         }
       },

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
+import { AgentAttentionChip } from "@/components/accounts/attention";
 import { AgentFreeze } from "@/components/freeze/freeze-sections";
 import { ErrorState, Loading } from "@/components/states";
 import { Avatar } from "@/components/agent-avatar";
@@ -183,6 +184,7 @@ export function AgentPage() {
                 {byo ? <Badge>{agent.kind}</Badge> : null}
                 {byo && agent.is_default ? <Badge tone="accent">Default</Badge> : null}
                 {byo ? null : <SandboxPill agentId={agent.id} />}
+                {wsId ? <AgentAttentionChip workspaceId={wsId} agentId={agent.id} accessHref={`${base}/agents/${agent.handle}?tab=access`} /> : null}
               </span>
             </div>
           </div>

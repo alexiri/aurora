@@ -10,7 +10,7 @@
 //! The outcome is a code, at most a host, an HTTP status or a protocol code: never an upstream body, header or
 //! credential. The result is stored (except `not_testable`) and audited as `account.test`.
 
-use super::dto::{AccountRefType, TestAnswer, TestDetail, TestResult};
+use super::dto::{AccountRefType, AccountTestAnswer, AccountTestDetail, AccountTestResult};
 use super::gateway::{Answer, Check};
 use crate::app::AppState;
 use crate::audit::{self, AuditActor, AuditEvent, Outcome};
@@ -31,19 +31,19 @@ use uuid::Uuid;
 
 /// The outcome of one check, before it is stored.
 struct Checked {
-    result: TestResult,
-    detail: Option<TestDetail>,
+    result: AccountTestResult,
+    detail: Option<AccountTestDetail>,
 }
 
 impl Checked {
-    fn of(result: TestResult) -> Self {
+    fn of(result: AccountTestResult) -> Self {
         Self {
             result,
             detail: None,
         }
     }
 
-    fn with(result: TestResult, detail: TestDetail) -> Self {
+    fn with(result: AccountTestResult, detail: AccountTestDetail) -> Self {
         Self {
             result,
             detail: Some(detail),
@@ -54,13 +54,13 @@ impl Checked {
 impl From<Answer> for Checked {
     fn from(a: Answer) -> Self {
         let has_detail = a.host.is_some() || a.code.is_some();
-        let detail = has_detail.then_some(TestDetail {
+        let detail = has_detail.then_some(AccountTestDetail {
             host: a.host,
             status: None,
             code: a.code,
         });
         Self {
-            result: TestResult::parse(&a.result),
+            result: AccountTestResult::parse(&a.result),
             detail,
         }
     }
@@ -72,7 +72,7 @@ pub async fn test(
     caller: &Caller,
     kind: AccountRefType,
     id: Uuid,
-) -> Result<TestAnswer, ApiError> {
+) -> Result<AccountTestAnswer, ApiError> {
     let (out, org, ws, target, meta) = match kind {
         AccountRefType::Connection => {
             let (row, access) = connections::visible(caller, state, id).await?;
@@ -107,7 +107,7 @@ pub async fn test(
         ev = ev.workspace(ws);
     }
     audit::record(state, ev);
-    Ok(TestAnswer {
+    Ok(AccountTestAnswer {
         result: out.result,
         detail: out.detail,
         checked_at: now,
@@ -116,15 +116,15 @@ pub async fn test(
 
 async fn test_secret(state: &AppState, row: &secret_repo::SecretRow) -> Checked {
     if row.kind != "llm" || row.status != "active" {
-        return Checked::of(TestResult::NotTestable);
+        return Checked::of(AccountTestResult::NotTestable);
     }
     match secrets::verify(state, row).await {
-        Ok(_) => Checked::of(TestResult::Ok),
+        Ok(_) => Checked::of(AccountTestResult::Ok),
         // `llm_key_invalid`: the provider refused the key; `llm_endpoint_unreachable`: nothing answered.
         Err(e) => match e.code() {
-            "llm_key_invalid" => Checked::of(TestResult::Rejected),
-            "llm_endpoint_unreachable" => Checked::of(TestResult::Unreachable),
-            _ => Checked::of(TestResult::Unexpected),
+            "llm_key_invalid" => Checked::of(AccountTestResult::Rejected),
+            "llm_endpoint_unreachable" => Checked::of(AccountTestResult::Unreachable),
+            _ => Checked::of(AccountTestResult::Unexpected),
         },
     }
 }
@@ -132,13 +132,13 @@ async fn test_secret(state: &AppState, row: &secret_repo::SecretRow) -> Checked 
 async fn test_connection(state: &AppState, row: &ConnectionRow) -> Result<Checked, ApiError> {
     if row.status != "active" {
         // A turned-off account runs nothing; an expired sign-in is already known and is fixed by Reconnect.
-        return Ok(Checked::of(TestResult::NotTestable));
+        return Ok(Checked::of(AccountTestResult::NotTestable));
     }
     let Some(snap) = registry::active_typed(state).await? else {
-        return Ok(Checked::of(TestResult::NotTestable));
+        return Ok(Checked::of(AccountTestResult::NotTestable));
     };
     let Some(app) = snap.app(&row.app_id) else {
-        return Ok(Checked::of(TestResult::NotTestable));
+        return Ok(Checked::of(AccountTestResult::NotTestable));
     };
     let method = row.connect_method.as_deref();
     let probe = probe_of(app, method);
@@ -158,7 +158,7 @@ async fn test_connection(state: &AppState, row: &ConnectionRow) -> Result<Checke
             return Ok(a.into());
         }
         if check == Check::Mint {
-            return Ok(Checked::of(TestResult::Ok));
+            return Ok(Checked::of(AccountTestResult::Ok));
         }
     }
     if let Some(p) = probe {
@@ -171,7 +171,7 @@ async fn test_connection(state: &AppState, row: &ConnectionRow) -> Result<Checke
             .await;
         return Ok(a.into());
     }
-    Ok(Checked::of(TestResult::NotTestable))
+    Ok(Checked::of(AccountTestResult::NotTestable))
 }
 
 /// The connect method's probe, with the connection's own credentials. A 1 MiB-capped read; the answer carries the
@@ -184,7 +184,7 @@ async fn run_probe(
     p: &aurora_registry::manifest::Probe,
 ) -> Checked {
     let Some(creds) = open_credentials(state, row).await else {
-        return Checked::of(TestResult::Unexpected);
+        return Checked::of(AccountTestResult::Unexpected);
     };
     let metadata = row.metadata.as_object().cloned().unwrap_or_default();
     let fields = Map::new();
@@ -203,16 +203,16 @@ async fn run_probe(
         instance_registered: row.instance_id.is_some(),
     };
     match probe::run(&state.connect, snap, app, p, &vars).await {
-        Ok(_) => Checked::of(TestResult::Ok),
+        Ok(_) => Checked::of(AccountTestResult::Ok),
         Err(f) => {
             let result = match f.cause {
-                ProbeCause::Rejected => TestResult::Rejected,
-                ProbeCause::Unreachable => TestResult::Unreachable,
-                ProbeCause::Unexpected => TestResult::Unexpected,
+                ProbeCause::Rejected => AccountTestResult::Rejected,
+                ProbeCause::Unreachable => AccountTestResult::Unreachable,
+                ProbeCause::Unexpected => AccountTestResult::Unexpected,
             };
             Checked::with(
                 result,
-                TestDetail {
+                AccountTestDetail {
                     host: f.host,
                     status: f.status,
                     code: None,

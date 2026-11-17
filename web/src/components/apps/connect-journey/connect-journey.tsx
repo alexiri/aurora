@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useCallback, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { AccessChoice } from "@/components/accounts/access-choice";
 import { AccessDialog } from "@/components/credentials/give-access";
@@ -13,7 +13,8 @@ import { ChoiceCards } from "@/components/ui/choice-cards";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Notice } from "@/components/ui/notice";
 import { LEVEL_ORDER, preselectAgents } from "@/lib/accounts";
-import { accountKeys, useAccounts, usePutAccess, type Account, type Level } from "@/lib/api/accounts";
+import { savedButText } from "@/lib/account-health";
+import { accountKeys, useAccounts, usePutAccess, useTestAccount, type Account, type Level } from "@/lib/api/accounts";
 import { appDisplayName } from "@/lib/api/app-name";
 import { useApp, useConnectPlan, type AppDetail } from "@/lib/api/apps";
 import { errorMessage } from "@/lib/api/errors";
@@ -125,6 +126,10 @@ export function ConnectJourney({
   const [accountPick, setAccount] = useState<string | null>(null);
   const [level, setLevel] = useState<Level>("read");
   const [done, setDone] = useState<DoneState | null>(null);
+  // (P5-UX-14, C-945) The account is tested once right after connecting; a failure is a warning, the account is kept.
+  const testAccount = useTestAccount();
+  const [warning, setWarning] = useState<string | null>(null);
+  const tested = useRef<string | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
   const [giving, setGiving] = useState(false);
@@ -174,6 +179,24 @@ export function ConnectJourney({
 
   const ready = choice?.kind === "website" ? !agents.isPending : !!choice && !!app && !accounts.isPending && !agents.isPending;
   const step: StepId = advancing && ready ? stepAfterApp(shape) : stepState;
+  useEffect(() => {
+    if (step !== "done" || !done || done.kind !== "connection" || tested.current === done.accountId) return;
+    tested.current = done.accountId;
+    testAccount.mutate(
+      { ref: { type: "connection", id: done.accountId } },
+      {
+        onSuccess: (a) =>
+          setWarning(
+            a.result === "unreachable"
+              ? savedButText(done.name, a.detail?.host ?? undefined)
+              : a.result === "rejected"
+                ? `Saved, but ${done.name} did not accept it. Check it or test again.`
+                : null,
+          ),
+      },
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once per account
+  }, [step, done]);
   const waiting = advancing && !ready;
 
   const refresh = useCallback(() => {
@@ -420,6 +443,7 @@ export function ConnectJourney({
             {doneSentence({ agent: who, app: done.name, level: done.level, agentChosen: granted.length > 0 })}
           </p>
         )}
+        {warning ? <Notice tone="pending" role="alert">{warning}</Notice> : null}
         {done.missing.length > 0 ? <Notice tone="pending">Some requested permissions were not granted: {done.missing.join(", ")}.</Notice> : null}
         {!done.grantFailed ? (
           <div className="flex flex-wrap gap-2 pt-1">

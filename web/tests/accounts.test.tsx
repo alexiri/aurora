@@ -104,7 +104,7 @@ describe("AccountsList: one row per kind", () => {
     list();
     await openMenu("AWS prod");
     const names = (await screen.findAllByRole("menuitem")).map((m) => m.textContent);
-    expect(names).toEqual(["Give access", "Rename", "Reconnect", "Turn off", "Remove"]);
+    expect(names).toEqual(["Give access", "Rename", "Reconnect", "Test", "Turn off", "Remove"]);
     fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
     cleanup();
     listWs([website()]);
@@ -137,7 +137,7 @@ describe("AccountsList: one row per kind", () => {
     listWs([app({ health: { state: "disabled" } }), app({ ref: { type: "connection", id: "c2" }, name: "Jira", health: { state: "sign_in_expired" } })]);
     list();
     expect(await screen.findByText("Turned off")).toBeInTheDocument();
-    expect(screen.getByText(/Sign-in expired/)).toBeInTheDocument();
+    expect(screen.getByText(/The sign-in to .* expired/)).toBeInTheDocument();
     await openMenu("AWS prod");
     expect(await screen.findByRole("menuitem", { name: "Turn on" })).toBeInTheDocument();
   });

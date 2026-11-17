@@ -166,7 +166,7 @@ pub struct Account {
 /// (C-943) What Test found.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum TestResult {
+pub enum AccountTestResult {
     Ok,
     Rejected,
     Unreachable,
@@ -174,7 +174,7 @@ pub enum TestResult {
     NotTestable,
 }
 
-impl TestResult {
+impl AccountTestResult {
     /// The stored form (`last_check_result`); `not_testable` is never stored.
     pub fn stored(self) -> Option<&'static str> {
         match self {
@@ -199,7 +199,7 @@ impl TestResult {
 
 /// At most a host, an HTTP status or a protocol code: never an upstream body, header or credential (SEC-129).
 #[derive(Debug, Clone, Default, Serialize, ToSchema)]
-pub struct TestDetail {
+pub struct AccountTestDetail {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub host: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -210,10 +210,10 @@ pub struct TestDetail {
 
 /// C-943: the answer of `POST /v1/accounts/{type}/{id}/test`.
 #[derive(Debug, Clone, Serialize, ToSchema)]
-pub struct TestAnswer {
-    pub result: TestResult,
+pub struct AccountTestAnswer {
+    pub result: AccountTestResult,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub detail: Option<TestDetail>,
+    pub detail: Option<AccountTestDetail>,
     pub checked_at: DateTime<Utc>,
 }
 
