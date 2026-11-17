@@ -125,6 +125,7 @@ export function ActivityView({ wsId, base }: { wsId: string; base: string }) {
               <Th>When</Th>
               <Th>Agent</Th>
               <Th>Request</Th>
+              <Th>Model</Th>
               <Th>Decision</Th>
               <Th>Rule</Th>
               <Th>App / tool</Th>
@@ -154,6 +155,9 @@ export function ActivityView({ wsId, base }: { wsId: string; base: string }) {
                         {e.context_label}
                       </span>
                     ) : null}
+                  </Td>
+                  <Td className="break-all font-mono text-xs" data-testid="llm-model">
+                    {e.llm_model ?? "—"}
                   </Td>
                   <Td>
                     <Badge tone={decisionTone(e.decision)}>{e.decision}</Badge>
