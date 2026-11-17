@@ -93,7 +93,18 @@ pub(crate) fn install() -> (
                 .with_writer(logs.clone())
                 .with_filter(tracing_subscriber::filter::LevelFilter::INFO),
         );
-    (exporter, logs, tracing::subscriber::set_default(sub))
+    // FIX-161: a callsite caches its interest when it is first hit. While only ONE dispatcher is
+    // registered in the process, tracing computes that interest from the hitting thread's own
+    // dispatcher; a parallel test's thread (it has none) hits the `job` / sqlx callsites first
+    // and caches "never", and this test's exporter stays empty (only in parallel runs). With a
+    // second, process-long dispatcher registered, interest is the union of all live dispatchers,
+    // whichever thread hits the callsite.
+    static KEEP: std::sync::OnceLock<tracing::Dispatch> = std::sync::OnceLock::new();
+    KEEP.get_or_init(|| tracing::Dispatch::new(tracing_subscriber::registry()));
+    let guard = tracing::subscriber::set_default(sub);
+    // Callsites already cached by earlier hits are recomputed with this subscriber in the set.
+    tracing::callsite::rebuild_interest_cache();
+    (exporter, logs, guard)
 }
 
 fn tp(trace: &str, span: &str) -> String {
