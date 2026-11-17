@@ -104,3 +104,18 @@ P5-IA-1 moved the existing pieces under these topics. This task makes each a coh
 ## Suggested agent/model and reason
 
 Sonnet (`nextjs-developer`): page composition, with one merged form.
+
+## Completion report (lane p5-apps, 2026-11-17)
+
+Commits: b3962aba (Data), 6b4b1246 (Sign-in, Chat platforms), 5c675fcc (BYO move, Playwright), d8cf9592 (gate fix).
+Web only; no Rust, API, OpenAPI or schema change.
+
+- **Already in place from P5-IA-1** (verified, not rebuilt): the People/Data/Platform/Chat platforms/Settings routes and tabs at each level, the redirects (incl. `/admin/identity`), the workspace People page, org Settings General with the member/agent limits, Platform Email and Rate limits.
+- **Data (C-969):** `OrgRetentionForm` (`components/org/retention-form.tsx`): conversation days, file days and storage quota in one `PUT`, Administration's maximums as `ScopeLadder` rows, Discard changes. Storage keeps usage only; the old `RetentionForm`, `LimitsForm`, `OrgSettingsView` and `usePutRetention` are gone; tabs read "Audit log".
+- **People › Sign-in (C-968):** one page of three headed parts: How people sign in (`sign_in`), Roles from the provider (new `ProviderRolesView`: the Identity page's mapping, read from the providers' `role_claim`/`role_mappings`, plus what the viewer's last sign-in made of them), Directory sync (`scim`).
+- **Chat platforms (C-970):** titles and the sentences that named Connectors/Channels now say Chat platforms ("Open Administration › Chat platforms"); one header per page.
+- **Workspace BYO (C-967):** `WorkspaceByoRow` in the agents list header (organization/instance value above, workspace choice behind Tighten…, text for members); removed from Settings › General (now name, Time zone, memory language).
+- **Left for P5-IA-3** (Agents pages, not this brief's pages): Administration › Agents still stacks `agents`+`approvals` and `terminal`+`previews`.
+- **Differences from boards:** AdminData's "organizations below" table is not built (D-351: the below table exists only for Internet access); quota is edited in MiB (the API's unit), the board shows GB.
+- **Gates:** vitest 119 files / 2027 tests pass; typecheck, lint (0 errors; 3 existing warnings), `pnpm build`, `gen:api` (no diff), guards, `extract-schema --check`; Playwright mocked project 952 passed / 5 failed under load ~19: agent-tabs ×4 (page.goto timeouts) pass on rerun alone (8 passed), fix-127-mattermost was a real regression of mine (wrapping the page in an embedded header hid the connector title), fixed in d8cf9592 and green with stage4-routes/stage4-axe chat-platforms (93 passed); production project 8 passed; new `e2e/ia-4.spec.ts` 16 passed. Not run: cargo clippy/nextest, OpenAPI drift test (no Rust touched since the master merge).
+- **Rule note:** the first commit's block removals used one throwaway python script (stated in its message).
