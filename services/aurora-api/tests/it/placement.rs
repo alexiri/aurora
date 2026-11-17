@@ -357,6 +357,92 @@ async fn sec79_templates_use_only_validated_claims_and_fall_back() {
     assert_eq!(s, 400);
 }
 
+/// C-922: people who signed in before the starter grant existed get it with the backfill, once;
+/// running it again changes nothing; each grant is audited as the placement with `backfill`.
+#[tokio::test]
+async fn c922_backfill_gives_starter_grants_to_earlier_people_and_is_idempotent() {
+    let e = env(SignupMode::Open).await;
+    let org = e.shared(json!({})).await;
+    for (sub, email) in [("b-1", "bo@example.com"), ("b-2", "cy@example.com")] {
+        e.who(sub, email, None);
+        e.sign_in().await.unwrap();
+    }
+    let key = e.org_secret(org, "org-llm-key", "generic").await;
+    let backfill = |body: Value| {
+        e.call(
+            &e.admin,
+            Method::POST,
+            "/v1/admin/placement/starter-grants/backfill",
+            Some(body),
+        )
+    };
+    let waiting = || async {
+        let (s, v) = e.call(&e.admin, Method::GET, "/v1/admin/setup", None).await;
+        assert_eq!(s, 200, "{v}");
+        v["personal_workspaces_without_starter"].as_i64().unwrap()
+    };
+    // No starter grant saved: nothing is waiting, and the backfill has nothing to give.
+    assert_eq!(waiting().await, 0);
+    let (s, v) = backfill(json!({})).await;
+    assert_eq!((s, v["granted"].as_u64()), (200, Some(0)), "{v}");
+    // An id that is not a starter grant is refused.
+    e.shared_again(json!({"personal_workspace": {"enabled": true},
+        "starter_grants": [{"kind": "secret", "id": key}]}))
+        .await;
+    let (s, v) = backfill(json!({"credential_ids": [Uuid::now_v7()]})).await;
+    assert_eq!(s, 400, "{v}");
+
+    assert_eq!(waiting().await, 2);
+    let (s, v) = backfill(json!({})).await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(
+        (v["granted"].as_u64(), v["skipped"].as_u64()),
+        (Some(2), Some(0))
+    );
+    assert_eq!(waiting().await, 0);
+    let held = format!(
+        "SELECT count(*) FROM agents a JOIN workspaces w ON w.id = a.workspace_id \
+         JOIN grants g ON g.agent_id = a.id AND g.secret_id = '{key}' \
+         WHERE a.is_default AND w.personal_owner_user_id IS NOT NULL"
+    );
+    assert_eq!(e.n(&held).await, 2);
+
+    // Again: nothing changes.
+    let (s, v) = backfill(json!({})).await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(
+        (v["granted"].as_u64(), v["skipped"].as_u64()),
+        (Some(0), Some(2))
+    );
+    assert_eq!(e.n(&held).await, 2);
+
+    // One audit row per grant, written by the placement, marked as a backfill.
+    let rows: Vec<Value> = sqlx::query_scalar(
+        "SELECT metadata FROM audit_log WHERE action = 'grant.create' AND actor_label = 'placement'",
+    )
+    .fetch_all(e.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(rows.len(), 2, "{rows:?}");
+    assert!(
+        rows.iter()
+            .all(|m| m["backfill"] == true && m["starter"] == true)
+    );
+
+    // Only an instance admin may run it.
+    let member = e.h.user("m@example.com", false).await;
+    let (_, tok) = e.h.good_session(member).await;
+    let (s, _) = e
+        .call(
+            &cookie(&tok),
+            Method::POST,
+            "/v1/admin/placement/starter-grants/backfill",
+            Some(json!({})),
+        )
+        .await;
+    assert_eq!(s, 403);
+}
+
 /// C-923: a personal workspace is named after the person: given name, else full name, else the
 /// part of the e-mail before the @; the slug keeps coming from the template (`{sub}`).
 #[tokio::test]

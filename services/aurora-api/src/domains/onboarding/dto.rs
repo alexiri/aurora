@@ -44,6 +44,10 @@ pub enum SetupState {
 pub struct SetupStatus {
     /// A placement has been saved: the wizard is no longer shown at sign-in.
     pub placement_saved: bool,
+    /// (C-922) Personal workspaces of the default organization whose default agent lacks a
+    /// starter grant of the saved placement: people who signed in before it was set. `0` when
+    /// no placement or no starter grant is saved.
+    pub personal_workspaces_without_starter: i64,
     /// The calling admin's last sign-in, when it read a role claim.
     pub you: Option<SetupYou>,
     /// In order: `roles`, `placement`, `llm`, `runners`, `optional`. ("Try it" is the client's.)
@@ -82,4 +86,13 @@ pub struct SetupCheck {
     pub value: Option<String>,
     /// The Helm value that changes it, for config-only things.
     pub helm: Option<String>,
+    /// (C-924) `app_needs_oauth_client` and `app_token_only`: the app the check is about.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub app_id: Option<String>,
+    /// (C-924) Those checks: the app's package id and the OAuth client key its sign-in method
+    /// reads (`null` for `app_token_only` when it has none to name).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub package: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client_key: Option<String>,
 }

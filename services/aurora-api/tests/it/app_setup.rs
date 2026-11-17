@@ -461,6 +461,78 @@ async fn an_instance_bound_app_without_a_server_needs_an_instance() {
     assert_eq!(v["suggested_method"], Value::Null);
 }
 
+/// C-924: the instance setup status lists the apps people cannot sign in to for lack of an OAuth
+/// client, and says so when e-mail is not set up.
+#[tokio::test]
+async fn setup_status_lists_apps_people_cannot_sign_in_to_and_missing_email() {
+    let w = world().await;
+    let (s, v) = w
+        .call(
+            &w.root,
+            Method::PUT,
+            "/v1/admin/placement",
+            Some(json!({"mode": "shared_org", "default_org_id": w.org})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let optional = |v: &Value| -> Vec<Value> {
+        v["steps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|s| s["id"] == "optional")
+            .unwrap()["checks"]
+            .as_array()
+            .unwrap()
+            .clone()
+    };
+    let by_id = |checks: &[Value], id: &str| checks.iter().find(|c| c["id"] == id).cloned();
+
+    let (s, v) = w.call(&w.root, Method::GET, "/v1/admin/setup", None).await;
+    assert_eq!(s, 200, "{v}");
+    let checks = optional(&v);
+    // Linear-like: its only way to connect is an OAuth client that does not exist.
+    let lin = by_id(&checks, "app:lin").unwrap();
+    assert_eq!(lin["reason"], "app_needs_oauth_client", "{lin}");
+    assert_eq!(lin["status"], "warning");
+    assert_eq!(
+        (
+            lin["app_id"].as_str(),
+            lin["package"].as_str(),
+            lin["client_key"].as_str()
+        ),
+        (Some("lin"), Some("multi"), Some("linear"))
+    );
+    // GitHub-like: a token works, so it is only informational.
+    let gh = by_id(&checks, "app:ghlike").unwrap();
+    assert_eq!(gh["reason"], "app_token_only", "{gh}");
+    assert_eq!(gh["status"], "ok");
+    // Apps blocked by something else, and apps with no OAuth method, are not listed.
+    assert!(by_id(&checks, "app:ghes").is_none());
+    assert!(by_id(&checks, "app:awsk").is_none());
+    // The test instance has no SMTP server.
+    let mail = by_id(&checks, "email").unwrap();
+    assert_eq!(mail["reason"], "email_not_configured");
+    assert_eq!(
+        mail["message"],
+        "E-mail is not set up. Aurora cannot send approval or invitation e-mails."
+    );
+
+    // An organization client for Linear takes Linear off the list; the other stays.
+    w.client(
+        &w.org_admin,
+        &format!("/v1/orgs/{}/oauth-clients", w.org),
+        "linear",
+    )
+    .await;
+    let (_, v) = w.call(&w.root, Method::GET, "/v1/admin/setup", None).await;
+    let checks = optional(&v);
+    assert!(by_id(&checks, "app:lin").is_none(), "{checks:?}");
+    assert!(by_id(&checks, "app:ghlike").is_some());
+    // No secret-shaped text, no client id.
+    assert!(!v.to_string().contains("SECRET"));
+}
+
 async fn org_slug(w: &W) -> String {
     sqlx::query_scalar("SELECT slug FROM organizations WHERE id = $1")
         .bind(w.org)

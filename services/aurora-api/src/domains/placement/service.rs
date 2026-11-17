@@ -667,6 +667,107 @@ pub async fn put(
     view(state).await
 }
 
+/// The saved placement's starter credentials as `(secret ids, connection ids)`.
+pub fn starter_ids(row: &PlacementRow) -> (Vec<Uuid>, Vec<Uuid>) {
+    let starters: Vec<Starter> =
+        serde_json::from_value(row.starter_grants.clone()).unwrap_or_default();
+    let pick = |kind: &str| {
+        starters
+            .iter()
+            .filter(|s| s.kind == kind)
+            .map(|s| s.id)
+            .collect()
+    };
+    (pick("secret"), pick("connection"))
+}
+
+/// How many personal workspaces of the default organization lack a starter grant (C-922).
+pub async fn personal_without_starter(state: &AppState) -> Result<i64, ApiError> {
+    let Some(row) = repo::get(&state.pool).await? else {
+        return Ok(0);
+    };
+    let Some(org) = row.default_org_id else {
+        return Ok(0);
+    };
+    let (secrets, connections) = starter_ids(&row);
+    if secrets.is_empty() && connections.is_empty() {
+        return Ok(0);
+    }
+    Ok(repo::count_personal_without_starter(&state.pool, org, &secrets, &connections).await?)
+}
+
+/// Give the placement's starter grants to the default agent of every existing personal
+/// workspace of the default organization (C-922). Idempotent: a grant that exists is left as
+/// it is and counted as skipped; one the normal grant path refuses is skipped too. Each grant is
+/// its own transaction with its own audit row (`actor_label = placement`, `backfill = true`).
+pub async fn backfill_starter_grants(
+    state: &AppState,
+    c: &Caller,
+    req: BackfillStarterGrants,
+) -> Result<BackfillResult, ApiError> {
+    let row = repo::get(&state.pool)
+        .await?
+        .filter(|r| PlacementMode::parse(&r.mode) == PlacementMode::SharedOrg)
+        .ok_or_else(|| bad("/", "save a shared organization placement first"))?;
+    let org_id = row
+        .default_org_id
+        .ok_or_else(|| bad("/", "the default organization no longer exists"))?;
+    let (mut secret_ids, mut connection_ids) = starter_ids(&row);
+    if let Some(only) = &req.credential_ids {
+        for (i, id) in only.iter().enumerate() {
+            if !secret_ids.contains(id) && !connection_ids.contains(id) {
+                return Err(bad(
+                    &format!("/credential_ids/{i}"),
+                    "is not one of the placement's starter grants",
+                ));
+            }
+        }
+        secret_ids.retain(|id| only.contains(id));
+        connection_ids.retain(|id| only.contains(id));
+    }
+    let mut out = BackfillResult {
+        granted: 0,
+        skipped: 0,
+    };
+    for agent_id in repo::personal_default_agents(&state.pool, org_id).await? {
+        let Some(agent) = aurora_db::repo::agents::get(&state.pool, agent_id).await? else {
+            continue;
+        };
+        let wanted = secret_ids
+            .iter()
+            .map(|id| ("secret", *id))
+            .chain(connection_ids.iter().map(|id| ("connection", *id)));
+        for (kind, id) in wanted {
+            let mut tx = audit::begin(state).await?;
+            let res = if kind == "secret" {
+                grants::grant_secret_as_system(&mut tx, &agent, id, actor())
+                    .await
+                    .map(|w| w.event)
+            } else {
+                grants::grant_connection_as_system(&mut tx, state, &agent, id, actor())
+                    .await
+                    .map(|w| w.event)
+            };
+            match res {
+                Ok(Some(mut ev)) => {
+                    ev.metadata["starter"] = json!(true);
+                    ev.metadata["backfill"] = json!(true);
+                    ev.metadata["requested_by"] = json!(c.user_id);
+                    audit::commit_critical(tx, &ev).await?;
+                    out.granted += 1;
+                }
+                // Already granted: nothing was written.
+                Ok(None) => out.skipped += 1,
+                Err(e) if e.status().is_server_error() => return Err(e),
+                // A credential deleted or disabled since, or an app that became custom-only:
+                // skipped, like the sign-in path does.
+                Err(_) => out.skipped += 1,
+            }
+        }
+    }
+    Ok(out)
+}
+
 pub async fn choices(state: &AppState, org: Uuid) -> Result<PlacementChoices, ApiError> {
     if repo::org_brief(&state.pool, org).await?.is_none() {
         return Err(ApiError::not_found("Organization not found."));

@@ -3249,6 +3249,79 @@
         ]
       }
     },
+    "/v1/admin/placement/starter-grants/backfill": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Give the starter grants to people who signed in before (instance administrators; audited\nper grant). Idempotent: a grant that exists is left alone.",
+        "operationId": "adminBackfillStarterGrants",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BackfillStarterGrants"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackfillResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
     "/v1/admin/plugins": {
       "get": {
         "tags": [
@@ -37751,6 +37824,44 @@
           }
         }
       },
+      "BackfillResult": {
+        "type": "object",
+        "description": "What a backfill did: grants written, and grants that already existed or were refused\n(an unusable credential, or an app that allows only custom access).",
+        "required": [
+          "granted",
+          "skipped"
+        ],
+        "properties": {
+          "granted": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "skipped": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
+      "BackfillStarterGrants": {
+        "type": "object",
+        "description": "`POST /v1/admin/placement/starter-grants/backfill` (C-922).",
+        "properties": {
+          "credential_ids": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Only these starter credentials; absent = every starter grant of the saved placement.\nAn id that is not one of the placement's starter grants is refused."
+          }
+        },
+        "additionalProperties": false
+      },
       "BatchDecided": {
         "type": "object",
         "required": [
@@ -55874,6 +55985,19 @@
           "message"
         ],
         "properties": {
+          "app_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "(C-924) `app_needs_oauth_client` and `app_token_only`: the app the check is about."
+          },
+          "client_key": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "helm": {
             "type": [
               "string",
@@ -55888,6 +56012,13 @@
           "message": {
             "type": "string",
             "description": "One short plain sentence for the page."
+          },
+          "package": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "(C-924) Those checks: the app's package id and the OAuth client key its sign-in method\nreads (`null` for `app_token_only` when it has none to name)."
           },
           "reason": {
             "type": "string"
@@ -56050,9 +56181,15 @@
         "description": "`GET /v1/admin/setup` (C-533): the setup wizard's live status, no secrets.",
         "required": [
           "placement_saved",
+          "personal_workspaces_without_starter",
           "steps"
         ],
         "properties": {
+          "personal_workspaces_without_starter": {
+            "type": "integer",
+            "format": "int64",
+            "description": "(C-922) Personal workspaces of the default organization whose default agent lacks a\nstarter grant of the saved placement: people who signed in before it was set. `0` when\nno placement or no starter grant is saved."
+          },
           "placement_saved": {
             "type": "boolean",
             "description": "A placement has been saved: the wizard is no longer shown at sign-in."
