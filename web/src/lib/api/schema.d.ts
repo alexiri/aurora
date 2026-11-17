@@ -3335,6 +3335,26 @@ export interface paths {
         patch: operations["patchOrg"];
         trace?: never;
     };
+    "/v1/orgs/{org}/accounts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The accounts shared with the whole organization (owners and admins; C-917), each with the
+         *     agents of every workspace that use it and its limit.
+         */
+        get: operations["listOrgAccounts"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/orgs/{org}/agent-tokens": {
         parameters: {
             query?: never;
@@ -4828,6 +4848,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/workspaces/{ws}/accounts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * One list of what a workspace's agents can use (`can_use`; C-917): the workspace's own apps,
+         *     websites and AI keys, and the organization's accounts its agents can be given. With
+         *     `agent_id` the list is read for that agent (`given`, given first).
+         */
+        get: operations["listWorkspaceAccounts"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/workspaces/{ws}/action-approvals": {
         parameters: {
             query?: never;
@@ -5301,6 +5342,59 @@ export interface components {
             /** @description The `idp:<provider>:<value>` source, for `idp_claim`. */
             value?: string | null;
         };
+        Account: {
+            agents: components["schemas"]["AgentAccess"][];
+            app?: components["schemas"]["AccountApp"] | null;
+            can: components["schemas"]["AccountCan"];
+            connected_by?: components["schemas"]["PersonName"] | null;
+            /** @description Only with `agent_id`: whether that agent can use the account (given ones come first). */
+            given?: boolean | null;
+            health: components["schemas"]["Health"];
+            kind: components["schemas"]["AccountKind"];
+            /** @description The choices that exist for the account, already cut to the limit; empty = no choice. */
+            levels: components["schemas"]["Level"][];
+            limit?: components["schemas"]["Level"] | null;
+            managed_by?: components["schemas"]["WhoCan"] | null;
+            name: string;
+            ref: components["schemas"]["AccountRef"];
+            /** @description `workspace` | `organization`. */
+            scope: string;
+        };
+        AccountAgent: {
+            handle: string;
+            /** Format: uuid */
+            id: string;
+            name: string;
+        };
+        AccountApp: {
+            app_id: string;
+            /**
+             * @description The app allows custom access only (C-410): no `act` choice, the actions table opens
+             *     directly.
+             */
+            custom_only: boolean;
+            family?: components["schemas"]["AppFamily"] | null;
+            name: string;
+        };
+        AccountCan: {
+            change_access: boolean;
+            give_access: boolean;
+            manage: boolean;
+        };
+        /** @enum {string} */
+        AccountKind: "app" | "website" | "ai_key";
+        AccountRef: {
+            /** Format: uuid */
+            id: string;
+            type: components["schemas"]["AccountRefType"];
+        };
+        /** @enum {string} */
+        AccountRefType: "connection" | "secret";
+        AccountWorkspace: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+        };
         /** @enum {string} */
         Action: "allow" | "block";
         ActionApproval: {
@@ -5581,6 +5675,19 @@ export interface components {
             /** Format: uuid */
             workspace_id: string;
         };
+        AgentAccess: {
+            agent: components["schemas"]["AccountAgent"];
+            /** @description Under `ask`: the changes the saved choice allows without asking. */
+            always_allowed?: components["schemas"]["AlwaysAllowed"][] | null;
+            custom?: components["schemas"]["CustomChoice"] | null;
+            level: components["schemas"]["AccessLevel"];
+            /**
+             * @description AI-key rows of a list read for one agent (`agent_id`): the model that agent's next turn
+             *     uses through the key.
+             */
+            model?: string | null;
+            workspace: components["schemas"]["AccountWorkspace"];
+        };
         /** @description A link seen from one of its two agents. */
         AgentLink: {
             /** Format: date-time */
@@ -5685,6 +5792,10 @@ export interface components {
         AllowlistEntry: {
             host: string;
             path?: string | null;
+        };
+        AlwaysAllowed: {
+            name: string;
+            tool_id: string;
         };
         ApiKey: {
             /** Format: date-time */
@@ -6930,6 +7041,15 @@ export interface components {
             /** @description The value in words; a secret reads only "Set" or "Not set". */
             value_display: string;
         };
+        CustomChoice: {
+            /** @description The nearest level. */
+            base: components["schemas"]["Level"];
+            /**
+             * Format: int32
+             * @description How many actions differ from it.
+             */
+            differs: number;
+        };
         /** @description How an agent reaches a database connection (P2-DBL-2, C-230); `null` for other apps. */
         DatabaseRef: {
             /** @description `postgres`. */
@@ -7471,6 +7591,17 @@ export interface components {
             /** @description `claude-code` | `codex` (| `fake` when enabled). */
             id: string;
         };
+        /** @description C-944. Until P5-UX-14 adds the check fields: `sign_in_expired`, `disabled`, else `unknown`. */
+        Health: {
+            /** Format: date-time */
+            checked_at?: string | null;
+            detail?: string | null;
+            /** Format: date-time */
+            last_used_at?: string | null;
+            state: components["schemas"]["HealthState"];
+        };
+        /** @enum {string} */
+        HealthState: "ok" | "rejected" | "sign_in_expired" | "unreachable" | "disabled" | "unknown";
         HookAccepted: {
             /** Format: uuid */
             delivery_id: string;
@@ -8630,6 +8761,27 @@ export interface components {
              */
             members: number;
             slug: string;
+        };
+        Page_Account: {
+            items: {
+                agents: components["schemas"]["AgentAccess"][];
+                app?: components["schemas"]["AccountApp"] | null;
+                can: components["schemas"]["AccountCan"];
+                connected_by?: components["schemas"]["PersonName"] | null;
+                /** @description Only with `agent_id`: whether that agent can use the account (given ones come first). */
+                given?: boolean | null;
+                health: components["schemas"]["Health"];
+                kind: components["schemas"]["AccountKind"];
+                /** @description The choices that exist for the account, already cut to the limit; empty = no choice. */
+                levels: components["schemas"]["Level"][];
+                limit?: components["schemas"]["Level"] | null;
+                managed_by?: components["schemas"]["WhoCan"] | null;
+                name: string;
+                ref: components["schemas"]["AccountRef"];
+                /** @description `workspace` | `organization`. */
+                scope: string;
+            }[];
+            next_cursor?: string | null;
         };
         Page_ActionApproval: {
             items: {
@@ -9906,6 +10058,9 @@ export interface components {
         };
         /** @enum {string} */
         Per: "minute" | "hour" | "day";
+        PersonName: {
+            name: string;
+        };
         PersonalOf: {
             /** Format: uuid */
             id: string;
@@ -10388,6 +10543,19 @@ export interface components {
             require_context: boolean;
             /** @description The agent's own source CIDR list; `null` = inherit the org/instance default. */
             source_cidrs?: string[] | null;
+        };
+        /**
+         * @description (P5-UX-4, C-980) Body of `PUT /agents/{agent}/grants/connections/{conn}`: a `level`, or a
+         *     `mode` with its tool lists (the Custom editor). Exactly one of the two; a level carries no tool
+         *     list (the tools come from the app's catalogue, never from the request).
+         */
+        PutConnectionAccess: {
+            allow_tools?: string[];
+            /** Format: int64 */
+            ask_timeout_secs?: number | null;
+            ask_tools?: string[];
+            level?: components["schemas"]["Level"] | null;
+            mode?: components["schemas"]["GrantMode"] | null;
         };
         PutConnectionGrant: {
             allow_tools?: string[];
@@ -18955,7 +19123,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["PutConnectionGrant"];
+                "application/json": components["schemas"]["PutConnectionAccess"];
             };
         };
         responses: {
@@ -18995,7 +19163,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description grant_invalid (details.reason: empty_custom | tool_in_both | unknown_tool) */
+            /** @description grant_invalid (details.reason: empty_custom | tool_in_both | unknown_tool | level_or_mode | level_with_tools), full_grant_forbidden, or above_account_limit (an organization's account; details.who_can, details.limit) */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -26548,6 +26716,84 @@ export interface operations {
             };
         };
     };
+    listOrgAccounts: {
+        parameters: {
+            query?: {
+                /**
+                 * @description Workspace list only: read the list for this agent (adds `given`, given first, the model
+                 *     line on AI keys).
+                 */
+                agent_id?: string | null;
+                /** @description `app` | `website` | `ai_key`. */
+                kind?: string | null;
+                /** @description Only the accounts of this app. */
+                app_id?: string | null;
+            };
+            header?: never;
+            path: {
+                /** @description Organization id */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Accounts */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_Account"];
+                };
+            };
+            /** @description Invalid filter */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     listOrgAgentTokens: {
         parameters: {
             query?: {
@@ -33945,6 +34191,75 @@ export interface operations {
                 };
             };
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    listWorkspaceAccounts: {
+        parameters: {
+            query?: {
+                /**
+                 * @description Workspace list only: read the list for this agent (adds `given`, given first, the model
+                 *     line on AI keys).
+                 */
+                agent_id?: string | null;
+                /** @description `app` | `website` | `ai_key`. */
+                kind?: string | null;
+                /** @description Only the accounts of this app. */
+                app_id?: string | null;
+            };
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                ws: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Accounts */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_Account"];
+                };
+            };
+            /** @description Invalid filter */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not found */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
