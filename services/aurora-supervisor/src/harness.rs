@@ -19,6 +19,9 @@ pub struct HarnessCapabilities {
     pub dialects: Vec<String>,
     pub skills_dir: Option<String>,
     pub instruction_files: Vec<String>,
+    /// (P5-MODELS-1, D-303, C-877) The roles the adapter maps (`large`/`medium`/`small`); `[]` = none.
+    /// Equal to `aurora_protocol::runner::harness_model_roles(id)` (the API's `/v1/harnesses` reads that).
+    pub model_roles: Vec<String>,
 }
 
 impl HarnessCapabilities {

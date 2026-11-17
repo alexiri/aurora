@@ -63,6 +63,10 @@ async fn list_harnesses(
                     .iter()
                     .map(|d| d.as_str().to_owned())
                     .collect(),
+                model_roles: aurora_protocol::runner::harness_model_roles(id)
+                    .iter()
+                    .map(|r| (*r).to_owned())
+                    .collect(),
                 available: live.iter().any(|l| l == id),
             })
         })
@@ -533,11 +537,20 @@ async fn model_readiness(
     drop(conn);
     let default = r.default.as_ref().and_then(|d| {
         let ep = r.keys.get(d.key)?.ep?;
+        let rr = r.roles.as_ref()?;
         Some(DefaultModel {
             endpoint_id: ep.id.clone(),
             provider: ep.provider.clone(),
             model_id: d.model.clone(),
             source: d.source.as_str().to_owned(),
+            roles: super::dto::RolesView {
+                large: (&rr.roles[0]).into(),
+                medium: (&rr.roles[1]).into(),
+                small: (&rr.roles[2]).into(),
+            },
+            roles_dropped: rr.dropped.iter().map(|n| (*n).to_owned()).collect(),
+            subagent_model: rr.subagent_model.clone(),
+            subagent_warning: rr.subagent_warning.map(str::to_owned),
         })
     });
     Ok(Json(ModelReadiness {

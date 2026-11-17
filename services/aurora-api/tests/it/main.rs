@@ -66,6 +66,7 @@ mod me;
 mod memory;
 mod message_idempotency;
 mod model_readiness;
+mod model_roles;
 mod oidc;
 mod oidc_roles;
 mod onboarding;

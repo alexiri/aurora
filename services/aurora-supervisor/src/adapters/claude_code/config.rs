@@ -46,9 +46,88 @@ const OWN_ENV: &[&str] = &[
     "ANTHROPIC_AUTH_TOKEN",
     "ANTHROPIC_BASE_URL",
     "ANTHROPIC_MODEL",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL_SUPPORTED_CAPABILITIES",
+    "CLAUDE_CODE_SUBAGENT_MODEL",
+    "CLAUDE_CODE_SUBAGENT_MODEL_FORCE",
+    "CLAUDE_CODE_MAX_CONTEXT_TOKENS",
     "HTTPS_PROXY",
     "HTTP_PROXY",
 ];
+
+/// (C-877, pinned with the CLI version) role → the CLI's alias and its per-alias variables.
+const ROLE_ALIASES: [(&str, &str, &str, &str); 3] = [
+    (
+        "large",
+        "opus",
+        "ANTHROPIC_DEFAULT_OPUS_MODEL",
+        "ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES",
+    ),
+    (
+        "medium",
+        "sonnet",
+        "ANTHROPIC_DEFAULT_SONNET_MODEL",
+        "ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES",
+    ),
+    (
+        "small",
+        "haiku",
+        "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+        "ANTHROPIC_DEFAULT_HAIKU_MODEL_SUPPORTED_CAPABILITIES",
+    ),
+];
+
+/// (SEC-122) The supervisor re-checks every model value of a `ModelChoice` before it enters a process
+/// environment or `harness.env`: ids against `MODEL_ID_PATTERN`, roles and capabilities against their closed
+/// vocabularies, the context window as an integer in range. A violation refuses the turn (`harness_failed`).
+pub fn check_model(m: &aurora_protocol::runner::ModelChoice) -> Result<(), HarnessError> {
+    use aurora_core::model_id::{
+        CONTEXT_WINDOW_MAX, CONTEXT_WINDOW_MIN, MODEL_CAPABILITIES, MODEL_ROLES, validate_model_id,
+    };
+    let bad = |what: &str| {
+        Err(HarnessError::new(
+            "harness_failed",
+            format!("the model choice is refused: {what} is not valid"),
+        ))
+    };
+    if !validate_model_id(&m.model) {
+        return bad("the model id");
+    }
+    if let Some(r) = &m.roles
+        && r.set().any(|(_, id)| !validate_model_id(id))
+    {
+        return bad("a role's model id");
+    }
+    if m.subagent_role
+        .as_deref()
+        .is_some_and(|r| !MODEL_ROLES.contains(&r))
+    {
+        return bad("the subagent role");
+    }
+    for meta in m.model_meta.iter().flatten() {
+        if !validate_model_id(&meta.model) {
+            return bad("a model_meta id");
+        }
+        if meta
+            .context_window
+            .is_some_and(|w| !(CONTEXT_WINDOW_MIN..=CONTEXT_WINDOW_MAX).contains(&w))
+        {
+            return bad("a context window");
+        }
+        if meta
+            .capabilities
+            .iter()
+            .any(|c| !MODEL_CAPABILITIES.contains(&c.as_str()))
+        {
+            return bad("a capability");
+        }
+    }
+    Ok(())
+}
 
 /// The dialects Claude Code speaks (`12 §Adapter claude-code`, D-260(a)): the Messages API, and the
 /// Bedrock and Vertex surfaces it reaches through its own "use provider" switches. The cloud ones
@@ -109,6 +188,31 @@ pub fn model_env(m: &aurora_protocol::runner::ModelChoice) -> Vec<(String, Strin
         }
     }
     set("ANTHROPIC_MODEL", &m.model);
+    // (C-877) Roles: an unset role sets nothing. Never `CLAUDE_CODE_SUBAGENT_MODEL_FORCE` (a subagent
+    // definition's own `model:` still wins) and never anything under `.claude/agents/` (D-302(d)).
+    let meta_of = |model: &str| m.model_meta.iter().flatten().find(|x| x.model == model);
+    if let Some(roles) = &m.roles {
+        for (role, model) in roles.set() {
+            let Some((_, _, var, caps_var)) = ROLE_ALIASES.iter().find(|a| a.0 == role) else {
+                continue;
+            };
+            set(var, model);
+            if let Some(meta) = meta_of(model).filter(|x| !x.capabilities.is_empty()) {
+                set(caps_var, &meta.capabilities.join(","));
+            }
+        }
+    }
+    if let Some(alias) = m
+        .subagent_role
+        .as_deref()
+        .and_then(|r| ROLE_ALIASES.iter().find(|a| a.0 == r))
+        .map(|a| a.1)
+    {
+        set("CLAUDE_CODE_SUBAGENT_MODEL", alias);
+    }
+    if let Some(w) = meta_of(&m.model).and_then(|x| x.context_window) {
+        set("CLAUDE_CODE_MAX_CONTEXT_TOKENS", &w.to_string());
+    }
     env
 }
 
@@ -180,6 +284,7 @@ pub fn launch_spec(
     resume: Option<&str>,
 ) -> Result<LaunchSpec, HarnessError> {
     check_dialect(&opts.model.dialect)?;
+    check_model(&opts.model)?;
     Ok(LaunchSpec {
         args: build_args(opts, resume)?,
         env: build_env(opts),
@@ -250,6 +355,9 @@ mod tests {
                     ("ANTHROPIC_API_KEY".into(), "sk-REAL-SECRET".into()),
                     ("LLM_EXTRA".into(), "1".into()),
                 ],
+                roles: None,
+                subagent_role: None,
+                model_meta: None,
             },
             proxy_url: "http://127.0.0.1:4100".into(),
             mcp_bridge: McpBridgeSpec {
@@ -426,6 +534,184 @@ mod tests {
             o.model.dialect = (*d).into();
             assert!(launch_spec(&o, None).is_ok(), "{d}");
         }
+    }
+
+    fn with_roles(
+        roles: Option<(&str, &str, &str)>,
+        subagent: Option<&str>,
+        meta: Vec<aurora_protocol::runner::ModelMeta>,
+    ) -> SessionOptions {
+        let mut o = opts("litellm", "medium");
+        o.model.roles = roles.map(|(l, m, s)| aurora_protocol::runner::ModelRoleIds {
+            large: (!l.is_empty()).then(|| l.to_owned()),
+            medium: (!m.is_empty()).then(|| m.to_owned()),
+            small: (!s.is_empty()).then(|| s.to_owned()),
+        });
+        o.model.subagent_role = subagent.map(str::to_owned);
+        o.model.model_meta = (!meta.is_empty()).then_some(meta);
+        o
+    }
+
+    fn one(env: &[(String, String)], k: &str) -> Option<String> {
+        let v = get(env, k);
+        assert!(v.len() <= 1, "{k} set twice: {v:?}");
+        v.first().map(|s| (*s).to_owned())
+    }
+
+    /// (C-877) Golden environments: no roles, all roles, a subagent default, capabilities and a context window.
+    #[test]
+    fn model_roles_map_to_the_cli_variables() {
+        let role_vars = [
+            "ANTHROPIC_DEFAULT_OPUS_MODEL",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL",
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+            "CLAUDE_CODE_SUBAGENT_MODEL",
+            "CLAUDE_CODE_SUBAGENT_MODEL_FORCE",
+            "CLAUDE_CODE_MAX_CONTEXT_TOKENS",
+            "ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES",
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL_SUPPORTED_CAPABILITIES",
+        ];
+        // no roles: none of the variables
+        let env = build_env(&with_roles(None, None, vec![]));
+        for k in role_vars {
+            assert_eq!(one(&env, k), None, "{k}");
+        }
+        // all roles + a subagent default
+        let env = build_env(&with_roles(
+            Some(("glm-big", "glm-mid", "glm-air")),
+            Some("small"),
+            vec![],
+        ));
+        assert_eq!(
+            one(&env, "ANTHROPIC_DEFAULT_OPUS_MODEL").as_deref(),
+            Some("glm-big")
+        );
+        assert_eq!(
+            one(&env, "ANTHROPIC_DEFAULT_SONNET_MODEL").as_deref(),
+            Some("glm-mid")
+        );
+        assert_eq!(
+            one(&env, "ANTHROPIC_DEFAULT_HAIKU_MODEL").as_deref(),
+            Some("glm-air")
+        );
+        assert_eq!(
+            one(&env, "CLAUDE_CODE_SUBAGENT_MODEL").as_deref(),
+            Some("haiku")
+        );
+        assert_eq!(
+            one(&env, "ANTHROPIC_MODEL").as_deref(),
+            Some("claude-sonnet-4-5")
+        );
+        // an unset role sets nothing; `_FORCE` is never set
+        let env = build_env(&with_roles(
+            Some(("", "", "glm-air")),
+            Some("large"),
+            vec![],
+        ));
+        assert_eq!(one(&env, "ANTHROPIC_DEFAULT_OPUS_MODEL"), None);
+        assert_eq!(
+            one(&env, "CLAUDE_CODE_SUBAGENT_MODEL").as_deref(),
+            Some("opus")
+        );
+        assert_eq!(one(&env, "CLAUDE_CODE_SUBAGENT_MODEL_FORCE"), None);
+        // capabilities of a role's model, and the default model's context window
+        let meta = vec![
+            aurora_protocol::runner::ModelMeta {
+                model: "glm-air".into(),
+                context_window: Some(128_000),
+                capabilities: vec!["thinking".into(), "effort".into()],
+            },
+            aurora_protocol::runner::ModelMeta {
+                model: "claude-sonnet-4-5".into(),
+                context_window: Some(200_000),
+                capabilities: vec!["effort".into()],
+            },
+        ];
+        let env = build_env(&with_roles(Some(("", "", "glm-air")), None, meta));
+        assert_eq!(
+            one(&env, "ANTHROPIC_DEFAULT_HAIKU_MODEL_SUPPORTED_CAPABILITIES").as_deref(),
+            Some("thinking,effort")
+        );
+        assert_eq!(
+            one(&env, "CLAUDE_CODE_MAX_CONTEXT_TOKENS").as_deref(),
+            Some("200000")
+        );
+        // a caller or client environment can never set the adapter's own variables
+        let mut o = with_roles(None, None, vec![]);
+        o.env
+            .push(("ANTHROPIC_DEFAULT_OPUS_MODEL".into(), "evil".into()));
+        o.env
+            .push(("CLAUDE_CODE_SUBAGENT_MODEL_FORCE".into(), "evil".into()));
+        o.model
+            .client_env
+            .push(("CLAUDE_CODE_SUBAGENT_MODEL".into(), "evil".into()));
+        let env = build_env(&o);
+        for k in role_vars {
+            assert_eq!(one(&env, k), None, "{k}");
+        }
+    }
+
+    /// (SEC-122) The supervisor refuses a choice whose values break the pattern, vocabularies or ranges.
+    #[test]
+    fn a_choice_with_a_bad_model_value_refuses_the_turn() {
+        let bad_ids = [
+            "a'b",
+            "$(id)",
+            "a b",
+            "a\nb",
+            "a=b",
+            "x`y`",
+            "sk-ant-api03-xyz",
+            "",
+        ];
+        for id in bad_ids
+            .iter()
+            .map(|s| (*s).to_owned())
+            .chain(["a".repeat(201)])
+        {
+            let mut o = with_roles(None, None, vec![]);
+            o.model.model = id.clone();
+            let e = launch_spec(&o, None).unwrap_err();
+            assert_eq!(e.code, "harness_failed", "{id:?}");
+            if !id.is_empty() {
+                let mut o = with_roles(Some(("", &id, "")), None, vec![]);
+                o.model.model = "ok".into();
+                assert_eq!(
+                    launch_spec(&o, None).unwrap_err().code,
+                    "harness_failed",
+                    "{id:?}"
+                );
+            }
+        }
+        let mut o = with_roles(None, Some("huge"), vec![]);
+        assert!(launch_spec(&o, None).is_err());
+        o = with_roles(
+            None,
+            None,
+            vec![aurora_protocol::runner::ModelMeta {
+                model: "m".into(),
+                context_window: Some(5),
+                capabilities: vec![],
+            }],
+        );
+        assert!(launch_spec(&o, None).is_err());
+        o = with_roles(
+            None,
+            None,
+            vec![aurora_protocol::runner::ModelMeta {
+                model: "m".into(),
+                context_window: None,
+                capabilities: vec!["telepathy".into()],
+            }],
+        );
+        assert!(launch_spec(&o, None).is_err());
+        assert!(
+            launch_spec(
+                &with_roles(Some(("a", "b", "c")), Some("large"), vec![]),
+                None
+            )
+            .is_ok()
+        );
     }
 
     #[test]

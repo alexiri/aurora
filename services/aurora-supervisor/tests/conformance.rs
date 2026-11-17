@@ -77,6 +77,9 @@ fn opts(case: &str, resume: Option<String>) -> SessionOptions {
             }),
             effort: "low".into(),
             client_env: vec![],
+            roles: None,
+            subagent_role: None,
+            model_meta: None,
         },
         proxy_url: "http://127.0.0.1:9".into(),
         mcp_bridge: McpBridgeSpec {
@@ -366,6 +369,9 @@ fn codex_opts(base: &str, case: &str, resume: Option<String>) -> SessionOptions 
             model: model.into(),
             effort: "low".into(),
             client_env: vec![],
+            roles: None,
+            subagent_role: None,
+            model_meta: None,
         },
         // No gateway here: the proxy points at a dead port and the mock is on loopback.
         proxy_url: "http://127.0.0.1:9".into(),

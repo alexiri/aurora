@@ -34129,6 +34129,7 @@
           "name",
           "kind",
           "is_default",
+          "subagent_model",
           "proactive_messaging",
           "brief",
           "effective_frozen",
@@ -34221,6 +34222,17 @@
               "null"
             ]
           },
+          "model_roles": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ModelRoles",
+                "description": "(P5-MODELS-1, C-876) Role models, stamped with the endpoint they were chosen for; null = none."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "name": {
             "type": "string"
           },
@@ -34231,6 +34243,10 @@
           "proactive_messaging": {
             "type": "string",
             "description": "`ask` | `allow` | `off`."
+          },
+          "subagent_model": {
+            "type": "string",
+            "description": "(P5-MODELS-1, C-876) `inherit` | `large` | `medium` | `small`: the model of subagents whose\ndefinition names none."
           },
           "updated_at": {
             "type": "string",
@@ -38628,7 +38644,10 @@
           "endpoint_id",
           "provider",
           "model_id",
-          "source"
+          "source",
+          "roles",
+          "roles_dropped",
+          "subagent_model"
         ],
         "properties": {
           "endpoint_id": {
@@ -38640,9 +38659,31 @@
           "provider": {
             "type": "string"
           },
+          "roles": {
+            "$ref": "#/components/schemas/RolesView",
+            "description": "(P5-MODELS-1, C-878) The role resolution of this selection, from the dispatcher's function."
+          },
+          "roles_dropped": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Agent roles dropped for the next turn (`large` | `medium` | `small`)."
+          },
           "source": {
             "type": "string",
             "description": "`override` | `endpoint_default` | `provider_default` | `allow_list` | `static_list`."
+          },
+          "subagent_model": {
+            "type": "string",
+            "description": "The agent's subagent default: `inherit` or a role."
+          },
+          "subagent_warning": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`subagent_role_unset` when the named role resolves to nothing on a non-`anthropic` endpoint."
           }
         }
       },
@@ -40207,6 +40248,7 @@
           "id",
           "display_name",
           "dialects",
+          "model_roles",
           "available"
         ],
         "properties": {
@@ -40227,6 +40269,13 @@
           "id": {
             "type": "string",
             "description": "`claude-code` | `codex` (| `fake` when enabled)."
+          },
+          "model_roles": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "(P5-MODELS-1, C-882) The model roles the adapter maps (`large`, `medium`, `small`); empty = none."
           }
         }
       },
@@ -42939,6 +42988,37 @@
           }
         }
       },
+      "ModelRoles": {
+        "type": "object",
+        "description": "(P5-MODELS-1, C-876) The agent's role models; `endpoint_id` is the endpoint they were chosen for.\nA role that is null or absent is unset.",
+        "required": [
+          "endpoint_id"
+        ],
+        "properties": {
+          "endpoint_id": {
+            "type": "string"
+          },
+          "large": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "medium": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "small": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
       "Models": {
         "type": "object",
         "required": [
@@ -44279,6 +44359,7 @@
                 "name",
                 "kind",
                 "is_default",
+                "subagent_model",
                 "proactive_messaging",
                 "brief",
                 "effective_frozen",
@@ -44371,6 +44452,17 @@
                     "null"
                   ]
                 },
+                "model_roles": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/ModelRoles",
+                      "description": "(P5-MODELS-1, C-876) Role models, stamped with the endpoint they were chosen for; null = none."
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
                 "name": {
                   "type": "string"
                 },
@@ -44381,6 +44473,10 @@
                 "proactive_messaging": {
                   "type": "string",
                   "description": "`ask` | `allow` | `off`."
+                },
+                "subagent_model": {
+                  "type": "string",
+                  "description": "(P5-MODELS-1, C-876) `inherit` | `large` | `medium` | `small`: the model of subagents whose\ndefinition names none."
                 },
                 "updated_at": {
                   "type": "string",
@@ -47710,6 +47806,17 @@
               "null"
             ]
           },
+          "model_roles": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ModelRoles",
+                "description": "(P5-MODELS-1, C-876) Absent = unchanged, `null` = clear, an object = replace (the roles it\nnames; the others become unset). Hosted agents only."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "name": {
             "type": [
               "string",
@@ -47728,6 +47835,13 @@
               "null"
             ],
             "description": "Instance admins only."
+          },
+          "subagent_model": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "(P5-MODELS-1, C-876) `inherit` | `large` | `medium` | `small`."
           }
         },
         "additionalProperties": false
@@ -50944,6 +51058,50 @@
             "type": "integer",
             "format": "int64",
             "minimum": 0
+          }
+        }
+      },
+      "RoleView": {
+        "type": "object",
+        "required": [
+          "source"
+        ],
+        "properties": {
+          "model_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source": {
+            "type": "string",
+            "description": "`agent` | `endpoint` | `none`."
+          },
+          "warning": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`role_unset` | `role_not_allowed`; null when none."
+          }
+        }
+      },
+      "RolesView": {
+        "type": "object",
+        "required": [
+          "large",
+          "medium",
+          "small"
+        ],
+        "properties": {
+          "large": {
+            "$ref": "#/components/schemas/RoleView"
+          },
+          "medium": {
+            "$ref": "#/components/schemas/RoleView"
+          },
+          "small": {
+            "$ref": "#/components/schemas/RoleView"
           }
         }
       },

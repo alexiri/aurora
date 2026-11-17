@@ -140,6 +140,9 @@ fn choice(model: &str) -> ModelChoice {
         model: model.into(),
         effort: String::new(),
         client_env: vec![],
+        roles: None,
+        subagent_role: None,
+        model_meta: None,
     }
 }
 

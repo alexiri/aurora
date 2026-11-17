@@ -58,6 +58,95 @@ fn provider_of(state: &AppState, endpoint: Option<&str>) -> Option<String> {
     state.llm().endpoint(endpoint?).map(|e| e.provider.clone())
 }
 
+const SUBAGENT_MODELS: [&str; 4] = ["inherit", "large", "medium", "small"];
+
+/// (SEC-122, C-876) 422 `model_id_invalid { field }`.
+fn model_id_ok(field: &str, id: &str) -> Result<(), ApiError> {
+    if aurora_core::model_id::validate_model_id(id) {
+        return Ok(());
+    }
+    Err(ApiError::unprocessable(
+        "model_id_invalid",
+        "A model id may contain only letters, digits and . _ : / @ - (1 to 200 characters).",
+    )
+    .with_details(serde_json::json!({ "field": field })))
+}
+
+/// The harness the agent will have after this PATCH.
+fn switch_target(state: &AppState, new: &Option<String>, old: &Option<String>) -> String {
+    new.clone()
+        .or_else(|| old.clone())
+        .unwrap_or_else(|| state.ops().hosted.default_harness.clone())
+}
+
+/// (C-876) Validates a PATCH's `model_roles`: ids, the endpoint stamp, the effective allow-list and the
+/// endpoint's static list. `ids` = (agent, org, workspace, harness); `new_endpoint` = the endpoint the same
+/// PATCH gives the default model (it becomes the default selection's endpoint).
+async fn check_roles(
+    state: &AppState,
+    conn: &mut sqlx::PgConnection,
+    ids: (Uuid, Uuid, Uuid, &str),
+    new_endpoint: Option<&str>,
+    roles: &ModelRoles,
+) -> Result<(), ApiError> {
+    let (agent, org, ws, harness) = ids;
+    for (field, v) in [
+        ("model_roles.large", &roles.large),
+        ("model_roles.medium", &roles.medium),
+        ("model_roles.small", &roles.small),
+    ] {
+        if let Some(v) = v {
+            model_id_ok(field, v)?;
+        }
+    }
+    let llm = state.llm();
+    let default_endpoint = match new_endpoint {
+        Some(e) => Some(e.to_owned()),
+        None => {
+            crate::domains::hosted::model::readiness(state, &llm, conn, agent, org, ws, harness)
+                .await?
+                .default_endpoint()
+                .map(str::to_owned)
+        }
+    };
+    if default_endpoint.as_deref() != Some(roles.endpoint_id.as_str()) {
+        return Err(ApiError::unprocessable(
+            "model_role_endpoint_mismatch",
+            "The roles were chosen for another endpoint than the agent's default model uses.",
+        )
+        .with_details(serde_json::json!({
+            "endpoint_id": roles.endpoint_id,
+            "default_endpoint_id": default_endpoint,
+        })));
+    }
+    let eff = crate::domains::secrets::gov::effective_for(state, org).await?;
+    let static_models = llm
+        .endpoint(&roles.endpoint_id)
+        .map(|e| e.models.clone())
+        .unwrap_or_default();
+    for (field, v) in [
+        ("model_roles.large", &roles.large),
+        ("model_roles.medium", &roles.medium),
+        ("model_roles.small", &roles.small),
+    ] {
+        let Some(m) = v else { continue };
+        let allowed =
+            match eff.model_allowed(&roles.endpoint_id, &aurora_llm::ModelRef::Model(m.clone())) {
+                Ok(()) if static_models.is_empty() || static_models.contains(m) => continue,
+                Ok(()) => static_models.clone(),
+                Err(list) => list,
+            };
+        return Err(ApiError::unprocessable(
+            "llm_model_not_allowed",
+            "This model is not allowed on the agent's endpoint.",
+        )
+        .with_details(serde_json::json!({
+            "field": field, "model": m, "allowed_models": allowed,
+        })));
+    }
+    Ok(())
+}
+
 fn effort_ok(e: &str) -> Result<(), ApiError> {
     if EFFORTS.contains(&e) {
         Ok(())
@@ -421,12 +510,23 @@ pub async fn patch(
     if let Some(h) = &req.harness {
         harness_ok(state, h)?;
     }
+    if let Some(m) = &req.model_id {
+        model_id_ok("model_id", m)?;
+    }
+    if let Some(s) = &req.subagent_model
+        && !SUBAGENT_MODELS.contains(&s.as_str())
+    {
+        return Err(bad(
+            "/subagent_model",
+            "must be inherit, large, medium or small",
+        ));
+    }
     let mut tx = state.pool.begin().await.map_err(DbError::from)?;
     // (P4-HAR, D-122) A harness switch: lock the agent, refuse during a turn, and after the
     // update give every conversation a fresh session, queue the purge of the old ones and
     // restart the computer so it boots with the new adapter.
-    let current = sqlx::query_as::<_, (String, Option<String>)>(
-        "SELECT kind, harness FROM agents WHERE id = $1 FOR UPDATE",
+    let current = sqlx::query_as::<_, (String, Option<String>, Uuid, Uuid)>(
+        "SELECT kind, harness, org_id, workspace_id FROM agents WHERE id = $1 FOR UPDATE",
     )
     .bind(id)
     .fetch_optional(&mut *tx)
@@ -450,6 +550,27 @@ pub async fn patch(
         ));
     }
     let model_provider = provider_of(state, req.model_endpoint_id.as_deref());
+    // (P5-MODELS-1, C-876) Roles are checked against the endpoint the agent's default selection
+    // will have, and against governance; stored as the stamped object.
+    let roles_json = match &req.model_roles {
+        Some(Some(roles)) => {
+            if current.0 != "hosted" {
+                return Err(bad("/model_roles", "only hosted agents have model roles"));
+            }
+            let harness = switch_target(state, &req.harness, &current.1);
+            check_roles(
+                state,
+                &mut tx,
+                (id, current.2, current.3, &harness),
+                req.model_endpoint_id.as_deref(),
+                roles,
+            )
+            .await?;
+            Some(Some(roles.to_json()))
+        }
+        Some(None) => Some(None),
+        None => None,
+    };
     let updated = agents::update(
         &mut *tx,
         id,
@@ -463,6 +584,8 @@ pub async fn patch(
             effort: req.effort.as_deref(),
             proactive_messaging: req.proactive_messaging.as_deref(),
             resource_overrides: req.resource_overrides.as_ref(),
+            model_roles: roles_json.as_ref().map(Option::as_ref),
+            subagent_model: req.subagent_model.as_deref(),
         },
     )
     .await?;

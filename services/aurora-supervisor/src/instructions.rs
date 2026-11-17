@@ -75,6 +75,8 @@ pub struct RenderInputs {
     pub memory_language: String,
     pub schedules: Option<String>,
     pub timezone: Option<String>,
+    /// (C-884) Absent unless a role resolves or a subagent role is set.
+    pub models: Option<ModelsInfo>,
 }
 
 impl Default for RenderInputs {
@@ -88,8 +90,56 @@ impl Default for RenderInputs {
             memory_language: "english".into(),
             schedules: None,
             timezone: None,
+            models: None,
         }
     }
+}
+
+/// (P5-MODELS-1, C-884) The *Models* fragment's inputs; the API sends them only when a role resolves or a
+/// subagent role is set.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ModelsInfo {
+    pub default: String,
+    pub large: Option<String>,
+    pub medium: Option<String>,
+    pub small: Option<String>,
+    /// `large` | `medium` | `small`.
+    pub subagent_role: Option<String>,
+}
+
+/// (C-884) A fixed template; the ids are inserted verbatim, because they are pattern-checked (SEC-122) — an id
+/// that fails the check here is left out, never rendered.
+fn models_fragment(m: &ModelsInfo) -> String {
+    use aurora_core::model_id::{MODEL_ROLES, validate_model_id};
+    if !validate_model_id(&m.default) {
+        return String::new();
+    }
+    let mut parts = vec![format!("default `{}`", m.default)];
+    for (role, id) in [
+        ("large", &m.large),
+        ("medium", &m.medium),
+        ("small", &m.small),
+    ] {
+        if let Some(id) = id.as_deref().filter(|id| validate_model_id(id)) {
+            parts.push(format!("{role} `{id}`"));
+        }
+    }
+    let mut o = String::from("## Models\n\n");
+    let _ = write!(o, "Models on your endpoint: {}.", parts.join(", "));
+    if let Some(role) = m
+        .subagent_role
+        .as_deref()
+        .filter(|r| MODEL_ROLES.contains(r))
+    {
+        let _ = write!(
+            o,
+            " Subagents use `{role}` unless their definition names a model. A subagent on a smaller model \
+             can do tool-heavy gathering; write the final answer yourself."
+        );
+    }
+    o.push_str("\n\n");
+    o
 }
 
 /// One line of untrusted text: control characters become spaces, runs collapse, length clamped.
@@ -288,6 +338,10 @@ ASCII words joined by hyphens.\n\n",
         ),
     }
 
+    if let Some(m) = &i.models {
+        o.push_str(&models_fragment(m));
+    }
+
     o.push_str("## Skills\n\nSkills are read-only folders in the skills directory; list and read them with the skill tools.\n\n");
 
     o.push_str("## Schedules\n\n");
@@ -312,6 +366,35 @@ ASCII words joined by hyphens.\n\n",
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// (C-884) The Models line is a fixed template, rendered only when given inputs; unset roles are omitted;
+    /// the subagent sentence needs a subagent role; an id that fails the pattern is never rendered.
+    #[test]
+    fn the_models_line_is_a_fixed_template() {
+        let mut i = sample();
+        assert!(!render(&i).contains("## Models"));
+        i.models = Some(ModelsInfo {
+            default: "glm-4.6".into(),
+            large: Some("glm-4.6".into()),
+            medium: None,
+            small: Some("glm-air".into()),
+            subagent_role: Some("small".into()),
+        });
+        let t = render(&i);
+        assert!(
+            t.contains("Models on your endpoint: default `glm-4.6`, large `glm-4.6`, small `glm-air`. Subagents use `small` unless their definition names a model. A subagent on a smaller model can do tool-heavy gathering; write the final answer yourself.\n"),
+            "{t}"
+        );
+        i.models.as_mut().unwrap().subagent_role = None;
+        let t = render(&i);
+        assert!(t.contains("small `glm-air`.\n"), "{t}");
+        assert!(!t.contains("Subagents use"), "{t}");
+        i.models.as_mut().unwrap().small = Some("x`\n## Injected".into());
+        let t = render(&i);
+        assert!(!t.contains("Injected"), "{t}");
+        i.models.as_mut().unwrap().default = "bad id".into();
+        assert!(!render(&i).contains("## Models"));
+    }
 
     fn sample() -> RenderInputs {
         RenderInputs {
@@ -345,6 +428,7 @@ mod tests {
             memory_language: "german".into(),
             schedules: Some("1 schedule: daily-report".into()),
             timezone: Some("Europe/Berlin".into()),
+            models: None,
         }
     }
 

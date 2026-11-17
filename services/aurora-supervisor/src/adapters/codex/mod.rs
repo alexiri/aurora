@@ -136,6 +136,8 @@ impl HarnessAdapter for CodexAdapter {
             // the `.system` skills Codex seeds beside it.
             skills_dir: Some(".codex/skills/aurora".into()),
             instruction_files: vec!["AGENTS.md".into()],
+            // (P5-MODELS-1, D-303) Codex picks no model per task: roles are received and ignored.
+            model_roles: vec![],
         }
     }
 
@@ -143,6 +145,8 @@ impl HarnessAdapter for CodexAdapter {
         &self,
         opts: SessionOptions,
     ) -> Result<Box<dyn HarnessSession>, HarnessError> {
+        // SEC-122: model values are re-checked even though Codex ignores roles (`model_roles = []`).
+        crate::adapters::claude_code::config::check_model(&opts.model)?;
         if let Some(r) = &opts.resume_ref
             && !safe_ref(r)
         {

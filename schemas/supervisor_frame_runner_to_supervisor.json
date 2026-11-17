@@ -343,8 +343,36 @@
         "model": {
           "type": "string"
         },
+        "model_meta": {
+          "description": "(C-877) Metadata of the default model and of the resolved roles only.",
+          "items": {
+            "$ref": "#/$defs/ModelMeta"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
         "provider": {
           "type": "string"
+        },
+        "roles": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModelRoleIds"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "(P5-MODELS-1, C-877) The **resolved** roles of the endpoint (an unset role is absent). Absent from an\nolder peer, and for a harness that declares no roles."
+        },
+        "subagent_role": {
+          "description": "(C-877) `large` | `medium` | `small`: the role subagents without a model of their own use.",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
@@ -356,6 +384,56 @@
         "effort",
         "client_env"
       ],
+      "type": "object"
+    },
+    "ModelMeta": {
+      "description": "(C-877) What the operator told the endpoint about a model the harness may not recognise by id.",
+      "properties": {
+        "capabilities": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "context_window": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "model": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "model"
+      ],
+      "type": "object"
+    },
+    "ModelRoleIds": {
+      "description": "(C-877) Resolved role models; every id matches `MODEL_ID_PATTERN` (the supervisor re-checks, SEC-122).",
+      "properties": {
+        "large": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "medium": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "small": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
       "type": "object"
     },
     "PreviewStartFrame": {

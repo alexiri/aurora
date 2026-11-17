@@ -429,6 +429,10 @@ pub const FILES_UPLOAD_MAX: u64 = 512 * 1024 * 1024;
 pub const FILES_EDIT_MAX: u64 = 1024 * 1024;
 /// (C-899) bytes per request path (255 per component).
 pub const FILES_PATH_MAX: usize = 4_096;
+/// (P5-MODELS-1, D-303, SEC-122) characters per model id (default, role, `model_info` key).
+pub const MODEL_ID_MAX: usize = 200;
+/// (P5-MODELS-1, D-303) `model_info` entries per LLM endpoint.
+pub const MODEL_INFO_MAX: usize = 64;
 /// (C-900) concurrent content transfers per person per API replica (429 `too_many_transfers`).
 pub const FILE_TRANSFERS_PER_USER: u32 = 4;
 /// (C-900) a transfer with no progress this long is aborted.
@@ -534,6 +538,8 @@ mod tests {
         assert_eq!(FILES_UPLOAD_MAX, 512 * 1024 * 1024);
         assert_eq!(FILES_EDIT_MAX, 1024 * 1024);
         assert_eq!(FILES_PATH_MAX, 4_096);
+        assert_eq!(MODEL_ID_MAX, 200);
+        assert_eq!(MODEL_INFO_MAX, 64);
         assert_eq!(FILE_TRANSFERS_PER_USER, 4);
         assert_eq!(FILES_TRANSFER_IDLE, Duration::from_secs(60));
         assert_eq!(FILES_AWAKE_GRACE, Duration::from_secs(120));

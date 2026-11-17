@@ -1070,6 +1070,34 @@ pub async fn model_prefs(
     .await?)
 }
 
+/// (P5-MODELS-1, C-876) The agent's `model_roles` and `subagent_model`.
+pub async fn model_role_prefs(
+    conn: &mut PgConnection,
+    agent: Uuid,
+) -> Result<(Option<serde_json::Value>, String), DbError> {
+    Ok(
+        sqlx::query_as("SELECT model_roles, subagent_model FROM agents WHERE id = $1")
+            .bind(agent)
+            .fetch_one(conn)
+            .await?,
+    )
+}
+
+/// (P5-MODELS-1, `08 §Model roles` drop rule) Replace the agent's stored roles (null clears). This does not
+/// touch `updated_at`: the drop is the platform's, not an edit.
+pub async fn set_model_roles(
+    conn: &mut PgConnection,
+    agent: Uuid,
+    roles: Option<&serde_json::Value>,
+) -> Result<(), DbError> {
+    sqlx::query("UPDATE agents SET model_roles = $2 WHERE id = $1")
+        .bind(agent)
+        .bind(roles)
+        .execute(conn)
+        .await?;
+    Ok(())
+}
+
 /// Queued turns of an agent as `(turn id, conversation id)`.
 pub async fn queued_turns_of_agent(
     conn: &mut PgConnection,

@@ -297,12 +297,18 @@ async fn arm6_dispatch(
         let model::Selection::Chosen {
             choice,
             mut notices,
+            stored_roles,
         } = sel
         else {
             continue;
         };
         if !hosted::mark_dispatched(tx, turn.id, cand.boot_id).await? {
             continue;
+        }
+        // (P5-MODELS-1, `08 §Model roles` drop rule) Roles that are no longer usable are cleared once, with
+        // the notice below; they are never re-pointed.
+        if let Some(rest) = &stored_roles {
+            hosted::set_model_roles(tx, agent.id, rest.as_ref()).await?;
         }
         let tok = token::generate(TokenPrefix::Context);
         let revoked = hosted::mint_turn_credential(

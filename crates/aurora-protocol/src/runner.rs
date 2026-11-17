@@ -349,6 +349,64 @@ pub struct ModelChoice {
     pub model: String,
     pub effort: String,
     pub client_env: Pairs,
+    /// (P5-MODELS-1, C-877) The **resolved** roles of the endpoint (an unset role is absent). Absent from an
+    /// older peer, and for a harness that declares no roles.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub roles: Option<ModelRoleIds>,
+    /// (C-877) `large` | `medium` | `small`: the role subagents without a model of their own use.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subagent_role: Option<String>,
+    /// (C-877) Metadata of the default model and of the resolved roles only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_meta: Option<Vec<ModelMeta>>,
+}
+
+/// (C-877) Resolved role models; every id matches `MODEL_ID_PATTERN` (the supervisor re-checks, SEC-122).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ModelRoleIds {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub large: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub medium: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub small: Option<String>,
+}
+
+impl ModelRoleIds {
+    /// `(role, model)` pairs of the set roles, largest first.
+    pub fn set(&self) -> impl Iterator<Item = (&'static str, &str)> {
+        [
+            ("large", self.large.as_deref()),
+            ("medium", self.medium.as_deref()),
+            ("small", self.small.as_deref()),
+        ]
+        .into_iter()
+        .filter_map(|(r, m)| m.map(|m| (r, m)))
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.set().next().is_none()
+    }
+}
+
+/// (C-877) What the operator told the endpoint about a model the harness may not recognise by id.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ModelMeta {
+    pub model: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_window: Option<u32>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub capabilities: Vec<String>,
+}
+
+/// (C-882) The roles each harness maps (`12 §Harness interface`): the supervisor's declaration
+/// (`HarnessCapabilities.model_roles`) and the API's `/v1/harnesses` read the same table, and a
+/// test keeps the adapters equal to it.
+pub fn harness_model_roles(harness: &str) -> &'static [&'static str] {
+    match harness {
+        "claude-code" => &["large", "medium", "small"],
+        _ => &[],
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -1454,6 +1512,9 @@ mod terminal_models_tests {
             model: "m".into(),
             effort: String::new(),
             client_env: vec![],
+            roles: None,
+            subagent_role: None,
+            model_meta: None,
         }
     }
 

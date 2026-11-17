@@ -245,6 +245,9 @@ mod tests {
                     ("OPENAI_BASE_URL".into(), "https://llm.example/v1".into()),
                     ("OPENAI_API_KEY".into(), "sk-REAL-SECRET".into()),
                 ],
+                roles: None,
+                subagent_role: None,
+                model_meta: None,
             },
             proxy_url: "http://127.0.0.1:4100".into(),
             mcp_bridge: McpBridgeSpec {

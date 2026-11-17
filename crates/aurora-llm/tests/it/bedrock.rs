@@ -32,6 +32,8 @@ fn endpoint(base: &str) -> Endpoint {
         region: Some("us-east-1".into()),
         project_id: None,
         location: None,
+        model_roles: Default::default(),
+        model_info: Default::default(),
     }
 }
 

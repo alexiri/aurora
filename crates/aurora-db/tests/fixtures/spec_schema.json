@@ -72,10 +72,12 @@
       "model_endpoint_id",
       "model_id",
       "model_provider",
+      "model_roles",
       "name",
       "org_id",
       "proactive_messaging",
       "resource_overrides",
+      "subagent_model",
       "workspace_id"
     ],
     "api_keys": [
@@ -1342,10 +1344,12 @@
       "model_endpoint_id": "text null",
       "model_id": "text null",
       "model_provider": "text null",
+      "model_roles": "jsonb null",
       "name": "text not null",
       "org_id": "uuid",
       "proactive_messaging": "text",
       "resource_overrides": "jsonb null",
+      "subagent_model": "text not null",
       "workspace_id": "uuid"
     },
     "api_keys": {

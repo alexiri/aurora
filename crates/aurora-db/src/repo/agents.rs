@@ -20,6 +20,10 @@ pub struct AgentRow {
     pub model_endpoint_id: Option<String>,
     pub model_id: Option<String>,
     pub effort: Option<String>,
+    /// (P5-MODELS-1, C-876) `{ endpoint_id, large?, medium?, small? }` or null.
+    pub model_roles: Option<serde_json::Value>,
+    /// (P5-MODELS-1, C-876) `inherit` | `large` | `medium` | `small`.
+    pub subagent_model: String,
     pub proactive_messaging: String,
     pub brief: String,
     pub avatar_blob_key: Option<String>,
@@ -33,7 +37,7 @@ pub struct AgentRow {
 }
 
 const COLS: &str = "id, org_id, workspace_id, handle, name, kind, is_default, harness, model_provider, \
-    model_endpoint_id, model_id, effort, proactive_messaging, brief, avatar_blob_key, avatar_public_key, \
+    model_endpoint_id, model_id, effort, model_roles, subagent_model, proactive_messaging, brief, avatar_blob_key, avatar_public_key, \
     byo_source_cidrs, byo_require_context, created_at, updated_at";
 
 pub struct NewDefaultAgent<'a> {
@@ -191,6 +195,9 @@ pub struct AgentPatch<'a> {
     pub effort: Option<&'a str>,
     pub proactive_messaging: Option<&'a str>,
     pub resource_overrides: Option<&'a serde_json::Value>,
+    /// (C-876) `None` = unchanged; `Some(None)` = clear; `Some(Some(v))` = replace.
+    pub model_roles: Option<Option<&'a serde_json::Value>>,
+    pub subagent_model: Option<&'a str>,
 }
 
 pub async fn update<'e, E: PgExecutor<'e>>(
@@ -204,7 +211,9 @@ pub async fn update<'e, E: PgExecutor<'e>>(
             model_id = COALESCE($6, model_id), effort = COALESCE($7, effort),
             proactive_messaging = COALESCE($8, proactive_messaging),
             resource_overrides = COALESCE($9, resource_overrides),
-            model_provider = COALESCE($10, model_provider), updated_at = now()
+            model_provider = COALESCE($10, model_provider),
+            model_roles = CASE WHEN $11 THEN $12 ELSE model_roles END,
+            subagent_model = COALESCE($13, subagent_model), updated_at = now()
          WHERE id = $1 RETURNING {COLS}"
     )))
     .bind(id)
@@ -217,6 +226,9 @@ pub async fn update<'e, E: PgExecutor<'e>>(
     .bind(p.proactive_messaging)
     .bind(p.resource_overrides)
     .bind(p.model_provider)
+    .bind(p.model_roles.is_some())
+    .bind(p.model_roles.flatten())
+    .bind(p.subagent_model)
     .fetch_one(exec)
     .await?)
 }
