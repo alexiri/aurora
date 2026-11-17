@@ -45,6 +45,7 @@ mod conversation_lifecycle;
 mod conversations;
 mod counters;
 mod direct_visibility;
+mod evals_questions;
 mod files;
 mod fix_029;
 mod foundation;

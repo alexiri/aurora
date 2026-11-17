@@ -781,6 +781,9 @@ Pruning: the API's `counters_prune` due-work arm (every 60 s, any replica, `FOR 
 | proactive_messaging | text CHECK in (`ask`,`allow`,`off`) default `ask` | `13 §Messaging tools` |
 | effort | text null CHECK in (`low`,`medium`,`high`,`max`) | |
 | brief | text not null default `''` | ≤20 000 chars |
+| eval_judge_secret_id | uuid null FK→secrets (set null) | (phase 5, P4-EVAL-1, D-292, C-863, migration `20261201000239`) the judge key: an LLM secret, granted to the agent, governance-admitted at every call (`10 §Evals`) |
+| eval_judge_model_id | text null | (phase 5, P4-EVAL-1) the judge's model (a model the key's endpoint serves); written together with `eval_judge_secret_id` by `PUT eval-settings`; ignored while the secret id is null (deleting the secret nulls the id only) |
+| eval_regression_notify | bool not null default true | (phase 5, P4-EVAL-1, C-871) whether the Evals page shows a regression notice for this agent |
 | avatar_blob_key | text null | |
 | avatar_public_key | text null | unguessable, rotating; gates the public avatar GET; partial index (avatar_public_key) WHERE avatar_public_key IS NOT NULL |
 | resource_overrides | jsonb null | `ResourceProfile` (instance admins only) |
@@ -1935,6 +1938,26 @@ state (`13 §4.2`, `§5.11`). The gateway database role gets nothing on this tab
 
 A grant of one agent is no grant of another. The gateway database role gets nothing on this table.
 
+### `eval_questions` (phase 5, P4-EVAL-1, D-289, C-861; migration `20261201000236`)
+| Column | Type | Notes |
+|---|---|---|
+| id | uuid pk | |
+| agent_id | uuid not null FK→agents (cascade) | hosted agents only (`eval_not_supported` for BYO) |
+| workspace_id | uuid not null FK→workspaces (cascade) | the audience of §Evals |
+| position | int not null | unique `(agent_id, position)` (deferrable) |
+| question | text not null | ≤ `EVAL_QUESTION_CHARS` |
+| expected_kind | text not null CHECK in (`numeric`,`text`,`judged`) | |
+| expected_number | numeric null | `numeric` only |
+| tolerance | numeric null default 0 | `numeric` only; ≥ 0 |
+| expected_text | text null | `text` only; ≤ `EVAL_EXPECTED_TEXT_CHARS`; agent-audience data (`10 §Evals`, SEC-116) |
+| criteria | text null | `judged` only; ≤ `EVAL_CRITERIA_CHARS` |
+| enabled | bool not null default true | |
+| version | int not null default 1 | bumped by every edit; part of `question_set_version` |
+| created_by | uuid null FK→users (set null) | |
+| unique | `(agent_id, position)` | |
+
+No foreign key to runs: a run keeps its question text and expected kind in `eval_results` (snapshot), so an edit never rewrites history. The gateway database role gets nothing on this table.
+
 ### `ssh_mint_counters` (certificate-mint rate limit, a ledger, phase 5, P4-SSH-1, D-239(c), C-791; migration `20261201000201`)
 | Column | Type | Notes |
 |---|---|---|
@@ -2004,24 +2027,7 @@ There is no `terminator_tokens` table: the single anchor token's SHA-256 is comp
 `AURORA_BOOTSTRAP_TERMINATOR_TOKEN` at startup and held in memory (rotation = a new Secret value and a
 rollout of the API and the terminator; `15 §SSH access`). The gateway database role gets nothing.
 
-#### `eval_questions` (phase 5, P4-EVAL, D-289, C-861; migration `20261201000236`)
-| Column | Type | Notes |
-|---|---|---|
-| id | uuid pk | |
-| agent_id | uuid FK→agents (cascade) | hosted agents only (`eval_not_supported` for BYO) |
-| workspace_id | uuid FK→workspaces (cascade) | the audience of §Evals |
-| position | int not null | unique `(agent_id, position)` |
-| question | text not null | ≤ `EVAL_QUESTION_CHARS` |
-| expected_kind | text not null CHECK in (`numeric`,`text`,`judged`) | |
-| expected_number | numeric null | `numeric` only |
-| tolerance | numeric null default 0 | `numeric` only; ≥ 0 |
-| expected_text | text null | `text` only; ≤ `EVAL_EXPECTED_TEXT_CHARS`; agent-audience data (`10 §Evals`, SEC-116) |
-| criteria | text null | `judged` only; ≤ `EVAL_CRITERIA_CHARS` |
-| enabled | bool not null default true | |
-| version | int not null default 1 | bumped by every edit; part of `question_set_version` |
-| created_by / created_at / updated_at | | |
-
-No foreign key to runs: a run keeps its question text and expected kind in `eval_results` (snapshot), so an edit never rewrites history.
+`eval_questions` is a real table (P4-EVAL-1, migration `20261201000236`): see `### eval_questions` above.
 
 #### `eval_runs` and `eval_results` (phase 5, P4-EVAL, D-290, D-291, C-864, C-867; migration `20261201000237`)
 | Table | Column | Type | Notes |
@@ -2085,7 +2091,4 @@ Rows of a finished run are immutable except by the retention job (`EVAL_RUN_RETE
 #### `agents` eval columns and `conversations.kind` (phase 5, P4-EVAL, C-860, C-863; migrations `20261201000239`, `20261201000240`)
 | Table | Planned change | Notes |
 |---|---|---|
-| `agents` | `eval_judge_secret_id uuid null FK→secrets (set null)` | the judge key (LLM secret, granted to the agent, governance-admitted at every call: `10 §Evals`, D-292) |
-| `agents` | `eval_judge_model_id text null` | the judge's model (a model the key's endpoint serves) |
-| `agents` | `eval_regression_notify bool not null default true` | C-871 |
 | `conversations` | `kind` CHECK gains `eval` | external_ref `eval:<run_id>:<position>`; the unique `(agent_id, kind, external_ref)` index is unchanged |

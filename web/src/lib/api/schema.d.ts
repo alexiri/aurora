@@ -1414,6 +1414,59 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/agents/{agent}/eval-fingerprint": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The configuration fingerprint a run started now would record. */
+        get: operations["getEvalFingerprint"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/agents/{agent}/eval-questions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** An agent's eval questions in position order (`can_use`; hosted agents only). */
+        get: operations["listEvalQuestions"];
+        put?: never;
+        /** Add a question at the end of the list. */
+        post: operations["createEvalQuestion"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/agents/{agent}/eval-settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The agent's eval settings: the judge key and the regression notice. */
+        get: operations["getEvalSettings"];
+        /** Replace the eval settings. A change of the judge key needs `can_own`. */
+        put: operations["putEvalSettings"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/agents/{agent}/files": {
         parameters: {
             query?: never;
@@ -2844,6 +2897,28 @@ export interface paths {
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/v1/eval-questions/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One question. */
+        get: operations["getEvalQuestion"];
+        put?: never;
+        post?: never;
+        /** Delete a question; the positions after it close up. */
+        delete: operations["deleteEvalQuestion"];
+        options?: never;
+        head?: never;
+        /**
+         * Change a question (any subset of its fields, or its position); bumps `version` when a field
+         *     changes. The kind is fixed.
+         */
+        patch: operations["updateEvalQuestion"];
         trace?: never;
     };
     "/v1/gateway/ca.pem": {
@@ -7064,6 +7139,27 @@ export interface components {
             /** @description Managed: non-secret `instance_setup` values. */
             settings?: Record<string, never> | null;
         };
+        CreateEvalQuestion: {
+            /** @description `judged` only (required). */
+            criteria?: string | null;
+            /** @description Default true. */
+            enabled?: boolean | null;
+            /** @description `numeric` | `text` | `judged`; fixed for the life of the question. */
+            expected_kind: string;
+            /**
+             * Format: double
+             * @description `numeric` only (required).
+             */
+            expected_number?: number | null;
+            /** @description `text` only (required). */
+            expected_text?: string | null;
+            question: string;
+            /**
+             * Format: double
+             * @description `numeric` only, ≥ 0 (default 0).
+             */
+            tolerance?: number | null;
+        };
         CreateGroupRequest: {
             description?: string | null;
             /** @description (D-156) Required for `source = idp`: a configured OIDC provider id with a `group_claim`. */
@@ -7543,6 +7639,68 @@ export interface components {
         /** @description OpenAPI description of the error envelope (`02 §Error envelope`). */
         ErrorEnvelope: {
             error: components["schemas"]["ErrorBody"];
+        };
+        EvalAgentRef: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+        };
+        /** @description What a run started now would record (C-866, C-883). */
+        EvalFingerprint: {
+            /** @description The canonical fingerprint object. */
+            fingerprint: unknown;
+            fingerprint_hash: string;
+            question_set_version: string;
+        };
+        EvalJudge: {
+            model_id: string;
+            /** Format: uuid */
+            secret_id: string;
+            secret_label: string;
+            /** @description Whether the key is granted and usable now (08 §Model readiness). */
+            usable: boolean;
+        };
+        EvalJudgeInput: {
+            model_id: string;
+            /** Format: uuid */
+            secret_id: string;
+        };
+        /**
+         * @description An eval question (C-861). Expected answers are agent-audience data: this shape is served only
+         *     to callers who `can_use` the agent's workspace.
+         */
+        EvalQuestion: {
+            agent: components["schemas"]["EvalAgentRef"];
+            /** Format: date-time */
+            created_at: string;
+            criteria?: string | null;
+            enabled: boolean;
+            /** @description `numeric` | `text` | `judged`. */
+            expected_kind: string;
+            /** Format: double */
+            expected_number?: number | null;
+            expected_text?: string | null;
+            /** Format: uuid */
+            id: string;
+            /**
+             * Format: int32
+             * @description 1-based, contiguous, unique per agent.
+             */
+            position: number;
+            question: string;
+            /** Format: double */
+            tolerance?: number | null;
+            /** Format: date-time */
+            updated_at: string;
+            /** Format: int32 */
+            version: number;
+        };
+        EvalQuestionList: {
+            questions: components["schemas"]["EvalQuestion"][];
+        };
+        EvalSettings: {
+            judge?: components["schemas"]["EvalJudge"] | null;
+            regression_notify: boolean;
         };
         EventsPage: {
             items: components["schemas"]["TranscriptEvent"][];
@@ -10237,6 +10395,22 @@ export interface components {
             /** @description Managed only: merged per key; `null` restores the field default. */
             settings?: Record<string, never> | null;
         };
+        /** @description Any subset; a field outside the question's kind is 422 `invalid`. */
+        PatchEvalQuestion: {
+            criteria?: string | null;
+            enabled?: boolean | null;
+            /** Format: double */
+            expected_number?: number | null;
+            expected_text?: string | null;
+            /**
+             * Format: int32
+             * @description Move to this 1-based position (clamped to the list).
+             */
+            position?: number | null;
+            question?: string | null;
+            /** Format: double */
+            tolerance?: number | null;
+        };
         PatchGroupRequest: {
             description?: string | null;
             name?: string | null;
@@ -10938,6 +11112,10 @@ export interface components {
             /** Format: int64 */
             generation: number;
             store_id: string;
+        };
+        PutEvalSettings: {
+            judge?: components["schemas"]["EvalJudgeInput"] | null;
+            regression_notify: boolean;
         };
         PutGovernance: {
             document: components["schemas"]["OrgGovernance"];
@@ -18939,6 +19117,307 @@ export interface operations {
             };
         };
     };
+    getEvalFingerprint: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent id */
+                agent: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvalFingerprint"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description eval_not_supported */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    listEvalQuestions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent id */
+                agent: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvalQuestionList"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description eval_not_supported */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    createEvalQuestion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent id */
+                agent: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateEvalQuestion"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvalQuestion"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description invalid, eval_question_limit, eval_not_supported */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    getEvalSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent id */
+                agent: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvalSettings"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description eval_not_supported */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    putEvalSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent id */
+                agent: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PutEvalSettings"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvalSettings"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description eval_judge_not_granted, eval_judge_not_usable, eval_judge_not_permitted, invalid */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     listAgentFiles: {
         parameters: {
             query?: {
@@ -24966,6 +25445,162 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    getEvalQuestion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Question id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvalQuestion"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    deleteEvalQuestion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Question id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    updateEvalQuestion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Question id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PatchEvalQuestion"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvalQuestion"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description invalid */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

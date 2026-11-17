@@ -1037,6 +1037,21 @@ const ROWS: &[Row] = &[
     ),
     r("GET", "/v1/agents/{agent}/links", G::WsUse, false),
     r("PUT", "/v1/agent-links/{id}/policy", G::WsUse, false),
+    // P4-EVAL-1 (C-861, C-863, C-866): `can_use` everywhere (a judge change needs `can_own`
+    // inside the service; the matrix body leaves the judge alone); no one else learns the agent exists.
+    r("GET", "/v1/agents/{agent}/eval-questions", G::WsUse, false),
+    r("POST", "/v1/agents/{agent}/eval-questions", G::WsUse, false),
+    r("GET", "/v1/eval-questions/{id}", G::WsUse, false),
+    r("PATCH", "/v1/eval-questions/{id}", G::WsUse, false),
+    r("DELETE", "/v1/eval-questions/{id}", G::WsUse, false),
+    r("GET", "/v1/agents/{agent}/eval-settings", G::WsUse, false),
+    r("PUT", "/v1/agents/{agent}/eval-settings", G::WsUse, false),
+    r(
+        "GET",
+        "/v1/agents/{agent}/eval-fingerprint",
+        G::WsUse,
+        false,
+    ),
     r("GET", "/v1/agents/{agent}/peer-tasks", G::WsUse, false),
     r("POST", "/v1/conversations/{id}/continue", G::WsUse, false),
     // P2-010 (RFE-010): the per-conversation decision (direct user / turn author / `can_own`) needs
@@ -1586,6 +1601,12 @@ fn body_for(method: &str, path: &str, fx: &Fx) -> Value {
         ("POST", "/v1/action-approvals/{id}/decision") => json!({"decision": "deny"}),
         ("PUT", "/v1/agent-links/{id}/policy") => {
             json!({"agent_id": fx.agent, "policy": "ask", "revision": 0})
+        }
+        ("POST", "/v1/agents/{agent}/eval-questions") => {
+            json!({"question": "q", "expected_kind": "judged", "criteria": "c"})
+        }
+        ("PUT", "/v1/agents/{agent}/eval-settings") => {
+            json!({"judge": null, "regression_notify": true})
         }
         _ => json!({}),
     }

@@ -119,10 +119,6 @@ TERMINAL_WAKE_WAIT no-row
 # P4-EVAL spec batch (2026-11-15) — the EVAL_* limits of docs/02 are specified; their briefs
 # (P4-EVAL-1 for the question and settings limits, P4-EVAL-2 for the run and schedule limits,
 # P4-EVAL-3 for the judge limits) remove each line when the constant lands in aurora-core::limits.
-EVAL_QUESTIONS_PER_AGENT doc-only
-EVAL_QUESTION_CHARS doc-only
-EVAL_EXPECTED_TEXT_CHARS doc-only
-EVAL_CRITERIA_CHARS doc-only
 EVAL_ANSWER_CHARS doc-only
 EVAL_TURN_TIMEOUT doc-only
 EVAL_RUNS_ACTIVE_PER_AGENT doc-only

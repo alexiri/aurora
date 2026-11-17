@@ -530,6 +530,14 @@ pub const USER_TOKENS_PER_PERSON: usize = 5;
 /// (P4-UTOK, D-284(c), C-856) pending `send_as_me` approvals per token (the sixth is refused
 /// `pending_limit`).
 pub const USER_TOKEN_PENDING_MAX: usize = 5;
+/// (phase 5, P4-EVAL-1, D-293(c), C-861, C-872) eval questions per agent (422 `eval_question_limit`).
+pub const EVAL_QUESTIONS_PER_AGENT: usize = 100;
+/// (P4-EVAL-1, C-861) characters of an eval question (422 `invalid`).
+pub const EVAL_QUESTION_CHARS: usize = 2000;
+/// (P4-EVAL-1, C-861) characters of an expected text answer (422 `invalid`).
+pub const EVAL_EXPECTED_TEXT_CHARS: usize = 1000;
+/// (P4-EVAL-1, C-861) characters of judged criteria (422 `invalid`).
+pub const EVAL_CRITERIA_CHARS: usize = 1000;
 /// (P4-SSH-1, C-791) default validity of a minted SSH user certificate; `ssh.cert_ttl_secs`
 /// (60 … 86 400 s) overrides it. `valid_after` is backdated 60 s for clock skew.
 pub const SSH_CERT_TTL: Duration = Duration::from_secs(900);
@@ -652,6 +660,10 @@ mod tests {
         assert_eq!(SSH_KEYS_PER_USER, 10);
         assert_eq!(USER_TOKENS_PER_PERSON, 5);
         assert_eq!(USER_TOKEN_PENDING_MAX, 5);
+        assert_eq!(EVAL_QUESTIONS_PER_AGENT, 100);
+        assert_eq!(EVAL_QUESTION_CHARS, 2000);
+        assert_eq!(EVAL_EXPECTED_TEXT_CHARS, 1000);
+        assert_eq!(EVAL_CRITERIA_CHARS, 1000);
         assert_eq!(SSH_CERT_TTL, Duration::from_secs(900));
         assert_eq!(SSH_MINTS_PER_USER_AGENT_HOUR, 30);
         const { assert!(CONDITION_BODY_BUFFER_MIN <= CONDITION_BODY_BUFFER) };

@@ -22,6 +22,7 @@ pub mod connect;
 pub mod connections;
 pub mod connectors;
 pub mod conversations;
+pub mod evals;
 pub mod files;
 pub mod freeze;
 pub mod governance;

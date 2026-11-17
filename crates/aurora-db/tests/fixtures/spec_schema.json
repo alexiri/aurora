@@ -59,6 +59,9 @@
       "byo_source_cidrs",
       "created_by",
       "effort",
+      "eval_judge_model_id",
+      "eval_judge_secret_id",
+      "eval_regression_notify",
       "frozen_at",
       "frozen_authority",
       "frozen_by_user_id",
@@ -396,6 +399,21 @@
       "agent_id",
       "integration_id",
       "platform_user_ref"
+    ],
+    "eval_questions": [
+      "agent_id",
+      "created_by",
+      "criteria",
+      "enabled",
+      "expected_kind",
+      "expected_number",
+      "expected_text",
+      "id",
+      "position",
+      "question",
+      "tolerance",
+      "version",
+      "workspace_id"
     ],
     "file_stream_grants": [
       "agent_id",
@@ -1404,6 +1422,9 @@
       "byo_source_cidrs": "text[] null",
       "created_by": "uuid null",
       "effort": "text null",
+      "eval_judge_model_id": "text null",
+      "eval_judge_secret_id": "uuid null",
+      "eval_regression_notify": "bool not null",
       "frozen_at": "timestamptz null",
       "frozen_authority": "text null",
       "frozen_by_user_id": "uuid null",
@@ -1741,6 +1762,21 @@
       "agent_id": "uuid",
       "integration_id": "uuid",
       "platform_user_ref": "text"
+    },
+    "eval_questions": {
+      "agent_id": "uuid not null",
+      "created_by": "uuid null",
+      "criteria": "text null",
+      "enabled": "bool not null",
+      "expected_kind": "text not null",
+      "expected_number": "numeric null",
+      "expected_text": "text null",
+      "id": "uuid not null",
+      "position": "int not null",
+      "question": "text not null",
+      "tolerance": "numeric null",
+      "version": "int not null",
+      "workspace_id": "uuid not null"
     },
     "file_stream_grants": {
       "agent_id": "uuid not null",
