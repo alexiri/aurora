@@ -94,8 +94,9 @@ GitHub Actions, two jobs in one `release.yml` workflow, sharing `scripts/release
   release assets. The release body lists addon ids, versions, sha256 digests and sizes (generated
   from the manifest).
 - The manifest's version URLs point at the **release-asset download URLs**
-  (`https://github.com/alexiri/aurora-addons-cern/releases/download/v<version>/<id>-<version>.aurora-plugin`,
-  one release per addon version tag) — stable, public, anonymous-https URLs that Aurora's addon
+  (`https://github.com/alexiri/aurora-addons-cern/releases/download/<tag>/<id>-<version>.aurora-plugin`;
+  **D-366**: releases are numbered `v1`, `v2`, … on their own, and each record names its release;
+  `v0.1.0` … `v0.1.3` predate this) — stable, public, anonymous-https URLs that Aurora's addon
   ingestion can fetch. **Actions run artifacts are not a substitute**: their download URLs need an
   authenticated API call, so they cannot serve as the manifest's `package` URL. Run artifacts may
   still be uploaded on non-tag builds for convenience (never referenced by the manifest).
