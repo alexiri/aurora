@@ -985,6 +985,13 @@ the supervisor snapshots are **index always** (one, two and 23 apps), the older-
 - **Dashboard**: vitest for the Channels switch (default off, PATCH on change, error inline); Playwright at 390 px and both themes for the help text.
 
 ### User tokens (phase 5, P4-UTOK, D-281..D-284, C-853..C-859, SEC-112, SEC-113)
+(Where it lives: the API tests are `services/aurora-api/tests/it/user_tokens.rs` — the connector is played over the real
+connector plane with a connector token and a replica, the secret store is a memory store so "no version left" is a
+count, and the canary token is searched in every response, queued op, stored row and audit row; the connector tests
+are `connectors/mattermost/tests/user_tokens.rs` (a wiremock platform that records every request); the conformance
+scenario is `s21` in `tests/conformance/connector`, run against the fake connector and, with a driver that can mint a
+personal access token, against the live server; the dashboard is `web/tests/user-tokens.test.tsx` and
+`web/e2e/send-as-me.spec.ts`.)
 - **Add and verify** (`api/it/user_tokens.rs`, the connector mocked for verify): a token of the caller's own link → 201 and `active`; another platform user → 422 `user_token_mismatch`; rejected → 422 `user_token_invalid`; limit 5 → 409; store unavailable → 503 with nothing stored; the token absent from responses, audit rows, captured logs and the request-log body (canary token).
 - **Custody** (SEC-112): the per-op copy exists from the send's claim to its terminal state and is then null with no store version left; a claim after revoke finds no copy and fails the op `credential_revoked`; the gateway, runner and sandbox fixtures carry no `user_token` purpose (static check plus boot-document snapshot).
 - **Eligibility** (SEC-113): the matrix of C-856 — another speaker in a shared channel, scheduled, webhook, watch, peer, system, dashboard and API turns, a grant of another agent, an inactive token or link — each refused with its code and no approval row; the owner's own DM and the owner's own thread succeed to the approval step.

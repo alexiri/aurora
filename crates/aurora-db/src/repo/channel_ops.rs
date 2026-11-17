@@ -164,15 +164,17 @@ pub async fn claim<'e, E: PgExecutor<'e>>(
        RETURNING o.id, o.kind, o.integration_id, o.presence_id, o.attempts, c.was_leased,
                  CASE WHEN o.kind = 'presence.deprovision'
                       THEN o.payload - 'credentials_ref' - 'org_id'
-                      ELSE o.payload - 'user_credential_ref' - 'user_org_id' - 'user_meta'
+                      WHEN jsonb_typeof(o.payload) = 'object'
+                      THEN o.payload - 'user_credential_ref' - 'user_org_id' - 'user_meta'
+                      ELSE o.payload
                  END AS payload,
                  CASE WHEN o.kind = 'presence.deprovision'
                       THEN o.payload->>'credentials_ref' END AS credentials_ref,
                  CASE WHEN o.kind = 'presence.deprovision'
                       THEN (o.payload->>'org_id')::uuid END AS org_id,
-                 (o.kind = 'user_token.verify' OR o.payload ? 'user_credential_ref'
+                 COALESCE(o.kind = 'user_token.verify' OR o.payload ? 'user_credential_ref'
                   OR (jsonb_typeof(o.payload->'sender') = 'object'
-                      AND o.payload->'sender' ? 'user_token')) AS user_op,
+                      AND o.payload->'sender' ? 'user_token'), false) AS user_op,
                  o.payload->>'user_credential_ref' AS user_credential_ref,
                  (o.payload->>'user_org_id')::uuid AS user_org_id,
                  o.payload->'sender'->>'user_token' AS user_token_id,

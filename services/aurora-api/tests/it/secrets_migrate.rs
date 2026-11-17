@@ -510,7 +510,7 @@ async fn context_mismatch_fails_that_row_only() {
         .unwrap();
     assert_eq!(counts(&s, Purpose::OauthClientSecret), (0, 0, 1, 0));
     assert_eq!(s.failed(), 1);
-    assert_eq!(s.moved(), 8);
+    assert_eq!(s.moved(), 10);
     assert_eq!(
         w.col(&w.seeds[2]).await,
         bad,
@@ -807,7 +807,7 @@ async fn rekey_context_failure_fails_only_that_row_and_leaves_other_stores_alone
     let s = run(w.h.pool(), &rotated, &o).await.unwrap();
     assert_eq!(counts(&s, Purpose::OauthClientSecret), (0, 0, 1, 0));
     assert_eq!(s.failed(), 1);
-    assert_eq!(s.moved(), 8);
+    assert_eq!(s.moved(), 10);
     assert_eq!(
         w.col(&w.seeds[2]).await,
         bad,
@@ -856,7 +856,7 @@ async fn racing_migrators_leave_one_valid_ref_per_row_memory() {
     sr.register(mem.clone());
     let w = world(SecretVault::new(sr)).await;
     race(&w, "memory").await;
-    assert_eq!(mem.managed_count(), 9, "a losing migrator leaked a value");
+    assert_eq!(mem.managed_count(), 11, "a losing migrator leaked a value");
 }
 
 #[tokio::test]
