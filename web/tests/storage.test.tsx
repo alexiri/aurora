@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { AdminStorageView } from "@/components/account/admin-storage-view";
@@ -52,7 +52,9 @@ describe("storage pages (RFE-015)", () => {
     expect(screen.getByRole("alert")).toHaveTextContent(/attachment storage is full/i);
     expect(screen.getByText("Main")).toBeInTheDocument();
     expect(screen.getByText("Sent by agents")).toBeInTheDocument();
-    await waitFor(() => expect(screen.getByRole("form", { name: "Attachment limits" })).toBeInTheDocument());
+    // C-969: the limits are one form under Data › Retention; Storage shows usage only.
+    expect(screen.queryByRole("form", { name: "Attachment limits" })).toBeNull();
+    expect(screen.queryByLabelText(/Storage quota/)).toBeNull();
   });
 
   it("lists instance totals, orgs and big tables", async () => {

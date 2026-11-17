@@ -196,7 +196,7 @@ export function AdminDataPage() {
         tabs={[
           { id: "retention", label: "Retention", content: section("retention") },
           { id: "storage", label: "Storage", content: <AdminStorageView /> },
-          { id: "audit", label: "Audit", content: <AdminAuditView /> },
+          { id: "audit", label: "Audit log", content: <AdminAuditView /> },
         ]}
       />
     </AdminGuard>
