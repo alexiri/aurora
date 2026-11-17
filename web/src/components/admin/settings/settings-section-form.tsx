@@ -1,7 +1,7 @@
 "use client";
 
 import { useQueryClient } from "@tanstack/react-query";
-import { useMemo, useState, type FormEvent, type ReactNode } from "react";
+import { useState, type FormEvent, type ReactNode } from "react";
 
 import {
   ChoiceListEditor,
@@ -23,8 +23,7 @@ import { ApiError } from "@/lib/api/client";
 import { errorMessage, fieldErrors } from "@/lib/api/errors";
 import { valueWords } from "@/lib/settings-words";
 import {
-  usePreviewSettings,
-  usePutSettings,
+  useSettingsSaver,
   type FieldInfo,
   type Setting,
   type SettingsPreview,
@@ -141,22 +140,7 @@ function needsConfirmation(p: SettingsPreview): boolean {
  * Save. Save calls the preview route first and asks for confirmation when something loosens; 409 / 422 follow
  * `14 §Instance administration`.
  */
-export function SettingsSectionForm(props: Parameters<typeof EditableSectionForm>[0]) {
-  if (props.section.editable === false) {
-    const keys = props.groups?.flatMap((g) => g.keys ?? []);
-    const shown = (props.section.current ?? []).filter((c) => !keys || keys.includes(c.key));
-    return <CurrentValues title={props.section.title} current={shown} fields={props.section.fields ?? []} />;
-  }
-  return <EditableSectionForm {...props} />;
-}
-
-function EditableSectionForm({
-  section,
-  onReload,
-  groups,
-  controls,
-  footer,
-}: {
+export function SettingsSectionForm(props: {
   section: SettingsSection;
   /** Extra content above Save, given the values a save would send (SET-4: the e-mail page's test button). */
   footer?: (values: SettingValues, dirty: boolean) => ReactNode;
@@ -167,73 +151,138 @@ function EditableSectionForm({
   /** A section page's own control for a key, replacing the generic one (the save pipeline stays shared). */
   controls?: Record<string, (ctx: SettingControlCtx) => ReactNode>;
 }) {
-  const initial = useMemo(() => initialDraft(section), [section]);
-  const [draft, setDraft] = useState<Draft>(initial);
-  const [error, setError] = useState<unknown>(null);
+  if (props.section.editable === false) {
+    const keys = props.groups?.flatMap((g) => g.keys ?? []);
+    const shown = (props.section.current ?? []).filter((c) => !keys || keys.includes(c.key));
+    return <CurrentValues title={props.section.title} current={shown} fields={props.section.fields ?? []} />;
+  }
+  return (
+    <SettingsStackForm
+      parts={[{ section: props.section, groups: props.groups, controls: props.controls }]}
+      onReload={props.onReload}
+      footer={props.footer}
+    />
+  );
+}
+
+/** One section of a stacked page: its settings laid out in titled groups, and whatever sits beneath them. */
+export interface StackPart {
+  section: SettingsSection;
+  groups?: SettingsGroup[];
+  controls?: Record<string, (ctx: SettingControlCtx) => ReactNode>;
+  /** A notice above this section's groups. */
+  above?: ReactNode;
+  /** Content between this section's groups and the next section (a read-only table). */
+  below?: ReactNode;
+}
+
+/** One draft per section, kept only for the generation it was made on (a reload or a save drops it). */
+type Drafts = Record<string, { generation: number; draft: Draft }>;
+
+/**
+ * One form for one or more sections (P5-IA-3): each section keeps its own draft, preview and PUT (the API saves per
+ * section), but the page has one Save, one confirmation listing what every changed section loosens, and one Discard.
+ * A Helm-locked key is never part of a draft, so it stays read-only. If a section fails, the ones saved before it stay
+ * saved and the error appears at the failing section.
+ */
+export function SettingsStackForm({
+  parts,
+  onReload,
+  footer,
+}: {
+  parts: StackPart[];
+  onReload: () => void;
+  /** Extra content above Save, given the values the first section would send (SET-4: the e-mail page's test button). */
+  footer?: (values: SettingValues, dirty: boolean) => ReactNode;
+}) {
+  const [drafts, setDrafts] = useState<Drafts>({});
+  const [errors, setErrors] = useState<Record<string, unknown>>({});
   const [saved, setSaved] = useState(false);
-  const [confirm, setConfirm] = useState<SettingsPreview | null>(null);
-  const preview = usePreviewSettings(section.section);
-  const put = usePutSettings(section.section);
+  const [confirm, setConfirm] = useState<{ part: StackPart; preview: SettingsPreview }[] | null>(null);
+  const [busy, setBusy] = useState(false);
+  const saver = useSettingsSaver();
   const qc = useQueryClient();
-  const busy = preview.isPending || put.isPending;
 
-  const dirty = JSON.stringify(toValues(section, draft)) !== JSON.stringify(toValues(section, initial));
-  const errs = error ? fieldErrors(error) : {};
-  const fieldsByKey = useMemo(() => new Map((section.fields ?? []).map((f) => [f.key, f])), [section.fields]);
-  const knownKeys = new Set(section.settings.map((s) => s.key));
-  const otherErrs = Object.entries(errs).filter(([k]) => !knownKeys.has(k.split("/")[0] ?? k));
-  const code = error instanceof ApiError ? error.code : null;
+  const states = parts.map((part) => {
+    const initial = initialDraft(part.section);
+    const mine = drafts[part.section.section];
+    const draft = mine && mine.generation === part.section.generation ? mine.draft : initial;
+    const dirty = JSON.stringify(toValues(part.section, draft)) !== JSON.stringify(toValues(part.section, initial));
+    return { part, initial, draft, dirty };
+  });
+  const dirty = states.some((s) => s.dirty);
+  const stacked = parts.length > 1;
 
-  function setValue(key: string, v: unknown) {
+  function edit(part: StackPart, change: (d: Draft) => Draft) {
     setSaved(false);
-    setDraft((d) => ({ ...d, values: { ...d.values, [key]: v } }));
-  }
-  function resetValue(key: string) {
-    setSaved(false);
-    setDraft((d) => {
-      const values = { ...d.values };
-      delete values[key];
-      return { ...d, values };
-    });
-  }
-  function setSecret(key: string, sd: SecretDraft | null) {
-    setSaved(false);
-    setDraft((d) => {
-      const secrets = { ...d.secrets };
-      if (sd) secrets[key] = sd;
-      else delete secrets[key];
-      return { ...d, secrets };
+    setDrafts((all) => {
+      const id = part.section.section;
+      const cur = all[id] && all[id].generation === part.section.generation ? all[id].draft : initialDraft(part.section);
+      return { ...all, [id]: { generation: part.section.generation, draft: change(cur) } };
     });
   }
 
-  async function doPut() {
-    setError(null);
-    try {
-      await put.mutateAsync({ generation: section.generation, values: toValues(section, draft) });
-      setConfirm(null);
-      setSaved(true);
-    } catch (e) {
-      setConfirm(null);
-      setError(e);
-      if (e instanceof ApiError && e.code === "setting_locked") {
-        // Helm changed under the page: show what is locked now.
-        void qc.invalidateQueries({ queryKey: ["admin", "settings"] });
-        onReload();
+  /** Helm changed under the page: show what is locked now. */
+  function lockedOut() {
+    void qc.invalidateQueries({ queryKey: ["admin", "settings"] });
+    onReload();
+  }
+
+  async function doPut(changed: typeof states) {
+    const errs: Record<string, unknown> = {};
+    let done = 0;
+    for (const s of changed) {
+      try {
+        await saver.put(s.part.section.section, {
+          generation: s.part.section.generation,
+          values: toValues(s.part.section, s.draft),
+        });
+        done += 1;
+      } catch (e) {
+        errs[s.part.section.section] = e;
+        if (e instanceof ApiError && e.code === "setting_locked") lockedOut();
+        break;
       }
     }
+    setConfirm(null);
+    setErrors(errs);
+    setSaved(done > 0 && Object.keys(errs).length === 0);
   }
 
   async function submit(e?: FormEvent) {
     e?.preventDefault();
-    setError(null);
+    setErrors({});
     setSaved(false);
+    setBusy(true);
     try {
-      const p = await preview.mutateAsync({ generation: section.generation, values: toValues(section, draft) });
-      if (needsConfirmation(p)) setConfirm(p);
-      else await doPut();
-    } catch (err) {
-      setError(err);
-      if (err instanceof ApiError && err.code === "setting_locked") onReload();
+      const changed = states.filter((s) => s.dirty);
+      const needing: { part: StackPart; preview: SettingsPreview }[] = [];
+      for (const s of changed) {
+        try {
+          const p = await saver.preview(s.part.section.section, {
+            generation: s.part.section.generation,
+            values: toValues(s.part.section, s.draft),
+          });
+          if (needsConfirmation(p)) needing.push({ part: s.part, preview: p });
+        } catch (err) {
+          setErrors({ [s.part.section.section]: err });
+          if (err instanceof ApiError && err.code === "setting_locked") onReload();
+          return;
+        }
+      }
+      if (needing.length > 0) setConfirm(needing);
+      else await doPut(changed);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function confirmed() {
+    setBusy(true);
+    try {
+      await doPut(states.filter((s) => s.dirty));
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -244,63 +293,93 @@ function EditableSectionForm({
           Saved. Applied to every replica within seconds.
         </Notice>
       ) : null}
-      {code === "stale_revision" ? (
-        <Notice tone="pending" role="alert" className="space-y-2">
-          <p>Someone changed these settings meanwhile. Your edits are kept until you reload.</p>
-          <Button type="button" size="sm" variant="outline" onClick={onReload}>
-            Reload
-          </Button>
-        </Notice>
-      ) : null}
-      {code === "setting_locked" ? (
-        <Notice tone="danger" role="alert">
-          A setting you changed is configured in Helm and cannot be changed here. The page was reloaded.
-        </Notice>
-      ) : null}
-      {error && !["stale_revision", "setting_locked", "settings_invalid"].includes(code ?? "") ? (
-        <Notice tone="danger" role="alert">
-          {errorMessage(error)}
-        </Notice>
-      ) : null}
-      {code === "settings_invalid" ? (
-        <Notice tone="danger" role="alert">
-          <p>{errorMessage(error)}</p>
-          {otherErrs.length > 0 ? (
-            <ul className="mt-1 list-disc pl-5">
-              {otherErrs.map(([k, m]) => (
-                <li key={k}>
-                  <code className="font-mono">{k}</code>: {m}
-                </li>
-              ))}
-            </ul>
-          ) : null}
-        </Notice>
-      ) : null}
 
-      {(groups ?? [{ title: section.title, description: section.description, keys: null }]).map((g) => {
-        const shown = g.keys ? section.settings.filter((s) => g.keys?.includes(s.key)) : section.settings;
-        if (shown.length === 0) return null;
+      {states.map(({ part, draft }) => {
+        const section = part.section;
+        const error = errors[section.section];
+        const errs = error ? fieldErrors(error) : {};
+        const fieldsByKey = new Map((section.fields ?? []).map((f) => [f.key, f]));
+        const knownKeys = new Set(section.settings.map((s) => s.key));
+        const otherErrs = Object.entries(errs).filter(([k]) => !knownKeys.has(k.split("/")[0] ?? k));
+        const code = error instanceof ApiError ? error.code : null;
+        const setValue = (key: string, v: unknown) => edit(part, (d) => ({ ...d, values: { ...d.values, [key]: v } }));
+        const resetValue = (key: string) =>
+          edit(part, (d) => {
+            const values = { ...d.values };
+            delete values[key];
+            return { ...d, values };
+          });
+        const setSecret = (key: string, sd: SecretDraft | null) =>
+          edit(part, (d) => {
+            const secrets = { ...d.secrets };
+            if (sd) secrets[key] = sd;
+            else delete secrets[key];
+            return { ...d, secrets };
+          });
         return (
-          <FormSection key={g.title} title={g.title} description={g.description}>
-            {shown.map((s) => (
-              <SettingRow
-                key={s.key}
-                setting={s}
-                field={fieldsByKey.get(s.key)}
-                draft={draft}
-                error={errs[s.key]}
-                entryErrors={Object.entries(errs).filter(([k]) => k.startsWith(`${s.key}/`))}
-                setValue={setValue}
-                resetValue={resetValue}
-                setSecret={setSecret}
-                custom={controls?.[s.key]}
-              />
-            ))}
-          </FormSection>
+          <div key={section.section} className="space-y-5">
+            {code === "stale_revision" ? (
+              <Notice tone="pending" role="alert" className="space-y-2">
+                <p>Someone changed these settings meanwhile. Reload to see their changes; your edits to this part are dropped.</p>
+                <Button type="button" size="sm" variant="outline" onClick={onReload}>
+                  Reload
+                </Button>
+              </Notice>
+            ) : null}
+            {code === "setting_locked" ? (
+              <Notice tone="danger" role="alert">
+                A setting you changed is configured in Helm and cannot be changed here. The page was reloaded.
+              </Notice>
+            ) : null}
+            {error && !["stale_revision", "setting_locked", "settings_invalid"].includes(code ?? "") ? (
+              <Notice tone="danger" role="alert">
+                {errorMessage(error)}
+              </Notice>
+            ) : null}
+            {code === "settings_invalid" ? (
+              <Notice tone="danger" role="alert">
+                <p>{errorMessage(error)}</p>
+                {otherErrs.length > 0 ? (
+                  <ul className="mt-1 list-disc pl-5">
+                    {otherErrs.map(([k, m]) => (
+                      <li key={k}>
+                        <code className="font-mono">{k}</code>: {m}
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+              </Notice>
+            ) : null}
+
+            {part.above ?? null}
+            {(part.groups ?? [{ title: section.title, description: section.description, keys: null }]).map((g) => {
+              const shown = g.keys ? section.settings.filter((s) => g.keys?.includes(s.key)) : section.settings;
+              if (shown.length === 0) return null;
+              return (
+                <FormSection key={g.title} title={g.title} description={g.description}>
+                  {shown.map((s) => (
+                    <SettingRow
+                      key={s.key}
+                      setting={s}
+                      field={fieldsByKey.get(s.key)}
+                      draft={draft}
+                      error={errs[s.key]}
+                      entryErrors={Object.entries(errs).filter(([k]) => k.startsWith(`${s.key}/`))}
+                      setValue={setValue}
+                      resetValue={resetValue}
+                      setSecret={setSecret}
+                      custom={part.controls?.[s.key]}
+                    />
+                  ))}
+                </FormSection>
+              );
+            })}
+            {part.below ?? null}
+          </div>
         );
       })}
 
-      {footer ? footer(toValues(section, draft), dirty) : null}
+      {footer && states[0] ? footer(toValues(states[0].part.section, states[0].draft), states[0].dirty) : null}
 
       <FormActions>
         <Button type="submit" disabled={busy || !dirty}>
@@ -311,8 +390,8 @@ function EditableSectionForm({
           variant="outline"
           disabled={busy || !dirty}
           onClick={() => {
-            setDraft(initial);
-            setError(null);
+            setDrafts({});
+            setErrors({});
             setSaved(false);
           }}
         >
@@ -328,10 +407,17 @@ function EditableSectionForm({
         title="Save these settings?"
         description="This changes what people and agents are allowed to do."
         confirmLabel="Save"
-        busy={put.isPending}
-        onConfirm={() => void doPut()}
+        busy={busy}
+        onConfirm={() => void confirmed()}
       >
-        {confirm ? <ConfirmDetails preview={confirm} /> : null}
+        {confirm
+          ? confirm.map((c) => (
+              <div key={c.part.section.section} className="space-y-1">
+                {stacked ? <p className="text-sm font-semibold text-ink">{c.part.section.title}</p> : null}
+                <ConfirmDetails preview={c.preview} />
+              </div>
+            ))
+          : null}
       </ConfirmDialog>
     </form>
   );

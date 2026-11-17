@@ -9,7 +9,11 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { ErrorState } from "@/components/states";
 import { WhoCan } from "@/components/ui/who-can";
-import { type Account, type AgentAccess, useGiveSecret, usePutAccess, useRemoveAccess } from "@/lib/api/accounts";
+import { useQueryClient } from "@tanstack/react-query";
+
+import { accountKeys, type Account, type AgentAccess, useGiveSecret, usePutAccess, useRemoveAccess, useTestAccount } from "@/lib/api/accounts";
+import { usePatchConnection } from "@/lib/api/apps";
+import type { HealthFix } from "@/lib/account-health";
 import type { SecretScope } from "@/lib/api/secrets";
 import { entryText, kindLabel } from "@/lib/accounts";
 
@@ -77,6 +81,29 @@ export function AccountRow({
   const own: SecretScope = account.scope === "organization" ? { kind: "organization", id: orgId } : scope;
   const mine = agent ? account.agents.find((a) => a.agent.id === agent.id) : undefined;
   const ws = workspaceId ?? (scope.kind === "workspace" ? scope.id : "");
+  // Test (C-943): a result that is stored shows through the list's health; one that is not (an account that cannot be
+  // tested, or a test that could not run) replaces the line until the next one.
+  const test = useTestAccount();
+  const patchConn = usePatchConnection({ kind: own.kind, id: own.id });
+  const qc = useQueryClient();
+  const [outcome, setOutcome] = useState<"not_testable" | "error" | null>(null);
+  const [replacing, setReplacing] = useState(false);
+  const runTest = () => {
+    setOutcome(null);
+    test.mutate(
+      { ref: account.ref },
+      { onSuccess: (a) => setOutcome(a.result === "not_testable" ? "not_testable" : null), onError: () => setOutcome("error") },
+    );
+  };
+  const fix = (kind: HealthFix) => {
+    if (kind === "test") runTest();
+    else if (kind === "turn_on")
+      patchConn.mutate({ id: account.ref.id, status: "active" }, { onSuccess: () => void qc.invalidateQueries({ queryKey: accountKeys.all }) });
+    else if (kind === "replace" && account.ref.type === "secret") setReplacing(true);
+    // A connection's token, password or key is replaced in the same dialog as a reconnect (C-842).
+    else onReconnect?.();
+  };
+  const canFix = (kind: HealthFix) => account.can.manage && (kind === "test" || kind === "turn_on" || kind === "replace" && account.ref.type === "secret" || !!onReconnect);
   return (
     <li className="space-y-3 rounded-card border border-line bg-surface p-4" aria-label={account.name}>
       <div className="flex flex-wrap items-start gap-3">
@@ -103,11 +130,25 @@ export function AccountRow({
             <Badge>{kindLabel(account.kind)}</Badge>
             {shared ? <Badge tone="accent">Shared by your organization</Badge> : null}
           </div>
-          <AccountHealth account={account} reconnectHref={account.can.manage ? reconnectHref : undefined} />
+          <AccountHealth
+            account={account}
+            outcome={test.isPending ? null : outcome}
+            onFix={account.can.manage ? (k) => (canFix(k) ? fix(k) : undefined) : undefined}
+          />
+          {test.isPending ? <p className="text-sm text-muted" role="status">Testing…</p> : null}
           {shared && account.managed_by ? <WhoCan value={account.managed_by} /> : null}
         </div>
         {account.can.manage ? (
-          <AccountMenu account={account} scope={own} orgId={orgId} contextAgentId={agent?.id} onReconnect={onReconnect} />
+          <AccountMenu
+            account={account}
+            scope={own}
+            orgId={orgId}
+            contextAgentId={agent?.id}
+            onReconnect={onReconnect}
+            onTest={runTest}
+            replacing={replacing}
+            onReplacingChange={setReplacing}
+          />
         ) : null}
       </div>
       {agent ? (

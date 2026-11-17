@@ -16,6 +16,7 @@ import { activeTurnId } from "@/lib/chat/transcript";
 import { useTranscript } from "@/lib/chat/use-transcript";
 
 import { ChatActionsContext, type ChatActions, type ReplyTarget } from "./chat-actions";
+import { AccountsBanner } from "@/components/accounts/attention";
 import { Composer } from "./composer";
 import { ThreadHeader } from "./thread-header";
 import { TranscriptView } from "./transcript-view";
@@ -196,6 +197,8 @@ export function ChatThread({
             </Notice>
           </div>
         ) : (
+          <>
+            <AccountsBanner workspaceId={wsId} agent={{ id: agentId, name: agentName }} base={base} />
           <Composer
             agentId={agentId}
             convId={convId}
@@ -209,6 +212,7 @@ export function ChatThread({
             onRestoreReply={setReply}
             attachRef={attachRef}
           />
+          </>
         )}
       </section>
       </DropZone>

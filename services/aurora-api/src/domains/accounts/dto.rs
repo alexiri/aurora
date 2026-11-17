@@ -163,6 +163,60 @@ pub struct Account {
     pub given: Option<bool>,
 }
 
+/// (C-943) What Test found.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AccountTestResult {
+    Ok,
+    Rejected,
+    Unreachable,
+    Unexpected,
+    NotTestable,
+}
+
+impl AccountTestResult {
+    /// The stored form (`last_check_result`); `not_testable` is never stored.
+    pub fn stored(self) -> Option<&'static str> {
+        match self {
+            Self::Ok => Some("ok"),
+            Self::Rejected => Some("rejected"),
+            Self::Unreachable => Some("unreachable"),
+            Self::Unexpected => Some("unexpected"),
+            Self::NotTestable => None,
+        }
+    }
+
+    pub fn parse(s: &str) -> Self {
+        match s {
+            "ok" => Self::Ok,
+            "rejected" => Self::Rejected,
+            "unreachable" => Self::Unreachable,
+            "not_testable" => Self::NotTestable,
+            _ => Self::Unexpected,
+        }
+    }
+}
+
+/// At most a host, an HTTP status or a protocol code: never an upstream body, header or credential (SEC-129).
+#[derive(Debug, Clone, Default, Serialize, ToSchema)]
+pub struct AccountTestDetail {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
+}
+
+/// C-943: the answer of `POST /v1/accounts/{type}/{id}/test`.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct AccountTestAnswer {
+    pub result: AccountTestResult,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<AccountTestDetail>,
+    pub checked_at: DateTime<Utc>,
+}
+
 #[derive(Debug, Deserialize, IntoParams)]
 pub struct AccountsQuery {
     /// Workspace list only: read the list for this agent (adds `given`, given first, the model

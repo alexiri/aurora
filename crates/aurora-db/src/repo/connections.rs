@@ -36,6 +36,10 @@ pub struct ConnectionRow {
     pub connected_by: Option<Uuid>,
     pub connected_by_name: Option<String>,
     pub last_used_at: Option<DateTime<Utc>>,
+    /// (P5-UX-14, C-944) When the account's health was last recorded, and what it was
+    /// (`ok` | `rejected` | `unreachable` | `unexpected`).
+    pub last_check_at: Option<DateTime<Utc>>,
+    pub last_check_result: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -44,7 +48,7 @@ const SELECT: &str = "SELECT c.id, c.org_id, c.workspace_id, c.app_id, c.package
     c.label, c.status, c.status_reason, c.scopes, c.requested_scopes, c.metadata, c.tenant_host, c.oauth_client_id, \
     c.connect_method, c.access, c.instance_id, ai.host AS instance_host, ai.base_path AS instance_base_path, ai.label AS instance_label, \
     c.credentials_expires_at, c.connected_by, u.display_name AS connected_by_name, c.last_used_at, \
-    c.created_at, c.updated_at FROM app_connections c LEFT JOIN users u ON u.id = c.connected_by \
+    c.last_check_at, c.last_check_result, c.created_at, c.updated_at FROM app_connections c LEFT JOIN users u ON u.id = c.connected_by \
     LEFT JOIN app_instances ai ON ai.id = c.instance_id";
 
 pub async fn get<'e, E: PgExecutor<'e>>(
@@ -265,6 +269,23 @@ pub async fn insert<'e, E: PgExecutor<'e>>(exec: E, n: &NewConnection<'_>) -> Re
     Ok(())
 }
 
+/// (P5-UX-14, C-943) Stores the result of Test: `ok` | `rejected` | `unreachable` | `unexpected`.
+/// A churn-style write: `updated_at` is untouched.
+pub async fn set_check<'e, E: PgExecutor<'e>>(
+    exec: E,
+    id: Uuid,
+    result: &str,
+) -> Result<(), DbError> {
+    sqlx::query(
+        "UPDATE app_connections SET last_check_at = now(), last_check_result = $2 WHERE id = $1",
+    )
+    .bind(id)
+    .bind(result)
+    .execute(exec)
+    .await?;
+    Ok(())
+}
+
 /// `(credentials_ref, credentials_version)` of a connection.
 pub async fn credentials_state<'e, E: PgExecutor<'e>>(
     exec: E,
@@ -292,7 +313,7 @@ pub async fn reconnect_cas<'e, E: PgExecutor<'e>>(
          credential_keys = $14, connect_method = $15, access = COALESCE($16, access), \
          status_reason = CASE WHEN status IN ('reauth_required','orphaned') THEN NULL ELSE status_reason END, \
          status = CASE WHEN status IN ('reauth_required','orphaned') THEN 'active' ELSE status END, \
-         reauth_required_at = NULL, updated_at = now() \
+         reauth_required_at = NULL, last_check_at = NULL, last_check_result = NULL, updated_at = now() \
          WHERE id = $1 AND credentials_version = $2 AND instance_id IS NOT DISTINCT FROM $13",
     )
     .bind(n.id)

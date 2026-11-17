@@ -147,6 +147,9 @@ pub struct ConnectMethod {
     /// (P5-UX-13, C-942) Values the person copies into the other service, shown with Copy above
     /// the method's fields: `org_external_id` (the AWS role's trust policy).
     pub show_context: Vec<String>,
+    /// (P5-UX-14, C-945) Whether connecting with this method already probes the upstream. The
+    /// journey tests a new account once afterwards only when it does not.
+    pub has_probe: bool,
 }
 
 #[derive(Debug, Serialize, ToSchema)]

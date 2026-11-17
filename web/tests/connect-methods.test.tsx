@@ -198,7 +198,7 @@ describe("tools restricted to a connect method", () => {
   });
 });
 
-// FIX-133 (D-240): "What may agents do with this connection?" is offered on every method of an app that has write
+// FIX-133 (D-240): "What may agents do with this account?" is offered on every method of an app that has write
 // tools, Read only is the recommended default, and the choice is sent as `access`.
 describe("connect window: read-only connection", () => {
   const tool = (id: string, group: "read" | "write") => ({
@@ -210,12 +210,12 @@ describe("connect window: read-only connection", () => {
   it("preselects Read only and sends it with the method's own form", async () => {
     const calls = stub(routes({ ...withTools([tool("get_repo", "read"), tool("create_issue", "write")]), ...connected }));
     wrap(<ConnectView />);
-    const group = await screen.findByRole("radiogroup", { name: "What may agents do with this connection?" });
+    const group = await screen.findByRole("radiogroup", { name: "What may agents do with this account?" });
     const [readOnly, readWrite] = within(group).getAllByRole("radio") as HTMLInputElement[];
     expect([readOnly.checked, readWrite.checked]).toEqual([true, false]);
     expect(within(group).getByText("Recommended")).toBeInTheDocument();
     fireEvent.click(await screen.findByRole("radio", { name: /Personal access token/ })); // every method offers it
-    expect(screen.getByRole("radiogroup", { name: "What may agents do with this connection?" })).toBeInTheDocument();
+    expect(screen.getByRole("radiogroup", { name: "What may agents do with this account?" })).toBeInTheDocument();
     fireEvent.change(await screen.findByLabelText("Personal access token field"), { target: { value: "ghp_x" } });
     fireEvent.click(screen.getByRole("button", { name: "Connect" }));
     await waitFor(() => expect(calls.some((c) => c.path === "/v1/apps/github/connect")).toBe(true));
@@ -237,7 +237,7 @@ describe("connect window: read-only connection", () => {
     stub(routes(withTools([tool("get_repo", "read")])));
     wrap(<ConnectView />);
     await screen.findByLabelText("Private key");
-    expect(screen.queryByRole("radiogroup", { name: "What may agents do with this connection?" })).toBeNull();
+    expect(screen.queryByRole("radiogroup", { name: "What may agents do with this account?" })).toBeNull();
     cleanup();
     search = "reconnect=c1";
     stub(
@@ -248,6 +248,6 @@ describe("connect window: read-only connection", () => {
     );
     wrap(<ConnectView />);
     await screen.findByLabelText("Personal access token field");
-    expect(screen.queryByRole("radiogroup", { name: "What may agents do with this connection?" })).toBeNull();
+    expect(screen.queryByRole("radiogroup", { name: "What may agents do with this account?" })).toBeNull();
   });
 });

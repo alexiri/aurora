@@ -53,6 +53,8 @@ pub enum Class {
     Telemetry,
     /// (phase 5, P5-FILES-1, D-316) every `/v1/agents/{agent}/files*` route, reads included.
     Files,
+    /// (phase 5, P5-UX-14, C-943, SEC-129) `POST /v1/accounts/{type}/{id}/test`: each call contacts an upstream.
+    Check,
 }
 
 impl Class {
@@ -66,6 +68,7 @@ impl Class {
             Self::Export => "export",
             Self::Telemetry => "telemetry",
             Self::Files => "files",
+            Self::Check => "check",
         }
     }
 }
@@ -88,6 +91,8 @@ pub fn classify(method: &Method, path: &str) -> Option<Class> {
         ["telemetry", "traces"] if post => return Some(Class::Telemetry),
         // (P5-FILES-1) Files routes, reads included, in their own bucket (not `write`/`upload`).
         ["agents", _, "files", ..] => return Some(Class::Files),
+        // (P5-UX-14, C-943) Testing an account contacts its upstream: its own small bucket.
+        ["accounts", _, _, "test"] if post => return Some(Class::Check),
         ["conversations", _, "messages"] if post => return Some(Class::Message),
         ["turns", _, "send-now"] if post => return Some(Class::Message),
         ["conversations", _, "attachments"] if post => return Some(Class::Upload),
@@ -217,6 +222,7 @@ pub struct Limits {
     pub export: Spec,
     pub telemetry: Spec,
     pub files: Spec,
+    pub check: Spec,
     pub preview: Spec,
     pub org: Spec,
     pub unauth_get: Spec,
@@ -256,6 +262,7 @@ impl Limits {
             export: class("export", Spec::per_hour(6, 2)),
             telemetry: class("telemetry", Spec::per_min(60, 20)),
             files: class("files", Spec::per_min(300, 60)),
+            check: class("check", Spec::per_min(10, 3)),
             preview: Spec::per_sec(c.preview_per_second, c.preview_burst).scaled(m),
             org: Spec::per_min(c.org_per_minute, org_burst).scaled(m),
             unauth_get: Spec::per_min(UNAUTH_GET_PER_MIN, UNAUTH_GET_PER_MIN).scaled(m),
@@ -275,6 +282,7 @@ impl Limits {
             Class::Export => self.export,
             Class::Telemetry => self.telemetry,
             Class::Files => self.files,
+            Class::Check => self.check,
         }
     }
 }
@@ -846,6 +854,11 @@ mod tests {
         ] {
             assert_eq!(c(m, p), Some(Class::Files), "{p}");
         }
+        // (P5-UX-14) Test of an account is class `check`, not `write`.
+        assert_eq!(
+            c(Method::POST, "/v1/accounts/connection/1/test"),
+            Some(Class::Check)
+        );
         assert_eq!(
             c(Method::POST, "/v1/conversations/1/messages"),
             Some(Class::Message)

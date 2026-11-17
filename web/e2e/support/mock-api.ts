@@ -185,6 +185,9 @@ export const user ={ id: id(99), display_name: "Ada Lovelace", email: "ada@examp
 /** (P5-UX-3) Accounts a spec's saves made, listed first by the workspace's accounts list; emptied by every `mockApi` call. */
 export const extraAccounts: Record<string, unknown>[] = [];
 
+/** (P5-UX-14) Ids of the connect methods that have a probe (`has_probe`); none by default. Emptied by every `mockApi` call. */
+export const probed = new Set<string>();
+
 /** (P5-UX-9) OAuth clients a spec registered in the workspace; the setup status counts them and the list shows them. Emptied by every `mockApi` call. */
 export const extraClients: Record<string, unknown>[] = [];
 
@@ -197,6 +200,7 @@ export async function mockApi(
   const patterns: [RegExp, unknown][] = [];
   extraAccounts.length = 0;
   extraClients.length = 0;
+  probed.clear();
   let availability: { posture: string; allow: { app_id: string; workspace_id?: string }[] } = { posture: "open", allow: [] };
   // (P5-IA-4, C-969) The organization's retention: Administration's maximums above, saved values kept across requests.
   let retention: Record<string, unknown> = {
@@ -532,7 +536,7 @@ export async function mockApi(
         },
       ];
       // (P5-UX-2/3) Every method also carries the audience, the scope presets per access and the values to show.
-      const full = connect.map((m) => ({ probe_scopes: [], audience: "person", scope_presets: { read: [], write: [] }, show_context: [], ...m }));
+      const full = connect.map((m) => ({ probe_scopes: [], audience: "person", scope_presets: { read: [], write: [] }, show_context: [], has_probe: probed.has(m.id), ...m }));
       return json({
         ...apps.find((x) => x.app_id === a.id), connect: full, credentials: [], hosts: [], metadata: [],
         // (P5-UX-9, C-946) The OAuth client definitions say which connect methods use them.

@@ -98,7 +98,7 @@ for (const scheme of ["light", "dark"] as const) {
         await expect(list.getByRole("listitem", { name: "Weather API" }).getByText("Website")).toBeVisible();
         await expect(list.getByRole("listitem", { name: "Team key" }).getByText("AI key")).toBeVisible();
         await expect(list.getByRole("listitem", { name: "Weather API" }).getByText("No agent can use this")).toBeVisible();
-        await expect(list.getByRole("listitem", { name: "Product team" }).getByText(/Sign-in expired/)).toBeVisible();
+        await expect(list.getByRole("listitem", { name: "Product team" }).getByText(/The sign-in to .* expired/)).toBeVisible();
         // No rule id, host pattern or "secret" on a row.
         await expect(list).not.toContainText(/secret|host pattern|rule/i);
         await check(page, "ws-accounts", scheme, width);

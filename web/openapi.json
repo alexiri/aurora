@@ -10,6 +10,106 @@
     "version": "0.1.0"
   },
   "paths": {
+    "/v1/accounts/{type}/{id}/test": {
+      "post": {
+        "tags": [
+          "accounts"
+        ],
+        "summary": "Check one account now (C-943, SEC-129): the connect method's probe, a gateway database login, a hook mint or the AI-key\nverify, in that order of what the account has. `can_own` of the account's workspace, or an organization owner or admin\nfor an organization's account. Never returns anything the upstream sent; stores the result (except `not_testable`) and\nis audited `account.test`.",
+        "operationId": "testAccount",
+        "parameters": [
+          {
+            "name": "type",
+            "in": "path",
+            "description": "`connection` or `secret`",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Account id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "What the check found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountTestAnswer"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Unknown account type",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited (class `check`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
     "/v1/action-approvals/{id}/decision": {
       "post": {
         "tags": [
@@ -35168,6 +35268,70 @@
           "secret"
         ]
       },
+      "AccountTestAnswer": {
+        "type": "object",
+        "description": "C-943: the answer of `POST /v1/accounts/{type}/{id}/test`.",
+        "required": [
+          "result",
+          "checked_at"
+        ],
+        "properties": {
+          "checked_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "detail": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/AccountTestDetail"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "result": {
+            "$ref": "#/components/schemas/AccountTestResult"
+          }
+        }
+      },
+      "AccountTestDetail": {
+        "type": "object",
+        "description": "At most a host, an HTTP status or a protocol code: never an upstream body, header or credential (SEC-129).",
+        "properties": {
+          "code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "host": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
+      "AccountTestResult": {
+        "type": "string",
+        "description": "(C-943) What Test found.",
+        "enum": [
+          "ok",
+          "rejected",
+          "unreachable",
+          "unexpected",
+          "not_testable"
+        ]
+      },
       "AccountWorkspace": {
         "type": "object",
         "required": [
@@ -38561,7 +38725,8 @@
           "probe_scopes",
           "audience",
           "scope_presets",
-          "show_context"
+          "show_context",
+          "has_probe"
         ],
         "properties": {
           "access_levels": {
@@ -38605,6 +38770,10 @@
             "items": {
               "$ref": "#/components/schemas/FormField"
             }
+          },
+          "has_probe": {
+            "type": "boolean",
+            "description": "(P5-UX-14, C-945) Whether connecting with this method already probes the upstream. The\njourney tests a new account once afterwards only when it does not."
           },
           "id": {
             "type": "string"

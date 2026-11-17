@@ -5,6 +5,7 @@
 //! candidates), [`PlaintextCache`] (lazy plaintext, after the decision),
 //! `MemoryCounter` (rate limits) and [`RequestLog`].
 
+use crate::account_health::{AccountHealth, AccountId};
 use crate::apps::{self, Cand, Exec, Pick};
 use crate::auth::{CredentialKind, RequestIdentity as Ident};
 use crate::db::{DbAuthorizer, DbEndpoint, DbOpenError, DbOpened, DbVerdict};
@@ -54,6 +55,8 @@ pub struct PolicyHandler {
     /// Churn column updates; `None` disables them (tests).
     touch_pool: Option<aurora_db::PgPool>,
     touched: Mutex<HashMap<Uuid, Instant>>,
+    /// (P5-UX-14, C-985) What was last recorded per account about its credential's health.
+    account_health: Arc<AccountHealth>,
     governance: Option<Arc<Governance>>,
     tokens: Option<Arc<TokenManager>>,
     summarizer: Option<Arc<dyn crate::summarize_client::Summarizer>>,
@@ -177,6 +180,9 @@ struct Hook {
     /// (P4-LLM-1, C-808) `(provider, endpoint id)` of an injected LLM key: the response is classified for the
     /// request log and `aurora_gateway_llm_upstream_total`.
     llm: Option<(String, String)>,
+    /// (P5-UX-14, C-985) Where to record what an upstream answer shows about the injected account;
+    /// `None` while the database is unreachable and in tests without a pool.
+    account_health: Option<(Arc<AccountHealth>, aurora_db::PgPool)>,
 }
 
 impl Hook {
@@ -284,6 +290,17 @@ impl PostHook for Hook {
             self.log
                 .record(ctx.row(r.status().as_u16(), Some(status.as_u16()), code.as_deref()));
             return Some(r);
+        }
+        // (P5-UX-14, C-985) What the answer shows about the account whose credential was injected: a 401 is
+        // `rejected`, a later 2xx or 3xx is `ok`, a 403 nothing. Informational; the answer is never altered.
+        if ctx.injected > 0
+            && let Some((h, pool)) = &self.account_health
+            && let Some(account) = ctx
+                .connection_id
+                .map(AccountId::Connection)
+                .or_else(|| ctx.secret_id.map(AccountId::Secret))
+        {
+            h.observe(pool, account, status.as_u16());
         }
         // (P4-LLM-1, C-808) Classify an injected LLM request's answer by status (and Bedrock's error-type header):
         // the request log's `error_code` and the upstream metric. Never reads a body, never alters the answer.
@@ -505,6 +522,7 @@ impl PolicyHandler {
             holds: p.holds,
             touch_pool: p.touch_pool,
             touched: Mutex::new(HashMap::new()),
+            account_health: Arc::new(AccountHealth::new()),
             governance: None,
             tokens: None,
             summarizer: None,
@@ -697,6 +715,13 @@ impl PolicyHandler {
         self
     }
 
+    /// (P5-UX-14) Another account-health recorder (tests change its spacing).
+    #[must_use]
+    pub fn with_account_health(mut self, h: Arc<AccountHealth>) -> Self {
+        self.account_health = h;
+        self
+    }
+
     /// Enable token refresh / mint and stale-token retry for app connections.
     pub fn with_tokens(mut self, t: Arc<TokenManager>) -> Self {
         self.tokens = Some(t);
@@ -741,8 +766,11 @@ impl PolicyHandler {
             }
             t.insert(secret_id, now);
         }
+        // The id is a secret's or an app connection's (P5-UX-14: a connection's `last_used_at` was
+        // never written, so its row read "Never used"); the other statement matches no row.
         tokio::spawn(async move {
             let _ = aurora_db::repo::gateway::touch_secret_last_used(&pool, secret_id).await;
+            let _ = aurora_db::repo::gateway::touch_connection_last_used(&pool, secret_id).await;
         });
     }
 
@@ -2546,8 +2574,13 @@ impl PolicyHandler {
             None => links.connect_any(),
         };
         let access_url = links.access(ctx.identity.agent_id);
+        let account_health = match (&self.touch_pool, self.db_down()) {
+            (Some(pool), false) => Some((self.account_health.clone(), pool.clone())),
+            _ => None,
+        };
         Box::new(Hook {
             llm: None,
+            account_health,
             ctx,
             log: self.log.clone(),
             fallback,
