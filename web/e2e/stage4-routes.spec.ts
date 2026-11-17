@@ -3,6 +3,7 @@ import { expect, test } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 
 import { ACCESS_SCREENS, openAccess } from "./support/access";
+import { EVAL_SCREENS, openEvals } from "./support/evals";
 import { id, mockApi, now, ROUTES } from "./support/mock-api";
 import { CONNECTOR_SCREENS, openConnectorScreen } from "./support/connectors";
 import { CANVAS, openRoute, overflow } from "./support/open";
@@ -64,6 +65,22 @@ for (const width of [1280, 390]) {
             expect(await table.evaluate((el) => el.scrollWidth - el.clientWidth), `${s} table overflows`).toBeLessThanOrEqual(0);
           }
           await page.screenshot({ path: `${ACCESS_SHOTS}/${s}-${scheme}-${width}.png`, fullPage: s === "list" });
+        });
+      }
+    }
+  });
+}
+
+// P4-EVAL-4: the agent's Evals page, a run's page and the two dialogs: themed, no horizontal page scroll.
+for (const width of [1280, 390]) {
+  test.describe(`agent Evals page (${width} px)`, () => {
+    test.use({ viewport: { width, height: 900 } });
+    for (const scheme of ["light", "dark"] as const) {
+      for (const s of EVAL_SCREENS) {
+        test(`${s}: themed, no horizontal page scroll (${scheme})`, async ({ page }) => {
+          await openEvals(page, s, scheme);
+          expect(await page.evaluate(() => getComputedStyle(document.body).backgroundColor)).toBe(CANVAS[scheme]);
+          expect(await overflow(page), `${s} overflows horizontally`).toBeLessThanOrEqual(0);
         });
       }
     }

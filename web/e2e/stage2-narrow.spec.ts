@@ -1,6 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 
 import { ACCESS_SCREENS, openAccess } from "./support/access";
+import { EVAL_SCREENS, openEvals } from "./support/evals";
 import { CONNECTOR_SCREENS, openConnectorScreen } from "./support/connectors";
 
 // P2-UI stage 2: the designed screens never scroll horizontally at 390 px (the agent tab strip
@@ -78,6 +79,14 @@ test.describe("390 px", () => {
         const table = page.getByRole("region", { name: /^What Daneel can do in / });
         expect(await table.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
       }
+    });
+  }
+
+  // P4-EVAL-4: the Evals page, a run's page and its dialogs (tables become stacked lists on a phone).
+  for (const s of EVAL_SCREENS) {
+    test(`agent Evals page › ${s} has no horizontal page scroll`, async ({ page }) => {
+      await openEvals(page, s, "light");
+      expect(await noPageScroll(page)).toBe(true);
     });
   }
 
