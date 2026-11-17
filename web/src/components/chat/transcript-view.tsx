@@ -5,6 +5,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode }
 import { buildRows, dayLabel } from "@/lib/chat/layout";
 import { activeTurnId, type TranscriptState } from "@/lib/chat/transcript";
 
+import { AccessRequestCard } from "./access-request-card";
 import { JumpToLatest } from "./jump-to-latest";
 import { MessageGroup, StreamingBubble } from "./message-group";
 import { ContinueNotice, RedactedRow, SystemRow, TypingRow } from "./status-rows";
@@ -131,6 +132,17 @@ export function TranscriptView({
                   // Only offer Continue until a later durable reset notice (C-27) exists.
                   const reset = state.events.some((e) => (e.seq ?? 0) > (r.ev.seq ?? 0) && e.type === "notice" && s(e.payload.code) === "app_turn_cap_reset");
                   if (!reset) return <ContinueNotice key={r.key} text={s(p.text)} convId={convId} />;
+                }
+                // (P5-UX-17, C-984) An agent's request for access is a card; its outcome is one line.
+                if (s(p.code) === "app_connection_requested" || s(p.code) === "secret_proposed") {
+                  return <AccessRequestCard key={r.key} ev={r.ev} events={state.events} wsId={wsId} agent={agent} />;
+                }
+                if (s(p.code) === "app_access_given" || s(p.code) === "app_access_request_dismissed") {
+                  return (
+                    <SystemRow key={r.key}>
+                      <span data-testid="access-request-outcome">{s(p.text)}</span>
+                    </SystemRow>
+                  );
                 }
                 return <SystemRow key={r.key}>{s(p.text)}</SystemRow>;
               }

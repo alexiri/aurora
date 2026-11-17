@@ -88,7 +88,9 @@ describe("the conformance fixture (C-891)", () => {
         expect(to, `${name}: tab=${tab}`).not.toBeNull();
         continue;
       }
-      expect(AGENT_PAGE_IDS as readonly string[], `${name}: tab=${tab}`).toContain(tab);
+      // (C-959) The Apps & accounts page has its own two tabs; the others name a tab of the agent page.
+      const accepted = routeOf(tpl).endsWith("/apps") ? ["apps", "accounts"] : (AGENT_PAGE_IDS as readonly string[]);
+      expect(accepted, `${name}: tab=${tab}`).toContain(tab);
     }
   });
 });
