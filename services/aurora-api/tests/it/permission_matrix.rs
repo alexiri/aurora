@@ -612,6 +612,13 @@ const ROWS: &[Row] = &[
     r("PUT", "/v1/admin/placement", G::Inst, false),
     r("GET", "/v1/admin/placement/preview", G::Inst, false),
     r("GET", "/v1/admin/placement/choices", G::Inst, false),
+    // (P5-UX-6, C-922) give the starter grants to people who signed in before
+    r(
+        "POST",
+        "/v1/admin/placement/starter-grants/backfill",
+        G::Inst,
+        false,
+    ),
     // (phase 5, SET-1) instance settings and (FIX-124) secret stores: instance administrators only; session-only (an API key gets 403 `session_required`)
     r("GET", "/v1/admin/settings", G::Inst, true),
     r("GET", "/v1/admin/settings/export", G::Inst, true),
@@ -765,6 +772,20 @@ const ROWS: &[Row] = &[
     r("PATCH", "/v1/workspaces/{ws}", G::WsOwn, false),
     r("DELETE", "/v1/workspaces/{ws}", G::WsOwn, false),
     r("GET", "/v1/workspaces/{ws}/access", G::WsOwn, false),
+    // (P5-UX-5, C-919, C-920, SEC-128) Adding people by e-mail: workspace owners only.
+    r(
+        "POST",
+        "/v1/workspaces/{ws}/access/by-email",
+        G::WsOwn,
+        false,
+    ),
+    r("GET", "/v1/workspaces/{ws}/access/pending", G::WsOwn, false),
+    r(
+        "DELETE",
+        "/v1/workspaces/{ws}/access/pending/{id}",
+        G::WsOwn,
+        false,
+    ),
     r("PUT", "/v1/workspaces/{ws}/access/{user}", G::WsOwn, false),
     r(
         "DELETE",
@@ -807,6 +828,13 @@ const ROWS: &[Row] = &[
     r("GET", "/v1/workspaces/{ws}/oauth-clients", G::WsOwn, false),
     r("POST", "/v1/workspaces/{ws}/oauth-clients", G::WsOwn, false),
     r("GET", "/v1/workspaces/{ws}/policy", G::WsOwn, false),
+    // (FIX-164, D-365) The published rules, read-only, for any member of the workspace.
+    r(
+        "GET",
+        "/v1/workspaces/{ws}/internet-access",
+        G::WsUse,
+        false,
+    ),
     r("PUT", "/v1/workspaces/{ws}/policy/draft", G::WsOwn, false),
     r(
         "GET",
@@ -865,6 +893,13 @@ const ROWS: &[Row] = &[
         true,
     ),
     r("GET", "/v1/agents/{agent}/effective", G::WsUse, false),
+    // (P5-UX-10, C-934) what exactly an agent can do in an app
+    r(
+        "GET",
+        "/v1/agents/{agent}/apps/{app}/access",
+        G::WsUse,
+        false,
+    ),
     r("GET", "/v1/agents/{agent}/schedules", G::WsUse, false),
     r("POST", "/v1/agents/{agent}/schedules", G::WsUse, false),
     r("GET", "/v1/agents/{agent}/webhooks", G::WsUse, false),
@@ -1050,6 +1085,8 @@ const ROWS: &[Row] = &[
     r("POST", "/v1/secrets/{id}/accept", G::WsOwn, false),
     r("POST", "/v1/secrets/{id}/reject", G::WsOwn, false),
     r("POST", "/v1/secrets/{id}/verify", G::WsOwn, false),
+    // (P5-UX-14, C-943, SEC-129) Test of an account: `can_own` of its workspace (owner/admin for an organization's).
+    r("POST", "/v1/accounts/{type}/{id}/test", G::WsOwn, false),
     r("PUT", "/v1/secrets/{id}/value", G::WsOwn, false),
     r("GET", "/v1/secrets/{id}/models", G::WsOwn, false),
     // BE-065 (M5): action approvals, agent links, peer tasks, app-turn cap reset.
@@ -1471,6 +1508,7 @@ fn fill(path: &str, fx: &Fx) -> String {
             "agent" => fx.agent.to_string(),
             "user" => fx.victim.to_string(),
             "rev" | "seq" => "1".to_owned(),
+            "type" => "connection".to_owned(),
             _ => Uuid::now_v7().to_string(),
         };
         out.push_str(&v);
@@ -1500,6 +1538,10 @@ fn norm(path: &str) -> String {
 /// still answer 4xx (404 unknown id, 409, 422) after authorization, which counts as allowed.
 fn body_for(method: &str, path: &str, fx: &Fx) -> Value {
     match (method, path) {
+        // (P5-UX-5) one exact address; an authorized owner gets a 200, anyone else a refusal before the body is read.
+        ("POST", "/v1/workspaces/{ws}/access/by-email") => {
+            json!({"email": "matrix@example.test", "role": "member"})
+        }
         ("PUT", "/v1/admin/host-claims/{group_key}") => {
             json!({"winner_package_id": "x", "winner_app_id": "x", "fingerprint": "x"})
         }

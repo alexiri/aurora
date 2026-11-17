@@ -483,6 +483,103 @@ async fn member_cannot_read_simulate_or_edit() {
     assert_eq!(s, 403);
 }
 
+// FIX-164 (D-365, amends I-27 for this one read, C-1020): a workspace member reads the workspace's PUBLISHED
+// Internet access and nothing else. A draft is never visible; the answer carries no draft, revision, history,
+// publisher or warnings; a non-member and another workspace's member are refused like for any workspace route; the
+// route has no verb but GET.
+#[tokio::test]
+async fn a_member_reads_only_the_published_internet_access() {
+    let w = world().await;
+    let url = format!("/v1/workspaces/{}/internet-access", w.ws);
+    // Published generation 1 of a fresh workspace: no rules.
+    let (s, v) = w.call(Method::GET, &url, &w.member, None).await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["number"], 1, "{v}");
+    assert_eq!(v["rules"], json!([]), "{v}");
+    // Only the published generation's defaults and rules: exactly these keys.
+    let mut keys: Vec<&str> = v.as_object().unwrap().keys().map(String::as_str).collect();
+    keys.sort_unstable();
+    assert_eq!(
+        keys,
+        [
+            "default_action",
+            "number",
+            "open_lane_posture",
+            "rules",
+            "uncredentialed_allowlist",
+            "uncredentialed_default"
+        ],
+        "{v}"
+    );
+
+    // The owner writes a draft with a rule: the member does not see it.
+    let rule = json!([{"name": "No evil", "action": "block", "targets": net("evil.example.com")}]);
+    let (s, v) = w.put(&w.wsu("/draft"), 0, "none", rule).await;
+    assert_eq!(s, 200, "{v}");
+    let (s, v) = w.call(Method::GET, &url, &w.member, None).await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["rules"], json!([]), "a draft is never visible: {v}");
+    assert_eq!(v["number"], 1, "{v}");
+
+    // Published: now the member reads the rule, read-only.
+    let (s, v) = w
+        .call(
+            Method::POST,
+            &w.wsu("/publish"),
+            &w.owner,
+            Some(json!({"revision": 1})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let (s, v) = w.call(Method::GET, &url, &w.member, None).await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["number"], 2, "{v}");
+    assert_eq!(v["rules"][0]["name"], "No evil", "{v}");
+    assert_eq!(
+        v["rules"][0]["targets"][0]["host"], "evil.example.com",
+        "{v}"
+    );
+    for field in [
+        "draft",
+        "published",
+        "draft_revision",
+        "published_by",
+        "generations",
+        "warnings",
+    ] {
+        assert!(v.get(field).is_none(), "{field} leaked: {v}");
+    }
+    // Everything else about the policy stays owner-only for the member (I-27 unchanged).
+    let (s, _) = w.call(Method::GET, &w.wsu(""), &w.member, None).await;
+    assert_eq!(s, 403);
+    for tail in ["/generations", "/warnings"] {
+        let (s, _) = w.call(Method::GET, &w.wsu(tail), &w.member, None).await;
+        assert_eq!(s, 403, "{tail}");
+    }
+    // No write on this route, for anyone.
+    for m in [Method::PUT, Method::POST, Method::PATCH, Method::DELETE] {
+        let (s, _) = w.call(m.clone(), &url, &w.owner, Some(json!({}))).await;
+        assert_eq!(s, 405, "{m}");
+    }
+
+    // A person with no access to the workspace (an org member not bound to it) and a member of ANOTHER
+    // workspace of the organization: the 404 of every workspace route, and no rules in the answer.
+    let (_, outsider) = w.h.good_session(w.outsider_id).await;
+    let (s, v) = w.call(Method::GET, &url, &outsider, None).await;
+    assert_eq!(s, 404, "{v}");
+    let ws2 = w.h.workspace(w.org).await;
+    let y = w.h.user("y@x.io", false).await;
+    w.h.member(w.org, y, "member", "active").await;
+    w.h.bind_ws(ws2, y, "member").await;
+    let (_, other) = w.h.good_session(y).await;
+    let (s, v) = w.call(Method::GET, &url, &other, None).await;
+    assert_eq!(s, 404, "{v}");
+    assert!(v.get("rules").is_none(), "{v}");
+    // Without a session at all.
+    let (s, _, _) = w.h.send(Method::GET, &url, &[], None).await;
+    assert_eq!(s.as_u16(), 401);
+}
+
 #[tokio::test]
 async fn secret_grant_derived_rule_and_simulate_granted_allow() {
     let w = world().await;

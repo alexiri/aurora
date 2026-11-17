@@ -79,6 +79,16 @@ is proven by `scripts/e2e/kind.sh`, whose profile (`deploy/kind/values-e2e.yaml`
 `connectorHost.testTypes: true`) makes the host announce the `fake` type, signed with a key of its
 own that the test trusts for its publisher.
 
+**The builtin apps** (P5-UX-6, D-326(d)). `kind-dev.sh up` builds the eleven packages of `plugins/builtin`
+(`aurora plugin build`, **unsigned**: the project key is a release secret) in the builder container and bakes
+them into the API image in `/var/lib/aurora/plugins` (`plugins.dir`; the chart mounts nothing over it with
+`plugins.source: none`). The API refuses unsigned packages from `plugins.builtin_dir` even with
+`plugins.allow_unsigned`, so they arrive as the `directory` source. `values-dev.yaml` sets
+`config.plugins.allow_unsigned: true` for that (dev only: the chart refuses it unless `externalUrl` is a
+loopback origin). A first install needs an instance admin's approval (docs/09 §10), so after sign-in the
+packages wait under Administration › Apps & accounts › Apps; approve them there and the organization's Apps tab
+lists the apps.
+
 The mock's Service has the fixed ClusterIP `10.96.100.40`; the profile opens exactly that `/32` in
 `gateway.allowed_private` and gives the gateway's NetworkPolicy one extra egress rule
 (`networkPolicy.gatewayExtraEgress`). Nothing else in the cluster is reachable by agents.

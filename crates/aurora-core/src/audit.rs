@@ -103,6 +103,12 @@ pub const SECURITY_CRITICAL_ACTIONS: &[&str] = &[
     "user.delete",
     "workspace_access.remove",
     "workspace_access.set",
+    // (P5-UX-5, D-325, SEC-128) a workspace owner adds a person by e-mail: bound at once, or a pending row that a
+    // sign-in applies (or the owner removes)
+    "workspace.access.grant",
+    "workspace.access.pending_apply",
+    "workspace.access.pending_create",
+    "workspace.access.pending_delete",
     // (P4-GRP-1, D-130, D-156) directory groups: membership, org-role mapping, bindings
     "group.create",
     "group.delete",

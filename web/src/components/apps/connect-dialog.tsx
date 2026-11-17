@@ -277,7 +277,7 @@ function ConnectForm({
       <div role="status" className="space-y-3 text-sm">
         <p className="font-medium text-ink">{app.name} is connected.</p>
         {done.missing.length ? (
-          <Notice tone="pending">Some requested scopes were not granted: {done.missing.join(", ")}.</Notice>
+          <Notice tone="pending">Some of the access you asked for was not given: {done.missing.join(", ")}.</Notice>
         ) : null}
         {!accessDone ? (
           <ConnectedStep
@@ -386,7 +386,7 @@ function ConnectForm({
           ) : null}
           {hasWriteTools && !reconnect ? (
             <ChoiceCards
-              legend="What may agents do with this connection?"
+              legend="What may agents do with this account?"
               value={connAccess}
               onChange={setConnAccess}
               options={[
@@ -395,12 +395,12 @@ function ConnectForm({
                   label: "Read only",
                   badge: "Recommended",
                   description:
-                    "Agents can look things up but never change anything: Aurora blocks every write operation, whatever the token or the grants allow. You can change this later on the connection.",
+                    "Agents can look things up but never change anything: Aurora blocks every write operation, whatever the token or the access you give allows. You can change this later on the account.",
                 },
                 {
                   value: "write",
                   label: "Read and write",
-                  description: "Agents may also make changes, as far as the grants you give them allow.",
+                  description: "Agents may also make changes, as far as the access you give them allows.",
                 },
               ]}
             />

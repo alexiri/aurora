@@ -154,6 +154,10 @@ pub struct HoldRequest<'a> {
     /// (FIX-084) The app connection whose credential the request would use; recorded on the row
     /// so that revoking that grant or connection abandons the pending approval.
     pub connection_id: Option<Uuid>,
+    /// (P5-UX-16, C-982) The app and the tool the request matched, recorded on the row so the
+    /// approval can say what it is about and offer Always allow for that tool.
+    pub app_id: Option<&'a str>,
+    pub tool_id: Option<&'a str>,
     pub batch: &'a AuroraHeaders,
     pub summary: &'a ApprovalSummary,
     /// (RFE-011a) The decision's rule-level timeout (minimum of the set values of the matching
@@ -573,6 +577,8 @@ impl Holds {
             host: r.host.to_owned(),
             path: r.path.to_owned(),
             connection_id: r.connection_id,
+            app_id: r.app_id.map(clip),
+            tool_id: r.tool_id.map(clip),
             rule_logical_id: r.rule.map(|x| x.0),
             rule_name: r.rule.map(|x| x.1.to_owned()),
             summary,

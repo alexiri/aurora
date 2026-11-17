@@ -152,6 +152,10 @@ pub struct Account {
     /// The choices that exist for the account, already cut to the limit; empty = no choice.
     pub levels: Vec<Level>,
     pub health: Health,
+    /// (FIX-163) Why a turned-off app account is off, when something other than a person's choice turned it
+    /// off: `instance_deleted` (its self-hosted app instance was removed; it cannot be turned on again).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status_reason: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub connected_by: Option<PersonName>,
     pub agents: Vec<AgentAccess>,
@@ -161,6 +165,60 @@ pub struct Account {
     /// Only with `agent_id`: whether that agent can use the account (given ones come first).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub given: Option<bool>,
+}
+
+/// (C-943) What Test found.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AccountTestResult {
+    Ok,
+    Rejected,
+    Unreachable,
+    Unexpected,
+    NotTestable,
+}
+
+impl AccountTestResult {
+    /// The stored form (`last_check_result`); `not_testable` is never stored.
+    pub fn stored(self) -> Option<&'static str> {
+        match self {
+            Self::Ok => Some("ok"),
+            Self::Rejected => Some("rejected"),
+            Self::Unreachable => Some("unreachable"),
+            Self::Unexpected => Some("unexpected"),
+            Self::NotTestable => None,
+        }
+    }
+
+    pub fn parse(s: &str) -> Self {
+        match s {
+            "ok" => Self::Ok,
+            "rejected" => Self::Rejected,
+            "unreachable" => Self::Unreachable,
+            "not_testable" => Self::NotTestable,
+            _ => Self::Unexpected,
+        }
+    }
+}
+
+/// At most a host, an HTTP status or a protocol code: never an upstream body, header or credential (SEC-129).
+#[derive(Debug, Clone, Default, Serialize, ToSchema)]
+pub struct AccountTestDetail {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
+}
+
+/// C-943: the answer of `POST /v1/accounts/{type}/{id}/test`.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct AccountTestAnswer {
+    pub result: AccountTestResult,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<AccountTestDetail>,
+    pub checked_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Deserialize, IntoParams)]

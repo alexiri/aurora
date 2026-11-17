@@ -1,6 +1,6 @@
 package:
   id: google-workspace
-  version: 1.0.3
+  version: 1.0.4
   contract: 1
   min_core: 0.1.0
   publisher: aurora
@@ -98,7 +98,7 @@ apps:
       # Every recipient (all To/Cc/Bcc lines), a clamped body preview and the attachment count:
       # the approval is the only control on outbound mail (FIX-118, 09 §approvals).
       send_message:
-        title: Send mail
+        title: send an email
         fields:
           - { label: To, source: body, steps: [ { json: /raw }, { base64url: {} }, { mime_header: To } ] }
           - { label: Cc, source: body, steps: [ { json: /raw }, { base64url: {} }, { mime_header: Cc } ] }
@@ -108,7 +108,7 @@ apps:
           - { label: Attachments, source: body, steps: [ { json: /raw }, { base64url: {} }, { mime_attachments: {} } ] }
         link: "https://mail.google.com/mail/u/0/#sent"
       create_draft:
-        title: Create a mail draft
+        title: create an email draft
         fields:
           - { label: To, source: body, steps: [ { json: /message/raw }, { base64url: {} }, { mime_header: To } ] }
           - { label: Cc, source: body, steps: [ { json: /message/raw }, { base64url: {} }, { mime_header: Cc } ] }
@@ -118,12 +118,12 @@ apps:
           - { label: Attachments, source: body, steps: [ { json: /message/raw }, { base64url: {} }, { mime_attachments: {} } ] }
         link: "https://mail.google.com/mail/u/0/#drafts"
       send_draft:
-        title: Send a draft
+        title: send an email draft
         fields:
           - { label: Draft, source: body, steps: [ { json: /id } ] }
         link: "https://mail.google.com/mail/u/0/#drafts"
       modify_message:
-        title: Change labels on a message
+        title: change the labels on an email
         fields:
           - { label: Message, source: path, segment: 6 }
           - { label: Add label, source: body, steps: [ { json: /addLabelIds/0 } ] }
@@ -212,12 +212,12 @@ apps:
           - { id: delete_event, description: "Deletes a calendar event.", name: Delete an event, host: www.googleapis.com, path: "/calendar/v3/calendars/*/events/*", methods: [DELETE] }
     approvals:
       query_freebusy:
-        title: Query free and busy times
+        title: look up free and busy times
         fields:
           - { label: From, source: body, steps: [ { json: /timeMin } ] }
           - { label: Until, source: body, steps: [ { json: /timeMax } ] }
       create_event:
-        title: Create calendar event
+        title: create a calendar event
         fields:
           - { label: Calendar, source: path, segment: 4 }
           - { label: Title, source: body, steps: [ { json: /summary } ] }
@@ -225,7 +225,7 @@ apps:
           - { label: Attendees, source: body, steps: [ { json: "/attendees/*/email" } ] }
         link: "https://calendar.google.com/calendar/"
       update_event:
-        title: Change calendar event
+        title: change a calendar event
         fields:
           - { label: Calendar, source: path, segment: 4 }
           - { label: Event, source: path, segment: 6 }
@@ -233,7 +233,7 @@ apps:
           - { label: Attendees, source: body, steps: [ { json: "/attendees/*/email" } ] }
         link: "https://calendar.google.com/calendar/"
       delete_event:
-        title: Delete calendar event
+        title: delete a calendar event
         fields:
           - { label: Calendar, source: path, segment: 4 }
           - { label: Event, source: path, segment: 6 }
@@ -324,53 +324,53 @@ apps:
       # The hook is tried first; the template is the fallback when the hook cannot read the request
       # (for example a multipart body that is not JSON). Neither shows file content.
       get_file:
-        title: Download Drive file
+        title: download a Drive file
         summarize: hook
         fields:
           - { label: File, source: path, segment: 4 }
           - { label: Mode, source: query, name: alt }
       export_file:
-        title: Export Drive file
+        title: export a Drive file
         summarize: hook
         fields:
           - { label: File, source: path, segment: 4 }
           - { label: Export as, source: query, name: mimeType }
       create_file:
-        title: Create Drive file or folder
+        title: create a Drive file or folder
         summarize: hook
         fields:
           - { label: Name, source: body, steps: [ { json: /name } ] }
           - { label: MIME type, source: body, steps: [ { json: /mimeType } ] }
         link: "https://drive.google.com/drive/"
       upload_file:
-        title: Upload Drive file
+        title: upload a Drive file
         summarize: hook
         fields:
           - { label: Upload type, source: query, name: uploadType }
         link: "https://drive.google.com/drive/"
       update_file:
-        title: Change Drive file
+        title: change a Drive file
         summarize: hook
         fields:
           - { label: File, source: path, segment: 4 }
           - { label: Name, source: body, steps: [ { json: /name } ] }
         link: "https://drive.google.com/drive/"
       upload_file_content:
-        title: Replace Drive file content
+        title: replace the content of a Drive file
         summarize: hook
         fields:
           - { label: File, source: path, segment: 5 }
           - { label: Upload type, source: query, name: uploadType }
         link: "https://drive.google.com/drive/"
       copy_file:
-        title: Copy Drive file
+        title: copy a Drive file
         summarize: hook
         fields:
           - { label: File, source: path, segment: 4 }
           - { label: Name, source: body, steps: [ { json: /name } ] }
         link: "https://drive.google.com/drive/"
       create_permission:
-        title: Share Drive file
+        title: share a Drive file
         summarize: hook
         fields:
           - { label: File, source: path, segment: 4 }

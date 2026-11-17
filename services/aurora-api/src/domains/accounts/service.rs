@@ -5,8 +5,9 @@
 use super::dto::{
     Account, AccountAgent, AccountApp, AccountCan, AccountKind, AccountRef, AccountRefType,
     AccountWorkspace, AccountsQuery, AgentAccess, AgentAccessLevel, AlwaysAllowed, CustomChoice,
-    Health, HealthState, PersonName,
+    HealthState, PersonName,
 };
+use super::health;
 use crate::app::AppState;
 use crate::domains::apps::dto::{AppFamily, Tool};
 use crate::domains::apps::service as apps;
@@ -216,6 +217,12 @@ async fn list(
         if let Some(a) = for_agent {
             r.account.given = Some(r.account.agents.iter().any(|x| x.agent.id == a.id));
         }
+        // The host an unreachable account could not be reached at (its health line names it).
+        if r.account.health.state == HealthState::Unreachable
+            && r.account.reference.kind == AccountRefType::Connection
+        {
+            r.account.health.detail = super::test::unreachable_host(state, id).await;
+        }
         items.push(r.account);
     }
     if for_agent.is_some() {
@@ -296,11 +303,13 @@ fn connection_row(
     let org_account = c.workspace_id.is_none();
     let limit = (org_account && tools.iter().any(|t| t.group != "read"))
         .then(|| levels::limit_from_access(&c.access));
-    let state = match c.status.as_str() {
-        "reauth_required" => HealthState::SignInExpired,
-        "disabled" => HealthState::Disabled,
-        _ => HealthState::Unknown,
-    };
+    let health = health::health(
+        Some(c.status.as_str()),
+        c.last_check_result.as_deref(),
+        c.last_check_at,
+        c.last_used_at,
+        health::refused_word(entry),
+    );
     let account = Account {
         reference: AccountRef {
             kind: AccountRefType::Connection,
@@ -329,12 +338,10 @@ fn connection_row(
         .to_owned(),
         limit,
         levels: levels::levels_for(&tools, custom_only, limit),
-        health: Health {
-            state,
-            detail: None,
-            checked_at: None,
-            last_used_at: c.last_used_at,
-        },
+        health,
+        status_reason: (c.status == "disabled")
+            .then(|| c.status_reason.clone())
+            .flatten(),
         connected_by: c.connected_by_name.clone().map(|name| PersonName { name }),
         agents: Vec::new(),
         managed_by: org_account.then(|| managed_by.clone()).flatten(),
@@ -372,12 +379,18 @@ fn secret_row(
             .to_owned(),
             limit: None,
             levels: Vec::new(),
-            health: Health {
-                state: HealthState::Unknown,
-                detail: None,
-                checked_at: None,
-                last_used_at: s.last_used_at,
-            },
+            health: health::health(
+                None,
+                s.last_check_result.as_deref(),
+                s.last_check_at,
+                s.last_used_at,
+                if kind == AccountKind::AiKey {
+                    "key"
+                } else {
+                    "token"
+                },
+            ),
+            status_reason: None,
             connected_by: s.created_by_name.clone().map(|name| PersonName { name }),
             agents: Vec::new(),
             managed_by: org_account.then(|| managed_by.clone()).flatten(),

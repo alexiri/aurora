@@ -447,7 +447,7 @@ async fn the_shipped_indico_version_replaces_the_previous_one_automatically() {
     assert_eq!(s, 200, "{b}");
     let v2 = a.upload(&shipped).await;
     assert_eq!(v2["package_id"], "indico", "{v2}");
-    assert_eq!(v2["version"], "1.2.1", "{v2}");
+    assert_eq!(v2["version"], "1.2.2", "{v2}");
     assert_eq!(v2["status"], "active", "activated without approval: {v2}");
     assert_eq!(a.status(&v1["id"]).await["status"], "superseded");
 }

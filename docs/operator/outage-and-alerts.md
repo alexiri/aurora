@@ -102,8 +102,8 @@ From docs/15 §Observability. Adjust the thresholds to your service levels; thes
 | NOTIFY queue | `aurora_pg_notify_queue_usage` ≥ 0.5 | warning; at 1.0 NOTIFY fails. Related: watch `aurora_delta_publish_seconds` p99 and `aurora_delta_dropped_total` (docs/15 §Streaming fan-out ceiling; [limits-and-approvals.md](limits-and-approvals.md)) |
 | Counter fallback | `aurora_counters_state{state="fallback"} == 1` for 5 min | warning: rate limits are per replica again (phase 4). `rate(aurora_counters_fallback_total{policy="closed"}) > 0` is critical for `closed` classes: requests are being refused. `readyz` is not affected |
 | Blob store down | `aurora_blob_store_up == 0` for 2 min | attachment uploads and downloads fail with 503; the rest of the API keeps working and `readyz` does not change (phase 5, D-138, S3 backend; the metric does not exist yet) |
-| Parked approvals | a growing `aurora_approvals_parked_pending` | nobody is deciding (phase 5, D-138; the metric does not exist yet) |
-| Push | sustained `result=forbidden`, or `result=rejected_host`, on `aurora_push_sent_total` | VAPID mismatch or a push service outside `push.allowed_endpoint_hosts` (phase 5, D-138; the metric does not exist yet) |
+| Parked approvals | a growing `aurora_approvals_parked_pending` | nobody is deciding (phase 5, D-138; [limits-and-approvals.md](limits-and-approvals.md)) |
+| Push | sustained `result=forbidden`, or `result=rejected_host`, on `aurora_push_sent_total` | VAPID mismatch or a push service outside `push.allowed_endpoint_hosts` (phase 5, D-138; [web-push.md](web-push.md)) |
 
 Other gateway series for dashboards (C-383): `aurora_gateway_db_unreachable_seconds`,
 `aurora_gateway_degraded_requests_total{outcome="served_from_cache"|"refused", reason}`, `aurora_gateway_listener_reconnects_total`,

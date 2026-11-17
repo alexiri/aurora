@@ -140,11 +140,11 @@ export function parseTimeout(text: string): number | null | "invalid" {
 }
 
 /** A client-side hint for the timeout field (the API stays authoritative and may refuse a lower instance maximum). */
-export function timeoutProblem(text: string): string | undefined {
+export function timeoutProblem(text: string, max: number = ASK_TIMEOUT_MAX): string | undefined {
   const t = parseTimeout(text);
   if (t === null) return undefined;
-  if (t === "invalid" || t < ASK_TIMEOUT_MIN || t > ASK_TIMEOUT_MAX)
-    return `Enter a whole number of seconds from ${ASK_TIMEOUT_MIN} to ${ASK_TIMEOUT_MAX}, or leave it empty.`;
+  if (t === "invalid" || t < ASK_TIMEOUT_MIN || t > max)
+    return `Enter a whole number of seconds from ${ASK_TIMEOUT_MIN} to ${max}, or leave it empty.`;
   return undefined;
 }
 

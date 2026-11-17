@@ -82,6 +82,32 @@ max_timeout_secs = 7200
 Verify: the approval card and the transcript event `approval.pending` show `expires_at`; `POST /v1/workspaces/{ws}/policy/simulate` shows the timeout a request would get.
 Both services that read these keys (API and gateway) must have the same values.
 
+### Parking: long approvals that do not hold the agent (phase 5, P4-011B, D-264..D-267)
+
+A held request keeps the agent's connection, its turn and its sandbox open until a person decides. With **parking** on, an approval whose timeout is above a threshold is *parked*: the gateway answers the agent at once with `403 approval_parked` (`x-should-retry: false`), the agent ends its turn, the sandbox may stop as usual, and the approval stays pending for up to the rule's timeout. When a person approves, Aurora wakes the agent with a platform message; the agent repeats **the same request once**, and the gateway lets exactly that request through.
+
+**When to turn it on.** When approvers are people who answer in hours, not minutes (a night-time agent, approvers in other time zones), so a held request would tie up a sandbox or time out. Leave it off when approvals are decided within a few minutes; held approvals behave exactly as before. Parking is off by default.
+
+| Key (instance settings, Admin › Approvals; `config.approvals.park.*` locks a key) | Default | Meaning |
+|-----|---------|---------|
+| `approvals.park.enabled` | `false` | The switch. Turning it off never discards a ready grant: one already approved is still consumed once. |
+| `approvals.park.threshold_secs` | `900` | An approval with a timeout **above** this parks; at or below it is held. |
+| `approvals.park.max_timeout_secs` | `86400` | While parking is on, the longest timeout a rule or grant may ask for (replaces `approvals.max_timeout_secs` as the bound). |
+| `approvals.park.resume_window_secs` | `1800` | After an approval, how long the agent's repeat is welcome. After it the grant expires and a new approval is needed. |
+| `approvals.park.deny_cooldown_secs` | `900` | After a deny, an identical request is answered `manual_approval_denied` without a new approval. `0` turns the cooldown off. |
+| `approvals.park.max_body_bytes` | `262144` | A request with a larger or unbounded (chunked) body is held, not parked: the fingerprint needs the whole body. |
+| `approvals.park.max_pending_per_agent` | `20` | Pending parked approvals per agent; beyond it `403 approval_limit_reached`. |
+
+**The cross-key rule** (checked only while `approvals.park.enabled` is true, at startup and when the setting is saved): `park.threshold_secs ≤ approvals.max_timeout_secs ≤ park.max_timeout_secs`. A saved value that breaks it is refused with `park_threshold_above_hold_max` or `park_max_below_hold_max`; a configuration with parking off always starts.
+
+**What agents are told.** The refusal says the request needs a person's approval, that the agent should stop and tell the user, that it will be woken when a decision is made, and the window in minutes. After an approve the follow-up message tells it to repeat exactly the same request once before a stated time; after a deny, not to try again or look for another way.
+
+**Byte-identical caveat.** The grant matches only the same agent, conversation, method, host, path, query, body, rule and credential, byte for byte. An agent that adds a timestamp, a request id or a nonce to its request will not match, and its repeat is a *new* parked approval. Such an agent cannot use parking; leave the rule's timeout at or below the threshold so it is held instead. A grant is single use: a second identical request after the first parks again.
+
+**Nothing parks** for governed LLM endpoints, BYO traffic, boot traffic or requests with no conversation, and nothing parks when the verdict depends on who is speaking: those are held as before.
+
+**Metrics** (API `/metrics`): `aurora_approvals_parked_pending` (gauge, pending parked approvals), `aurora_approvals_resume_expired_total` (approved but never repeated), `aurora_approvals_grants_revoked_total{cause}`. Gateway: `aurora_gateway_approvals_parked_total`, `aurora_gateway_approval_grants_total{result="consumed"|"no_match"|"expired"}`. **Alert** on `aurora_approvals_parked_pending` that keeps growing (nobody is deciding; see [outage-and-alerts.md](outage-and-alerts.md)), and on a rising `no_match` share (agents that change their request on the repeat). Approvers who are away are reached by [Web Push](web-push.md) and, after half the timeout, by one reminder e-mail.
+
 ## Approval e-mail
 
 When an approval has no live place to be decided (a schedule or webhook turn with no chat presence, and nobody with the approvals page open), the API e-mails the people who can decide it, 20 seconds after the approval was created.

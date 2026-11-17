@@ -319,6 +319,10 @@ pub const CHANNEL_LEDGER_RETENTION: Duration = Duration::from_secs(604800);
 /// [`WEBHOOK_DELIVERY_MAX_PER_WEBHOOK`] per webhook (rejected requests write rows too).
 pub const WEBHOOK_DELIVERY_RETENTION: Duration = Duration::from_secs(30 * 24 * 3600);
 pub const WEBHOOK_DELIVERY_MAX_PER_WEBHOOK: i64 = 10_000;
+/// (phase 5, P5-UX-5, D-325, SEC-128) An unused pending workspace access row expires this long after it was added.
+pub const PENDING_ACCESS_TTL: Duration = Duration::from_secs(30 * 24 * 3600);
+/// (phase 5, P5-UX-5, D-325) Pending access rows per workspace; one more is refused (422 `pending_access_limit`).
+pub const PENDING_ACCESS_MAX: i64 = 50;
 /// (FIX-111) Revoked or expired sessions and expired context credentials are removed by the
 /// daily retention pass this long after expiry or revocation.
 pub const SESSION_PRUNE_GRACE: Duration = Duration::from_secs(7 * 24 * 3600);

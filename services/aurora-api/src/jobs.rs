@@ -562,6 +562,12 @@ pub fn spawn(
                 Ok(_) => {}
                 Err(e) => tracing::warn!(error = %e, "reach-grant expiry failed"),
             }
+            // (P5-UX-5, C-920) Pending workspace access past `PENDING_ACCESS_TTL`; idempotent on every replica.
+            match crate::domains::tenancy::pending_access::sweep_expired(&ap).await {
+                Ok(n) if n > 0 => tracing::info!(expired = n, "pending workspace access expiry"),
+                Ok(_) => {}
+                Err(e) => tracing::warn!(error = %e, "pending workspace access expiry failed"),
+            }
         }
     });
     let cp = pool.clone();

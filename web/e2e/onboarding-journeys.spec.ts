@@ -90,11 +90,10 @@ test("1. fresh instance: the admin walks the setup wizard to a working chat", as
   await form.getByRole("button", { name: "Add LLM key" }).click();
   // The key is saved when the wizard shows it from the server's state: the form gives way to the starter
   // switch ("Saved …" is transient — the Setup query refetch replaces the form as soon as the key exists).
-  const starter = llm.getByRole("checkbox", { name: "Give it to every new user's agent" });
+  const starter = llm.getByRole("checkbox", { name: "Give the organization's AI key to every new person's agent" });
   await expect(starter).toBeVisible({ timeout: 60_000 });
-  // The checkbox is controlled: it only renders checked once the PUT and the refetch have round-tripped,
-  // so click once and then wait for the server's state (a `check()` verifies the state straight away).
-  await starter.click();
+  // (C-922) The first key is a starter grant by default: nothing to click. The checkbox is controlled, so it
+  // renders checked once the PUT and the refetch have round-tripped.
   await expect(starter).toBeChecked({ timeout: 30_000 });
 
   // 4. Agents can run: the runner and the gateway report ready on the stack.
@@ -108,11 +107,11 @@ test("1. fresh instance: the admin walks the setup wizard to a working chat", as
   const base = new URL(page.url()).pathname.replace(/\/welcome$/, "");
   await page.goto(`${base}/welcome`);
   const guide = page.getByRole("region", { name: "Get Daneel talking" });
-  await expect(guide.getByText(/Your organization provides an LLM key: Mock LLM/)).toBeVisible({ timeout: 30_000 });
+  await expect(guide.getByText("Give Daneel access to Mock LLM")).toBeVisible({ timeout: 30_000 }); // (C-927) only a key the agent cannot use
   // Access: Daneel is preselected, one click — done from the server's state.
   await expect(guide.getByRole("checkbox", { name: /Daneel/ })).toBeChecked();
   await guide.getByRole("button", { name: "Give Daneel access" }).click(); // (C-925) the button names who
-  await expect(guide.getByText("2 of 3 done")).toBeVisible({ timeout: 30_000 });
+  await expect(guide.getByText("1 of 2 done")).toBeVisible({ timeout: 30_000 });
   await guide.getByRole("link", { name: "Say hello to Daneel" }).click();
   await chatGetsAnswer(page);
 });
@@ -123,9 +122,9 @@ test("2. new user with a starter grant: Welcome, no LLM step, first reply", asyn
   await expect(page).toHaveURL(/\/o\/[^/]+\/w\/[^/]+\/welcome$/, { timeout: 30_000 });
   const guide = page.getByRole("region", { name: "Get Daneel talking" });
   // The organization's key came with the starter grant: step 1 is collapsed and says who provides it.
-  await expect(guide.getByText(/Your organization provides an LLM key: Mock LLM/)).toBeVisible({ timeout: 30_000 });
+  await expect(guide.getByText(/Your organization provides an AI key: Mock LLM/)).toBeVisible({ timeout: 30_000 });
   await expect(guide.getByRole("form", { name: "New LLM key" })).toHaveCount(0);
-  await expect(guide.getByText("2 of 3 done")).toBeVisible();
+  await expect(guide.getByText("1 of 2 done")).toBeVisible();
 
   await guide.getByRole("link", { name: "Say hello to Daneel" }).click();
   await chatGetsAnswer(page);
@@ -159,14 +158,14 @@ test("3. new user without a starter grant: the guide waits for access, then the 
   const guide = page.getByRole("region", { name: "Get Daneel talking" });
   // No starter grant: the key step is not done by a grant. But this is a shared_org placement — as a
   // member the person sees the organization's key, so the guide says who provides it and waits for
-  // access (a "0 of 3 done" + key-form walk is the personal_org world, covered by first-run.spec.ts).
-  await expect(guide.getByText(/Your organization provides an LLM key: Mock LLM/)).toBeVisible({ timeout: 30_000 });
-  await expect(guide.getByText("1 of 3 done")).toBeVisible();
+  // access (a "0 of 2 done" + key-form walk is the personal_org world, covered by first-run.spec.ts).
+  await expect(guide.getByText("Give Daneel access to Mock LLM")).toBeVisible({ timeout: 30_000 });
+  await expect(guide.getByText("0 of 2 done")).toBeVisible();
 
   // Access: Daneel is preselected, one click — done from the server's state.
   await expect(guide.getByRole("checkbox", { name: /Daneel/ })).toBeChecked();
   await guide.getByRole("button", { name: "Give Daneel access" }).click(); // (C-925) the button names who
-  await expect(guide.getByText("2 of 3 done")).toBeVisible({ timeout: 30_000 });
+  await expect(guide.getByText("1 of 2 done")).toBeVisible({ timeout: 30_000 });
 
   // Reply.
   await guide.getByRole("link", { name: "Say hello to Daneel" }).click();

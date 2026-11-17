@@ -236,6 +236,17 @@ impl Template {
     }
 }
 
+/// The name a personal workspace shows (C-923): the person's given name, else their full name,
+/// else the part of their e-mail before the `@`. Cleaned like any template value; `None` only
+/// when none of the three holds a letter or digit.
+pub fn person_name(src: &dyn Lookup) -> Option<String> {
+    [Var::GivenName, Var::Name, Var::EmailLocal]
+        .iter()
+        .filter_map(|v| src.get(v))
+        .map(|x| clean(&x))
+        .find(|x| has_alnum(x))
+}
+
 /// `user-<first 8 hex digits of the id>`: the last resort.
 pub fn fallback_name(user_id: uuid::Uuid) -> String {
     format!("user-{}", &user_id.simple().to_string()[..8])

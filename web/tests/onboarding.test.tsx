@@ -10,6 +10,7 @@ vi.mock("next/navigation", () => ({
   useSearchParams: () => new URLSearchParams(window.location.search),
 }));
 
+import { gapFromSetup } from "@/components/admin/sign-in-gaps";
 import { SetupView } from "@/components/admin/setup-view";
 import { GettingStarted } from "@/components/onboarding/getting-started";
 import { Tour } from "@/components/onboarding/tour";
@@ -107,35 +108,39 @@ describe("getting-started guide: every state", () => {
   it("key provided by the org: collapsed with what provides it, no form, hello is next", async () => {
     world({ readiness: readiness([keyRow()]), orgKeys: [llmSecret("k1", "AIGW", "organization")] });
     guide();
-    expect(await screen.findByText("Your organization provides an LLM key: AIGW")).toBeInTheDocument();
+    expect(await screen.findByText("Your organization provides an AI key: AIGW")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Get Daneel talking" })).toBeInTheDocument();
     expect(screen.queryByLabelText("New LLM key")).not.toBeInTheDocument();
     expect(screen.queryByText("Choose a model")).not.toBeInTheDocument();
     const hello = await screen.findByRole("link", { name: "Say hello to Daneel" });
     expect(hello).toHaveAttribute("href", expect.stringContaining("/o/acme/w/ops/agents/daneel?tab=chat&draft="));
-    expect(screen.getByText("2 of 3 done")).toBeInTheDocument();
+    // Two steps (C-927): the key is done, one left.
+    expect(screen.getByText("1 of 2 done")).toBeInTheDocument();
+    expect(screen.queryByText(/Give Daneel access to/)).not.toBeInTheDocument();
   });
 
-  it("key missing: explains what a key is and opens the form in place", async () => {
+  it("key missing: explains what an AI key is and opens the form in place, with the agent ticked", async () => {
     world({ readiness: readiness([]) });
     guide();
-    expect(await screen.findByText(/An LLM key is the password to the AI service/)).toBeInTheDocument();
+    expect(await screen.findByText(/An AI key is the password to the AI service/)).toBeInTheDocument();
     expect(await screen.findByLabelText("New LLM key")).toBeInTheDocument();
-    expect(screen.getByText("0 of 3 done")).toBeInTheDocument();
-    expect(screen.getByText("Comes after the key.")).toBeInTheDocument();
+    expect(screen.getByText("0 of 2 done")).toBeInTheDocument();
+    expect(screen.getByText("Comes after the steps above.")).toBeInTheDocument();
   });
 
   it("not granted: the access step names the key and preselects the agent", async () => {
     world({ readiness: readiness([]), wsKeys: [llmSecret("k2", "my-key", "workspace")] });
     routes["GET /v1/secrets/k2/grants"] = () => json(200, { items: [] });
     guide();
-    expect(await screen.findByText("my-key")).toBeInTheDocument();
+    // The step is titled with the key it gives (C-927) and appears only for a key the agent cannot use.
+    expect(await screen.findByText("Give Daneel access to my-key")).toBeInTheDocument();
+    expect(screen.queryByText("AI key")).not.toBeInTheDocument();
     const box = await screen.findByRole("checkbox", { name: /Daneel/ });
     await waitFor(() => expect(box).toBeChecked());
     expect(screen.getByRole("button", { name: "Give Daneel access" })).toBeEnabled();
   });
 
-  it("no model: shows the model step, and saving the choice patches the agent", async () => {
+  it("no default model: the AI key step holds the model picker, and saving the choice patches the agent", async () => {
     world({ readiness: readiness([keyRow()], false), orgKeys: [llmSecret("k1", "AIGW", "organization")] });
     routes["GET /v1/agents/a1/models"] = () =>
       json(200, { items: [{ endpoint_id: "litellm", provider: "litellm", model_id: "claude-sonnet", display_name: "Claude Sonnet", dialects: [] }] });
@@ -152,7 +157,7 @@ describe("getting-started guide: every state", () => {
   it("done: an answer from the agent completes it, whatever else is missing", async () => {
     world({ readiness: readiness([keyRow()]), orgKeys: [llmSecret("k1", "AIGW", "organization")], replied: true });
     guide();
-    expect(await screen.findByText("3 of 3 done")).toBeInTheDocument();
+    expect(await screen.findByText("2 of 2 done")).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Say hello to Daneel" })).not.toBeInTheDocument();
   });
 
@@ -161,19 +166,18 @@ describe("getting-started guide: every state", () => {
     routes["GET /v1/conversations/c1/events"] = () =>
       json(200, { items: [{ seq: 1, type: "turn.queued", ts: "2026-11-10T09:00:00Z", payload: {} }, { seq: 2, type: "error", ts: "2026-11-10T09:00:05Z", payload: { code: "no_model_key" } }], last_seq: 2 });
     guide();
-    expect(await screen.findByText("2 of 3 done")).toBeInTheDocument();
+    expect(await screen.findByText("1 of 2 done")).toBeInTheDocument();
   });
 
-  it("member: sees who can do the key and access steps, never a form, and does not read readiness", async () => {
+  it("member: sees who can do the key step, never a form, and does not read readiness", async () => {
     // The owners come from the workspace's `contacts` (C-981): a member can read them, no access list is needed.
     world({ contacts: { owners: [{ name: "Ada Lovelace" }] } });
     guide({ isOwner: false });
     expect(await screen.findByText("Only workspace owners can add an account. Ask Ada Lovelace.")).toBeInTheDocument();
-    expect(screen.getByText("Only workspace owners can give agents access. Ask Ada Lovelace.")).toBeInTheDocument();
     expect(calls.some((c) => c.key === "GET /v1/workspaces/w1/access")).toBe(false);
     expect(screen.queryByLabelText("New LLM key")).not.toBeInTheDocument();
     expect(calls.some((c) => c.key === "GET /v1/agents/a1/model-readiness")).toBe(false);
-    expect(screen.getAllByText("Needs an owner")).toHaveLength(2);
+    expect(screen.getAllByText("Needs an owner")).toHaveLength(1);
   });
 
   it("member of a workspace whose contacts are not known still gets a sentence, not a dead button", async () => {
@@ -185,7 +189,7 @@ describe("getting-started guide: every state", () => {
   it("Overview: one line once complete, and expandable", async () => {
     world({ readiness: readiness([keyRow()]), orgKeys: [llmSecret("k1", "AIGW", "organization")], replied: true });
     guide({ variant: "overview" });
-    expect(await screen.findByText(/Getting started — 3\/3/)).toBeInTheDocument();
+    expect(await screen.findByText(/Getting started — 2\/2/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Show again" }));
     expect(await screen.findByRole("heading", { name: "Get Daneel talking" })).toBeInTheDocument();
   });
@@ -200,7 +204,7 @@ describe("getting-started guide: every state", () => {
     };
     guide({ variant: "overview" });
     fireEvent.click(await screen.findByRole("button", { name: "Dismiss" }));
-    expect(await screen.findByText(/Getting started — 0\/3/)).toBeInTheDocument();
+    expect(await screen.findByText(/Getting started — 0\/2/)).toBeInTheDocument();
     expect(calls.find((c) => c.key === "PATCH /v1/me/onboarding")?.body).toEqual({ guide_dismissed: ["w1"] });
     expect(screen.getByRole("button", { name: "Show" })).toBeInTheDocument();
   });
@@ -241,7 +245,7 @@ describe("getting-started guide: every state", () => {
   it("never shows a secret value", async () => {
     world({ readiness: readiness([keyRow()]), orgKeys: [llmSecret("k1", "AIGW", "organization")] });
     const { container } = guide();
-    await screen.findByText("Your organization provides an LLM key: AIGW");
+    await screen.findByText("Your organization provides an AI key: AIGW");
     expect(container.textContent).not.toMatch(/sk-/);
     expect(container.querySelector("input[type=password]")).toBeNull();
   });
@@ -258,6 +262,7 @@ const placement = (over: Record<string, unknown> = {}) => ({
 const check = (id: string, status: string, reason: string, message: string, extra: Record<string, unknown> = {}) => ({ id, status, reason, message, value: null, helm: null, ...extra });
 const setupStatus = (over: Record<string, unknown> = {}) => ({
   placement_saved: true,
+  personal_workspaces_without_starter: 0,
   you: { provider: "cern", provider_name: "CERN SSO", role_claim: "cern_roles", values: ["aurora-admins", "aurora-users", "stray"], granted: [
     { value: "aurora-admins", instance_admin: true, org: null, workspaces: [] },
     { value: "aurora-users", instance_admin: false, org: { slug: "users", role: "member" }, workspaces: [] },
@@ -355,7 +360,8 @@ describe("instance setup wizard (D-141)", () => {
       return json(200, current);
     };
     wrap(<SetupView />);
-    const sw = await screen.findByRole("checkbox", { name: "Give it to every new user's agent" });
+    const sw = await screen.findByRole("checkbox", { name: "Give the organization's AI key to every new person's agent" });
+    expect(screen.getByText("Every new person's agent can use this key from the first minute. Turn off to make people add their own.")).toBeInTheDocument();
     await waitFor(() => expect(sw).toBeEnabled());
     fireEvent.click(sw);
     // (The PUT -> refetch -> re-render chain has to fit, which can be slow on a loaded host.)
@@ -382,6 +388,41 @@ describe("instance setup wizard (D-141)", () => {
     expect(await screen.findByLabelText("New LLM key")).toBeInTheDocument();
   });
 
+  it("C-922: adding the first key also makes it a starter grant, with no switch to find", async () => {
+    setupWorld();
+    routes["GET /v1/orgs/o1/secrets"] = () => json(200, { items: [] });
+    routes["GET /v1/llm/providers"] = () =>
+      json(200, { providers: [{ id: "litellm", display_name: "LiteLLM", auth_modes: ["bearer"] }], endpoints: [{ id: "litellm", provider: "litellm", display_name: "AIGW", permitted: true, key_scopes: [] }] });
+    routes["POST /v1/orgs/o1/secrets"] = () => json(201, llmSecret("k10", "AIGW", "organization"));
+    routes["PUT /v1/admin/placement"] = () => json(200, placement());
+    wrap(<SetupView />);
+    fireEvent.change(await screen.findByLabelText("Name"), { target: { value: "AIGW" } });
+    fireEvent.change(await screen.findByLabelText("Provider endpoint"), { target: { value: "litellm" } });
+    fireEvent.change(screen.getByLabelText("API key"), { target: { value: "sk-test" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add LLM key" }));
+    await waitFor(() =>
+      expect(calls.find((c) => c.key === "PUT /v1/admin/placement")?.body).toMatchObject({ mode: "shared_org", starter_grants: [{ kind: "secret", id: "k10" }] }),
+    );
+  });
+
+  it("C-922: with the key given to every new agent, people who signed in before get one click to give it too", async () => {
+    const withStarter = placement({ starter_grants: [{ kind: "secret", id: "k9", name: "AIGW", detail: "llm" }] });
+    setupWorld(setupStatus({ personal_workspaces_without_starter: 3 }), withStarter);
+    routes["POST /v1/admin/placement/starter-grants/backfill"] = () => json(200, { granted: 3, skipped: 0 });
+    wrap(<SetupView />);
+    expect(await screen.findByText("3 people signed in before and their agents can't use the key yet.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Also give it to the 3 people who signed in before" }));
+    await waitFor(() => expect(calls.some((c) => c.key === "POST /v1/admin/placement/starter-grants/backfill")).toBe(true));
+    expect(await screen.findByText(/Done: 3 agents can use the key now/)).toBeInTheDocument();
+  });
+
+  it("without people waiting, the backfill is not offered", async () => {
+    setupWorld(setupStatus(), placement({ starter_grants: [{ kind: "secret", id: "k9", name: "AIGW", detail: "llm" }] }));
+    wrap(<SetupView />);
+    await screen.findByRole("checkbox", { name: "Give the organization's AI key to every new person's agent" });
+    expect(screen.queryByRole("button", { name: /Also give it to/ })).toBeNull();
+  });
+
   it("adding the key refetches the wizard status, so step 3 does not stay stale (FIX-067)", async () => {
     setupWorld();
     routes["GET /v1/orgs/o1/secrets"] = () => json(200, { items: [] });
@@ -397,6 +438,97 @@ describe("instance setup wizard (D-141)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Add LLM key" }));
     await waitFor(() => expect(calls.some((c) => c.key === "POST /v1/orgs/o1/secrets")).toBe(true));
     await waitFor(() => expect(statusReads()).toBeGreaterThan(before));
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Administration › Overview: the checklist, then the health page (P5-UX-6, C-922, C-924)
+// ---------------------------------------------------------------------------------------------------------------------
+/** Setup complete: nothing blocks (runners online, key present), and the optional step lists what needs the admin. */
+const doneStatus = (optional: unknown[]) => {
+  const base = setupStatus();
+  return setupStatus({
+    steps: base.steps.map((s) => {
+      if (s.id === "llm") return { ...s, status: "ok", reason: "llm_ok", checks: s.checks.filter((c) => c.status === "ok") };
+      if (s.id === "runners")
+        return { ...s, status: "ok", reason: "runners_ok", checks: [check("runners", "ok", "runner_online", "3 runner(s) online.", { value: "3" }), check("gateway", "ok", "gateway_online", "The gateway is up: agents reach the internet through it.", { value: "2" })] };
+      if (s.id === "optional") return { ...s, checks: optional };
+      return s;
+    }),
+  });
+};
+const linearGap = check("app:lin", "warning", "app_needs_oauth_client", "People can't sign in to Linear yet.", { value: "Linear", app_id: "lin", package: "linear-pkg", client_key: "linear" });
+const githubGap = check("app:gh", "ok", "app_token_only", "People can connect GitHub with a token. Signing in needs an OAuth client.", { value: "GitHub", app_id: "gh", package: "gh-pkg", client_key: "gh_oauth" });
+const noMail = check("email", "warning", "email_not_configured", "E-mail is not set up. Aurora cannot send approval or invitation e-mails.");
+
+describe("Administration › Overview (P5-UX-6)", () => {
+  it("is the checklist while setup is incomplete", async () => {
+    setupWorld();
+    wrap(<SetupView />);
+    expect(await screen.findByRole("list", { name: "Setup steps" })).toBeInTheDocument();
+    expect(screen.queryByTestId("admin-health")).toBeNull();
+    // Each step links to the topic page that holds its settings.
+    expect(screen.getByRole("link", { name: "Open People › New users" })).toHaveAttribute("href", "/admin/people?tab=new-users");
+    expect(screen.getByRole("link", { name: "Open AI models" })).toHaveAttribute("href", "/admin/ai-models?tab=endpoints");
+  });
+
+  it("is a health page once setup is complete: what needs the admin, with a prefilled Register an OAuth client", async () => {
+    setupWorld(doneStatus([linearGap, githubGap, noMail]));
+    routes["GET /v1/admin/storage"] = () => json(200, { blob_bytes: 2048, blob_count: 4, attachment_bytes: 0, attachment_files: 0, purged_files: 0, computed_at: "2026-11-17T10:00:00Z", orgs: [], tables: [] });
+    wrap(<SetupView />);
+    const health = await screen.findByTestId("admin-health");
+    expect(within(health).getByText(/Aurora is running\. People can't sign in to 1 app yet, and e-mail is not set up\./)).toBeInTheDocument();
+    // The blocked app, with the OAuth clients tab prefilled and a link to its setup page.
+    const row = within(health).getByText("People can't sign in to Linear yet").closest("li")!;
+    expect(within(row).getByRole("link", { name: "Register an OAuth client" })).toHaveAttribute("href", "/admin/apps?tab=oauth-clients&package=linear-pkg&client_key=linear");
+    expect(await within(row).findByRole("link", { name: "How to set up Linear" })).toHaveAttribute("href", "/o/users/apps/lin");
+    // An app people can connect with a token gets one informational line, not a to-do.
+    expect(within(health).queryByText("People can't sign in to GitHub yet")).toBeNull();
+    expect(within(health).getByText(/People can connect GitHub with a token/)).toBeInTheDocument();
+    // E-mail.
+    expect(within(health).getByText("E-mail is not set up. Aurora cannot send approval or invitation e-mails.")).toBeInTheDocument();
+    expect(within(health).getByRole("link", { name: "Open Platform › Email" })).toHaveAttribute("href", "/admin/platform?tab=email");
+    // Health lines.
+    const lines = within(health).getByRole("list", { name: "Health" });
+    expect(within(lines).getByText("3 runner(s) online.")).toBeInTheDocument();
+    expect(within(lines).getByText("The gateway is up: agents reach the internet through it.")).toBeInTheDocument();
+    expect(await within(lines).findByText(/2\.0 KiB in 4 stored files/)).toBeInTheDocument();
+    expect(screen.queryByRole("list", { name: "Setup steps" })).toBeNull();
+  });
+
+  it("says nothing needs the admin when nothing does, and Run setup again brings the checklist back", async () => {
+    setupWorld(doneStatus([]));
+    wrap(<SetupView />);
+    expect(await screen.findByText(/Aurora is running\. Nothing needs you\./)).toBeInTheDocument();
+    expect(screen.queryByText("Needs you")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Run setup again" }));
+    expect(await screen.findByRole("list", { name: "Setup steps" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Back to the health page" }));
+    expect(await screen.findByTestId("admin-health")).toBeInTheDocument();
+  });
+
+  it("the checklist's last step lists the apps people can't sign in to, in the one component", async () => {
+    setupWorld(setupStatus({ steps: setupStatus().steps.map((s) => (s.id === "optional" ? { ...s, checks: [linearGap, noMail] } : s)) }));
+    wrap(<SetupView />);
+    const gaps = await screen.findByTestId("sign-in-gaps");
+    expect(within(gaps).getByText("People can't sign in to Linear yet")).toBeInTheDocument();
+    expect(within(gaps).getByRole("link", { name: "Register an OAuth client" })).toBeInTheDocument();
+    expect(screen.getByText("E-mail is not set up. Aurora cannot send approval or invitation e-mails.")).toBeInTheDocument();
+  });
+});
+
+describe("sign-in gaps of one organization (C-924)", () => {
+  const method = (over: Record<string, unknown>) => ({ id: "m", label: "M", kind: "oauth2", audience: "person", recommended: false, ready: false, needs: [], scope_presets: { read: [], write: [] }, ...over });
+  const status = (methods: unknown[]) => ({ app_id: "lin", name: "Linear", methods }) as never;
+
+  it("an app whose only person method needs a client is a gap; a working token makes it informational; an admin-only method does not count", () => {
+    const onlyOauth = status([method({ id: "oauth", needs: ["oauth_client"], client_key: "linear" })]);
+    expect(gapFromSetup(onlyOauth, "pkg")).toMatchObject({ appId: "lin", name: "Linear", pkg: "pkg", clientKey: "linear", tokenOnly: false });
+    const withToken = status([method({ id: "oauth", needs: ["oauth_client"], client_key: "linear" }), method({ id: "token", kind: "fields", ready: true })]);
+    expect(gapFromSetup(withToken, "pkg")).toMatchObject({ tokenOnly: true });
+    expect(gapFromSetup(status([method({ id: "app", audience: "admin", needs: ["oauth_client"], client_key: "x" })]))).toBeNull();
+    // Blocked by a server that is not registered: not a client problem.
+    expect(gapFromSetup(status([method({ needs: ["oauth_client"], client_key: "k" }), method({ id: "s", kind: "fields", needs: ["instance"] })]))).toBeNull();
   });
 });
 

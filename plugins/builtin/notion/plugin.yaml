@@ -1,6 +1,6 @@
 package:
   id: notion
-  version: 1.0.3
+  version: 1.0.4
   contract: 1
   min_core: 0.1.0
   publisher: aurora
@@ -92,35 +92,35 @@ apps:
           - { id: create_comment, description: "Adds a comment to a page, block or discussion.", name: "Comment on a page, block or discussion", host: api.notion.com, path: /v1/comments, methods: [POST] }
     approvals:
       search:
-        title: Search Notion
+        title: search
         fields:
           - { label: Query, source: body, steps: [ { json: /query } ] }
       query_data_source:
-        title: Query data source
+        title: query a data source
         fields:
           - { label: Data source, source: path, segment: 3 }
       create_page:
-        title: Create page
+        title: create a page
         fields:
           - { label: Parent page, source: body, steps: [ { json: /parent/page_id } ] }
           - { label: Parent data source, source: body, steps: [ { json: /parent/data_source_id } ] }
           - { label: Title, source: body, steps: [ { json: /properties/title/title/0/text/content } ] }
           - { label: Content, source: body, steps: [ { json_text: /children } ] }
       update_page:
-        title: Update page
+        title: update a page
         fields:
           - { label: Page, source: path, segment: 3 }
           - { label: In trash, source: body, steps: [ { json: /in_trash } ] }
         link: "https://www.notion.so/{path.3}"
       append_block_children:
-        title: Append blocks
+        title: add blocks to a page
         fields:
           - { label: Parent block or page, source: path, segment: 3 }
           - { label: First block type, source: body, steps: [ { json: /children/0/type } ] }
           - { label: Content, source: body, steps: [ { json_text: /children } ] }
         link: "https://www.notion.so/{path.3}"
       create_comment:
-        title: Create comment
+        title: create a comment
         fields:
           - { label: Page, source: body, steps: [ { json: /parent/page_id } ] }
           - { label: Discussion, source: body, steps: [ { json: /discussion_id } ] }

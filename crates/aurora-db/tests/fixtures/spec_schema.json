@@ -110,6 +110,8 @@
       "id",
       "instance_id",
       "label",
+      "last_check_at",
+      "last_check_result",
       "last_used_at",
       "metadata",
       "oauth_client_id",
@@ -1062,6 +1064,8 @@
       "id",
       "injection",
       "kind",
+      "last_check_at",
+      "last_check_result",
       "last_used_at",
       "llm_auth_mode",
       "llm_endpoint_id",
@@ -1440,6 +1444,15 @@
       "user_id",
       "workspace_id"
     ],
+    "workspace_pending_access": [
+      "email_normalized",
+      "expires_at",
+      "id",
+      "invited_by",
+      "org_id",
+      "role",
+      "workspace_id"
+    ],
     "workspaces": [
       "byo_posture",
       "frozen_at",
@@ -1568,6 +1581,8 @@
       "id": "uuid not null",
       "instance_id": "uuid null",
       "label": "text not null",
+      "last_check_at": "timestamptz null",
+      "last_check_result": "text null",
       "last_used_at": "timestamptz null",
       "metadata": "jsonb not null",
       "oauth_client_id": "uuid null",
@@ -2520,6 +2535,8 @@
       "id": "uuid not null",
       "injection": "jsonb not null",
       "kind": "text",
+      "last_check_at": "timestamptz null",
+      "last_check_result": "text null",
       "last_used_at": "timestamptz null",
       "llm_auth_mode": "text null",
       "llm_endpoint_id": "text null",
@@ -2897,6 +2914,15 @@
       "role": "text",
       "user_id": "uuid",
       "workspace_id": "uuid"
+    },
+    "workspace_pending_access": {
+      "email_normalized": "text not null",
+      "expires_at": "timestamptz not null",
+      "id": "uuid not null",
+      "invited_by": "uuid null",
+      "org_id": "uuid not null",
+      "role": "text not null",
+      "workspace_id": "uuid not null"
     },
     "workspaces": {
       "byo_posture": "text null",

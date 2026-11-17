@@ -4,6 +4,28 @@
  */
 
 export interface paths {
+    "/v1/accounts/{type}/{id}/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Check one account now (C-943, SEC-129): the connect method's probe, a gateway database login, a hook mint or the AI-key
+         *     verify, in that order of what the account has. `can_own` of the account's workspace, or an organization owner or admin
+         *     for an organization's account. Never returns anything the upstream sent; stores the result (except `not_testable`) and
+         *     is audited `account.test`.
+         */
+        post: operations["testAccount"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/action-approvals/{id}/decision": {
         parameters: {
             query?: never;
@@ -549,6 +571,26 @@ export interface paths {
         get: operations["adminPlacementPreview"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/placement/starter-grants/backfill": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Give the starter grants to people who signed in before (instance administrators; audited
+         *     per grant). Idempotent: a grant that exists is left alone.
+         */
+        post: operations["adminBackfillStarterGrants"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1304,6 +1346,27 @@ export interface paths {
         head?: never;
         /** Update an agent (`can_use`); `handle` and `kind` are immutable. */
         patch: operations["updateAgent"];
+        trace?: never;
+    };
+    "/v1/agents/{agent}/apps/{app}/access": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * (P5-UX-10, C-934) What exactly an agent can do in one app, account by account: each tool with
+         *     what actually happens, and a reason only when something other than the agent's access decided
+         *     (`can_use`).
+         */
+        get: operations["getAgentAppAccess"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/v1/agents/{agent}/avatar": {
@@ -5221,6 +5284,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/workspaces/{ws}/access/by-email": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Add one person to the workspace by e-mail (`can_own`; C-919). */
+        post: operations["addAccessByEmail"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/workspaces/{ws}/access/groups/{group}": {
         parameters: {
             query?: never;
@@ -5237,6 +5317,40 @@ export interface paths {
         post?: never;
         /** Unbind a group from a workspace (`can_own`; idempotent). */
         delete: operations["deleteGroupAccess"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/workspaces/{ws}/access/pending": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The workspace's people waiting for their first sign-in (`can_own`; C-920). */
+        get: operations["listPendingAccess"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/workspaces/{ws}/access/pending/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Remove one waiting person (`can_own`; C-920). A row of another workspace is a 404. */
+        delete: operations["deletePendingAccess"];
         options?: never;
         head?: never;
         patch?: never;
@@ -5450,6 +5564,26 @@ export interface paths {
         put?: never;
         /** Freeze a workspace: every agent in it (`can_own`; org owners/admins included). */
         post: operations["freezeWorkspace"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/workspaces/{ws}/internet-access": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * (FIX-164, C-1020, D-365; amends I-27 for this one read) A workspace member reads the workspace's **published**
+         *     Internet access, read-only: defaults and rules of the active generation. No draft, history, warnings or write.
+         */
+        get: operations["getWorkspaceInternetAccess"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -5771,6 +5905,11 @@ export interface components {
             ref: components["schemas"]["AccountRef"];
             /** @description `workspace` | `organization`. */
             scope: string;
+            /**
+             * @description (FIX-163) Why a turned-off app account is off, when something other than a person's choice turned it
+             *     off: `instance_deleted` (its self-hosted app instance was removed; it cannot be turned on again).
+             */
+            status_reason?: string | null;
         };
         AccountAgent: {
             handle: string;
@@ -5798,10 +5937,36 @@ export interface components {
         AccountRef: {
             /** Format: uuid */
             id: string;
-            type: components["schemas"]["AccountRefType"];
+            /** @description `connection`. */
+            type: string;
+        };
+        AccountRefDto: {
+            /** Format: uuid */
+            id: string;
+            /** @description `connection` */
+            type: string;
         };
         /** @enum {string} */
         AccountRefType: "connection" | "secret";
+        /** @description C-943: the answer of `POST /v1/accounts/{type}/{id}/test`. */
+        AccountTestAnswer: {
+            /** Format: date-time */
+            checked_at: string;
+            detail?: components["schemas"]["AccountTestDetail"] | null;
+            result: components["schemas"]["AccountTestResult"];
+        };
+        /** @description At most a host, an HTTP status or a protocol code: never an upstream body, header or credential (SEC-129). */
+        AccountTestDetail: {
+            code?: string | null;
+            host?: string | null;
+            /** Format: int32 */
+            status?: number | null;
+        };
+        /**
+         * @description (C-943) What Test found.
+         * @enum {string}
+         */
+        AccountTestResult: "ok" | "rejected" | "unreachable" | "unexpected" | "not_testable";
         AccountWorkspace: {
             /** Format: uuid */
             id: string;
@@ -5852,6 +6017,16 @@ export interface components {
         ActionDecisionBody: {
             decision: components["schemas"]["ActionDecision"];
         };
+        AddByEmailRequest: {
+            email: string;
+            role: components["schemas"]["WorkspaceRole"];
+        };
+        AddByEmailResponse: {
+            org_entry: components["schemas"]["OrgEntry"];
+            result: components["schemas"]["AddResult"];
+        };
+        /** @enum {string} */
+        AddResult: "added" | "pending";
         AddonEntry: {
             description: string;
             id: string;
@@ -6225,6 +6400,19 @@ export interface components {
             name: string;
             tool_id: string;
         };
+        /** @description (C-982) Only on the answer of an Always allow. */
+        AlwaysApplied: {
+            /**
+             * Format: int32
+             * @description Other pending approvals of the same agent, account and tool that went ahead too.
+             */
+            also_approved: number;
+            tool: components["schemas"]["AlwaysTool"];
+        };
+        AlwaysTool: {
+            id: string;
+            name: string;
+        };
         ApiKey: {
             /** Format: date-time */
             created_at: string;
@@ -6248,6 +6436,30 @@ export interface components {
              * @description `null` for organization keys (`auo_`).
              */
             workspace_id?: string | null;
+        };
+        /** @description Answer of `GET /v1/agents/{agent}/apps/{app}/access` (C-934). */
+        AppAccess: {
+            accounts: components["schemas"]["AppAccessAccount"][];
+        };
+        AppAccessAccount: {
+            name: string;
+            ref: components["schemas"]["AccountRef"];
+            tools: components["schemas"]["AppAccessTool"][];
+        };
+        AppAccessTool: {
+            /** @description `read` | `write`. */
+            access: string;
+            /** @description What actually happens: `allow` | `ask` | `block`. */
+            decision: string;
+            description?: string | null;
+            name: string;
+            /**
+             * @description What the agent's own saved access says (`allow` | `ask` | `block`), so a reader who cannot
+             *     read the grants can still show it beside a reason. Equal to `decision` when no `reason`.
+             */
+            own: string;
+            reason?: components["schemas"]["ToolReason"] | null;
+            tool_id: string;
         };
         AppAvailability: {
             allow: components["schemas"]["AllowEntry"][];
@@ -6411,8 +6623,12 @@ export interface components {
         };
         Approval: {
             agent?: components["schemas"]["ApprovalAgent"] | null;
+            always_applied?: components["schemas"]["AlwaysApplied"] | null;
             app_id?: string | null;
+            asked_by?: components["schemas"]["AskedBy"] | null;
             batch?: components["schemas"]["ApprovalBatch"] | null;
+            /** @description Whether the caller may choose Always allow for this question (SEC-131). */
+            can_always_allow: boolean;
             /** Format: uuid */
             connection_id?: string | null;
             /** Format: date-time */
@@ -6453,6 +6669,8 @@ export interface components {
             /** Format: uuid */
             rule_logical_id?: string | null;
             rule_name?: string | null;
+            /** @description (P5-UX-16, C-982) */
+            sentence: components["schemas"]["ApprovalSentence"];
             /** @description `pending` | `approved` | `denied` | `expired` | `abandoned` */
             status: string;
             summary: components["schemas"]["ApprovalSummary"];
@@ -6540,6 +6758,17 @@ export interface components {
             /** @description `ready` */
             state: string;
         };
+        /** @description (P5-UX-16, C-982) The sentence an approval reads as: "<agent> wants to <action> in <app>". */
+        ApprovalSentence: {
+            account?: components["schemas"]["SentenceAccount"] | null;
+            /**
+             * @description The app's approval title when the package provides one, else the tool's name, else
+             *     "send a <METHOD> request to <host>". Completes "<agent> wants to …".
+             */
+            action: string;
+            agent: components["schemas"]["SentenceAgent"];
+            app?: components["schemas"]["SentenceApp"] | null;
+        };
         ApprovalSummary: {
             fields: components["schemas"]["SummaryField"][];
             group?: string | null;
@@ -6561,6 +6790,24 @@ export interface components {
             user_code: string;
             /** Format: uuid */
             workspace_id: string;
+        };
+        /** @description (P5-UX-16, C-982) What asked the question: the agent's access, or a rule. */
+        AskedBy: {
+            /** Format: uuid */
+            agent_id: string;
+            /** Format: uuid */
+            connection_id: string;
+            /** @enum {string} */
+            kind: "access";
+            tool_id?: string | null;
+        } | {
+            /** @enum {string} */
+            kind: "rule";
+            /** Format: uuid */
+            rule_id: string;
+            rule_name: string;
+            /** @description `workspace` | `organization` */
+            scope: string;
         };
         AttachPresenceRequest: {
             /** @description Values for the connector's `presence_setup.dedicated.fields` (manual setup). */
@@ -6627,6 +6874,24 @@ export interface components {
             recommended: boolean;
             /** @description `string` | `aws_sigv4` | `aws_assume_role` | `azure_entra` | `gcp_service_account`. */
             value_shape: string;
+        };
+        /**
+         * @description What a backfill did: grants written, and grants that already existed or were refused
+         *     (an unusable credential, or an app that allows only custom access).
+         */
+        BackfillResult: {
+            /** Format: int32 */
+            granted: number;
+            /** Format: int32 */
+            skipped: number;
+        };
+        /** @description `POST /v1/admin/placement/starter-grants/backfill` (C-922). */
+        BackfillStarterGrants: {
+            /**
+             * @description Only these starter credentials; absent = every starter grant of the saved placement.
+             *     An id that is not one of the placement's starter grants is refused.
+             */
+            credential_ids?: string[] | null;
         };
         BatchDecided: {
             /** Format: int32 */
@@ -6824,6 +7089,11 @@ export interface components {
             /** @description One or two sentences: what the method is and when to use it. */
             description?: string | null;
             fields: components["schemas"]["FormField"][];
+            /**
+             * @description (P5-UX-14, C-945) Whether connecting with this method already probes the upstream. The
+             *     journey tests a new account once afterwards only when it does not.
+             */
+            has_probe: boolean;
             id: string;
             /** @description `oauth2` | `fields` | `hook`. */
             kind: string;
@@ -7610,6 +7880,11 @@ export interface components {
         /** @enum {string} */
         Decision: "approve" | "deny";
         DecisionBody: {
+            /**
+             * @description (C-982, SEC-131) With `approve`: also stop asking for this kind of change. Needs
+             *     `can_own` of the agent's workspace; only for a question the agent's access asked.
+             */
+            always?: boolean | null;
             decision: components["schemas"]["Decision"];
         };
         /** @enum {string} */
@@ -9334,6 +9609,11 @@ export interface components {
              */
             origin: components["schemas"]["OrgOrigin"];
         };
+        /**
+         * @description How the person can get into the organization (the dashboard says it when the access is pending).
+         * @enum {string}
+         */
+        OrgEntry: "member" | "open_signup" | "invitation_needed";
         /** @description Normalized organization governance document (`organizations.governance`). */
         OrgGovernance: {
             /**
@@ -9600,6 +9880,11 @@ export interface components {
                 ref: components["schemas"]["AccountRef"];
                 /** @description `workspace` | `organization`. */
                 scope: string;
+                /**
+                 * @description (FIX-163) Why a turned-off app account is off, when something other than a person's choice turned it
+                 *     off: `instance_deleted` (its self-hosted app instance was removed; it cannot be turned on again).
+                 */
+                status_reason?: string | null;
             }[];
             next_cursor?: string | null;
         };
@@ -9825,8 +10110,12 @@ export interface components {
         Page_Approval: {
             items: {
                 agent?: components["schemas"]["ApprovalAgent"] | null;
+                always_applied?: components["schemas"]["AlwaysApplied"] | null;
                 app_id?: string | null;
+                asked_by?: components["schemas"]["AskedBy"] | null;
                 batch?: components["schemas"]["ApprovalBatch"] | null;
+                /** @description Whether the caller may choose Always allow for this question (SEC-131). */
+                can_always_allow: boolean;
                 /** Format: uuid */
                 connection_id?: string | null;
                 /** Format: date-time */
@@ -9867,6 +10156,8 @@ export interface components {
                 /** Format: uuid */
                 rule_logical_id?: string | null;
                 rule_name?: string | null;
+                /** @description (P5-UX-16, C-982) */
+                sentence: components["schemas"]["ApprovalSentence"];
                 /** @description `pending` | `approved` | `denied` | `expired` | `abandoned` */
                 status: string;
                 summary: components["schemas"]["ApprovalSummary"];
@@ -10287,6 +10578,20 @@ export interface components {
                 to_agent_id: string;
                 /** Format: date-time */
                 updated_at: string;
+            }[];
+            next_cursor?: string | null;
+        };
+        Page_PendingAccess: {
+            items: {
+                /** Format: date-time */
+                created_at: string;
+                /** @description The normalized address. */
+                email: string;
+                /** Format: date-time */
+                expires_at: string;
+                /** Format: uuid */
+                id: string;
+                role: components["schemas"]["WorkspaceRole"];
             }[];
             next_cursor?: string | null;
         };
@@ -10921,6 +11226,18 @@ export interface components {
             /** Format: uuid */
             id: string;
         };
+        /** @description One person waiting for their first sign-in. */
+        PendingAccess: {
+            /** Format: date-time */
+            created_at: string;
+            /** @description The normalized address. */
+            email: string;
+            /** Format: date-time */
+            expires_at: string;
+            /** Format: uuid */
+            id: string;
+            role: components["schemas"]["WorkspaceRole"];
+        };
         PendingLibrarySkill: {
             /** Format: uuid */
             agent_id?: string | null;
@@ -11423,6 +11740,23 @@ export interface components {
         PublishRequest: {
             /** Format: int64 */
             revision: number;
+        };
+        /**
+         * @description (FIX-164, C-1020, D-365) What a workspace member reads of the workspace's Internet access: the **published**
+         *     generation's defaults and rules, and nothing else: no draft, no revision, no generation history, no publisher, no
+         *     warnings, no other workspace's overrides.
+         */
+        PublishedInternetAccess: {
+            default_action: components["schemas"]["DefaultAction"];
+            /**
+             * Format: int32
+             * @description The published generation's number.
+             */
+            number: number;
+            open_lane_posture: components["schemas"]["OpenLanePosture"];
+            rules: components["schemas"]["PolicyRule"][];
+            uncredentialed_allowlist: components["schemas"]["AllowlistEntry"][];
+            uncredentialed_default: components["schemas"]["UncredentialedDefault"];
         };
         PurgedAttachment: {
             /** Format: uuid */
@@ -12334,6 +12668,19 @@ export interface components {
             /** @description May be empty or absent when `attachment_ids` is non-empty (C-726). */
             text?: string;
         };
+        SentenceAccount: {
+            name: string;
+            ref: components["schemas"]["AccountRefDto"];
+        };
+        SentenceAgent: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+        };
+        SentenceApp: {
+            app_id: string;
+            name: string;
+        };
         SetDmDefaultRequest: {
             /** Format: uuid */
             agent_id: string;
@@ -12453,15 +12800,26 @@ export interface components {
             set_availability: boolean;
         };
         SetupCheck: {
+            /** @description (C-924) `app_needs_oauth_client` and `app_token_only`: the app the check is about. */
+            app_id?: string | null;
+            client_key?: string | null;
             /** @description The Helm value that changes it, for config-only things. */
             helm?: string | null;
             /** @description Stable id, e.g. `endpoint:litellm`, `default_model:litellm`, `gateway`. */
             id: string;
             /** @description One short plain sentence for the page. */
             message: string;
+            /**
+             * @description (C-924) Those checks: the app's package id and the OAuth client key its sign-in method
+             *     reads (`null` for `app_token_only` when it has none to name).
+             */
+            package?: string | null;
             reason: string;
             status: components["schemas"]["SetupState"];
-            /** @description The current value (never a secret): a model id, an image, a count. */
+            /**
+             * @description The current value (never a secret): a model id, an image, a count; an app's name for
+             *     the `app_*` checks.
+             */
             value?: string | null;
         };
         SetupClients: {
@@ -12506,6 +12864,13 @@ export interface components {
         SetupState: "ok" | "warning" | "todo";
         /** @description `GET /v1/admin/setup` (C-533): the setup wizard's live status, no secrets. */
         SetupStatus: {
+            /**
+             * Format: int64
+             * @description (C-922) Personal workspaces of the default organization whose default agent lacks a
+             *     starter grant of the saved placement: people who signed in before it was set. `0` when
+             *     no placement or no starter grant is saved.
+             */
+            personal_workspaces_without_starter: number;
             /** @description A placement has been saved: the wizard is no longer shown at sign-in. */
             placement_saved: boolean;
             /** @description In order: `roles`, `placement`, `llm`, `runners`, `optional`. ("Try it" is the client's.) */
@@ -13133,6 +13498,18 @@ export interface components {
             scopes: string[];
             wildcard: boolean;
         };
+        /**
+         * @description (P5-UX-10, C-934) Why a tool is not what the agent's access says: only when something else
+         *     decided.
+         */
+        ToolReason: {
+            /** @description A sentence: "Limited by <org>", a rule's name, …. */
+            label: string;
+            /** @description `limit` | `workspace_rule` | `org_rule` | `organization` | `package`. */
+            layer: string;
+            /** @description `internet_access` for a rule people wrote (the dashboard builds the address). */
+            link?: string | null;
+        };
         TraceEntry: {
             matched: boolean;
             reason: string;
@@ -13501,6 +13878,76 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    testAccount: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description `connection` or `secret` */
+                type: string;
+                /** @description Account id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description What the check found */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccountTestAnswer"];
+                };
+            };
+            /** @description Unknown account type */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Rate limited (class `check`) */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     decideActionApproval: {
         parameters: {
             query?: never;
@@ -15879,6 +16326,63 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PlacementPreview"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminBackfillStarterGrants: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BackfillStarterGrants"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BackfillResult"];
                 };
             };
             400: {
@@ -18951,6 +19455,58 @@ export interface operations {
             };
             /** @description Forbidden */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    getAgentAppAccess: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent id */
+                agent: string;
+                /** @description App id */
+                app: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Per-tool access */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppAccess"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -23587,6 +24143,14 @@ export interface operations {
                 };
             };
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -37052,6 +37616,81 @@ export interface operations {
             };
         };
     };
+    addAccessByEmail: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                ws: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AddByEmailRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AddByEmailResponse"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     putGroupAccess: {
         parameters: {
             query?: never;
@@ -37131,6 +37770,119 @@ export interface operations {
                 ws: string;
                 /** @description Group id */
                 group: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Removed */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    listPendingAccess: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                ws: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_PendingAccess"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    deletePendingAccess: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                ws: string;
+                /** @description Pending access id */
+                id: string;
             };
             cookie?: never;
         };
@@ -38181,6 +38933,56 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    getWorkspaceInternetAccess: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                ws: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The published generation */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PublishedInternetAccess"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not found */
             404: {
                 headers: {
                     [name: string]: unknown;

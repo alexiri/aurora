@@ -182,9 +182,15 @@ export function isAlreadyDecided(err: unknown): boolean {
 export function useDecide(wsId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, decision }: { id: string; decision: Decision }) =>
+    // (C-982) `always` is Always allow: only ever sent as `true`, with `approve`.
+    mutationFn: ({ id, decision, always }: { id: string; decision: Decision; always?: boolean }) =>
       traceAction("approval_decide", () =>
-        unwrap(api.POST("/v1/approvals/{id}/decision", { params: { path: { id } }, body: { decision } })),
+        unwrap(
+          api.POST("/v1/approvals/{id}/decision", {
+            params: { path: { id } },
+            body: always ? { decision, always: true } : { decision },
+          }),
+        ),
       ),
     onSettled: (_d, err, vars) => {
       // On 409 someone else decided; either way it is no longer pending for us.

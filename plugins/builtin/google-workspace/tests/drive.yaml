@@ -41,7 +41,7 @@
   request: { method: GET, url: "https://www.googleapis.com/drive/v3/files/1FileIdFixture?alt=media" }
   expect:
     tool: get_file
-    summary: { title: "Download Drive file", fields: { File: "1FileIdFixture", Mode: "media" } }
+    summary: { title: "download a Drive file", fields: { File: "1FileIdFixture", Mode: "media" } }
 - name: "negative get_file: DELETE (permanent delete) selects no tool"
   connection: { credentials: { access_token: "tok-fixture-1" } }
   request: { method: DELETE, url: "https://www.googleapis.com/drive/v3/files/1FileIdFixture" }
@@ -51,7 +51,7 @@
   request: { method: GET, url: "https://www.googleapis.com/drive/v3/files/1DocIdFixture/export?mimeType=application%2Fpdf" }
   expect:
     tool: export_file
-    summary: { title: "Export Drive file", fields: { File: "1DocIdFixture", "Export as": "application/pdf" } }
+    summary: { title: "export a Drive file", fields: { File: "1DocIdFixture", "Export as": "application/pdf" } }
 - name: "negative export_file: POST selects no tool"
   connection: { credentials: { access_token: "tok-fixture-1" } }
   request: { method: POST, url: "https://www.googleapis.com/drive/v3/files/1DocIdFixture/export" }
@@ -74,7 +74,7 @@
     body: '{"name":"Reports","mimeType":"application/vnd.google-apps.folder","parents":["1ParentFixture"]}'
   expect:
     tool: create_file
-    summary: { title: "Create Drive file or folder", fields: { Name: "Reports", "MIME type": "application/vnd.google-apps.folder" } }
+    summary: { title: "create a Drive file or folder", fields: { Name: "Reports", "MIME type": "application/vnd.google-apps.folder" } }
 - name: "negative create_file: PUT selects no tool"
   connection: { credentials: { access_token: "tok-fixture-1" } }
   request: { method: PUT, url: "https://www.googleapis.com/drive/v3/files" }
@@ -89,7 +89,7 @@
   expect:
     tool: upload_file
     upstream: { url: "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart", headers: { authorization: "Bearer tok-fixture-1" } }
-    summary: { title: "Upload Drive file", fields: { "Upload type": "multipart" } }
+    summary: { title: "upload a Drive file", fields: { "Upload type": "multipart" } }
 - name: "negative upload_file: PUT selects no tool"
   connection: { credentials: { access_token: "tok-fixture-1" } }
   request: { method: PUT, url: "https://www.googleapis.com/upload/drive/v3/files" }
@@ -107,7 +107,7 @@
     body: '{"name":"Renamed.txt"}'
   expect:
     tool: update_file
-    summary: { title: "Change Drive file", fields: { File: "1FileIdFixture", Name: "Renamed.txt" } }
+    summary: { title: "change a Drive file", fields: { File: "1FileIdFixture", Name: "Renamed.txt" } }
 - name: "negative update_file: PUT selects no tool"
   connection: { credentials: { access_token: "tok-fixture-1" } }
   request: { method: PUT, url: "https://www.googleapis.com/drive/v3/files/1FileIdFixture" }
@@ -121,7 +121,7 @@
     body: "new content"
   expect:
     tool: upload_file_content
-    summary: { title: "Replace Drive file content", fields: { File: "1FileIdFixture", "Upload type": "media" } }
+    summary: { title: "replace the content of a Drive file", fields: { File: "1FileIdFixture", "Upload type": "media" } }
 - name: "negative upload_file_content: PUT selects no tool"
   connection: { credentials: { access_token: "tok-fixture-1" } }
   request: { method: PUT, url: "https://www.googleapis.com/upload/drive/v3/files/1FileIdFixture" }
@@ -135,7 +135,7 @@
     body: '{"name":"Copy of notes"}'
   expect:
     tool: copy_file
-    summary: { title: "Copy Drive file", fields: { File: "1FileIdFixture", Name: "Copy of notes" } }
+    summary: { title: "copy a Drive file", fields: { File: "1FileIdFixture", Name: "Copy of notes" } }
 - name: "negative copy_file: GET selects no tool"
   connection: { credentials: { access_token: "tok-fixture-1" } }
   request: { method: GET, url: "https://www.googleapis.com/drive/v3/files/1FileIdFixture/copy" }
@@ -149,7 +149,7 @@
     body: '{"role":"reader","type":"user","emailAddress":"bob@example.com"}'
   expect:
     tool: create_permission
-    summary: { title: "Share Drive file", fields: { File: "1FileIdFixture", Role: "reader", Type: "user", Email: "bob@example.com" } }
+    summary: { title: "share a Drive file", fields: { File: "1FileIdFixture", Role: "reader", Type: "user", Email: "bob@example.com" } }
 - name: "create_permission: summary template shows a domain share"
   connection: { credentials: { access_token: "tok-fixture-1" } }
   request:
@@ -159,7 +159,7 @@
     body: '{"role":"reader","type":"domain","domain":"example.com"}'
   expect:
     tool: create_permission
-    summary: { title: "Share Drive file", fields: { File: "1FileIdFixture", Role: "reader", Type: "domain", Domain: "example.com" } }
+    summary: { title: "share a Drive file", fields: { File: "1FileIdFixture", Role: "reader", Type: "domain", Domain: "example.com" } }
 - name: "negative create_permission: PUT selects no tool"
   connection: { credentials: { access_token: "tok-fixture-1" } }
   request: { method: PUT, url: "https://www.googleapis.com/drive/v3/files/1FileIdFixture/permissions" }

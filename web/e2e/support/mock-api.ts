@@ -57,7 +57,25 @@ const connection = (n: number, appId: string, label: string) => ({
 const approval = {
   id: id(60), org_id: id(1), workspace_id: id(2), status: "pending", created_at: now, deadline: later, host: "api.github.com", method: "PUT",
   path: "/repos/acme/web/pulls/42/merge", app_id: "github", agent: { id: id(11), handle: "daneel", name: "Daneel" },
-  summary: { source: "app", title: "Merge pull request #42", fields: [{ label: "Repository", value: "acme/web" }] },
+  summary: { source: "app", title: "merge a pull request", fields: [{ label: "Repository", value: "acme/web" }] },
+  // (P5-UX-16, C-982) The sentence, what asked (the agent's access) and whether the viewer may choose Always allow.
+  sentence: {
+    agent: { id: id(11), name: "Daneel" }, action: "merge a pull request", app: { app_id: "github", name: "GitHub" },
+    account: { ref: { type: "connection", id: id(30) }, name: "Acme GitHub" },
+  },
+  asked_by: { kind: "access", agent_id: id(11), connection_id: id(30), tool_id: "merge_pull" },
+  can_always_allow: true,
+};
+
+/** P4-011B-4: an approval the gateway parked (the agent stopped waiting): the Parked chip and sentence render. */
+const parkedApproval = {
+  ...approval, id: id(61), parked: true, deadline: new Date(Date.now() + 7_200_000).toISOString(),
+  summary: { source: "app", title: "delete a repository", fields: [] },
+  // A rule asked this one: no Always allow, "Asked by the rule …".
+  sentence: { agent: { id: id(11), name: "Daneel" }, action: "delete a repository", app: { app_id: "github", name: "GitHub" } },
+  asked_by: { kind: "rule", rule_id: id(81), rule_name: "Ask before deleting", scope: "workspace" },
+  can_always_allow: false,
+  method: "DELETE", path: "/repos/acme/old",
 };
 
 const generation = (status: string) => ({
@@ -167,6 +185,9 @@ export const user ={ id: id(99), display_name: "Ada Lovelace", email: "ada@examp
 /** (P5-UX-3) Accounts a spec's saves made, listed first by the workspace's accounts list; emptied by every `mockApi` call. */
 export const extraAccounts: Record<string, unknown>[] = [];
 
+/** (P5-UX-14) Ids of the connect methods that have a probe (`has_probe`); none by default. Emptied by every `mockApi` call. */
+export const probed = new Set<string>();
+
 /** (P5-UX-9) OAuth clients a spec registered in the workspace; the setup status counts them and the list shows them. Emptied by every `mockApi` call. */
 export const extraClients: Record<string, unknown>[] = [];
 
@@ -179,6 +200,7 @@ export async function mockApi(
   const patterns: [RegExp, unknown][] = [];
   extraAccounts.length = 0;
   extraClients.length = 0;
+  probed.clear();
   let availability: { posture: string; allow: { app_id: string; workspace_id?: string }[] } = { posture: "open", allow: [] };
   // (P5-IA-4, C-969) The organization's retention: Administration's maximums above, saved values kept across requests.
   let retention: Record<string, unknown> = {
@@ -231,6 +253,11 @@ export async function mockApi(
     if (/^\/v1\/admin\/agents\/[^/]+\/start-failures$/.test(p)) return json({ items: [] });
     if (p === "/v1/admin/setup") return json(setupStatus);
     if (p.endsWith("/policy") && (p.startsWith("/v1/orgs/") || p.startsWith("/v1/workspaces/"))) return json(policyDoc);
+    // (FIX-164, C-1020) The published rules, which every member of the workspace reads.
+    if (/^\/v1\/workspaces\/[^/]+\/internet-access$/.test(p)) {
+      const { number, default_action, uncredentialed_default, uncredentialed_allowlist, open_lane_posture, rules } = policyDoc.published;
+      return json({ number, default_action, uncredentialed_default, uncredentialed_allowlist, open_lane_posture, rules });
+    }
     if (p === "/v1/llm/providers") return json({ providers: [] });
     if (p.endsWith("/governance/effective")) return json(effective);
     if (/^\/v1\/orgs\/[^/]+\/retention$/.test(p)) {
@@ -462,10 +489,23 @@ export async function mockApi(
         permissions: { hooks: [], context: [], egress: { "api.github.com": ["GET"] } },
       });
     }
+    // P4-011B-4: Web Push is on (the Account card and its device list render) and parking is on (the limits route).
+    if (p === "/v1/push/config") return json({ available: true, vapid_public_key: "B".repeat(87), allowed_hosts: ["fcm.googleapis.com"] });
+    if (p === "/v1/me/push-subscriptions") {
+      return json({
+        subscriptions: [
+          { id: id(700), label: "Chrome on Linux", show_details: false, paused: false, state: "active", this_session: false, created_at: now, last_success_at: now, last_failure_at: null },
+          { id: id(701), label: "Firefox on Windows", show_details: true, paused: false, state: "disabled", this_session: false, created_at: now, last_success_at: null, last_failure_at: now },
+        ],
+      });
+    }
+    if (p === "/v1/policy/approval-limits") {
+      return json({ timeout_secs: 300, max_timeout_secs: 3600, park: { enabled: true, threshold_secs: 900, max_timeout_secs: 86400, resume_window_secs: 1800 } });
+    }
     if (p === "/v1/instance") {
       return json({
         version: "0.1.0", signup_mode: "closed", setup_errors: [],
-        features: { hosted: true, previews: true, terminal: true },
+        features: { hosted: true, previews: true, terminal: true, push: true },
         previews: { enabled: true, domain: "previews.example.org" },
         oidc_providers: [{ id: "corp", display_name: "Corporate SSO", groups: true }],
       });
@@ -501,7 +541,7 @@ export async function mockApi(
         },
       ];
       // (P5-UX-2/3) Every method also carries the audience, the scope presets per access and the values to show.
-      const full = connect.map((m) => ({ probe_scopes: [], audience: "person", scope_presets: { read: [], write: [] }, show_context: [], ...m }));
+      const full = connect.map((m) => ({ probe_scopes: [], audience: "person", scope_presets: { read: [], write: [] }, show_context: [], has_probe: probed.has(m.id), ...m }));
       return json({
         ...apps.find((x) => x.app_id === a.id), connect: full, credentials: [], hosts: [], metadata: [],
         // (P5-UX-9, C-946) The OAuth client definitions say which connect methods use them.
@@ -646,7 +686,7 @@ export async function mockApi(
       }
       return json({ section, title: section, description: "", generation: 1, updated_at: now, updated_by_label: null, extra: null, settings: [] });
     }
-    if (p.endsWith("/approvals")) return json({ items: url.searchParams.get("status") === "pending" ? [approval] : [], next_cursor: null });
+    if (p.endsWith("/approvals")) return json({ items: url.searchParams.get("status") === "pending" ? [approval, parkedApproval] : [], next_cursor: null });
     if (p.endsWith("/workspaces")) return json({ items: [ws] });
     if (p.endsWith("/agents")) return json({ items: [agent] });
     // P4-PRV-1: the agent's preview shares (the Previews tab; the sandbox view marks port 3000 shared).

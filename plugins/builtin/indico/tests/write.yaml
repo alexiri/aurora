@@ -12,7 +12,7 @@
     tool: book_room
     upstream: { headers: { authorization: "Bearer tok-fixture-1" } }
     summary:
-      title: "Book room"
+      title: "book a room"
       fields:
         Room ID: "57"
         From: "2026-11-10T09:00"
@@ -30,7 +30,7 @@
   expect:
     tool: book_room
     summary:
-      title: "Book room"
+      title: "book a room"
       fields: { Room ID: "57", From (f): "2026-11-10T11:00", To (t): "2026-11-10T12:00", Booked for: "jdoe", Reason: "Review" }
 - name: "negative book_room: GET selects no tool"
   connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
@@ -49,7 +49,7 @@
     tool: create_booking
     upstream: { headers: { authorization: "Bearer tok-fixture-1" } }
     summary:
-      title: "Book room"
+      title: "book a room"
       fields:
         Room ID: "57"
         Start: "2026-11-10T09:00:00"
@@ -73,7 +73,7 @@
     app: indico
     tool: create_booking
     summary:
-      title: "Book room"
+      title: "book a room"
       fields:
         Room ID: "1234"
         Start: "2026-11-15T10:00:00"
@@ -91,7 +91,7 @@
     app: indico
     tool: book_room
     summary:
-      title: "Book room"
+      title: "book a room"
       fields:
         Room ID: "1234"
         From: "2026-11-15T10:00"
@@ -106,7 +106,7 @@
     url: "https://indico.example.org/rooms/api/booking/create"
     headers: { content-type: application/x-www-form-urlencoded }
     body: "room_id=57&reason=Weekly+sync"
-  expect: { tool: create_booking, summary: { title: "Book room" } }
+  expect: { tool: create_booking, summary: { title: "book a room" } }
 - name: "negative create_booking: GET selects no tool"
   connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
   request: { method: GET, url: "https://indico.example.org/rooms/api/booking/create" }
@@ -115,7 +115,7 @@
 - name: "cancel_booking: summary shows the booking id"
   connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
   request: { method: POST, url: "https://indico.example.org/rooms/api/bookings/42/cancel" }
-  expect: { app: indico, tool: cancel_booking, summary: { title: "Cancel room booking", fields: { Booking: "42" } } }
+  expect: { app: indico, tool: cancel_booking, summary: { title: "cancel a room booking", fields: { Booking: "42" } } }
 - name: "negative cancel_booking: GET selects no tool"
   connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
   request: { method: GET, url: "https://indico.example.org/rooms/api/bookings/42/cancel" }
@@ -124,7 +124,7 @@
 - name: "cancel_booking_occurrence: summary shows booking and date"
   connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
   request: { method: POST, url: "https://indico.example.org/rooms/api/bookings/42/2026-11-10/cancel" }
-  expect: { app: indico, tool: cancel_booking_occurrence, summary: { title: "Cancel room booking date", fields: { Booking: "42", Date: "2026-11-10" } } }
+  expect: { app: indico, tool: cancel_booking_occurrence, summary: { title: "cancel one date of a room booking", fields: { Booking: "42", Date: "2026-11-10" } } }
 - name: "negative cancel_booking_occurrence: GET selects no tool"
   connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
   request: { method: GET, url: "https://indico.example.org/rooms/api/bookings/42/2026-11-10/cancel" }
@@ -133,7 +133,7 @@
 - name: "add_favorite_user: PUT"
   connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
   request: { method: PUT, url: "https://indico.example.org/user/api/favorites/users/User:101" }
-  expect: { app: indico, tool: add_favorite_user, summary: { title: "Add favorite user", fields: { User: "User:101" } } }
+  expect: { app: indico, tool: add_favorite_user, summary: { title: "add a favorite user", fields: { User: "User:101" } } }
 - name: "negative add_favorite_user: DELETE selects remove_favorite_user, not add"
   connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
   request: { method: DELETE, url: "https://indico.example.org/user/api/favorites/users/User:101" }
@@ -141,7 +141,7 @@
 - name: "remove_favorite_user: DELETE"
   connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
   request: { method: DELETE, url: "https://indico.example.org/user/api/favorites/users/User:101" }
-  expect: { app: indico, tool: remove_favorite_user, summary: { title: "Remove favorite user", fields: { User: "User:101" } } }
+  expect: { app: indico, tool: remove_favorite_user, summary: { title: "remove a favorite user", fields: { User: "User:101" } } }
 - name: "negative remove_favorite_user: PUT selects add_favorite_user, not remove"
   connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
   request: { method: PUT, url: "https://indico.example.org/user/api/favorites/users/User:101" }
@@ -150,7 +150,7 @@
 - name: "add_favorite_category: PUT"
   connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
   request: { method: PUT, url: "https://indico.example.org/user/api/favorites/categories/12" }
-  expect: { app: indico, tool: add_favorite_category, summary: { title: "Add favorite category", fields: { Category: "12" } } }
+  expect: { app: indico, tool: add_favorite_category, summary: { title: "add a favorite category", fields: { Category: "12" } } }
 - name: "negative add_favorite_category: DELETE selects remove_favorite_category, not add"
   connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
   request: { method: DELETE, url: "https://indico.example.org/user/api/favorites/categories/12" }
@@ -158,7 +158,7 @@
 - name: "remove_favorite_category: DELETE"
   connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
   request: { method: DELETE, url: "https://indico.example.org/user/api/favorites/categories/12" }
-  expect: { app: indico, tool: remove_favorite_category, summary: { title: "Remove favorite category", fields: { Category: "12" } } }
+  expect: { app: indico, tool: remove_favorite_category, summary: { title: "remove a favorite category", fields: { Category: "12" } } }
 - name: "negative remove_favorite_category: PUT selects add_favorite_category, not remove"
   connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
   request: { method: PUT, url: "https://indico.example.org/user/api/favorites/categories/12" }
@@ -167,7 +167,7 @@
 - name: "add_favorite_event: PUT"
   connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
   request: { method: PUT, url: "https://indico.example.org/user/api/favorites/events/1234" }
-  expect: { app: indico, tool: add_favorite_event, summary: { title: "Add favorite event", fields: { Event: "1234" } } }
+  expect: { app: indico, tool: add_favorite_event, summary: { title: "add a favorite event", fields: { Event: "1234" } } }
 - name: "negative add_favorite_event: DELETE selects remove_favorite_event, not add"
   connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
   request: { method: DELETE, url: "https://indico.example.org/user/api/favorites/events/1234" }
@@ -175,7 +175,7 @@
 - name: "remove_favorite_event: DELETE"
   connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
   request: { method: DELETE, url: "https://indico.example.org/user/api/favorites/events/1234" }
-  expect: { app: indico, tool: remove_favorite_event, summary: { title: "Remove favorite event", fields: { Event: "1234" } } }
+  expect: { app: indico, tool: remove_favorite_event, summary: { title: "remove a favorite event", fields: { Event: "1234" } } }
 - name: "negative remove_favorite_event: PUT selects add_favorite_event, not remove"
   connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
   request: { method: PUT, url: "https://indico.example.org/user/api/favorites/events/1234" }
@@ -184,7 +184,7 @@
 - name: "add_favorite_room: PUT"
   connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
   request: { method: PUT, url: "https://indico.example.org/rooms/api/user/favorite-rooms/57" }
-  expect: { app: indico, tool: add_favorite_room, summary: { title: "Add favorite room", fields: { Room: "57" } } }
+  expect: { app: indico, tool: add_favorite_room, summary: { title: "add a favorite room", fields: { Room: "57" } } }
 - name: "negative add_favorite_room: DELETE selects remove_favorite_room, not add"
   connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
   request: { method: DELETE, url: "https://indico.example.org/rooms/api/user/favorite-rooms/57" }
@@ -192,7 +192,7 @@
 - name: "remove_favorite_room: DELETE"
   connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
   request: { method: DELETE, url: "https://indico.example.org/rooms/api/user/favorite-rooms/57" }
-  expect: { app: indico, tool: remove_favorite_room, summary: { title: "Remove favorite room", fields: { Room: "57" } } }
+  expect: { app: indico, tool: remove_favorite_room, summary: { title: "remove a favorite room", fields: { Room: "57" } } }
 - name: "negative remove_favorite_room: PUT selects add_favorite_room, not remove"
   connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
   request: { method: PUT, url: "https://indico.example.org/rooms/api/user/favorite-rooms/57" }
@@ -210,7 +210,7 @@
     tool: prepare_event
     upstream: { headers_absent: [authorization] }
     summary:
-      title: "Prepare an event to create"
+      title: "prepare to create an event"
       fields: { Title: "Planning meeting", Start: "2026-11-12T14:00:00", Time zone: "Europe/Zurich", Duration: "60", Type: "meeting" }
 - name: "negative prepare_event: GET selects no tool"
   connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }

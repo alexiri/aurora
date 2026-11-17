@@ -411,6 +411,44 @@ pub async fn touch_secret_last_used<'e, E: PgExecutor<'e>>(
     Ok(())
 }
 
+/// (P5-UX-14) Churn column of an app connection; does not touch `updated_at`.
+pub async fn touch_connection_last_used<'e, E: PgExecutor<'e>>(
+    exec: E,
+    connection_id: Uuid,
+) -> Result<(), DbError> {
+    sqlx::query("UPDATE app_connections SET last_used_at = now() WHERE id = $1")
+        .bind(connection_id)
+        .execute(exec)
+        .await?;
+    Ok(())
+}
+
+/// (P5-UX-14, D-350, C-985) Records what real use showed about an account: `rejected` (an upstream
+/// 401 on a request with its credential injected) or `ok` (a later 2xx or 3xx). Only on a change of
+/// state: a row already holding `result` is not written. Informational — never touches `status`,
+/// `updated_at` or anything an agent's access reads. Returns whether a row changed.
+pub async fn record_account_check<'e, E: PgExecutor<'e>>(
+    exec: E,
+    connection: bool,
+    id: Uuid,
+    result: &str,
+) -> Result<bool, DbError> {
+    let sql = if connection {
+        "UPDATE app_connections SET last_check_at = now(), last_check_result = $2 \
+         WHERE id = $1 AND last_check_result IS DISTINCT FROM $2"
+    } else {
+        "UPDATE secrets SET last_check_at = now(), last_check_result = $2 \
+         WHERE id = $1 AND last_check_result IS DISTINCT FROM $2"
+    };
+    Ok(sqlx::query(sql)
+        .bind(id)
+        .bind(result)
+        .execute(exec)
+        .await?
+        .rows_affected()
+        == 1)
+}
+
 #[derive(Debug, Clone)]
 pub struct RequestLogRow {
     pub id: Uuid,
@@ -518,6 +556,9 @@ pub struct NewApproval {
     pub host: String,
     pub path: String,
     pub connection_id: Option<Uuid>,
+    /// (P5-UX-16, C-982) The app and tool the request matched.
+    pub app_id: Option<String>,
+    pub tool_id: Option<String>,
     pub rule_logical_id: Option<Uuid>,
     pub rule_name: Option<String>,
     pub summary: serde_json::Value,
@@ -536,8 +577,9 @@ pub async fn insert_approval<'e, E: PgExecutor<'e>>(
     sqlx::query(
         "INSERT INTO approvals (id, org_id, workspace_id, agent_id, conversation_id, turn_id, \
          gateway_instance_id, method, host, path, connection_id, rule_logical_id, rule_name, \
-         summary, batch_id, batch_label, batch_total, context_label, status, deadline) \
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$19,'pending', \
+         summary, batch_id, batch_label, batch_total, context_label, app_id, tool_id, status, \
+         deadline) \
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$19,$20,$21,'pending', \
                  now() + make_interval(secs => $18))",
     )
     .bind(a.id)
@@ -559,6 +601,8 @@ pub async fn insert_approval<'e, E: PgExecutor<'e>>(
     .bind(a.batch_total)
     .bind(a.timeout_secs)
     .bind(&a.context_label)
+    .bind(&a.app_id)
+    .bind(&a.tool_id)
     .execute(exec)
     .await?;
     Ok(())
@@ -792,9 +836,9 @@ pub async fn insert_parked(
         "INSERT INTO approvals (id, org_id, workspace_id, agent_id, conversation_id, turn_id, \
          gateway_instance_id, method, host, path, connection_id, rule_logical_id, rule_name, \
          summary, batch_id, batch_label, batch_total, context_label, status, deadline, \
-         parked, fp_salt, fingerprint) \
+         parked, fp_salt, fingerprint, app_id, tool_id) \
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$19,'pending', \
-                 now() + make_interval(secs => $18), true, $20, $21) \
+                 now() + make_interval(secs => $18), true, $20, $21, $22, $23) \
          RETURNING deadline",
     )
     .bind(a.id)
@@ -818,6 +862,8 @@ pub async fn insert_parked(
     .bind(&a.context_label)
     .bind(fp_salt)
     .bind(fingerprint)
+    .bind(&a.app_id)
+    .bind(&a.tool_id)
     .fetch_one(&mut *tx)
     .await?;
     tx.commit().await?;

@@ -271,3 +271,20 @@ pub struct PlacementPreview {
     /// Variables with no value here (and so skipped or empty).
     pub unresolved: Vec<String>,
 }
+
+/// `POST /v1/admin/placement/starter-grants/backfill` (C-922).
+#[derive(Deserialize, ToSchema, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct BackfillStarterGrants {
+    /// Only these starter credentials; absent = every starter grant of the saved placement.
+    /// An id that is not one of the placement's starter grants is refused.
+    pub credential_ids: Option<Vec<Uuid>>,
+}
+
+/// What a backfill did: grants written, and grants that already existed or were refused
+/// (an unusable credential, or an app that allows only custom access).
+#[derive(Serialize, ToSchema, Debug)]
+pub struct BackfillResult {
+    pub granted: u32,
+    pub skipped: u32,
+}

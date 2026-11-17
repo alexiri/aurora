@@ -98,7 +98,7 @@ for (const scheme of ["light", "dark"] as const) {
         await expect(list.getByRole("listitem", { name: "Weather API" }).getByText("Website")).toBeVisible();
         await expect(list.getByRole("listitem", { name: "Team key" }).getByText("AI key")).toBeVisible();
         await expect(list.getByRole("listitem", { name: "Weather API" }).getByText("No agent can use this")).toBeVisible();
-        await expect(list.getByRole("listitem", { name: "Product team" }).getByText(/Sign-in expired/)).toBeVisible();
+        await expect(list.getByRole("listitem", { name: "Product team" }).getByText(/The sign-in to .* expired/)).toBeVisible();
         // No rule id, host pattern or "secret" on a row.
         await expect(list).not.toContainText(/secret|host pattern|rule/i);
         await check(page, "ws-accounts", scheme, width);
@@ -164,6 +164,36 @@ for (const scheme of ["light", "dark"] as const) {
         expect(posted).toHaveLength(1);
         expect(posted[0].grant).toEqual({ agent_ids: [agent.id] });
         await check(page, "ai-key-one-request", scheme, width);
+      });
+
+      test("FIX-163: an account whose app instance was deleted is not offered Turn on and says who can add the instance again", async ({ page }) => {
+        await mockApi(page);
+        await page.route("**/v1/**", async (route) => {
+          const p = new URL(route.request().url()).pathname;
+          const json = (b: unknown) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(b) });
+          if (p === `/v1/workspaces/${ws.id}/accounts`) {
+            const row = (n: number, name: string, extra: Record<string, unknown>) => ({
+              ref: { type: "connection", id: id(n) }, kind: "app", name, scope: "workspace", levels: ["read", "ask", "act"],
+              app: { app_id: "aws-keys", name: "AWS", custom_only: false }, health: { state: "disabled" }, agents: [{ ...who(agent), level: "read" }], can, ...extra,
+            });
+            return json({ items: [row(51, "desk", { status_reason: "instance_deleted" }), row(52, "staging", {})], next_cursor: null });
+          }
+          return route.fallback();
+        });
+        await page.emulateMedia({ colorScheme: scheme });
+        await page.goto("/o/acme/w/main/apps?tab=accounts");
+        const gone = page.getByRole("listitem", { name: "desk" });
+        await expect(gone.getByText("Turned off: the instance of this app was removed")).toBeVisible();
+        await expect(gone.getByText(/Only organization owners and admins can add the app's instance again\./)).toBeVisible();
+        await gone.getByRole("button", { name: "More for desk" }).click();
+        await expect(page.getByRole("menuitem", { name: "Rename" })).toBeVisible();
+        await expect(page.getByRole("menuitem", { name: "Turn on" })).toHaveCount(0);
+        await page.keyboard.press("Escape");
+        // Another reason for being off keeps Turn on.
+        await page.getByRole("listitem", { name: "staging" }).getByRole("button", { name: "More for staging" }).click();
+        await expect(page.getByRole("menuitem", { name: "Turn on" })).toBeVisible();
+        await page.keyboard.press("Escape");
+        await check(page, "instance-deleted", scheme, width);
       });
     });
   }

@@ -32,6 +32,16 @@ export const policyKeys = {
   effective: (agentId: string) => ["effective", agentId] as const,
 };
 
+/** (P4-011B-4, C-829) The live approval-timeout bounds and parking facts; any signed-in user. */
+export function useApprovalLimits() {
+  return useQuery({
+    queryKey: ["policy", "approval-limits"] as const,
+    queryFn: () => unwrap(api.GET("/v1/policy/approval-limits")),
+    staleTime: 60_000,
+    retry: false,
+  });
+}
+
 export function usePolicy(scope: PolicyScope, enabled = true) {
   return useQuery({
     queryKey: policyKeys.doc(scope),
@@ -40,6 +50,22 @@ export function usePolicy(scope: PolicyScope, enabled = true) {
       scope.kind === "workspace"
         ? unwrap(api.GET("/v1/workspaces/{ws}/policy", { params: { path: { ws: scope.id } } }))
         : unwrap(api.GET("/v1/orgs/{org}/policy", { params: { path: { org: scope.id } } })),
+    retry: false,
+  });
+}
+
+export type PublishedInternetAccess = S["PublishedInternetAccess"];
+
+/**
+ * (FIX-164, C-1020, D-365) The workspace's **published** Internet access (defaults and rules, nothing else), readable by
+ * any member of the workspace. The summary sentences and a member's read-only page read it; owners edit the full
+ * document (`usePolicy`).
+ */
+export function useInternetAccess(wsId: string | undefined, enabled = true) {
+  return useQuery({
+    queryKey: ["policy", "workspace", wsId ?? "", "internet-access"] as const,
+    enabled: enabled && !!wsId,
+    queryFn: () => unwrap(api.GET("/v1/workspaces/{ws}/internet-access", { params: { path: { ws: wsId! } } })),
     retry: false,
   });
 }

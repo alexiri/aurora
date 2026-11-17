@@ -3,6 +3,7 @@
 import { useParams } from "next/navigation";
 import type { ReactNode } from "react";
 
+import { OrgSignInGaps } from "@/components/admin/sign-in-gaps";
 import { AvailabilityView } from "@/components/apps/availability-view";
 import { InstancesView } from "@/components/apps/instances-view";
 import { OAuthClientsPanel } from "@/components/apps/oauth-clients-panel";
@@ -85,7 +86,11 @@ export function OrgAppsPage() {
               label: "Apps",
               content: (
                 <EmbeddedPage headed>
-                  <AvailabilityView orgId={org.id} orgSlug={slug} canEdit />
+                  <div className="space-y-6">
+                    {/* (C-924) Above the tab's content, not inside the list. */}
+                    <OrgSignInGaps orgId={org.id} orgSlug={slug} />
+                    <AvailabilityView orgId={org.id} orgSlug={slug} canEdit />
+                  </div>
                 </EmbeddedPage>
               ),
             },

@@ -1,3 +1,4 @@
+import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Page } from "@playwright/test";
 
 import { id, mockApi, org, ws } from "./support/mock-api";
@@ -143,6 +144,42 @@ test.describe("Internet access (mocked API)", () => {
     await expect(row).toContainText("Turned off");
     await expect(row.getByRole("link", { name: "Open" })).toHaveAttribute("href", "/o/acme/w/main/internet-access");
   });
+
+  // FIX-164 (D-365): a member of the workspace reads its published rules, read-only, from the member route.
+  for (const scheme of ["light", "dark"] as const) {
+    for (const width of [1280, 390]) {
+      test(`a workspace member reads the summary and the published rules with no controls, ${scheme} theme, ${width} px`, async ({ page }) => {
+        await page.setViewportSize({ width, height: width === 1280 ? 900 : 844 });
+        await mockApi(page);
+        const requested: string[] = [];
+        await page.route("**/v1/**", async (route) => {
+          const p = new URL(route.request().url()).pathname;
+          requested.push(p);
+          const json = (b: unknown) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(b) });
+          if (p === `/v1/workspaces/${ws.id}`) return json({ ...ws, my_role: "member", contacts: { owners: [{ name: "Bob Builder" }] } });
+          if (p === `/v1/workspaces/${ws.id}/internet-access`) {
+            const g = policyOf([{ name: "No evil", action: "block", targets: [{ type: "network", host: "evil.example.com" }] }], "published", null);
+            return json({ number: 2, default_action: g.default_action, uncredentialed_default: g.uncredentialed_default, uncredentialed_allowlist: [], open_lane_posture: "enabled", rules: g.rules });
+          }
+          if (p === `/v1/workspaces/${ws.id}/policy`) return route.fulfill({ status: 403, contentType: "application/json", body: JSON.stringify({ error: { code: "forbidden", message: "no" } }) });
+          return route.fallback();
+        });
+        await open(page, "/o/acme/w/main/internet-access", scheme);
+        await expect(page.getByTestId("internet-summary")).toHaveText("Agents here can reach any website, except where a rule blocks it. Nothing asks you first.");
+        const rules = page.getByRole("list", { name: "Rules people wrote" });
+        await expect(rules).toContainText("No evil");
+        await expect(rules).toContainText("evil.example.com");
+        await expect(page.getByText("Only workspace owners can change this. Ask Bob Builder.")).toBeVisible();
+        for (const name of [/Block a website/, /Ask before changes on a website/, /Add rule/, /Tighten/]) {
+          await expect(page.getByRole("button", { name })).toHaveCount(0);
+        }
+        expect(requested.filter((p) => p.endsWith("/policy") || p.endsWith("/policy/warnings") || p.endsWith("/policy/generations"))).toEqual([]);
+        expect(await overflow(page), "scrolls sideways").toBeLessThanOrEqual(0);
+        const { violations } = await new AxeBuilder({ page }).analyze();
+        expect(violations.filter((v) => v.impact === "serious" || v.impact === "critical").map((v) => v.id)).toEqual([]);
+      });
+    }
+  }
 
   for (const scheme of ["light", "dark"] as const) {
     test(`the three pages fit at 390 px, ${scheme} theme`, async ({ page }) => {

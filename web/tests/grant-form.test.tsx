@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render as rtlRender, screen, waitFor, within } from "@testing-library/react";
+import type { ReactElement } from "react";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { useState } from "react";
@@ -11,6 +12,12 @@ import { ScopeGroups } from "@/components/grants/scope-groups";
 import { initialGrantValue, splitByScopes, type GrantValue, type Tool } from "@/lib/grant-editor";
 
 afterEach(cleanup);
+
+/** The grant form reads the live approval limits (P4-011B-4), so every render has a query client. */
+function render(ui: ReactElement) {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return rtlRender(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
+}
 
 const tool = (id: string, name: string, group: "read" | "write", over: Partial<Tool> = {}): Tool => ({
   id, name, group, host: "indico.example.org", path: `/${id}`, methods: group === "read" ? ["GET"] : ["POST"], connect_methods: [], scopes: [], wildcard: false, ...over,

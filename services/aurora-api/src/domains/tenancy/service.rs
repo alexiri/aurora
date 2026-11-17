@@ -179,7 +179,52 @@ pub async fn create_workspace_in_tx(
     timezone: Option<&str>,
     memory_language: Option<&str>,
 ) -> Result<(WorkspaceRow, AgentRow), ApiError> {
+    create_workspace_named_in_tx(
+        tx,
+        cfg,
+        org_id,
+        creator,
+        name,
+        slug.map_or(SlugFrom::Name, SlugFrom::Explicit),
+        timezone,
+        memory_language,
+    )
+    .await
+}
+
+/// Where a new workspace's slug comes from.
+#[derive(Clone, Copy)]
+pub enum SlugFrom<'a> {
+    /// Derived from the workspace name (the default).
+    Name,
+    /// Exactly this slug (validated, must be free).
+    Explicit(&'a str),
+    /// Derived from this text, not from the name (a personal workspace: the name is the
+    /// person's, the slug comes from the placement template, C-923, D-162).
+    Text(&'a str),
+}
+
+/// [`create_workspace_in_tx`] with the slug's source chosen (C-923).
+#[allow(clippy::too_many_arguments)]
+pub async fn create_workspace_named_in_tx(
+    tx: &mut PgConnection,
+    cfg: &ApiConfig,
+    org_id: Uuid,
+    creator: Uuid,
+    name: &str,
+    slug_from: SlugFrom<'_>,
+    timezone: Option<&str>,
+    memory_language: Option<&str>,
+) -> Result<(WorkspaceRow, AgentRow), ApiError> {
     let name = validate_name("/name", name)?;
+    let slug = match slug_from {
+        SlugFrom::Explicit(s) => Some(s),
+        _ => None,
+    };
+    let slug_text = match slug_from {
+        SlugFrom::Text(t) => t.to_owned(),
+        _ => name.clone(),
+    };
     let timezone = validate_timezone(timezone.unwrap_or(&cfg.hosted.default_timezone))?;
     let language = validate_language(&mut *tx, memory_language.unwrap_or("english")).await?;
     let slug = match slug {
@@ -191,7 +236,7 @@ pub async fn create_workspace_in_tx(
             s.to_owned()
         }
         None => {
-            let base = derive_slug_base(&name, "workspace");
+            let base = derive_slug_base(&slug_text, "workspace");
             let mut candidate = base.clone();
             let mut n = 2;
             while workspaces::slug_exists(&mut *tx, org_id, &candidate).await? {

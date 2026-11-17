@@ -41,9 +41,89 @@ pub struct ApprovalDecider {
     pub display_name: String,
 }
 
+/// (P5-UX-16, C-982) The sentence an approval reads as: "<agent> wants to <action> in <app>".
+#[derive(Serialize, ToSchema)]
+pub struct ApprovalSentence {
+    pub agent: SentenceAgent,
+    /// The app's approval title when the package provides one, else the tool's name, else
+    /// "send a <METHOD> request to <host>". Completes "<agent> wants to …".
+    pub action: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub app: Option<SentenceApp>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub account: Option<SentenceAccount>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct SentenceAgent {
+    pub id: Uuid,
+    pub name: String,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct SentenceApp {
+    pub app_id: String,
+    pub name: String,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct AccountRefDto {
+    /// `connection`
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub id: Uuid,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct SentenceAccount {
+    #[serde(rename = "ref")]
+    pub reference: AccountRefDto,
+    pub name: String,
+}
+
+/// (P5-UX-16, C-982) What asked the question: the agent's access, or a rule.
+#[derive(Serialize, ToSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum AskedBy {
+    Access {
+        agent_id: Uuid,
+        connection_id: Uuid,
+        tool_id: Option<String>,
+    },
+    Rule {
+        rule_id: Uuid,
+        rule_name: String,
+        /// `workspace` | `organization`
+        scope: String,
+    },
+}
+
+/// (C-982) Only on the answer of an Always allow.
+#[derive(Serialize, ToSchema)]
+pub struct AlwaysApplied {
+    pub tool: AlwaysTool,
+    /// Other pending approvals of the same agent, account and tool that went ahead too.
+    pub also_approved: u32,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct AlwaysTool {
+    pub id: String,
+    pub name: String,
+}
+
 #[derive(Serialize, ToSchema)]
 pub struct Approval {
     pub id: Uuid,
+    /// (P5-UX-16, C-982)
+    pub sentence: ApprovalSentence,
+    /// `None` when no rule asked (nothing to name).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub asked_by: Option<AskedBy>,
+    /// Whether the caller may choose Always allow for this question (SEC-131).
+    pub can_always_allow: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub always_applied: Option<AlwaysApplied>,
     pub org_id: Uuid,
     pub workspace_id: Uuid,
     pub agent: Option<ApprovalAgent>,
@@ -112,7 +192,28 @@ impl From<ApprovalRow> for Approval {
             group: None,
             source: "generic".to_owned(),
         });
+        let action = if summary.source == "generic" {
+            format!("send a {} request to {}", r.method, r.host)
+        } else {
+            summary.title.clone()
+        };
+        let sentence = ApprovalSentence {
+            agent: SentenceAgent {
+                id: r.agent_id,
+                name: r
+                    .agent_name
+                    .clone()
+                    .unwrap_or_else(|| "A removed agent".to_owned()),
+            },
+            action,
+            app: None,
+            account: None,
+        };
         Self {
+            sentence,
+            asked_by: None,
+            can_always_allow: false,
+            always_applied: None,
             id: r.id,
             org_id: r.org_id,
             workspace_id: r.workspace_id,
@@ -192,6 +293,10 @@ pub enum Decision {
 #[derive(Deserialize, ToSchema)]
 pub struct DecisionBody {
     pub decision: Decision,
+    /// (C-982, SEC-131) With `approve`: also stop asking for this kind of change. Needs
+    /// `can_own` of the agent's workspace; only for a question the agent's access asked.
+    #[serde(default)]
+    pub always: Option<bool>,
 }
 
 #[derive(Deserialize, ToSchema)]

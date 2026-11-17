@@ -138,7 +138,10 @@ pub async fn unseen(
     let gateway = format!(
         "SELECT a.id, 'gateway'::text AS kind, a.org_id, a.workspace_id, a.agent_id, \
             a.conversation_id, a.batch_id, \
-            COALESCE(NULLIF(a.summary->>'title', ''), a.method || ' ' || a.host) AS title, \
+            CASE WHEN COALESCE(a.summary->>'source', 'generic') = 'generic' \
+                 THEN 'send a ' || a.method || ' request to ' || a.host \
+                 ELSE COALESCE(NULLIF(a.summary->>'title', ''), 'send a ' || a.method || ' request to ' || a.host) \
+            END AS title, \
             a.rule_name, a.deadline AS expires_at, a.created_at, \
             COALESCE(ag.name, 'An agent') AS agent_name, w.name AS workspace_name, \
             w.slug AS workspace_slug, o.name AS org_name, o.slug AS org_slug \
@@ -297,7 +300,10 @@ pub async fn unseen_reminders(
     Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT a.id, 'gateway'::text AS kind, a.org_id, a.workspace_id, a.agent_id, \
             a.conversation_id, a.batch_id, \
-            COALESCE(NULLIF(a.summary->>'title', ''), a.method || ' ' || a.host) AS title, \
+            CASE WHEN COALESCE(a.summary->>'source', 'generic') = 'generic' \
+                 THEN 'send a ' || a.method || ' request to ' || a.host \
+                 ELSE COALESCE(NULLIF(a.summary->>'title', ''), 'send a ' || a.method || ' request to ' || a.host) \
+            END AS title, \
             a.rule_name, a.deadline AS expires_at, \
             COALESCE(ag.name, 'An agent') AS agent_name, w.name AS workspace_name, \
             w.slug AS workspace_slug, o.name AS org_name, o.slug AS org_slug \

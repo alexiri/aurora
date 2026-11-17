@@ -44,7 +44,7 @@
   expect:
     app: linear
     tool: graphql_mutation
-    summary: { title: "Make a change in Linear", fields: { Operation: IssueCreate, Fields: issueCreate } }
+    summary: { title: "make a change", fields: { Operation: IssueCreate, Fields: issueCreate } }
 - name: "graphql_mutation: updating an issue"
   connection: { credentials: { access_token: "tok-fixture-1" } }
   request:
@@ -54,7 +54,7 @@
     body: '{"query":"mutation IssueUpdate($id: String!) { issueUpdate(id: $id, input: {stateId: \"state-fixture\"}) { success } }","operationName":"IssueUpdate","variables":{"id":"issue-fixture"}}'
   expect:
     tool: graphql_mutation
-    summary: { title: "Make a change in Linear", fields: { Operation: IssueUpdate, Fields: issueUpdate } }
+    summary: { title: "make a change", fields: { Operation: IssueUpdate, Fields: issueUpdate } }
 - name: "graphql_mutation: commenting on an issue"
   connection: { credentials: { access_token: "tok-fixture-1" } }
   request:
@@ -64,7 +64,7 @@
     body: '{"query":"mutation CommentCreate { commentCreate(input: {issueId: \"issue-fixture\", body: \"Looks good\"}) { success } }","operationName":"CommentCreate"}'
   expect:
     tool: graphql_mutation
-    summary: { title: "Make a change in Linear", fields: { Operation: CommentCreate, Fields: commentCreate } }
+    summary: { title: "make a change", fields: { Operation: CommentCreate, Fields: commentCreate } }
 - name: "negative graphql_mutation: a query does not select the write tool"
   connection: { credentials: { access_token: "tok-fixture-1" } }
   request:

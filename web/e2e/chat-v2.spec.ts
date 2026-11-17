@@ -56,7 +56,9 @@ const states: { name: string; fx: Fixture; query: (narrow: boolean) => string; p
         }),
       );
       await expect(page.getByRole("status").filter({ hasText: "Waiting for approval" })).toBeVisible();
-      await expect(page.getByText("Held", { exact: true })).toBeVisible();
+      // (P5-UX-16) The held request is the question card: the sentence and its three answers.
+      await expect(page.getByText("merge a pull request").first()).toBeVisible();
+      await expect(page.getByRole("button", { name: "Allow once" }).first()).toBeVisible();
     },
   },
   {

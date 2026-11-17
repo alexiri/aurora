@@ -1,6 +1,8 @@
 "use client";
 
 import { Badge } from "@/components/ui/badge";
+import { useApprovalLimits } from "@/lib/api/policy";
+import { effectiveMax, limitsHint } from "@/lib/approval-limits";
 import { Field, inputClass } from "@/components/ui/field";
 import { Notice } from "@/components/ui/notice";
 import { Segmented } from "@/components/ui/segmented";
@@ -68,7 +70,9 @@ export function GrantForm({
 }) {
   const effectiveMode: Mode = customOnly ? "custom" : value.mode;
   const anyAsk = counts(value.decisions).ask > 0;
-  const timeoutHint = anyAsk ? timeoutProblem(value.timeout) : undefined;
+  // (P4-011B-4, C-829) The bound and the hint come from the live limits; until they load the fixed bounds apply.
+  const limits = useApprovalLimits().data;
+  const timeoutHint = anyAsk ? timeoutProblem(value.timeout, effectiveMax(limits) ?? ASK_TIMEOUT_MAX) : undefined;
   const problem = grantValueProblem(value, customOnly);
 
   const setDecision = (id: string, d: Decision) => onChange({ ...value, decisions: { ...value.decisions, [id]: d } });
@@ -166,7 +170,7 @@ export function GrantForm({
             <Field
               id={`${idPrefix}-timeout`}
               label="Approval timeout (seconds)"
-              hint={`Empty = the instance default (5 min). From ${ASK_TIMEOUT_MIN} to ${ASK_TIMEOUT_MAX} s, at most the instance maximum (1 h unless raised).`}
+              hint={limitsHint(limits, ASK_TIMEOUT_MIN)}
               error={errors.timeout ?? timeoutHint}
             >
               <input

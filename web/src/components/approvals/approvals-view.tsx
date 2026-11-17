@@ -1,9 +1,9 @@
 "use client";
 
+import { useParams, useSearchParams } from "next/navigation";
 import { useState } from "react";
 
 import { fmtDate } from "@/components/account/key-table";
-import { Avatar } from "@/components/agent-avatar";
 import { EmptyState, ErrorState, Loading } from "@/components/states";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -14,7 +14,6 @@ import { PageHeader } from "@/components/ui/page-header";
 import { StatusDot } from "@/components/ui/status-dot";
 import { Tabs, tabId, tabPanelId } from "@/components/ui/tabs";
 import {
-  countdown,
   isAlreadyDecided,
   useApprovalHistory,
   useApprovalsStream,
@@ -33,8 +32,11 @@ import {
   type ActionApproval,
 } from "@/lib/api/action-approvals";
 import { errorMessage } from "@/lib/api/errors";
+import { cn } from "@/lib/utils";
 
+import { AlwaysAllowedNote, ApprovalQuestion } from "./approval-question";
 import { OwnSendApprovals } from "./own-send-approvals";
+import { ParkedChip, ResumeBadge } from "./parked";
 
 /** Summary text is untrusted data: React text nodes only, never HTML. */
 export function ApprovalCard({
@@ -43,59 +45,31 @@ export function ApprovalCard({
   onDecide,
   pending,
   message,
+  focused = false,
 }: {
   approval: Approval;
   now: number;
-  onDecide: (d: Decision) => void;
+  onDecide: (d: Decision, always?: boolean) => void;
   pending: boolean;
   message?: string;
+  /** `?focus=<id>` (a notification's link): scrolled into view and outlined. */
+  focused?: boolean;
 }) {
+  const params = useParams<{ org?: string; ws?: string }>();
+  // A parked approval repeats its sentence before it is decided (inside the card): the agent is told, not resumed in place.
   return (
-    <li className="space-y-3 rounded-card border border-line bg-surface p-4 text-ink shadow-card sm:p-5">
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
-        {a.agent ? <Avatar name={a.agent.name} tintKey={a.agent.id} size={24} /> : null}
-        <span className="font-semibold">{a.agent ? a.agent.name : "Unknown agent"}</span>
-        {a.agent ? <span className="font-mono text-muted">@{a.agent.handle}</span> : null}
-        <span className="ml-auto font-medium tabular-nums text-pending-ink">Expires in {countdown(a.deadline, now)}</span>
-      </div>
-      <p className="font-display text-base font-semibold">{a.summary.title}</p>
-      {a.summary.text ? <p className="whitespace-pre-wrap text-sm text-ink-2">{a.summary.text}</p> : null}
-      <p className="flex min-w-0 flex-wrap items-center gap-2 rounded-control bg-canvas px-3 py-2 font-mono text-xs text-ink-2">
-        <span className="rounded bg-subtle px-1.5 py-0.5 font-semibold text-ink">{a.method}</span>
-        <span className="min-w-0 break-all">
-          {a.host}
-          {a.path}
-        </span>
-      </p>
-      {a.summary.fields.length > 0 ? (
-        <dl className="grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1 text-sm">
-          {a.summary.fields.map((f, i) => (
-            <div key={i} className="contents">
-              <dt className="text-muted">{f.label}</dt>
-              <dd className="break-words">{f.value}</dd>
-            </div>
-          ))}
-        </dl>
-      ) : null}
-      {a.rule_name ? <p className="text-xs text-muted">Rule: {a.rule_name}</p> : null}
-      {a.context_label ? (
-        <p className="text-xs text-muted" data-testid="context-label">
-          Run: {a.context_label}
-        </p>
-      ) : null}
-      {message ? (
-        <p role="alert" className="rounded-control border border-pending-line bg-pending-panel p-3 text-sm text-pending-ink">
-          {message}
-        </p>
-      ) : null}
-      <div className="flex flex-wrap justify-end gap-2">
-        <Button size="lg" variant="outline" disabled={pending} onClick={() => onDecide("deny")}>
-          Block
-        </Button>
-        <Button size="lg" variant="approve" disabled={pending} onClick={() => onDecide("approve")}>
-          Allow once
-        </Button>
-      </div>
+    <li className={cn("rounded-card border border-pending-line bg-surface p-4 shadow-card sm:p-5", focused && "ring-2 ring-accent")}>
+      <ApprovalQuestion
+        approval={a}
+        now={now}
+        onDecide={onDecide}
+        pending={pending}
+        message={message}
+        focused={focused}
+        canApprove
+        org={params?.org ?? ""}
+        ws={params?.ws ?? ""}
+      />
     </li>
   );
 }
@@ -137,12 +111,20 @@ function PendingTab({ wsId }: { wsId: string }) {
   const batch = useDecideBatch(wsId);
   const [messages, setMessages] = useState<Record<string, string>>({});
   const [batchError, setBatchError] = useState<string | null>(null);
+  // A notification's link (in-tab or push) opens `…/approvals?focus=<id>`.
+  const focus = useSearchParams()?.get("focus") ?? null;
 
-  function onDecide(id: string, decision: Decision) {
+  const params = useParams<{ org?: string; ws?: string }>();
+  // What Always allow just did (C-982): "Daneel will no longer ask before …", kept until the next answer.
+  const [always, setAlways] = useState<{ approval: Approval; also: number } | null>(null);
+
+  function onDecide(a: Approval, decision: Decision, wantsAlways = false) {
+    const id = a.id;
     setMessages((m) => ({ ...m, [id]: "" }));
     decide.mutate(
-      { id, decision },
+      { id, decision, always: wantsAlways },
       {
+        onSuccess: (done) => setAlways(wantsAlways && done.always_applied ? { approval: a, also: done.always_applied.also_approved } : null),
         onError: (err) =>
           setMessages((m) => ({
             ...m,
@@ -154,7 +136,9 @@ function PendingTab({ wsId }: { wsId: string }) {
 
   if (q.isPending) return <Loading />;
   if (q.isError) return <ErrorState error={q.error} onRetry={() => q.refetch()} />;
-  const groups = groupApprovals(q.data.items);
+  // `?focus=<id>` puts that question first (C-983).
+  const items = focus ? [...q.data.items].sort((x, y) => Number(y.id === focus) - Number(x.id === focus)) : q.data.items;
+  const groups = groupApprovals(items);
   return (
     <div className="space-y-4">
       <p role="status">
@@ -165,11 +149,25 @@ function PendingTab({ wsId }: { wsId: string }) {
           {batchError}
         </p>
       ) : null}
+      {always ? (
+        <section aria-label="Answered just now" className="rounded-card border border-dashed border-line-strong p-4">
+          <p className="mb-1 text-sm text-ink">
+            You chose <strong>Always allow</strong> for {always.approval.sentence.agent.name}.
+          </p>
+          <AlwaysAllowedNote
+            agentName={always.approval.sentence.agent.name}
+            agentHandle={always.approval.agent?.handle}
+            action={always.approval.sentence.action}
+            appName={always.approval.sentence.app?.name}
+            alsoApproved={always.also}
+            org={params?.org ?? ""}
+            ws={params?.ws ?? ""}
+          />
+        </section>
+      ) : null}
       {q.data.truncated ? <MoreNotShown what="pending approvals" narrow="Decide the ones shown; the rest appear as these are decided." /> : null}
       {groups.length === 0 ? (
-        <EmptyState title="No pending approvals" when="Look here when a number appears next to Approvals in the menu.">
-          Nothing is waiting for you. When an agent wants to do something risky, it asks here first.
-        </EmptyState>
+        <EmptyState title="Nothing is waiting for you.">Agents ask here when their access is Ask before changes, or when a rule says so.</EmptyState>
       ) : null}
       {groups.map((g) => (
         <section key={g.key} aria-label={g.label ?? undefined} className="space-y-2">
@@ -203,7 +201,8 @@ function PendingTab({ wsId }: { wsId: string }) {
                 now={now}
                 pending={decide.isPending && decide.variables?.id === a.id}
                 message={messages[a.id]}
-                onDecide={(d) => onDecide(a.id, d)}
+                focused={focus === a.id}
+                onDecide={(d, al) => onDecide(a, d, al === true)}
               />
             ))}
           </ul>
@@ -364,7 +363,7 @@ function HistoryTab({ wsId }: { wsId: string }) {
       </label>
       {q.isPending ? <Loading /> : null}
       {q.isError ? <ErrorState error={q.error} onRetry={() => q.refetch()} /> : null}
-      {q.data && items.length === 0 ? <EmptyState title="No approvals yet" /> : null}
+      {q.data && items.length === 0 ? <EmptyState title="No questions have been answered yet." /> : null}
       {items.length > 0 ? (
         <DataTable caption="Approval history">
           <thead>
@@ -386,9 +385,18 @@ function HistoryTab({ wsId }: { wsId: string }) {
                   {a.method} {a.host}
                   {a.path}
                 </Td>
-                <Td>{a.summary.title}</Td>
+                <Td>
+                  {a.sentence.agent.name} wants to {a.sentence.action}
+                  {a.sentence.app ? ` in ${a.sentence.app.name}` : ""}
+                </Td>
                 <Td>
                   <Badge tone={a.status === "approved" ? "accent" : a.status === "denied" ? "danger" : "neutral"}>{a.status}</Badge>
+                  {a.parked ? (
+                    <span className="mt-1 flex flex-wrap items-center gap-1">
+                      <ParkedChip />
+                      <ResumeBadge approval={a} />
+                    </span>
+                  ) : null}
                 </Td>
                 <Td>{a.decided_by?.display_name ?? "—"}</Td>
               </tr>
@@ -412,7 +420,7 @@ export function ApprovalsView({ wsId }: { wsId: string }) {
       <PageHeader title="Approvals" description="Requests that wait for a person to allow them once or block them." />
       <Tabs
         items={[
-          { value: "pending", label: "Pending" },
+          { value: "pending", label: "Waiting" },
           { value: "history", label: "History" },
         ]}
         value={tab}

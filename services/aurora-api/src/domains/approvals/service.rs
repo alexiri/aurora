@@ -1,11 +1,13 @@
 use super::bus::BusMsg;
-use super::dto::{Approval, Decision};
+use super::dto::{AlwaysApplied, AlwaysTool, Approval, Decision};
 use crate::app::AppState;
 use crate::audit::{self, AuditActor, AuditEvent, Outcome};
+use crate::domains::grants::levels::{self, Level};
 use crate::http::auth::{Caller, Principal};
 use aurora_core::{ApiError, FieldError};
 use aurora_db::authz;
-use aurora_db::repo::approvals::{self, ApprovalRow};
+use aurora_db::repo::approvals::{self, ApprovalRow, RuleOrigin};
+use aurora_db::repo::connections;
 use std::time::Duration;
 use tokio::time::Instant;
 use uuid::Uuid;
@@ -59,9 +61,6 @@ fn decision_event(c: &Caller, row: &ApprovalRow, decision: Decision, batch: bool
     }))
 }
 
-/// Seam for M4/M6: append `approval.decided` transcript events and update channel cards.
-fn after_decision(_s: &AppState, _row: &ApprovalRow) {}
-
 fn already_decided() -> ApiError {
     ApiError::conflict(
         "already_decided",
@@ -69,12 +68,114 @@ fn already_decided() -> ApiError {
     )
 }
 
+/// (C-982) `422 always_not_available`: Always allow was asked for where SEC-131 does not allow it.
+fn always_not_available(why: &str) -> ApiError {
+    ApiError::unprocessable("always_not_available", why)
+}
+
+/// (C-982, SEC-131) The Always allow part of a decision, in the deciding transaction: checks that
+/// the question was asked by the agent's access, that the caller owns the workspace, and that an
+/// organization's account allows changes without asking; then moves exactly the asked tool from
+/// asked to allowed in the agent's grant and approves the other pending approvals of the same
+/// agent, account and tool. Nothing is written when a check fails.
+async fn apply_always(
+    s: &AppState,
+    c: &Caller,
+    tx: &mut audit::Tx,
+    row: &ApprovalRow,
+) -> Result<(AlwaysApplied, Vec<ApprovalRow>, Vec<AuditEvent>), ApiError> {
+    if !matches!(c.principal, Principal::Session { .. }) {
+        return Err(always_not_available(
+            "Always allow can only be chosen in the dashboard.",
+        ));
+    }
+    if !authz::can_own(&mut **tx, c.user_id, row.workspace_id).await? {
+        return Err(always_not_available(
+            "Only a workspace owner can choose Always allow.",
+        ));
+    }
+    let (Some(logical), Some(connection_id), Some(tool_id)) = (
+        row.rule_logical_id,
+        row.connection_id,
+        row.tool_id.as_deref(),
+    ) else {
+        return Err(always_not_available(
+            "This question is not about one change of one account.",
+        ));
+    };
+    let Some(RuleOrigin::Access {
+        agent_id,
+        connection_id: grant_conn,
+        ..
+    }) = approvals::rule_origin(tx, logical).await?
+    else {
+        return Err(always_not_available(
+            "A rule asked this question, not the agent's access.",
+        ));
+    };
+    if agent_id != row.agent_id || grant_conn != connection_id {
+        return Err(always_not_available(
+            "A rule asked this question, not the agent's access.",
+        ));
+    }
+    let conn = connections::get(&mut **tx, connection_id)
+        .await?
+        .ok_or_else(|| always_not_available("The account is gone."))?;
+    if conn.workspace_id.is_none() && levels::limit_from_access(&conn.access) != Level::Act {
+        return Err(always_not_available(
+            "This account's limit does not allow changes without asking.",
+        ));
+    }
+    let written = crate::domains::grants::service::always_allow_tool_in_tx(
+        tx,
+        s,
+        c,
+        agent_id,
+        connection_id,
+        tool_id,
+        row.id,
+    )
+    .await?
+    .ok_or_else(|| always_not_available("The agent's access no longer asks about this change."))?;
+    let name = {
+        let snap = crate::domains::plugins::registry::active_typed_on(tx).await?;
+        snap.as_ref()
+            .and_then(|sn| sn.app(&conn.app_id))
+            .map(crate::domains::apps::service::tools)
+            .and_then(|ts| ts.into_iter().find(|t| t.id == tool_id))
+            .map_or_else(|| tool_id.to_owned(), |t| t.name)
+    };
+    let others = approvals::approve_same_kind(
+        tx,
+        row.id,
+        agent_id,
+        connection_id,
+        tool_id,
+        c.user_id,
+        via(c),
+        s.ops().approvals.park.resume_window_secs,
+    )
+    .await?;
+    let applied = AlwaysApplied {
+        tool: AlwaysTool {
+            id: tool_id.to_owned(),
+            name,
+        },
+        also_approved: u32::try_from(others.len()).unwrap_or(u32::MAX),
+    };
+    Ok((applied, others, written.event.into_iter().collect()))
+}
+
 pub async fn decide(
     s: &AppState,
     c: &Caller,
     id: Uuid,
     decision: Decision,
+    always: bool,
 ) -> Result<Approval, ApiError> {
+    if always && decision != Decision::Approve {
+        return Err(always_not_available("Always allow goes with approving."));
+    }
     let existing = approvals::get(&s.pool, id)
         .await?
         .ok_or_else(|| ApiError::not_found("Approval not found."))?;
@@ -125,12 +226,50 @@ pub async fn decide(
         decision == Decision::Approve,
     )
     .await?;
+    // (C-982, SEC-131) Always allow: the access change, the other pending approvals of the same
+    // kind and their audit rows commit with this decision, or none of it happens.
+    let mut applied = None;
+    let mut extra_events: Vec<AuditEvent> = Vec::new();
+    if always {
+        let (a, others, events) = apply_always(s, c, &mut tx, &row).await?;
+        super::resume::after_decide(&mut tx, s, &others, true).await?;
+        for o in &others {
+            extra_events.push(decision_event(c, o, Decision::Approve, false));
+            super::transcript::write(s, &mut tx, o, super::transcript::Kind::Pending, None).await?;
+            super::transcript::write(s, &mut tx, o, super::transcript::Kind::Decided, None).await?;
+        }
+        extra_events.extend(events);
+        applied = Some(a);
+    }
     // A frozen agent or a gone conversation turned the grant `revoked`: answer what is stored.
     let row = approvals::get(&mut *tx, id).await?.unwrap_or(row);
+    // (C-983) The answer appears in the conversation where the agent paused.
+    super::transcript::write(s, &mut tx, &row, super::transcript::Kind::Pending, None).await?;
+    super::transcript::write(
+        s,
+        &mut tx,
+        &row,
+        super::transcript::Kind::Decided,
+        applied.as_ref(),
+    )
+    .await?;
     // RFE-008: the decision commits with its audit row, or does not happen.
-    audit::commit_critical(tx, &decision_event(c, &row, decision, false)).await?;
-    after_decision(s, &row);
-    Ok(Approval::from(row).with_resume())
+    let mut events = vec![decision_event(c, &row, decision, false)];
+    events.extend(extra_events);
+    audit::commit_critical_many(tx, &events).await?;
+    let mut out = Approval::from(row).with_resume();
+    out.always_applied = applied;
+    super::enrich::enrich(
+        s,
+        is_session(c).then_some(c.user_id),
+        std::slice::from_mut(&mut out),
+    )
+    .await;
+    Ok(out)
+}
+
+fn is_session(c: &Caller) -> bool {
+    matches!(c.principal, Principal::Session { .. })
 }
 
 pub async fn decide_batch(
@@ -177,6 +316,11 @@ pub async fn decide_batch(
         }
     }
     super::resume::after_decide(&mut tx, s, &decided_rows, decision == Decision::Approve).await?;
+    // (C-983) Each decided row appears in its conversation.
+    for r in &decided_rows {
+        super::transcript::write(s, &mut tx, r, super::transcript::Kind::Pending, None).await?;
+        super::transcript::write(s, &mut tx, r, super::transcript::Kind::Decided, None).await?;
+    }
     // RFE-008: every decided row commits with its audit row (all or nothing).
     let events: Vec<AuditEvent> = rows
         .iter()

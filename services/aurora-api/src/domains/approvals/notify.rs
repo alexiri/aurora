@@ -140,10 +140,21 @@ pub fn dashboard_link(external_url: &str, u: &repo::Unseen) -> String {
     )
 }
 
+/// (P5-UX-16, C-983) The sentence of a gateway approval, "<Agent> wants to <action>"; an action
+/// approval keeps its one-line summary.
+fn what(u: &repo::Unseen, agent: &str) -> String {
+    let title = clean(&u.title);
+    if u.kind == "gateway" {
+        clean(&format!("{agent} wants to {title}"))
+    } else {
+        title
+    }
+}
+
 /// Platform-voice mail for one approval (plus `more` further approvals of its batch).
 pub fn approval_mail(external_url: &str, to: &str, u: &repo::Unseen, more: usize) -> Mail {
-    let title = clean(&u.title);
     let agent = clean(&u.agent_name);
+    let title = what(u, &agent);
     let workspace = clean(&u.workspace_name);
     let mut intro = format!(
         "{agent} in the workspace \"{workspace}\" is waiting for an approval.\n\nWhat: {title}"
@@ -260,8 +271,8 @@ pub async fn notify_once(s: &AppState) -> Result<usize, ApiError> {
 /// (P4-011B-2) The half-time reminder of a parked approval: same content rules as
 /// [`approval_mail`] plus the fact that the agent has stopped waiting.
 pub fn reminder_mail(external_url: &str, to: &str, u: &repo::Unseen) -> Mail {
-    let title = clean(&u.title);
     let agent = clean(&u.agent_name);
+    let title = what(u, &agent);
     let workspace = clean(&u.workspace_name);
     Mail::new(
         to,

@@ -19,6 +19,8 @@ const EXPECTED_CSP =
   "style-src 'self' 'nonce-[A-Za-z0-9+/=]+'; " +
   "style-src-attr 'unsafe-inline'; " +
   "connect-src 'self'; " +
+  // (P4-011B-4, C-835, SEC-102) The push service worker and the manifest: 'self' only; nothing else changed.
+  "worker-src 'self'; manifest-src 'self'; " +
   "object-src 'none'; " +
   "base-uri 'self'; " +
   "form-action 'self'; " +

@@ -4,18 +4,18 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 
 import { Avatar } from "@/components/agent-avatar";
+import { AgentSummary } from "@/components/agents/agent-summary";
 import { CreateAgentDialog } from "@/components/agents/create-agent-dialog";
 import { decisionTone } from "@/components/approvals/activity-view";
 import { ErrorState, Loading } from "@/components/states";
 import { Badge } from "@/components/ui/badge";
-import { buttonVariants } from "@/components/ui/button";
 import { GettingStarted } from "@/components/onboarding/getting-started";
+import { NeedsYou } from "@/components/overview/needs-you";
 import { PageHeader } from "@/components/ui/page-header";
 import { Section } from "@/components/ui/section";
 import { StatusDot } from "@/components/ui/status-dot";
-import { countdown, useActivity, useApprovalsStream, useCanApprove, useNow, usePendingApprovals } from "@/lib/api/approvals";
+import { useActivity, useApprovalsStream, useCanApprove, useNow } from "@/lib/api/approvals";
 import { useAgents, useResolve, useWorkspace } from "@/lib/api/queries";
-import { cn } from "@/lib/utils";
 
 function ago(iso: string, now: number): string {
   const s = Math.max(0, Math.floor((now - new Date(iso).getTime()) / 1000));
@@ -68,13 +68,9 @@ function OverviewBody({
   const agents = useAgents(wsId);
   const workspace = useWorkspace(wsId);
   const canApprove = useCanApprove(wsId);
-  const pending = usePendingApprovals(wsId, canApprove);
   const activity = useActivity(wsId, { agent: "", decision: "", host: "" });
   const now = useNow(30_000);
-  const clock = useNow(1000);
   const base = `/o/${org}/w/${ws}`;
-  const urgent = pending.data?.items.slice(0, 2) ?? [];
-  const count = pending.data?.items.length ?? 0;
   const recent = (activity.data?.pages[0]?.items ?? []).slice(0, 6);
   const byId = new Map(agents.data?.items.map((a) => [a.id, a]) ?? []);
 
@@ -82,37 +78,7 @@ function OverviewBody({
     <div className="flex flex-col gap-8">
       <PageHeader title={name} description="Your agents, what they asked for and what they did." className="mb-0" />
 
-      {canApprove && count > 0 ? (
-        <section
-          aria-labelledby="approvals-h"
-          className="rounded-card border border-pending-line bg-pending-panel p-4 text-ink sm:p-5"
-        >
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <h2 id="approvals-h" className="font-display text-base font-semibold text-pending-ink">
-              Approvals
-              <span className="sr-only"> waiting</span>{" "}
-              <Badge tone="pending" aria-label={`${count} pending`}>
-                {count}
-              </Badge>
-            </h2>
-            <Link
-              href={`${base}/approvals`}
-              className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
-            >
-              Review all
-            </Link>
-          </div>
-          <ul className="mt-3 space-y-2">
-            {urgent.map((a) => (
-              <li key={a.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-control bg-surface px-3 py-2 text-sm">
-                <span className="min-w-0 flex-1 truncate font-medium">{a.summary.title}</span>
-                <span className="font-mono text-xs text-muted">{a.agent ? `@${a.agent.handle}` : "Unknown agent"}</span>
-                <span className="text-xs font-medium tabular-nums text-pending-ink">{countdown(a.deadline, clock)}</span>
-              </li>
-            ))}
-          </ul>
-        </section>
-      ) : null}
+      <NeedsYou wsId={wsId} base={base} />
 
       <Section id="agents" title="Agents">
         {agents.isPending ? <Loading /> : null}
@@ -120,11 +86,8 @@ function OverviewBody({
         {agents.data ? (
           <ul aria-label="Agents" className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {agents.data.items.map((a) => (
-              <li key={a.id}>
-                <Link
-                  href={`${base}/agents/${a.handle}`}
-                  className="flex h-full min-w-0 items-start gap-3 rounded-card border border-line bg-surface p-4 shadow-card hover:border-line-strong"
-                >
+              <li key={a.id} className="flex min-w-0 flex-col rounded-card border border-line bg-surface shadow-card hover:border-line-strong">
+                <Link href={`${base}/agents/${a.handle}`} className="flex min-w-0 items-start gap-3 p-4">
                   <Avatar name={a.name} url={a.avatar_url} tintKey={a.id} size={40} />
                   <span className="min-w-0 flex-1">
                     <span className="block truncate font-semibold text-ink">{a.name}</span>
@@ -136,6 +99,8 @@ function OverviewBody({
                     </span>
                   </span>
                 </Link>
+                {/* The agent's summary (C-986): the same sentences as Welcome and the Access tab. */}
+                <AgentSummary wsId={wsId} orgId={orgId} agent={a} className="space-y-1 border-t border-line px-4 py-3 text-sm text-ink-2" />
               </li>
             ))}
             <li className="flex min-h-22 items-center justify-center rounded-card border border-dashed border-line-strong bg-surface p-4">

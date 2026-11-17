@@ -100,7 +100,7 @@
   expect:
     app: sentry
     tool: update_issue
-    summary: { title: "Update issue", fields: { Organization: example-org, Issue: "1234", Status: resolved } }
+    summary: { title: "update an issue", fields: { Organization: example-org, Issue: "1234", Status: resolved } }
     upstream: { headers: { authorization: "Bearer tok-fixture-1" } }
 - name: "update_issue: assigning an issue shows the assignee"
   connection: { credentials: { access_token: "tok-fixture-1" } }
@@ -111,7 +111,7 @@
     body: '{"assignedTo":"user:42"}'
   expect:
     tool: update_issue
-    summary: { title: "Update issue", fields: { "Assigned to": "user:42" } }
+    summary: { title: "update an issue", fields: { "Assigned to": "user:42" } }
 - name: "negative update_issue: PATCH selects no tool"
   connection: { credentials: { access_token: "tok-fixture-1" } }
   request: { method: PATCH, url: "https://sentry.io/api/0/organizations/example-org/issues/1234/" }

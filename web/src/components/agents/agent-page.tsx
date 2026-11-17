@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
+import { AgentAttentionChip } from "@/components/accounts/attention";
 import { AgentFreeze } from "@/components/freeze/freeze-sections";
 import { ErrorState, Loading } from "@/components/states";
 import { Avatar } from "@/components/agent-avatar";
@@ -177,12 +178,14 @@ export function AgentPage() {
             </nav>
             <div className="flex min-w-0 flex-col md:flex-row md:items-center md:gap-x-3">
               <h1 className="min-w-0 truncate font-display text-base font-semibold leading-5 text-ink md:text-xl md:leading-7">{agent.name}</h1>
-              <span className="flex items-center gap-2 text-sm text-ink-2">
+              {/* Each item keeps its words on one line; at 390 px the items wrap between themselves, never off the screen. */}
+              <span className="flex min-w-0 flex-wrap items-center gap-x-2 whitespace-nowrap text-sm text-ink-2 md:shrink-0 md:flex-nowrap">
                 <span className="hidden font-mono text-muted md:inline">@{agent.handle}</span>
                 {/* The kind and Default badges live in the rail's About part; a BYO agent has no rail. */}
                 {byo ? <Badge>{agent.kind}</Badge> : null}
                 {byo && agent.is_default ? <Badge tone="accent">Default</Badge> : null}
                 {byo ? null : <SandboxPill agentId={agent.id} />}
+                {wsId ? <AgentAttentionChip workspaceId={wsId} agentId={agent.id} accessHref={`${base}/agents/${agent.handle}?tab=access`} /> : null}
               </span>
             </div>
           </div>

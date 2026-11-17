@@ -1,14 +1,15 @@
 "use client";
 
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
-import { useMemo, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 
 import { ConnectorAvailableCallout } from "@/components/connectors/available-callout";
 import { LlmKeyForm } from "@/components/credentials/llm-form";
 import { ErrorState, Loading } from "@/components/states";
 import { Badge } from "@/components/ui/badge";
-import { buttonVariants } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { CheckboxField } from "@/components/ui/form";
 import { Notice } from "@/components/ui/notice";
@@ -16,7 +17,9 @@ import { PageHeader } from "@/components/ui/page-header";
 import { StatusDot } from "@/components/ui/status-dot";
 import { errorMessage } from "@/lib/api/errors";
 import { onboardingKeys, useAdminSetup, type SetupCheck, type SetupStatus, type SetupStep } from "@/lib/api/onboarding";
-import { usePlacement, useSavePlacement, type PlacementView as Placement, type PutPlacement } from "@/lib/api/placement";
+import { formatBytes } from "@/lib/api/attachments";
+import { useAdminStorage } from "@/lib/api/org";
+import { useBackfillStarterGrants, usePlacement, useSavePlacement, type PlacementView as Placement, type PutPlacement } from "@/lib/api/placement";
 import { useSecrets } from "@/lib/api/secrets";
 import { useOrgs, useWorkspaces } from "@/lib/api/queries";
 import { landingPath } from "@/lib/nav/landing";
@@ -25,7 +28,9 @@ import { cn } from "@/lib/utils";
 
 import { OwnerlessBanner } from "./ownerless-banner";
 import { PlacementView } from "./placement-view";
+import { SignInGaps, gapsFromChecks } from "./sign-in-gaps";
 import { PreviewsLine } from "./previews-line";
+import { PushLine } from "./push-line";
 import { SshLine } from "./ssh-line";
 
 type Tone = "accent" | "pending" | "neutral";
@@ -55,6 +60,7 @@ const FIX: Record<string, string> = {
   runner_offline: "Check that the runner is running and can reach the API. See docs/operator/runners.md.",
   no_gateway: "Start the gateway. Without it agents cannot reach the internet or the LLM.",
   plugins_pending: "Review them under Apps & accounts › Apps.",
+  email_not_configured: "Set an SMTP server under Platform › Email.",
 };
 
 /** The checks whose fix is made on Admin › Settings › LLM endpoints (SET-3): the step links there. */
@@ -194,11 +200,14 @@ function putWithStarters(v: Placement, starters: { kind: "secret" | "connection"
   };
 }
 
-/** "Give it to every new user's agent": the starter grant of the org key (`04 §New-user placement`). */
+/** Placement allows starter grants: a saved shared organization with personal workspaces (C-521). */
+const startersAllowed = (p: Placement) => p.saved && p.mode === "shared_org" && p.personal_workspace.enabled;
+
+/** "Give it to every new user's agent": the starter grant of the org key (`04 §New-user placement`), on by default (C-922). */
 function StarterSwitch({ placement, secretId, onChanged }: { placement: Placement; secretId: string; onChanged: () => void }) {
   const save = useSavePlacement();
   const on = placement.starter_grants.some((g) => g.kind === "secret" && g.id === secretId);
-  const usable = placement.saved && placement.mode === "shared_org" && placement.personal_workspace.enabled;
+  const usable = startersAllowed(placement);
   function toggle(next: boolean) {
     const others = placement.starter_grants.filter((g) => !(g.kind === "secret" && g.id === secretId)).map((g) => ({ kind: g.kind, id: g.id }));
     save.mutate(putWithStarters(placement, next ? [...others, { kind: "secret", id: secretId }] : others), { onSuccess: onChanged });
@@ -207,8 +216,8 @@ function StarterSwitch({ placement, secretId, onChanged }: { placement: Placemen
     <div className="space-y-2">
       <CheckboxField
         id="setup-starter"
-        label="Give it to every new user's agent"
-        hint="Each new person's agent can use this key from the first minute, so nobody has to add one."
+        label="Give the organization's AI key to every new person's agent"
+        hint="Every new person's agent can use this key from the first minute. Turn off to make people add their own."
         checked={on}
         disabled={!usable || save.isPending}
         onChange={toggle}
@@ -225,8 +234,38 @@ function StarterSwitch({ placement, secretId, onChanged }: { placement: Placemen
   );
 }
 
-function LlmBody({ step, onChanged }: { step: SetupStep; onChanged: () => void }) {
+/** (C-922) People who signed in before the starter grant existed: one click gives them the key too. Idempotent. */
+function BackfillOffer({ waiting }: { waiting: number }) {
+  const backfill = useBackfillStarterGrants();
+  if (backfill.data) {
+    return (
+      <Notice tone="accent" role="status">
+        Done: {backfill.data.granted === 1 ? "1 agent" : `${backfill.data.granted} agents`} can use the key now
+        {backfill.data.skipped > 0 ? ` (${backfill.data.skipped} already could or could not be given it).` : "."}
+      </Notice>
+    );
+  }
+  if (waiting <= 0) return null;
+  return (
+    <div className="space-y-2">
+      <p className="text-sm text-ink-2">
+        {waiting === 1 ? "1 person signed in before and their agent can't use the key yet." : `${waiting} people signed in before and their agents can't use the key yet.`}
+      </p>
+      <Button variant="outline" size="sm" disabled={backfill.isPending} onClick={() => backfill.mutate()}>
+        Also give it to the {waiting} {waiting === 1 ? "person" : "people"} who signed in before
+      </Button>
+      {backfill.error ? (
+        <Notice tone="danger" role="alert">
+          {errorMessage(backfill.error)}
+        </Notice>
+      ) : null}
+    </div>
+  );
+}
+
+function LlmBody({ step, waiting, onChanged }: { step: SetupStep; waiting: number; onChanged: () => void }) {
   const placement = usePlacement();
+  const savePlacement = useSavePlacement();
   const org = placement.data?.default_org ?? null;
   const secrets = useSecrets({ kind: "organization", id: org?.id ?? "" });
   const orgKey = (secrets.data?.items ?? []).find((s) => s.kind === "llm" && s.status === "active");
@@ -254,11 +293,51 @@ function LlmBody({ step, onChanged }: { step: SetupStep; onChanged: () => void }
               <strong className="text-ink">{orgKey.name}</strong> belongs to {org.name}. It is stored sealed and never shown again.
             </p>
           ) : (
-            <LlmKeyForm scope={{ kind: "organization", id: org.id }} orgId={org.id} onSaved={onChanged} />
+            <LlmKeyForm
+              scope={{ kind: "organization", id: org.id }}
+              orgId={org.id}
+              onSaved={(secret) => {
+                // (C-922) The first key is a starter grant by default, whenever placement allows one.
+                const p = placement.data;
+                if (p && startersAllowed(p)) {
+                  const others = p.starter_grants.map((g) => ({ kind: g.kind, id: g.id }));
+                  savePlacement.mutate(putWithStarters(p, [...others, { kind: "secret", id: secret.id }]), { onSettled: onChanged });
+                } else onChanged();
+              }}
+            />
           )}
           {orgKey ? <StarterSwitch placement={placement.data} secretId={orgKey.id} onChanged={onChanged} /> : null}
+          {orgKey && placement.data.starter_grants.some((g) => g.kind === "secret" && g.id === orgKey.id) ? <BackfillOffer waiting={waiting} /> : null}
         </div>
       )}
+      <Link href={adminRoutes.aiModels("endpoints")} className="inline-block text-sm font-medium text-ink underline underline-offset-2">
+        Open AI models
+      </Link>
+    </div>
+  );
+}
+
+/** Step 5: apps people can't sign in to yet (C-924), chat platforms and e-mail, each linking to the page that holds it. */
+function OptionalBody({ step }: { step: SetupStep }) {
+  const placement = usePlacement();
+  const gaps = gapsFromChecks(step.checks);
+  // The instance-wide OAuth client count is the gaps' business now; the rest stays a plain check.
+  const rest: SetupStep = { ...step, checks: step.checks.filter((c) => !c.id.startsWith("app:") && c.id !== "oauth_clients") };
+  return (
+    <div className="space-y-4">
+      <SignInGaps gaps={gaps} where={{ level: "admin", orgSlug: placement.data?.default_org?.slug }} />
+      <Checks step={rest} />
+      <div className="flex flex-wrap gap-2">
+        <Link href={adminRoutes.chatPlatforms()} className={cn(buttonVariants({ variant: "outline", size: "sm" }))}>
+          Chat platforms
+        </Link>
+        <Link href={adminRoutes.platform("email")} className={cn(buttonVariants({ variant: "outline", size: "sm" }))}>
+          Platform › Email
+        </Link>
+        <Link href={adminRoutes.apps("apps")} className={cn(buttonVariants({ variant: "outline", size: "sm" }))}>
+          Apps &amp; accounts
+        </Link>
+      </div>
     </div>
   );
 }
@@ -283,12 +362,149 @@ function TryBody() {
   );
 }
 
-/** Admin › Setup (`14 §Onboarding` 1): the instance setup wizard. One page, a stepper, live status per step. */
+/** Setup is complete when no step that blocks is still to do (`optional` never blocks). */
+export function setupComplete(setup: SetupStatus): boolean {
+  return setup.placement_saved && setup.steps.every((s) => s.id === "optional" || s.status !== "todo");
+}
+
+/** The count of a step's checks by reason, for the health lines. */
+function checkOf(setup: SetupStatus, stepId: string, id: string) {
+  return setup.steps.find((s) => s.id === stepId)?.checks.find((c) => c.id === id);
+}
+
+function HealthLine({ tone, title, children, href, hrefLabel }: { tone: Tone; title: string; children: ReactNode; href?: string; hrefLabel?: string }) {
+  return (
+    <li className="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 py-3 text-sm" data-health={title}>
+      <StatusDot tone={tone === "neutral" ? "neutral" : tone} className="min-w-28 text-sm font-semibold text-ink">
+        {title}
+      </StatusDot>
+      <span className="min-w-0 flex-1 text-ink-2">{children}</span>
+      {href ? (
+        <Link href={href} className="text-sm font-medium text-ink underline underline-offset-2">
+          {hrefLabel}
+        </Link>
+      ) : null}
+    </li>
+  );
+}
+
+/** After setup: what is healthy and what needs the admin, from the same status as the checklist (`14 §9`). */
+function HealthView({ setup, onRunSetup }: { setup: SetupStatus; onRunSetup: () => void }) {
+  const placement = usePlacement();
+  const storage = useAdminStorage();
+  const optional = setup.steps.find((s) => s.id === "optional");
+  const gaps = gapsFromChecks(optional?.checks ?? []);
+  const blocked = gaps.filter((g) => !g.tokenOnly);
+  const noMail = optional?.checks.some((c) => c.reason === "email_not_configured") ?? false;
+  const orgSlug = placement.data?.default_org?.slug;
+  const runners = setup.steps.find((s) => s.id === "runners");
+  const llm = setup.steps.find((s) => s.id === "llm");
+  const endpoints = llm?.checks.filter((c) => c.id.startsWith("endpoint:")) ?? [];
+  const down = endpoints.filter((c) => c.status !== "ok");
+  const gateway = checkOf(setup, "runners", "gateway");
+  const runner = checkOf(setup, "runners", "runners");
+  const tone = (s?: SetupCheck["status"]): Tone => (s === "ok" ? "accent" : s === "warning" ? "pending" : "neutral");
+  const needs = blocked.length + (noMail ? 1 : 0);
+  return (
+    <div className="space-y-6" data-testid="admin-health">
+      <header className="flex flex-wrap items-end justify-between gap-4">
+        <p className="max-w-3xl font-display text-xl font-medium text-ink">
+          Aurora is running.
+          {needs > 0
+            ? ` ${[
+                blocked.length > 0 ? `People can't sign in to ${blocked.length === 1 ? "1 app" : `${blocked.length} apps`} yet` : "",
+                noMail ? "e-mail is not set up" : "",
+              ]
+                .filter(Boolean)
+                .join(", and ")
+                .replace(/^e-mail/, "E-mail")}.`
+            : " Nothing needs you."}
+        </p>
+        <Button variant="outline" onClick={onRunSetup}>
+          Run setup again
+        </Button>
+      </header>
+      {needs > 0 ? (
+        <section aria-labelledby="needs-you-h" className="space-y-4 rounded-card border border-pending-line bg-pending-panel p-4">
+          <div>
+            <h2 id="needs-you-h" className="font-display text-base font-semibold text-ink">
+              Needs you
+            </h2>
+            <p className="text-sm text-ink-2">Each item says what is missing and opens the page that fixes it.</p>
+          </div>
+          <SignInGaps gaps={blocked} where={{ level: "admin", orgSlug }} />
+          {noMail ? (
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm" data-reason="email_not_configured">
+              <div className="min-w-0 flex-1">
+                <p className="font-semibold text-ink">E-mail is not set up</p>
+                <p className="text-ink-2">E-mail is not set up. Aurora cannot send approval or invitation e-mails.</p>
+              </div>
+              <Link href={adminRoutes.platform("email")} className={cn(buttonVariants({ variant: "outline", size: "sm" }))}>
+                Open Platform › Email
+              </Link>
+            </div>
+          ) : null}
+        </section>
+      ) : null}
+      {gaps.some((g) => g.tokenOnly) ? <SignInGaps gaps={gaps.filter((g) => g.tokenOnly)} where={{ level: "admin", orgSlug }} /> : null}
+      <Card className="p-0">
+        <h2 className="px-4 pt-4 font-display text-base font-semibold text-ink">Health</h2>
+        <ul aria-label="Health" className="divide-y divide-line">
+          <HealthLine tone={tone(runner?.status)} title="Runners" href={adminRoutes.platform("runners")} hrefLabel="Open Platform › Runners">
+            {runner?.message ?? runners?.reason}
+          </HealthLine>
+          <HealthLine tone={tone(gateway?.status)} title="Gateway">
+            {gateway?.message ?? "No gateway has been seen."}
+          </HealthLine>
+          <HealthLine tone={endpoints.length === 0 ? "neutral" : down.length > 0 ? "pending" : "accent"} title="AI models" href={adminRoutes.aiModels("endpoints")} hrefLabel="Open AI models">
+            {endpoints.length === 0
+              ? "No AI endpoint is set up."
+              : down.length > 0
+                ? down.map((c) => c.message).join(" ")
+                : `${endpoints.length === 1 ? "1 endpoint answers" : `${endpoints.length} endpoints answer`}.`}
+          </HealthLine>
+          <HealthLine tone="accent" title="New people" href={adminRoutes.people("new-users")} hrefLabel="Open People › New users">
+            {setup.placement_saved ? "Land where you chose, with a personal workspace and the organization's AI key." : "Not saved yet."}
+          </HealthLine>
+          {storage.data ? (
+            <HealthLine tone="accent" title="Storage" href={adminRoutes.data()} hrefLabel="Open Data">
+              {formatBytes(storage.data.blob_bytes)} in {storage.data.blob_count} stored files.
+            </HealthLine>
+          ) : null}
+        </ul>
+      </Card>
+      <div className="space-y-3">
+        <PreviewsLine />
+        <SshLine />
+        <PushLine />
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Administration › Overview (`14 §Agents, accounts and access` §9): the setup checklist until setup is complete,
+ * then a health page from the same status. **Run setup again** brings the checklist back.
+ */
 export function SetupView() {
   const qc = useQueryClient();
   const setup = useAdminSetup();
+  const params = useSearchParams();
+  const [again, setAgain] = useState(params.get("setup") === "1");
   const refresh = () => void qc.invalidateQueries({ queryKey: onboardingKeys.setup });
   const step = (id: string) => setup.data?.steps.find((s) => s.id === id);
+  const complete = setup.data ? setupComplete(setup.data) : false;
+
+  if (setup.data && complete && !again) {
+    return (
+      <div className="max-w-page space-y-6">
+        <PageHeader title="Overview" description="What needs you, and whether Aurora is healthy." className="mb-0" />
+        <OwnerlessBanner />
+        <ConnectorAvailableCallout />
+        <HealthView setup={setup.data} onRunSetup={() => setAgain(true)} />
+      </div>
+    );
+  }
 
   return (
     <div className="max-w-page space-y-6">
@@ -296,6 +512,13 @@ export function SetupView() {
         title="Set up Aurora"
         description="Six steps from a fresh install to your first answer. Each shows what is ready now."
         className="mb-0"
+        actions={
+          complete ? (
+            <Button variant="outline" onClick={() => setAgain(false)}>
+              Back to the health page
+            </Button>
+          ) : undefined
+        }
       />
       {setup.isPending ? <Loading /> : null}
       {setup.isError ? <ErrorState error={setup.error} onRetry={() => setup.refetch()} /> : null}
@@ -303,6 +526,7 @@ export function SetupView() {
       <ConnectorAvailableCallout />
       <PreviewsLine />
       <SshLine />
+      <PushLine />
       {setup.data ? (
         <>
           {!setup.data.placement_saved ? (
@@ -316,26 +540,18 @@ export function SetupView() {
             </StepCard>
             <StepCard n={2} id="placement" step={step("placement")}>
               <PlacementView embedded onSaved={refresh} />
+              <Link href={adminRoutes.people("new-users")} className="inline-block text-sm font-medium text-ink underline underline-offset-2">
+                Open People › New users
+              </Link>
             </StepCard>
             <StepCard n={3} id="llm" step={step("llm")}>
-              {step("llm") ? <LlmBody step={step("llm")!} onChanged={refresh} /> : null}
+              {step("llm") ? <LlmBody step={step("llm")!} waiting={setup.data.personal_workspaces_without_starter ?? 0} onChanged={refresh} /> : null}
             </StepCard>
             <StepCard n={4} id="runners" step={step("runners")}>
               {step("runners") ? <Checks step={step("runners")!} /> : null}
             </StepCard>
             <StepCard n={5} id="optional" step={step("optional")}>
-              {step("optional") ? <Checks step={step("optional")!} /> : null}
-              <div className="flex flex-wrap gap-2">
-                <Link href={adminRoutes.chatPlatforms()} className={cn(buttonVariants({ variant: "outline", size: "sm" }))}>
-                  Chat platforms
-                </Link>
-                <Link href={adminRoutes.oauthClients()} className={cn(buttonVariants({ variant: "outline", size: "sm" }))}>
-                  OAuth clients
-                </Link>
-                <Link href={adminRoutes.apps("apps")} className={cn(buttonVariants({ variant: "outline", size: "sm" }))}>
-                  Apps
-                </Link>
-              </div>
+              {step("optional") ? <OptionalBody step={step("optional")!} /> : null}
             </StepCard>
             <StepCard n={6} id="try">
               <TryBody />

@@ -1,17 +1,22 @@
 "use client";
 
+import Link from "next/link";
+import { useParams } from "next/navigation";
 import { useMemo, useState } from "react";
 
 import { ErrorState, Loading } from "@/components/states";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogClose, DialogContent } from "@/components/ui/dialog";
 import { Notice } from "@/components/ui/notice";
-import { type Account, type AgentAccess, usePutAccess } from "@/lib/api/accounts";
+import { WhoCan } from "@/components/ui/who-can";
+import { type Account, type AgentAccess, type AppAccessTool, useAppAccess, usePutAccess } from "@/lib/api/accounts";
 import { useGrants } from "@/lib/api/policy";
 import { useApp } from "@/lib/api/apps";
 import { counts, customBody, groupOf, initialDecisions, type Decision, type Tool } from "@/lib/grant-editor";
+import { orgRoutes, wsRoutes } from "@/lib/routes";
 
 const DECISION_LABEL: Record<Decision, string> = { allow: "Allowed", ask: "Asks you", block: "Blocked" };
+const DECISION_TONE: Record<Decision, "neutral" | "pending" | "danger"> = { allow: "neutral", ask: "pending", block: "danger" };
 
 /** The table's starting choices: the saved ones; an `act` choice allows everything; a fresh `custom_only` account allows reads (C-410). */
 export function startingDecisions(
@@ -27,10 +32,12 @@ export function startingDecisions(
 }
 
 /**
- * The actions table (C-938): every action of an app with the agent's saved choice, editable by people who may change
- * the access. Methods and host patterns are under Technical details. At least one action must be allowed or asked.
- * One save (C-980): setting a change to Allowed under Ask before changes is the same as Always allow, and the server
- * reads it back as Ask with that change always allowed, not as Custom.
+ * The actions table (C-938, C-934): every action of an app with what actually happens (Allowed, Asks you, Blocked)
+ * and, only when something other than the agent's access decided, why. It opens inside the account's row, from
+ * **What exactly?** or **Custom…** (one table, not two). People who may change the access set each action in place
+ * (one save, C-980: a change set to Allowed under Ask before changes is the same as Always allow, and the server
+ * reads it back as Ask with that change always allowed, not as Custom); everyone else reads it. Methods and host
+ * patterns are under Technical details. At least one action must be allowed or asked.
  */
 export function ActionsTable({
   account,
@@ -38,44 +45,134 @@ export function ActionsTable({
   agentId,
   agentName,
   workspaceId,
-  open,
-  onOpenChange,
+  canChange,
+  onClose,
 }: {
   account: Account;
   entry?: AgentAccess;
   agentId: string;
   agentName: string;
   workspaceId: string;
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
+  canChange: boolean;
+  onClose: () => void;
 }) {
+  const access = useAppAccess(agentId, account.app?.app_id);
+  if (access.isPending) return <Loading />;
+  if (access.isError) return <ErrorState error={access.error} onRetry={() => access.refetch()} />;
+  const mine = access.data.accounts.find((a) => a.ref.id === account.ref.id);
+  const rows = mine?.tools ?? [];
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent
-        size="xl"
-        title={`What ${agentName} can do in ${account.app?.name ?? account.name}`}
-        description="Choose, action by action. Most people never need this: the three choices cover almost everything."
-      >
-        {open ? (
-          <Body account={account} entry={entry} agentId={agentId} workspaceId={workspaceId} onDone={() => onOpenChange(false)} />
-        ) : null}
-      </DialogContent>
-    </Dialog>
+    <section aria-label={`What ${agentName} can do in ${account.app?.name ?? account.name}`} className="space-y-3 rounded-card border border-line bg-canvas p-3">
+      <p className="text-sm text-ink-2">
+        What {agentName} can do in {account.app?.name ?? account.name}, action by action.
+        {canChange ? " Most people never need this: the three choices cover almost everything." : null}
+      </p>
+      {rows.length === 0 ? <p className="text-sm text-muted">This app has no actions to list.</p> : null}
+      {canChange ? (
+        <Editable account={account} entry={entry} agentId={agentId} agentName={agentName} workspaceId={workspaceId} rows={rows} onClose={onClose} />
+      ) : (
+        <Groups rows={rows} account={account} agentName={agentName} />
+      )}
+      {canChange ? null : (
+        <div className="flex justify-end">
+          <Button variant="outline" size="sm" type="button" onClick={onClose}>
+            Close
+          </Button>
+        </div>
+      )}
+    </section>
   );
 }
 
-function Body({
+const GROUPS = [
+  { id: "read", label: "Looking things up" },
+  { id: "write", label: "Changing things" },
+] as const;
+
+/** The read-only table: the chip says what happens; a reason sentence and the agent's own choice follow it when something else decided. */
+function Groups({ rows, account, agentName }: { rows: AppAccessTool[]; account: Account; agentName: string }) {
+  return (
+    <div className="space-y-4">
+      {GROUPS.map((g) => {
+        const list = rows.filter((t) => t.access === g.id);
+        if (list.length === 0) return null;
+        return (
+          <section key={g.id} aria-label={g.label} className="space-y-2">
+            <h4 className="text-sm font-semibold text-ink">{g.label}</h4>
+            <ul className="divide-y divide-line rounded-card border border-line bg-surface">
+              {list.map((t) => (
+                <li key={t.tool_id} className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2 p-3">
+                  <div className="min-w-0 flex-1 basis-56">
+                    <p className="text-sm font-medium text-ink">{t.name}</p>
+                    {t.description ? <p className="text-sm text-ink-2">{t.description}</p> : null}
+                  </div>
+                  <div className="space-y-1 sm:text-right">
+                    <Badge tone={DECISION_TONE[t.decision as Decision]}>{DECISION_LABEL[t.decision as Decision]}</Badge>
+                    <Reason tool={t} account={account} agentName={agentName} showOwn />
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </section>
+        );
+      })}
+    </div>
+  );
+}
+
+/** "Limited by Acme", or the rule's name with a link to Internet access; the agent's own choice in small text. */
+function Reason({ tool, account, agentName, showOwn }: { tool: AppAccessTool; account: Account; agentName: string; showOwn: boolean }) {
+  const params = useParams<{ org?: string; ws?: string }>();
+  const r = tool.reason;
+  if (!r) return null;
+  const href =
+    r.link !== "internet_access"
+      ? null
+      : r.layer === "workspace_rule" && params.org && params.ws
+        ? wsRoutes(params.org, params.ws).internetAccess()
+        : params.org
+          ? orgRoutes(params.org).internetAccess()
+          : "/admin/internet-access";
+  return (
+    <div className="space-y-0.5 text-sm text-ink-2">
+      <p>
+        {r.layer === "org_rule" || r.layer === "workspace_rule" ? "Rule: " : null}
+        {r.label}
+        {href ? (
+          <>
+            {" · "}
+            <Link href={href} className="underline">
+              Internet access
+            </Link>
+          </>
+        ) : null}
+      </p>
+      {r.layer === "limit" && account.managed_by ? <WhoCan value={account.managed_by} /> : null}
+      {showOwn ? (
+        <p className="text-xs text-muted">
+          {agentName}&apos;s access: {DECISION_LABEL[tool.own as Decision]}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+function Editable({
   account,
   entry,
   agentId,
+  agentName,
   workspaceId,
-  onDone,
+  rows,
+  onClose,
 }: {
   account: Account;
   entry?: AgentAccess;
   agentId: string;
+  agentName: string;
   workspaceId: string;
-  onDone: () => void;
+  rows: AppAccessTool[];
+  onClose: () => void;
 }) {
   const app = useApp(account.app?.app_id, workspaceId);
   const grants = useGrants(agentId);
@@ -88,10 +185,12 @@ function Body({
       account={account}
       entry={entry}
       agentId={agentId}
+      agentName={agentName}
       tools={app.data.tools}
+      rows={rows}
       saved={saved}
       customOnly={account.app?.custom_only ?? false}
-      onDone={onDone}
+      onClose={onClose}
     />
   );
 }
@@ -100,27 +199,29 @@ function Editor({
   account,
   entry,
   agentId,
+  agentName,
   tools,
+  rows,
   saved,
   customOnly,
-  onDone,
+  onClose,
 }: {
   account: Account;
   entry?: AgentAccess;
   agentId: string;
+  agentName: string;
   tools: Tool[];
+  rows: AppAccessTool[];
   saved: { mode: "full" | "custom"; allow_tools: string[]; ask_tools: string[]; ask_timeout_secs?: number | null } | undefined;
   customOnly: boolean;
-  onDone: () => void;
+  onClose: () => void;
 }) {
   const put = usePutAccess();
   const [decisions, setDecisions] = useState(() => startingDecisions(tools, entry, saved, customOnly));
   const c = counts(decisions);
+  const byId = useMemo(() => new Map(rows.map((r) => [r.tool_id, r])), [rows]);
   const groups = useMemo(
-    () => [
-      { id: "read", label: "Looking things up", tools: tools.filter((t) => groupOf(t) === "read") },
-      { id: "write", label: "Changing things", tools: tools.filter((t) => groupOf(t) === "write") },
-    ],
+    () => GROUPS.map((g) => ({ ...g, tools: tools.filter((t) => groupOf(t) === g.id) })),
     [tools],
   );
   const empty = c.allow + c.ask === 0;
@@ -129,35 +230,49 @@ function Editor({
       {groups.map((g) =>
         g.tools.length === 0 ? null : (
           <section key={g.id} aria-label={g.label} className="space-y-2">
-            <h3 className="text-sm font-semibold text-ink">{g.label}</h3>
-            <ul className="divide-y divide-line rounded-card border border-line">
-              {g.tools.map((t) => (
-                <li key={t.id} className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2 p-3">
-                  <div className="min-w-0 flex-1 basis-56">
-                    <p className="text-sm font-medium text-ink">{t.name}</p>
-                    {t.description ? <p className="text-sm text-ink-2">{t.description}</p> : null}
-                    <details className="mt-1 text-xs text-muted">
-                      <summary className="cursor-pointer">Technical details</summary>
-                      <p className="mt-1 break-all">
-                        {t.methods.join(", ") || "any method"} · {t.host}
-                        {t.path}
-                      </p>
-                    </details>
-                  </div>
-                  <select
-                    aria-label={`${t.name}: what happens`}
-                    className="h-9 rounded-control border border-line bg-surface px-2 text-sm text-ink"
-                    value={decisions[t.id] ?? "block"}
-                    onChange={(e) => setDecisions({ ...decisions, [t.id]: e.target.value as Decision })}
-                  >
-                    {(["allow", "ask", "block"] as const).map((d) => (
-                      <option key={d} value={d}>
-                        {DECISION_LABEL[d]}
-                      </option>
-                    ))}
-                  </select>
-                </li>
-              ))}
+            <h4 className="text-sm font-semibold text-ink">{g.label}</h4>
+            <ul className="divide-y divide-line rounded-card border border-line bg-surface">
+              {g.tools.map((t) => {
+                const row = byId.get(t.id);
+                return (
+                  <li key={t.id} className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2 p-3">
+                    <div className="min-w-0 flex-1 basis-56">
+                      <p className="text-sm font-medium text-ink">{t.name}</p>
+                      {t.description ? <p className="text-sm text-ink-2">{t.description}</p> : null}
+                      <details className="mt-1 text-xs text-muted">
+                        <summary className="cursor-pointer">Technical details</summary>
+                        <p className="mt-1 break-all">
+                          {t.methods.join(", ") || "any method"} · {t.host}
+                          {t.path}
+                        </p>
+                      </details>
+                    </div>
+                    <div className="space-y-1 sm:text-right">
+                      <select
+                        aria-label={`${t.name}: what happens`}
+                        className="h-9 rounded-control border border-line bg-surface px-2 text-sm text-ink"
+                        value={decisions[t.id] ?? "block"}
+                        onChange={(e) => setDecisions({ ...decisions, [t.id]: e.target.value as Decision })}
+                      >
+                        {(["allow", "ask", "block"] as const).map((d) => (
+                          <option key={d} value={d}>
+                            {DECISION_LABEL[d]}
+                          </option>
+                        ))}
+                      </select>
+                      {/* Something else decided: what actually happens, and why. The select above is the agent's own choice. */}
+                      {row?.reason ? (
+                        <div className="space-y-1">
+                          <p>
+                            <Badge tone={DECISION_TONE[row.decision as Decision]}>{DECISION_LABEL[row.decision as Decision]}</Badge>
+                          </p>
+                          <Reason tool={row} account={account} agentName={agentName} showOwn={false} />
+                        </div>
+                      ) : null}
+                    </div>
+                  </li>
+                );
+              })}
             </ul>
           </section>
         ),
@@ -165,13 +280,12 @@ function Editor({
       {empty ? <Notice tone="pending">Allow or ask for at least one action, or remove the access instead.</Notice> : null}
       {put.isError ? <ErrorState error={put.error} /> : null}
       <div className="flex flex-wrap justify-end gap-2">
-        <DialogClose asChild>
-          <Button variant="outline" type="button">
-            Cancel
-          </Button>
-        </DialogClose>
+        <Button variant="outline" size="sm" type="button" onClick={onClose}>
+          Cancel
+        </Button>
         <Button
           type="button"
+          size="sm"
           disabled={empty || put.isPending}
           onClick={() =>
             put.mutate(
@@ -180,7 +294,7 @@ function Editor({
                 connectionId: account.ref.id,
                 body: customBody(decisions, saved?.ask_timeout_secs != null ? String(saved.ask_timeout_secs) : ""),
               },
-              { onSuccess: onDone },
+              { onSuccess: onClose },
             )
           }
         >

@@ -107,3 +107,25 @@ and without exposing the organization's member list.
 
 Sonnet (`rust-developer` then `nextjs-developer`, or one lane in that order). A migration, the sign-in
 path and a security invariant: it needs careful review against SEC-128.
+
+## Completion report (lane p5-apps)
+
+Commits: part 1 `59a8bd13` (API), part 2 (web) after it. Migration `20261201000249_workspace_pending_access.sql` (number given by the coordinator).
+
+**For the SEC-128 review (where to look)**
+- `services/aurora-api/src/domains/tenancy/pending_access.rs`: `add_by_email`, `list_pending`, `delete_pending`, **`apply_on_sign_in`**.
+- `services/aurora-api/src/domains/oidc/service.rs` (`sign_in`): `apply_on_sign_in` runs **last** in the sign-in transaction, after invitation, role claims, JIT, placement and group sync (everything that can create or confirm the membership), before `record_login`. It never creates a membership.
+- `crates/aurora-db/src/repo/pending_access.rs`: `due_for_sign_in` is the only sign-in lookup: `email_normalized = ANY(<the person's verified e-mails>)` (equality, no LIKE) **and** `EXISTS (org_members … status = 'active')` for the row's organization, `FOR UPDATE OF p`. The person's verified e-mails are the provider-verified e-mail of this sign-in (`v.email_verified`) and the account's own e-mail only when `email_verified_at` is set. An unverified e-mail matches nothing.
+- Never an owner: CHECK `role IN ('member','approver')` on the table and 422 `owner_requires_member` in the route; an applied row never lowers a higher role (it reads the current binding first); it deletes the row and writes `workspace.access.pending_apply` through `insert_tx` in the sign-in transaction (a failed audit write fails the sign-in).
+- No list or search: the by-email route answers `{result, org_entry}` only (no name, no other person); `active_member_by_verified_email` takes one exact address; a workspace owner gets no new read of the organization. `delete`/`list` are scoped by `workspace_id` (another workspace's row id is a 404).
+- Audit: four new **critical** actions (`workspace.access.grant`, `.pending_create`, `.pending_apply`, `.pending_delete`) in `SECURITY_CRITICAL_ACTIONS`, written with `commit_critical`/`insert_tx` (the `audit_atomic` scan test covers them).
+- Rate: new class `invite` (10/min, burst 5 per principal, `API_RATE_CLASSES`) and a local per-workspace cap of 30/hour (`api_limiter`, per replica like the other in-process buckets; the brief said "in the counter store": the counter store's classes are fixed to `management`/`security`, so the shared version is a follow-up if wanted).
+
+**Decisions and deviations**
+- `org_entry` has a third value, `member` (added at once), written into C-919; `open_signup` means open sign-up with a shared-organization placement whose default organization is this workspace's; everything else (closed placement, JIT, claims, invite-only) says `invitation_needed`.
+- **Approver** is accepted by the API; the dialog offers it only in a workspace that already has one (D-352).
+- Pending rows are applied at **sign-in only** (not when an invitation is accepted later, nor when an admin adds the member): the person's next sign-in applies it.
+- An existing member added by e-mail whose e-mail is **not verified** gets a pending row like a stranger (the exact rule of invitations); owner for such a person is refused.
+- The e-mail is stored normalized (trim, lower case); the by-email answer and the waiting list show it as normalized.
+
+**Tests.** API `tests/it/pending_access.rs` (12): the walkthrough (Bob adds Carol; at her first sign-in she has Member, row gone, audit rows, idempotent, no invitation, no membership by itself), unverified sign-in, a matching person not in the organization (placement `none`, existing account: nothing applied, no `org_members` row), exact match only (`%`, `*`, longer domain, suffix), owner for non-member 422 / for a member at once and never lowered, the table refuses `owner`, the maximum (and refresh and room after Remove), expiry (not applied, not listed, swept), who may do what (member 403, outsider 404, another workspace's row 404), no member/invitation list for a workspace owner, the `invite` class and the 30/hour cap; `permission_matrix` rows (three `WsOwn`, body fixture) and the OpenAPI coverage; `audit_atomic`; limits guard (the two `doc-only` entries removed); `aurora-db` schema checks; `apilimit` unit (class). vitest `add-people.test.tsx` (words, roles offered with and without an approver, pending with link and invitation sentence, open sign-up, added, refusals in words, waiting list and Remove, empty list not shown, Welcome link). Playwright mocked `add-people.spec.ts` (both themes, 1280/390 px, axe, no horizontal scroll). The real-stack journey `add-people-journey.spec.ts` (Bob adds a second dev-IdP user who has never signed in; after the first sign-in Carol sees the workspace) is written and added to the real-stack project but **not run** here (needs the live stack).

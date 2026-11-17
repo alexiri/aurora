@@ -49,6 +49,7 @@ pub mod oauth_clients;
 pub mod onboarding;
 pub mod orgs;
 pub mod peer_tasks;
+pub mod pending_access;
 pub mod placement;
 pub mod plugins;
 pub mod policy;

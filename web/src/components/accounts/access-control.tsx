@@ -82,12 +82,36 @@ export function AccessControl({
       </p>
     ) : null;
 
+  // One table, from **What exactly?** or **Custom…**, inside the row (C-934, C-938).
+  const details = (
+    <>
+      {table ? (
+        <ActionsTable
+          account={account}
+          entry={entry}
+          agentId={entry.agent.id}
+          agentName={entry.agent.name}
+          workspaceId={workspaceId}
+          canChange={canChange}
+          onClose={() => setTable(false)}
+        />
+      ) : null}
+    </>
+  );
+  const exactly = (
+    <Button variant="outline" size="sm" aria-expanded={table} onClick={() => setTable((v) => !v)}>
+      What exactly?
+    </Button>
+  );
+
   if (!canChange) {
     return (
-      <div className="space-y-1 text-sm text-ink-2">
+      <div className="space-y-2 text-sm text-ink-2">
         {level ? <p>{LEVEL_LABEL[level]}</p> : null}
         {alwaysList}
         {customNote}
+        {exactly}
+        {details}
       </div>
     );
   }
@@ -98,18 +122,13 @@ export function AccessControl({
       {alwaysList}
       {customNote}
       {put.isError ? <ErrorState error={put.error} /> : null}
-      <Button variant="outline" size="sm" onClick={() => setTable(true)}>
-        Custom…
-      </Button>
-      <ActionsTable
-        account={account}
-        entry={entry}
-        agentId={entry.agent.id}
-        agentName={entry.agent.name}
-        workspaceId={workspaceId}
-        open={table}
-        onOpenChange={setTable}
-      />
+      <div className="flex flex-wrap gap-2">
+        <Button variant="outline" size="sm" onClick={() => setTable(true)}>
+          Custom…
+        </Button>
+        {exactly}
+      </div>
+      {details}
     </div>
   );
 }

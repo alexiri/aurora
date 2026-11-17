@@ -7,9 +7,9 @@ use aurora_testkit::oidc::{CLIENT_ID, CLIENT_SECRET, MockIdp};
 use http::{Method, StatusCode};
 use uuid::Uuid;
 
-const PID: &str = "mock";
+pub(crate) const PID: &str = "mock";
 
-fn provider(idp: &MockIdp, f: impl FnOnce(&mut OidcProvider)) -> OidcProvider {
+pub(crate) fn provider(idp: &MockIdp, f: impl FnOnce(&mut OidcProvider)) -> OidcProvider {
     let mut p = OidcProvider {
         id: PID.into(),
         display_name: Some("Mock SSO".into()),

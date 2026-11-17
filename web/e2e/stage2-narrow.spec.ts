@@ -75,8 +75,8 @@ test.describe("390 px", () => {
       await openAccess(page, s, "light");
       expect(await noPageScroll(page)).toBe(true);
       if (s !== "list") {
-        const dlg = page.getByRole("dialog");
-        expect(await dlg.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
+        const table = page.getByRole("region", { name: /^What Daneel can do in / });
+        expect(await table.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
       }
     });
   }

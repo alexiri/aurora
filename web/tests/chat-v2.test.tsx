@@ -316,19 +316,22 @@ describe("inline approval (RFE-012)", () => {
   const approval = () => ({
     id: "ap1", status: "pending", created_at: "2026-11-08T12:00:00Z", deadline: new Date(Date.now() + 125_000).toISOString(), host: "api.github.com",
     method: "PUT", path: "/repos/acme/web/pulls/42/merge", rule_name: "Ask before merging",
+    summary: { title: "merge a pull request", fields: [], source: "template" },
+    sentence: { agent: { id: "ag1", name: "Daneel" }, action: "merge a pull request" },
+    asked_by: { kind: "rule", rule_id: "r1", rule_name: "Ask before merging", scope: "workspace" }, can_always_allow: false,
   });
   const routes = (role: string) => ({
     "GET /v1/workspaces/w": () => json(200, { my_role: role }),
     "GET /v1/workspaces/w/approvals": () => json(200, { items: [approval()], next_cursor: null }),
   });
 
-  it("shows HELD, the countdown, the request line and the rule, with Approve and Deny for an approver", async () => {
+  it("shows the sentence, the countdown, the request line and the rule, with Allow once and Block for an approver", async () => {
     st.events = [e(1, "turn.queued", { turn_id: "t1", text: "merge it" }), pending];
     mock(routes("approver"));
     pane();
     expect(await screen.findByText("PUT")).toBeTruthy();
-    expect(screen.getByText("Held")).toBeTruthy();
-    expect(screen.getByText(/Expires in 2:0\d/)).toBeTruthy();
+    expect(screen.getByText("merge a pull request")).toBeTruthy();
+    expect(screen.getByText(/Expires in 2m 0\d/)).toBeTruthy();
     expect(screen.getByText("api.github.com/repos/acme/web/pulls/42/merge")).toBeTruthy();
     expect(screen.getByText(/Ask before merging/)).toBeTruthy();
     expect(await screen.findByRole("button", { name: "Allow once" })).toBeTruthy();

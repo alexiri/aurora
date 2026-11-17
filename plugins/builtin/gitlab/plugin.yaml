@@ -1,6 +1,6 @@
 package:
   id: gitlab
-  version: 1.2.2
+  version: 1.2.3
   contract: 1
   min_core: 0.1.0
   publisher: aurora
@@ -162,25 +162,25 @@ apps:
           - { id: git_push, description: "Pushes commits to a repository over HTTPS.", name: Push code over HTTPS, host: "{instance}", path: "/**", methods: [GET, POST], git: push }
     approvals:
       create_issue:
-        title: Create issue
+        title: create an issue
         fields:
           - { label: Project, source: path, segment: 4 }
           - { label: Title, source: body, steps: [ { json: /title } ] }
         link: "https://{request.host}/dashboard/issues"
       update_issue:
-        title: Update issue
+        title: update an issue
         fields:
           - { label: Project, source: path, segment: 4 }
           - { label: Issue, source: path, segment: 6 }
           - { label: Change, source: body, steps: [ { json: /state_event } ] }
       create_issue_note:
-        title: Comment on issue
+        title: comment on an issue
         fields:
           - { label: Project, source: path, segment: 4 }
           - { label: Issue, source: path, segment: 6 }
           - { label: Comment, source: body, steps: [ { json: /body } ] }
       create_merge_request:
-        title: Create merge request
+        title: create a merge request
         fields:
           - { label: Project, source: path, segment: 4 }
           - { label: Title, source: body, steps: [ { json: /title } ] }
@@ -188,63 +188,63 @@ apps:
           - { label: Into, source: body, steps: [ { json: /target_branch } ] }
         link: "https://{request.host}/dashboard/merge_requests"
       update_merge_request:
-        title: Update merge request
+        title: update a merge request
         fields:
           - { label: Project, source: path, segment: 4 }
           - { label: Merge request, source: path, segment: 6 }
           - { label: Change, source: body, steps: [ { json: /state_event } ] }
       merge_merge_request:
-        title: Merge merge request
+        title: merge a merge request
         fields:
           - { label: Project, source: path, segment: 4 }
           - { label: Merge request, source: path, segment: 6 }
       create_merge_request_note:
-        title: Comment on merge request
+        title: comment on a merge request
         fields:
           - { label: Project, source: path, segment: 4 }
           - { label: Merge request, source: path, segment: 6 }
           - { label: Comment, source: body, steps: [ { json: /body } ] }
       create_pipeline:
-        title: Run pipeline
+        title: run a pipeline
         fields:
           - { label: Project, source: path, segment: 4 }
           - { label: Ref, source: query, name: ref }
       retry_pipeline:
-        title: Retry pipeline
+        title: retry a pipeline
         fields:
           - { label: Project, source: path, segment: 4 }
           - { label: Pipeline, source: path, segment: 6 }
       cancel_pipeline:
-        title: Cancel pipeline
+        title: cancel a pipeline
         fields:
           - { label: Project, source: path, segment: 4 }
           - { label: Pipeline, source: path, segment: 6 }
       create_branch:
-        title: Create branch
+        title: create a branch
         fields:
           - { label: Project, source: path, segment: 4 }
           - { label: Branch, source: body, steps: [ { json: /branch } ] }
           - { label: From, source: body, steps: [ { json: /ref } ] }
       delete_branch:
-        title: Delete branch
+        title: delete a branch
         fields:
           - { label: Project, source: path, segment: 4 }
           - { label: Branch, source: path, segment: 7 }
       create_commit:
-        title: Commit changes
+        title: commit changes
         fields:
           - { label: Project, source: path, segment: 4 }
           - { label: Branch, source: body, steps: [ { json: /branch } ] }
           - { label: Message, source: body, steps: [ { json: /commit_message } ] }
       write_repository_file:
-        title: Change repository file
+        title: change a file in a repository
         fields:
           - { label: Project, source: path, segment: 4 }
           - { label: File, source: path, segment: 7 }
           - { label: Branch, source: body, steps: [ { json: /branch } ] }
           - { label: Message, source: body, steps: [ { json: /commit_message } ] }
       git_push:
-        title: Push code
+        title: push code
         fields:
           - { label: Group or user, source: path, segment: 1 }
     agent:

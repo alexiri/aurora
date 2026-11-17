@@ -38,10 +38,36 @@ export function useAccounts(scope: AccountsScope, enabled = true) {
   });
 }
 
+export type TestAnswer = S["AccountTestAnswer"];
+
+/** C-943: check one account now. The result is stored by the server (except `not_testable`), so the lists refresh. */
+export function useTestAccount() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ ref }: { ref: Account["ref"] }) =>
+      unwrap(api.POST("/v1/accounts/{type}/{id}/test", { params: { path: { type: ref.type, id: ref.id } } })),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: accountKeys.all }),
+  });
+}
+
+export type AppAccess = S["AppAccess"];
+export type AppAccessTool = S["AppAccessTool"];
+
+/** C-934: what actually happens for each tool of an app, per account the agent has been given. */
+export function useAppAccess(agentId: string, appId: string | undefined) {
+  return useQuery({
+    queryKey: ["app-access", agentId, appId ?? ""] as const,
+    enabled: !!appId,
+    queryFn: () => unwrap(api.GET("/v1/agents/{agent}/apps/{app}/access", { params: { path: { agent: agentId, app: appId! } } })),
+    retry: false,
+  });
+}
+
 /** Anything that changed an agent's access to an account refreshes the lists and the agent's grant views. */
 function useAccessInvalidation() {
   const qc = useQueryClient();
   return (agentId: string) => {
+    void qc.invalidateQueries({ queryKey: ["app-access", agentId] });
     void qc.invalidateQueries({ queryKey: accountKeys.all });
     void qc.invalidateQueries({ queryKey: ["connections"] });
     void qc.invalidateQueries({ queryKey: policyKeys.grants(agentId) });

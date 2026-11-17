@@ -202,6 +202,68 @@ pub async fn get<'e, E: sqlx::PgExecutor<'e>>(
     )
 }
 
+/// (P5-UX-16, C-982) Where the question of an approval came from, resolved from the logical id of
+/// the rule that asked: the derived ask rule of an agent's access (a grant), or a policy rule.
+#[derive(Debug, Clone)]
+pub enum RuleOrigin {
+    /// The derived `(ask)` rule of a connection grant.
+    Access {
+        grant_id: Uuid,
+        agent_id: Uuid,
+        connection_id: Uuid,
+        mode: String,
+        ask_tools: Vec<String>,
+    },
+    /// A policy rule of a workspace (`organization = false`) or of the organization.
+    Rule { name: String, organization: bool },
+}
+
+pub async fn rule_origin(
+    exec: &mut sqlx::PgConnection,
+    logical_id: Uuid,
+) -> Result<Option<RuleOrigin>, DbError> {
+    let derived: Option<(String, Uuid, i32)> = sqlx::query_as(
+        "SELECT source_kind, source_id, ordinal FROM derived_rules WHERE logical_id = $1",
+    )
+    .bind(logical_id)
+    .fetch_optional(&mut *exec)
+    .await?;
+    if let Some((kind, source, ordinal)) = derived {
+        if kind != "grant" || ordinal != 1 {
+            return Ok(None);
+        }
+        let g: Option<(Uuid, Option<Uuid>, String, Vec<String>)> = sqlx::query_as(
+            "SELECT agent_id, connection_id, COALESCE(mode, 'full'), ask_tools \
+             FROM grants WHERE id = $1",
+        )
+        .bind(source)
+        .fetch_optional(&mut *exec)
+        .await?;
+        return Ok(g.and_then(|(agent_id, connection_id, mode, ask_tools)| {
+            connection_id.map(|connection_id| RuleOrigin::Access {
+                grant_id: source,
+                agent_id,
+                connection_id,
+                mode,
+                ask_tools,
+            })
+        }));
+    }
+    let r: Option<(String, Option<Uuid>)> = sqlx::query_as(
+        "SELECT r.name, g.workspace_id FROM policy_rules r \
+         JOIN policy_generations g ON g.id = r.generation_id \
+         WHERE r.logical_id = $1 \
+         ORDER BY (g.status = 'published') DESC, g.number DESC LIMIT 1",
+    )
+    .bind(logical_id)
+    .fetch_optional(&mut *exec)
+    .await?;
+    Ok(r.map(|(name, ws)| RuleOrigin::Rule {
+        name,
+        organization: ws.is_none(),
+    }))
+}
+
 /// Workspace history, newest first, optional status filter.
 pub async fn list_workspace(
     pool: &PgPool,
@@ -359,6 +421,39 @@ pub async fn decide(
     };
     notify_tx(&mut *tx, id, ws, "decided").await?;
     get(&mut *tx, id).await
+}
+
+/// (P5-UX-16, C-982) Approves the other pending approvals of the same agent, account and tool, one
+/// by one with [`decide`] (so each notifies and starts its resume window), in the caller's
+/// transaction. Returns the rows it approved.
+#[allow(clippy::too_many_arguments)]
+pub async fn approve_same_kind(
+    tx: &mut sqlx::PgConnection,
+    except: Uuid,
+    agent_id: Uuid,
+    connection_id: Uuid,
+    tool_id: &str,
+    user: Uuid,
+    via: &str,
+    resume_window_secs: u64,
+) -> Result<Vec<ApprovalRow>, DbError> {
+    let ids: Vec<Uuid> = sqlx::query_scalar(
+        "SELECT id FROM approvals WHERE agent_id = $1 AND connection_id = $2 AND tool_id = $3 \
+         AND status = 'pending' AND deadline > now() AND id <> $4 ORDER BY created_at, id",
+    )
+    .bind(agent_id)
+    .bind(connection_id)
+    .bind(tool_id)
+    .bind(except)
+    .fetch_all(&mut *tx)
+    .await?;
+    let mut out = Vec::new();
+    for id in ids {
+        if let Some(row) = decide(&mut *tx, id, true, user, via, resume_window_secs).await? {
+            out.push(row);
+        }
+    }
+    Ok(out)
 }
 
 /// Whether any approval of this batch/agent exists that the user may decide
