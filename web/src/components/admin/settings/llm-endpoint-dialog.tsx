@@ -258,8 +258,8 @@ export function EndpointDialog({
       open
       size="xl"
       onOpenChange={(o) => !o && onClose()}
-      title={existing ? `Edit ${str(existing.id)}` : "Add an LLM endpoint"}
-      description="Credentials are never part of an endpoint: they are the LLM keys organizations add."
+      title={existing ? `Edit ${str(existing.id)}` : "Add an AI endpoint"}
+      description="AI keys are never part of an endpoint: organizations and workspaces add them as accounts."
       submitLabel="Done"
       submitDisabled={Boolean(idError) || missing}
       onSubmit={submit}

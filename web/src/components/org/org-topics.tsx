@@ -8,7 +8,7 @@ import { InstancesView } from "@/components/apps/instances-view";
 import { OAuthClientsPanel } from "@/components/apps/oauth-clients-panel";
 import { ChannelsView } from "@/components/channels/channels-view";
 import { AccountsPanel } from "@/components/accounts/accounts-panel";
-import { GovernanceView, type Tab as GovernancePanel } from "@/components/governance/governance-view";
+import { OrgAiModels, OrgByo } from "@/components/governance/org-governance";
 import { GroupsView } from "@/components/groups/groups-view";
 import { OrgAuditView } from "@/components/org/audit-view";
 import { OrgDirectoryView } from "@/components/org/directory-view";
@@ -47,21 +47,16 @@ function AdminTopic({ children }: { children: (org: Org, slug: string) => ReactN
   );
 }
 
-/** One governance panel group (AI models, Internet access, BYO) of an organization, read-only for members. */
-function Governance({ org, slug, panels }: { org: Org; slug: string; panels: GovernancePanel[] }) {
-  return <GovernanceView orgId={org.id} orgSlug={slug} canEdit={isAdmin(org)} panels={panels} />;
-}
-
 export function OrgAgentsPage() {
   return (
     <AdminTopic>
-      {(org, slug) => (
+      {(org) => (
         <TopicPage<Tabs<"orgAgents">>
           idBase="org-agents"
           title="Agents"
           description="Rules for bring-your-own agents, the skills every agent has, and previews."
           tabs={[
-            { id: "byo", label: "BYO", content: <Governance org={org} slug={slug} panels={["byo"]} /> },
+            { id: "byo", label: "BYO", content: <OrgByo org={org} /> },
             { id: "skills", label: "Skills", content: <OrgSkills /> },
             { id: "previews", label: "Previews", content: <PreviewsForm org={org} /> },
           ]}
@@ -123,7 +118,7 @@ export function OrgAiModelsPage() {
             }
             className="mb-2"
           />
-          <Governance org={org} slug={slug} panels={["models", "compliance"]} />
+          <OrgAiModels org={org} />
         </div>
       )}
     </OrgGate>

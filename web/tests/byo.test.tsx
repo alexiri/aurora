@@ -7,7 +7,8 @@ import { WorkspaceByoRow } from "@/components/agents/workspace-byo";
 import { ConnectTab } from "@/components/agents/connect-tab";
 import { CreateAgentDialog } from "@/components/agents/create-agent-dialog";
 import { AgentsList } from "@/components/agents-list";
-import { GovernanceView } from "@/components/governance/governance-view";
+import { OrgByo } from "@/components/governance/org-governance";
+import type { Org } from "@/lib/api/queries";
 import { InternetLevel } from "@/components/internet/internet-level";
 import { GeneralTab } from "@/components/settings/general-tab";
 import {
@@ -18,6 +19,8 @@ import {
   type EffectiveGovernance,
 } from "@/lib/api/governance";
 import { allAgentsText, appliesToAllAgents, type RuleInput } from "@/lib/api/policy";
+
+const ORG = { id: "o1", slug: "acme", name: "Acme", my_role: "owner" } as unknown as Org;
 
 const json = (status: number, body: unknown) =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -123,15 +126,15 @@ describe("BYO tab of the governance page", () => {
         instance({ default_source_cidrs: ["10.0.0.0/8"] }),
       ),
     );
-    wrap(<GovernanceView orgId="o1" orgSlug="acme" canEdit />);
-    fireEvent.click(await screen.findByRole("tab", { name: "BYO agents" }));
+    wrap(<OrgByo org={ORG} />);
+    await screen.findByLabelText("Who may create BYO agents");
     const sel = screen.getByLabelText("Who may create BYO agents") as HTMLSelectElement;
     expect([...sel.options].map((o) => o.value)).toEqual(["", "owners_only", "disabled"]);
     expect(screen.getByText(/inside the instance default: 10.0.0.0\/8/)).toBeTruthy();
     fireEvent.change(sel, { target: { value: "disabled" } });
     fireEvent.change(screen.getByLabelText("Default source CIDR list"), { target: { value: "10.1.0.0/16\n10.2.0.0/16" } });
     fireEvent.click(screen.getByLabelText(/Require context credentials/));
-    fireEvent.click(screen.getByRole("button", { name: "Save governance" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(body).not.toBeNull());
     expect(body!.document.byo).toEqual({
       posture: "disabled",
@@ -155,15 +158,15 @@ describe("BYO tab of the governance page", () => {
         instance({ enabled: false }),
       ),
     );
-    const { unmount } = wrap(<GovernanceView orgId="o1" orgSlug="acme" canEdit />);
-    fireEvent.click(await screen.findByRole("tab", { name: "BYO agents" }));
+    const { unmount } = wrap(<OrgByo org={ORG} />);
+    await screen.findByLabelText("Who may create BYO agents");
     expect(screen.getByText(/disabled by the instance operator/)).toBeTruthy();
     expect((screen.getByLabelText("Who may create BYO agents") as HTMLSelectElement).disabled).toBe(true);
     unmount();
-    wrap(<GovernanceView orgId="o1" orgSlug="acme" canEdit={false} />);
-    fireEvent.click(await screen.findByRole("tab", { name: "BYO agents" }));
+    wrap(<OrgByo org={{ ...ORG, my_role: "member" }} />);
+    await screen.findByLabelText("Who may create BYO agents");
     expect((screen.getByLabelText("Default source CIDR list") as HTMLTextAreaElement).disabled).toBe(true);
-    expect(screen.queryByRole("button", { name: "Save governance" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
   });
 });
 
