@@ -120,6 +120,17 @@ describe("origin view", () => {
 });
 
 // ---------------------------------------------------------------------------------------------------------------------
+const ROLES_OK = {
+  roles: {
+    large: { model_id: null, source: "none", warning: null },
+    medium: { model_id: null, source: "none", warning: null },
+    small: { model_id: null, source: "none", warning: null },
+  },
+  roles_dropped: [],
+  subagent_model: "inherit",
+  subagent_warning: null,
+};
+
 describe("model readiness on the Access tab", () => {
   const readiness = (keys: unknown[], dflt: unknown, over: Record<string, unknown> = {}) =>
     json(200, { harness: "claude-code", keys, default: dflt, override_dropped: false, ...over });
@@ -161,12 +172,39 @@ describe("model readiness on the Access tab", () => {
 
   it("shows Ready and the model the next turn uses", async () => {
     routes["GET /v1/agents/a1/model-readiness"] = () =>
-      readiness([key({})], { endpoint_id: "aigw", provider: "litellm", model_id: "gpt-4o", source: "endpoint_default" });
+      readiness([key({})], { endpoint_id: "aigw", provider: "litellm", model_id: "gpt-4o", source: "endpoint_default", ...ROLES_OK });
     tab();
     expect(await screen.findByText("Ready")).toBeTruthy();
     const next = screen.getByTestId("next-model");
     expect(next.textContent).toContain("gpt-4o");
     expect(next.textContent).toContain("the endpoint's default model");
+  });
+
+  // (phase 5, P5-MODELS-3, C-878) Resolved roles with their source, the warnings, the dropped roles and the subagent default.
+  it("lists the resolved roles with their source, an unset role on LiteLLM, a dropped role and a role not allowed for the org", async () => {
+    routes["GET /v1/agents/a1/model-readiness"] = () =>
+      readiness([key({})], {
+        endpoint_id: "aigw", provider: "litellm", model_id: "gpt-4o", source: "override",
+        roles: {
+          large: { model_id: "claude-opus", source: "agent", warning: "role_not_allowed" },
+          medium: { model_id: "glm-4.6", source: "endpoint", warning: null },
+          small: { model_id: null, source: "none", warning: "role_unset" },
+        },
+        roles_dropped: ["small"], subagent_model: "small", subagent_warning: "subagent_role_unset",
+      });
+    tab();
+    const list = await screen.findByRole("list", { name: "Model roles" });
+    const rows = within(list).getAllByRole("listitem").map((r) => r.textContent);
+    expect(rows[0]).toContain("Largeclaude-opusset on this agent");
+    expect(rows[1]).toContain("Mediumglm-4.6from the endpoint");
+    expect(rows[2]).toContain("Smallnonenot set");
+    const notes = screen.getAllByTestId("role-warning").map((n) => n.textContent ?? "");
+    expect(notes.some((t) => t.includes("Large (claude-opus) is not allowed for your organization"))).toBe(true);
+    expect(notes.some((t) => t.includes("Small is not set. On this endpoint, subagents and background requests may ask for a model it does not serve."))).toBe(true);
+    expect(notes.some((t) => t.includes("The Small model set for this agent is no longer usable"))).toBe(true);
+    expect(notes.some((t) => t.includes("Subagents use Small, which is not set"))).toBe(true);
+    expect(screen.getByTestId("subagent-model").textContent).toBe("Subagents use Small.");
+    expect(screen.getAllByRole("link", { name: "Change the roles on Instructions" })[0]!.getAttribute("href")).toContain("tab=instructions");
   });
 
   it("says 'No model chosen' with the Instructions link when default is null", async () => {

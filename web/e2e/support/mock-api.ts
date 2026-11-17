@@ -137,7 +137,20 @@ export const readinessReady = {
   harness: "claude-code",
   keys: [{ secret_id: id(300), name: "AIGW", scope: "organization", provider: "litellm", endpoint_id: "litellm", usable: true, reason: null }],
   override_dropped: false,
-  default: { endpoint_id: "litellm", model_id: "claude-sonnet-4", provider: "litellm", source: "endpoint_default" },
+  default: {
+    endpoint_id: "litellm",
+    model_id: "claude-sonnet-4",
+    provider: "litellm",
+    source: "endpoint_default",
+    roles: {
+      large: { model_id: "claude-opus-4", source: "endpoint", warning: null },
+      medium: { model_id: "claude-sonnet-4", source: "endpoint", warning: null },
+      small: { model_id: null, source: "none", warning: "role_unset" },
+    },
+    roles_dropped: [],
+    subagent_model: "inherit",
+    subagent_warning: null,
+  },
 };
 /** Nothing granted yet: the guide opens the key step. */
 export const readinessEmpty = { harness: "claude-code", keys: [], override_dropped: false, default: null };

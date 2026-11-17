@@ -8,6 +8,10 @@ import { Badge } from "@/components/ui/badge";
 import { Notice } from "@/components/ui/notice";
 import { ItemList, ListRow, Section } from "@/components/ui/section";
 import { useModelReadiness, type KeyReadiness } from "@/lib/api/credential-grants";
+import type { components } from "@/lib/api/schema";
+import { droppedRoleWarning, ROLE_LABEL, ROLE_SOURCE_COPY, ROLES, roleWarning, subagentWarning, type Role } from "@/lib/model-roles";
+
+type DefaultModel = components["schemas"]["DefaultModel"];
 
 /** Why a granted key is not usable, in words, and the fix (`08 §Model readiness`). */
 export const REASON_COPY: Record<string, { text: string; fix: string; where?: "keys" | "governance" }> = {
@@ -57,6 +61,47 @@ function KeyRow({ k, base, orgBase }: { k: KeyReadiness; base: string; orgBase: 
   );
 }
 
+/** (phase 5, P5-MODELS-3, C-878) The resolved roles with their source, the subagent default, the warnings and the dropped roles. */
+function RolesView({ d, instructionsHref }: { d: DefaultModel; instructionsHref: string }) {
+  const notes: string[] = [];
+  for (const role of ROLES) {
+    const v = d.roles[role];
+    if (v.warning) notes.push(roleWarning(role, v.warning, v.model_id));
+  }
+  for (const r of d.roles_dropped) notes.push(droppedRoleWarning(r));
+  if (d.subagent_warning) notes.push(subagentWarning(d.subagent_model, d.subagent_warning));
+  return (
+    <div className="space-y-2" data-testid="model-roles">
+      <ItemList aria-label="Model roles">
+        {ROLES.map((role) => {
+          const v = d.roles[role];
+          return (
+            <ListRow key={role}>
+              <p className="flex flex-wrap items-center gap-x-2 text-sm">
+                <span className="font-medium text-ink">{ROLE_LABEL[role]}</span>
+                {v.model_id ? <span className="break-all font-mono text-ink">{v.model_id}</span> : <span className="text-muted">none</span>}
+                <span className="text-xs text-muted">{ROLE_SOURCE_COPY[v.source] ?? v.source}</span>
+              </p>
+            </ListRow>
+          );
+        })}
+      </ItemList>
+      <p className="text-sm text-ink-2" data-testid="subagent-model">
+        Subagents use {d.subagent_model === "inherit" ? "the same model as the default" : ROLE_LABEL[d.subagent_model as Role] ?? d.subagent_model}.
+      </p>
+      {notes.map((n) => (
+        <Notice key={n} tone="pending" role="status" data-testid="role-warning">
+          {n}{" "}
+          <Link href={instructionsHref} className="font-semibold underline">
+            Change the roles on Instructions
+          </Link>
+          .
+        </Notice>
+      ))}
+    </div>
+  );
+}
+
 /** Hosted agents, owners only (C-500): each granted LLM key as Ready or its reason with the fix, and the model the next turn uses. */
 export function ModelReadinessSection({ agentId, base }: { agentId: string; base: string }) {
   const readiness = useModelReadiness(agentId);
@@ -85,10 +130,13 @@ export function ModelReadinessSection({ agentId, base }: { agentId: string; base
           ) : null}
           {readiness.data.keys.length > 0 ? (
             d ? (
-              <p className="text-sm text-ink-2" data-testid="next-model">
-                The next turn uses <span className="font-mono text-ink">{d.model_id}</span> on{" "}
-                <span className="font-mono text-ink">{d.endpoint_id}</span> ({SOURCE_COPY[d.source] ?? d.source}).
-              </p>
+              <>
+                <p className="text-sm text-ink-2" data-testid="next-model">
+                  The next turn uses <span className="font-mono text-ink">{d.model_id}</span> on{" "}
+                  <span className="font-mono text-ink">{d.endpoint_id}</span> ({SOURCE_COPY[d.source] ?? d.source}).
+                </p>
+                <RolesView d={d} instructionsHref={`${pathname}?tab=instructions`} />
+              </>
             ) : (
               <Notice tone="pending" role="status">
                 No model chosen —{" "}
