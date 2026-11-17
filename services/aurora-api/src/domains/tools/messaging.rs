@@ -80,7 +80,9 @@ impl PlatformTool for FindRecipient {
     }
     fn description(&self, _: &ToolContext) -> String {
         "Search the chat platform for people and spaces you may message. Returns recipient ids \
-         and short aliases you can pass as `to` to send_message."
+         and short aliases, valid for this conversation, that you can pass as `to` to \
+         send_message. Use it when you know only part of a name; an exact handle can go \
+         straight to send_message."
             .into()
     }
     fn input_schema(&self) -> Value {
@@ -135,19 +137,21 @@ impl PlatformTool for SendMessage {
         "send_message"
     }
     fn description(&self, _: &ToolContext) -> String {
-        "Send a chat message. `to` is `here` (this conversation's own thread, always allowed), \
-         an alias or a recipient id from find_recipient. Messages elsewhere may need a person's \
-         approval (you get status `pending_approval`) or be refused, depending on your settings."
+        "Send a chat message. Messages outside this thread may need a person's approval (you get \
+         status `pending_approval`) or be refused, depending on your settings. An unknown or \
+         ambiguous `to` returns the matching aliases to retry with."
             .into()
     }
     fn input_schema(&self) -> Value {
         json!({"type": "object", "additionalProperties": false, "required": ["to", "text"],
                "properties": {
-                 "to": {"type": "string"},
-                 "text": {"type": "string"},
+                 "to": {"type": "string",
+                        "description": "Who to send to: `here` (this conversation's own thread), an alias from find_recipient (e.g. `jdoe`), a recipient id, or a person's exact @handle / a channel's exact name — those are looked up for you."},
+                 "text": {"type": "string", "description": "Message body (Markdown)."},
                  "files": {"type": "array", "items": {"type": "string"},
                            "description": "Attachment ids of files you produced in this conversation."},
-                 "platform": {"type": "string"}}})
+                 "platform": {"type": "string",
+                              "description": "Connector id; only needed when you have several chat platforms."}}})
     }
     fn available(&self, _: &ToolContext) -> bool {
         true
@@ -203,8 +207,9 @@ impl PlatformTool for ReadConversation {
     fn input_schema(&self) -> Value {
         json!({"type": "object", "additionalProperties": false,
                "properties": {
-                 "target": {"type": "string", "description": "Alias or recipient id of a space bound to you."},
-                 "limit": {"type": "integer", "minimum": 1, "maximum": 50}}})
+                 "target": {"type": "string", "description": "Which space: `here`, an alias from find_recipient, a recipient id, or a channel's exact name — spaces bound to you only."},
+                 "limit": {"type": "integer", "minimum": 1, "maximum": 50,
+                           "description": "How many recent messages to return (default 20)."}}})
     }
     fn available(&self, _: &ToolContext) -> bool {
         true
@@ -360,5 +365,33 @@ impl PlatformTool for DeleteMyMessage {
             a.message_id,
         )
         .await?))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// With deferred tool loading the field descriptions may be all the model sees (FIX-150).
+    #[test]
+    fn every_recipient_field_is_described() {
+        for t in tools() {
+            if !matches!(
+                t.name(),
+                "send_message" | "find_recipient" | "read_conversation"
+            ) {
+                continue;
+            }
+            let schema = t.input_schema();
+            let props = schema["properties"].as_object().expect("properties");
+            for (prop, def) in props {
+                let d = def["description"].as_str().unwrap_or_default();
+                assert!(
+                    !d.trim().is_empty(),
+                    "{}.{prop} has no description",
+                    t.name()
+                );
+            }
+        }
     }
 }
