@@ -146,7 +146,8 @@ describe("org Apps page (C-894)", () => {
     expect(screen.getByLabelText("People can connect every app")).toBeChecked();
     fireEvent.click(within(list).getByRole("button", { name: "Connect CERN Phonebook" }));
     const dlg = await screen.findByRole("dialog");
-    await within(dlg).findByRole("list", { name: "Your workspaces" });
+    await within(dlg).findByRole("list", { name: "Where to connect" });
+    expect(within(dlg).getByText("For the whole organization")).toBeInTheDocument();
     expect(within(dlg).queryByText("LAB")).toBeNull();
     // the unavailable one is disabled with the reason
     await waitFor(() => expect(within(dlg).getByRole("button", { name: "Connect in DEV" })).toBeDisabled());
@@ -157,14 +158,16 @@ describe("org Apps page (C-894)", () => {
     expect(router.push).toHaveBeenCalledWith("/o/acme/w/ops/apps?tab=apps&connect=cern-phonebook");
   });
 
-  it("with no owned workspace the dialog says who can connect", async () => {
+  it("with no owned workspace an organization admin can still connect for the whole organization, with no workspace to pick", async () => {
     mockFetch({
       ...routes(),
       "GET /v1/orgs/o1/workspaces": () => json(200, { items: [ws("w2", "lab", "member")], next_cursor: null }),
     });
     wrap(<AvailabilityView orgId="o1" orgSlug="acme" canEdit />);
     fireEvent.click(await screen.findByRole("button", { name: "Connect CERN Phonebook" }));
-    expect(await screen.findByText(/Only a workspace owner can connect apps/)).toBeInTheDocument();
+    const dlg = await screen.findByRole("dialog");
+    expect(await within(dlg).findByText("For the whole organization")).toBeInTheDocument();
+    expect(within(dlg).queryByRole("button", { name: /^Connect in / })).toBeNull();
   });
 });
 
