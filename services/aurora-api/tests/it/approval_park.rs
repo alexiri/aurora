@@ -265,6 +265,7 @@ async fn a_frozen_agent_gets_no_followup_and_the_grant_is_revoked() {
 #[tokio::test]
 async fn the_resume_window_ends_with_an_expiry_and_a_notice_and_no_turn() {
     let w = world().await;
+    aurora_api::domains::approvals::transcript::spawn(w.h.state.clone());
     let id = row(&w, true, None, "Window").await;
     assert_eq!(decide(&w, id, "approve").await.0, 200);
     let before = followups(&w).await.len();
@@ -298,6 +299,47 @@ async fn the_resume_window_ends_with_an_expiry_and_a_notice_and_no_turn() {
     .await
     .unwrap();
     assert_eq!(notices, 1);
+
+    // (P5-UX-16, C-983) The card says it ran out: `approval.expired` with `resume_window`, after
+    // `approval.pending` and `approval.decided`, once. The listener's subscription is lazy, so the
+    // bus message is repeated with a deadline (the writer is idempotent).
+    let count = |ty: &'static str| {
+        let pool = w.h.pool().clone();
+        let conv = w.conv;
+        async move {
+            sqlx::query_as::<_, (Value,)>(
+                "SELECT payload FROM transcript_events WHERE conversation_id = $1 AND type = $2 \
+                 AND payload->>'approval_id' = $3",
+            )
+            .bind(conv)
+            .bind(ty)
+            .bind(id.to_string())
+            .fetch_all(&pool)
+            .await
+            .unwrap()
+        }
+    };
+    let mut expired = Vec::new();
+    for _ in 0..100 {
+        aurora_db::bus::notify(
+            w.h.pool(),
+            aurora_db::bus::Channel::Approval,
+            &json!({"id": id, "workspace_id": w.f.ws, "event": "expired"}),
+        )
+        .await
+        .unwrap();
+        expired = count("approval.expired").await;
+        if !expired.is_empty() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    assert_eq!(expired.len(), 1, "{expired:?}");
+    assert_eq!(expired[0].0["reason"], "resume_window");
+    assert_eq!(count("approval.pending").await.len(), 1);
+    let decided = count("approval.decided").await;
+    assert_eq!(decided.len(), 1);
+    assert_eq!(decided[0].0["decision"], "approve");
 }
 
 #[tokio::test]

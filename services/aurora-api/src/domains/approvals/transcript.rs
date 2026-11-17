@@ -156,6 +156,11 @@ pub async fn write_current(s: &AppState, id: uuid::Uuid) -> Result<(), ApiError>
         }
         write(s, &mut tx, &row, kind, None).await?;
     }
+    // An approved parked approval nobody repeated in time: the sweep ended its window and notified
+    // `expired` (C-828); the card then says the approval ran out (`resume_window`).
+    if row.status == "approved" && row.resume_state.as_deref() == Some("expired") {
+        write(s, &mut tx, &row, Kind::Expired("resume_window"), None).await?;
+    }
     tx.commit().await.map_err(DbError::from)?;
     Ok(())
 }
