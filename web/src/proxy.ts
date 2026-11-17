@@ -27,6 +27,9 @@ export function proxy(request: NextRequest) {
     // overlap. `<style>` elements and stylesheets stay bound to `'self'` and the nonce.
     "style-src-attr 'unsafe-inline'",
     "connect-src 'self'",
+    // (P4-011B-4, C-835, SEC-102) The push service worker and the manifest: 'self' only.
+    "worker-src 'self'",
+    "manifest-src 'self'",
     "object-src 'none'",
     "base-uri 'self'",
     "form-action 'self'",
