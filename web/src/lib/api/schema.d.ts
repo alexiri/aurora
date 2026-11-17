@@ -6183,6 +6183,11 @@ export interface components {
             decision: string;
             description?: string | null;
             name: string;
+            /**
+             * @description What the agent's own saved access says (`allow` | `ask` | `block`), so a reader who cannot
+             *     read the grants can still show it beside a reason. Equal to `decision` when no `reason`.
+             */
+            own: string;
             reason?: components["schemas"]["ToolReason"] | null;
             tool_id: string;
         };

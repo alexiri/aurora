@@ -322,6 +322,9 @@ pub struct AppAccessTool {
     pub access: String,
     /// What actually happens: `allow` | `ask` | `block`.
     pub decision: String,
+    /// What the agent's own saved access says (`allow` | `ask` | `block`), so a reader who cannot
+    /// read the grants can still show it beside a reason. Equal to `decision` when no `reason`.
+    pub own: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<ToolReason>,
 }

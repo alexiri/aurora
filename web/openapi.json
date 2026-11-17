@@ -36886,7 +36886,8 @@
           "tool_id",
           "name",
           "access",
-          "decision"
+          "decision",
+          "own"
         ],
         "properties": {
           "access": {
@@ -36905,6 +36906,10 @@
           },
           "name": {
             "type": "string"
+          },
+          "own": {
+            "type": "string",
+            "description": "What the agent's own saved access says (`allow` | `ask` | `block`), so a reader who cannot\nread the grants can still show it beside a reason. Equal to `decision` when no `reason`."
           },
           "reason": {
             "oneOf": [

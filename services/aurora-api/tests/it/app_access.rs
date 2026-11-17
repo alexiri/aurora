@@ -124,6 +124,8 @@ async fn an_organizations_read_only_limit_blocks_writes_with_its_reason() {
     let create = tool(&v, "create_item");
     assert_eq!(create["decision"], "block", "{v}");
     assert_eq!(create["reason"]["layer"], "limit");
+    // The agent's own choice stays visible beside the reason.
+    assert_eq!(create["own"], "ask");
     assert_eq!(create["reason"]["label"], format!("Limited by {org_name}"));
     let get = tool(&v, "get_item");
     assert_eq!(get["decision"], "allow");

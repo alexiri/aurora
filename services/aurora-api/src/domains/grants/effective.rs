@@ -494,6 +494,7 @@ pub async fn app_access(
                     description: t.description.clone(),
                     access: if t.group == "write" { "write" } else { "read" }.into(),
                     decision: decision_str(e.verdict).into(),
+                    own: own.into(),
                     reason: reason_for(&e, own, &derived, org_account, &org_name),
                 }
             })
