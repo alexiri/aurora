@@ -52,6 +52,9 @@ export interface SignInResult {
   granted: string[];
   grantFailed: string | null;
   missing: string[];
+  /** The scopes the new account has and the method it was made with: the Access dialog lists tools the scopes cannot serve (FIX-136). */
+  scopes?: string[];
+  methodId?: string;
 }
 
 const reason = (w: WhoCanValue | null | undefined) =>
@@ -130,9 +133,9 @@ export function SignInStep({
     useCallback(
       (m) => {
         refresh();
-        onResult({ accountId: m.connectionId, granted: m.grantedAgentIds, grantFailed: m.grantFailed, missing: m.missingScopes });
+        onResult({ accountId: m.connectionId, granted: m.grantedAgentIds, grantFailed: m.grantFailed, missing: m.missingScopes, methodId: method?.id });
       },
-      [refresh, onResult],
+      [refresh, onResult, method?.id],
     ),
   );
 
@@ -191,7 +194,14 @@ export function SignInStep({
       }
       signIn.close();
       refresh();
-      onResult({ accountId: res.connection.id, granted: res.grants.map((g) => g.agent_id), grantFailed: null, missing: res.missing_scopes });
+      onResult({
+        accountId: res.connection.id,
+        granted: res.grants.map((g) => g.agent_id),
+        grantFailed: null,
+        missing: res.missing_scopes,
+        scopes: res.connection.scopes,
+        methodId: method.id,
+      });
     } catch (err) {
       signIn.close();
       setError(err);

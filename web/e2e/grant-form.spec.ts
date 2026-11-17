@@ -26,6 +26,7 @@ const indico = {
   connect: [
     {
       id: "token", kind: "fields", access_levels: [], default_scopes: [], scopes: [], recommended: true, label: "API token",
+      audience: "person", probe_scopes: [], scope_presets: { read: [], write: [] }, show_context: [],
       fields: [{ name: "api_token", label: "API token", type: "secret", store: "credentials", required: true }],
     },
   ],
@@ -54,7 +55,7 @@ for (const scheme of ["light", "dark"] as const) {
           const m = route.request().method();
           const json = (b: unknown, status = 200) => route.fulfill({ status, contentType: "application/json", body: JSON.stringify(b) });
           if (p === "/v1/apps/indico" && m === "GET") return json(indico);
-          if (p === "/v1/apps/indico/connect") return json({ kind: "connected", connection: { id: CONN }, missing_scopes: [] });
+          if (p === "/v1/apps/indico/connect") return json({ kind: "connected", connection: { id: CONN }, grants: [], missing_scopes: [] });
           if (p === `/v1/workspaces/${agent.workspace_id}/agents`) return json({ items: [agent], next_cursor: null });
           if (p === `/v1/connections/${CONN}/grants`) {
             if (m === "POST") {
@@ -66,8 +67,14 @@ for (const scheme of ["light", "dark"] as const) {
           return route.fallback();
         });
         await page.goto("/o/acme/w/main/credentials?tab=apps&connect=indico");
-        await page.getByLabel("API token").fill("not-a-real-token");
-        await page.getByRole("button", { name: "Connect", exact: true }).click();
+        // The connect journey (P5-UX-3): choose no agent now, sign in, and give the access from the Done step (a custom-only
+        // app has no Access step: its access is the custom form).
+        const journey = page.getByTestId("ws-connect-journey");
+        await journey.getByRole("checkbox", { name: `Give ${agent.name} access` }).uncheck();
+        await journey.getByRole("button", { name: "Next" }).click();
+        await journey.getByLabel("API token").fill("not-a-real-token");
+        await journey.getByRole("button", { name: "Connect", exact: true }).click();
+        await journey.getByRole("button", { name: "Give access" }).click();
         const panel = page.getByLabel("Give agents access");
         await panel.getByRole("checkbox", { name: `Give ${agent.name} access` }).check();
         await expect(panel.getByText(/This app only supports custom access/)).toBeVisible();

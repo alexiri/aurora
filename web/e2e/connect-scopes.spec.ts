@@ -28,6 +28,7 @@ const indico = {
   connect: [
     {
       id: "token", kind: "fields", access_levels: [], default_scopes: [], recommended: true, label: "Personal API token",
+      audience: "person", show_context: [], scope_presets: { read: ["read:legacy_api"], write: ["write:legacy_api"] },
       fields: [{ name: "access_token", label: "Personal API token", type: "secret", store: "credentials", required: true }],
       probe_scopes: ["read:legacy_api", "read:everything"],
       scopes: [
@@ -66,14 +67,20 @@ for (const scheme of ["light", "dark"] as const) {
           if (p === "/v1/apps/indico/connect") {
             const body = route.request().postDataJSON() as Record<string, unknown>;
             connected.push(body);
-            return json({ kind: "connected", connection: { id: CONN, scopes: body.scopes ?? ["read:legacy_api"] }, missing_scopes: [] });
+            return json({ kind: "connected", connection: { id: CONN, scopes: body.scopes ?? ["read:legacy_api"] }, grants: [], missing_scopes: [] });
           }
           if (p === `/v1/workspaces/${agent.workspace_id}/agents`) return json({ items: [agent], next_cursor: null });
           if (p === `/v1/connections/${CONN}/grants`) return json({ items: [] });
           return route.fallback();
         });
         await page.goto("/o/acme/w/main/credentials?tab=apps&connect=indico");
-        await page.getByLabel("Personal API token").fill("not-a-real-token");
+        // The connect journey (P5-UX-3): no agent now (the unavailable tools are listed in the Access dialog from Done), and the
+        // token's scopes are under Advanced.
+        const journey = page.getByTestId("ws-connect-journey");
+        await journey.getByRole("checkbox", { name: `Give ${agent.name} access` }).uncheck();
+        await journey.getByRole("button", { name: "Next" }).click();
+        await journey.getByLabel("Personal API token").fill("not-a-real-token");
+        await journey.getByText(/^Advanced: other ways to connect/).click();
         const scopes = page.getByRole("group", { name: "Which scopes did you give this token?" });
         await expect(scopes.getByText("Aurora checks each read scope")).toBeVisible();
         await scopes.getByText("I will tick them", { exact: true }).click();
@@ -84,6 +91,7 @@ for (const scheme of ["light", "dark"] as const) {
         await expect.poll(() => connected.length).toBe(1);
         expect(connected[0]).toMatchObject({ method_id: "token", scopes: ["read:legacy_api"] });
 
+        await journey.getByRole("button", { name: "Give access" }).click();
         const panel = page.getByLabel("Give agents access");
         await panel.getByRole("checkbox", { name: `Give ${agent.name} access` }).check();
         const box = panel.getByText(/Not available with this connection's token \(3\)/);

@@ -55,7 +55,7 @@ function Tile({
       <button
         type="button"
         aria-disabled={blocked ? true : undefined}
-        aria-label={blocked ? `${name} (needs setup)` : name}
+        aria-label={blocked ? `${name} (needs setup)` : undefined}
         onFocus={onFocus}
         onMouseEnter={onFocus}
         onClick={() => {

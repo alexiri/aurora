@@ -19,9 +19,11 @@ for (const scheme of ["light", "dark"] as const) {
         page.on("popup", (p) => opened.push(p.url()));
         await openRoute(page, APPS, scheme);
         await page.getByRole("button", { name: "Connect GitHub" }).click();
-        const dialog = page.getByRole("dialog", { name: "Connect GitHub" });
+        // The connect journey (P5-UX-3): its name follows the steps, so hold on to the dialog itself. The workspace has one
+        // agent, so the Agent step comes first with Daneel chosen.
+        const dialog = page.getByTestId("ws-connect-journey");
         await expect(dialog).toBeVisible();
-        await expect(dialog.getByRole("radiogroup", { name: "How do you want to connect?" })).toBeVisible();
+        await expect(dialog.getByRole("group", { name: "Which agents can use GitHub?" })).toBeVisible();
         // The dialog sits on the page itself: the dashboard is still behind it, in this window.
         expect(page.url()).toContain("/apps?tab=apps");
         expect(opened).toEqual([]);
@@ -50,7 +52,7 @@ for (const scheme of ["light", "dark"] as const) {
 
       test("the deep link opens the dialog and closing it removes the parameter", async ({ page }) => {
         await openRoute(page, `${APPS}&connect=github`, scheme);
-        const dialog = page.getByRole("dialog", { name: "Connect GitHub" });
+        const dialog = page.getByTestId("ws-connect-journey");
         await expect(dialog).toBeVisible();
         await dialog.getByRole("button", { name: "Close" }).click();
         await expect(dialog).toBeHidden();
@@ -59,7 +61,7 @@ for (const scheme of ["light", "dark"] as const) {
 
       test("the old connect route redirects to the dialog", async ({ page }) => {
         await openRoute(page, "/o/acme/w/main/apps/github/connect", scheme);
-        await expect(page.getByRole("dialog", { name: "Connect GitHub" })).toBeVisible();
+        await expect(page.getByTestId("ws-connect-journey")).toBeVisible();
         expect(new URL(page.url()).pathname).toBe("/o/acme/w/main/apps");
       });
     });
@@ -70,9 +72,12 @@ test.describe("× stays reachable at 390 px", () => {
   test.use({ viewport: { width: 390, height: 600 } });
   test("scrolling a long dialog keeps the close icon in view", async ({ page }) => {
     await openRoute(page, `${APPS}&connect=github`, "light");
-    const dialog = page.getByRole("dialog", { name: "Connect GitHub" });
+    const dialog = page.getByTestId("ws-connect-journey");
     await expect(dialog).toBeVisible();
-    // Choose the token method so the form is long enough to scroll.
+    // Go to the sign-in step and open Advanced so the form is long enough to scroll.
+    await dialog.getByRole("button", { name: "Give Daneel access" }).click();
+    await dialog.getByRole("button", { name: "Next" }).click();
+    await dialog.getByText(/^Advanced: other ways to connect/).click();
     const scrollable = await dialog.evaluate((el) => el.scrollHeight - el.clientHeight);
     expect(scrollable, "the dialog body should scroll in this viewport").toBeGreaterThan(0);
     await dialog.evaluate((el) => { el.scrollTop = el.scrollHeight; });

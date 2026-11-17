@@ -48,6 +48,8 @@ interface DoneState {
   level: Level | null;
   appId?: string;
   customOnly?: boolean;
+  scopes?: string[];
+  methodId?: string;
 }
 
 function names(list: string[]): string {
@@ -242,6 +244,8 @@ export function ConnectJourney({
       level: hasLevels ? effective : null,
       appId: realApp,
       customOnly,
+      scopes: r.scopes,
+      methodId: r.methodId,
     });
     setStep("done");
   };
@@ -460,6 +464,8 @@ export function ConnectJourney({
               appId: done.appId,
               appWorkspaceId: workspaceId,
               customOnly: done.customOnly,
+              scopes: done.scopes,
+              connectMethod: done.methodId,
             }}
           />
         ) : null}
