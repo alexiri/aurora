@@ -193,6 +193,12 @@ impl Mm {
         &self.base
     }
 
+    /// The client for a person's own token (P4-UTOK): same server and address policy, but a type
+    /// that can reach only `GET /users/me` and `POST /posts`.
+    pub fn person_client(&self) -> crate::person::PersonClient {
+        crate::person::PersonClient::new(self.http.clone(), self.base.clone())
+    }
+
     pub fn host(&self) -> String {
         reqwest::Url::parse(&self.base)
             .ok()
@@ -343,7 +349,7 @@ impl Mm {
     }
 }
 
-async fn check(resp: reqwest::Response) -> R<reqwest::Response> {
+pub(crate) async fn check(resp: reqwest::Response) -> R<reqwest::Response> {
     let status = resp.status();
     if status.is_success() {
         return Ok(resp);

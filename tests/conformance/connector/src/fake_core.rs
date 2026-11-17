@@ -355,6 +355,7 @@ impl FakeCore {
                 maybe_sent: false,
                 payload,
                 credentials: with_credentials.then_some(credentials),
+                user_credential: None,
             },
             state: OpState::Queued,
             claims: vec![],
@@ -457,6 +458,7 @@ impl FakeCore {
             maybe_sent: false,
             payload,
             credentials: None,
+            user_credential: None,
         };
         self.st().ops.push(OpRecord {
             op,

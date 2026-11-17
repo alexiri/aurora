@@ -194,6 +194,17 @@ pub async fn call_correlated(
     op: NewOp,
     timeout: Duration,
 ) -> Result<Value, CorrelatedError> {
+    call_correlated_with_id(state, Uuid::now_v7(), op, timeout).await
+}
+
+/// As [`call_correlated`] with a caller-chosen op id (a person's token copy is sealed under it
+/// before the op exists, P4-UTOK).
+pub async fn call_correlated_with_id(
+    state: &AppState,
+    op_id: Uuid,
+    op: NewOp,
+    timeout: Duration,
+) -> Result<Value, CorrelatedError> {
     // Subscribe before inserting so the result notification cannot be missed.
     let mut rx = state
         .connector_bus
@@ -203,7 +214,7 @@ pub async fn call_correlated(
     let correlation = Uuid::now_v7();
     let id = async {
         let mut tx = state.pool.begin().await.map_err(DbError::from)?;
-        let id = enqueue_with(&mut tx, Uuid::now_v7(), op, Some(correlation)).await?;
+        let id = enqueue_with(&mut tx, op_id, op, Some(correlation)).await?;
         tx.commit().await.map_err(DbError::from)?;
         Ok::<_, ApiError>(id)
     }
@@ -324,6 +335,21 @@ async fn claim(
                         continue;
                     }
                 };
+                // (P4-UTOK, C-857) An op that acts with a person's token is handed out only while
+                // the token, its grant and the owner's link stand; the copy is opened here.
+                let user_credential = if r.user_op {
+                    use crate::domains::user_tokens::claim::{Outcome as UserClaim, on_claim};
+                    match on_claim(&s, &r).await? {
+                        UserClaim::Deliver(token) => Some(token),
+                        UserClaim::Refused => continue,
+                        UserClaim::Retry => {
+                            ops::reschedule(&s.pool, r.id, backoff_secs(r.attempts), true).await?;
+                            continue;
+                        }
+                    }
+                } else {
+                    None
+                };
                 out.push(Operation {
                     op_id: r.id,
                     kind,
@@ -333,6 +359,7 @@ async fn claim(
                     maybe_sent: r.was_leased,
                     payload: r.payload,
                     credentials,
+                    user_credential,
                 });
             }
             if !out.is_empty() {
@@ -434,6 +461,14 @@ async fn apply_result(s: &AppState, c: &ConnectorCtx, r: OpResult) -> Result<(),
     }
     let fail = |code: &str, message: &str| json!({"error": {"code": code, "message": message}});
     let deprovision = op.kind == "presence.deprovision";
+    // (P4-UTOK) An op that acts with a person's token: a verify, or a send (`sender.user_token`).
+    let user_send_token: Option<Uuid> = op
+        .payload
+        .pointer("/sender/user_token")
+        .and_then(Value::as_str)
+        .and_then(|t| t.parse().ok());
+    let user_op = op.kind == "user_token.verify" || user_send_token.is_some();
+    let mut user_discards = crate::domains::user_tokens::custody::Discards::default();
     // Set when a self-contained deprovision reaches a terminal state: `(status, error code)`.
     let mut ended: Option<(&str, Option<String>)> = None;
     match (r.outcome, r.error) {
@@ -503,6 +538,15 @@ async fn apply_result(s: &AppState, c: &ConnectorCtx, r: OpResult) -> Result<(),
                 // The presence row is gone: nothing to disable or tell an operator about
                 // (the failure audit row says it).
                 "credential_dead" if deprovision => {}
+                // (P4-UTOK, C-857) A person's token was rejected: the token ends `invalid`; the
+                // presence and the integration are untouched.
+                "credential_dead" if user_op => {
+                    if let Some(token) = user_send_token {
+                        user_discards.extend(
+                            crate::domains::user_tokens::end::invalidate(&mut tx, token).await?,
+                        );
+                    }
+                }
                 "credential_dead" => {
                     if let Some(p) = op.presence_id {
                         ops::disable_presence(&mut *tx, p, "credential_dead").await?;
@@ -552,6 +596,28 @@ async fn apply_result(s: &AppState, c: &ConnectorCtx, r: OpResult) -> Result<(),
         }
     }
     tx.commit().await.map_err(DbError::from)?;
+    if user_op && let Some((status, code)) = &ended {
+        use crate::domains::user_tokens::{custody, events};
+        user_discards.run(s).await;
+        // The per-op copy goes at the terminal state (a failed discard is retried by the sweep).
+        let org = op
+            .payload
+            .get("user_org_id")
+            .and_then(Value::as_str)
+            .and_then(|v| v.parse::<Uuid>().ok());
+        if let Some(sealed) = op
+            .payload
+            .get("user_credential_ref")
+            .and_then(Value::as_str)
+        {
+            custody::discard_op_copy(s, op.id, org, sealed).await;
+        }
+        if let (Some(token), Some(org)) = (user_send_token, org) {
+            let meta = op.payload.get("user_meta").cloned().unwrap_or_default();
+            let ok = *status == "done";
+            events::record_send(s, org, token, None, &meta, ok, code.as_deref());
+        }
+    }
     if deprovision && let Some((status, code)) = ended {
         use crate::domains::channels::deprovision as dep;
         // The copy is discarded once the terminal state is committed (a failed discard is

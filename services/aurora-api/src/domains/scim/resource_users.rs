@@ -464,6 +464,14 @@ pub async fn create_user(
                 deprovision::revoke_org_keys(&mut tx, org.org_id, user_id)
                     .await
                     .map_err(scim_of_api)?;
+                deprovision::end_user_tokens(
+                    &mut tx,
+                    org.org_id,
+                    user_id,
+                    &service::actor(&caller.token.name),
+                )
+                .await
+                .map_err(scim_of_api)?;
                 deprovision::revoke_sessions_if_last(&mut tx, user_id)
                     .await
                     .map_err(scim_of_api)?;
@@ -1225,6 +1233,9 @@ async fn apply_update(
             deprovision::revoke_org_keys(&mut tx, org.org_id, row.user_id)
                 .await
                 .map_err(scim_of_api)?;
+            deprovision::end_user_tokens(&mut tx, org.org_id, row.user_id, &actor)
+                .await
+                .map_err(scim_of_api)?;
             deprovision::revoke_sessions_if_last(&mut tx, row.user_id)
                 .await
                 .map_err(scim_of_api)?;
@@ -1401,6 +1412,9 @@ async fn move_link(
                 deprovision::revoke_org_keys(&mut *tx, org, to)
                     .await
                     .map_err(scim_of_api)?;
+                deprovision::end_user_tokens(&mut *tx, org, to, actor)
+                    .await
+                    .map_err(scim_of_api)?;
                 deprovision::revoke_sessions_if_last(&mut *tx, to)
                     .await
                     .map_err(scim_of_api)?;
@@ -1511,6 +1525,9 @@ pub async fn delete_user(
             .await
             .map_err(scim_of_api)?;
         deprovision::revoke_org_keys(&mut tx, org.org_id, row.user_id)
+            .await
+            .map_err(scim_of_api)?;
+        deprovision::end_user_tokens(&mut tx, org.org_id, row.user_id, &actor)
             .await
             .map_err(scim_of_api)?;
         deprovision::revoke_sessions_if_last(&mut tx, row.user_id)

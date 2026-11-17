@@ -251,6 +251,7 @@ pub async fn post_card(
         files: vec![],
         ephemeral_to: None,
         op_marker: op_id.to_string(),
+        user_footer: None,
     })?;
     if !enqueue(
         conn,
@@ -316,6 +317,7 @@ pub async fn notify_person(
         files: vec![],
         ephemeral_to,
         op_marker: op_id.to_string(),
+        user_footer: None,
     })?;
     enqueue(
         conn,
@@ -414,6 +416,7 @@ async fn send_settle(
             files: vec![],
             ephemeral_to: None,
             op_marker: op_id.to_string(),
+            user_footer: None,
         })?;
         enqueue(
             conn,

@@ -19,7 +19,15 @@ use std::time::Duration;
 use uuid::Uuid;
 
 /// Where each purpose's ref lives: `(purpose, "SELECT <ref> FROM … WHERE id = $1")`.
-const REF_SQL: [(Purpose, &str); 9] = [
+const REF_SQL: [(Purpose, &str); 11] = [
+    (
+        Purpose::UserToken,
+        "SELECT token_ref FROM user_tokens WHERE id = $1",
+    ),
+    (
+        Purpose::ChannelOpUserToken,
+        "SELECT payload->>'user_credential_ref' FROM channel_ops WHERE id = $1",
+    ),
     (
         Purpose::SecretValue,
         "SELECT value_ref FROM secrets WHERE id = $1",
@@ -163,6 +171,18 @@ async fn world(vault: SecretVault) -> World {
                 sqlx::query("INSERT INTO channel_ops (id, connector_id, kind, payload, status) VALUES ($1,'chat','presence.deprovision',$2,'pending')")
                     .bind(id)
                     .bind(json!({"credentials_ref": r, "org_id": org}))
+                    .execute(pool).await.unwrap();
+            }
+            Purpose::UserToken => {
+                let user = h.user(&format!("tok-{id}@example.com"), false).await;
+                sqlx::query("INSERT INTO user_tokens (id, user_id, integration_id, platform_user_ref, platform_user_label, token_ref, status) VALUES ($1,$2,$3,'pu','pu',$4,'active')")
+                    .bind(id).bind(user).bind(integration).bind(&r).execute(pool).await.unwrap();
+            }
+            Purpose::ChannelOpUserToken => {
+                sqlx::query("INSERT INTO channel_ops (id, connector_id, integration_id, kind, payload, status) VALUES ($1,'chat',$2,'user_token.verify',$3,'pending')")
+                    .bind(id)
+                    .bind(integration)
+                    .bind(json!({"user_credential_ref": r, "user_org_id": org}))
                     .execute(pool).await.unwrap();
             }
             Purpose::ConnectorSettings => {

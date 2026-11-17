@@ -74,6 +74,7 @@ pub mod tool_identity;
 pub mod transcript;
 pub mod turns;
 pub mod user_links;
+pub mod user_tokens;
 pub mod users;
 pub mod webhooks;
 pub mod workspaces;

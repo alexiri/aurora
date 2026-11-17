@@ -613,6 +613,7 @@ pub fn v1_router() -> OpenApiRouter<AppState> {
         .merge(domains::terminal::router())
         .merge(domains::files::router())
         .merge(domains::ssh::router())
+        .merge(domains::user_tokens::router())
         .merge(domains::telemetry::router())
         .merge(domains::relay::router())
         .merge(domains::groups::router())

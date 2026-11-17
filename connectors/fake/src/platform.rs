@@ -92,6 +92,9 @@ pub struct Platform {
     pub counter: u64,
     /// Threads currently showing the working status (`status.set`, FIX-158): `space|thread`.
     pub working: BTreeSet<String>,
+    /// (P4-UTOK) Personal access tokens by value → the user they belong to
+    /// (`POST /fake/person-tokens`). Never listed back.
+    pub person_tokens: BTreeMap<String, String>,
 }
 
 impl Platform {

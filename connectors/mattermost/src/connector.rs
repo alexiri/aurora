@@ -32,6 +32,8 @@ pub const DEFAULT_CAPABILITIES: &[&str] = &[
     "email_verified",
     "ephemeral",
     "native_status",
+    // (phase 5, P4-UTOK, D-281) per-person tokens for `send_as_me`; read-as-user stays hidden.
+    "user_tokens",
 ];
 
 pub const MAX_FILE_BYTES: u64 = 52_428_800;

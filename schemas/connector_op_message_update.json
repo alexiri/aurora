@@ -16,6 +16,19 @@
             "presence_id"
           ],
           "type": "object"
+        },
+        {
+          "description": "(phase 5, P4-UTOK, C-857) Post as a person: the `user_tokens` id. Only a `message.post`\ncarries it; the claim delivers the person's token as `Operation.user_credential`.",
+          "properties": {
+            "user_token": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          "required": [
+            "user_token"
+          ],
+          "type": "object"
         }
       ]
     },

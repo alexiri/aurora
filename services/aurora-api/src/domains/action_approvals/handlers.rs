@@ -1,6 +1,7 @@
 //! Handler registry keyed by `action_key`. Phase 0: `message_agent` (BE-065); `send_message`
 //! is registered by the M6 messaging task by adding one entry to [`REGISTRY`].
 
+use crate::app::AppState;
 use aurora_db::repo::action_approvals::ActionApprovalRow;
 use sqlx::PgConnection;
 use uuid::Uuid;
@@ -9,6 +10,8 @@ use uuid::Uuid;
 pub struct ActionContext<'a> {
     pub approval: &'a ActionApprovalRow,
     pub decided_by: Uuid,
+    /// The application state, for a handler that needs the secret vault (P4-UTOK `send_as_me`).
+    pub state: &'a AppState,
 }
 
 /// Result of a successful execution.
@@ -37,6 +40,8 @@ pub trait ActionHandler: Send + Sync {
 static REGISTRY: &[&dyn ActionHandler] = &[
     &crate::domains::agent_links::handler::MessageAgent,
     &crate::domains::channels::messaging::SendMessage,
+    // (phase 5, P4-UTOK, D-283(b), C-856) a held post as a person; decided by its owner only.
+    &crate::domains::user_tokens::send::SendAsMe,
 ];
 
 /// The handler for `key`, if registered.

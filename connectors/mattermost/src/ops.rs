@@ -66,7 +66,147 @@ fn sender(integ: &Integ, s: &Sender) -> R<(String, String)> {
             .get(presence_id)
             .map(|p| (p.token.clone(), p.user_id.clone()))
             .ok_or_else(|| err(ErrorCode::NotFound, "unknown presence")),
+        // (P4-UTOK) A person's token never goes through the bot's client: only the send and
+        // verify paths below use it, through `PersonClient`.
+        Sender::UserToken { .. } => Err(err(
+            ErrorCode::Invalid,
+            "a person's token is used only by message.post and user_token.verify",
+        )),
     }
+}
+
+/// The person's token of a claimed op (`Operation.user_credential`).
+fn person_token(op: &Operation) -> R<&str> {
+    op.user_credential
+        .as_deref()
+        .filter(|t| !t.is_empty())
+        .ok_or_else(|| {
+            err(
+                ErrorCode::Invalid,
+                "the operation carries no person's token",
+            )
+        })
+}
+
+/// `user_token.verify` (C-854): `GET /users/me` with the person's token only. A `401` answers
+/// `credential_dead`; the core compares the account with the person's link.
+async fn user_verify(integ: &Arc<Integ>, op: &Operation) -> R<Value> {
+    need(integ, Capability::UserTokens)?;
+    let me = integ.mm.person_client().me(person_token(op)?).await?;
+    let id = me
+        .get("id")
+        .and_then(Value::as_str)
+        .filter(|i| is_mm_id(i))
+        .ok_or_else(|| {
+            err(
+                ErrorCode::Unavailable,
+                "unexpected mattermost response to users/me",
+            )
+        })?;
+    let handle = me
+        .get("username")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    Ok(json!({"platform_user_ref": id, "handle": handle}))
+}
+
+/// `message.post` with `sender.user_token` (C-857): `POST /posts` with the person's token and
+/// nothing else — no ephemeral post, no file, no card, no direct-channel creation. The post ends
+/// with the footer naming the agent and the owner (D-283(c)), added here and not by the model.
+async fn person_post(integ: &Arc<Integ>, op: &Operation, m: MessagePostOp) -> R<Value> {
+    need(integ, Capability::UserTokens)?;
+    if m.ephemeral_to.is_some() || !m.files.is_empty() {
+        return Err(err(
+            ErrorCode::Invalid,
+            "a post as a person has no ephemeral or file part",
+        ));
+    }
+    let token = person_token(op)?;
+    let footer = m.user_footer.as_ref().ok_or_else(|| {
+        err(
+            ErrorCode::Invalid,
+            "a post as a person needs the names of its footer",
+        )
+    })?;
+    let (channel_id, root_in) = match &m.target {
+        Target::Space {
+            space_ref,
+            thread_ref,
+        } => {
+            need_id(space_ref, "space")?;
+            (space_ref.clone(), thread_ref.clone().unwrap_or_default())
+        }
+        Target::User { .. } => {
+            return Err(err(
+                ErrorCode::Invalid,
+                "a post as a person goes to a channel or thread",
+            ));
+        }
+    };
+    let c: Content = serde_json::from_value(m.content.clone())
+        .map_err(|e| err(ErrorCode::Invalid, e.to_string()))?;
+    if c.card.is_some() || c.narration.is_some() {
+        return Err(err(ErrorCode::Invalid, "a post as a person is plain text"));
+    }
+    let (body, _) = render_content(integ, &m.content).await?;
+    let message = format!(
+        "{body}\n\n{}",
+        crate::render::user_footer(&footer.agent_name, &footer.owner_label)
+    );
+    if message.chars().count() > MESSAGE_MAX_CHARS {
+        return Err(err(ErrorCode::TooLarge, "message too long"));
+    }
+    // At-most-once in practice: a re-claimed post may already be there. The person's token has no
+    // other endpoint, so the bot looks for the marker; when it cannot tell, the post is not
+    // repeated (the op is retried or fails rather than posting twice as a person).
+    if op.maybe_sent {
+        let bot = integ.snapshot().bot_token;
+        let v = integ
+            .mm
+            .get_q(
+                &bot,
+                &format!("/channels/{channel_id}/posts"),
+                &[("per_page", MARKER_SEARCH)],
+            )
+            .await?;
+        if let Some(prev) = posts_of(&v)
+            .into_iter()
+            .filter(|p| {
+                p.props.get("aurora_op").and_then(Value::as_str) == Some(m.op_marker.as_str())
+            })
+            .min_by_key(|p| p.create_at)
+        {
+            let channel = integ.channel(&channel_id).await.ok();
+            return Ok(json!({
+                "message_ref": prev.id,
+                "thread_ref": thread_of(integ, channel.as_ref(), &prev.root_id, &prev.id),
+            }));
+        }
+    }
+    let root = if integ.has("threads") {
+        root_in
+    } else {
+        String::new()
+    };
+    let created = integ
+        .mm
+        .person_client()
+        .post(
+            token,
+            &json!({
+                "channel_id": channel_id,
+                "message": message,
+                "root_id": root,
+                "props": props(Some(&m.op_marker), Vec::new()),
+            }),
+        )
+        .await?;
+    let post: MmPost = serde_json::from_value(created).map_err(bad_shape)?;
+    let channel = integ.channel(&channel_id).await.ok();
+    Ok(json!({
+        "message_ref": post.id,
+        "thread_ref": thread_of(integ, channel.as_ref(), &root, &post.id),
+    }))
 }
 
 /// Neutral content → `(message, props.attachments)`, honouring the integration's capabilities.
@@ -168,6 +308,9 @@ async fn message_post(
     op: &Operation,
     m: MessagePostOp,
 ) -> R<Value> {
+    if matches!(m.sender, Sender::UserToken { .. }) {
+        return person_post(integ, op, m).await;
+    }
     let (token, bot_id) = sender(integ, &m.sender)?;
     let d = integ.snapshot();
     let ephemeral_token = match &m.ephemeral_to {
@@ -611,6 +754,7 @@ pub async fn execute(
             ErrorCode::Invalid,
             "credentials.validate is handled by the connector, not an integration",
         )),
+        OpPayload::UserTokenVerify(_) => user_verify(integ, op).await,
         OpPayload::Other => Err(err(ErrorCode::Unsupported, "unknown operation kind")),
     }
 }

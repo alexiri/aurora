@@ -134,7 +134,16 @@ async fn remove(s: &AppState, row: &UserLinkRow, ev: &AuditEvent) -> Result<(), 
     let mut tx = audit::begin(s).await?;
     repo::delete(&mut *tx, row.id).await?;
     dm_defaults::delete(&mut *tx, row.integration_id, &row.platform_user_ref).await?;
+    // (P4-UTOK, D-284(a)) A token of that account ends with the link, in the same transaction.
+    let discards = crate::domains::user_tokens::end::for_link(
+        &mut tx,
+        row.user_id,
+        row.integration_id,
+        &ev.actor,
+    )
+    .await?;
     audit::commit_critical(tx, ev).await?;
+    discards.run(s).await;
     Ok(())
 }
 

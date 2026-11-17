@@ -91,6 +91,8 @@ open_vocab! {
         PresenceRename = "presence.rename",
         PresenceSetIcon = "presence.set_icon",
         CredentialsValidate = "credentials.validate",
+        /// (phase 5, P4-UTOK, C-854) Verify a person's token: the platform user it belongs to.
+        UserTokenVerify = "user_token.verify",
     }
 }
 open_vocab! {
@@ -618,6 +620,12 @@ pub struct Operation {
     /// present only on that kind, only when the op carries a sealed copy. Never log.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub credentials: Option<Value>,
+    /// (phase 5, P4-UTOK, C-854, C-857, SEC-112) A person's platform token, opened at claim for
+    /// this one operation: present only on a `user_token.verify` and on a `message.post` whose
+    /// `sender` is a `user_token`. The connector uses it for that call alone and never stores or
+    /// logs it. Never log.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user_credential: Option<String>,
 }
 
 impl std::fmt::Debug for Operation {
@@ -632,6 +640,10 @@ impl std::fmt::Debug for Operation {
             .field(
                 "credentials",
                 &self.credentials.as_ref().map(|_| "[redacted]"),
+            )
+            .field(
+                "user_credential",
+                &self.user_credential.as_ref().map(|_| "[redacted]"),
             )
             .finish_non_exhaustive()
     }
@@ -827,7 +839,14 @@ pub enum SharedTag {
 #[serde(untagged)]
 pub enum Sender {
     Shared(SharedTag),
-    Presence { presence_id: Uuid },
+    Presence {
+        presence_id: Uuid,
+    },
+    /// (phase 5, P4-UTOK, C-857) Post as a person: the `user_tokens` id. Only a `message.post`
+    /// carries it; the claim delivers the person's token as `Operation.user_credential`.
+    UserToken {
+        user_token: Uuid,
+    },
 }
 
 impl Sender {
@@ -867,6 +886,17 @@ pub struct MessagePostOp {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ephemeral_to: Option<String>,
     pub op_marker: String,
+    /// (P4-UTOK, C-857, C-851) With `sender.user_token`: the names the connector puts in the
+    /// post's footer, added at send time and never part of what the owner approved.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user_footer: Option<UserFooter>,
+}
+
+/// Who a post made with a person's token is credited to in its footer (C-851).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct UserFooter {
+    pub agent_name: String,
+    pub owner_label: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -1109,9 +1139,25 @@ pub struct CredentialsValidateResult {
     pub warnings: Vec<String>,
 }
 
+/// `user_token.verify` (P4-UTOK, C-854): the token itself arrives in `Operation.user_credential`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct UserTokenVerifyOp {
+    /// The integration's non-secret setup fields (e.g. a server URL).
+    #[serde(default)]
+    pub config: Value,
+}
+
+/// The platform user a verified token belongs to (C-854).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct UserTokenVerifyResult {
+    pub platform_user_ref: String,
+    pub handle: String,
+}
+
 /// A typed operation payload.
 #[derive(Debug, Clone, PartialEq)]
 pub enum OpPayload {
+    UserTokenVerify(UserTokenVerifyOp),
     MessagePost(MessagePostOp),
     MessageUpdate(MessageUpdateOp),
     MessageDelete(MessageDeleteOp),
@@ -1162,6 +1208,7 @@ impl Operation {
             OpKind::CredentialsValidate => {
                 OpPayload::CredentialsValidate(serde_json::from_value(p)?)
             }
+            OpKind::UserTokenVerify => OpPayload::UserTokenVerify(serde_json::from_value(p)?),
             OpKind::Other(_) => OpPayload::Other,
         })
     }

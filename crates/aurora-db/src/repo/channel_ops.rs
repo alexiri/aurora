@@ -105,6 +105,18 @@ pub struct Claimed {
     pub credentials_ref: Option<String>,
     /// Self-contained `presence.deprovision` only: the org the copy was sealed for.
     pub org_id: Option<Uuid>,
+    /// (P4-UTOK) The op acts with a person's token: a `user_token.verify`, or a `message.post`
+    /// whose sender is a `user_token`. Its internal keys are stripped from `payload`.
+    pub user_op: bool,
+    /// (P4-UTOK) The sealed per-op copy of the person's token (internal; `None` when revoked).
+    pub user_credential_ref: Option<String>,
+    /// (P4-UTOK) The org the copy was sealed for.
+    pub user_org_id: Option<Uuid>,
+    /// (P4-UTOK) `sender.user_token` of a send.
+    pub user_token_id: Option<String>,
+    /// (P4-UTOK) The send's internal audit data (`user_meta`: agent, conversation, approval); the
+    /// agent is the one whose grant the send rides on.
+    pub user_meta: Option<serde_json::Value>,
 }
 
 /// `SKIP LOCKED` claim of up to `max` due ops of `connector_id` that `replica` may run: ops of
@@ -151,11 +163,20 @@ pub async fn claim<'e, E: PgExecutor<'e>>(
            FROM c WHERE o.id = c.id
        RETURNING o.id, o.kind, o.integration_id, o.presence_id, o.attempts, c.was_leased,
                  CASE WHEN o.kind = 'presence.deprovision'
-                      THEN o.payload - 'credentials_ref' - 'org_id' ELSE o.payload END AS payload,
+                      THEN o.payload - 'credentials_ref' - 'org_id'
+                      ELSE o.payload - 'user_credential_ref' - 'user_org_id' - 'user_meta'
+                 END AS payload,
                  CASE WHEN o.kind = 'presence.deprovision'
                       THEN o.payload->>'credentials_ref' END AS credentials_ref,
                  CASE WHEN o.kind = 'presence.deprovision'
-                      THEN (o.payload->>'org_id')::uuid END AS org_id",
+                      THEN (o.payload->>'org_id')::uuid END AS org_id,
+                 (o.kind = 'user_token.verify' OR o.payload ? 'user_credential_ref'
+                  OR (jsonb_typeof(o.payload->'sender') = 'object'
+                      AND o.payload->'sender' ? 'user_token')) AS user_op,
+                 o.payload->>'user_credential_ref' AS user_credential_ref,
+                 (o.payload->>'user_org_id')::uuid AS user_org_id,
+                 o.payload->'sender'->>'user_token' AS user_token_id,
+                 o.payload->'user_meta' AS user_meta",
     )
     .bind(connector_id)
     .bind(replica)
@@ -254,6 +275,45 @@ pub async fn clear_credentials_ref<'e, E: PgExecutor<'e>>(
         "UPDATE channel_ops SET payload = jsonb_set(payload, '{credentials_ref}', 'null'::jsonb),
                 updated_at = now()
           WHERE id = $1 AND kind = 'presence.deprovision'",
+    )
+    .bind(id)
+    .execute(exec)
+    .await?;
+    Ok(())
+}
+
+/// (P4-UTOK) A finished op whose per-op copy of a person's token is still referenced.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct UserCopyEnd {
+    pub id: Uuid,
+    pub sealed: String,
+    pub org_id: Option<Uuid>,
+}
+
+/// Finished ops (`done`, `failed`, `dropped`) whose per-op token copy was not discarded yet
+/// (a discard failed or never ran); the sweep retries them.
+pub async fn finished_with_user_copy<'e, E: PgExecutor<'e>>(
+    exec: E,
+    limit: i64,
+) -> Result<Vec<UserCopyEnd>, DbError> {
+    Ok(sqlx::query_as(
+        "SELECT id, payload->>'user_credential_ref' AS sealed,
+                (payload->>'user_org_id')::uuid AS org_id
+           FROM channel_ops
+          WHERE status IN ('done','failed','dropped') AND payload->>'user_credential_ref' IS NOT NULL
+          ORDER BY updated_at LIMIT $1",
+    )
+    .bind(limit)
+    .fetch_all(exec)
+    .await?)
+}
+
+/// Replace the per-op token reference with JSON `null` once its copy was discarded.
+pub async fn clear_user_copy_ref<'e, E: PgExecutor<'e>>(exec: E, id: Uuid) -> Result<(), DbError> {
+    sqlx::query(
+        "UPDATE channel_ops SET payload = jsonb_set(payload, '{user_credential_ref}', 'null'::jsonb),
+                updated_at = now()
+          WHERE id = $1 AND payload ? 'user_credential_ref'",
     )
     .bind(id)
     .execute(exec)

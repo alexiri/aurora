@@ -368,6 +368,26 @@ pub fn spawn_ssh_sweep(state: crate::app::AppState) {
     });
 }
 
+/// (P4-UTOK, SEC-112) The token custody sweep: every API replica, every minute, discards the
+/// per-op token copies of finished ops and the sealed values of ended tokens that an earlier
+/// discard left behind. Idempotent.
+pub const USER_TOKEN_SWEEP_EVERY: Duration = Duration::from_secs(60);
+
+pub fn spawn_user_token_sweep(state: crate::app::AppState) {
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(USER_TOKEN_SWEEP_EVERY);
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            tick.tick().await;
+            match crate::domains::user_tokens::custody::sweep(&state).await {
+                Ok(0) => {}
+                Ok(n) => tracing::info!(pruned = n, "user token custody sweep"),
+                Err(e) => tracing::warn!(error = %e.message(), "user token custody sweep failed"),
+            }
+        }
+    });
+}
+
 /// Run the preview-housekeeping arm on this replica every [`PREVIEW_HOUSEKEEPING_EVERY`].
 pub const PREVIEW_HOUSEKEEPING_EVERY: Duration = Duration::from_secs(60);
 

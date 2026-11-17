@@ -155,7 +155,7 @@ pub struct Where {
 }
 
 /// The thread link the current turn came in through, else the conversation's latest link.
-async fn current_link(
+pub(crate) async fn current_link(
     conn: &mut PgConnection,
     w: &Where,
 ) -> Result<Option<thread_links::ThreadLinkRow>, DbError> {
@@ -398,7 +398,7 @@ pub async fn reachable(
 }
 
 /// The current thread link when `r` is its space (the own thread: always allowed).
-async fn own_thread(
+pub(crate) async fn own_thread(
     conn: &mut PgConnection,
     w: &Where,
     r: &Recipient,
@@ -413,7 +413,7 @@ async fn own_thread(
 
 // -------------------------------------------------------------------- posting
 
-fn bad_text(text: &str, platform: &Platform) -> Option<String> {
+pub(crate) fn bad_text(text: &str, platform: &Platform) -> Option<String> {
     let max = TEXT_MAX.min((platform.ctx.message_max_chars() / 2).max(200));
     if Content::agent_markdown(text).is_empty() {
         Some("The message text is empty.".into())
@@ -730,7 +730,7 @@ async fn lookup_and_pin(
 /// How a recipient the model named is turned into something `resolve_to` accepts, before any
 /// transaction opens (docs/13 §5.10, D-287).
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum For {
+pub(crate) enum For {
     Send,
     Read,
 }
@@ -738,7 +738,7 @@ enum For {
 /// `here`, an id or a pinned alias resolve as they are (no platform call). Anything else is
 /// looked up on the platform once: exactly one exact handle/alias/name match is used (it is
 /// pinned already, and returned as its alias); otherwise the refusal lists the candidates.
-async fn resolve_recipient(
+pub(crate) async fn resolve_recipient(
     s: &AppState,
     agent: &AgentRow,
     w: &Where,
@@ -797,7 +797,7 @@ async fn resolve_recipient(
 
 /// Who a send went to, for the transcript: the pinned alias (absent for `here` or an id with no
 /// anchor), the kind and the label.
-async fn recipient_json(
+pub(crate) async fn recipient_json(
     conn: &mut PgConnection,
     w: &Where,
     to: &str,
