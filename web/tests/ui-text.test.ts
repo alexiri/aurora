@@ -118,9 +118,6 @@ describe("UI text rules (C-974)", () => {
   const VOCABULARY_EXEMPT: Record<string, string> = {
     "src/components/admin/placement-view.tsx": "P5-UX-6 (People › New users), P5-IA-4",
     "src/components/admin/secret-stores-view.tsx": "P5-IA-4 (Platform › Secret stores)",
-    "src/components/admin/settings/llm-controls.tsx": "P5-IA-3 (Administration › AI models)",
-    "src/components/admin/settings/llm-endpoint-dialog.tsx": "P5-IA-3",
-    "src/components/governance/governance-view.tsx": "P5-IA-3 (deleted there), P5-IA-2 (the Internet access panel)",
     "src/components/policy/rule-editor.tsx": "P5-IA-2",
   };
 
@@ -130,7 +127,6 @@ describe("UI text rules (C-974)", () => {
    */
   const OTHER_EXEMPT: Record<string, string> = {
     "src/components/admin/setup-view.tsx": "P5-UX-6 (the Overview rebuild)",
-    "src/components/governance/governance-view.tsx": "P5-IA-3, P5-IA-2",
   };
 
   it("does not use a retired word of the vocabulary table as a name, label or button", () => {

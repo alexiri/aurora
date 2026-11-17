@@ -1,9 +1,10 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { GovernanceView } from "@/components/governance/governance-view";
+import { OrgAiModels, OrgByo } from "@/components/governance/org-governance";
 import { ApiError } from "@/lib/api/client";
+import type { Org } from "@/lib/api/queries";
 import {
   countBlockedHosts,
   formFromDocument,
@@ -119,43 +120,75 @@ const routes = (extra: Record<string, Handler> = {}) => ({
   ...extra,
 });
 
-describe("GovernanceView", () => {
-  it("members see read-only controls and locked labels", async () => {
+const ORG = { id: "o1", slug: "acme", name: "Acme", my_role: "owner" } as unknown as Org;
+
+describe("OrgByo (P5-IA-3, C-967)", () => {
+  it("shows Administration's BYO limits as locked rows above the organization's own controls", async () => {
+    const e = eff({ agent_tokens: { max_age_days: { value: 90, source: "instance" } } });
+    mockFetch(routes({ "GET /v1/orgs/o1/governance/effective": () => json(200, e), "GET /v1/orgs/o1/agent-tokens": () => json(200, { items: [], next_cursor: null }) }));
+    wrap(<OrgByo org={ORG} />);
+    const above = await screen.findByRole("list", { name: "Limits set above this level" });
+    const rows = within(above).getAllByRole("listitem").map((r) => r.textContent ?? "");
+    expect(rows.some((r) => /Who may run agents outside Aurora/.test(r) && /Only workspace owners/.test(r) && /Set by Administration/.test(r))).toBe(true);
+    expect(rows.some((r) => /Longest a token lasts/.test(r) && /Up to 90 days/.test(r))).toBe(true);
+    expect(screen.getByLabelText("Maximum token age (days)")).toBeTruthy();
+    expect(screen.queryByLabelText("Allowed models")).toBeNull();
+  });
+
+  it("has no limit rows when Administration sets none", async () => {
+    const e = eff({
+      byo: { posture: { value: "enabled", source: "org" }, source_cidrs: { value: null, source: "org" }, require_context_credentials: { value: false, source: "org" } },
+      agent_tokens: { max_age_days: { value: null, source: "org" } },
+    });
+    mockFetch(routes({ "GET /v1/orgs/o1/governance/effective": () => json(200, e), "GET /v1/orgs/o1/agent-tokens": () => json(200, { items: [], next_cursor: null }) }));
+    wrap(<OrgByo org={ORG} />);
+    await screen.findByLabelText("Who may create BYO agents");
+    expect(screen.queryByRole("list", { name: "Limits set above this level" })).toBeNull();
+  });
+});
+
+describe("OrgAiModels (P5-IA-3, C-966)", () => {
+  it("members see read-only controls and locked labels, and no Save", async () => {
     mockFetch(routes());
-    wrap(<GovernanceView orgId="o1" orgSlug="acme" canEdit={false} />);
+    wrap(<OrgAiModels org={{ ...ORG, my_role: "member" }} />);
     expect(await screen.findByText("Anthropic")).toBeTruthy();
     expect(screen.getAllByText("enforced by instance").length).toBeGreaterThan(0);
-    expect(screen.queryByRole("button", { name: "Save governance" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
     expect((screen.getByLabelText("Allowed models") as HTMLTextAreaElement).disabled).toBe(true);
   });
 
-  it("egress tab edits the browser-tunnel posture and saves it in the document", async () => {
-    let body: { document: { egress: { open_lane: string } } } | null = null;
-    mockFetch(routes({
-      "PUT /v1/orgs/o1/governance": async (req) => {
-        body = await req.json();
-        return json(200, { document: doc, revision: 5 });
-      },
-    }));
-    wrap(<GovernanceView orgId="o1" orgSlug="acme" canEdit />);
-    fireEvent.click(await screen.findByRole("tab", { name: "Egress" }));
-    const sel = screen.getByLabelText(/Browser connections/) as HTMLSelectElement;
-    expect(sel.value).toBe("allowlist_only");
-    fireEvent.change(sel, { target: { value: "disabled" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save governance" }));
-    await waitFor(() => expect(body).not.toBeNull());
-    expect(body!.document.egress.open_lane).toBe("disabled");
-  });
-
-  it("has no Apps tab: which apps people may connect is set on Apps & accounts › Apps (P5-UX-9, C-933)", async () => {
+  it("has one page: no tabs, no Egress, no Apps, no Compliance", async () => {
     mockFetch(routes());
-    wrap(<GovernanceView orgId="o1" orgSlug="acme" canEdit />);
+    wrap(<OrgAiModels org={ORG} />);
     await screen.findByText("Anthropic");
-    expect(screen.queryByRole("tab", { name: "Apps" })).toBeNull();
-    expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(expect.not.arrayContaining(["Apps"]));
+    expect(screen.queryAllByRole("tab")).toHaveLength(0);
+    expect(screen.queryByLabelText(/Browser connections/)).toBeNull();
   });
 
-  it("admins save with revision; stale revision prompts reload", async () => {
+  it("shows Administration's limits as locked rows above the organization's rules, with who can change them", async () => {
+    mockFetch(routes());
+    wrap(<OrgAiModels org={ORG} />);
+    const above = await screen.findByRole("list", { name: "Limits set above this level" });
+    const rows = within(above).getAllByRole("listitem").map((r) => r.textContent ?? "");
+    // The instance decides the endpoint's permission and key scopes; the posture and allowed models are the organization's.
+    expect(rows.some((r) => /AI endpoints organizations may use/.test(r) && /Anthropic allowed/.test(r))).toBe(true);
+    expect(rows.some((r) => /Who may add Anthropic keys/.test(r) && /keys for the whole organization/.test(r))).toBe(true);
+    expect(rows.every((r) => /Set by Administration/.test(r) && /An Aurora administrator can set this up|administrator/.test(r))).toBe(true);
+    expect(rows.some((r) => /Which AI keys agents may use/.test(r))).toBe(false);
+    // Above the rules: the ladder's list comes first in the document.
+    const rules = screen.getByLabelText("LLM posture");
+    expect(above.compareDocumentPosition(rules) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("names the posture as a limit when the instance sets it", async () => {
+    const e = eff({ llm: { ...eff().llm, posture: { value: "sanctioned_only", source: "instance" } } });
+    mockFetch(routes({ "GET /v1/orgs/o1/governance/effective": () => json(200, e) }));
+    wrap(<OrgAiModels org={ORG} />);
+    const above = await screen.findByRole("list", { name: "Limits set above this level" });
+    expect(within(above).getByText("Only keys an administrator approved")).toBeTruthy();
+  });
+
+  it("admins save with revision (Save is off until something changed); stale revision prompts reload", async () => {
     let body: { revision: number } | null = null;
     mockFetch(routes({
       "PUT /v1/orgs/o1/governance": async (req) => {
@@ -163,18 +196,64 @@ describe("GovernanceView", () => {
         return json(409, { error: { code: "stale_revision", message: "stale" } });
       },
     }));
-    wrap(<GovernanceView orgId="o1" orgSlug="acme" canEdit />);
-    fireEvent.click(await screen.findByRole("button", { name: "Save governance" }));
+    wrap(<OrgAiModels org={ORG} />);
+    const save = (await screen.findByRole("button", { name: "Save" })) as HTMLButtonElement;
+    expect(save.disabled).toBe(true);
+    fireEvent.change(screen.getByLabelText("Allowed models"), { target: { value: "m1\nm2" } });
+    expect(save.disabled).toBe(false);
+    fireEvent.click(save);
     expect(await screen.findByRole("button", { name: "Reload latest" })).toBeTruthy();
     expect(body!.revision).toBe(4);
   });
 
-  it("shows compliance list with a fix link and blocked-host helper", async () => {
+  it("an admin narrows the allowed models and saves them in the document; Discard changes puts them back", async () => {
+    let body: { document: { llm: { endpoints: { anthropic: { allowed_models: string[] } } } } } | null = null;
+    let revision = 4;
+    mockFetch(routes({
+      "GET /v1/orgs/o1/governance": () => json(200, { document: doc, revision }),
+      "PUT /v1/orgs/o1/governance": async (req) => {
+        body = await req.json();
+        revision = 5;
+        return json(200, { document: doc, revision });
+      },
+    }));
+    wrap(<OrgAiModels org={ORG} />);
+    const models =(await screen.findByLabelText("Allowed models")) as HTMLTextAreaElement;
+    fireEvent.change(models, { target: { value: "mx" } });
+    fireEvent.click(screen.getByRole("button", { name: "Discard changes" }));
+    expect((screen.getByLabelText("Allowed models") as HTMLTextAreaElement).value).toBe("m1");
+    fireEvent.change(screen.getByLabelText("Allowed models"), { target: { value: "m2" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(body).not.toBeNull());
+    expect(body!.document.llm.endpoints.anthropic.allowed_models).toEqual(["m2"]);
+    // The save brings a new revision, which starts a fresh form; the confirmation survives that.
+    expect(await screen.findByText(/Saved\. Existing keys were re-checked/)).toBeTruthy();
+  });
+
+  it("says how many AI keys no longer follow the rules and links to the Accounts lists filtered to AI keys", async () => {
+    const e = eff({
+      non_compliant_secrets: [
+        { id: "s1", name: "my-key", workspace_id: null, reason: "mismatch" },
+        { id: "s2", name: "ws-key", workspace_id: "w1", reason: "not_permitted" },
+      ],
+    });
+    mockFetch(routes({ "GET /v1/orgs/o1/governance/effective": () => json(200, e) }));
+    wrap(<OrgAiModels org={ORG} />);
+    const notice = await screen.findByTestId("keys-notice");
+    expect(notice.textContent).toMatch(/2 AI keys no longer follow these rules/);
+    expect(within(notice).getByRole("link", { name: /Acme's Accounts/ }).getAttribute("href")).toBe("/o/acme/apps?tab=accounts&kind=ai-key");
+    await waitFor(() => expect(within(notice).getByRole("link", { name: /Main's Accounts/ })).toBeTruthy());
+    expect(within(notice).getByRole("link", { name: /Main's Accounts/ }).getAttribute("href")).toMatch(/\/o\/acme\/w\/main\/.*kind=ai-key/);
+  });
+
+  it("says one key in the singular, and nothing is wrong when none", async () => {
     mockFetch(routes());
-    wrap(<GovernanceView orgId="o1" orgSlug="acme" canEdit />);
-    fireEvent.click(await screen.findByRole("tab", { name: /Compliance/ }));
-    expect(screen.getByRole("link", { name: "Fix" }).getAttribute("href")).toBe("/o/acme/apps?tab=accounts&kind=ai-key");
-    fireEvent.click(screen.getByRole("tab", { name: "Egress" }));
-    await waitFor(() => expect(screen.getByText("blocked.dev")).toBeTruthy());
+    wrap(<OrgAiModels org={ORG} />);
+    expect((await screen.findByTestId("keys-notice")).textContent).toMatch(/1 AI key no longer follows these rules/);
+    cleanup();
+    mockFetch(routes({ "GET /v1/orgs/o1/governance/effective": () => json(200, eff({ non_compliant_secrets: [] })) }));
+    wrap(<OrgAiModels org={ORG} />);
+    expect(await screen.findByText("All AI keys follow these rules.")).toBeTruthy();
+    expect(screen.queryByTestId("keys-notice")).toBeNull();
   });
 });

@@ -159,24 +159,29 @@ function OperationalView({
   notice,
   controls,
   below,
+  bare = false,
 }: {
   sectionId: string;
   page: OperationalPage;
   notice?: (s: SettingsSection) => ReactNode;
   controls?: Record<string, (ctx: SettingControlCtx) => ReactNode>;
   below?: (s: SettingsSection) => ReactNode;
+  /** Part of a topic page's tab (P5-IA-3): no page header of its own, only the titled groups. */
+  bare?: boolean;
 }) {
   const q = useSettingsSection(sectionId);
   if (q.isPending) return <Loading />;
   if (q.isError) return <ErrorState error={q.error} onRetry={() => q.refetch()} />;
   const section = q.data;
   return (
-    <div className="max-w-page space-y-6">
-      <PageHeader
-        breadcrumb={[{ label: "Settings", href: "/admin/settings" }, { label: section.title }]}
-        title={section.title}
-        description={`${section.description} Last change: ${section.updated_by_label ? `${section.updated_by_label}, ` : ""}${when(section.updated_at)}.`}
-      />
+    <div className={bare ? "space-y-6" : "max-w-page space-y-6"}>
+      {bare ? null : (
+        <PageHeader
+          breadcrumb={[{ label: "Settings", href: "/admin/settings" }, { label: section.title }]}
+          title={section.title}
+          description={`${section.description} Last change: ${section.updated_by_label ? `${section.updated_by_label}, ` : ""}${when(section.updated_at)}.`}
+        />
+      )}
       {notice ? notice(section) : null}
       <SettingsSectionForm
         key={section.generation}
@@ -268,26 +273,37 @@ export function ApprovalsSettingsView() {
   return <OperationalView sectionId="approvals" page={APPROVALS_PAGE} />;
 }
 
+/** Administration › Agents › Defaults (C-967): the agents and approvals sections as one run of titled groups. */
+export function AgentsDefaultsView() {
+  return (
+    <div className="space-y-8">
+      <OperationalView bare sectionId="agents" page={AGENTS_PAGE} below={(s) => <RunnersTable section={s} />} />
+      <OperationalView bare sectionId="approvals" page={APPROVALS_PAGE} />
+    </div>
+  );
+}
+
 /** Admin › Settings › Retention (SET-5). */
 export function RetentionSettingsView() {
   return <OperationalView sectionId="retention" page={RETENTION_PAGE} />;
 }
 
 /** Admin › Settings › Skill libraries (SET-5). */
-export function SkillsSettingsView() {
-  return <OperationalView sectionId="skills" page={SKILLS_PAGE} />;
+export function SkillsSettingsView({ bare = false }: { bare?: boolean }) {
+  return <OperationalView bare={bare} sectionId="skills" page={SKILLS_PAGE} />;
 }
 
 /** Admin › Settings › Previews (SET-5). */
-export function PreviewsSettingsView() {
+export function PreviewsSettingsView({ bare = false }: { bare?: boolean }) {
   return (
     <OperationalView
+      bare={bare}
       sectionId="previews"
       page={PREVIEWS_PAGE}
       notice={() => (
         <Notice tone="neutral" role="status" className="max-w-3xl">
           Whether previews are on and their domain are set in Helm (<code className="font-mono">relay.enabled</code>,{" "}
-          <code className="font-mono">relay.domain</code>); this page sets their limits.
+          <code className="font-mono">relay.domain</code>); {bare ? "these are" : "this page sets"} their limits.
         </Notice>
       )}
     />
@@ -317,9 +333,10 @@ export function ScimSettingsView() {
 }
 
 /** Admin › Settings › Terminal (SET-5). */
-export function TerminalSettingsView() {
+export function TerminalSettingsView({ bare = false }: { bare?: boolean }) {
   return (
     <OperationalView
+      bare={bare}
       sectionId="terminal"
       page={TERMINAL_PAGE}
       notice={(s) =>
@@ -332,6 +349,16 @@ export function TerminalSettingsView() {
         )
       }
     />
+  );
+}
+
+/** Administration › Agents › Computers (C-967): the terminal and the previews as one run of titled groups. */
+export function ComputersView() {
+  return (
+    <div className="space-y-8">
+      <TerminalSettingsView bare />
+      <PreviewsSettingsView bare />
+    </div>
   );
 }
 
