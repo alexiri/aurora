@@ -27,3 +27,8 @@ config:
   ssh:
     public_host: localhost
     public_port: 2222
+  # Every client arrives from one address here (the node / the port-forward), so the per-address bucket of
+  # new connections (SSH_CONNECT_RATE 30 per minute, burst 10) would throttle the e2e's many short sessions.
+  terminator:
+    connect_rate_per_min: 600
+    connect_burst: 100
