@@ -6,7 +6,7 @@ pub(crate) mod fields;
 mod flow;
 mod hooks;
 mod page;
-mod probe;
+pub(crate) mod probe;
 mod routes;
 pub mod service;
 

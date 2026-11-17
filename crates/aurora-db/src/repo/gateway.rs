@@ -411,6 +411,44 @@ pub async fn touch_secret_last_used<'e, E: PgExecutor<'e>>(
     Ok(())
 }
 
+/// (P5-UX-14) Churn column of an app connection; does not touch `updated_at`.
+pub async fn touch_connection_last_used<'e, E: PgExecutor<'e>>(
+    exec: E,
+    connection_id: Uuid,
+) -> Result<(), DbError> {
+    sqlx::query("UPDATE app_connections SET last_used_at = now() WHERE id = $1")
+        .bind(connection_id)
+        .execute(exec)
+        .await?;
+    Ok(())
+}
+
+/// (P5-UX-14, D-350, C-985) Records what real use showed about an account: `rejected` (an upstream
+/// 401 on a request with its credential injected) or `ok` (a later 2xx or 3xx). Only on a change of
+/// state: a row already holding `result` is not written. Informational — never touches `status`,
+/// `updated_at` or anything an agent's access reads. Returns whether a row changed.
+pub async fn record_account_check<'e, E: PgExecutor<'e>>(
+    exec: E,
+    connection: bool,
+    id: Uuid,
+    result: &str,
+) -> Result<bool, DbError> {
+    let sql = if connection {
+        "UPDATE app_connections SET last_check_at = now(), last_check_result = $2 \
+         WHERE id = $1 AND last_check_result IS DISTINCT FROM $2"
+    } else {
+        "UPDATE secrets SET last_check_at = now(), last_check_result = $2 \
+         WHERE id = $1 AND last_check_result IS DISTINCT FROM $2"
+    };
+    Ok(sqlx::query(sql)
+        .bind(id)
+        .bind(result)
+        .execute(exec)
+        .await?
+        .rows_affected()
+        == 1)
+}
+
 #[derive(Debug, Clone)]
 pub struct RequestLogRow {
     pub id: Uuid,

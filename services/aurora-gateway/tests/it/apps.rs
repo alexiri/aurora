@@ -40,6 +40,9 @@ const TOKEN: &str = "aug_good";
 #[path = "ldap_lane.rs"]
 mod ldap_lane;
 
+#[path = "account_health.rs"]
+mod account_health;
+
 #[derive(Clone, Copy)]
 struct World {
     org: Uuid,
@@ -170,6 +173,9 @@ async fn upstream(req: Request<Incoming>) -> Result<Response<Full<Bytes>>, Infal
     if parts.uri.path().ends_with("/401") {
         *r.status_mut() = http::StatusCode::UNAUTHORIZED;
     }
+    if parts.uri.path().ends_with("/403") {
+        *r.status_mut() = http::StatusCode::FORBIDDEN;
+    }
     if parts.uri.path().ends_with("/challenge") {
         *r.status_mut() = http::StatusCode::UNAUTHORIZED;
         r.headers_mut().insert(
@@ -269,6 +275,20 @@ async fn start_with_ca(
         ws: Uuid::now_v7(),
         agent: Uuid::now_v7(),
     };
+    start_in(w, snap, creds, mk, extra_ca_pem, None, None).await
+}
+
+/// [`start_with_ca`] in a given world, with the churn-column pool (`touch_pool`) of a real database
+/// (P5-UX-14: account health is written there).
+async fn start_in(
+    w: World,
+    snap: Value,
+    creds: &[(&str, &str)],
+    mk: impl FnOnce(&World) -> Rows,
+    extra_ca_pem: Option<String>,
+    touch_pool: Option<aurora_db::PgPool>,
+    account_health: Option<Arc<aurora_gateway::account_health::AccountHealth>>,
+) -> (Env, Arc<Src>, Arc<SnapshotStore>) {
     let mem = Arc::new(MemoryStore::new("mem"));
     for (p, c) in creds {
         mem.preload(p, None, c.as_bytes());
@@ -304,17 +324,19 @@ async fn start_with_ca(
     );
     let resolver = Arc::new(Resolver::new(src.clone(), llm).with_snapshots(store.clone()));
     let plaintext = Arc::new(PlaintextCache::new(Arc::new(SecretVault::new(reg))));
-    let handler = Arc::new(
-        PolicyHandler::new(PolicyHandlerParts {
-            resolver,
-            plaintext,
-            log: RequestLog::new(Arc::new(Null)),
-            external_url: "https://aurora.test/".into(),
-            holds: None,
-            touch_pool: None,
-        })
-        .with_insecure_loopback_injection(true),
-    );
+    let mut handler = PolicyHandler::new(PolicyHandlerParts {
+        resolver,
+        plaintext,
+        log: RequestLog::new(Arc::new(Null)),
+        external_url: "https://aurora.test/".into(),
+        holds: None,
+        touch_pool,
+    })
+    .with_insecure_loopback_injection(true);
+    if let Some(h) = account_health {
+        handler = handler.with_account_health(h);
+    }
+    let handler = Arc::new(handler);
     let gw = ca::generate("gw").unwrap();
     let pl = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let proxy = pl.local_addr().unwrap();

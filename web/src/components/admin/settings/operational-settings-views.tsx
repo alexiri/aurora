@@ -4,6 +4,7 @@ import { useState, type ReactNode } from "react";
 
 import {
   SettingsSectionForm,
+  SettingsStackForm,
   type SettingControlCtx,
   type SettingsGroup,
 } from "@/components/admin/settings/settings-section-form";
@@ -16,7 +17,7 @@ import { FormSection } from "@/components/ui/form";
 import { Notice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
 import { SettingField, settingControlId } from "@/components/ui/setting-field";
-import { useSettingsSection, type SettingsSection } from "@/lib/api/settings";
+import { useSettingsSection, useSettingsSections, type SettingsSection } from "@/lib/api/settings";
 
 /*
  * The operational Admin › Settings pages (SET-5, C-782): agents & sandboxes, approvals, retention, skill
@@ -195,6 +196,31 @@ function OperationalView({
   );
 }
 
+/**
+ * Several sections as one run of titled groups with one Save (P5-IA-3): the page loads each section, and
+ * `SettingsStackForm` keeps a draft per section and writes the changed ones from a single Save.
+ */
+function OperationalStack({
+  parts,
+}: {
+  parts: { sectionId: string; page: OperationalPage; notice?: (s: SettingsSection) => ReactNode; below?: (s: SettingsSection) => ReactNode }[];
+}) {
+  const qs = useSettingsSections(parts.map((p) => p.sectionId));
+  const failed = qs.find((q) => q.isError);
+  if (failed?.isError) return <ErrorState error={failed.error} onRetry={() => void Promise.all(qs.map((q) => q.refetch()))} />;
+  const sections = qs.map((q) => q.data);
+  if (sections.some((s) => !s)) return <Loading />;
+  return (
+    <SettingsStackForm
+      parts={parts.map((p, i) => {
+        const s = sections[i] as SettingsSection;
+        return { section: s, groups: p.page.groups, above: p.notice?.(s), below: p.below?.(s) };
+      })}
+      onReload={() => void Promise.all(qs.map((q) => q.refetch()))}
+    />
+  );
+}
+
 interface RunnerRow {
   id: string;
   name: string;
@@ -276,10 +302,12 @@ export function ApprovalsSettingsView() {
 /** Administration › Agents › Defaults (C-967): the agents and approvals sections as one run of titled groups. */
 export function AgentsDefaultsView() {
   return (
-    <div className="space-y-8">
-      <OperationalView bare sectionId="agents" page={AGENTS_PAGE} below={(s) => <RunnersTable section={s} />} />
-      <OperationalView bare sectionId="approvals" page={APPROVALS_PAGE} />
-    </div>
+    <OperationalStack
+      parts={[
+        { sectionId: "agents", page: AGENTS_PAGE, below: (s) => <RunnersTable section={s} /> },
+        { sectionId: "approvals", page: APPROVALS_PAGE },
+      ]}
+    />
   );
 }
 
@@ -300,18 +328,32 @@ export function PreviewsSettingsView({ bare = false }: { bare?: boolean }) {
       bare={bare}
       sectionId="previews"
       page={PREVIEWS_PAGE}
-      notice={() => (
-        <Notice tone="neutral" role="status" className="max-w-3xl">
-          Whether previews are on and their domain are set in Helm (<code className="font-mono">relay.enabled</code>,{" "}
-          <code className="font-mono">relay.domain</code>); {bare ? "these are" : "this page sets"} their limits.
-        </Notice>
-      )}
+      notice={() => previewsNotice(bare)}
     />
+  );
+}
+
+function previewsNotice(bare: boolean): ReactNode {
+  return (
+    <Notice tone="neutral" role="status" className="max-w-3xl">
+      Whether previews are on and their domain are set in Helm (<code className="font-mono">relay.enabled</code>,{" "}
+      <code className="font-mono">relay.domain</code>); {bare ? "these are" : "this page sets"} their limits.
+    </Notice>
   );
 }
 
 function availableOf(section: SettingsSection): boolean {
   return (section.extra as { available?: boolean } | null | undefined)?.available === true;
+}
+
+function terminalNotice(s: SettingsSection): ReactNode {
+  return availableOf(s) ? null : (
+    <Notice tone="pending" role="status" className="max-w-3xl">
+      This deployment does not provide the terminal&apos;s wiring (the runner&apos;s stream listener and the network flows to it), so
+      the terminal cannot be turned on here. Set <code className="font-mono">terminal.enabled: true</code> in your Helm values, then
+      come back.
+    </Notice>
+  );
 }
 
 /** Admin › Settings › Directory sync (SET-5). */
@@ -339,26 +381,20 @@ export function TerminalSettingsView({ bare = false }: { bare?: boolean }) {
       bare={bare}
       sectionId="terminal"
       page={TERMINAL_PAGE}
-      notice={(s) =>
-        availableOf(s) ? null : (
-          <Notice tone="pending" role="status" className="max-w-3xl">
-            This deployment does not provide the terminal&apos;s wiring (the runner&apos;s stream listener and the network flows to it),
-            so the terminal cannot be turned on here. Set <code className="font-mono">terminal.enabled: true</code> in your Helm
-            values, then come back.
-          </Notice>
-        )
-      }
+      notice={terminalNotice}
     />
   );
 }
 
-/** Administration › Agents › Computers (C-967): the terminal and the previews as one run of titled groups. */
+/** Administration › Agents › Computers (C-967): the terminal and the previews as one run of titled groups, one Save. */
 export function ComputersView() {
   return (
-    <div className="space-y-8">
-      <TerminalSettingsView bare />
-      <PreviewsSettingsView bare />
-    </div>
+    <OperationalStack
+      parts={[
+        { sectionId: "terminal", page: TERMINAL_PAGE, notice: terminalNotice },
+        { sectionId: "previews", page: PREVIEWS_PAGE, notice: () => previewsNotice(true) },
+      ]}
+    />
   );
 }
 

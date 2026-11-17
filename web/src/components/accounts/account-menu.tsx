@@ -14,7 +14,7 @@ import { useDeleteConnection, usePatchConnection } from "@/lib/api/apps";
 import { ValueInput } from "@/components/credentials/value-input";
 
 import { EditWebsite } from "./edit-website";
-import { useDeleteSecret, usePatchSecret, useSetSecretValue, useVerifySecret, type SecretScope } from "@/lib/api/secrets";
+import { useDeleteSecret, usePatchSecret, useSetSecretValue, type SecretScope } from "@/lib/api/secrets";
 
 /**
  * The row's menu, in the order of `14 §1`: Give access, Rename, Reconnect or Replace, Test, Turn off (or Turn on),
@@ -27,6 +27,9 @@ export function AccountMenu({
   orgId,
   contextAgentId,
   onReconnect,
+  onTest,
+  replacing,
+  onReplacingChange,
 }: {
   account: Account;
   /** The scope the account lives in (the list's scope for its own accounts; the organization for shared ones). */
@@ -34,6 +37,11 @@ export function AccountMenu({
   orgId: string;
   contextAgentId?: string;
   onReconnect?: () => void;
+  /** Test: the row runs it and shows the result in place of its health line (C-943). */
+  onTest?: () => void;
+  /** The Replace dialog of a website or AI key, opened by the menu or by the health line's fix. */
+  replacing: boolean;
+  onReplacingChange: (open: boolean) => void;
 }) {
   const qc = useQueryClient();
   const refresh = () => void qc.invalidateQueries({ queryKey: accountKeys.all });
@@ -41,7 +49,7 @@ export function AccountMenu({
   const [giving, setGiving] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [removing, setRemoving] = useState(false);
-  const [replacing, setReplacing] = useState(false);
+  const setReplacing = onReplacingChange;
   const [editingSite, setEditingSite] = useState(false);
   const setValue = useSetSecretValue(scope, account.ref.id);
   const [newValue, setNewValue] = useState("");
@@ -50,10 +58,11 @@ export function AccountMenu({
   const patchConn = usePatchConnection(credScope);
   const delConn = useDeleteConnection(credScope);
   const patchSecret = usePatchSecret(scope, account.ref.id);
-  const verify = useVerifySecret(scope, account.ref.id);
   const delSecret = useDeleteSecret(scope, account.ref.id);
   const off = account.health.state === "disabled";
-  const error = patchConn.error ?? delConn.error ?? patchSecret.error ?? verify.error ?? delSecret.error;
+  const error = patchConn.error ?? delConn.error ?? patchSecret.error ?? delSecret.error;
+  // A turned-off account runs nothing and an expired sign-in is fixed by Reconnect: there is nothing to test.
+  const testable = !isConn || (account.health.state !== "disabled" && account.health.state !== "sign_in_expired");
 
   return (
     <>
@@ -69,7 +78,7 @@ export function AccountMenu({
           {isConn && onReconnect ? <MenuItem onSelect={onReconnect}>Reconnect</MenuItem> : null}
           {account.kind === "website" ? <MenuItem onSelect={() => setEditingSite(true)}>Change website</MenuItem> : null}
           {!isConn ? <MenuItem onSelect={() => setReplacing(true)}>Replace</MenuItem> : null}
-          {!isConn ? <MenuItem onSelect={() => verify.mutate(undefined, { onSuccess: refresh })}>Test</MenuItem> : null}
+          {onTest && testable ? <MenuItem onSelect={onTest}>Test</MenuItem> : null}
           {isConn ? (
             <MenuItem onSelect={() => patchConn.mutate({ id: account.ref.id, status: off ? "active" : "disabled" }, { onSuccess: refresh })}>
               {off ? "Turn on" : "Turn off"}
