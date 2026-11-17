@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type FormEvent } from "react";
+import { useState, useSyncExternalStore, type FormEvent } from "react";
 
 import { Button } from "@/components/ui/button";
 import { CopyValue } from "@/components/ui/copy-value";
@@ -74,8 +74,12 @@ export function AddPeople({
   const [email, setEmail] = useState("");
   const [role, setRole] = useState<Role>("member");
   const [done, setDone] = useState<{ email: string; role: Role; response: AddByEmailResponse } | null>(null);
-  const [origin, setOrigin] = useState("");
-  useEffect(() => setOrigin(window.location.origin), []);
+  // The address bar's origin, known only in the browser ("" while rendering on the server).
+  const origin = useSyncExternalStore(
+    () => () => {},
+    () => window.location.origin,
+    () => "",
+  );
   const add = useAddByEmail(wsId);
   const org = useOrg(orgId);
   const orgName = org.data?.name ?? "the organization";
