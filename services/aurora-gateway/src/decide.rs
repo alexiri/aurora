@@ -1337,6 +1337,34 @@ impl PolicyHandler {
             ctx.secret_id = wsec.map(|c| c.id);
             return Outcome::Respond(self.refuse(ctx, &err, "governance_refused"));
         }
+        // 6b. (P4-EVAL-2, C-868, SEC-114) A turn of an eval conversation cannot change the world:
+        // a request whose effect is a write is refused before any rule, approval or injection:
+        // an app tool tagged write whatever its method, and anything that is not GET/HEAD and not
+        // a read tool. The model provider's own calls (an LLM host) are the turn itself.
+        if identity.is_eval_read_only() && !rv.is_llm_host {
+            let tool_is_write = tool.zip(app_match.as_ref()).map(|(t, m)| {
+                apps::tool_tags(
+                    m.app,
+                    t,
+                    match &winner {
+                        Some(Cand::App(c)) => Some(c.as_ref()),
+                        _ => None,
+                    },
+                )
+                .write
+            });
+            let read_tool = tool_is_write == Some(false);
+            if tool_is_write == Some(true)
+                || (!matches!(method, http::Method::GET | http::Method::HEAD) && !read_tool)
+            {
+                let err = ApiError::new(
+                    StatusCode::FORBIDDEN,
+                    "eval_read_only",
+                    "This is an evaluation run: it cannot change anything. Answer from what you can read.",
+                );
+                return Outcome::Respond(self.refuse(ctx, &err, "eval_read_only"));
+            }
+        }
         // 7. decision (nothing decrypted yet).
         let peek = body_prefix[..body_prefix.len().min(APPROVAL_BODY_PEEK)].to_vec();
         let peek_truncated = truncated || body_prefix.len() > APPROVAL_BODY_PEEK;

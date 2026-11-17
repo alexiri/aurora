@@ -208,7 +208,14 @@ async fn compute(
     dispatch::arms(s, &mut tx, runner.id, replica, &mut items, &mut after).await?;
     // Arm 9 (schedules): claim due schedules and create their turns.
     crate::domains::schedules::fire::arm9(s, &mut tx).await?;
+    // Arm 10 (evals, P4-EVAL-2): eval schedule fires, then the eval run engine.
+    crate::domains::evals::schedules::arm(s, &mut tx).await?;
+    let judge_jobs = crate::domains::evals::engine::arm(s, &mut tx).await?;
     tx.commit().await.map_err(DbError::from)?;
+    // Judge calls (P4-EVAL-3) run after the commit, outside the transaction.
+    for job in judge_jobs {
+        crate::domains::evals::judge::spawn(s.clone(), job);
+    }
     for (conv, turn) in after.flush {
         crate::domains::hosted::lifecycle::flush_deltas(s, conv, turn).await;
     }

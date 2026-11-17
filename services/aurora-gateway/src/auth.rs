@@ -64,7 +64,18 @@ pub struct ByoAdmission {
 /// Capability that admits the open lane (RFE-003).
 pub const CAP_BROWSER: &str = "browser";
 
+/// (P4-EVAL-2, C-868) Marks the `context` credential of a turn in an `eval` conversation: the
+/// gateway refuses every write made with it (`eval_read_only`). Set at mint from the
+/// conversation's kind; a sandbox cannot add or remove it.
+pub const CAP_EVAL_READ_ONLY: &str = "eval_read_only";
+
 impl RequestIdentity {
+    /// A `context` credential of an eval turn (writes are refused).
+    pub fn is_eval_read_only(&self) -> bool {
+        self.kind == CredentialKind::Context
+            && self.capabilities.iter().any(|c| c == CAP_EVAL_READ_ONLY)
+    }
+
     pub fn has_capability(&self, cap: &str) -> bool {
         self.kind == CredentialKind::Boot && self.capabilities.iter().any(|c| c == cap)
     }

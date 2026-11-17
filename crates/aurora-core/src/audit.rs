@@ -175,6 +175,9 @@ pub const SECURITY_CRITICAL_ACTIONS: &[&str] = &[
     "scim.update",
     "scim_token.create",
     "scim_token.revoke",
+    // (phase 5, P4-EVAL-1, C-863, C-873) the judge key an agent's evals send its answers to; every
+    // settings write is atomic (a regression-notice toggle included: one action name, one class).
+    "eval.settings.update",
 ];
 
 /// Is `action` in the security-critical set?

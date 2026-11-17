@@ -8389,6 +8389,815 @@
         ]
       }
     },
+    "/v1/agents/{agent}/eval-fingerprint": {
+      "get": {
+        "tags": [
+          "evals"
+        ],
+        "summary": "The configuration fingerprint a run started now would record.",
+        "operationId": "getEvalFingerprint",
+        "parameters": [
+          {
+            "name": "agent",
+            "in": "path",
+            "description": "Agent id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvalFingerprint"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "eval_not_supported",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/agents/{agent}/eval-questions": {
+      "get": {
+        "tags": [
+          "evals"
+        ],
+        "summary": "An agent's eval questions in position order (`can_use`; hosted agents only).",
+        "operationId": "listEvalQuestions",
+        "parameters": [
+          {
+            "name": "agent",
+            "in": "path",
+            "description": "Agent id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvalQuestionList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "eval_not_supported",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "evals"
+        ],
+        "summary": "Add a question at the end of the list.",
+        "operationId": "createEvalQuestion",
+        "parameters": [
+          {
+            "name": "agent",
+            "in": "path",
+            "description": "Agent id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateEvalQuestion"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvalQuestion"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "invalid, eval_question_limit, eval_not_supported",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/agents/{agent}/eval-runs": {
+      "get": {
+        "tags": [
+          "evals"
+        ],
+        "summary": "An agent's eval runs, newest first.",
+        "operationId": "listEvalRuns",
+        "parameters": [
+          {
+            "name": "agent",
+            "in": "path",
+            "description": "Agent id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size, 1..=200 (default 50).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Opaque cursor from a previous response's `next_cursor`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "description": "`queued` | `running` | `done` | `failed` | `cancelled`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "trigger",
+            "in": "query",
+            "description": "`manual` | `schedule`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_EvalRun"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "eval_not_supported, invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "evals"
+        ],
+        "summary": "Start a run: it is queued and the due-work arm runs its questions one at a time.",
+        "operationId": "startEvalRun",
+        "parameters": [
+          {
+            "name": "agent",
+            "in": "path",
+            "description": "Agent id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvalRun"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "eval_run_active",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "eval_no_questions, eval_not_supported",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "423": {
+            "description": "frozen",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "eval_runs_limited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/agents/{agent}/eval-schedules": {
+      "get": {
+        "tags": [
+          "evals"
+        ],
+        "summary": "An agent's eval schedules.",
+        "operationId": "listEvalSchedules",
+        "parameters": [
+          {
+            "name": "agent",
+            "in": "path",
+            "description": "Agent id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvalScheduleList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "eval_not_supported",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "evals"
+        ],
+        "summary": "Create an eval schedule (at least one hour between occurrences).",
+        "operationId": "createEvalSchedule",
+        "parameters": [
+          {
+            "name": "agent",
+            "in": "path",
+            "description": "Agent id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateEvalSchedule"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvalSchedule"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "invalid, eval_schedule_limit, eval_not_supported",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/agents/{agent}/eval-settings": {
+      "get": {
+        "tags": [
+          "evals"
+        ],
+        "summary": "The agent's eval settings: the judge key and the regression notice.",
+        "operationId": "getEvalSettings",
+        "parameters": [
+          {
+            "name": "agent",
+            "in": "path",
+            "description": "Agent id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvalSettings"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "eval_not_supported",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "evals"
+        ],
+        "summary": "Replace the eval settings. A change of the judge key needs `can_own`.",
+        "operationId": "putEvalSettings",
+        "parameters": [
+          {
+            "name": "agent",
+            "in": "path",
+            "description": "Agent id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PutEvalSettings"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvalSettings"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "eval_judge_not_granted, eval_judge_not_usable, eval_judge_not_permitted, invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
     "/v1/agents/{agent}/files": {
       "get": {
         "tags": [
@@ -16884,6 +17693,674 @@
             }
           },
           "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/eval-questions/{id}": {
+      "get": {
+        "tags": [
+          "evals"
+        ],
+        "summary": "One question.",
+        "operationId": "getEvalQuestion",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Question id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvalQuestion"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "evals"
+        ],
+        "summary": "Delete a question; the positions after it close up.",
+        "operationId": "deleteEvalQuestion",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Question id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "evals"
+        ],
+        "summary": "Change a question (any subset of its fields, or its position); bumps `version` when a field\nchanges. The kind is fixed.",
+        "operationId": "updateEvalQuestion",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Question id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchEvalQuestion"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvalQuestion"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/eval-runs/{id}": {
+      "get": {
+        "tags": [
+          "evals"
+        ],
+        "summary": "A run with its fingerprint and one page of its results.",
+        "operationId": "getEvalRun",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Run id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "results_after",
+            "in": "query",
+            "description": "Position after which the next page of results starts (default 0).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvalRunDetail"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "evals"
+        ],
+        "summary": "Delete a finished run, its results and its eval conversations (`can_own`).",
+        "operationId": "deleteEvalRun",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Run id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {},
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "eval_run_active",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/eval-runs/{id}/cancel": {
+      "post": {
+        "tags": [
+          "evals"
+        ],
+        "summary": "Cancel a queued or running run; the remaining questions are not scored.",
+        "operationId": "cancelEvalRun",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Run id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvalRun"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "eval_run_finished",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/eval-schedules/{id}": {
+      "get": {
+        "tags": [
+          "evals"
+        ],
+        "summary": "One eval schedule.",
+        "operationId": "getEvalSchedule",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Schedule id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvalSchedule"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "evals"
+        ],
+        "summary": "Delete an eval schedule (its past runs stay).",
+        "operationId": "deleteEvalSchedule",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Schedule id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {},
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "evals"
+        ],
+        "summary": "Edit an eval schedule.",
+        "operationId": "patchEvalSchedule",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Schedule id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchEvalSchedule"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvalSchedule"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "invalid",
             "content": {
               "application/json": {
                 "schema": {
@@ -41202,6 +42679,91 @@
           }
         }
       },
+      "CreateEvalQuestion": {
+        "type": "object",
+        "required": [
+          "question",
+          "expected_kind"
+        ],
+        "properties": {
+          "criteria": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`judged` only (required)."
+          },
+          "enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Default true."
+          },
+          "expected_kind": {
+            "type": "string",
+            "description": "`numeric` | `text` | `judged`; fixed for the life of the question."
+          },
+          "expected_number": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "`numeric` only (required)."
+          },
+          "expected_text": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`text` only (required)."
+          },
+          "question": {
+            "type": "string"
+          },
+          "tolerance": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "`numeric` only, ≥ 0 (default 0)."
+          }
+        }
+      },
+      "CreateEvalSchedule": {
+        "type": "object",
+        "required": [
+          "name",
+          "cron",
+          "timezone"
+        ],
+        "properties": {
+          "anchor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`creator` (default) | `workspace` (`can_own` only)."
+          },
+          "cron": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "timezone": {
+            "type": "string"
+          }
+        }
+      },
       "CreateGroupRequest": {
         "type": "object",
         "required": [
@@ -42777,6 +44339,698 @@
         "properties": {
           "error": {
             "$ref": "#/components/schemas/ErrorBody"
+          }
+        }
+      },
+      "EvalAgentRef": {
+        "type": "object",
+        "required": [
+          "id",
+          "name"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "EvalFingerprint": {
+        "type": "object",
+        "description": "What a run started now would record (C-866, C-883).",
+        "required": [
+          "fingerprint",
+          "fingerprint_hash",
+          "question_set_version"
+        ],
+        "properties": {
+          "fingerprint": {
+            "description": "The canonical fingerprint object."
+          },
+          "fingerprint_hash": {
+            "type": "string"
+          },
+          "question_set_version": {
+            "type": "string"
+          }
+        }
+      },
+      "EvalJudge": {
+        "type": "object",
+        "required": [
+          "secret_id",
+          "model_id",
+          "secret_label",
+          "usable"
+        ],
+        "properties": {
+          "model_id": {
+            "type": "string"
+          },
+          "secret_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "secret_label": {
+            "type": "string"
+          },
+          "usable": {
+            "type": "boolean",
+            "description": "Whether the key is granted and usable now (08 §Model readiness)."
+          }
+        }
+      },
+      "EvalJudgeInput": {
+        "type": "object",
+        "required": [
+          "secret_id",
+          "model_id"
+        ],
+        "properties": {
+          "model_id": {
+            "type": "string"
+          },
+          "secret_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "EvalJudgeUsage": {
+        "type": "object",
+        "required": [
+          "input_tokens",
+          "output_tokens"
+        ],
+        "properties": {
+          "input_tokens": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "output_tokens": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "EvalPersonRef": {
+        "type": "object",
+        "required": [
+          "id",
+          "label"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "label": {
+            "type": "string"
+          }
+        }
+      },
+      "EvalQuestion": {
+        "type": "object",
+        "description": "An eval question (C-861). Expected answers are agent-audience data: this shape is served only\nto callers who `can_use` the agent's workspace.",
+        "required": [
+          "id",
+          "agent",
+          "position",
+          "question",
+          "expected_kind",
+          "enabled",
+          "version",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "agent": {
+            "$ref": "#/components/schemas/EvalAgentRef"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "criteria": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "expected_kind": {
+            "type": "string",
+            "description": "`numeric` | `text` | `judged`."
+          },
+          "expected_number": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "expected_text": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "position": {
+            "type": "integer",
+            "format": "int32",
+            "description": "1-based, contiguous, unique per agent."
+          },
+          "question": {
+            "type": "string"
+          },
+          "tolerance": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "EvalQuestionList": {
+        "type": "object",
+        "required": [
+          "questions"
+        ],
+        "properties": {
+          "questions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EvalQuestion"
+            }
+          }
+        }
+      },
+      "EvalRegression": {
+        "type": "object",
+        "required": [
+          "from_run_id",
+          "drop_points"
+        ],
+        "properties": {
+          "drop_points": {
+            "type": "number",
+            "format": "double"
+          },
+          "from_run_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "EvalResult": {
+        "type": "object",
+        "description": "One question's result (C-867).",
+        "required": [
+          "position",
+          "question",
+          "expected_kind",
+          "outcome",
+          "refused_writes"
+        ],
+        "properties": {
+          "answer": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "conversation_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "expected": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/EvalResultExpected"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "expected_kind": {
+            "type": "string"
+          },
+          "extracted_value": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "finished_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "judge": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/EvalResultJudge"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "outcome": {
+            "type": "string",
+            "description": "`pass` | `fail` | `error` | `not_scored`."
+          },
+          "position": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "question": {
+            "$ref": "#/components/schemas/EvalResultQuestion"
+          },
+          "reason_code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "refused_writes": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "started_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          }
+        }
+      },
+      "EvalResultExpected": {
+        "type": "object",
+        "description": "The expected answer of a result (agent-audience data: `can_use` only).",
+        "properties": {
+          "criteria": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "number": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "text": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tolerance": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          }
+        }
+      },
+      "EvalResultJudge": {
+        "type": "object",
+        "required": [
+          "verdict"
+        ],
+        "properties": {
+          "rationale": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "verdict": {
+            "type": "string"
+          }
+        }
+      },
+      "EvalResultQuestion": {
+        "type": "object",
+        "required": [
+          "text"
+        ],
+        "properties": {
+          "id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "text": {
+            "type": "string"
+          }
+        }
+      },
+      "EvalRun": {
+        "type": "object",
+        "description": "An eval run (C-864).",
+        "required": [
+          "id",
+          "agent",
+          "trigger",
+          "status",
+          "question_set_version",
+          "fingerprint_hash",
+          "counts",
+          "created_at"
+        ],
+        "properties": {
+          "agent": {
+            "$ref": "#/components/schemas/EvalAgentRef"
+          },
+          "counts": {
+            "$ref": "#/components/schemas/EvalRunCounts"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "error_code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "fingerprint_hash": {
+            "type": "string"
+          },
+          "finished_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "judge_usage": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/EvalJudgeUsage"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "pass_rate": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Percent, `pass ÷ (pass + fail)`; null when nothing was scored."
+          },
+          "question_set_version": {
+            "type": "string"
+          },
+          "regression": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/EvalRegression"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "schedule": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/EvalScheduleRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "started_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "started_by": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/EvalPersonRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "type": "string",
+            "description": "`queued` | `running` | `done` | `failed` | `cancelled`."
+          },
+          "trigger": {
+            "type": "string",
+            "description": "`manual` | `schedule`."
+          }
+        }
+      },
+      "EvalRunCounts": {
+        "type": "object",
+        "required": [
+          "total",
+          "passed",
+          "failed",
+          "errored",
+          "not_scored",
+          "refused_writes"
+        ],
+        "properties": {
+          "errored": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "failed": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "not_scored": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "passed": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "refused_writes": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "total": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "EvalRunDetail": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/EvalRun"
+          },
+          {
+            "type": "object",
+            "required": [
+              "fingerprint",
+              "results"
+            ],
+            "properties": {
+              "fingerprint": {
+                "description": "The C-866 object recorded at start."
+              },
+              "next_results_after": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "format": "int32",
+                "description": "Position to pass as `results_after` for the next page; null on the last page."
+              },
+              "results": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/EvalResult"
+                }
+              }
+            }
+          }
+        ],
+        "description": "A run with its fingerprint and one page of results (`GET /eval-runs/{id}`)."
+      },
+      "EvalSchedule": {
+        "type": "object",
+        "description": "An eval schedule (C-870).",
+        "required": [
+          "id",
+          "agent",
+          "name",
+          "cron",
+          "timezone",
+          "enabled",
+          "anchor"
+        ],
+        "properties": {
+          "agent": {
+            "$ref": "#/components/schemas/EvalAgentRef"
+          },
+          "anchor": {
+            "type": "string",
+            "description": "`creator` | `workspace`."
+          },
+          "creator": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/EvalPersonRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "cron": {
+            "type": "string"
+          },
+          "disabled_reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`user` | `authorization` | `failures`."
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "last_fire_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "last_outcome": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`ok` | `failed` | `skipped_busy` | `skipped_frozen`."
+          },
+          "last_run_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "next_fire_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "timezone": {
+            "type": "string"
+          }
+        }
+      },
+      "EvalScheduleList": {
+        "type": "object",
+        "required": [
+          "schedules"
+        ],
+        "properties": {
+          "schedules": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EvalSchedule"
+            }
+          }
+        }
+      },
+      "EvalScheduleRef": {
+        "type": "object",
+        "required": [
+          "id",
+          "name"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "EvalSettings": {
+        "type": "object",
+        "required": [
+          "regression_notify"
+        ],
+        "properties": {
+          "judge": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/EvalJudge"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "regression_notify": {
+            "type": "boolean"
           }
         }
       },
@@ -49332,6 +51586,135 @@
           }
         }
       },
+      "Page_EvalRun": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "An eval run (C-864).",
+              "required": [
+                "id",
+                "agent",
+                "trigger",
+                "status",
+                "question_set_version",
+                "fingerprint_hash",
+                "counts",
+                "created_at"
+              ],
+              "properties": {
+                "agent": {
+                  "$ref": "#/components/schemas/EvalAgentRef"
+                },
+                "counts": {
+                  "$ref": "#/components/schemas/EvalRunCounts"
+                },
+                "created_at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "error_code": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "fingerprint_hash": {
+                  "type": "string"
+                },
+                "finished_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "date-time"
+                },
+                "id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "judge_usage": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/EvalJudgeUsage"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "pass_rate": {
+                  "type": [
+                    "number",
+                    "null"
+                  ],
+                  "format": "double",
+                  "description": "Percent, `pass ÷ (pass + fail)`; null when nothing was scored."
+                },
+                "question_set_version": {
+                  "type": "string"
+                },
+                "regression": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/EvalRegression"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "schedule": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/EvalScheduleRef"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "started_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "date-time"
+                },
+                "started_by": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/EvalPersonRef"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "status": {
+                  "type": "string",
+                  "description": "`queued` | `running` | `done` | `failed` | `cancelled`."
+                },
+                "trigger": {
+                  "type": "string",
+                  "description": "`manual` | `schedule`."
+                }
+              }
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
       "Page_Group": {
         "type": "object",
         "required": [
@@ -51971,6 +54354,87 @@
           }
         }
       },
+      "PatchEvalQuestion": {
+        "type": "object",
+        "description": "Any subset; a field outside the question's kind is 422 `invalid`.",
+        "properties": {
+          "criteria": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "expected_number": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "expected_text": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "position": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Move to this 1-based position (clamped to the list)."
+          },
+          "question": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tolerance": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          }
+        }
+      },
+      "PatchEvalSchedule": {
+        "type": "object",
+        "properties": {
+          "cron": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "timezone": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
       "PatchGroupRequest": {
         "type": "object",
         "properties": {
@@ -54432,6 +56896,28 @@
           },
           "store_id": {
             "type": "string"
+          }
+        }
+      },
+      "PutEvalSettings": {
+        "type": "object",
+        "required": [
+          "regression_notify"
+        ],
+        "properties": {
+          "judge": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/EvalJudgeInput",
+                "description": "`null` clears the judge."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "regression_notify": {
+            "type": "boolean"
           }
         }
       },

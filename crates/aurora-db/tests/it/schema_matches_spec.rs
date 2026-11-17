@@ -121,6 +121,8 @@ fn spec_type_to_udt(t: &str) -> Option<&'static str> {
         "int" | "integer" => "int4",
         "smallint" => "int2",
         "bigint" => "int8",
+        // (P4-EVAL-1/2) `eval_questions.expected_number` and `tolerance`.
+        "numeric" => "numeric",
         "bool" | "boolean" => "bool",
         "jsonb" => "jsonb",
         "bytea" => "bytea",

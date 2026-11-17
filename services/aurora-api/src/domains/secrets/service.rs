@@ -874,6 +874,12 @@ pub async fn verify(state: &AppState, row: &SecretRow) -> Result<StoredOrigin, A
     Ok(o.into())
 }
 
+/// The decrypted value of an LLM secret, for `PlatformLlm` (P4-EVAL-3) only: held in memory for
+/// one call, never logged.
+pub async fn open_llm_key(state: &AppState, row: &SecretRow) -> Result<Plain<String>, ApiError> {
+    open_key(state, row).await
+}
+
 async fn open_key(state: &AppState, row: &SecretRow) -> Result<Plain<String>, ApiError> {
     let r: SecretRef = row
         .value_ref
