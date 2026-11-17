@@ -740,3 +740,141 @@ pub async fn select(
         stored_roles: r.roles.as_ref().and_then(|rr| rr.stored_after_drop.clone()),
     })
 }
+
+/// (P5-MODELS-2, D-304) What the dispatcher chose for a turn, stored with it (`turns.model_basis`): the
+/// trust rule at turn end reads the default and the roles from here, never from the harness.
+pub fn basis_of(c: &ModelChoice) -> Value {
+    let mut b = serde_json::json!({
+        "provider": c.provider, "endpoint_id": c.endpoint_id, "model": c.model,
+    });
+    if let Some(r) = &c.roles {
+        b["roles"] = serde_json::json!(r.set().map(|(_, m)| m).collect::<Vec<_>>());
+    }
+    b
+}
+
+/// Token counters of one `by_model` entry: input, output, cache read, cache write.
+type Counts = [i64; 4];
+
+fn counts_of(e: &Value) -> Counts {
+    let n = |k: &str| e.get(k).and_then(Value::as_i64).unwrap_or(0).max(0);
+    [
+        n("input_tokens"),
+        n("output_tokens"),
+        n("cache_read_tokens"),
+        n("cache_write_tokens"),
+    ]
+}
+
+/// (D-304, C-879, `08` *Error classification and usage*) The usage the API stores for a turn: the harness's
+/// claim, reduced by the trust rule. `provider` and `endpoint_id` come from the turn's basis, never from the
+/// claim. An entry is kept when its model is the default, a resolved role, or accepted by `allowed` (the
+/// effective allow-list at turn end; any pattern-valid id when none applies). Every other entry, and every
+/// entry past `USAGE_BY_MODEL_MAX`, is folded into the default model's entry and sets `unverified_models`.
+/// The totals are the sum of the kept entries. A claim with no breakdown becomes one entry for the default.
+pub fn fold_usage(basis: &Value, claim: &Value, allowed: impl Fn(&str) -> bool) -> Value {
+    let text = |k: &str| basis.get(k).and_then(Value::as_str).unwrap_or_default();
+    let default = text("model").to_owned();
+    let roles: Vec<&str> = basis
+        .get("roles")
+        .and_then(Value::as_array)
+        .map(|a| a.iter().filter_map(Value::as_str).collect())
+        .unwrap_or_default();
+    let trusted = |m: &str| {
+        m == default
+            || roles.contains(&m)
+            || (aurora_core::model_id::validate_model_id(m) && allowed(m))
+    };
+    let claimed: Vec<(String, Counts)> = match claim
+        .get("by_model")
+        .and_then(Value::as_array)
+        .filter(|a| !a.is_empty())
+    {
+        Some(a) => a
+            .iter()
+            .map(|e| {
+                let m = e.get("model").and_then(Value::as_str).unwrap_or_default();
+                (m.to_owned(), counts_of(e))
+            })
+            .collect(),
+        None => vec![(default.clone(), counts_of(claim))],
+    };
+    let add = |into: &mut Counts, c: Counts| {
+        for (t, d) in into.iter_mut().zip(c) {
+            *t = t.saturating_add(d);
+        }
+    };
+    let (mut kept, mut folded): (Vec<(String, Counts)>, Counts) = (Vec::new(), [0; 4]);
+    let mut unverified = false;
+    for (m, c) in claimed {
+        if !trusted(&m) {
+            add(&mut folded, c);
+            unverified = true;
+        } else if let Some((_, k)) = kept.iter_mut().find(|(km, _)| *km == m) {
+            add(k, c);
+        } else if m == default {
+            kept.insert(0, (m, c)); // the default is first, so the limit never drops it
+        } else {
+            kept.push((m, c));
+        }
+    }
+    // The limit counts the default's entry, which exists whenever something was folded.
+    let room = aurora_core::limits::USAGE_BY_MODEL_MAX
+        - usize::from(!kept.iter().any(|(m, _)| *m == default));
+    while kept.len() > room {
+        if let Some((_, c)) = kept.pop() {
+            add(&mut folded, c);
+            unverified = true;
+        }
+    }
+    if unverified {
+        match kept.iter_mut().find(|(m, _)| *m == default) {
+            Some((_, c)) => add(c, folded),
+            None => kept.insert(0, (default.clone(), folded)),
+        }
+    }
+    let mut total = [0_i64; 4];
+    for (_, c) in &kept {
+        add(&mut total, *c);
+    }
+    let mut out = serde_json::json!({
+        "input_tokens": total[0], "output_tokens": total[1],
+        "cache_read_tokens": total[2], "cache_write_tokens": total[3],
+        "provider": text("provider"), "endpoint_id": text("endpoint_id"), "model": default,
+        "by_model": kept.iter().map(|(m, c)| serde_json::json!({
+            "model": m, "input_tokens": c[0], "output_tokens": c[1],
+            "cache_read_tokens": c[2], "cache_write_tokens": c[3],
+        })).collect::<Vec<_>>(),
+    });
+    if let Some(r) = claim.get("reasoning_tokens").and_then(Value::as_i64) {
+        out["reasoning_tokens"] = r.max(0).into();
+    }
+    if unverified {
+        out["unverified_models"] = true.into();
+    }
+    out
+}
+
+/// The usage to store at turn end (see [`fold_usage`]): the turn's basis and the effective allow-list now.
+/// A turn without a recorded basis keeps its totals and loses the breakdown it cannot verify.
+pub async fn usage_for_turn(
+    state: &AppState,
+    conn: &mut PgConnection,
+    turn: Uuid,
+    claim: &Value,
+) -> Result<Value, ApiError> {
+    let Some((org, Some(basis))) = hosted::model_basis(conn, turn).await? else {
+        let mut u = claim.clone();
+        if let Some(o) = u.as_object_mut() {
+            o.remove("by_model");
+        }
+        return Ok(u);
+    };
+    let eff = gov::effective_for(state, org).await?;
+    let ep = basis
+        .get("endpoint_id")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
+    Ok(fold_usage(&basis, claim, |m| model_ok(&eff, &ep, m)))
+}

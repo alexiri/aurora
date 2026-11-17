@@ -43019,6 +43019,38 @@
         },
         "additionalProperties": false
       },
+      "ModelUsage": {
+        "type": "object",
+        "description": "One model's share of a turn's usage (C-879).",
+        "required": [
+          "model",
+          "input_tokens",
+          "output_tokens",
+          "cache_read_tokens",
+          "cache_write_tokens"
+        ],
+        "properties": {
+          "cache_read_tokens": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "cache_write_tokens": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "input_tokens": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "model": {
+            "type": "string"
+          },
+          "output_tokens": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
       "Models": {
         "type": "object",
         "required": [
@@ -46746,6 +46778,13 @@
                 "latency_ms": {
                   "type": "integer",
                   "format": "int32"
+                },
+                "llm_model": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "(phase 5, P5-MODELS-2, C-880) The model an LLM request asked for, when the gateway could read it."
                 },
                 "method": {
                   "type": "string"
@@ -50869,6 +50908,13 @@
           "latency_ms": {
             "type": "integer",
             "format": "int32"
+          },
+          "llm_model": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "(phase 5, P5-MODELS-2, C-880) The model an LLM request asked for, when the gateway could read it."
           },
           "method": {
             "type": "string"
@@ -55565,12 +55611,30 @@
           "output_tokens"
         ],
         "properties": {
+          "by_model": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/ModelUsage"
+            },
+            "description": "Tokens per model, subagents included; the totals above are their sum. Absent on turns recorded\nbefore per-model usage."
+          },
           "cache_read_tokens": {
             "type": [
               "integer",
               "null"
             ],
             "format": "int64"
+          },
+          "cache_write_tokens": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "(P5-MODELS-2, C-879)"
           },
           "cost_usd": {
             "type": [
@@ -55579,13 +55643,36 @@
             ],
             "format": "double"
           },
+          "endpoint_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "input_tokens": {
             "type": "integer",
             "format": "int64"
           },
+          "model": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "output_tokens": {
             "type": "integer",
             "format": "int64"
+          },
+          "provider": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The provider, endpoint and default model, stamped from the turn's model choice."
+          },
+          "unverified_models": {
+            "type": "boolean",
+            "description": "Set when the harness reported models outside what the turn could have used: those tokens were\nfolded into the default model's entry."
           }
         }
       },

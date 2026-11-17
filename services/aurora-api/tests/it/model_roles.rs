@@ -26,7 +26,7 @@ fn lite(id: &str) -> LlmEndpoint {
     }
 }
 
-async fn rig() -> Rig {
+pub(crate) async fn rig() -> Rig {
     rig_with(|c| {
         c.governance.allowed_key_scopes = vec!["organization".into()];
         c.hosted.enabled_harnesses = vec!["claude-code".into(), "codex".into()];
@@ -74,7 +74,7 @@ async fn grant(r: &Rig, agent: Uuid, endpoint: &str, name: &str) {
 }
 
 /// A hosted `claude-code` agent with one key on `endpoint`.
-async fn agent_on(r: &Rig, handle: &str, endpoint: &str) -> Uuid {
+pub(crate) async fn agent_on(r: &Rig, handle: &str, endpoint: &str) -> Uuid {
     let a = r.agent(handle, false).await;
     sqlx::query("UPDATE agents SET harness = 'claude-code' WHERE id = $1")
         .bind(a)

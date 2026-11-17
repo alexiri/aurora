@@ -665,6 +665,7 @@ Rules compiled from grants and app blocklists; always live (not drafted).
 | bytes_up, bytes_down | bigint not null default 0 | |
 | context_label | text null | (phase 2, RFE-025) label of the BYO context credential (a labelled `aurora run`), ≤128, sanitized (`08 §11.9`) |
 | speaker_user_id | uuid null | (phase 2, RFE-005) the request identity's speaker (no FK, ledger table); lets operators see which person's turn caused a request |
+| llm_model | text null | (phase 5, P5-MODELS-2, D-304, C-880) `model_from_request` of a request with an injected key on a governed LLM endpoint (`08 §11.5`); null otherwise or when `Unknown`. Audit only: no decision reads it. Added on the partitioned parent, so every partition inherits it |
 
 Partitions are created ahead by the API (next 2 months); rows are deleted when older than
 `retention.request_log_days` (default 30), checked daily: whole partitions past the period are
@@ -844,6 +845,7 @@ Invariant: at most one non-revoked `agent` credential per agent.
 | error_code | text null | open vocabulary |
 | error_message | text null | |
 | usage | jsonb null | `{ input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, model, provider }`. (phase 5, P4-LLM) It also holds `endpoint_id`. (phase 5, P5-MODELS-2, D-304, C-879) It also holds `by_model: [{ model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens }]` and an optional `unverified_models: true`. The totals are the sum of `by_model`, and `model` is the default (`10 §Usage and metering`) |
+| model_basis | jsonb null | (phase 5, P5-MODELS-2, D-304) what the dispatcher chose: `{ provider, endpoint_id, model, roles? }` (`roles` = the resolved role model ids). The trust rule at turn end reads the default and the roles from here, never from the harness. Null before the migration and never read for a turn that is not `role = 'turn'` |
 | dispatched_at, started_at, finished_at | timestamptz null | |
 | last_progress_at | timestamptz null | churn column |
 | dispatch_lease_until | timestamptz null | claim clock (dispatch) |
@@ -1735,7 +1737,6 @@ has table-level `SELECT` on `app_instances` (`§Gateway database role grants`), 
 |---|---|---|---|
 | agents.model_roles | jsonb null | (phase 5, P5-MODELS-1, D-303) `{ endpoint_id, large?, medium?, small? }`: role models stamped with the endpoint they were chosen for. Dropped per role under the override rule (`08 §Model roles`) | 5 (P5-MODELS-1) |
 | agents.subagent_model | text not null default `'inherit'` | (phase 5, P5-MODELS-1) CHECK in (`inherit`,`large`,`medium`,`small`) | 5 (P5-MODELS-1) |
-| request_log.llm_model | text null | (phase 5, P5-MODELS-2, D-304, C-880) `model_from_request` of a request with an injected key on a governed LLM endpoint (`08 §11.5`); null otherwise or when `Unknown`. Audit only: no decision reads it | 5 (P5-MODELS-2) |
 
 The migrations land with P5-MODELS-1 and -2 (next free numbers when placed); the rows then move into `§agents` and `§request_log` above.
 

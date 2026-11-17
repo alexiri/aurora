@@ -8231,6 +8231,18 @@ export interface components {
             medium?: string | null;
             small?: string | null;
         };
+        /** @description One model's share of a turn's usage (C-879). */
+        ModelUsage: {
+            /** Format: int64 */
+            cache_read_tokens: number;
+            /** Format: int64 */
+            cache_write_tokens: number;
+            /** Format: int64 */
+            input_tokens: number;
+            model: string;
+            /** Format: int64 */
+            output_tokens: number;
+        };
         Models: {
             items: components["schemas"]["ModelItem"][];
         };
@@ -9385,6 +9397,8 @@ export interface components {
                 lane: string;
                 /** Format: int32 */
                 latency_ms: number;
+                /** @description (phase 5, P5-MODELS-2, C-880) The model an LLM request asked for, when the gateway could read it. */
+                llm_model?: string | null;
                 method: string;
                 path: string;
                 /** Format: uuid */
@@ -10630,6 +10644,8 @@ export interface components {
             lane: string;
             /** Format: int32 */
             latency_ms: number;
+            /** @description (phase 5, P5-MODELS-2, C-880) The model an LLM request asked for, when the gateway could read it. */
+            llm_model?: string | null;
             method: string;
             path: string;
             /** Format: uuid */
@@ -12027,14 +12043,33 @@ export interface components {
             package: string;
         };
         Usage: {
+            /**
+             * @description Tokens per model, subagents included; the totals above are their sum. Absent on turns recorded
+             *     before per-model usage.
+             */
+            by_model?: components["schemas"]["ModelUsage"][] | null;
             /** Format: int64 */
             cache_read_tokens?: number | null;
+            /**
+             * Format: int64
+             * @description (P5-MODELS-2, C-879)
+             */
+            cache_write_tokens?: number | null;
             /** Format: double */
             cost_usd?: number | null;
+            endpoint_id?: string | null;
             /** Format: int64 */
             input_tokens: number;
+            model?: string | null;
             /** Format: int64 */
             output_tokens: number;
+            /** @description The provider, endpoint and default model, stamped from the turn's model choice. */
+            provider?: string | null;
+            /**
+             * @description Set when the harness reported models outside what the turn could have used: those tokens were
+             *     folded into the default model's entry.
+             */
+            unverified_models?: boolean;
         };
         User: {
             /** Format: date-time */

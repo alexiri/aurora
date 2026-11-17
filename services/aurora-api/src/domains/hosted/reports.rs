@@ -482,6 +482,11 @@ async fn result(
         let p = json!({"turn_id": turn, "code": code, "message": message.unwrap_or("")});
         conv::append_event(tx, cid, Some(turn), "error", &p).await?;
     }
+    // (P5-MODELS-2, D-304) The harness's claim, reduced by the trust rule and stamped from the turn's basis.
+    let usage = match tr.usage.as_ref().filter(|u| u.is_object()) {
+        Some(claim) => Some(super::model::usage_for_turn(s, tx, turn, claim).await?),
+        None => None,
+    };
     let done = lifecycle::finish(
         tx,
         turn,
@@ -492,7 +497,7 @@ async fn result(
             code.as_deref()
         },
         message,
-        tr.usage.as_ref().filter(|u| u.is_object()),
+        usage.as_ref(),
     )
     .await?;
     Ok(match done {
