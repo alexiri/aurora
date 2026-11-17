@@ -13,6 +13,19 @@ const nextConfig: NextConfig = {
   async redirects() {
     return STATIC_REDIRECTS.map((r) => ({ ...r, permanent: false }));
   },
+  // (P4-011B-4, C-835) The push service worker is revalidated on every load, so a fixed worker reaches browsers at
+  // once; the type is explicit because browsers refuse a worker served as anything but JavaScript.
+  async headers() {
+    return [
+      {
+        source: "/aurora-push-sw.js",
+        headers: [
+          { key: "Cache-Control", value: "no-cache" },
+          { key: "Content-Type", value: "text/javascript; charset=utf-8" },
+        ],
+      },
+    ];
+  },
   async rewrites() {
     // Dev only: in production the edge proxy routes /v1/* to the API.
     if (process.env.NODE_ENV === "production") return [];
