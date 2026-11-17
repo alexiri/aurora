@@ -814,6 +814,13 @@ const ROWS: &[Row] = &[
     r("GET", "/v1/workspaces/{ws}/oauth-clients", G::WsOwn, false),
     r("POST", "/v1/workspaces/{ws}/oauth-clients", G::WsOwn, false),
     r("GET", "/v1/workspaces/{ws}/policy", G::WsOwn, false),
+    // (FIX-164, D-365) The published rules, read-only, for any member of the workspace.
+    r(
+        "GET",
+        "/v1/workspaces/{ws}/internet-access",
+        G::WsUse,
+        false,
+    ),
     r("PUT", "/v1/workspaces/{ws}/policy/draft", G::WsOwn, false),
     r(
         "GET",

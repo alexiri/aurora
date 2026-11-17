@@ -5333,6 +5333,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/workspaces/{ws}/internet-access": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * (FIX-164, C-1020, D-365; amends I-27 for this one read) A workspace member reads the workspace's **published**
+         *     Internet access, read-only: defaults and rules of the active generation. No draft, history, warnings or write.
+         */
+        get: operations["getWorkspaceInternetAccess"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/workspaces/{ws}/members/{user}/offboarding": {
         parameters: {
             query?: never;
@@ -5648,6 +5668,11 @@ export interface components {
             ref: components["schemas"]["AccountRef"];
             /** @description `workspace` | `organization`. */
             scope: string;
+            /**
+             * @description (FIX-163) Why a turned-off app account is off, when something other than a person's choice turned it
+             *     off: `instance_deleted` (its self-hosted app instance was removed; it cannot be turned on again).
+             */
+            status_reason?: string | null;
         };
         AccountAgent: {
             handle: string;
@@ -9286,6 +9311,11 @@ export interface components {
                 ref: components["schemas"]["AccountRef"];
                 /** @description `workspace` | `organization`. */
                 scope: string;
+                /**
+                 * @description (FIX-163) Why a turned-off app account is off, when something other than a person's choice turned it
+                 *     off: `instance_deleted` (its self-hosted app instance was removed; it cannot be turned on again).
+                 */
+                status_reason?: string | null;
             }[];
             next_cursor?: string | null;
         };
@@ -11056,6 +11086,23 @@ export interface components {
         PublishRequest: {
             /** Format: int64 */
             revision: number;
+        };
+        /**
+         * @description (FIX-164, C-1020, D-365) What a workspace member reads of the workspace's Internet access: the **published**
+         *     generation's defaults and rules, and nothing else: no draft, no revision, no generation history, no publisher, no
+         *     warnings, no other workspace's overrides.
+         */
+        PublishedInternetAccess: {
+            default_action: components["schemas"]["DefaultAction"];
+            /**
+             * Format: int32
+             * @description The published generation's number.
+             */
+            number: number;
+            open_lane_posture: components["schemas"]["OpenLanePosture"];
+            rules: components["schemas"]["PolicyRule"][];
+            uncredentialed_allowlist: components["schemas"]["AllowlistEntry"][];
+            uncredentialed_default: components["schemas"]["UncredentialedDefault"];
         };
         PurgedAttachment: {
             /** Format: uuid */
@@ -36905,6 +36952,56 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    getWorkspaceInternetAccess: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                ws: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The published generation */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PublishedInternetAccess"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not found */
             404: {
                 headers: {
                     [name: string]: unknown;

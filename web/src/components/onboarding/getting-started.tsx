@@ -2,7 +2,7 @@
 
 import { useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 import { CreateAgentDialog } from "@/components/agents/create-agent-dialog";
 import { GiveAccessPanel } from "@/components/credentials/give-access";
@@ -35,9 +35,8 @@ import { REASON_COPY } from "@/components/agents/model-readiness";
 const WIDTH = ["w-0", "w-1/4", "w-2/4", "w-3/4", "w-full"];
 
 const TITLES: Record<GuideStepId, string> = {
-  key: "Add an LLM key",
-  access: "Give {agent} access to it",
-  model: "Choose a model",
+  key: "AI key",
+  access: "Give {agent} access to {key}",
   hello: "Say hello",
 };
 
@@ -72,6 +71,14 @@ export function GettingStarted(props: GuideProps) {
   const [open, setOpen] = useState(false);
   const base = `/o/${props.org}/w/${props.ws}`;
   const dismissed = onboarding.data?.guide_dismissed?.includes(props.wsId) === true;
+
+  // Welcome is where a person lands until the guide is finished or skipped (C-927): finishing it is "seen".
+  const complete = state.guide?.complete === true;
+  const seen = onboarding.data?.welcome_seen;
+  useEffect(() => {
+    if (props.variant === "welcome" && complete && seen === false && !patch.isPending) patch.mutate({ welcome_seen: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [props.variant, complete, seen]);
 
   if (agents.isPending) return <Loading />;
   if (agents.isError) return <ErrorState error={agents.error} onRetry={() => agents.refetch()} />;
@@ -168,7 +175,7 @@ export function GettingStarted(props: GuideProps) {
 
 function StepRow({ step, index, agent, expanded, children }: { step: GuideStep; index: number; agent: Agent; expanded: boolean; children: ReactNode }) {
   const done = step.state === "done";
-  const title = TITLES[step.id].replace("{agent}", agent.name);
+  const title = TITLES[step.id].replace("{agent}", agent.name).replace("{key}", step.keyToGrant?.name ?? "it");
   return (
     <li id={stepAnchor(step.id)} data-state={step.state} className="scroll-mt-20">
       <div className="flex items-start gap-3">
@@ -213,11 +220,10 @@ function StepBody({
   }
   switch (step.id) {
     case "key":
-      return step.state === "waiting" ? (
-        <p>Checking what {agent.name} can use…</p>
-      ) : (
-        <KeyStep step={step} wsId={wsId} orgId={orgId} agent={agent} base={base} keysCount={keysCount} />
-      );
+      if (step.state === "waiting") return <p>Checking what {agent.name} can use…</p>;
+      // The key works but no model resolves: the picker is part of this step (C-927).
+      if (step.needsModel) return <ModelStep agent={agent} wsId={wsId} />;
+      return <KeyStep step={step} wsId={wsId} orgId={orgId} agent={agent} base={base} keysCount={keysCount} />;
     case "access":
       if (step.state === "waiting") return <p>Comes after the key.</p>;
       if (step.keyToGrant && accessDeferred) {
@@ -248,8 +254,6 @@ function StepBody({
           />
         </div>
       ) : null;
-    case "model":
-      return <ModelStep agent={agent} wsId={wsId} />;
     case "hello":
       return (
         <div className="space-y-2">
@@ -287,7 +291,7 @@ function KeyStep({ step, wsId, orgId, agent, base, keysCount }: { step: GuideSte
       ) : (
         <>
           <p>
-            An LLM key is the password to the AI service that does {agent.name}&apos;s thinking. Get one from your AI provider or
+            An AI key is the password to the AI service that does {agent.name}&apos;s thinking. Get one from your AI provider or
             from whoever runs it for your team. Aurora stores it sealed and never shows it again.
           </p>
           {keysCount === 0 ? null : <p>Keys you already have are listed under Apps & accounts.</p>}
@@ -354,11 +358,16 @@ export function optionalNextLinks({
   isOwner: boolean;
 }): { href: string; label: string; text: string }[] {
   const w = wsRoutes(org, ws);
-  // "Give <Agent> an app" opens the agent's Access tab, where an owner gives it an app (P5-UX-7 points it at the journey).
+  // "Give <Agent> an app" opens the connect journey for this agent, at its App step: the Access tab with `connect=` empty
+  // (`url()` drops an empty value, so it is appended here; C-914).
   // "Invite a teammate" is gone: it led to a page a workspace owner may not open (P5-UX-5 adds **Add people**).
   return [
     handle && isOwner
-      ? { href: w.agent(handle, { tab: "access" }), label: `Give ${agentName ?? "the agent"} an app`, text: "Let the agent use GitHub, Linear and more, with your approval." }
+      ? {
+          href: `${w.agent(handle, { tab: "access" })}&connect=`,
+          label: `Give ${agentName ?? "the agent"} an app`,
+          text: "Let the agent use GitHub, Linear and more. You choose what it may do there.",
+        }
       : null,
     handle ? { href: w.agent(handle, { tab: "instructions" }), label: "Write instructions for the agent", text: "Tell it what you want it to do and how." } : null,
     handle ? { href: w.agent(handle, { tab: "schedules" }), label: "Set up a schedule", text: "Have it do something every morning." } : null,

@@ -36,24 +36,25 @@ const ORG_KEY: GuideKey = { id: "k1", name: "AIGW", scope: "organization" };
 const states = (g: ReturnType<typeof computeGuide>) => Object.fromEntries(g.steps.map((s) => [s.id, s.state]));
 
 describe("getting-started guide: computed from real state (D-141)", () => {
-  it("key provided by the org: key and access are done and say what provides them; a model is not needed", () => {
+  it("key provided by the org: two steps, the key is done and says what provides it, hello is next (C-927)", () => {
     const g = computeGuide({ isOwner: true, readiness: readiness([key()]), keys: [ORG_KEY], replied: false });
-    expect(states(g)).toEqual({ key: "done", access: "done", model: "skipped", hello: "todo" });
-    expect(g.steps[0].provider).toBe("Your organization provides an LLM key: AIGW");
-    expect(g).toMatchObject({ total: 3, done: 2, complete: false });
+    expect(states(g)).toEqual({ key: "done", access: "skipped", hello: "todo" });
+    expect(g.steps[0].provider).toBe("Your organization provides an AI key: AIGW");
+    expect(g).toMatchObject({ total: 2, done: 1, complete: false });
   });
 
-  it("key missing: the key step is the one to do, the rest wait", () => {
+  it("key missing: the key step is the one to do, hello waits", () => {
     const g = computeGuide({ isOwner: true, readiness: readiness([]), keys: [], replied: false });
-    expect(states(g)).toEqual({ key: "todo", access: "waiting", model: "skipped", hello: "waiting" });
-    expect(g.done).toBe(0);
+    expect(states(g)).toEqual({ key: "todo", access: "skipped", hello: "waiting" });
+    expect(g).toMatchObject({ total: 2, done: 0 });
   });
 
-  it("a key exists but is not granted: access is the step, preselecting the workspace's own key first", () => {
+  it("a key exists that the agent cannot use: the access step replaces the key step, naming the workspace's own key first", () => {
     const own: GuideKey = { id: "k2", name: "my-key", scope: "workspace" };
     const g = computeGuide({ isOwner: true, readiness: readiness([]), keys: [ORG_KEY, own], replied: false });
-    expect(states(g)).toEqual({ key: "done", access: "todo", model: "skipped", hello: "waiting" });
+    expect(states(g)).toEqual({ key: "skipped", access: "todo", hello: "waiting" });
     expect(g.steps[1].keyToGrant).toEqual(own);
+    expect(g.total).toBe(2);
   });
 
   it("a granted key that cannot be used keeps the key step open with the reason", () => {
@@ -64,20 +65,21 @@ describe("getting-started guide: computed from real state (D-141)", () => {
       replied: false,
     });
     expect(g.steps[0]).toMatchObject({ id: "key", state: "todo", problem: "origin_unverified" });
-    expect(g.steps[1].state).toBe("done");
-    expect(g.steps[3].state).toBe("waiting");
+    expect(g.steps[1].state).toBe("skipped");
+    expect(g.steps[2].state).toBe("waiting");
   });
 
-  it("no model resolves: the model step appears and blocks hello", () => {
+  it("the key works but its endpoint has no default model: the key step stays open for a model picker; there is no third step", () => {
     const g = computeGuide({ isOwner: true, readiness: readiness([key()], false), keys: [ORG_KEY], replied: false });
-    expect(states(g)).toEqual({ key: "done", access: "done", model: "todo", hello: "waiting" });
-    expect(g.total).toBe(4);
+    expect(states(g)).toEqual({ key: "todo", access: "skipped", hello: "waiting" });
+    expect(g.steps[0].needsModel).toBe(true);
+    expect(g.total).toBe(2);
   });
 
   it("done: the agent answered, whatever readiness says", () => {
     const g = computeGuide({ isOwner: true, readiness: readiness([key()]), keys: [ORG_KEY], replied: true });
-    expect(states(g)).toEqual({ key: "done", access: "done", model: "skipped", hello: "done" });
-    expect(g).toMatchObject({ total: 3, done: 3, complete: true });
+    expect(states(g)).toEqual({ key: "done", access: "skipped", hello: "done" });
+    expect(g).toMatchObject({ total: 2, done: 2, complete: true });
   });
 
   it("a click never completes anything: the same inputs give the same guide", () => {
@@ -85,9 +87,9 @@ describe("getting-started guide: computed from real state (D-141)", () => {
     expect(computeGuide(input)).toEqual(computeGuide({ ...input }));
   });
 
-  it("member: key and access are for an owner, hello is theirs; nothing is claimed done", () => {
+  it("member: the key is for an owner, hello is theirs; nothing is claimed done", () => {
     const g = computeGuide({ isOwner: false, keys: [], replied: false });
-    expect(states(g)).toEqual({ key: "owner", access: "owner", model: "skipped", hello: "todo" });
+    expect(states(g)).toEqual({ key: "owner", access: "skipped", hello: "todo" });
     expect(g.done).toBe(0);
   });
 

@@ -33190,6 +33190,77 @@
         ]
       }
     },
+    "/v1/workspaces/{ws}/internet-access": {
+      "get": {
+        "tags": [
+          "policy"
+        ],
+        "summary": "(FIX-164, C-1020, D-365; amends I-27 for this one read) A workspace member reads the workspace's **published**\nInternet access, read-only: defaults and rules of the active generation. No draft, history, warnings or write.",
+        "operationId": "getWorkspaceInternetAccess",
+        "parameters": [
+          {
+            "name": "ws",
+            "in": "path",
+            "description": "Workspace id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The published generation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublishedInternetAccess"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
     "/v1/workspaces/{ws}/members/{user}/offboarding": {
       "get": {
         "tags": [
@@ -35212,6 +35283,13 @@
           "scope": {
             "type": "string",
             "description": "`workspace` | `organization`."
+          },
+          "status_reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "(FIX-163) Why a turned-off app account is off, when something other than a person's choice turned it\noff: `instance_deleted` (its self-hosted app instance was removed; it cannot be turned on again)."
           }
         }
       },
@@ -46799,6 +46877,13 @@
                 "scope": {
                   "type": "string",
                   "description": "`workspace` | `organization`."
+                },
+                "status_reason": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "(FIX-163) Why a turned-off app account is off, when something other than a person's choice turned it\noff: `instance_deleted` (its self-hosted app instance was removed; it cannot be turned on again)."
                 }
               }
             }
@@ -52946,6 +53031,46 @@
           }
         },
         "additionalProperties": false
+      },
+      "PublishedInternetAccess": {
+        "type": "object",
+        "description": "(FIX-164, C-1020, D-365) What a workspace member reads of the workspace's Internet access: the **published**\ngeneration's defaults and rules, and nothing else: no draft, no revision, no generation history, no publisher, no\nwarnings, no other workspace's overrides.",
+        "required": [
+          "number",
+          "default_action",
+          "uncredentialed_default",
+          "uncredentialed_allowlist",
+          "open_lane_posture",
+          "rules"
+        ],
+        "properties": {
+          "default_action": {
+            "$ref": "#/components/schemas/DefaultAction"
+          },
+          "number": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The published generation's number."
+          },
+          "open_lane_posture": {
+            "$ref": "#/components/schemas/OpenLanePosture"
+          },
+          "rules": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PolicyRule"
+            }
+          },
+          "uncredentialed_allowlist": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AllowlistEntry"
+            }
+          },
+          "uncredentialed_default": {
+            "$ref": "#/components/schemas/UncredentialedDefault"
+          }
+        }
       },
       "PurgedAttachment": {
         "type": "object",

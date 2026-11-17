@@ -242,6 +242,11 @@ export async function mockApi(
     if (/^\/v1\/admin\/agents\/[^/]+\/start-failures$/.test(p)) return json({ items: [] });
     if (p === "/v1/admin/setup") return json(setupStatus);
     if (p.endsWith("/policy") && (p.startsWith("/v1/orgs/") || p.startsWith("/v1/workspaces/"))) return json(policyDoc);
+    // (FIX-164, C-1020) The published rules, which every member of the workspace reads.
+    if (/^\/v1\/workspaces\/[^/]+\/internet-access$/.test(p)) {
+      const { number, default_action, uncredentialed_default, uncredentialed_allowlist, open_lane_posture, rules } = policyDoc.published;
+      return json({ number, default_action, uncredentialed_default, uncredentialed_allowlist, open_lane_posture, rules });
+    }
     if (p === "/v1/llm/providers") return json({ providers: [] });
     if (p.endsWith("/governance/effective")) return json(effective);
     if (/^\/v1\/orgs\/[^/]+\/retention$/.test(p)) {

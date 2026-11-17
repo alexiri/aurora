@@ -7,7 +7,6 @@ import { WhoCan } from "@/components/ui/who-can";
 import { useAccounts, type Account } from "@/lib/api/accounts";
 import { useWhoCan } from "@/lib/api/who-can";
 import { attentionCount, healthClause, healthLine, needsAttention } from "@/lib/account-health";
-
 /**
  * The accounts one agent can use that have stopped working (`14 §7`, C-945): given to the agent, and the app refuses
  * them, their sign-in expired, or their host cannot be reached. Read from the accounts list the Access tab reads.
@@ -17,42 +16,33 @@ export function useAgentAttention(workspaceId: string | undefined, agentId: stri
   return (q.data?.items ?? []).filter((a) => a.given === true && needsAttention(a));
 }
 
-/**
- * The workspace Overview's block (C-945): every account of the workspace that has stopped working, with the same line
- * and the same fix as its row. For people who cannot fix it, who can. Nothing when all is well.
- */
-export function OverviewAccountsAttention({ workspaceId, base }: { workspaceId: string; base: string }) {
+/** Every account of the workspace that has stopped working (C-945), for the Overview's **Needs you** card. */
+export function useWorkspaceAttention(workspaceId: string): Account[] {
   const q = useAccounts({ kind: "workspace", id: workspaceId }, true);
+  return (q.data?.items ?? []).filter(needsAttention);
+}
+
+/**
+ * One item of the Overview's **Needs you** card: the account's row line and its fix (Reconnect deep-links to the
+ * Accounts tab's dialog). For people who cannot fix it, who can.
+ */
+export function AccountAttentionItem({ account: a, base, workspaceId }: { account: Account; base: string; workspaceId: string }) {
   const who = useWhoCan({ workspaceId }, "workspace_owner", "manage_account");
-  const broken = (q.data?.items ?? []).filter(needsAttention);
-  if (broken.length === 0) return null;
+  const fix = healthLine(a).fix;
+  const href = fix?.kind === "reconnect" ? `${base}/apps?tab=accounts&reconnect=${a.ref.id}` : `${base}/apps?tab=accounts`;
   return (
-    <section aria-labelledby="accounts-attention-h" className="rounded-card border border-pending-line bg-pending-panel p-4 text-ink sm:p-5">
-      <h2 id="accounts-attention-h" className="font-display text-base font-semibold text-pending-ink">
-        {attentionCount(broken.length)}
-      </h2>
-      <ul className="mt-3 space-y-2">
-        {broken.map((a) => {
-          const fix = healthLine(a).fix;
-          const href =
-            fix?.kind === "reconnect" ? `${base}/apps?tab=accounts&reconnect=${a.ref.id}` : `${base}/apps?tab=accounts`;
-          return (
-            <li key={`${a.ref.type}:${a.ref.id}`} className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-control bg-surface px-3 py-2 text-sm">
-              <span className="min-w-0 flex-1">
-                <span className="font-medium">{a.name}</span>: {healthLine(a).text}
-              </span>
-              {fix && a.can.manage ? (
-                <Link href={href} className="font-medium text-link underline">
-                  {fix.label}
-                </Link>
-              ) : (
-                <WhoCan value={who} />
-              )}
-            </li>
-          );
-        })}
-      </ul>
-    </section>
+    <li className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-control bg-surface px-3 py-2 text-sm">
+      <span className="min-w-0 flex-1">
+        <span className="font-medium">{a.name}</span>: {healthLine(a).text}
+      </span>
+      {fix && a.can.manage ? (
+        <Link href={href} className="font-medium text-link underline">
+          {fix.label}
+        </Link>
+      ) : (
+        <WhoCan value={who} />
+      )}
+    </li>
   );
 }
 

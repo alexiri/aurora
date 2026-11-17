@@ -602,6 +602,7 @@ the frozen payload.
 | Create workspace | org `owner`/`admin`, or any member if `organizations.settings.members_can_create_workspaces` (default `true`) |
 | Workspace settings (name, timezone, memory language), access bindings (phase 2, RFE-012: including granting `approver`), delete workspace | `can_own` |
 | Workspace secrets, connections, grants, workspace policy (incl. the workspace uncredentialed default), workspace API keys | `can_own` |
+| Read the **published** Internet access of the workspace (rules and defaults of the active generation; `GET /v1/workspaces/{ws}/internet-access`, FIX-164, D-365; read-only, an exception to the row above) | `can_use` |
 | Workspace LLM keys | `can_own`, **and** org governance permits `workspace`-scoped keys for that endpoint, **and** the key's origin complies (`08 §11`) |
 | Space bindings for an agent of the workspace | `can_own` |
 | Create/edit/delete agents, brief, model, avatar; memory; agent-tier skills; schedules; webhooks; restart sandbox | `can_use` |

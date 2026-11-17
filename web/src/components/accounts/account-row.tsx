@@ -15,6 +15,7 @@ import { accountKeys, type Account, type AgentAccess, useGiveSecret, usePutAcces
 import { usePatchConnection } from "@/lib/api/apps";
 import type { HealthFix } from "@/lib/account-health";
 import type { SecretScope } from "@/lib/api/secrets";
+import { useWhoCan } from "@/lib/api/who-can";
 import { entryText, kindLabel } from "@/lib/accounts";
 
 import { AccessControl } from "./access-control";
@@ -135,6 +136,7 @@ export function AccountRow({
             outcome={test.isPending ? null : outcome}
             onFix={account.can.manage ? (k) => (canFix(k) ? fix(k) : undefined) : undefined}
           />
+          {account.status_reason === "instance_deleted" && account.health.state === "disabled" ? <InstanceRemoved orgId={orgId} /> : null}
           {test.isPending ? <p className="text-sm text-muted" role="status">Testing…</p> : null}
           {shared && account.managed_by ? <WhoCan value={account.managed_by} /> : null}
         </div>
@@ -184,6 +186,12 @@ export function AccountRow({
       ) : null}
     </li>
   );
+}
+
+/** (FIX-163) Who can add the removed app instance again: its registration is for organization owners and admins. */
+function InstanceRemoved({ orgId }: { orgId: string }) {
+  const who = useWhoCan({ orgId }, "org_admin", "add_instance");
+  return <WhoCan value={who} lead />;
 }
 
 function RemoveOnly({ account, agentId }: { account: Account; agentId: string }) {

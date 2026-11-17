@@ -259,6 +259,20 @@ pub struct PolicyDocument {
     pub draft: PolicyGeneration,
 }
 
+/// (FIX-164, C-1020, D-365) What a workspace member reads of the workspace's Internet access: the **published**
+/// generation's defaults and rules, and nothing else: no draft, no revision, no generation history, no publisher, no
+/// warnings, no other workspace's overrides.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct PublishedInternetAccess {
+    /// The published generation's number.
+    pub number: i32,
+    pub default_action: DefaultAction,
+    pub uncredentialed_default: UncredentialedDefault,
+    pub uncredentialed_allowlist: Vec<AllowlistEntry>,
+    pub open_lane_posture: aurora_llm::governance::OpenLanePosture,
+    pub rules: Vec<PolicyRule>,
+}
+
 /// A generation without its rules.
 #[derive(Debug, Serialize, ToSchema)]
 pub struct PolicyGenerationSummary {

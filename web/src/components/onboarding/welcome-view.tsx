@@ -2,21 +2,23 @@
 
 import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
-import { useEffect, type ReactNode } from "react";
+import { type ReactNode } from "react";
 
+import { AgentSummary } from "@/components/agents/agent-summary";
 import { ErrorState, Loading } from "@/components/states";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { PageHeader } from "@/components/ui/page-header";
 import { useMeOnboarding, usePatchOnboarding } from "@/lib/api/onboarding";
-import { useAgents, useOrg, useResolve, useWorkspace } from "@/lib/api/queries";
+import { useAgents, useOrg, useResolve, useSession, useWorkspace } from "@/lib/api/queries";
 import type { GuideStepId } from "@/lib/onboarding/guide";
+import { wsRoutes } from "@/lib/routes";
 import { cn } from "@/lib/utils";
 
 import { GettingStarted, OptionalNext } from "./getting-started";
 import { startTour } from "./tour-events";
 
-const STEPS: readonly GuideStepId[] = ["key", "access", "model", "hello"];
+const STEPS: readonly GuideStepId[] = ["key", "access", "hello"];
 
 function InfoCard({ id, title, children }: { id: string; title: string; children: ReactNode }) {
   return (
@@ -29,7 +31,19 @@ function InfoCard({ id, title, children }: { id: string; title: string; children
   );
 }
 
-/** The Welcome page (`14 §Onboarding` 2): where you are, then "Get Daneel talking". */
+/** The one sentence about the viewer's role that a person who is not an owner reads (C-927). */
+export function roleSentence(role: string, agent: string): string | null {
+  if (role === "owner") return null;
+  return role === "approver"
+    ? `You are an approver here: you can chat with ${agent} and answer what it asks you in Approvals. An owner sets up its accounts and access.`
+    : `You are a member here: you can chat with ${agent} and see what it did. An owner sets up its accounts and access.`;
+}
+
+/**
+ * The Welcome page (`14 §9`, C-927): "Welcome to <workspace>" (or "Welcome, <name>" in your own personal workspace), three
+ * cards from the five sentences of `14 §Information architecture`, "Get <Agent> talking" and what to do next. It is where
+ * a person lands until the guide is finished or skipped (the guide marks Welcome seen when it completes).
+ */
 export function WelcomeView() {
   const { org, ws } = useParams<{ org: string; ws: string }>();
   const search = useSearchParams();
@@ -38,15 +52,9 @@ export function WelcomeView() {
   const resolvedWs = resolved.data?.workspace;
   const wsFull = useWorkspace(resolvedWs?.id);
   const agents = useAgents(resolvedWs?.id);
-  const onboarding = useMeOnboarding();
+  const session = useSession();
   const patch = usePatchOnboarding();
-  const seen = onboarding.data?.welcome_seen;
-
-  // Opening the page is what "seen" means: the next sign-in lands on Overview.
-  useEffect(() => {
-    if (seen === false && !patch.isPending) patch.mutate({ welcome_seen: true });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [seen]);
+  useMeOnboarding();
 
   if (resolved.isPending) return <Loading />;
   if (resolved.isError) return <ErrorState error={resolved.error} onRetry={() => resolved.refetch()} />;
@@ -55,38 +63,48 @@ export function WelcomeView() {
   if (!wsFull.data) return <Loading />;
   const workspace = wsFull.data;
 
-  const base = `/o/${org}/w/${ws}`;
+  const w = wsRoutes(org, ws);
   const isOwner = workspace.my_role === "owner";
   const orgName = orgQ.data?.name ?? resolved.data.org.name;
   const agent = agents.data?.items.find((a) => a.is_default) ?? agents.data?.items[0];
+  const personal = session.data?.memberships.some((m) => m.workspaces.some((x) => x.id === workspace.id && x.personal)) === true;
   const stepParam = search.get("step");
-  const focus = STEPS.find((s) => s === stepParam) ?? null;
-  const role =
-    workspace.my_role === "owner"
-      ? { title: "You are the owner", text: "You can add keys and credentials, set the rules, approve what the agent asks for, and invite people." }
-      : workspace.my_role === "approver"
-        ? { title: "You are an approver", text: "You can chat with the agent and decide what it asks for. An owner manages keys and rules." }
-        : { title: "You are a member", text: "You can chat with the agent and see its activity. An owner manages keys and rules." };
+  // `step=model` links (a chat's "no model" row) land on the AI key step, which now holds the model picker.
+  const focus = STEPS.find((s) => s === (stepParam === "model" ? "key" : stepParam)) ?? null;
+  const agentName = agent?.name ?? "Your agent";
+  const role = roleSentence(workspace.my_role, agentName);
 
   return (
     <div className="flex flex-col gap-6">
-      <PageHeader title={`Welcome to ${workspace.name}`} description="A few minutes from here to your agent's first answer." className="mb-0" />
+      <PageHeader
+        title={personal ? `Welcome, ${workspace.name}` : `Welcome to ${workspace.name}`}
+        description={role ?? "A few minutes from here to your agent's first answer."}
+        className="mb-0"
+      />
 
       <div className="grid gap-3 md:grid-cols-3">
         <InfoCard id="welcome-where" title="Where you are">
           <p>
-            This is <strong className="text-ink">{workspace.name}</strong>, your workspace in <strong className="text-ink">{orgName}</strong>.
+            This is <strong className="text-ink">{workspace.name}</strong>, in <strong className="text-ink">{orgName}</strong>.
+            {agent ? ` ${agent.name} works here, on its own computer.` : " Agents work here, each on its own computer."}
           </p>
-          <p>Workspaces hold agents, credentials and rules.</p>
+        </InfoCard>
+        <InfoCard id="welcome-safe" title="How it stays safe">
+          <p>
+            Everything {agent ? agent.name : "an agent"} sends goes through Aurora&apos;s gateway. It holds the keys, applies the access you choose, and
+            puts anything that needs your say in{" "}
+            <Link href={w.approvals()} className="font-medium text-link underline">
+              Approvals
+            </Link>
+            .
+          </p>
         </InfoCard>
         <InfoCard id="welcome-agent" title={agent ? `${agent.name} is your agent` : "Your agent"}>
-          <p>
-            {agent ? agent.name : "An agent"} works on its own computer and reaches the internet only through Aurora&apos;s gateway. The gateway adds
-            credentials and asks you before risky actions.
-          </p>
-        </InfoCard>
-        <InfoCard id="welcome-role" title={role.title}>
-          <p>{role.text}</p>
+          {agent ? (
+            <AgentSummary wsId={workspace.id} orgId={workspace.org_id} agent={agent} className="space-y-1" />
+          ) : (
+            <p>This workspace has no agent yet.</p>
+          )}
         </InfoCard>
       </div>
 
@@ -104,7 +122,7 @@ export function WelcomeView() {
         >
           Show me around
         </Button>
-        <Link href={base} className={cn(buttonVariants({ variant: "ghost" }))} onClick={() => patch.mutate({ welcome_seen: true })}>
+        <Link href={w.home()} className={cn(buttonVariants({ variant: "ghost" }))} onClick={() => patch.mutate({ welcome_seen: true })}>
           Skip for now
         </Link>
         <span className="text-sm text-muted">The same guide stays on your Overview until it is done.</span>

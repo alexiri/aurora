@@ -15,7 +15,7 @@ export function AccountHealth({
   outcome,
   onFix,
 }: {
-  account: Pick<Account, "health" | "app" | "name">;
+  account: Pick<Account, "health" | "app" | "name" | "status_reason">;
   outcome?: "not_testable" | "error" | null;
   onFix?: (kind: HealthFix) => void;
 }) {

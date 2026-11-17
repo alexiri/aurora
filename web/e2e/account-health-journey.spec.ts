@@ -90,9 +90,10 @@ for (const scheme of ["light", "dark"] as const) {
         await check(page);
       });
 
-      test("the workspace Overview lists the accounts that need attention with the row's line and fix", async ({ page }) => {
+      test("the workspace Overview's Needs you card lists the accounts that need attention with the row's line and fix", async ({ page }) => {
         await openRoute(page, "/o/acme/w/main", scheme);
-        const block = page.getByRole("region", { name: "1 account needs attention" });
+        // (P5-UX-7) The account block lives in the Overview's "Needs you" card, beside the approvals.
+        const block = page.getByRole("region", { name: /^Needs you/ });
         await expect(block).toContainText("Product team");
         await expect(block).toContainText("The sign-in to Linear expired");
         await expect(block.getByRole("link", { name: "Reconnect" })).toHaveAttribute("href", /\/apps\?tab=accounts&reconnect=/);

@@ -142,6 +142,26 @@ describe("AccountsList: one row per kind", () => {
     expect(await screen.findByRole("menuitem", { name: "Turn on" })).toBeInTheDocument();
   });
 
+  it("FIX-163: an account whose app instance was deleted is not offered Turn on; the row says why and who can add the instance again", async () => {
+    routes["GET /v1/orgs/o1"] = () => json(200, { id: "o1", slug: "acme", name: "Acme", contacts: { admins: [{ name: "Ada Lovelace" }], owners: [] } });
+    listWs([
+      app({ health: { state: "disabled" }, status_reason: "instance_deleted" }),
+      app({ ref: { type: "connection", id: "c2" }, name: "Jira", health: { state: "disabled" } }),
+    ]);
+    list();
+    const gone = await screen.findByRole("listitem", { name: "AWS prod" });
+    expect(within(gone).getByText("Turned off: the instance of this app was removed")).toBeInTheDocument();
+    expect(await within(gone).findByText(/Only organization owners and admins can add the app's instance again\./)).toBeInTheDocument();
+    await openMenu("AWS prod");
+    expect(await screen.findByRole("menuitem", { name: "Rename" })).toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "Turn on" })).toBeNull();
+    expect(screen.queryByRole("menuitem", { name: "Turn off" })).toBeNull();
+    // Any other reason keeps today's behaviour: a plainly turned-off account is turned on from the menu.
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
+    await openMenu("Jira");
+    expect(await screen.findByRole("menuitem", { name: "Turn on" })).toBeInTheDocument();
+  });
+
   it("marks an account nobody can use, and an organization's account with who manages it", async () => {
     listWs([
       website({ agents: [] }),
