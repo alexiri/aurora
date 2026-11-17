@@ -135,7 +135,7 @@ pub struct SetupCan {
 }
 
 #[derive(Debug, Clone, Serialize, ToSchema)]
-pub struct SetupStatus {
+pub struct AppSetupStatus {
     pub app_id: String,
     pub name: String,
     pub family: Option<AppFamily>,
@@ -152,7 +152,7 @@ pub struct SetupStatus {
     pub can: SetupCan,
 }
 
-/// The journey's view of [`SetupStatus`] (C-955): the same methods and availability, nothing else.
+/// The journey's view of [`AppSetupStatus`] (C-955): the same methods and availability, nothing else.
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ConnectPlan {
     pub app_id: String,
@@ -163,8 +163,8 @@ pub struct ConnectPlan {
     pub suggested_method: Option<String>,
 }
 
-impl From<SetupStatus> for ConnectPlan {
-    fn from(s: SetupStatus) -> Self {
+impl From<AppSetupStatus> for ConnectPlan {
+    fn from(s: AppSetupStatus) -> Self {
         Self {
             app_id: s.app_id,
             available: s.available,
@@ -254,7 +254,7 @@ pub async fn setup_status(
     state: &AppState,
     app_id: &str,
     view: SetupView,
-) -> Result<SetupStatus, ApiError> {
+) -> Result<AppSetupStatus, ApiError> {
     let snap = snapshot(state)
         .await?
         .ok_or_else(|| ApiError::not_found("App not found."))?;
@@ -439,7 +439,7 @@ pub async fn setup_status(
         })
         .collect();
 
-    Ok(SetupStatus {
+    Ok(AppSetupStatus {
         app_id: app.app_id.clone(),
         name: app.about.name.clone(),
         family: app.about.family.as_ref().map(|f| AppFamily {

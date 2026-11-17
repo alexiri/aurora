@@ -69,7 +69,7 @@ async fn setup_view(
 #[utoipa::path(
     get, path = "/apps/{app}/setup", operation_id = "getAppSetup", tag = "apps",
     params(("app" = String, Path, description = "App id"), SetupQuery),
-    responses((status = 200, description = "Setup status", body = setup::SetupStatus),
+    responses((status = 200, description = "Setup status", body = setup::AppSetupStatus),
               (status = 400, body = ErrorEnvelope), (status = 403, body = ErrorEnvelope),
               (status = 404, body = ErrorEnvelope)),
     security(("session" = []), ("api_key" = []))
@@ -79,7 +79,7 @@ async fn app_setup(
     State(state): State<AppState>,
     Path(app): Path<String>,
     Query(q): Query<SetupQuery>,
-) -> Result<Json<setup::SetupStatus>, ApiError> {
+) -> Result<Json<setup::AppSetupStatus>, ApiError> {
     let view = setup_view(&caller, &state, &q).await?;
     Ok(Json(setup::setup_status(&state, &app, view).await?))
 }
