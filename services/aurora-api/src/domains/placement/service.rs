@@ -228,19 +228,27 @@ async fn ensure_personal_workspace(
     {
         return Ok(());
     }
-    let name = template::parse(&row.name_template)
+    let lookup = TokenClaims {
+        claims: who.claims,
+        email: who.email,
+    };
+    // The template still sets the slug (D-162); the name is the person's own (C-923).
+    let slug_text = template::parse(&row.name_template)
         .ok()
-        .and_then(|t| {
-            t.render(&TokenClaims {
-                claims: who.claims,
-                email: who.email,
-            })
-            .name
-        })
+        .and_then(|t| t.render(&lookup).name)
         .unwrap_or_else(|| template::fallback_name(user.id));
-    let (ws, agent) =
-        tenancy::create_workspace_in_tx(tx, &state.ops(), org_id, user.id, &name, None, None, None)
-            .await?;
+    let name = template::person_name(&lookup).unwrap_or_else(|| slug_text.clone());
+    let (ws, agent) = tenancy::create_workspace_named_in_tx(
+        tx,
+        &state.ops(),
+        org_id,
+        user.id,
+        &name,
+        tenancy::SlugFrom::Text(&slug_text),
+        None,
+        None,
+    )
+    .await?;
     repo::set_personal_owner(&mut **tx, ws.id, user.id).await?;
     if row.personal_role != "owner" {
         workspaces::bind_user(&mut **tx, ws.id, user.id, &row.personal_role).await?;
