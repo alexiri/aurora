@@ -323,18 +323,18 @@ function PlacementForm({ saved, embedded, onSaved }: { saved: Placement; embedde
             {personal ? (
               <FormSection
                 title="Starter grants"
-                description="Credentials of the default organization that every new personal workspace's agent receives, so it works on day one."
+                description="Accounts of the default organization that every new personal workspace's agent receives, so it works on day one."
               >
                 {creating ? (
-                  <p className="text-sm text-ink-2">Save once to create the organization, then pick its credentials.</p>
+                  <p className="text-sm text-ink-2">Save once to create the organization, then pick its accounts.</p>
                 ) : llm.length + otherSecrets.length + connections.length === 0 ? (
-                  <p className="text-sm text-ink-2">The organization has no organization-level keys, secrets or connections yet.</p>
+                  <p className="text-sm text-ink-2">The organization has no accounts of its own yet.</p>
                 ) : (
                   <>
                     {[
-                      { title: "LLM keys", items: llm.map((s) => ({ k: `secret:${s.id}`, name: s.name, hint: "LLM key" })) },
-                      { title: "Secrets", items: otherSecrets.map((s) => ({ k: `secret:${s.id}`, name: s.name, hint: s.kind })) },
-                      { title: "Connections", items: connections.map((c) => ({ k: `connection:${c.id}`, name: c.label, hint: c.app_id })) },
+                      { title: "AI keys", items: llm.map((s) => ({ k: `secret:${s.id}`, name: s.name, hint: "AI key" })) },
+                      { title: "Websites", items: otherSecrets.map((s) => ({ k: `secret:${s.id}`, name: s.name, hint: s.kind })) },
+                      { title: "Apps", items: connections.map((c) => ({ k: `connection:${c.id}`, name: c.label, hint: c.app_id })) },
                     ]
                       .filter((g) => g.items.length > 0)
                       .map((g) => (
