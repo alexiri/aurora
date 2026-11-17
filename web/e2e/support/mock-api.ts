@@ -57,13 +57,24 @@ const connection = (n: number, appId: string, label: string) => ({
 const approval = {
   id: id(60), org_id: id(1), workspace_id: id(2), status: "pending", created_at: now, deadline: later, host: "api.github.com", method: "PUT",
   path: "/repos/acme/web/pulls/42/merge", app_id: "github", agent: { id: id(11), handle: "daneel", name: "Daneel" },
-  summary: { source: "app", title: "Merge pull request #42", fields: [{ label: "Repository", value: "acme/web" }] },
+  summary: { source: "app", title: "merge a pull request", fields: [{ label: "Repository", value: "acme/web" }] },
+  // (P5-UX-16, C-982) The sentence, what asked (the agent's access) and whether the viewer may choose Always allow.
+  sentence: {
+    agent: { id: id(11), name: "Daneel" }, action: "merge a pull request", app: { app_id: "github", name: "GitHub" },
+    account: { ref: { type: "connection", id: id(30) }, name: "Acme GitHub" },
+  },
+  asked_by: { kind: "access", agent_id: id(11), connection_id: id(30), tool_id: "merge_pull" },
+  can_always_allow: true,
 };
 
 /** P4-011B-4: an approval the gateway parked (the agent stopped waiting): the Parked chip and sentence render. */
 const parkedApproval = {
   ...approval, id: id(61), parked: true, deadline: new Date(Date.now() + 7_200_000).toISOString(),
-  summary: { source: "app", title: "Delete repository acme/old", fields: [] },
+  summary: { source: "app", title: "delete a repository", fields: [] },
+  // A rule asked this one: no Always allow, "Asked by the rule …".
+  sentence: { agent: { id: id(11), name: "Daneel" }, action: "delete a repository", app: { app_id: "github", name: "GitHub" } },
+  asked_by: { kind: "rule", rule_id: id(81), rule_name: "Ask before deleting", scope: "workspace" },
+  can_always_allow: false,
   method: "DELETE", path: "/repos/acme/old",
 };
 

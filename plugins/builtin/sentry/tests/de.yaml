@@ -89,7 +89,7 @@
   expect:
     app: sentry
     tool: update_issue
-    summary: { title: "Update issue", fields: { Organization: example-org, Issue: "1234", Status: resolved } }
+    summary: { title: "update an issue", fields: { Organization: example-org, Issue: "1234", Status: resolved } }
     upstream: { headers: { authorization: "Bearer tok-fixture-1" } }
 - name: "negative update_issue: PATCH selects no tool"
   connection: { instance_host: de.sentry.io, credentials: { access_token: "tok-fixture-1" } }

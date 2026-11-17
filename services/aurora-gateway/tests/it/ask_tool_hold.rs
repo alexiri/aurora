@@ -73,6 +73,7 @@ impl CredentialResolver for Static {
 }
 
 struct Src {
+    org: ScopePolicyRows,
     ws: ScopePolicyRows,
     conns: Vec<AppConnectionRow>,
     instances: Vec<InstanceHostRow>,
@@ -87,7 +88,7 @@ impl PolicySource for Src {
         Ok(if ws.is_some() {
             self.ws.clone()
         } else {
-            ScopePolicyRows::default()
+            self.org.clone()
         })
     }
     async fn secrets(&self, _o: Uuid, _w: Uuid) -> Result<Vec<SecretMetaRow>, String> {
@@ -173,6 +174,8 @@ struct Env {
 
 /// The policy rows a test world serves: the workspace's rules, its connections and the registered instances.
 struct Rows {
+    /// The organization's rules (empty unless a test adds some).
+    org: ScopePolicyRows,
     ws: ScopePolicyRows,
     conns: Vec<AppConnectionRow>,
     instances: Vec<InstanceHostRow>,
@@ -215,6 +218,7 @@ fn demo_rows(w: &World) -> Rows {
                "targets":[{"type":"connection","id":conn.id,"tools":["write_item"]}]}),
     ));
     Rows {
+        org: ScopePolicyRows::default(),
         ws,
         conns: vec![conn],
         instances: vec![],
@@ -236,6 +240,7 @@ async fn start_with(pool: sqlx::PgPool, snap: Value, mk: impl FnOnce(&World) -> 
     reg.register(mem);
     let rows = mk(&w);
     let src = Arc::new(Src {
+        org: rows.org,
         ws: rows.ws,
         conns: rows.conns,
         instances: rows.instances,
@@ -392,6 +397,16 @@ async fn ask_tool_holds_then_approval_proceeds_and_denial_refuses() {
     let id = pending(&env.pool, env.w.ws).await;
     tokio::time::sleep(Duration::from_millis(200)).await;
     assert!(!t.is_finished(), "request must stay held while pending");
+    // (P5-UX-16, C-982) The held row records the app, the tool and the account it would use.
+    let (app, tool, conn): (Option<String>, Option<String>, Option<Uuid>) =
+        sqlx::query_as("SELECT app_id, tool_id, connection_id FROM approvals WHERE id=$1")
+            .bind(id)
+            .fetch_one(&env.pool)
+            .await
+            .unwrap();
+    assert_eq!(app.as_deref(), Some("demo"));
+    assert_eq!(tool.as_deref(), Some("write_item"));
+    assert!(conn.is_some());
     decide(&env.pool, id, "approved", env.w.ws).await;
     let r = t.await.unwrap();
     assert_eq!(r.status, 200, "{}", r.body);
@@ -492,4 +507,71 @@ async fn approval_summary_path_segments_count_from_the_app_path_under_a_base_pat
     decide(&env.pool, id, "denied", env.w.ws).await;
     let out = t.await.unwrap();
     assert!(out.contains("manual_approval_denied"), "{out}");
+}
+
+/// The rows of a world where the agent's access has been moved by **Always allow**: the asked
+/// tool's derived rule now allows without asking (`grants::always_allow_tool_in_tx` rewrites the
+/// grant, and the compiler then emits this shape). `org_block` adds an organization rule that
+/// blocks the same request.
+fn always_allowed_rows(w: &World, org_block: bool) -> Rows {
+    let mut r = demo_rows(w);
+    let cid = r.conns[0].id;
+    r.ws.derived = vec![(
+        Uuid::now_v7(),
+        json!({"name":"d1","enabled":true,"identities":[],"action":"allow",
+               "targets":[{"type":"connection","id":cid,"tools":["read_item","write_item"]}]}),
+    )];
+    if org_block {
+        r.org.rules.push(aurora_db::repo::gateway::PolicyRuleRow {
+            logical_id: Uuid::now_v7(),
+            name: "no-writes-anywhere".into(),
+            enabled: true,
+            identities: json!([]),
+            targets: json!([{"type":"network","host":"127.0.0.1","path":"/items"}]),
+            action: "block".into(),
+            require_approval: false,
+            approval_timeout_secs: None,
+            rate_limit: None,
+            conditions: json!([]),
+        });
+    }
+    r
+}
+
+/// (P5-UX-16, SEC-131, D-348) Always allow writes the agent's own change of access and never
+/// outranks a block from above: once the tool is allowed without asking, a request an organization
+/// rule blocks is still refused (`blocked_by_policy`) and nothing reaches the upstream, while the
+/// same world without that rule lets the request through without a hold.
+#[tokio::test]
+async fn an_organization_block_rule_still_refuses_after_always_allow() {
+    // Control: the access after Always allow lets the write through, no approval is created.
+    let db = TestDb::new().await;
+    let env = start_with(db.pool().clone(), snapshot(), |w| {
+        always_allowed_rows(w, false)
+    })
+    .await;
+    let r = send(&env, "POST", "/items", "{\"a\":1}").await;
+    assert_eq!(r.status, 200, "{}", r.body);
+    assert!(r.body.contains("authorization: Bearer T0K"), "{}", r.body);
+    let n: i64 = sqlx::query_scalar("SELECT count(*) FROM approvals")
+        .fetch_one(&env.pool)
+        .await
+        .unwrap();
+    assert_eq!(n, 0, "an always-allowed tool asks no more");
+
+    // The same access under an organization block rule: refused, no hold, nothing sent upstream.
+    let db = TestDb::new().await;
+    let env = start_with(db.pool().clone(), snapshot(), |w| {
+        always_allowed_rows(w, true)
+    })
+    .await;
+    let r = send(&env, "POST", "/items", "{\"a\":1}").await;
+    assert_eq!(r.status, 403, "{}", r.body);
+    assert!(r.body.contains("blocked_by_policy"), "{}", r.body);
+    assert!(!r.body.contains("T0K"), "{}", r.body);
+    let n: i64 = sqlx::query_scalar("SELECT count(*) FROM approvals")
+        .fetch_one(&env.pool)
+        .await
+        .unwrap();
+    assert_eq!(n, 0, "a blocked request never creates an approval");
 }

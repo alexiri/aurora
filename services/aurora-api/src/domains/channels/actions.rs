@@ -305,7 +305,7 @@ impl Click<'_> {
                     .await?;
                 self.consume(claims, exp).await?;
                 let d = gate(*decision);
-                crate::domains::approvals::service::decide(s, c, a.id, d).await?;
+                crate::domains::approvals::service::decide(s, c, a.id, d, false).await?;
                 Ok(Done::new("approval.decide"))
             }
             ActionKind::ApprovalBatchDecide {

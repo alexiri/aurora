@@ -74,7 +74,7 @@ fn build(r: &Req) -> Result<Built, HookError> {
             }
             let id = file_id(r.path).ok_or_else(|| bad("no file id in the path"))?;
             Ok((
-                "Download Drive file".into(),
+                "download a Drive file".into(),
                 vec![f("File id", &id), f("Action", "download the file content")],
                 None,
             ))
@@ -83,7 +83,7 @@ fn build(r: &Req) -> Result<Built, HookError> {
             let id = file_id(r.path).ok_or_else(|| bad("no file id in the path"))?;
             let mime = kv_get(r.query, "mimeType").ok_or_else(|| bad("export without mimeType"))?;
             Ok((
-                "Export Drive file".into(),
+                "export a Drive file".into(),
                 vec![f("File id", &id), f("Export MIME type", mime)],
                 None,
             ))
@@ -122,16 +122,16 @@ fn permission(r: &Req) -> Result<Built, HookError> {
     if let Some(v) = kv_get(r.query, "sendNotificationEmail") {
         fields.push(f("Notify by email", v));
     }
-    Ok(("Share Drive file".into(), fields, truncated_note(r)))
+    Ok(("share a Drive file".into(), fields, truncated_note(r)))
 }
 
 fn file_change(r: &Req) -> Result<Built, HookError> {
     let (title, upload) = match r.tool {
-        "create_file" => ("Create Drive file or folder", false),
-        "update_file" => ("Change Drive file", false),
-        "copy_file" => ("Copy Drive file", false),
-        "upload_file" => ("Upload Drive file", true),
-        _ => ("Replace Drive file content", true),
+        "create_file" => ("create a Drive file or folder", false),
+        "update_file" => ("change a Drive file", false),
+        "copy_file" => ("copy a Drive file", false),
+        "upload_file" => ("upload a Drive file", true),
+        _ => ("replace the content of a Drive file", true),
     };
     let upload_type = kv_get(r.query, "uploadType").unwrap_or("");
     let ctype = hdr(r.headers, "content-type").unwrap_or("");
@@ -556,7 +556,7 @@ mod tests {
             ("content-length", "4096"),
         ]);
         let b = build(&req("upload_file", "/upload/drive/v3/files", &q, &h, body, false)).unwrap();
-        assert_eq!(b.0, "Upload Drive file");
+        assert_eq!(b.0, "upload a Drive file");
         assert_eq!(field(&b, "Name"), Some("n.txt"));
         assert_eq!(field(&b, "Target MIME type"), Some("text/plain"));
         assert_eq!(field(&b, "Parent folder ids"), Some("f1, f2"));
@@ -622,7 +622,7 @@ mod tests {
     fn downloads_and_exports() {
         let q = kv([("alt", "media")]);
         let b = build(&req("get_file", "/drive/v3/files/F2", &q, &[], b"", false)).unwrap();
-        assert_eq!(b.0, "Download Drive file");
+        assert_eq!(b.0, "download a Drive file");
         assert_eq!(field(&b, "File id"), Some("F2"));
         // Metadata read: unsupported, not summarized.
         assert!(matches!(

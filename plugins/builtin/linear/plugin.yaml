@@ -1,6 +1,6 @@
 package:
   id: linear
-  version: 1.0.4
+  version: 1.0.5
   contract: 1
   min_core: 0.1.0
   publisher: aurora
@@ -77,7 +77,7 @@ apps:
           - { id: graphql_mutation, description: "Runs a GraphQL mutation: creates or updates an issue, adds a comment, and similar changes.", name: "GraphQL mutation (create or update an issue, comment, ...)", host: api.linear.app, path: /graphql, methods: [POST], graphql: mutation }
     approvals:
       graphql_mutation:
-        title: Make a change in Linear
+        title: make a change
         fields:
           - { label: Operation, source: body, steps: [ { graphql: operation_name } ] }
           - { label: Fields, source: body, steps: [ { graphql: field_names } ] }

@@ -13,7 +13,7 @@
 - name: "instance: a write tool is classified and summarised on the registered host"
   connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
   request: { method: POST, url: "https://indico.example.org/rooms/api/bookings/42/cancel" }
-  expect: { tool: cancel_booking, summary: { title: "Cancel room booking", fields: { Booking: "42" } } }
+  expect: { tool: cancel_booking, summary: { title: "cancel a room booking", fields: { Booking: "42" } } }
 - name: "instance: a second registered host is served the same way"
   connection: { instance_host: indico.other.example, credentials: { access_token: "tok-fixture-1" } }
   request: { method: GET, url: "https://indico.other.example/api/user/" }

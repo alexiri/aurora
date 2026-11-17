@@ -39,7 +39,7 @@ async fn titled(
         "INSERT INTO approvals (id, org_id, workspace_id, agent_id, gateway_instance_id, conversation_id, method, host, path,
             summary, batch_id, rule_name, status, deadline)
          VALUES ($1,$2,$3,$4,$5,$6,'POST','api.example.com','/x',
-            '{\"title\":\"Deploy to prod\",\"fields\":[{\"label\":\"k\",\"value\":\"SECRETFIELD\"}],\"text\":\"BODYTEXT\",\"link\":null,\"group\":null,\"source\":\"generic\"}',
+            '{\"title\":\"Deploy to prod\",\"fields\":[{\"label\":\"k\",\"value\":\"SECRETFIELD\"}],\"text\":\"BODYTEXT\",\"link\":null,\"group\":null,\"source\":\"template\"}',
             $7,'Ask first','pending', now() + interval '10 minutes')",
     )
     .bind(id).bind(f.org).bind(f.ws).bind(f.agent).bind(f.gw).bind(conv).bind(batch)

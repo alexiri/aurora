@@ -78,7 +78,7 @@
   expect:
     app: jira-dc
     tool: create_issue
-    summary: { title: "Create Jira issue", fields: { Project: "DEMO", Type: "Bug", Summary: "Crash on save", Description: "Open a 2 GB file and save it." } }
+    summary: { title: "create a Jira issue", fields: { Project: "DEMO", Type: "Bug", Summary: "Crash on save", Description: "Open a 2 GB file and save it." } }
 - name: "negative create_issue: GET on the issue collection selects no tool on the registered host"
   connection: { instance_host: jira.example.com, instance_app: jira-dc, credentials: { access_token: "pat-fixture-1" } }
   request: { method: GET, url: "https://jira.example.com/rest/api/2/issue" }
@@ -93,7 +93,7 @@
   expect:
     app: jira-dc
     tool: edit_issue
-    summary: { title: "Edit Jira issue", fields: { Issue: "DEMO-7", Summary: "Crash on save of large files", Description: "Only above 1 GB." } }
+    summary: { title: "edit a Jira issue", fields: { Issue: "DEMO-7", Summary: "Crash on save of large files", Description: "Only above 1 GB." } }
 - name: "negative edit_issue: PATCH selects no tool on the registered host"
   connection: { instance_host: jira.example.com, instance_app: jira-dc, credentials: { access_token: "pat-fixture-1" } }
   request: { method: PATCH, url: "https://jira.example.com/rest/api/2/issue/DEMO-7" }
@@ -108,7 +108,7 @@
   expect:
     app: jira-dc
     tool: add_issue_comment
-    summary: { title: "Comment on Jira issue", fields: { Issue: "DEMO-7", Comment: "Reproduced on 9.12." } }
+    summary: { title: "comment on a Jira issue", fields: { Issue: "DEMO-7", Comment: "Reproduced on 9.12." } }
 - name: "negative add_issue_comment: PUT selects no tool on the registered host"
   connection: { instance_host: jira.example.com, instance_app: jira-dc, credentials: { access_token: "pat-fixture-1" } }
   request: { method: PUT, url: "https://jira.example.com/rest/api/2/issue/DEMO-7/comment" }
@@ -123,7 +123,7 @@
   expect:
     app: jira-dc
     tool: transition_issue
-    summary: { title: "Move Jira issue", fields: { Issue: "DEMO-7", Transition: "41" } }
+    summary: { title: "move a Jira issue", fields: { Issue: "DEMO-7", Transition: "41" } }
 - name: "negative transition_issue: DELETE selects no tool on the registered host"
   connection: { instance_host: jira.example.com, instance_app: jira-dc, credentials: { access_token: "pat-fixture-1" } }
   request: { method: DELETE, url: "https://jira.example.com/rest/api/2/issue/DEMO-7/transitions" }

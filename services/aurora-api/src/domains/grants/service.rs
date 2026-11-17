@@ -43,11 +43,14 @@ pub enum Origin {
     /// (P5-UX-2, C-957) The connect journey gave the access together with the new account: the
     /// grant is new by construction; audited with `details.via = "connect_journey"`.
     ConnectJourney,
+    /// (P5-UX-16, C-982, SEC-131) Always allow on an approval: replaces the agent's grant;
+    /// audited with `details.via = "approval"` and the approval id.
+    Approval(Uuid),
 }
 
 impl Origin {
     fn replaces(self) -> bool {
-        self == Self::Agent
+        matches!(self, Self::Agent | Self::Approval(_))
     }
 }
 
@@ -64,6 +67,10 @@ fn with_via(origin: Origin, mut meta: serde_json::Value) -> serde_json::Value {
     match origin {
         Origin::Credential => meta["via"] = json!("credential"),
         Origin::ConnectJourney => meta["via"] = json!("connect_journey"),
+        Origin::Approval(id) => {
+            meta["via"] = json!("approval");
+            meta["approval_id"] = json!(id);
+        }
         Origin::Agent => {}
     }
     meta
@@ -754,6 +761,71 @@ pub async fn grant_connection_in_tx(
         Some(caller.user_id),
     )
     .await
+}
+
+/// (P5-UX-16, C-982, SEC-131) Always allow: moves `tool_id` from asked to allowed in the agent's
+/// grant of `connection_id`, in the caller's transaction, through the one writer of connection
+/// grants (so the organization's limit applies here too). The agent's access stays *Ask before
+/// changes*: the tool is listed as always allowed. `Ok(None)` when the grant no longer asks for
+/// the tool (nothing is written).
+pub async fn always_allow_tool_in_tx(
+    tx: &mut audit::Tx,
+    state: &AppState,
+    caller: &Caller,
+    agent_id: Uuid,
+    connection_id: Uuid,
+    tool_id: &str,
+    approval_id: Uuid,
+) -> Result<Option<Written<ConnectionGrant>>, ApiError> {
+    let (agent, auth) = visible_agent(caller, state, agent_id).await?;
+    crate::http::auth::require_own(&auth)?;
+    // Lock the grant: two answers to different approvals must not overwrite each other.
+    let Some(old) = sqlx::query_as::<_, grants::ConnectionGrantRow>(
+        "SELECT id, workspace_id, agent_id, connection_id, mode, allow_tools, ask_tools, \
+         ask_timeout_secs, created_at FROM grants WHERE agent_id = $1 AND connection_id = $2 \
+         FOR UPDATE",
+    )
+    .bind(agent_id)
+    .bind(connection_id)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(DbError::from)?
+    else {
+        return Ok(None);
+    };
+    if old.mode != "custom" || !old.ask_tools.iter().any(|t| t == tool_id) {
+        return Ok(None);
+    }
+    let mut allow = old.allow_tools.clone();
+    allow.push(tool_id.to_owned());
+    let ask: Vec<String> = old
+        .ask_tools
+        .iter()
+        .filter(|t| *t != tool_id)
+        .cloned()
+        .collect();
+    let timeout = if ask.is_empty() {
+        None
+    } else {
+        old.ask_timeout_secs.map(i64::from)
+    };
+    let w = write_connection_grant(
+        tx,
+        state,
+        &agent,
+        connection_id,
+        PutConnectionGrant {
+            mode: GrantMode::Custom,
+            allow_tools: allow,
+            ask_tools: ask,
+            ask_timeout_secs: timeout,
+        },
+        Origin::Approval(approval_id),
+        AuditActor::from_caller(caller),
+        Some(caller.user_id),
+    )
+    .await?;
+    Ok(Some(w))
 }
 
 /// Starter grants (P4-ONB-1): a full-access connection grant written as the system; see

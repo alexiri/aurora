@@ -52,8 +52,10 @@ async fn list_approvals(
     )
     .await?;
     let page = Page::from_rows(rows, p.limit, |r| (r.created_at, r.id));
+    let mut items: Vec<Approval> = page.items.into_iter().map(Approval::from).collect();
+    super::enrich::enrich(&s, chooser(&c), &mut items).await;
     Ok(Json(Page {
-        items: page.items.into_iter().map(Approval::from).collect(),
+        items,
         next_cursor: page.next_cursor,
     }))
 }
@@ -68,7 +70,8 @@ async fn pending(
     State(s): State<AppState>,
     Query(q): Query<PendingQuery>,
 ) -> Result<Json<PendingList>, ApiError> {
-    let items = service::pending(&s, &c, q.wait.unwrap_or(0)).await?;
+    let mut items = service::pending(&s, &c, q.wait.unwrap_or(0)).await?;
+    super::enrich::enrich(&s, chooser(&c), &mut items).await;
     Ok(Json(PendingList { items }))
 }
 
@@ -95,10 +98,12 @@ async fn stream(
                     workspace_id,
                     event,
                 }) => {
-                    let Some(approval) = service::stream_item(&s, user, id, workspace_id).await
+                    let Some(mut approval) = service::stream_item(&s, user, id, workspace_id).await
                     else {
                         continue;
                     };
+                    super::enrich::enrich(&s, Some(user), std::slice::from_mut(&mut approval))
+                        .await;
                     let notice = if event == "created" {
                         service::notice_for(&s, &approval).await
                     } else {
@@ -134,7 +139,7 @@ async fn stream(
     params(("id" = Uuid, Path, description = "Approval id")),
     request_body = DecisionBody,
     responses((status = 200, body = Approval), (status = 403, body = ErrorEnvelope), (status = 404, body = ErrorEnvelope),
-        (status = 409, body = ErrorEnvelope)),
+        (status = 409, body = ErrorEnvelope), (status = 422, body = ErrorEnvelope)),
     security(("session" = []), ("api_key" = [])))]
 async fn decide(
     c: Caller,
@@ -142,7 +147,15 @@ async fn decide(
     Path(id): Path<Uuid>,
     Json(b): Json<DecisionBody>,
 ) -> Result<Json<Approval>, ApiError> {
-    Ok(Json(service::decide(&s, &c, id, b.decision).await?))
+    Ok(Json(
+        service::decide(&s, &c, id, b.decision, b.always == Some(true)).await?,
+    ))
+}
+
+/// The person who may choose Always allow on what this caller reads: a dashboard session only
+/// (SEC-131: not API keys, not chat platforms).
+fn chooser(c: &Caller) -> Option<uuid::Uuid> {
+    matches!(c.principal, crate::http::auth::Principal::Session { .. }).then_some(c.user_id)
 }
 
 /// Decide all pending approvals of a batch for one agent that the caller may decide.

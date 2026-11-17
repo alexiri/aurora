@@ -1,6 +1,6 @@
 package:
   id: atlassian
-  version: 1.1.1
+  version: 1.1.2
   contract: 1
   min_core: 0.1.0
   publisher: aurora
@@ -102,25 +102,25 @@ apps:
           - { id: transition_issue, description: "Moves a Jira issue to another workflow step, such as Done.", name: Move an issue through a workflow transition, host: api.atlassian.com, path: "/ex/jira/*/rest/api/3/issue/*/transitions", methods: [POST] }
     approvals:
       create_issue:
-        title: Create Jira issue
+        title: create a Jira issue
         fields:
           - { label: Project, source: body, steps: [ { json: /fields/project/key } ] }
           - { label: Type, source: body, steps: [ { json: /fields/issuetype/name } ] }
           - { label: Summary, source: body, steps: [ { json: /fields/summary } ] }
           - { label: Description, source: body, steps: [ { json_text: /fields/description } ] }
       edit_issue:
-        title: Edit Jira issue
+        title: edit a Jira issue
         fields:
           - { label: Issue, source: path, segment: 8 }
           - { label: Summary, source: body, steps: [ { json: /fields/summary } ] }
           - { label: Description, source: body, steps: [ { json_text: /fields/description } ] }
       add_issue_comment:
-        title: Comment on Jira issue
+        title: comment on a Jira issue
         fields:
           - { label: Issue, source: path, segment: 8 }
           - { label: Comment, source: body, steps: [ { json_text: /body } ] }
       transition_issue:
-        title: Move Jira issue
+        title: move a Jira issue
         fields:
           - { label: Issue, source: path, segment: 8 }
           - { label: Transition, source: body, steps: [ { json: /transition/id } ] }
@@ -221,21 +221,21 @@ apps:
           - { id: create_footer_comment, description: "Adds a comment to a Confluence page.", name: Comment on a page, host: api.atlassian.com, path: "/ex/confluence/*/wiki/api/v2/footer-comments", methods: [POST] }
     approvals:
       create_page:
-        title: Create Confluence page
+        title: create a Confluence page
         fields:
           - { label: Space, source: body, steps: [ { json: /spaceId } ] }
           - { label: Title, source: body, steps: [ { json: /title } ] }
           - { label: Status, source: body, steps: [ { json: /status } ] }
           - { label: Content, source: body, steps: [ { json: /body/value } ] }
       update_page:
-        title: Update Confluence page
+        title: update a Confluence page
         fields:
           - { label: Page, source: path, segment: 8 }
           - { label: Title, source: body, steps: [ { json: /title } ] }
           - { label: Version, source: body, steps: [ { json: /version/number } ] }
           - { label: Content, source: body, steps: [ { json: /body/value } ] }
       create_footer_comment:
-        title: Comment on Confluence page
+        title: comment on a Confluence page
         fields:
           - { label: Page, source: body, steps: [ { json: /pageId } ] }
           - { label: Comment, source: body, steps: [ { json: /body/value } ] }
@@ -312,27 +312,27 @@ apps:
           - { id: transition_issue, description: "Moves a Jira issue to another workflow step, such as Done.", name: Move an issue through a workflow transition, host: "{instance}", path: "/rest/api/2/issue/*/transitions", methods: [POST] }
     approvals:
       create_issue:
-        title: Create Jira issue
+        title: create a Jira issue
         fields:
           - { label: Project, source: body, steps: [ { json: /fields/project/key } ] }
           - { label: Type, source: body, steps: [ { json: /fields/issuetype/name } ] }
           - { label: Summary, source: body, steps: [ { json: /fields/summary } ] }
           - { label: Description, source: body, steps: [ { json_text: /fields/description } ] }
       edit_issue:
-        title: Edit Jira issue
+        title: edit a Jira issue
         fields:
           - { label: Issue, source: path, segment: 5 }
           - { label: Summary, source: body, steps: [ { json: /fields/summary } ] }
           - { label: Description, source: body, steps: [ { json_text: /fields/description } ] }
         link: "https://{request.host}/browse/{path.5}"
       add_issue_comment:
-        title: Comment on Jira issue
+        title: comment on a Jira issue
         fields:
           - { label: Issue, source: path, segment: 5 }
           - { label: Comment, source: body, steps: [ { json: /body } ] }
         link: "https://{request.host}/browse/{path.5}"
       transition_issue:
-        title: Move Jira issue
+        title: move a Jira issue
         fields:
           - { label: Issue, source: path, segment: 5 }
           - { label: Transition, source: body, steps: [ { json: /transition/id } ] }
@@ -404,14 +404,14 @@ apps:
           - { id: update_content, description: "Changes a Confluence page.", name: Update a page, host: "{instance}", path: "/rest/api/content/*", methods: [PUT] }
     approvals:
       create_content:
-        title: Create Confluence content
+        title: create Confluence content
         fields:
           - { label: Type, source: body, steps: [ { json: /type } ] }
           - { label: Space, source: body, steps: [ { json: /space/key } ] }
           - { label: Title, source: body, steps: [ { json: /title } ] }
           - { label: Content, source: body, steps: [ { json: /body/storage/value } ] }
       update_content:
-        title: Update Confluence page
+        title: update a Confluence page
         fields:
           - { label: Page, source: path, segment: 4 }
           - { label: Title, source: body, steps: [ { json: /title } ] }

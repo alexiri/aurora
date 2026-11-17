@@ -57,7 +57,7 @@
   expect:
     app: calendar
     tool: query_freebusy
-    summary: { title: "Query free and busy times", fields: { From: "2026-03-02T00:00:00Z", Until: "2026-03-03T00:00:00Z" } }
+    summary: { title: "look up free and busy times", fields: { From: "2026-03-02T00:00:00Z", Until: "2026-03-03T00:00:00Z" } }
 - name: "negative query_freebusy: GET selects no tool"
   connection: { credentials: { access_token: "tok-fixture-1" } }
   request: { method: GET, url: "https://www.googleapis.com/calendar/v3/freeBusy" }
@@ -71,7 +71,7 @@
     body: '{"summary":"Design review","start":{"dateTime":"2026-03-02T10:00:00Z"},"end":{"dateTime":"2026-03-02T11:00:00Z"},"attendees":[{"email":"bob@example.com"},{"email":"eve@example.org"}]}'
   expect:
     tool: create_event
-    summary: { title: "Create calendar event", fields: { Calendar: "primary", Title: "Design review", Starts: "2026-03-02T10:00:00Z", Attendees: "bob@example.com, eve@example.org" } }
+    summary: { title: "create a calendar event", fields: { Calendar: "primary", Title: "Design review", Starts: "2026-03-02T10:00:00Z", Attendees: "bob@example.com, eve@example.org" } }
 - name: "negative create_event: PUT selects no tool"
   connection: { credentials: { access_token: "tok-fixture-1" } }
   request: { method: PUT, url: "https://www.googleapis.com/calendar/v3/calendars/primary/events" }
@@ -85,7 +85,7 @@
     body: '{"summary":"Design review (moved)","attendees":[{"email":"bob@example.com"},{"email":"frank@example.net"}]}'
   expect:
     tool: update_event
-    summary: { title: "Change calendar event", fields: { Calendar: "primary", Event: "evt0fixture1", Title: "Design review (moved)", Attendees: "bob@example.com, frank@example.net" } }
+    summary: { title: "change a calendar event", fields: { Calendar: "primary", Event: "evt0fixture1", Title: "Design review (moved)", Attendees: "bob@example.com, frank@example.net" } }
 - name: "negative update_event: PUT selects no tool"
   connection: { credentials: { access_token: "tok-fixture-1" } }
   request: { method: PUT, url: "https://www.googleapis.com/calendar/v3/calendars/primary/events/evt0fixture1" }
@@ -95,7 +95,7 @@
   request: { method: DELETE, url: "https://www.googleapis.com/calendar/v3/calendars/primary/events/evt0fixture1" }
   expect:
     tool: delete_event
-    summary: { title: "Delete calendar event", fields: { Calendar: "primary", Event: "evt0fixture1" } }
+    summary: { title: "delete a calendar event", fields: { Calendar: "primary", Event: "evt0fixture1" } }
 - name: "negative delete_event: PUT selects no tool"
   connection: { credentials: { access_token: "tok-fixture-1" } }
   request: { method: PUT, url: "https://www.googleapis.com/calendar/v3/calendars/primary/events/evt0fixture1" }

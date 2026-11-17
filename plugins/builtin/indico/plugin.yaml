@@ -1,6 +1,6 @@
 package:
   id: indico
-  version: 1.2.1
+  version: 1.2.2
   contract: 1
   min_core: 0.1.0
   publisher: aurora
@@ -162,7 +162,7 @@ apps:
           - { id: prepare_event, description: "Prepares an event for you to review and create in Indico.", name: Prepare an event for me to create (Indico web API), host: "{instance}", path: /event/create/prepare, methods: [POST], scopes: ["full:everything"] }
     approvals:
       book_room:
-        title: Book room
+        title: book a room
         fields:
           - { label: Room ID, source: body, steps: [ { form: roomid } ] }
           - { label: From, source: body, steps: [ { form: from } ] }
@@ -174,7 +174,7 @@ apps:
           - { label: Reason, source: body, steps: [ { form: reason } ] }
         link: "https://{request.host}/rooms/"
       create_booking:
-        title: Book room
+        title: book a room
         fields:
           - { label: Room ID, source: body, steps: [ { json: /room_id } ] }
           - { label: Start, source: body, steps: [ { json: /start_dt } ] }
@@ -189,58 +189,58 @@ apps:
           - { label: Linked id, source: body, steps: [ { json: /link_id } ] }
         link: "https://{request.host}/rooms/"
       cancel_booking:
-        title: Cancel room booking
+        title: cancel a room booking
         fields:
           - { label: Booking, source: path, segment: 4 }
         link: "https://{request.host}/rooms/"
       cancel_booking_occurrence:
-        title: Cancel room booking date
+        title: cancel one date of a room booking
         fields:
           - { label: Booking, source: path, segment: 4 }
           - { label: Date, source: path, segment: 5 }
         link: "https://{request.host}/rooms/"
       add_favorite_user:
-        title: Add favorite user
+        title: add a favorite user
         fields:
           - { label: User, source: path, segment: 5 }
         link: "https://{request.host}/user/favorites/"
       remove_favorite_user:
-        title: Remove favorite user
+        title: remove a favorite user
         fields:
           - { label: User, source: path, segment: 5 }
         link: "https://{request.host}/user/favorites/"
       add_favorite_category:
-        title: Add favorite category
+        title: add a favorite category
         fields:
           - { label: Category, source: path, segment: 5 }
         link: "https://{request.host}/user/favorites/"
       remove_favorite_category:
-        title: Remove favorite category
+        title: remove a favorite category
         fields:
           - { label: Category, source: path, segment: 5 }
         link: "https://{request.host}/user/favorites/"
       add_favorite_event:
-        title: Add favorite event
+        title: add a favorite event
         fields:
           - { label: Event, source: path, segment: 5 }
         link: "https://{request.host}/user/favorites/"
       remove_favorite_event:
-        title: Remove favorite event
+        title: remove a favorite event
         fields:
           - { label: Event, source: path, segment: 5 }
         link: "https://{request.host}/user/favorites/"
       add_favorite_room:
-        title: Add favorite room
+        title: add a favorite room
         fields:
           - { label: Room, source: path, segment: 5 }
         link: "https://{request.host}/rooms/"
       remove_favorite_room:
-        title: Remove favorite room
+        title: remove a favorite room
         fields:
           - { label: Room, source: path, segment: 5 }
         link: "https://{request.host}/rooms/"
       prepare_event:
-        title: Prepare an event to create
+        title: prepare to create an event
         fields:
           - { label: Title, source: body, steps: [ { json: /title } ] }
           - { label: Start, source: body, steps: [ { json: /start_dt } ] }

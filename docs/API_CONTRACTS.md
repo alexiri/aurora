@@ -354,11 +354,11 @@ interface EffectiveGovernance {
 | GET `…/policy/generations` | S/K | `?limit&cursor` | 200 `Page<Omit<PolicyGeneration,"rules"> & {rule_count}>` | — |
 | GET `…/policy/warnings` | S/K | — | 200 `{ items: { code: "shadowed" \| "inert" \| "overridden_by_org", rule_logical_id, message }[] }` | — |
 | POST `/v1/workspaces/{ws}/policy/simulate` | S/K can_use | `{ agent_id, method, url, body?, use_draft? }` | 200 `Simulation` | 400; 404 agent |
-| GET `/v1/workspaces/{ws}/approvals` | S/K can_use | `?status&limit&cursor` | 200 `Page<Approval>` | 404 |
+| GET `/v1/workspaces/{ws}/approvals` | S/K can_approve | `?status&limit&cursor` | 200 `Page<Approval>` | 403 `approver_required`; 404 |
 | GET `/v1/approvals/pending` | S/K | `?wait` (≤30) | 200 `{ items: Approval[] }` (decidable by caller) | — |
 | GET `/v1/approvals/stream` | S | — | SSE `event: approval`, `data: { event: "created"\|"decided"\|"expired", approval: Approval }` (C-10) | 401 |
-| POST `/v1/approvals/{id}/decision` | S/K can_use | `{ decision: "approve"\|"deny" }` | 200 `Approval` | 404; 409 `already_decided` |
-| POST `/v1/approvals/batches/{batch_id}/decision` | S/K can_use | `{ decision, agent_id }` (C-09) | 200 `{ decided: number }` | 404 |
+| POST `/v1/approvals/{id}/decision` | S/K can_approve | `{ decision: "approve"\|"deny", always?: true }` (C-982; `always` only from a session, only with `approve`) | 200 `Approval` (+ `always_applied`) | 403 `approver_required`; 404; 409 `already_decided`; 422 `always_not_available` |
+| POST `/v1/approvals/batches/{batch_id}/decision` | S/K can_approve | `{ decision, agent_id }` (C-09; never `always`) | 200 `{ decided: number }` | 403 `approver_required`; 404 |
 | GET `/v1/orgs/{org}/governance` | S/K owner·admin | — | 200 `{ document: OrgGovernance, revision: number }` | 403 |
 | PUT `/v1/orgs/{org}/governance` | S/K owner·admin | `{ document, revision }` | 200 same | 409 `stale_revision`; 422 `governance_invalid` \| `governance_below_instance_minimum` |
 | GET `/v1/orgs/{org}/governance/effective` | S/K any member | — | 200 `EffectiveGovernance` | 404 |

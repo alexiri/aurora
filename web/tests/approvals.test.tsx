@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ApprovalsView } from "@/components/approvals/approvals-view";
@@ -13,6 +13,8 @@ const mk = (id: string, over: Record<string, unknown> = {}) => ({
   created_at: `2026-01-01T00:00:0${id.length}Z`, deadline: "2099-01-01T00:00:00Z",
   agent: { id: "ag1", handle: "bot", name: "Bot" },
   summary: { title: `Send ${id}`, fields: [{ label: "To", value: "bob" }], source: "generic" },
+  sentence: { agent: { id: "ag1", name: "Bot" }, action: `Send ${id}` },
+  can_always_allow: false,
   ...over,
 });
 
@@ -79,7 +81,7 @@ describe("approvals", () => {
     routes["GET /v1/workspaces/w1/approvals"] = () => json(200, { items: [mk("a1")], next_cursor: null });
     show();
     await screen.findByText("Send a1");
-    act(() => FakeES.last.emit("approval", { event: "created", approval: mk("a22", { summary: { title: "<script>alert(1)</script>", fields: [], source: "generic" } }) }));
+    act(() => FakeES.last.emit("approval", { event: "created", approval: mk("a22", { summary: { title: "<script>alert(1)</script>", fields: [], source: "generic" }, sentence: { agent: { id: "ag1", name: "Bot" }, action: "<script>alert(1)</script>" } }) }));
     expect(await screen.findByText("<script>alert(1)</script>")).toBeInTheDocument();
     expect(document.querySelector("script")).toBeNull();
     act(() => FakeES.last.emit("approval", { event: "decided", approval: mk("a1", { status: "approved" }) }));
@@ -94,6 +96,47 @@ describe("approvals", () => {
     show();
     fireEvent.click(await screen.findByRole("button", { name: "Allow once" }));
     expect(await screen.findByText(/already decided by someone else/i)).toBeInTheDocument();
+  });
+
+  it("reads as a sentence with the app and the account, and offers three answers where Always allow is possible", async () => {
+    const q = mk("a1", {
+      sentence: { agent: { id: "ag1", name: "Daneel" }, action: "comment on an issue", app: { app_id: "linear", name: "Linear" }, account: { ref: { type: "connection", id: "c1" }, name: "Bob's Linear" } },
+      can_always_allow: true,
+      asked_by: { kind: "access", agent_id: "ag1", connection_id: "c1", tool_id: "comment" },
+    });
+    routes["GET /v1/workspaces/w1/approvals"] = () => json(200, { items: [q], next_cursor: null });
+    show();
+    const heading = await screen.findByText("comment on an issue");
+    expect(heading.closest("p")?.textContent).toBe("Daneel wants to comment on an issue in Linear");
+    expect(screen.getByText("Bob's Linear")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Allow once" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Block" })).toBeInTheDocument();
+    routes["POST /v1/approvals/a1/decision"] = () =>
+      json(200, { ...q, status: "approved", always_applied: { tool: { id: "comment", name: "Comment on an issue" }, also_approved: 2 } });
+    fireEvent.click(screen.getByRole("button", { name: "Always allow" }));
+    await waitFor(() => expect(calls.find((c) => c.key === "POST /v1/approvals/a1/decision")?.body).toEqual({ decision: "approve", always: true }));
+    const note = await screen.findByTestId("always-allowed");
+    expect(note.textContent).toContain("Daneel will no longer ask before it wants to comment on an issue in Linear.");
+    expect(note.textContent).toContain("2 other waiting requests of the same kind went ahead too.");
+    expect(within(note).getByRole("link").getAttribute("href")).toContain("/agents/bot?tab=access");
+  });
+
+  it("a question asked by a rule names the rule and offers no Always allow", async () => {
+    const q = mk("a1", { asked_by: { kind: "rule", rule_id: "r1", rule_name: "Ask on status.example.org", scope: "workspace" }, can_always_allow: false });
+    routes["GET /v1/workspaces/w1/approvals"] = () => json(200, { items: [q], next_cursor: null });
+    show();
+    expect(await screen.findByTestId("asked-by-rule")).toHaveTextContent("Asked by the rule Ask on status.example.org");
+    expect(screen.queryByRole("button", { name: "Always allow" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Allow once" })).toBeInTheDocument();
+  });
+
+  it("an empty list says nothing is waiting, in the words of the page", async () => {
+    routes["GET /v1/workspaces/w1/approvals"] = () => json(200, { items: [], next_cursor: null });
+    show();
+    expect(await screen.findByText("Nothing is waiting for you.")).toBeInTheDocument();
+    expect(screen.getByText("Agents ask here when their access is Ask before changes, or when a rule says so.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "History" }));
+    expect(await screen.findByText("No questions have been answered yet.")).toBeInTheDocument();
   });
 
   it("batch decision posts agent_id", async () => {

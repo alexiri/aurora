@@ -381,6 +381,8 @@ describe("labelled runs", () => {
       id: "ap1", org_id: "o1", workspace_id: "w1", agent: { id: "a1", name: "Bot", handle: "bot" },
       method: "POST", host: "api.example.com", path: "/x", rule_name: "r",
       summary: { title: "POST api.example.com", fields: [], source: "generic" },
+      sentence: { agent: { id: "a1", name: "Bot" }, action: "send a POST request to api.example.com" },
+      can_always_allow: false,
       context_label: "aurora run: make deploy", status: "pending",
       deadline: new Date(Date.now() + 60_000).toISOString(), created_at: "2026-01-01T00:00:00Z",
     };

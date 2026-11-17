@@ -1,6 +1,6 @@
 package:
   id: sentry
-  version: 2.0.1
+  version: 2.0.2
   contract: 1
   min_core: 0.1.0
   publisher: aurora
@@ -82,7 +82,7 @@ apps:
           - { id: update_issue, description: "Changes an issue: resolve it, assign it, or bookmark it.", name: "Update or resolve an issue (status, assignee, bookmarks)", host: "{instance}", path: "/api/0/organizations/*/issues/*/", methods: [PUT] }
     approvals:
       update_issue:
-        title: Update issue
+        title: update an issue
         fields:
           - { label: Organization, source: path, segment: 4 }
           - { label: Issue, source: path, segment: 6 }

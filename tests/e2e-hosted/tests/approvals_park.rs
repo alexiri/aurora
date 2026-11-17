@@ -122,6 +122,29 @@ impl World {
         transcript_text(&self.api.events(&self.conv).await)
     }
 
+    /// (P5-UX-16, C-983) The payloads of the transcript events `ty` (`approval.pending`,
+    /// `approval.decided`, `approval.expired`) written for this approval, once `n` exist (the API's
+    /// bus listener writes them, so this polls with a deadline).
+    async fn approval_events(&self, ty: &str, id: &str, n: usize) -> Vec<Value> {
+        let end = Instant::now() + Duration::from_secs(30);
+        loop {
+            let rows: Vec<(Value,)> = sqlx::query_as(
+                "SELECT payload FROM transcript_events WHERE conversation_id = $1::uuid \
+                 AND type = $2 AND payload->>'approval_id' = $3 ORDER BY seq",
+            )
+            .bind(&self.conv)
+            .bind(ty)
+            .bind(id)
+            .fetch_all(self.st.pool())
+            .await
+            .unwrap();
+            if rows.len() >= n || Instant::now() > end {
+                return rows.into_iter().map(|r| r.0).collect();
+            }
+            tokio::time::sleep(Duration::from_millis(300)).await;
+        }
+    }
+
     async fn upstream_hits(&self) -> usize {
         self.up.received_requests().await.unwrap().len()
     }
@@ -253,6 +276,19 @@ async fn p1_park_approve_resume_consumed_once() {
     let t = w.transcript().await;
     assert!(t.contains("approval_parked"), "{t}");
     assert_eq!(w.upstream_hits().await, 0, "parked before approval");
+    // (C-983) The conversation shows the question where the agent paused: one `approval.pending`,
+    // marked parked, with the sentence and when it expires.
+    let pending = w.approval_events("approval.pending", &id, 1).await;
+    assert_eq!(pending.len(), 1, "{pending:?}");
+    assert_eq!(pending[0]["parked"], true, "{pending:?}");
+    assert!(
+        pending[0]["summary"]
+            .as_str()
+            .unwrap()
+            .contains(" wants to "),
+        "{pending:?}"
+    );
+    assert!(pending[0]["expires_at"].is_string(), "{pending:?}");
     // The identical request while pending is the same approval: nothing new is created.
     w.request("/parked").await;
     let (_, list) = w
@@ -270,6 +306,16 @@ async fn p1_park_approve_resume_consumed_once() {
     // Approve: a ready single-use grant and one system follow-up (door ref `approval:<id>`).
     let d = w.decide(&id, "approve").await;
     assert_eq!(d["resume"]["state"], "ready", "{d}");
+    // The answer appears in the conversation, once (the repeat requests above made no second card).
+    let decided = w.approval_events("approval.decided", &id, 1).await;
+    assert_eq!(decided.len(), 1, "{decided:?}");
+    assert_eq!(decided[0]["decision"], "approve", "{decided:?}");
+    assert!(decided[0]["resume_expires_at"].is_string(), "{decided:?}");
+    assert_eq!(
+        w.approval_events("approval.pending", &id, 1).await.len(),
+        1,
+        "one card however often the request repeated"
+    );
     let (text, door) = w.followup(1).await;
     assert!(
         text.contains("a person approved a request you were waiting for"),
@@ -318,6 +364,9 @@ async fn p2_deny_follow_up_and_cooldown() {
         .unwrap()
         .to_owned();
     w.decide(&id, "deny").await;
+    let decided = w.approval_events("approval.decided", &id, 1).await;
+    assert_eq!(decided.len(), 1, "{decided:?}");
+    assert_eq!(decided[0]["decision"], "deny", "{decided:?}");
     let (text, _) = w.followup(1).await;
     assert!(
         text.contains("a person denied a request you were waiting for"),
@@ -366,6 +415,10 @@ async fn p3_deadline_and_resume_window_expire_without_a_turn() {
     }
     assert_eq!(w.turns().await, turns, "expiry starts no turn");
     assert_eq!(w.upstream_hits().await, 0);
+    // The card runs out in the conversation: `approval.expired` for the deadline.
+    let expired = w.approval_events("approval.expired", &id, 1).await;
+    assert_eq!(expired.len(), 1, "{expired:?}");
+    assert_eq!(expired[0]["reason"], "deadline", "{expired:?}");
 
     // The resume window passes unused: `expired`, a notice, no further turn; the repeat parks anew.
     w.request("/window").await;
@@ -398,6 +451,12 @@ async fn p3_deadline_and_resume_window_expire_without_a_turn() {
     .await
     .unwrap();
     assert_eq!(notices, 1);
+    // After `approval.pending` and `approval.decided`, the card ends with `resume_window`.
+    let expired = w.approval_events("approval.expired", &id, 1).await;
+    assert_eq!(expired.len(), 1, "{expired:?}");
+    assert_eq!(expired[0]["reason"], "resume_window", "{expired:?}");
+    assert_eq!(w.approval_events("approval.pending", &id, 1).await.len(), 1);
+    assert_eq!(w.approval_events("approval.decided", &id, 1).await.len(), 1);
     w.request("/window").await;
     assert_eq!(
         w.upstream_hits().await,
