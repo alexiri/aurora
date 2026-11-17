@@ -14,6 +14,7 @@ is not a target (MM-001 findings were identical on 12.0.2).
 ## Manifest
 
 - `package.id = "mattermost"`, contract 1.
+- Typing indicator (phase 5, FIX-158, D-319): `native_status` is declared. `status.set` starts one refresher per (sender, channel, thread) that calls `POST /api/v4/users/{user_id}/typing` `{channel_id, parent_id}` with the sender's (bot or presence) token every `TYPING_REFRESH_SECS` (4 s; clients drop it after ~5 s); `status.clear` stops it; it stops by itself after `TURN_CEILING_WARNING` and quietly on 403/404. Two sets are one refresher. A connector restart drops the refreshers (the next turn sets it again). Typing calls are not posts and do not count toward the write limits.
 - Capabilities: `threads`, `edits`, `reactions`, `buttons`, `menus`, `files`,
   `commands`, `history`, `presence_shared`, `presence_dedicated`,
   `email_verified`, `ephemeral` = true; `text_input`, `native_status`,

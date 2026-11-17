@@ -135,6 +135,14 @@ pub async fn claim<'e, E: PgExecutor<'e>>(
                 AND (o.integration_id IS NULL OR EXISTS (
                         SELECT 1 FROM channel_integrations i
                          WHERE i.id = o.integration_id AND i.owner_replica_id = $2))
+                -- (FIX-158) a reaction is never removed while its add is still queued or running
+                AND NOT (o.kind = 'reaction.remove' AND EXISTS (
+                        SELECT 1 FROM channel_ops a
+                         WHERE a.kind = 'reaction.add' AND a.status IN ('pending', 'claimed')
+                           AND a.integration_id IS NOT DISTINCT FROM o.integration_id
+                           AND a.payload->>'space_ref' = o.payload->>'space_ref'
+                           AND a.payload->>'message_ref' = o.payload->>'message_ref'
+                           AND a.created_at <= o.created_at))
               ORDER BY o.not_before, o.id LIMIT $3
                 FOR UPDATE OF o SKIP LOCKED)
          UPDATE channel_ops o
@@ -438,5 +446,99 @@ pub async fn by_dedupe_key<'e, E: PgExecutor<'e>>(
     )))
     .bind(key)
     .fetch_optional(exec)
+    .await?)
+}
+
+/// A chat receipt (👀 reaction, native status or "Working…" placeholder) that has not been
+/// removed yet, with the thread link its message came in through (FIX-158, D-319).
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct OpenReceipt {
+    pub event_id: String,
+    pub conversation_id: Uuid,
+    pub thread_link_id: Uuid,
+}
+
+/// Open receipts of the last three days whose message's turn is no longer being worked on
+/// (`done`/`failed`/`aborted`/`joined`/`promoted`): a `receipt:<event>` (or `placeholder:<event>`)
+/// op that was or may still be delivered, with no `receipt-clear:` / `placeholder-clear:` op.
+/// `link` limits them to one thread link; `older_than_secs` to receipts at least that old.
+pub async fn open_receipts<'e, E: PgExecutor<'e>>(
+    exec: E,
+    link: Option<Uuid>,
+    older_than_secs: Option<f64>,
+    limit: i64,
+) -> Result<Vec<OpenReceipt>, DbError> {
+    Ok(sqlx::query_as(
+        "WITH r0 AS (
+             SELECT substr(dedupe_key, CASE WHEN dedupe_key LIKE 'receipt:%' THEN 9 ELSE 13 END) AS ev
+               FROM channel_ops
+              WHERE (dedupe_key LIKE 'receipt:%' OR dedupe_key LIKE 'placeholder:%')
+                AND status IN ('pending', 'claimed', 'done')
+                AND created_at > now() - interval '3 days'
+                AND ($2::float8 IS NULL OR created_at < now() - make_interval(secs => $2))),
+         r AS (
+             SELECT ev FROM r0
+              WHERE NOT EXISTS (SELECT 1 FROM channel_ops c
+                                 WHERE c.dedupe_key IN ('receipt-clear:' || r0.ev,
+                                                        'placeholder-clear:' || r0.ev)))
+         SELECT DISTINCT r.ev AS event_id, t.conversation_id,
+                (t.door->>'thread_link_id')::uuid AS thread_link_id
+           FROM r JOIN turns t ON t.source_event_id = r.ev
+          WHERE t.door->>'thread_link_id' IS NOT NULL
+            AND ($1::uuid IS NULL OR t.door->>'thread_link_id' = $1::text)
+            AND t.status NOT IN ('queued', 'dispatched', 'running', 'joining')
+          LIMIT $3",
+    )
+    .bind(link)
+    .bind(older_than_secs)
+    .bind(limit)
+    .fetch_all(exec)
+    .await?)
+}
+
+/// Is there work in `conversation` that will post to its thread later: an armed watch, a pending
+/// action approval or gateway hold (of `turn` when given, else of the conversation), a `joining`
+/// follow-up, or a `queued`/`dispatched`/`running` turn other than `turn`?
+pub async fn follow_on_pending<'e, E: PgExecutor<'e>>(
+    exec: E,
+    conversation: Uuid,
+    turn: Option<Uuid>,
+) -> Result<bool, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM watches w
+                         WHERE w.conversation_id = $1 AND w.status = 'armed')
+             OR EXISTS (SELECT 1 FROM action_approvals a
+                         WHERE a.conversation_id = $1 AND a.status = 'pending'
+                           AND ($2::uuid IS NULL OR a.turn_id = $2))
+             OR EXISTS (SELECT 1 FROM approvals g
+                         WHERE g.conversation_id = $1 AND g.status = 'pending'
+                           AND ($2::uuid IS NULL OR g.turn_id = $2))
+             OR EXISTS (SELECT 1 FROM turns t
+                         WHERE t.conversation_id = $1
+                           AND ($2::uuid IS NULL OR t.id <> $2)
+                           AND t.status IN ('queued', 'dispatched', 'running', 'joining'))",
+    )
+    .bind(conversation)
+    .bind(turn)
+    .fetch_one(exec)
+    .await?)
+}
+
+/// Has `conversation` had no active turn and no turn created or finished in the last `secs`?
+pub async fn conversation_quiet<'e, E: PgExecutor<'e>>(
+    exec: E,
+    conversation: Uuid,
+    secs: f64,
+) -> Result<bool, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT NOT EXISTS (SELECT 1 FROM turns t
+                             WHERE t.conversation_id = $1
+                               AND (t.status IN ('queued', 'dispatched', 'running', 'joining')
+                                    OR coalesce(t.finished_at, t.created_at)
+                                       > now() - make_interval(secs => $2)))",
+    )
+    .bind(conversation)
+    .bind(secs)
+    .fetch_one(exec)
     .await?)
 }

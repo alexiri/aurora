@@ -1422,3 +1422,47 @@ line one  \nline two [https://y.example](https://y.example) :tada:";
     c.0.finish().await?;
     Ok(())
 }
+
+// ------------------------------------- 19. the working status (FIX-158, D-319)
+
+/// A turn that runs shows the working status ("is typing…") in its thread until `status.clear`;
+/// the receipt reaction stays until the answer posts. Both ops are accepted by a platform that
+/// declares `native_status`; one that can observe the status shows it set and then gone.
+#[tokio::test]
+async fn s19_working_status_shows_while_the_turn_runs_and_ends_with_the_answer() -> R {
+    let c = ctx(StartOptions::default()).await?;
+    let d = c.0.driver.post_message(msg("U1", None, "hello")).await?;
+    let m = c.message_event(&d.message_ref).await?;
+    let space = m.space.reference.clone();
+    let r = c
+        .op(
+            "reaction.add",
+            json!({"space_ref": space, "message_ref": d.message_ref,
+                   "sender": "shared", "emoji": "eyes"}),
+        )
+        .await?;
+    ok_data(&r);
+    let status = json!({"space_ref": space, "sender": "shared", "text": "Working…"});
+    ok_data(&c.op("status.set", status.clone()).await?);
+    // Two sets are one indicator.
+    ok_data(&c.op("status.set", status.clone()).await?);
+    if let Some(shown) = c.0.driver.working(&space, "").await? {
+        assert!(shown, "the working status is not shown after status.set");
+    }
+    // Still working: the receipt is there.
+    let user_msg = c.find_post(&d.message_ref).await?;
+    assert!(user_msg.reactions.iter().any(|(e, _)| e == "eyes"));
+    ok_data(&c.op("status.clear", status).await?);
+    let (_, r) = c
+        .post(space_target(&space, None), &text("done working"))
+        .await?;
+    ok_data(&r);
+    if let Some(shown) = c.0.driver.working(&space, "").await? {
+        assert!(
+            !shown,
+            "the working status is still shown after status.clear"
+        );
+    }
+    c.0.finish().await?;
+    Ok(())
+}

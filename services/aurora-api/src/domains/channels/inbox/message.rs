@@ -1022,6 +1022,14 @@ async fn receipt(
 ) -> Result<(), InboxError> {
     use aurora_channels::capability::SeenReceipt;
     let key = format!("receipt:{event_id}");
+    tracing::info!(
+        target: "aurora_api::channels::receipt",
+        event_id,
+        integration_id = %ctx.id(),
+        receipt = ?ctx.caps.seen_receipt(),
+        reason = "message_received",
+        "receipt added"
+    );
     match ctx.caps.seen_receipt() {
         SeenReceipt::Reaction => {
             send::reaction(

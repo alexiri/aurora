@@ -30,6 +30,7 @@ pub const DEFAULT_CAPABILITIES: &[&str] = &[
     "commands",
     "history",
     "files",
+    "native_status",
 ];
 
 pub const MESSAGE_MAX_CHARS: u32 = 16_000;
@@ -392,8 +393,14 @@ impl FakeConnector {
                 }
                 ok(json!({}))
             }
-            OpPayload::StatusSet(_) | OpPayload::StatusClear(_) => {
+            OpPayload::StatusSet(s) | OpPayload::StatusClear(s) => {
                 self.need(Capability::NativeStatus)?;
+                let key = format!("{}|{}", s.space_ref, s.thread_ref.unwrap_or_default());
+                if op.kind == OpKind::StatusSet {
+                    p.working.insert(key);
+                } else {
+                    p.working.remove(&key);
+                }
                 ok(json!({}))
             }
             // Handled asynchronously in `execute` (needs the core client).
