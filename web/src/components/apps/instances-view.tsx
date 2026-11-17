@@ -2,8 +2,10 @@
 
 import { useQueries } from "@tanstack/react-query";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { useState, type FormEvent } from "react";
 
+import { AppLink } from "./app-link";
 import { EmptyState, ErrorState, Loading } from "@/components/states";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -131,14 +133,17 @@ function RegisterDialog({
   open,
   onOpenChange,
   bound,
+  initialAppId = "",
 }: {
   scope: InstanceScope;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   bound: AppDetail[];
+  /** The app chosen when the form opens (`?package=`). */
+  initialAppId?: string;
 }) {
   const create = useCreateAppInstance(scope);
-  const [appId, setAppId] = useState("");
+  const [appId, setAppId] = useState(initialAppId);
   const [host, setHost] = useState("");
   const [basePath, setBasePath] = useState("");
   const [label, setLabel] = useState("");
@@ -271,12 +276,14 @@ function RegisterDialog({
 function InstanceRow({
   inst,
   appName,
+  packageId,
   canManage,
   showOrg = false,
   canPromote = false,
 }: {
   inst: AppInstance;
   appName: string;
+  packageId?: string;
   canManage: boolean;
   /** The admin list: an Organization column. */
   showOrg?: boolean;
@@ -291,7 +298,9 @@ function InstanceRow({
   const active = inst.status === "active";
   return (
     <tr>
-      <Td>{appName}</Td>
+      <Td>
+        <AppLink app={{ app_id: inst.app_id, package_id: packageId }}>{appName}</AppLink>
+      </Td>
       <Td>
         <div className="break-all font-mono text-sm">{inst.base_url}</div>
         <div className="text-xs text-muted">{inst.label}</div>
@@ -409,7 +418,9 @@ export function InstancesView({ scope, canManage }: { scope: InstanceScope; canM
   const effective: InstanceScope = adminAll ? { kind: "instance", all: true, org: orgFilter || undefined } : scope;
   const list = useAppInstances(effective);
   const { bound, pending } = useInstanceBoundApps();
-  const [open, setOpen] = useState(false);
+  // (C-933) `?package=<package>` opens the registration form with that app chosen ("Register a self-hosted app").
+  const wantPackage = useSearchParams().get("package");
+  const [open, setOpen] = useState(!!wantPackage && canManage);
   if (list.isPending || pending) return <Loading />;
   if (list.isError) return <ErrorState error={list.error} onRetry={() => list.refetch()} />;
   const names = new Map(bound.map((a) => [a.app_id, appDisplayName(a)]));
@@ -472,6 +483,7 @@ export function InstancesView({ scope, canManage }: { scope: InstanceScope; canM
                   key={i.id}
                   inst={i}
                   appName={names.get(i.app_id) ?? i.app_id}
+                  packageId={bound.find((a) => a.app_id === i.app_id)?.package_id}
                   canManage={canManage && (adminAll ? i.org_id == null : scope.kind === "instance" || i.org_id != null)}
                   showOrg={adminAll}
                   canPromote={adminAll && canManage}
@@ -481,7 +493,13 @@ export function InstancesView({ scope, canManage }: { scope: InstanceScope; canM
           </DataTable>
         )}
       </Section>
-      <RegisterDialog scope={scope} open={open} onOpenChange={setOpen} bound={bound} />
+      <RegisterDialog
+        scope={scope}
+        open={open}
+        onOpenChange={setOpen}
+        bound={bound}
+        initialAppId={bound.find((a) => a.package_id === wantPackage)?.app_id ?? ""}
+      />
     </div>
   );
 }

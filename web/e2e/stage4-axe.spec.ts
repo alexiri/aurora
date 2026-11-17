@@ -24,7 +24,7 @@ async function serious(page: Page) {
 // P5-IA-1: and the topic pages' frames (header, level badge, tab bar) of each level.
 const NAMED = [
   "ws-overview", "ws-approvals", "ws-agent", "org-workspaces", "sign-in", "ws-app-connect", "ws-connect-journey", "ws-connect-journey-apps", "ws-connect-journey-agent",
-  "ws-apps-accounts", "ws-internet-access", "ws-people", "ws-settings-general",
+  "ws-app-setup", "org-app-setup", "ws-apps-accounts", "ws-internet-access", "ws-people", "ws-settings-general",
   "org-apps-accounts", "org-people-members", "org-ai-models", "org-internet-access", "org-settings-general",
   "admin-overview", "admin-people-users", "admin-platform-runners", "admin-apps-apps",
 ];

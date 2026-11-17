@@ -167,6 +167,9 @@ export const user ={ id: id(99), display_name: "Ada Lovelace", email: "ada@examp
 /** (P5-UX-3) Accounts a spec's saves made, listed first by the workspace's accounts list; emptied by every `mockApi` call. */
 export const extraAccounts: Record<string, unknown>[] = [];
 
+/** (P5-UX-9) OAuth clients a spec registered in the workspace; the setup status counts them and the list shows them. Emptied by every `mockApi` call. */
+export const extraClients: Record<string, unknown>[] = [];
+
 export async function mockApi(
   page: Page,
   /** (FIX-029) Extra canned responses: a regex or exact path → JSON body, or `{status, body}`. */
@@ -175,6 +178,8 @@ export async function mockApi(
   const exact = new Map<string, unknown>();
   const patterns: [RegExp, unknown][] = [];
   extraAccounts.length = 0;
+  extraClients.length = 0;
+  let availability: { posture: string; allow: { app_id: string; workspace_id?: string }[] } = { posture: "open", allow: [] };
   // (P5-IA-4, C-969) The organization's retention: Administration's maximums above, saved values kept across requests.
   let retention: Record<string, unknown> = {
     conversations_days: 180, conversations_days_max: 365, attachments_days: null, attachments_days_max: 90,
@@ -498,8 +503,18 @@ export async function mockApi(
       // (P5-UX-2/3) Every method also carries the audience, the scope presets per access and the values to show.
       const full = connect.map((m) => ({ probe_scopes: [], audience: "person", scope_presets: { read: [], write: [] }, show_context: [], ...m }));
       return json({
-        ...apps.find((x) => x.app_id === a.id), connect: full, credentials: [], hosts: [], metadata: [], oauth_clients: [], tools: [
-          { id: "get_repo", name: "Get a repository", group: "read" }, { id: "create_issue", name: "Create an issue", group: "write" },
+        ...apps.find((x) => x.app_id === a.id), connect: full, credentials: [], hosts: [], metadata: [],
+        // (P5-UX-9, C-946) The OAuth client definitions say which connect methods use them.
+        oauth_clients: ["github", "linear", "gitlab"].includes(a.id)
+          ? [{
+              client_key: a.id, used_by_methods: [{ id: "oauth", label: `Sign in with ${a.name}` }], setup_note: null,
+              redirect_uri: "https://aurora.example.org/v1/oauth/callback",
+              fields: [{ name: "client_id", label: "Client ID", secret: false }, { name: "client_secret", label: "Client secret", secret: true }],
+            }]
+          : [],
+        tools: [
+          { id: "get_repo", name: "Get a repository", group: "read", description: "Read one repository's details." },
+          { id: "create_issue", name: "Create an issue", group: "write", description: "Open an issue with a title and a body." },
         ],
       });
     }
@@ -516,6 +531,72 @@ export async function mockApi(
         return json({ app_id: app, available: false, available_who_can: who, suggested_method: null, methods: [method("oauth", "oauth2", { ready: false, needs: ["oauth_client"], who_can: who })] });
       }
       return json({ app_id: app, available: true, suggested_method: "token", methods: [method("token", "fields"), method("oauth", "oauth2")] });
+    }
+    // (P5-UX-9, C-931) The setup status of an app. Linear's sign-in has no OAuth client yet (the workspace owner can register
+    // one; for everyone only Ada can, by name), GitHub's App needs an administrator's material, GitLab needs a self-hosted
+    // server (the organization view can register one), AWS carries the organization's external id.
+    if (/^\/v1\/apps\/[^/]+\/setup$/.test(p)) {
+      const app = p.split("/")[3]!;
+      const orgView = !url.searchParams.get("workspace_id");
+      const registered = extraClients.filter((c) => c.package_id === app);
+      const m = (mid: string, kind: string, label: string, over: Record<string, unknown> = {}) => ({
+        id: mid, kind, label, description: null, recommended: false, audience: "person", needs: [], ready: true,
+        scope_presets: { read: [], write: [] }, ...over,
+      });
+      const adminWho = { action: "register_oauth_client", role: "org_admin", people: [{ id: id(99), name: "Ada Lovelace" }, { id: id(100), name: "Alan Turing" }], you_can: orgView };
+      const methods: Record<string, unknown>[] =
+        app === "linear"
+          ? [
+              m("key", "fields", "API key"),
+              registered.length > 0
+                ? m("oauth", "oauth2", "Sign in with Linear", { client_key: "linear" })
+                : m("oauth", "oauth2", "Sign in with Linear", { client_key: "linear", ready: false, needs: ["oauth_client"], who_can: adminWho }),
+            ]
+          : app === "github"
+            ? [
+                m("token", "fields", "Personal access token"),
+                m("oauth", "oauth2", "Sign in with GitHub", { client_key: "github" }),
+                m("github_app", "hook", "GitHub App installation", { audience: "admin", ready: false, needs: ["admin_material"] }),
+              ]
+            : app === "gitlab"
+              ? [m("token", "fields", "Personal access token", { ready: false, needs: ["instance"] }), m("oauth", "oauth2", "Sign in with GitLab", { client_key: "gitlab" })]
+              : [m("token", "fields", app === "aws-keys" ? "Access keys" : "API key")];
+      return json({
+        app_id: app, name: PACKAGES.find((x) => x.id === app)?.name ?? app, available: true, suggested_method: "token", instances: [],
+        values: { callback_url: "https://aurora.example.org/v1/oauth/callback", ...(app === "aws-keys" ? { external_id: "aurora-ext-7f3a9c" } : {}) },
+        can: orgView
+          ? { register_workspace_client: false, register_org_client: true, register_instance: app === "gitlab", set_availability: true, connect_workspace: false, connect_org: true }
+          : { register_workspace_client: true, register_org_client: false, register_instance: false, set_availability: false, connect_workspace: true, connect_org: false },
+        clients: {
+          workspace: orgView ? null : registered.map((c) => ({ id: c.id, client_key: c.client_key, enabled: true, used_by_methods: [{ id: "oauth", label: `Sign in with ${PACKAGES.find((x) => x.id === app)?.name}` }] })),
+          organization: [], instance: { set_up: false },
+        },
+        methods,
+      });
+    }
+    if (/^\/v1\/workspaces\/[^/]+\/oauth-clients$/.test(p)) {
+      if (route.request().method() === "POST") {
+        const body = route.request().postDataJSON() as { package_id: string; client_key: string; fields: Record<string, string> };
+        extraClients.push({
+          id: id(300 + extraClients.length), scope: "workspace", package_id: body.package_id, client_key: body.client_key,
+          fields: { ...body.fields, client_secret: "" }, enabled: true, connection_count: 0, created_at: now, updated_at: now,
+        });
+        return json(extraClients[extraClients.length - 1], 201);
+      }
+      return json({ items: extraClients });
+    }
+    // (P5-UX-13, C-940) The setup guide, with the viewer's values filled in.
+    if (/^\/v1\/apps\/[^/]+\/guide$/.test(p)) {
+      const app = p.split("/")[3]!;
+      return route.fulfill({
+        status: 200, contentType: "text/markdown",
+        body: `1. In ${app}, open the developer settings and create an OAuth application.\n2. Paste \`https://aurora.example.org/v1/oauth/callback\` as the callback URL.`,
+      });
+    }
+    // (P5-UX-9, C-933) Which apps the organization allows: saved values kept across requests.
+    if (/^\/v1\/orgs\/[^/]+\/app-availability$/.test(p)) {
+      if (route.request().method() === "PUT") availability = route.request().postDataJSON() as typeof availability;
+      return json(availability);
     }
     // (P5-UX-4, C-917) The one list of accounts: two apps, a website nobody can use yet and an AI key; the organization's
     // list has an app and an AI key. With `agent_id` the agent's own come first (`given`).
@@ -711,6 +792,9 @@ const TOPIC_ROUTES: RouteEntry[] = [
   { name: "ws-connect-journey", path: "/o/acme/w/main/apps?tab=apps&connect=github" },
   { name: "ws-connect-journey-apps", path: "/o/acme/w/main/apps?tab=accounts&connect=" },
   { name: "ws-connect-journey-agent", path: "/o/acme/w/main/agents/daneel?tab=access&connect=github" },
+  // (P5-UX-9) The per-app setup pages: a workspace owner's (Linear: sign-in needs a client) and an organization's (AWS: external id).
+  { name: "ws-app-setup", path: "/o/acme/w/main/apps/linear" },
+  { name: "org-app-setup", path: "/o/acme/apps/aws-keys" },
   { name: "ws-internet-access", path: "/o/acme/w/main/internet-access" },
   { name: "ws-people", path: "/o/acme/w/main/people" },
   ...tab("/o/acme/w/main/settings", ["general", "api-keys", "audit", "danger"], "ws-settings"),

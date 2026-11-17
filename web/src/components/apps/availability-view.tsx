@@ -1,16 +1,14 @@
 "use client";
 
-import Link from "next/link";
 import { useState } from "react";
 
 import { ErrorState, Loading } from "@/components/states";
 import { Button } from "@/components/ui/button";
-import { CheckboxField, FormActions } from "@/components/ui/form";
+import { Card } from "@/components/ui/card";
+import { FormActions } from "@/components/ui/form";
 import { Notice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
-import { appDisplayName } from "@/lib/api/app-name";
 import { errorMessage } from "@/lib/api/errors";
-import { orgRoutes } from "@/lib/routes";
 import {
   toggleAllow,
   useApps,
@@ -22,9 +20,10 @@ import {
 import { OrgAppsList } from "./org-apps-list";
 
 /**
- * The per-app availability list (which apps are available when the org posture is `restricted`). The posture
- * itself lives on Org › Governance (FIX-130): while it is `open` this page only says so and links there. A save
- * sends the posture as it currently is on the server together with the list.
+ * (P5-UX-9, C-933) Which apps people in the organization can connect, and the list of apps, on one page: the choice
+ * (every app, or only the ones switched on below) above the list, with one Save. A save sends the choice and the list
+ * together (`PUT /v1/orgs/{org}/app-availability`); entries for one workspace, and for apps this page does not list, are
+ * kept as they are.
  */
 export function AvailabilityEditor({
   orgId,
@@ -36,60 +35,76 @@ export function AvailabilityEditor({
   orgId: string;
   orgSlug: string;
   initial: AppAvailability;
-  apps: { app_id: string; name: string }[];
+  apps: Parameters<typeof OrgAppsList>[0]["apps"];
   canEdit: boolean;
 }) {
   const put = usePutAppAvailability(orgId);
-  const live = useAppAvailability(orgId);
-  const posture = live.data?.posture ?? initial.posture;
+  const [posture, setPosture] = useState<"open" | "restricted">(initial.posture === "restricted" ? "restricted" : "open");
   const [allow, setAllow] = useState(initial.allow);
   const [saved, setSaved] = useState(false);
   const orgWide = (id: string) => allow.some((e) => e.app_id === id && !e.workspace_id);
   const known = new Set(apps.map((a) => a.app_id));
+  const restricted = posture === "restricted";
+  const choose = (p: "open" | "restricted") => {
+    setPosture(p);
+    setSaved(false);
+  };
   async function save() {
     setSaved(false);
     try {
-      await put.mutateAsync({ posture: posture === "restricted" ? "restricted" : "open", allow });
+      await put.mutateAsync({ posture, allow });
       setSaved(true);
     } catch {
       // shown below
     }
   }
-  if (posture !== "restricted") {
-    return (
-      <Notice role="status">
-        Every app is available — change in{" "}
-        <Link className="font-medium underline" href={orgRoutes(orgSlug).apps("apps")}>
-          Apps &amp; accounts › Apps
-        </Link>
-        .
-      </Notice>
-    );
-  }
   return (
     <div className="space-y-5">
-      <fieldset className="min-w-0 space-y-3 rounded-card border border-line bg-surface p-4 sm:p-5" disabled={!canEdit}>
-        <legend className="px-1 font-display text-base font-semibold text-ink">Allowed apps (organization-wide)</legend>
-        <p className="text-sm text-ink-2">
-          Only these apps can be connected while the posture is restricted (set in{" "}
-          <Link className="font-medium text-link underline" href={orgRoutes(orgSlug).apps("apps")}>
-            Apps &amp; accounts › Apps
-          </Link>
-          ).
-        </p>
-        {apps.map((a) => (
-          <CheckboxField
-            key={a.app_id}
-            id={`allow-${a.app_id}`}
-            label={appDisplayName(a)}
-            checked={orgWide(a.app_id)}
-            onChange={() => setAllow((cur) => toggleAllow(cur, a.app_id, null))}
-          />
-        ))}
-        {allow.filter((e) => e.workspace_id || !known.has(e.app_id)).length > 0 ? (
-          <p className="text-xs text-muted">Workspace-specific or unknown entries are kept as they are.</p>
-        ) : null}
-      </fieldset>
+      <Card className="space-y-3" id="availability">
+        <fieldset className="min-w-0 space-y-3" disabled={!canEdit}>
+          <legend className="font-display text-base font-semibold text-ink">Which apps can people connect?</legend>
+          <label className="flex items-start gap-2.5 text-sm text-ink">
+            <input
+              type="radio"
+              name="app-posture"
+              className="mt-0.5 size-4 accent-accent"
+              checked={!restricted}
+              onChange={() => choose("open")}
+            />
+            People can connect every app
+          </label>
+          <label className="flex items-start gap-2.5 text-sm text-ink">
+            <input
+              type="radio"
+              name="app-posture"
+              className="mt-0.5 size-4 accent-accent"
+              checked={restricted}
+              onChange={() => choose("restricted")}
+            />
+            People can connect only the apps switched on below
+          </label>
+        </fieldset>
+      </Card>
+      <OrgAppsList
+        orgId={orgId}
+        orgSlug={orgSlug}
+        apps={apps}
+        switches={
+          restricted
+            ? {
+                isOn: (id) => orgWide(id),
+                onToggle: (id) => {
+                  setAllow((cur) => toggleAllow(cur, id, null));
+                  setSaved(false);
+                },
+                disabled: !canEdit,
+              }
+            : undefined
+        }
+      />
+      {restricted && allow.filter((e) => e.workspace_id || !known.has(e.app_id)).length > 0 ? (
+        <p className="text-xs text-muted">Workspace-specific or unknown entries are kept as they are.</p>
+      ) : null}
       {put.error ? (
         <Notice tone="danger" role="alert">
           {errorMessage(put.error)}
@@ -123,11 +138,8 @@ export function AvailabilityView({ orgId, orgSlug, canEdit }: { orgId: string; o
     <div className="max-w-page-narrow">
       <PageHeader
         title="Apps"
-        description="The installed apps. Connect one in a workspace, and choose which can be connected in this organization."
+        description="The installed apps, and which of them people in this organization can connect."
       />
-      <div className="mb-5">
-        <OrgAppsList orgId={orgId} orgSlug={orgSlug} apps={apps.data.items} />
-      </div>
       <AvailabilityEditor orgId={orgId} orgSlug={orgSlug} initial={avail.data} apps={apps.data.items} canEdit={canEdit} />
     </div>
   );

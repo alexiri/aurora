@@ -4,7 +4,6 @@ import { useParams, useRouter } from "next/navigation";
 import type { ReactNode } from "react";
 
 import { AppsTab } from "@/components/apps/apps-tab";
-import { OAuthClientsPanel } from "@/components/apps/oauth-clients-panel";
 import { AccountsPanel } from "@/components/accounts/accounts-panel";
 import { WorkspaceFreeze } from "@/components/freeze/freeze-sections";
 import { WorkspaceInternet } from "@/components/internet/workspace-internet";
@@ -16,7 +15,6 @@ import { KeysTab } from "@/components/settings/keys-tab";
 import { ErrorState, Loading } from "@/components/states";
 import { TopicPage, type TopicTab } from "@/components/topic-page";
 import { PageHeader } from "@/components/ui/page-header";
-import { Section } from "@/components/ui/section";
 import { useResolve, useWorkspace, type Workspace } from "@/lib/api/queries";
 import { orgRoutes, type TABS } from "@/lib/routes";
 import { forbiddenError, whoCanFromContacts } from "@/lib/who-can";
@@ -52,17 +50,8 @@ export function WorkspaceAppsPage() {
           {
             id: "apps",
             label: "Apps",
-            content: (
-              <div className="space-y-8">
-                <AppsTab workspaceId={w.id} orgId={w.org_id} canOwn={canOwn} />
-                {/* Until the per-app setup pages hold them (P5-UX-9), a workspace's OAuth clients are reached from here. */}
-                {canOwn ? (
-                  <Section id="ws-oauth-clients" title="OAuth clients" description="App registrations of this workspace.">
-                    <OAuthClientsPanel scope={{ kind: "workspace", id: w.id }} canOwn orgId={w.org_id} />
-                  </Section>
-                ) : null}
-              </div>
-            ),
+            // (P5-UX-9, C-932) A workspace's OAuth clients are managed on each app's setup page, not here.
+            content: <AppsTab workspaceId={w.id} orgId={w.org_id} canOwn={canOwn} />,
           },
         ];
         return (

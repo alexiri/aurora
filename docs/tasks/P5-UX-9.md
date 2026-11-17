@@ -115,3 +115,47 @@ In the app-setup walkthrough:
 
 Sonnet (`nextjs-developer`). A new page assembled from existing pieces, many cross-links, and two views of
 one component.
+
+## Completion report (worker 27, 2026-11-17)
+
+Commits on `alexiri/p5-apps`: `3a23d352` (OpenAPI/hooks/copy table), `214c7661` (page, links, clients, availability),
+`39447394` (the obsolete Details-dialog e2e test), `830d938b` (merge of master, which carries the regenerated
+`spec_schema.json`).
+
+**Found and fixed (outside the brief's Owns, needed by it).** `GET /v1/apps/{app}/setup` answered a struct named
+`SetupStatus`, the same name as the admin setup wizard's response. utoipa keeps one schema per name, so `openapi.json`
+and `schema.d.ts` typed the app route as the wizard (`placement_saved`, `steps`) and none of C-931's fields existed in
+the web types. The struct is now `AppSetupStatus` (`services/aurora-api/src/domains/apps/{setup,routes}.rs`); OpenAPI
+and `schema.d.ts` regenerated.
+
+**Built.**
+- `lib/apps/setup-copy.ts` (+ `tests/setup-copy.test.ts`): chip per method (Ready / Needs setup / Admin only, by `needs`
+  and the viewer's `can`), one sentence per method, the headline, `clientLabel` ("GitHub — for Sign in with GitHub"), the
+  `can` → actions mapping.
+- `components/apps/app-setup/{app-setup-page,sections}.tsx`, the two `page.tsx` files, `components/apps/app-link.tsx`
+  (`useAppHref`/`AppLink`: workspace page, organization page, or the Administration catalogue entry by the page's level).
+  The workspace view gates on workspace owner (a member reads `WhoCan`); the organization view on `OrgGate` owner/admin.
+  Organization **Connect…** opens the existing choose-a-workspace dialog: the journey's organization mode is P5-UX-11.
+- `AccountsList` gained an optional `appId` (filter, no Add, one-line empty text); the brief says it is used unchanged,
+  this is the minimal additive prop the page needs.
+- OAuth clients: forms and lists say "<app> — for <method>" (key as tooltip), `OAuthClientDialog` for Register on the
+  page (Edit/Remove stay inline in the row), `?package=[&client_key=]` opens the form with the client chosen; Self-hosted
+  tab `?package=` opens its form with the app chosen; app names in the Apps, OAuth clients, Self-hosted and Accounts tabs
+  link (members' account rows stay plain text); the catalogue entry links **OAuth clients for this app**.
+- Organization Apps tab: one switch (radio, in words) + the list with switches + one Save; `apps-posture-panel.tsx`
+  and the Governance Apps tab are deleted.
+- The workspace Apps tab no longer lists OAuth clients; the Details dialog and `AppDetailBody` are gone (the content is
+  "What it can do" on the page).
+
+**Left / not done.** "Self-hosted apps registered for it" is shown for the viewer's organization only (the setup
+status lists those); the guide sits last at full width, not in the aside as on the board (the spec says last).
+
+**Gates (batch, after P5-UX-9).** `cargo fmt --all --check` ok; `bash scripts/fixtures/build.sh` 57/57; `cargo test -p
+aurora-api -- --test-threads=8` (all targets) exit 0; `cargo clippy --workspace --all-targets --all-features -- -D
+warnings` exit 0; `pnpm -C web typecheck`, `lint` (4 pre-existing warnings), full `vitest` exit 0, `build` exit 0, `gen:api`
+no diff; Playwright mocked full run (`--project mocked`) 1049 passed, 4 failed — all four the obsolete "Details shows the
+close icon" test, replaced and re-run (`connect-dialog.spec.ts` 17/17); `e2e/app-setup.spec.ts` 20/20 (both themes, 1280
+and 390 px; the 390 px Save uses `dispatchEvent` because the Next dev indicator covers it); production project 8/8.
+`guards` and `extract-schema.py --check` were red on the branch before merging master (stale `spec_schema.json`, fixed on
+master by `f24c0abf`); both green after the merge. Axe and narrow-route entries `ws-app-setup`, `org-app-setup` are in
+the suites (passed in the full run).

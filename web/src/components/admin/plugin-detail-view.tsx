@@ -182,6 +182,13 @@ export function PluginReview({ plugin }: { plugin: PluginPackage }) {
           <dd className="break-all font-mono text-xs text-ink-2">{plugin.digest}</dd>
           <dt className="text-muted">Apps</dt>
           <dd className="text-ink">{plugin.apps.map((a) => a.name).join(", ") || "None"}</dd>
+          {/* (P5-UX-9, C-933) Administration has no setup page: the catalogue entry leads to the package's OAuth clients. */}
+          <dt className="text-muted">Sign-in</dt>
+          <dd className="text-ink">
+            <Link href={adminRoutes.oauthClients({ package: plugin.package_id })} className="font-medium text-link underline">
+              OAuth clients for this app
+            </Link>
+          </dd>
           {plugin.apps.some((a) => a.library_host) ? (
             <>
               <dt className="text-muted">Skill library</dt>

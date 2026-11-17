@@ -13629,7 +13629,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SetupStatus"
+                  "$ref": "#/components/schemas/AppSetupStatus"
                 }
               }
             }
@@ -35965,6 +35965,79 @@
           }
         }
       },
+      "AppSetupStatus": {
+        "type": "object",
+        "required": [
+          "app_id",
+          "name",
+          "available",
+          "methods",
+          "clients",
+          "instances",
+          "values",
+          "can"
+        ],
+        "properties": {
+          "app_id": {
+            "type": "string"
+          },
+          "available": {
+            "type": "boolean"
+          },
+          "available_who_can": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/WhoCan",
+                "description": "Present when `available` is false: who can allow the app."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "can": {
+            "$ref": "#/components/schemas/SetupCan"
+          },
+          "clients": {
+            "$ref": "#/components/schemas/SetupClients"
+          },
+          "family": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/AppFamily"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "instances": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SetupInstance"
+            }
+          },
+          "methods": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SetupMethod"
+            }
+          },
+          "name": {
+            "type": "string"
+          },
+          "suggested_method": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The first ready person method: recommended, then oauth2, fields, hook; `null` if none."
+          },
+          "values": {
+            "$ref": "#/components/schemas/SetupValues"
+          }
+        }
+      },
       "AppSummary": {
         "type": "object",
         "required": [
@@ -37460,7 +37533,7 @@
       },
       "ConnectPlan": {
         "type": "object",
-        "description": "The journey's view of [`SetupStatus`] (C-955): the same methods and availability, nothing else.",
+        "description": "The journey's view of [`AppSetupStatus`] (C-955): the same methods and availability, nothing else.",
         "required": [
           "app_id",
           "available",

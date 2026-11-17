@@ -7,6 +7,8 @@ import { InstancesView } from "@/components/apps/instances-view";
 import { ApiError } from "@/lib/api/client";
 import { errorMessage, hostConflict, hostConflictMessage, type HostConflict } from "@/lib/api/errors";
 
+vi.mock("next/navigation", () => ({ useParams: () => ({}), useSearchParams: () => new URLSearchParams() }));
+
 const json = (status: number, body: unknown) =>
   new Response(body === null ? null : JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
