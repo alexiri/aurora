@@ -178,7 +178,7 @@ export function AgentPage() {
             </nav>
             <div className="flex min-w-0 flex-col md:flex-row md:items-center md:gap-x-3">
               <h1 className="min-w-0 truncate font-display text-base font-semibold leading-5 text-ink md:text-xl md:leading-7">{agent.name}</h1>
-              <span className="flex items-center gap-2 text-sm text-ink-2">
+              <span className="flex items-center gap-2 whitespace-nowrap text-sm text-ink-2">
                 <span className="hidden font-mono text-muted md:inline">@{agent.handle}</span>
                 {/* The kind and Default badges live in the rail's About part; a BYO agent has no rail. */}
                 {byo ? <Badge>{agent.kind}</Badge> : null}
