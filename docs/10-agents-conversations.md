@@ -976,4 +976,11 @@ counts no tokens; spend limits stay out of scope.
   route's `by_model` aggregate sums these entries per `(provider, endpoint_id, model)`. A turn recorded
   before this batch counts under its top-level `model`. Harness cost estimates (such as the CLI's
   `costUSD`) are dropped: Aurora records no money (D-276(b)).
+- (phase 5, P5-USAGE-1, D-359, C-1000..C-1002) **What the usage route counts**: per workspace, agent,
+  UTC day and model, the four token counters, the number of turns and their time (`finished_at −
+  started_at`, control-plane clock), and sandbox awake time. Tokens and turn time are added to the
+  `usage_daily` ledger at turn end, in the transaction that ends the turn, so they survive conversation
+  retention and deletion; awake time comes from the hourly `runtime_daily` rollup. Only usage that has
+  passed the trust rule is counted, also for a turn that ends without a terminal usage report. Cost is
+  not counted (owner, 2026-11-17).
 - Budgets are out of scope (deferred).
