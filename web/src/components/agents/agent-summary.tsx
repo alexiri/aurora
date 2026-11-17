@@ -1,0 +1,58 @@
+"use client";
+
+import { useMemo } from "react";
+
+import { Loading, ErrorState } from "@/components/states";
+import { useAccounts } from "@/lib/api/accounts";
+import { useEffectiveGovernance } from "@/lib/api/governance";
+import { usePolicy } from "@/lib/api/policy";
+import { agentSummary } from "@/lib/summary/agent";
+import { internetAccessOf, type InternetAccess } from "@/lib/summary/internet";
+
+/**
+ * The workspace's Internet access for the sentences (C-986), or `null` while it is unknown or the viewer cannot read it.
+ * Owners read the workspace's published policy; the limits above come from the effective governance every member reads.
+ */
+export function useWorkspaceInternet(wsId: string, orgId: string, canOwn: boolean): { access: InternetAccess | null; pending: boolean } {
+  const policy = usePolicy({ kind: "workspace", id: wsId }, canOwn);
+  const eff = useEffectiveGovernance(orgId);
+  const access = useMemo(() => {
+    if (!canOwn || !policy.data || !eff.data) return null;
+    const e = eff.data.egress;
+    return internetAccessOf(policy.data.published, e.posture.value === "credentialed_only", e.baseline_allowlist.length + e.org_allowlist.length);
+  }, [canOwn, policy.data, eff.data]);
+  return { access, pending: canOwn && (policy.isPending || eff.isPending) };
+}
+
+/**
+ * One agent's summary of what it can do (`14 §8`, C-986, D-350): the same sentences on Welcome, at the top of the agent's
+ * Access tab and on the workspace Overview. Computed from real state, nothing stored.
+ */
+export function AgentSummary({
+  wsId,
+  orgId,
+  agent,
+  canOwn,
+  className,
+}: {
+  wsId: string;
+  orgId: string;
+  agent: { id: string; name: string };
+  /** Owner of the workspace: reads its Internet access policy. */
+  canOwn: boolean;
+  className?: string;
+}) {
+  const accounts = useAccounts({ kind: "workspace", id: wsId, agentId: agent.id });
+  const internet = useWorkspaceInternet(wsId, orgId, canOwn);
+  const sentences = useMemo(
+    () => (accounts.data ? agentSummary({ agent: agent.name, agentId: agent.id, accounts: accounts.data.items, internet: internet.access }) : []),
+    [accounts.data, agent.id, agent.name, internet.access],
+  );
+  if (accounts.isError) return <ErrorState error={accounts.error} onRetry={() => void accounts.refetch()} />;
+  if (accounts.isPending || internet.pending) return <Loading />;
+  return (
+    <div className={className} data-testid="agent-summary">
+      <p>{sentences.join(" ")}</p>
+    </div>
+  );
+}

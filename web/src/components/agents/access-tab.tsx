@@ -2,6 +2,7 @@
 
 import { AccountsList } from "@/components/accounts/accounts-list";
 
+import { AgentSummary } from "./agent-summary";
 import { ModelReadinessSection } from "./model-readiness";
 
 /**
@@ -31,6 +32,11 @@ export function AccessTab({
 }) {
   return (
     <div className="space-y-8">
+      {/* The agent's summary (C-986): the same sentences as Welcome and the Overview, above the list they come from. */}
+      <section aria-label={`What ${agentName} can do`} className="rounded-card border border-line bg-surface p-4 shadow-card sm:p-5">
+        <h2 className="font-display text-base font-semibold text-ink">What {agentName} can do</h2>
+        <AgentSummary wsId={wsId} orgId={orgId} agent={{ id: agentId, name: agentName }} canOwn={canOwn} className="mt-2 space-y-1 text-sm text-ink-2" />
+      </section>
       {canOwn && hosted ? <ModelReadinessSection agentId={agentId} base={base} /> : null}
       <AccountsList
         scope={{ kind: "workspace", id: wsId }}
