@@ -21,7 +21,7 @@ import { InstancesView } from "@/components/apps/instances-view";
 import { OAuthClientsPanel } from "@/components/apps/oauth-clients-panel";
 import { ConnectorsAdminView } from "@/components/connectors/connectors-admin-view";
 import { TopicPage } from "@/components/topic-page";
-import { EmbeddedPage, PageHeader } from "@/components/ui/page-header";
+import { EmbeddedPage } from "@/components/ui/page-header";
 import { Section } from "@/components/ui/section";
 import type { TABS } from "@/lib/routes";
 
@@ -193,12 +193,7 @@ export function AdminPeoplePage() {
 export function AdminChatPlatformsPage() {
   return (
     <AdminGuard>
-      <div className="max-w-page space-y-4">
-        <PageHeader title="Chat platforms" description="Mattermost and similar: where people can talk to agents." className="mb-2" />
-        <EmbeddedPage>
-          <ConnectorsAdminView />
-        </EmbeddedPage>
-      </div>
+      <ConnectorsAdminView />
     </AdminGuard>
   );
 }

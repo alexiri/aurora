@@ -171,12 +171,7 @@ export function OrgChatPlatformsPage() {
   return (
     <AdminTopic>
       {(org) => (
-        <div className="max-w-page space-y-4">
-          <PageHeader title="Chat platforms" description="Mattermost and similar: where people can talk to agents." className="mb-2" />
-          <EmbeddedPage>
-            <ChannelsView orgId={org.id} />
-          </EmbeddedPage>
-        </div>
+        <ChannelsView orgId={org.id} />
       )}
     </AdminTopic>
   );
