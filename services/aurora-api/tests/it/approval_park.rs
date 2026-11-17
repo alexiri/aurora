@@ -12,14 +12,14 @@ use http::Method;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
-struct World {
-    h: Harness,
-    f: Fx,
-    cookie: String,
-    conv: Uuid,
+pub(crate) struct World {
+    pub(crate) h: Harness,
+    pub(crate) f: Fx,
+    pub(crate) cookie: String,
+    pub(crate) conv: Uuid,
 }
 
-async fn world() -> World {
+pub(crate) async fn world() -> World {
     let h = Harness::new().await;
     let f = fixture(&h).await;
     let approver = h.user("ap@x.io", false).await;
@@ -38,7 +38,7 @@ async fn world() -> World {
 }
 
 /// A `pending` approval of the world's conversation; `parked` rows carry a salt and fingerprint.
-async fn row(w: &World, parked: bool, batch: Option<&str>, title: &str) -> Uuid {
+pub(crate) async fn row(w: &World, parked: bool, batch: Option<&str>, title: &str) -> Uuid {
     let id = Uuid::now_v7();
     sqlx::query(
         "INSERT INTO approvals (id, org_id, workspace_id, agent_id, conversation_id, \
@@ -64,7 +64,7 @@ async fn row(w: &World, parked: bool, batch: Option<&str>, title: &str) -> Uuid 
     id
 }
 
-async fn decide(w: &World, id: Uuid, decision: &str) -> (u16, Value) {
+pub(crate) async fn decide(w: &World, id: Uuid, decision: &str) -> (u16, Value) {
     let (s, _, v) =
         w.h.send(
             Method::POST,
@@ -77,7 +77,7 @@ async fn decide(w: &World, id: Uuid, decision: &str) -> (u16, Value) {
 }
 
 /// `(resume_state, resume_expires_at is set, resume_turn_id is set)`.
-async fn grant(w: &World, id: Uuid) -> (Option<String>, bool, bool) {
+pub(crate) async fn grant(w: &World, id: Uuid) -> (Option<String>, bool, bool) {
     sqlx::query_as(
         "SELECT resume_state, resume_expires_at IS NOT NULL, resume_turn_id IS NOT NULL \
          FROM approvals WHERE id = $1",
@@ -89,7 +89,7 @@ async fn grant(w: &World, id: Uuid) -> (Option<String>, bool, bool) {
 }
 
 /// The system follow-ups of the conversation: `(text, door)`.
-async fn followups(w: &World) -> Vec<(String, Value)> {
+pub(crate) async fn followups(w: &World) -> Vec<(String, Value)> {
     sqlx::query_as(
         "SELECT text, door FROM turns WHERE conversation_id = $1 AND speaker_kind = 'system' \
          ORDER BY created_at, id",

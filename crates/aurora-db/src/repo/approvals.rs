@@ -456,45 +456,67 @@ pub enum Scope {
     Agent(Uuid),
 }
 
+/// (P4-011B-2, C-825/C-826) An approval ended by a revocation hook: a `pending` row that became
+/// `abandoned` (`parked` tells whether it was parked: only those get a transcript notice) or a
+/// `ready` grant that became `revoked`.
+#[derive(Debug, Clone)]
+pub struct Ended {
+    pub id: Uuid,
+    pub workspace_id: Uuid,
+    pub conversation_id: Option<Uuid>,
+    pub parked: bool,
+    /// `true`: a `ready` grant -> `revoked`; `false`: a `pending` row -> `abandoned`.
+    pub grant_revoked: bool,
+}
+
+pub(crate) type EndedRow = (Uuid, Uuid, Option<Uuid>, bool);
+
+pub(crate) fn ended(rows: Vec<EndedRow>, grant_revoked: bool) -> Vec<Ended> {
+    rows.into_iter()
+        .map(|(id, workspace_id, conversation_id, parked)| Ended {
+            id,
+            workspace_id,
+            conversation_id,
+            parked,
+            grant_revoked,
+        })
+        .collect()
+}
+
 /// (P4-011B-2, C-826) Agent or conversation deletion and a `harness_session_epoch` bump:
 /// `pending` **parked** rows -> `abandoned`, `ready` grants -> `revoked`, in the caller's
-/// transaction. Held rows are untouched (their gateway ends them). Returns the abandoned and the
-/// revoked rows as `(id, workspace_id, conversation_id)`.
-#[allow(clippy::type_complexity)]
+/// transaction. Held rows are untouched (their gateway ends them). Returns the ended rows; the
+/// caller writes the notices and counts the metric (`approvals::resume::end_parked`).
 pub async fn end_parked_of(
     tx: &mut sqlx::PgConnection,
     scope: Scope,
-) -> Result<
-    (
-        Vec<(Uuid, Uuid, Option<Uuid>)>,
-        Vec<(Uuid, Uuid, Option<Uuid>)>,
-    ),
-    DbError,
-> {
+) -> Result<Vec<Ended>, DbError> {
     let (col, id) = match scope {
         Scope::Conversation(c) => ("conversation_id", c),
         Scope::Agent(a) => ("agent_id", a),
     };
-    let abandoned: Vec<(Uuid, Uuid, Option<Uuid>)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+    let abandoned: Vec<EndedRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "UPDATE approvals SET status = 'abandoned', decided_at = now(), resolved_at = now(), \
          updated_at = now() WHERE {col} = $1 AND status = 'pending' AND parked \
-         RETURNING id, workspace_id, conversation_id"
+         RETURNING id, workspace_id, conversation_id, parked"
     )))
     .bind(id)
     .fetch_all(&mut *tx)
     .await?;
-    let revoked: Vec<(Uuid, Uuid, Option<Uuid>)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+    let revoked: Vec<EndedRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "UPDATE approvals SET resume_state = 'revoked', resolved_at = now(), updated_at = now() \
          WHERE {col} = $1 AND resume_state = 'ready' \
-         RETURNING id, workspace_id, conversation_id"
+         RETURNING id, workspace_id, conversation_id, parked"
     )))
     .bind(id)
     .fetch_all(&mut *tx)
     .await?;
-    for (i, ws, _) in abandoned.iter().chain(revoked.iter()) {
-        notify_tx(&mut *tx, *i, *ws, "abandoned").await?;
+    let mut all = ended(abandoned, false);
+    all.extend(ended(revoked, true));
+    for e in &all {
+        notify_tx(&mut *tx, e.id, e.workspace_id, "abandoned").await?;
     }
-    Ok((abandoned, revoked))
+    Ok(all)
 }
 
 /// (P4-011B-2, C-828) Ready grants past `resume_expires_at` -> `resume_state = 'expired'`.
@@ -566,28 +588,31 @@ async fn revoke_ready_where(
     tx: &mut sqlx::PgConnection,
     pred: &str,
     binds: RevokeBind<'_>,
-) -> Result<(), DbError> {
+) -> Result<Vec<Ended>, DbError> {
     let sql = format!(
         "UPDATE approvals SET resume_state = 'revoked', resolved_at = now(), updated_at = now() \
-         WHERE resume_state = 'ready' AND {pred} RETURNING id, workspace_id"
+         WHERE resume_state = 'ready' AND {pred} RETURNING id, workspace_id, conversation_id, parked"
     );
-    let q = sqlx::query_as::<_, (Uuid, Uuid)>(sqlx::AssertSqlSafe(sql));
+    let q = sqlx::query_as::<_, EndedRow>(sqlx::AssertSqlSafe(sql));
     let rows = match binds {
         RevokeBind::Uuids(a, b) => q.bind(a).bind(b).fetch_all(&mut *tx).await?,
         RevokeBind::Text(t) => q.bind(t).fetch_all(&mut *tx).await?,
     };
-    for (id, ws) in &rows {
-        notify_tx(&mut *tx, *id, *ws, "abandoned").await?;
+    let rows = ended(rows, true);
+    for e in &rows {
+        notify_tx(&mut *tx, e.id, e.workspace_id, "abandoned").await?;
     }
-    Ok(())
+    Ok(rows)
 }
 
 /// `pending` approvals depending on `dep` -> `abandoned`, notifying the waiting gateways.
-/// Runs inside the caller's transaction. Returns `(id, workspace_id)`.
+/// Runs inside the caller's transaction. Returns every row ended (the `pending` ones now
+/// `abandoned` and the `ready` grants now `revoked`); the caller writes the notices for the
+/// parked ones (`approvals::resume::notify_ended`).
 pub async fn abandon_pending_depending_on(
     tx: &mut sqlx::PgConnection,
     dep: Dependency<'_>,
-) -> Result<Vec<(Uuid, Uuid)>, DbError> {
+) -> Result<Vec<Ended>, DbError> {
     // The predicate of the dependency, with its binds as `($1, $2)` (`$2` only for a connection).
     let (pred, b1, b2): (&str, Option<Uuid>, Option<Uuid>) = match dep {
         Dependency::Connection {
@@ -606,35 +631,41 @@ pub async fn abandon_pending_depending_on(
         // `app_id` is text, not a uuid: handled apart below.
         Dependency::App { .. } => ("", None, None),
     };
-    let rows: Vec<(Uuid, Uuid)> = if let Dependency::App { app_id } = dep {
+    let (revoked, rows): (Vec<Ended>, Vec<EndedRow>) = if let Dependency::App { app_id } = dep {
         let pred = "connection_id IN (SELECT id FROM app_connections WHERE app_id = $1)";
         // (P4-011B-2, C-826) The `ready` grants that depend on the same thing are revoked in
         // the same transaction (they are not `pending`, so this runs first and apart).
-        revoke_ready_where(&mut *tx, pred, RevokeBind::Text(app_id)).await?;
-        sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        let revoked = revoke_ready_where(&mut *tx, pred, RevokeBind::Text(app_id)).await?;
+        let rows = sqlx::query_as(sqlx::AssertSqlSafe(format!(
             "UPDATE approvals SET status = 'abandoned', decided_at = now(), resolved_at = now(), \
-             updated_at = now() WHERE status = 'pending' AND {pred} RETURNING id, workspace_id"
+             updated_at = now() WHERE status = 'pending' AND {pred} \
+             RETURNING id, workspace_id, conversation_id, parked"
         )))
         .bind(app_id)
         .fetch_all(&mut *tx)
-        .await?
+        .await?;
+        (revoked, rows)
     } else {
-        revoke_ready_where(&mut *tx, pred, RevokeBind::Uuids(b1, b2)).await?;
-        sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        let revoked = revoke_ready_where(&mut *tx, pred, RevokeBind::Uuids(b1, b2)).await?;
+        let rows = sqlx::query_as(sqlx::AssertSqlSafe(format!(
             "UPDATE approvals SET status = 'abandoned', decided_at = now(), resolved_at = now(), \
-             updated_at = now() WHERE status = 'pending' AND {pred} RETURNING id, workspace_id"
+             updated_at = now() WHERE status = 'pending' AND {pred} \
+             RETURNING id, workspace_id, conversation_id, parked"
         )))
         .bind(b1)
         .bind(b2)
         .fetch_all(&mut *tx)
-        .await?
+        .await?;
+        (revoked, rows)
     };
-    for (id, ws) in &rows {
+    let mut all = ended(rows, false);
+    for e in &all {
         // The event follows the status (docs/05 `aurora_approval`): `abandoned`, as on the
         // freeze path (FIX-122).
-        notify_tx(&mut *tx, *id, *ws, "abandoned").await?;
+        notify_tx(&mut *tx, e.id, e.workspace_id, "abandoned").await?;
     }
-    Ok(rows)
+    all.extend(revoked);
+    Ok(all)
 }
 
 /// `pending` past `deadline + grace` -> `expired`; a **parked** approval (nobody holds it, so no

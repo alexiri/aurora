@@ -427,30 +427,32 @@ pub async fn agents_in(
 }
 
 /// Pending gateway approvals of `agents` -> `abandoned` (they never revive). Returns
-/// `(approval, workspace)`; the caller notifies waiters.
+/// the rows ended (the caller notifies waiters and writes the notices for the parked ones).
 pub async fn abandon_pending_approvals(
     conn: &mut PgConnection,
     agents: &[Uuid],
-) -> Result<Vec<(Uuid, Uuid)>, DbError> {
-    let mut rows: Vec<(Uuid, Uuid)> = sqlx::query_as(
+) -> Result<Vec<super::approvals::Ended>, DbError> {
+    let rows: Vec<super::approvals::EndedRow> = sqlx::query_as(
         "UPDATE approvals SET status = 'abandoned', decided_at = now(), resolved_at = now(),
              updated_at = now()
-         WHERE status = 'pending' AND agent_id = ANY($1) RETURNING id, workspace_id",
+         WHERE status = 'pending' AND agent_id = ANY($1)
+         RETURNING id, workspace_id, conversation_id, parked",
     )
     .bind(agents)
     .fetch_all(&mut *conn)
     .await?;
+    let mut rows = super::approvals::ended(rows, false);
     // (P4-011B-2, C-826) The `ready` grants of the agents are revoked in the same transaction and
     // never revive on unfreeze; they are notified like the abandoned rows.
-    rows.extend(
-        sqlx::query_as::<_, (Uuid, Uuid)>(
-            "UPDATE approvals SET resume_state = 'revoked', resolved_at = now(), updated_at = now()
-             WHERE resume_state = 'ready' AND agent_id = ANY($1) RETURNING id, workspace_id",
-        )
-        .bind(agents)
-        .fetch_all(&mut *conn)
-        .await?,
-    );
+    let revoked: Vec<super::approvals::EndedRow> = sqlx::query_as(
+        "UPDATE approvals SET resume_state = 'revoked', resolved_at = now(), updated_at = now()
+         WHERE resume_state = 'ready' AND agent_id = ANY($1)
+         RETURNING id, workspace_id, conversation_id, parked",
+    )
+    .bind(agents)
+    .fetch_all(&mut *conn)
+    .await?;
+    rows.extend(super::approvals::ended(revoked, true));
     Ok(rows)
 }
 

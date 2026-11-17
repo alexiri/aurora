@@ -182,7 +182,7 @@ pub async fn act(
             // (FIX-084) A request held under the `full` grant that was just converted must not be
             // released on the strength of that approval.
             for c in &done.converted {
-                aurora_db::repo::approvals::abandon_pending_depending_on(
+                let ended = aurora_db::repo::approvals::abandon_pending_depending_on(
                     &mut tx,
                     aurora_db::repo::approvals::Dependency::Connection {
                         connection_id: c.connection_id,
@@ -190,6 +190,8 @@ pub async fn act(
                     },
                 )
                 .await?;
+                crate::domains::approvals::resume::notify_ended(&mut tx, &ended, "access_removed")
+                    .await?;
             }
             // (P4-GRANTS, D-123) One security-critical audit row per converted grant, committed
             // with the activation (SEC-67).

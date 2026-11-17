@@ -590,6 +590,14 @@ pub async fn patch(
     )
     .await?;
     if let Some(old) = &switch_from {
+        // (C-826) Ended here, not inside the repository call, so that the notices and the metric
+        // are written (the repository's own call then finds nothing).
+        crate::domains::approvals::resume::end_parked(
+            &mut tx,
+            aurora_db::repo::approvals::Scope::Agent(id),
+            "session_reset",
+        )
+        .await?;
         aurora_db::repo::lifecycle::switch_harness_sessions(&mut tx, id, old).await?;
         hosted::request_restart(&mut tx, id).await?;
         crate::domains::conversations::service::notify_work(&mut tx).await?;
@@ -625,9 +633,10 @@ pub async fn delete(state: &AppState, id: Uuid) -> Result<(), ApiError> {
         // those first, or they stay in the policy as rules of a source that no longer exists.
         aurora_db::repo::derived_rules::delete_for_agent_grants(&mut *tx, id).await?;
         // (P4-011B-2, C-826) Parked approvals and `ready` grants of the agent end with it.
-        aurora_db::repo::approvals::end_parked_of(
+        crate::domains::approvals::resume::end_parked(
             &mut tx,
             aurora_db::repo::approvals::Scope::Agent(id),
+            "access_removed",
         )
         .await?;
         agents::delete(&mut *tx, id).await?;

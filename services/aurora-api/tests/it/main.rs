@@ -13,6 +13,7 @@ mod app_instances;
 mod app_setup;
 mod approval_notify;
 mod approval_park;
+mod approval_park_revoke;
 mod approval_stall;
 mod approvals;
 mod apps_connections;

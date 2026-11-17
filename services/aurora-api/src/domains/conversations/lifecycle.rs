@@ -103,6 +103,14 @@ pub async fn delete(state: &AppState, c: &Caller, id: Uuid) -> Result<(), ApiErr
             "A turn is still running in this conversation; abort it first.",
         ));
     }
+    // (C-826) Counted and ended here; the transcript goes with the conversation, so no notice
+    // remains to be read.
+    crate::domains::approvals::resume::end_parked(
+        &mut tx,
+        aurora_db::repo::approvals::Scope::Conversation(id),
+        "session_reset",
+    )
+    .await?;
     let gone = lifecycle::delete_conversation(&mut tx, id).await?;
     let ev = AuditEvent::new(
         AuditActor::from_caller(c),
@@ -247,6 +255,14 @@ pub async fn redact(
     }
     let mut session_reset = false;
     if req.reset_session {
+        // (C-826) Ended here so that the notices and the metric are written; the repository's own
+        // call inside `reset_session` then finds nothing.
+        crate::domains::approvals::resume::end_parked(
+            &mut tx,
+            aurora_db::repo::approvals::Scope::Conversation(conversation),
+            "session_reset",
+        )
+        .await?;
         let (agent, old) = lifecycle::reset_session(&mut tx, conversation).await?;
         if let Some(r) = old.as_deref().filter(|r| !r.is_empty()) {
             lifecycle::enqueue_purge(&mut tx, agent, Some(conversation), r).await?;
@@ -489,6 +505,12 @@ async fn sweep_batch(pool: &PgPool, org: Uuid, days: i64, limit: i64) -> Result<
         let Some(row) = convs::get(&mut *tx, id).await? else {
             continue;
         };
+        crate::domains::approvals::resume::end_parked(
+            &mut tx,
+            aurora_db::repo::approvals::Scope::Conversation(id),
+            "session_reset",
+        )
+        .await?;
         let g = lifecycle::delete_conversation(&mut tx, id).await?;
         agg.turns += g.turns;
         agg.events += g.events;

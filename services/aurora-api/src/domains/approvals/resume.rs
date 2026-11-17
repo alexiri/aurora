@@ -9,7 +9,7 @@
 use crate::app::AppState;
 use crate::domains::conversations::service::{self as conv, NewMessage};
 use aurora_core::{ApiError, limits, sanitize};
-use aurora_db::repo::approvals::ApprovalRow;
+use aurora_db::repo::approvals::{ApprovalRow, Ended};
 use aurora_db::repo::turns::Created;
 use aurora_db::repo::{approvals, conversations as convs, freeze};
 use serde_json::json;
@@ -133,6 +133,66 @@ pub fn revoked_text(cause: &str) -> String {
     format!("An approved request will not be accepted any more: {why}. A new approval is needed.")
 }
 
+/// Notice text of `approval_abandoned` (a pending parked approval ended by C-826) for a cause.
+pub fn abandoned_text(cause: &str) -> String {
+    let why = match cause {
+        "frozen" => "the agent was paused by an administrator",
+        "session_reset" => "the agent's session was reset",
+        _ => "the access it would use was removed",
+    };
+    format!(
+        "An approval request was withdrawn: {why}. The agent will ask again if it still needs it."
+    )
+}
+
+/// (C-825, C-826) After a revocation hook, in the same transaction: count each `ready` grant
+/// revoked (`aurora_approvals_grants_revoked_total{cause}`) and write, where a transcript
+/// remains, `approval_grant_revoked` for a revoked grant and `approval_abandoned` for a parked
+/// pending row that was abandoned. Held (not parked) rows get nothing: their gateway answers them.
+/// `cause` is `frozen`, `access_removed` or `session_reset`.
+pub async fn notify_ended(
+    tx: &mut PgConnection,
+    ended: &[Ended],
+    cause: &'static str,
+) -> Result<(), ApiError> {
+    for e in ended {
+        if e.grant_revoked {
+            metrics::counter!("aurora_approvals_grants_revoked_total", "cause" => cause)
+                .increment(1);
+            notice(
+                tx,
+                e.conversation_id,
+                e.id,
+                "approval_grant_revoked",
+                &revoked_text(cause),
+            )
+            .await?;
+        } else if e.parked {
+            notice(
+                tx,
+                e.conversation_id,
+                e.id,
+                "approval_abandoned",
+                &abandoned_text(cause),
+            )
+            .await?;
+        }
+    }
+    Ok(())
+}
+
+/// (C-826) Agent deletion, conversation deletion and a session-epoch bump: ends the parked rows
+/// and `ready` grants of `scope` and reports them (`notify_ended`). Idempotent: the repository
+/// functions that bump the epoch call `end_parked_of` themselves and then find nothing.
+pub async fn end_parked(
+    tx: &mut PgConnection,
+    scope: approvals::Scope,
+    cause: &'static str,
+) -> Result<(), ApiError> {
+    let ended = approvals::end_parked_of(&mut *tx, scope).await?;
+    notify_ended(tx, &ended, cause).await
+}
+
 /// After the decision statement, in the same transaction (C-823/C-824): for the **parked** rows
 /// among `rows` (already decided; `approve` tells which way), write one follow-up per
 /// conversation and set `resume_turn_id`; a frozen agent or a conversation that is gone gets no
@@ -162,7 +222,9 @@ pub async fn after_decide(
         };
         let Some(c) = conversation else {
             if approve {
-                approvals::revoke_ready(tx, &ids).await?;
+                let n = approvals::revoke_ready(tx, &ids).await?.len();
+                metrics::counter!("aurora_approvals_grants_revoked_total", "cause" => "access_removed")
+                    .increment(n as u64);
             }
             continue;
         };
@@ -171,7 +233,18 @@ pub async fn after_decide(
             .is_some()
         {
             if approve {
-                approvals::revoke_ready(tx, &ids).await?;
+                let revoked = approvals::revoke_ready(tx, &ids)
+                    .await?
+                    .into_iter()
+                    .map(|(id, workspace_id, conversation_id)| Ended {
+                        id,
+                        workspace_id,
+                        conversation_id,
+                        parked: true,
+                        grant_revoked: true,
+                    })
+                    .collect::<Vec<_>>();
+                notify_ended(tx, &revoked, "frozen").await?;
             }
             continue;
         }

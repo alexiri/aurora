@@ -7,6 +7,7 @@ use super::dto::{
 use super::levels;
 use crate::app::AppState;
 use crate::audit::{self, AuditActor, AuditEvent, Outcome};
+use crate::domains::approvals::resume;
 use crate::domains::apps::service as apps;
 use crate::http::auth::Caller;
 use aurora_core::ApiError;
@@ -477,11 +478,12 @@ pub async fn revoke_secret(
         .ok_or_else(|| ApiError::not_found("Grant not found."))?;
     derived_rules::delete_for_source(&mut *tx, "grant", id).await?;
     // (FIX-084) Held requests of this agent that would use a secret end with the grant.
-    approvals::abandon_pending_depending_on(
+    let ended = approvals::abandon_pending_depending_on(
         &mut tx,
         approvals::Dependency::AgentSecrets { agent_id: agent.id },
     )
     .await?;
+    resume::notify_ended(&mut tx, &ended, "access_removed").await?;
     credentials::notify_gateway_invalidate(&mut *tx, "agent", agent.id).await?;
     let ev = event(
         caller,
@@ -956,7 +958,7 @@ async fn write_connection_grant(
     {
         // Held requests of this agent that would use the connection were approved or are waiting
         // under the wider grant; they do not survive its narrowing.
-        approvals::abandon_pending_depending_on(
+        let ended = approvals::abandon_pending_depending_on(
             tx,
             approvals::Dependency::Connection {
                 connection_id: conn.id,
@@ -964,6 +966,7 @@ async fn write_connection_grant(
             },
         )
         .await?;
+        resume::notify_ended(tx, &ended, "access_removed").await?;
     }
     let grant = ConnectionGrant::from(g).restricted(restrictions);
     if !created {
@@ -1048,7 +1051,7 @@ pub async fn revoke_connection(
         sync_connection_access(&mut tx, conn.id, &conn.app_id, &conn.access).await?;
     }
     // (FIX-084) Held requests of this agent that would use the connection end with the grant.
-    approvals::abandon_pending_depending_on(
+    let ended = approvals::abandon_pending_depending_on(
         &mut tx,
         approvals::Dependency::Connection {
             connection_id,
@@ -1056,6 +1059,7 @@ pub async fn revoke_connection(
         },
     )
     .await?;
+    resume::notify_ended(&mut tx, &ended, "access_removed").await?;
     credentials::notify_gateway_invalidate(&mut *tx, "agent", agent.id).await?;
     let ev = event(
         caller,

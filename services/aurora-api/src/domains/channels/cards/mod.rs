@@ -336,10 +336,34 @@ pub async fn settle_card(
     caps: &CapabilitySet,
     summary: &str,
 ) -> Result<bool, ApiError> {
-    use aurora_channels::capability::SettleMode;
     if card.state != "posted" || !repo::claim_settle(&mut *conn, card.id).await? {
         return Ok(false);
     }
+    send_settle(conn, card, caps, summary, &format!("settle:{}", card.id)).await?;
+    Ok(true)
+}
+
+/// (C-825) Edit a **settled** card of a parked approval once more when its grant ended after the
+/// settle ("approval window ended", "revoked"). Exactly once by the op's dedupe key.
+pub async fn resettle_card(
+    conn: &mut PgConnection,
+    card: &CardRow,
+    caps: &CapabilitySet,
+    summary: &str,
+) -> Result<(), ApiError> {
+    send_settle(conn, card, caps, summary, &format!("resettle:{}", card.id)).await
+}
+
+/// Enqueue the platform op that shows `summary` on the card: an in-place edit where the platform
+/// supports it, else a short post in the thread.
+async fn send_settle(
+    conn: &mut PgConnection,
+    card: &CardRow,
+    caps: &CapabilitySet,
+    summary: &str,
+    dedupe: &str,
+) -> Result<(), ApiError> {
+    use aurora_channels::capability::SettleMode;
     let sender = match ops::get(&mut *conn, card.post_op_id).await? {
         Some(op) => op
             .payload
@@ -352,7 +376,6 @@ pub async fn settle_card(
     let edit = caps.settle_mode() == SettleMode::EditInPlace
         && !card.space_ref.starts_with(DM_PREFIX)
         && card.message_ref.is_some();
-    let dedupe = format!("settle:{}", card.id);
     let op_id = Uuid::now_v7();
     if let (true, Some(message_ref)) = (edit, card.message_ref.as_deref()) {
         let content = Content::card(Card {
@@ -370,7 +393,7 @@ pub async fn settle_card(
             "message.update",
             op_id,
             &payload,
-            &dedupe,
+            dedupe,
         )
         .await?;
     } else {
@@ -397,9 +420,9 @@ pub async fn settle_card(
             "message.post",
             op_id,
             &payload,
-            &dedupe,
+            dedupe,
         )
         .await?;
     }
-    Ok(true)
+    Ok(())
 }

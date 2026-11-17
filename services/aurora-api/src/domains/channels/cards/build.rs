@@ -40,13 +40,30 @@ fn decide_buttons(
     ])
 }
 
+/// The parked sentence of `13 §5.6`; the window is rounded up to whole minutes.
+pub fn parked_sentence(resume_window_secs: u64) -> String {
+    format!(
+        "The agent has stopped waiting and will resume when this is approved (valid for {} min after approval).",
+        resume_window_secs.div_ceil(60).max(1)
+    )
+}
+
 /// Gateway approval card: header, summary title (and fields in a 1:1 conversation), context,
 /// Approve/Deny and, for batches with more than one approval, Approve all / Deny all.
 ///
 /// D-178 (Q-R5-9): in a **shared** space (`shared`: every member of the channel sees the card, not
 /// only people who may use the agent) the card carries the title, agent, rule and expiry only. The
 /// request's details (method, host, path, body keys) are on the dashboard page the card links to.
-pub fn approval(m: &Minter<'_>, row: &ApprovalRow, shared: bool) -> Result<Card, ApiError> {
+///
+/// (P4-011B-2, C-825) A **parked** approval's card adds the sentence of `13 §5.6` (`resume_window_secs`
+/// is the instance's `approvals.park.resume_window_secs`); it carries no request detail, so D-192
+/// is unchanged.
+pub fn approval(
+    m: &Minter<'_>,
+    row: &ApprovalRow,
+    shared: bool,
+    resume_window_secs: u64,
+) -> Result<Card, ApiError> {
     let title = row
         .summary
         .get("title")
@@ -86,6 +103,9 @@ pub fn approval(m: &Minter<'_>, row: &ApprovalRow, shared: bool) -> Result<Card,
     // Phase 2, RFE-012: who may decide.
     ctx.push_str(" · Needs an approver");
     blocks.push(Block::context(&ctx));
+    if row.parked {
+        blocks.push(Block::text(&parked_sentence(resume_window_secs)));
+    }
     let mut items = decide_buttons(
         m,
         row.id,
