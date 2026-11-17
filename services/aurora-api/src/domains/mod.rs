@@ -57,5 +57,6 @@ pub mod telemetry;
 pub mod tenancy;
 pub mod terminal;
 pub mod tools;
+pub mod usage;
 pub mod user_tokens;
 pub mod webhooks;

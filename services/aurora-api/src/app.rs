@@ -625,6 +625,7 @@ pub fn v1_router() -> OpenApiRouter<AppState> {
         .merge(domains::freeze::router())
         .merge(domains::approvals::router())
         .merge(domains::activity::router())
+        .merge(domains::usage::router())
         .merge(domains::secrets::router())
         .merge(domains::grants::router())
         .merge(domains::policy::router())
