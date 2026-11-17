@@ -36,6 +36,8 @@ pub const SECURITY_CRITICAL_ACTIONS: &[&str] = &[
     "app_instance.update",
     "cli_login.approve",
     "cli_login.consume",
+    // (P4-011B-3, C-833) the instance's Web Push signing key rotated (CLI)
+    "push.vapid_rotate",
     "connection.create",
     "connection.delete",
     "connection.disable",
