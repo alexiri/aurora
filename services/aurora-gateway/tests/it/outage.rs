@@ -1452,6 +1452,7 @@ fn log_row(w: &World, n: usize) -> RequestLogRow {
         speaker_user_id: None,
         approval_id: None,
         resumed: false,
+        llm_model: None,
     }
 }
 

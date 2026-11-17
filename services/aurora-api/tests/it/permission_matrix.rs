@@ -662,6 +662,8 @@ const ROWS: &[Row] = &[
     r("PUT", "/v1/orgs/{org}/app-availability", G::Admin, false),
     r("GET", "/v1/orgs/{org}/audit", G::Admin, false),
     r("GET", "/v1/orgs/{org}/connections", G::OrgCred, false),
+    // (P5-UX-4, C-917) the organization's accounts list: owners and admins.
+    r("GET", "/v1/orgs/{org}/accounts", G::Admin, false),
     r("GET", "/v1/orgs/{org}/governance", G::Admin, false),
     r("PUT", "/v1/orgs/{org}/governance", G::Admin, false),
     r("GET", "/v1/orgs/{org}/invitations", G::Admin, false),
@@ -735,6 +737,8 @@ const ROWS: &[Row] = &[
     r("GET", "/v1/workspaces/{ws}/approvals", G::WsApprove, false),
     r("GET", "/v1/workspaces/{ws}/audit", G::WsOwn, false),
     r("GET", "/v1/workspaces/{ws}/connections", G::WsOwn, false),
+    // (P5-UX-4, C-917) the workspace's accounts list: every member sees it.
+    r("GET", "/v1/workspaces/{ws}/accounts", G::WsUse, false),
     r("GET", "/v1/workspaces/{ws}/oauth-clients", G::WsOwn, false),
     r("POST", "/v1/workspaces/{ws}/oauth-clients", G::WsOwn, false),
     r("GET", "/v1/workspaces/{ws}/policy", G::WsOwn, false),

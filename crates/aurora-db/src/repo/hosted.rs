@@ -1074,6 +1074,64 @@ pub async fn model_prefs(
     .await?)
 }
 
+/// (P5-MODELS-1, C-876) The agent's `model_roles` and `subagent_model`.
+pub async fn model_role_prefs(
+    conn: &mut PgConnection,
+    agent: Uuid,
+) -> Result<(Option<serde_json::Value>, String), DbError> {
+    Ok(
+        sqlx::query_as("SELECT model_roles, subagent_model FROM agents WHERE id = $1")
+            .bind(agent)
+            .fetch_one(conn)
+            .await?,
+    )
+}
+
+/// (P5-MODELS-1, `08 §Model roles` drop rule) Replace the agent's stored roles (null clears). This does not
+/// touch `updated_at`: the drop is the platform's, not an edit.
+pub async fn set_model_roles(
+    conn: &mut PgConnection,
+    agent: Uuid,
+    roles: Option<&serde_json::Value>,
+) -> Result<(), DbError> {
+    sqlx::query("UPDATE agents SET model_roles = $2 WHERE id = $1")
+        .bind(agent)
+        .bind(roles)
+        .execute(conn)
+        .await?;
+    Ok(())
+}
+
+/// (P5-MODELS-2, D-304) Records what the dispatcher chose for the turn: `{ provider, endpoint_id, model,
+/// roles? }`. A re-dispatch overwrites it.
+pub async fn set_model_basis(
+    conn: &mut PgConnection,
+    turn: Uuid,
+    basis: &serde_json::Value,
+) -> Result<(), DbError> {
+    sqlx::query("UPDATE turns SET model_basis = $2 WHERE id = $1 AND role = 'turn'")
+        .bind(turn)
+        .bind(basis)
+        .execute(conn)
+        .await?;
+    Ok(())
+}
+
+/// The turn's agent's organization and its recorded model basis (`None` for a turn dispatched before it was
+/// recorded, or never).
+pub async fn model_basis(
+    conn: &mut PgConnection,
+    turn: Uuid,
+) -> Result<Option<(Uuid, Option<serde_json::Value>)>, DbError> {
+    Ok(sqlx::query_as(
+        "SELECT a.org_id, t.model_basis FROM turns t JOIN agents a ON a.id = t.agent_id
+         WHERE t.id = $1",
+    )
+    .bind(turn)
+    .fetch_optional(conn)
+    .await?)
+}
+
 /// Queued turns of an agent as `(turn id, conversation id)`.
 pub async fn queued_turns_of_agent(
     conn: &mut PgConnection,

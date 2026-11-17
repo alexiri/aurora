@@ -90,6 +90,193 @@ pub fn access_for_grant(grant: &PutConnectionGrant, tools: &[Tool]) -> &'static 
     }
 }
 
+impl Level {
+    /// Order of the three choices: read < ask < act.
+    #[must_use]
+    pub fn rank(self) -> u8 {
+        match self {
+            Self::Read => 0,
+            Self::Ask => 1,
+            Self::Act => 2,
+        }
+    }
+
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Read => "read",
+            Self::Ask => "ask",
+            Self::Act => "act",
+        }
+    }
+}
+
+/// The limit of an organization's account, until P5-UX-11 stores it: derived from the
+/// connection's `access` (`read` → read, `write` → act).
+#[must_use]
+pub fn limit_from_access(access: &str) -> Level {
+    if access == "read" {
+        Level::Read
+    } else {
+        Level::Act
+    }
+}
+
+/// The choices that exist for an app: none when it has no tool that changes anything, no `act`
+/// for a `custom_only` app (C-410), and nothing above the account's `limit`.
+#[must_use]
+pub fn levels_for(tools: &[Tool], custom_only: bool, limit: Option<Level>) -> Vec<Level> {
+    if !tools.iter().any(|t| !is_read(t)) {
+        return Vec::new();
+    }
+    [Level::Read, Level::Ask, Level::Act]
+        .into_iter()
+        .filter(|l| !(custom_only && *l == Level::Act))
+        .filter(|l| limit.is_none_or(|m| l.rank() <= m.rank()))
+        .collect()
+}
+
+/// Whether a grant allows what `limit` does not (C-980, SEC-131): `full` above `act`; a write
+/// under `read`; a write allowed without asking under `ask`. Custom choices are checked tool by
+/// tool, so a hand-built tool list cannot get past the limit.
+#[must_use]
+pub fn exceeds_limit(
+    limit: Level,
+    full: bool,
+    allow: &[String],
+    ask: &[String],
+    tools: &[Tool],
+) -> bool {
+    let is_write = |id: &String| tools.iter().any(|t| &t.id == id && !is_read(t));
+    match limit {
+        Level::Act => false,
+        _ if full => true,
+        Level::Read => allow.iter().chain(ask).any(is_write),
+        Level::Ask => allow.iter().any(is_write),
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Decision {
+    Allow,
+    Ask,
+    Block,
+}
+
+fn level_decision(level: Level, t: &Tool) -> Decision {
+    match (level, is_read(t)) {
+        (Level::Act, _) | (_, true) => Decision::Allow,
+        (Level::Ask, false) => Decision::Ask,
+        (Level::Read, false) => Decision::Block,
+    }
+}
+
+/// A saved grant as the dashboard reads it (C-917).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Choice {
+    Level(Level),
+    /// Not a level: the nearest level and how many tools differ from it.
+    Custom {
+        base: Level,
+        differs: usize,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Classified {
+    pub choice: Choice,
+    /// Under `ask`: the changes the saved choice allows without asking (tool ids).
+    pub always_allowed: Vec<String>,
+}
+
+/// Read a saved grant through the levels. `full` is `act`; reads allowed and no change blocked
+/// is `ask` (the changes it allows are `always_allowed`); reads allowed and every change blocked
+/// is `read`; every tool allowed is `act`; anything else is `custom` with its nearest level.
+#[must_use]
+pub fn classify(full: bool, allow: &[String], ask: &[String], tools: &[Tool]) -> Classified {
+    let level = |l| Classified {
+        choice: Choice::Level(l),
+        always_allowed: Vec::new(),
+    };
+    if full {
+        return level(Level::Act);
+    }
+    let decide = |t: &Tool| {
+        if allow.contains(&t.id) {
+            Decision::Allow
+        } else if ask.contains(&t.id) {
+            Decision::Ask
+        } else {
+            Decision::Block
+        }
+    };
+    let reads_allowed = tools
+        .iter()
+        .filter(|t| is_read(t))
+        .all(|t| decide(t) == Decision::Allow);
+    let writes: Vec<(&Tool, Decision)> = tools
+        .iter()
+        .filter(|t| !is_read(t))
+        .map(|t| (t, decide(t)))
+        .collect();
+    if reads_allowed {
+        if writes.iter().all(|(_, d)| *d == Decision::Block) {
+            return level(Level::Read);
+        }
+        if writes.iter().all(|(_, d)| *d != Decision::Block) {
+            if writes.iter().all(|(_, d)| *d == Decision::Allow) {
+                return level(Level::Act);
+            }
+            return Classified {
+                choice: Choice::Level(Level::Ask),
+                always_allowed: writes
+                    .iter()
+                    .filter(|(_, d)| *d == Decision::Allow)
+                    .map(|(t, _)| t.id.clone())
+                    .collect(),
+            };
+        }
+    }
+    let (base, differs) = [Level::Read, Level::Ask, Level::Act]
+        .into_iter()
+        .map(|l| {
+            let n = tools
+                .iter()
+                .filter(|t| level_decision(l, t) != decide(t))
+                .count();
+            (l, n)
+        })
+        .min_by_key(|(_, n)| *n)
+        .unwrap_or((Level::Read, 0));
+    Classified {
+        choice: Choice::Custom { base, differs },
+        always_allowed: Vec::new(),
+    }
+}
+
+/// `access_for_grant` over a saved row's parts.
+#[must_use]
+pub fn access_for_saved(
+    full: bool,
+    allow: &[String],
+    ask: &[String],
+    tools: &[Tool],
+) -> &'static str {
+    access_for_grant(
+        &PutConnectionGrant {
+            mode: if full {
+                GrantMode::Full
+            } else {
+                GrantMode::Custom
+            },
+            allow_tools: allow.to_vec(),
+            ask_tools: ask.to_vec(),
+            ask_timeout_secs: None,
+        },
+        tools,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -137,6 +324,92 @@ mod tests {
         let f = expand(Level::Act, &t);
         assert_eq!(f.mode, GrantMode::Full);
         assert!(f.allow_tools.is_empty() && f.ask_tools.is_empty());
+    }
+
+    fn ids(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| (*s).to_owned()).collect()
+    }
+
+    fn two_writes() -> Vec<Tool> {
+        vec![
+            tool("list", "read"),
+            tool("create", "write"),
+            tool("comment", "write"),
+        ]
+    }
+
+    #[test]
+    fn a_saved_grant_reads_as_a_level_or_custom() {
+        let t = two_writes();
+        let lvl = |c: &Classified| match c.choice {
+            Choice::Level(l) => Some(l),
+            Choice::Custom { .. } => None,
+        };
+        for l in [Level::Read, Level::Ask, Level::Act] {
+            let g = expand(l, &t);
+            let c = classify(g.mode == GrantMode::Full, &g.allow_tools, &g.ask_tools, &t);
+            assert_eq!(lvl(&c), Some(l));
+            assert!(c.always_allowed.is_empty());
+        }
+        // Ask before changes with one change allowed: still `ask`, the change always allowed.
+        let c = classify(false, &ids(&["list", "comment"]), &ids(&["create"]), &t);
+        assert_eq!(c.choice, Choice::Level(Level::Ask));
+        assert_eq!(c.always_allowed, ids(&["comment"]));
+        // A blocked read is not a level (and the allowed change differs from asking, too).
+        let c = classify(false, &ids(&["comment"]), &ids(&["create"]), &t);
+        assert_eq!(
+            c.choice,
+            Choice::Custom {
+                base: Level::Ask,
+                differs: 2
+            }
+        );
+        // A blocked change under otherwise-asked changes is not a level either (equally near
+        // Read only and Ask before changes: the lower one is the base).
+        let c = classify(false, &ids(&["list"]), &ids(&["create"]), &t);
+        assert_eq!(
+            c.choice,
+            Choice::Custom {
+                base: Level::Read,
+                differs: 1
+            }
+        );
+        // Every tool allowed in a custom grant takes effect as act.
+        let c = classify(false, &ids(&["list", "create", "comment"]), &[], &t);
+        assert_eq!(c.choice, Choice::Level(Level::Act));
+    }
+
+    #[test]
+    fn limits_cut_the_choices_and_refuse_wider_grants() {
+        let t = two_writes();
+        assert_eq!(
+            levels_for(&t, false, None),
+            vec![Level::Read, Level::Ask, Level::Act]
+        );
+        assert_eq!(levels_for(&t, true, None), vec![Level::Read, Level::Ask]);
+        assert_eq!(levels_for(&t, false, Some(Level::Read)), vec![Level::Read]);
+        assert!(levels_for(&[tool("list", "read")], false, None).is_empty());
+        let (a, k) = (ids(&["list", "create"]), ids(&[]));
+        assert!(exceeds_limit(Level::Read, false, &a, &k, &t));
+        assert!(exceeds_limit(Level::Ask, false, &a, &k, &t));
+        assert!(!exceeds_limit(
+            Level::Ask,
+            false,
+            &ids(&["list"]),
+            &ids(&["create"]),
+            &t
+        ));
+        assert!(exceeds_limit(
+            Level::Read,
+            false,
+            &ids(&["list"]),
+            &ids(&["create"]),
+            &t
+        ));
+        assert!(exceeds_limit(Level::Ask, true, &[], &[], &t));
+        assert!(!exceeds_limit(Level::Act, true, &[], &[], &t));
+        assert_eq!(limit_from_access("read"), Level::Read);
+        assert_eq!(limit_from_access("write"), Level::Act);
     }
 
     #[test]

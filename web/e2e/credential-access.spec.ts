@@ -82,31 +82,37 @@ for (const scheme of ["light", "dark"] as const) {
     test.describe(`${scheme} theme, ${width} px`, () => {
       test.use({ viewport: { width, height: width === 1280 ? 900 : 844 } });
 
-      test("the old ?tab=llm address opens the AI keys; creating a key shows the Give agents access step", async ({ page }) => {
+      test("the old ?tab=llm address opens the AI keys; Add an AI key saves the key with its agents in one request", async ({ page }) => {
+        const posted: { grant?: { agent_ids: string[] } }[] = [];
         await open(page, "/o/acme/w/main/credentials?tab=llm", scheme);
+        // Registered after the shared mock, so it wins for the create call.
+        await page.route(`**/v1/workspaces/${agent.workspace_id}/secrets`, async (route) => {
+          if (route.request().method() !== "POST") return route.fallback();
+          posted.push(route.request().postDataJSON());
+          return route.fulfill({ status: 201, contentType: "application/json", body: JSON.stringify(llmKey) });
+        });
         await expect(page).toHaveURL(/\/apps\?tab=accounts&kind=ai-key$/);
-        await expect(page.getByRole("heading", { name: "AI keys", level: 2 })).toBeVisible();
-        await page.getByLabel("Name").fill("Team key");
-        await page.getByLabel("Provider endpoint").selectOption("aigw");
-        await page.getByLabel("API key").fill("sk-not-a-real-key");
-        await page.getByRole("button", { name: "Add LLM key" }).click();
-        const step = page.getByRole("region", { name: "Give agents access" });
-        await expect(step).toBeVisible();
-        await expect(step.getByRole("checkbox")).toHaveCount(2);
-        // Nothing is preselected; the agent that already has the key (the mock's grant list) shows as such.
-        await expect(step.getByRole("checkbox", { name: "Give Giskard access" })).not.toBeChecked();
-        await expect(step.getByRole("checkbox", { name: "Give Daneel access" })).toBeDisabled();
-        await expect(step.getByText("Has access")).toBeVisible();
-        await check(page, "give-access-step", scheme, width);
-        await step.getByRole("checkbox", { name: "Give Giskard access" }).check();
-        await step.getByRole("button", { name: "Give access" }).click();
-        await expect(step.getByText("Access given to 1 agent.")).toBeVisible();
-        await check(page, "give-access-done", scheme, width);
+        await page.getByRole("button", { name: "Add", exact: true }).click();
+        await page.getByRole("menuitem", { name: "Add an AI key" }).click();
+        const form = page.getByRole("form", { name: "New LLM key" });
+        await form.getByLabel("Name").fill("Team key");
+        await form.getByLabel("Provider endpoint").selectOption("aigw");
+        await form.getByLabel("API key").fill("sk-not-a-real-key");
+        // (C-925) Two agents may be chosen and none is the context: nothing is ticked.
+        await expect(form.getByRole("checkbox", { name: "Daneel can use this key" })).not.toBeChecked();
+        await form.getByRole("checkbox", { name: "Giskard can use this key" }).check();
+        await check(page, "add-ai-key", scheme, width);
+        await form.getByRole("button", { name: "Add LLM key" }).click();
+        await expect(page.getByText("Saved Team key")).toBeVisible();
+        expect(posted).toHaveLength(1);
+        expect(posted[0].grant).toEqual({ agent_ids: [second.id] });
+        await check(page, "add-ai-key-done", scheme, width);
       });
 
-      test("the row Access dialog lists, removes and adds", async ({ page }) => {
+      test("the row menu's Give access opens the Access dialog: lists, removes and adds", async ({ page }) => {
         await open(page, "/o/acme/w/main/apps?tab=accounts&kind=ai-key", scheme);
-        await page.getByRole("button", { name: "Access to Team key" }).click();
+        await page.getByRole("button", { name: "More for Team key" }).click();
+        await page.getByRole("menuitem", { name: "Give access" }).click();
         const dlg = page.getByRole("dialog", { name: "Access to Team key" });
         await expect(dlg.getByRole("button", { name: "Remove access for Daneel" })).toBeVisible();
         await expect(dlg.getByRole("checkbox", { name: "Give Giskard access" })).toBeVisible();
@@ -128,7 +134,7 @@ for (const scheme of ["light", "dark"] as const) {
         await expect(section.getByText("Not usable")).toBeVisible();
         await expect(section.getByRole("link", { name: "Re-verify the key." })).toBeVisible();
         await expect(section.getByText(/No model chosen/)).toBeVisible();
-        await expect(page.getByText("(LLM key, workspace)")).toBeVisible();
+        await expect(page.getByText("Daneel thinks with claude-sonnet through this key.")).toBeVisible();
         await check(page, "model-readiness", scheme, width);
       });
     });

@@ -129,3 +129,22 @@ against the pinned binary.** The live suite is the evidence (acceptance 6).
 
 Sonnet (`rust-developer`). It is multi-crate but well bounded, with a live-suite step that needs
 judgement about the pinned CLI's real behaviour.
+
+## Completion report (worker 15, partial: see "Left open")
+
+**Done** (migration `20261201000245_agents_model_roles.sql`, which also makes the roles/default-model columns bump `home_sync_generation` so the Models line re-renders):
+- Limits `MODEL_ID_MAX`/`MODEL_INFO_MAX` (allow lines removed); `aurora_core::model_id::validate_model_id` (re-exported as `aurora_llm::validate_model_id`, because `aurora-config` cannot depend on `aurora-llm`), pattern + credential-shaped refusal.
+- Endpoint entry `model_roles`/`model_info` (C-875) validated in `endpoint_field_errors` (`value_invalid` naming the key; same function serves startup and settings writes); `aurora_llm::Endpoint` carries them.
+- Agent GET/PATCH `model_roles`/`subagent_model` (C-876): `model_id_invalid`, `llm_model_not_allowed`, `model_role_endpoint_mismatch`.
+- Resolution (`hosted/model.rs`, one function for dispatcher, readiness, terminal and the home render): agent role stamped for the endpoint, then endpoint role, then none; allow-list + static list at selection; per-role drop cleared in the DB by the dispatcher with one notice; `role_unset`/`role_not_allowed`/`subagent_role_unset`; `model_meta`. Readiness C-878, `/v1/harnesses.model_roles` C-882 (shared `aurora_protocol::runner::harness_model_roles`; adapters declare the same).
+- Wire `ModelChoice.roles/subagent_role/model_meta` (schemas regenerated); `claude-code` env (`model_env`, names in `ROLE_ALIASES`, adapter-owned vars added to `OWN_ENV`, never `_FORCE`), supervisor re-check `check_model` for claude-code and codex (SEC-122), `harness.env` uses it; C-884 Models line (`render_inputs.models`, `instructions::models_fragment`).
+- Tests: config refusals, `model_id` unit tests, claude-code golden envs, `harness.env` `sh -n` + source-back, instructions line, `api/it/model_roles.rs` (6 tests). Gate level: targeted. aurora-core/config/protocol/supervisor lib: green; `model_roles::`, `model_readiness::`, `harness_selection::`, `agents::` green; clippy on the 7 touched crates `-D warnings` green; guards + schema check green; OpenAPI + `gen:api` regenerated.
+
+**Left open**
+- Eval fingerprint (C-883): `fingerprint`/C-866 is not in the code on this branch, so nothing was added. PROGRESS note needed: whichever of P4-EVAL-2 and this merges second adds `model_roles` and `subagent_model`.
+- Live conformance (acceptance 6): **not run.** `scripts/e2e/llm.sh` fronts a scripted VidaiMock, not a model: it would need a second LiteLLM model plus scenarios in which the main model emits an Agent tool call with `model: haiku`, and none exists. It is a separate piece of work (a scenario set), not built here; the gateway-side evidence arrives with `request_log.llm_model` (P5-MODELS-2).
+
+**Worker 16 (continuation)**
+- Variable names **verified against the pinned 2.1.319 binary** (strings of the linux-x64 native `claude`, not executed): all of `ANTHROPIC_DEFAULT_{OPUS,SONNET,HAIKU}_MODEL`, `…_SUPPORTED_CAPABILITIES`, `CLAUDE_CODE_SUBAGENT_MODEL`(+`_FORCE`, unused), `CLAUDE_CODE_MAX_CONTEXT_TOKENS` exist; no per-alias context variable exists (the one value applies to every unrecognised model); also present: `ANTHROPIC_SMALL_FAST_MODEL`, `fable` alias (unmapped). Written into `12 §Adapter claude-code`.
+- The three missing tests, now written, each **seen failing with its rule broken** (llm_endpoint.rs `model_roles_ok` check disabled, `role_usable` without the allow-list, `set_model_roles` skipped in dispatch; reverted): `settings_llm::settings_writes_refuse_bad_model_roles_and_model_info` (8 refusals + one accepted write, over `PUT /v1/admin/settings/llm`), `model_roles::an_endpoint_role_outside_the_orgs_narrower_allow_list_is_not_sent`, `model_roles::the_dispatcher_clears_dropped_agent_roles_in_the_database` (boots a `claude-code` agent through the runner rig). Test-rig changes: `Rig::boot_agent` split out of `Rig::boot`; the rig's runner capabilities advertise `claude-code` and `codex` too.
+- Gate level: targeted (`model_roles::` and the new settings test: 9 passed).

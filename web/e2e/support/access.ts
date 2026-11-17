@@ -3,10 +3,11 @@ import { expect, type Page } from "@playwright/test";
 import { agent, id, mockApi, now, ws } from "./mock-api";
 import type { Scheme } from "./open";
 
-// FIX-022: the agent Access tab with the connection grant editor. The data uses the real built-in packages
-// (plugins/builtin/github, atlassian, indico) and their tool ids/names; the API is the shared mock plus these routes.
+// FIX-022, P5-UX-4: the agent Access tab (the list of accounts, C-917) with the actions table (C-938) open on an app
+// and on a custom-only app. The data uses the real built-in packages (plugins/builtin/github, atlassian, indico) and their
+// tool ids/names; the API is the shared mock plus these routes.
 
-export const ACCESS_SCREENS = ["connections", "editor-custom", "editor-custom-only"] as const;
+export const ACCESS_SCREENS = ["list", "table", "table-custom-only"] as const;
 export type AccessScreen = (typeof ACCESS_SCREENS)[number];
 
 const tool = (tid: string, name: string, group: "read" | "write", path: string, methods: string[], host = "api.github.com") => ({
@@ -49,6 +50,22 @@ export async function mockAccess(page: Page) {
     const json = (b: unknown) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(b) });
     if (p === `/v1/workspaces/${ws.id}/connections`) return json({ items: [conn(C_GH, "github", "acme-bot"), conn(C_JIRA, "atlassian", "Jira Cloud"), conn(C_IND, "indico", "CERN Indico")] });
     if (p === `/v1/orgs/${ws.org_id}/connections`) return json({ items: [] });
+    if (p === `/v1/workspaces/${ws.id}/accounts`) {
+      const who = { agent: { id: agent.id, name: agent.name, handle: agent.handle }, workspace: { id: ws.id, name: ws.name } };
+      const can = { give_access: true, change_access: true, manage: true };
+      const row = (cid: string, name: string, app: { app_id: string; name: string; custom_only: boolean }, entry: Record<string, unknown>) => ({
+        ref: { type: "connection", id: cid }, kind: "app", name, scope: "workspace", levels: app.custom_only ? ["read", "ask"] : ["read", "ask", "act"], app,
+        health: { state: "unknown", last_used_at: now }, agents: [{ ...who, ...entry }], can, given: true,
+      });
+      return json({
+        items: [
+          row(C_GH, "acme-bot", { app_id: "github", name: "GitHub", custom_only: false }, { level: "custom", custom: { differs: 2, base: "read" } }),
+          row(C_JIRA, "Jira Cloud", { app_id: "atlassian", name: "Atlassian", custom_only: false }, { level: "act" }),
+          row(C_IND, "CERN Indico", { app_id: "indico", name: "Indico", custom_only: true }, { level: "custom", custom: { differs: 1, base: "read" } }),
+        ],
+        next_cursor: null,
+      });
+    }
     if (p === `/v1/agents/${agent.id}/grants`)
       return json({
         secrets: [],
@@ -67,7 +84,7 @@ export async function mockAccess(page: Page) {
   });
 }
 
-/** Opens `?tab=access` on the mocked agent; `editor-custom` opens the GitHub grant, `editor-custom-only` the Indico one. */
+/** Opens `?tab=access` on the mocked agent; `table` opens the actions table of GitHub, `table-custom-only` the Indico one. */
 export async function openAccess(page: Page, screen: AccessScreen, scheme: Scheme) {
   // `openRoute` installs the shared mock; ours goes on top before the page loads.
   await mockAccess(page);
@@ -75,12 +92,14 @@ export async function openAccess(page: Page, screen: AccessScreen, scheme: Schem
   page.on("pageerror", (e) => errors.push(e.message));
   await page.emulateMedia({ colorScheme: scheme });
   await page.goto("/o/acme/w/main/agents/daneel?tab=access");
-  await page.getByRole("list", { name: "Connection grants" }).waitFor();
+  await page.getByRole("list", { name: `Accounts ${agent.name} can use` }).waitFor();
   await page.waitForLoadState("networkidle");
   await expect.poll(() => page.locator("html").getAttribute("data-theme"), { timeout: 20_000 }).toBe(scheme);
-  if (screen !== "connections") {
-    await page.getByRole("button", { name: screen === "editor-custom" ? "Edit access to acme-bot" : "Edit access to CERN Indico" }).click();
-    await page.getByRole("dialog").getByRole("radiogroup", { name: /^Access for / }).first().waitFor();
+  if (screen !== "list") {
+    // The actions table opens from "Custom…" under the choices (a custom-only app offers no "Change without asking").
+    const row = page.getByRole("listitem", { name: screen === "table" ? "acme-bot" : "CERN Indico" });
+    await row.getByRole("button", { name: "Custom…" }).click();
+    await page.getByRole("dialog").getByLabel(/: what happens$/).first().waitFor();
   }
   expect(errors, "the Access tab threw").toEqual([]);
 }

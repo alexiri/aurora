@@ -29,6 +29,10 @@ pub struct Endpoint {
     pub region: Option<String>,
     pub project_id: Option<String>,
     pub location: Option<String>,
+    /// (P5-MODELS-1, C-875) Operator-named models for the harness's roles (`large`, `medium`, `small`).
+    pub model_roles: std::collections::BTreeMap<String, String>,
+    /// (C-875) What the operator says about models the harness cannot recognise by id.
+    pub model_info: std::collections::BTreeMap<String, aurora_config::ModelInfoEntry>,
 }
 
 impl Endpoint {

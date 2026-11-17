@@ -199,6 +199,7 @@ async fn loads_view_and_invalidates_on_notify() {
         speaker_user_id: None,
         approval_id: None,
         resumed: false,
+        llm_model: None,
     };
     repo::insert_request_log(p, &[row]).await.unwrap();
     let (cnt,): (i64,) = sqlx::query_as(

@@ -211,6 +211,14 @@ against `fake`, and against `claude-code` when an LLM endpoint is configured
   reach `roles.small` (seen in `request_log.llm_model`). Every value is re-checked against
   `MODEL_ID_PATTERN` (or as an integer, or the capability vocabulary) before it enters the environment
   (SEC-122). The adapter never writes `.claude/agents/`: subagent definitions are the agent's (D-302(d)).
+  *Verified against the pinned 2.1.319 binary (2026-11-17, strings of the native `claude`):* every variable
+  above exists (`ANTHROPIC_DEFAULT_{OPUS,SONNET,HAIKU}_MODEL`, their `_SUPPORTED_CAPABILITIES`,
+  `CLAUDE_CODE_SUBAGENT_MODEL`, `CLAUDE_CODE_MAX_CONTEXT_TOKENS`). The CLI has **no per-alias context
+  variable**: `CLAUDE_CODE_MAX_CONTEXT_TOKENS` is one value applied to every model the CLI does not
+  recognise, so only the default model's `context_window` is mapped. The binary also knows
+  `ANTHROPIC_SMALL_FAST_MODEL` (the legacy background-model variable) and a `fable` alias, both left
+  unmapped. The live conformance run (a subagent with `model: haiku` and the background requests reach
+  `roles.small`) needs LiteLLM serving two models and is recorded in the brief's Completion report.
 - (phase 5, P5-MODELS-2, D-304, C-879) **Usage.** `Done { usage }` is built from the result's
   per-model report (`modelUsage`; the key is pinned with the CLI version). Each entry becomes a
   `by_model` entry (`inputTokens` → `input_tokens`, `outputTokens` → `output_tokens`,

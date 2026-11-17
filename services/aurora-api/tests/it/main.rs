@@ -1,4 +1,5 @@
 //! Single integration-test binary for this crate (OPS-016): one link instead of one per file.
+mod accounts;
 mod action_approvals;
 mod activity;
 mod addons;
@@ -67,6 +68,7 @@ mod me;
 mod memory;
 mod message_idempotency;
 mod model_readiness;
+mod model_roles;
 mod oidc;
 mod oidc_roles;
 mod onboarding;
@@ -116,6 +118,7 @@ mod terminal;
 mod tools;
 mod trace_e2e;
 mod turn_trace_context;
+mod usage_by_model;
 mod webhooks;
 mod who_can;
 

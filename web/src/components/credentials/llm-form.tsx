@@ -10,7 +10,8 @@ import { Field, inputClass } from "@/components/ui/field";
 import { Form, FormActions } from "@/components/ui/form";
 import { Notice } from "@/components/ui/notice";
 import { errorMessage } from "@/lib/api/errors";
-import { useOrg } from "@/lib/api/queries";
+import { preselectAgents } from "@/lib/accounts";
+import { useAgents, useOrg } from "@/lib/api/queries";
 import {
   buildLlmCreate,
   useCreateSecret,
@@ -100,6 +101,20 @@ export function LlmKeyForm({
   const [fields, setFields] = useState<Record<string, string>>({});
   const [clientErr, setClientErr] = useState("");
   const [saved, setSaved] = useState<Secret | null>(null);
+  // (C-988, C-925) A workspace's key is given to the ticked agents in the same request: the contextual agent, else the
+  // only agent, else none. `picked` is what the person changed; until then the default applies.
+  const wsId = scope.kind === "workspace" ? scope.id : undefined;
+  const agents = useAgents(wsId);
+  const agentList = agents.data?.items ?? [];
+  const [picked, setPicked] = useState<Set<string> | null>(null);
+  const defaults = preselect ?? preselectAgents(agentList, null);
+  const ticked = picked ?? new Set(defaults);
+  const toggleAgent = (id: string) => {
+    const next = new Set(ticked);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    setPicked(next);
+  };
 
   const endpoints = (providers.data?.endpoints ?? []).filter((e) => e.permitted === true);
   const endpoint = endpoints.find((e) => e.id === endpointId);
@@ -128,10 +143,12 @@ export function LlmKeyForm({
           endpointId,
           authMode: admitted.length > 1 ? mode : "",
           value: buildValue(shape, value, fields),
+          agentIds: wsId ? agentList.filter((a) => ticked.has(a.id)).map((a) => a.id) : [],
         }),
       );
       setSaved(s);
       setName("");
+      setPicked(null);
       onSaved?.(s);
     } catch {
       // surfaced via create.error
@@ -148,7 +165,20 @@ export function LlmKeyForm({
   if (endpoints.length === 0)
     return <Notice role="status">Your organization&apos;s governance does not permit any LLM endpoints.</Notice>;
 
-  // The key exists: the form gives way to the "Give agents access" step (skippable, nothing preselected).
+  // A workspace's key was saved with its agents (C-988): one confirmation, no second step.
+  if (saved && wsId)
+    return (
+      <section aria-label="New AI key saved" className="space-y-3 rounded-card border border-line bg-surface p-4 text-ink shadow-card sm:p-5">
+        <p role="status" className="text-sm font-medium">
+          Saved {saved.name}
+        </p>
+        <OriginView origin={saved.origin} />
+        <Button variant="outline" size="sm" onClick={() => setSaved(null)}>
+          Add another
+        </Button>
+      </section>
+    );
+  // The organization's key exists: the form gives way to the "Give agents access" step (skippable, nothing preselected).
   if (saved)
     return (
       <GiveAccessStep
@@ -172,7 +202,7 @@ export function LlmKeyForm({
           id="l-endpoint"
           label="Provider endpoint"
           hint={endpoint ? `Allowed key scopes: ${scopes.length ? scopes.join(", ") : "any"}.${harnessLine ? ` ${harnessLine}.` : ""}` : undefined}
-          error={scopeOk ? undefined : `Governance does not permit ${scopeName}-level keys for this endpoint.`}
+          error={scopeOk ? undefined : `Your organization does not permit ${scopeName}-level keys for this endpoint.`}
         >
           <select
             id="l-endpoint"
@@ -276,6 +306,30 @@ export function LlmKeyForm({
         ) : null}
         {endpoint && (endpoint.provider === "azure_openai" || endpoint.provider === "vertex") ? (
           <p className="text-xs text-muted">Models are configured by your administrator.</p>
+        ) : null}
+        {wsId ? (
+          <fieldset className="space-y-1" aria-label="Who can use this key">
+            <legend className="mb-1 text-sm font-semibold text-ink">Who can use this key</legend>
+            {agents.isPending ? (
+              <p className="text-sm text-muted">Loading agents…</p>
+            ) : agentList.length === 0 ? (
+              <p className="text-sm text-muted">No agents yet. Give the key to an agent from its Access tab.</p>
+            ) : (
+              agentList.map((a) => (
+                <label key={a.id} className="flex min-h-9 items-center gap-2.5 text-sm">
+                  <input
+                    type="checkbox"
+                    className="size-4 shrink-0 accent-accent"
+                    checked={ticked.has(a.id)}
+                    disabled={create.isPending}
+                    onChange={() => toggleAgent(a.id)}
+                    aria-label={`${a.name} can use this key`}
+                  />
+                  <span className="min-w-0 break-words font-medium text-ink">{a.name}</span>
+                </label>
+              ))
+            )}
+          </fieldset>
         ) : null}
         {clientErr || create.error ? (
           <Notice tone="danger" role="alert">

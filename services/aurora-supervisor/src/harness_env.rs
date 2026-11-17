@@ -152,6 +152,12 @@ pub fn render(cfg: &HarnessEnvConfig, models: &TerminalModels) -> String {
 
     // claude-code: exactly what `claude_code::config::build_env` sets for a turn.
     match models.claude_code.as_ref() {
+        // SEC-122: a choice whose values do not pass the supervisor's re-check never reaches the file.
+        Some(TerminalModel {
+            choice: Some(m), ..
+        }) if crate::adapters::claude_code::config::check_model(m).is_err() => {
+            set("ANTHROPIC_API_KEY", PLACEHOLDER);
+        }
         Some(TerminalModel {
             choice: Some(m), ..
         }) => {
@@ -242,9 +248,12 @@ mod tests {
             endpoint_id: "e".into(),
             base_url: "http://llm.example/v1".into(),
             dialect: dialect.into(),
-            model: "m'1".into(),
+            model: "m.1".into(),
             effort: String::new(),
             client_env: vec![],
+            roles: None,
+            subagent_role: None,
+            model_meta: None,
         }
     }
 
@@ -319,8 +328,72 @@ mod tests {
             t.contains("ANTHROPIC_AUTH_TOKEN='aurora-placeholder'\n"),
             "{t}"
         );
-        assert!(t.contains("ANTHROPIC_MODEL='m'\\''1'\n"), "{t}");
+        assert!(t.contains("ANTHROPIC_MODEL='m.1'\n"), "{t}");
         assert!(!t.contains("\nANTHROPIC_API_KEY"), "{t}");
+    }
+
+    /// (C-881, SEC-122) A `harness.env` with roles is syntactically valid shell, and parsing it back as
+    /// `NAME='VALUE'` data gives the values the turn's environment has. A choice that fails the supervisor's
+    /// re-check writes no model variables at all.
+    #[test]
+    fn roles_are_written_single_quoted_and_source_back_to_the_same_values() {
+        let mut m = choice("litellm", "anthropic_messages");
+        m.roles = Some(aurora_protocol::runner::ModelRoleIds {
+            large: Some("glm-4.6".into()),
+            medium: None,
+            small: Some("openai/glm-air:1@x".into()),
+        });
+        m.subagent_role = Some("small".into());
+        m.model_meta = Some(vec![aurora_protocol::runner::ModelMeta {
+            model: "m.1".into(),
+            context_window: Some(131_072),
+            capabilities: vec!["thinking".into()],
+        }]);
+        let t = render(&cfg(), &claude(m.clone()));
+        for want in [
+            "ANTHROPIC_DEFAULT_OPUS_MODEL='glm-4.6'\n",
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL='openai/glm-air:1@x'\n",
+            "CLAUDE_CODE_SUBAGENT_MODEL='haiku'\n",
+            "CLAUDE_CODE_MAX_CONTEXT_TOKENS='131072'\n",
+        ] {
+            assert!(t.contains(want), "{want}\n{t}");
+        }
+        assert!(!t.contains("ANTHROPIC_DEFAULT_SONNET_MODEL"), "{t}");
+        assert!(!t.contains("_FORCE"), "{t}");
+        // `sh -n` accepts the file, and sourcing it yields the same values
+        let dir = std::env::temp_dir().join(format!("aurora-henv-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("harness.env");
+        std::fs::write(&f, &t).unwrap();
+        let ok = crate::spawn::command("sh", Vec::<(String, String)>::new())
+            .arg("-n")
+            .arg(&f)
+            .status()
+            .unwrap();
+        assert!(ok.success());
+        let out = crate::spawn::command("sh", Vec::<(String, String)>::new())
+            .arg("-c")
+            .arg(format!(
+                ". {}; printf '%s|%s|%s' \"$ANTHROPIC_DEFAULT_OPUS_MODEL\" \"$ANTHROPIC_DEFAULT_HAIKU_MODEL\" \"$CLAUDE_CODE_SUBAGENT_MODEL\"",
+                f.display()
+            ))
+            .output()
+            .unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout),
+            "glm-4.6|openai/glm-air:1@x|haiku"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+        // a violating id never reaches the file
+        for bad in ["a'b", "$(id)", "a b", "a=b", "x\ny"] {
+            let mut b = m.clone();
+            b.roles.as_mut().unwrap().large = Some(bad.into());
+            let t = render(&cfg(), &claude(b));
+            assert!(
+                !t.contains("ANTHROPIC_DEFAULT_") && !t.contains("ANTHROPIC_MODEL"),
+                "{bad:?}\n{t}"
+            );
+        }
     }
 
     #[test]

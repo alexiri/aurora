@@ -132,7 +132,7 @@ describe("getting-started guide: every state", () => {
     expect(await screen.findByText("my-key")).toBeInTheDocument();
     const box = await screen.findByRole("checkbox", { name: /Daneel/ });
     await waitFor(() => expect(box).toBeChecked());
-    expect(screen.getByRole("button", { name: "Give access" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Give Daneel access" })).toBeEnabled();
   });
 
   it("no model: shows the model step, and saving the choice patches the agent", async () => {

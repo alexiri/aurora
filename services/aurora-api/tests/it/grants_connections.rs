@@ -47,16 +47,22 @@ apps:
           - bearer: "{credentials.api_token}"
 "#;
 
-struct W {
-    h: Harness,
-    org: Uuid,
-    ws: Uuid,
-    owner: String,
-    member: String,
-    agent: Uuid,
+pub(crate) struct W {
+    pub(crate) h: Harness,
+    pub(crate) org: Uuid,
+    pub(crate) ws: Uuid,
+    pub(crate) owner: String,
+    pub(crate) member: String,
+    pub(crate) agent: Uuid,
 }
 
 async fn world() -> W {
+    world_with(YAML).await
+}
+
+/// The world of this file with another package: an organization with an org owner, a workspace
+/// with an owner, a member and one BYO agent (`bot`), the package installed and approved.
+pub(crate) async fn world_with(yaml: &str) -> W {
     let h = Harness::new().await;
     let root = h.user("root@x.io", true).await;
     let (_, admin_tok) = h.good_session(root).await;
@@ -72,7 +78,7 @@ async fn world() -> W {
         )
         .await;
     assert_eq!(s, 201, "{v}");
-    let mut b = PackageBuilder::new(YAML);
+    let mut b = PackageBuilder::new(yaml);
     b.sign(&key, &PackageBuilder::key_id(&key));
     let boundary = "XB";
     let mut body = format!(
@@ -131,7 +137,13 @@ async fn world() -> W {
 }
 
 impl W {
-    async fn call(&self, who: &str, m: Method, uri: &str, body: Option<Value>) -> (u16, Value) {
+    pub(crate) async fn call(
+        &self,
+        who: &str,
+        m: Method,
+        uri: &str,
+        body: Option<Value>,
+    ) -> (u16, Value) {
         let (s, _, v) = self
             .h
             .send(m, uri, &[("cookie", who), ("origin", ORIGIN)], body)

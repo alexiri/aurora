@@ -76,3 +76,41 @@ async fn activity_filters_and_pagination() {
     let (s, _) = h.get(&format!("{base}?limit=0"), &hd).await;
     assert_eq!(s, 400);
 }
+
+/// (P5-MODELS-2, C-880) The workspace activity read returns the model an LLM request asked for, and null for
+/// a row without one.
+#[tokio::test]
+async fn activity_returns_the_requested_llm_model() {
+    let h = Harness::new().await;
+    let org = h.org().await;
+    let ws = h.workspace(org).await;
+    let member = h.user("m@x.io", false).await;
+    h.member(org, member, "member", "active").await;
+    h.bind_ws(ws, member, "member").await;
+    let (_, mt) = h.good_session(member).await;
+    let agent = Uuid::now_v7();
+    let with = log(&h, org, ws, agent, "llm.example.com", "allow", 1).await;
+    let without = log(&h, org, ws, agent, "b.com", "allow", 2).await;
+    sqlx::query("UPDATE request_log SET llm_model = 'claude-x' WHERE id = $1")
+        .bind(with)
+        .execute(h.pool())
+        .await
+        .unwrap();
+    let c = cookie(&mt);
+    let (s, v) = h
+        .get(
+            &format!("/v1/workspaces/{ws}/activity"),
+            &[("cookie", c.as_str())],
+        )
+        .await;
+    assert_eq!(s, 200);
+    let items = v["items"].as_array().unwrap();
+    let of = |id: Uuid| {
+        items
+            .iter()
+            .find(|i| i["id"] == serde_json::json!(id))
+            .unwrap()
+    };
+    assert_eq!(of(with)["llm_model"], "claude-x");
+    assert!(of(without)["llm_model"].is_null());
+}

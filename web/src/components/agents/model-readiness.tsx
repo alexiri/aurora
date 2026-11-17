@@ -14,7 +14,7 @@ export const REASON_COPY: Record<string, { text: string; fix: string; where?: "k
   not_active: { text: "The key is not active (a pending proposal or a rejected one).", fix: "Accept it or replace the value.", where: "keys" },
   endpoint_unknown: { text: "The key's endpoint is no longer configured.", fix: "Ask your operator, or add a key on a configured endpoint.", where: "keys" },
   provider_disabled: { text: "The endpoint's provider is disabled on this instance.", fix: "Ask your operator to enable it." },
-  scope_not_permitted: { text: "Governance does not permit this key scope on the endpoint.", fix: "An organization admin can change this.", where: "governance" },
+  scope_not_permitted: { text: "Your organization does not permit this key scope on the endpoint.", fix: "An organization admin can change this.", where: "governance" },
   origin_unverified: { text: "The endpoint requires a verified account and this key is not verified.", fix: "Re-verify the key.", where: "keys" },
   origin_not_compliant: { text: "The key is verified, but its account is not an allowed one.", fix: "Use a key from an allowed account.", where: "keys" },
   no_shared_dialect: { text: "The endpoint serves no dialect this agent's harness speaks.", fix: "Ask your operator to add a dialect, or use another harness." },

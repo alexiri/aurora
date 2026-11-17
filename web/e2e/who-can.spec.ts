@@ -29,6 +29,7 @@ async function open(page: Page, path: string, scheme: "light" | "dark", role: "o
     if (p === `/v1/orgs/${id(1)}`) return json({ ...org, my_role: role === "owner" ? "owner" : "member", contacts: { owners: [{ name: "Grace Hopper" }], admins } });
     if (p === `/v1/workspaces/${id(2)}`) return json({ ...ws, my_role: role, contacts: { owners } });
     if (p === `/v1/workspaces/${id(2)}/secrets`) return json({ items: [], next_cursor: null });
+    if (p === `/v1/workspaces/${id(2)}/accounts`) return json({ items: [], next_cursor: null });
     return route.fallback();
   });
   await page.goto(path);
@@ -55,8 +56,9 @@ for (const scheme of ["light", "dark"] as const) {
 
       test("a workspace owner's empty Accounts list shows its Add action and no Ask line", async ({ page }) => {
         await open(page, "/o/acme/w/main/apps?tab=accounts&kind=website", scheme, "owner");
-        await expect(page.getByRole("button", { name: "Add a website" })).toBeVisible();
-        await expect(page.getByText("No websites yet")).toBeVisible();
+        await expect(page.getByRole("button", { name: "Add", exact: true })).toBeVisible();
+        await expect(page.getByRole("link", { name: "Connect an app or website" })).toBeVisible();
+        await expect(page.getByText("Nothing connected yet")).toBeVisible();
         await expect(page.getByText(/Ask /)).toHaveCount(0);
         await expect(page.getByText(/Only workspace owners/)).toHaveCount(0);
         expect(await overflow(page)).toBeLessThanOrEqual(0);
@@ -66,7 +68,8 @@ for (const scheme of ["light", "dark"] as const) {
       test("a workspace member's Accounts says who can add one, and has no button", async ({ page }) => {
         await open(page, "/o/acme/w/main/apps?tab=accounts", scheme, "member");
         await expect(page.getByText("Only workspace owners can add an account. Ask Bob Builder or Ada Diaz.")).toBeVisible();
-        await expect(page.getByRole("button", { name: /Add a website|Add an account/ })).toHaveCount(0);
+        await expect(page.getByRole("button", { name: /^Add$/ })).toHaveCount(0);
+        await expect(page.getByRole("link", { name: "Connect an app or website" })).toHaveCount(0);
         expect(await overflow(page)).toBeLessThanOrEqual(0);
         expect(await serious(page)).toEqual([]);
       });

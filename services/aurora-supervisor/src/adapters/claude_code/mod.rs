@@ -104,6 +104,10 @@ impl HarnessAdapter for ClaudeCodeAdapter {
             dialects: config::DIALECTS.iter().map(|d| (*d).to_owned()).collect(),
             skills_dir: Some(".claude/skills".into()),
             instruction_files: vec!["CLAUDE.md".into(), "AGENTS.md".into()],
+            model_roles: aurora_protocol::runner::harness_model_roles("claude-code")
+                .iter()
+                .map(|r| (*r).to_owned())
+                .collect(),
         }
     }
 
@@ -198,6 +202,8 @@ struct Live {
     kill: Option<Box<dyn FnOnce() + Send>>,
     ready: Arc<AtomicBool>,
     dead: Arc<AtomicBool>,
+    /// The CLI's per-model usage report is cumulative for this child (P5-MODELS-2).
+    usage_base: stream::Baseline,
 }
 
 impl Live {
@@ -240,6 +246,7 @@ impl ClaudeSession {
             kill: Some(kill),
             ready: Arc::default(),
             dead: Arc::default(),
+            usage_base: Arc::default(),
         });
         Ok(())
     }
@@ -255,6 +262,7 @@ struct Pump {
     abort: Arc<Notify>,
     hold_timeout: Duration,
     user_line: String,
+    usage_base: stream::Baseline,
 }
 
 fn err(code: &str, message: &str) -> HarnessEvent {
@@ -269,7 +277,7 @@ impl Pump {
     async fn drive(&self) -> HarnessEvent {
         let aborted = || err("aborted", "turn aborted");
         let mut lines = self.lines.lock().await;
-        let mut mapper = StreamMapper::new();
+        let mut mapper = StreamMapper::with_baseline(self.usage_base.clone());
         if !self.ready.load(Ordering::SeqCst) {
             let started = Instant::now();
             let mut deadline = started + self.hold_timeout.min(INIT_GRACE);
@@ -389,6 +397,7 @@ impl HarnessSession for ClaudeSession {
             abort,
             hold_timeout: self.hold_timeout,
             user_line: config::user_message_line(&config::render_turn(&input)),
+            usage_base: live.usage_base.clone(),
         };
         let running = self.running.clone();
         tokio::spawn(async move {

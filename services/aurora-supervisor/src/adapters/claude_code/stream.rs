@@ -11,9 +11,10 @@
 //! - `result` -> terminal `Done{usage}` or `Error{code,message}` (see [`classify_failure`]).
 //! - Events with a non-null `parent_tool_use_id` (sub-agents) and unknown types are ignored.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::sync::{Arc, Mutex as StdMutex};
 
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use crate::adapters::provider_error;
 use crate::harness::HarnessEvent;
@@ -38,8 +39,13 @@ pub struct Mapped {
     pub terminal: Option<HarnessEvent>,
 }
 
+/// Per model: input, output, cache-read, cache-write tokens, as of the child's last `result`.
+pub type Baseline = Arc<StdMutex<BTreeMap<String, [i64; 4]>>>;
+
 #[derive(Debug, Default)]
 pub struct StreamMapper {
+    /// Shared across the turns of one child (the CLI's per-model report is cumulative for the process).
+    baseline: Baseline,
     message_id: String,
     streamed: HashSet<String>,
     block_kinds: HashMap<u64, String>,
@@ -81,6 +87,14 @@ fn result_text(content: &Value) -> String {
 impl StreamMapper {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// A mapper for one turn of a child whose earlier turns left `baseline`.
+    pub fn with_baseline(baseline: Baseline) -> Self {
+        Self {
+            baseline,
+            ..Self::default()
+        }
     }
 
     /// Clears per-turn state (call when a new user message is sent).
@@ -272,6 +286,8 @@ impl StreamMapper {
     }
 
     fn result(&mut self, v: &Value) -> HarnessEvent {
+        // Taken for every result, so that a failed turn's tokens are not carried into the next one.
+        let usage = self.turn_usage(v);
         let is_error = v.get("is_error").and_then(Value::as_bool).unwrap_or(false);
         let refusal = self.stop_reason.as_deref() == Some("refusal");
         if refusal && !is_error {
@@ -295,9 +311,79 @@ impl StreamMapper {
             let (code, message) = classify_failure(status, text, subtype);
             return HarnessEvent::Error { code, message };
         }
-        HarnessEvent::Done {
-            usage: v.get("usage").cloned(),
+        HarnessEvent::Done { usage }
+    }
+
+    /// (P5-MODELS-2, D-304, C-879) This turn's usage, per model. The result's `modelUsage` (pinned 2.1.319)
+    /// is keyed by model id and includes subagents; the top-level `usage` covers the main loop only and is
+    /// used only when the report is absent. The CLI's report is **cumulative for the child process** ("read
+    /// the latest result rather than summing across results"), so the turn's share is the difference to the
+    /// previous result of the same child (a counter that went down means a fresh child: its value is taken
+    /// whole). `costUSD` and `total_cost_usd` are never read: Aurora records no money.
+    fn turn_usage(&mut self, v: &Value) -> Option<Value> {
+        let Some(report) = v
+            .get("modelUsage")
+            .and_then(Value::as_object)
+            .filter(|m| !m.is_empty())
+        else {
+            return v.get("usage").map(|u| {
+                let n = |k: &str| u.get(k).and_then(Value::as_i64).unwrap_or(0);
+                json!({
+                    "input_tokens": n("input_tokens"),
+                    "output_tokens": n("output_tokens"),
+                    "cache_read_tokens": n("cache_read_input_tokens"),
+                    "cache_write_tokens": n("cache_creation_input_tokens"),
+                })
+            });
+        };
+        let mut base = self
+            .baseline
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut by_model = Vec::new();
+        let mut total = [0_i64; 4];
+        for (model, e) in report {
+            let n = |k: &str| e.get(k).and_then(Value::as_i64).unwrap_or(0).max(0);
+            let cur = [
+                n("inputTokens"),
+                n("outputTokens"),
+                n("cacheReadInputTokens"),
+                n("cacheCreationInputTokens"),
+            ];
+            let prev = base.get(model).copied().unwrap_or_default();
+            let delta = if cur.iter().zip(prev).all(|(c, p)| *c >= p) {
+                [
+                    cur[0] - prev[0],
+                    cur[1] - prev[1],
+                    cur[2] - prev[2],
+                    cur[3] - prev[3],
+                ]
+            } else {
+                cur
+            };
+            base.insert(model.clone(), cur);
+            if delta == [0; 4] {
+                continue;
+            }
+            for (t, d) in total.iter_mut().zip(delta) {
+                *t = t.saturating_add(d);
+            }
+            by_model.push(json!({
+                "model": model,
+                "input_tokens": delta[0],
+                "output_tokens": delta[1],
+                "cache_read_tokens": delta[2],
+                "cache_write_tokens": delta[3],
+            }));
         }
+        by_model.sort_by(|a, b| a["model"].as_str().cmp(&b["model"].as_str()));
+        Some(json!({
+            "input_tokens": total[0],
+            "output_tokens": total[1],
+            "cache_read_tokens": total[2],
+            "cache_write_tokens": total[3],
+            "by_model": by_model,
+        }))
     }
 }
 
@@ -612,5 +698,87 @@ mod tests {
         assert_eq!(m.map_line("not json"), Mapped::default());
         let sub = r#"{"type":"assistant","parent_tool_use_id":"toolu_9","message":{"id":"m","content":[{"type":"text","text":"x"}]}}"#;
         assert_eq!(m.map_line(sub), Mapped::default());
+    }
+
+    const SUBAGENT: &str = include_str!("fixtures/subagent_turn.jsonl");
+
+    fn done_usage(t: Option<HarnessEvent>) -> Value {
+        match t {
+            Some(HarnessEvent::Done { usage: Some(u) }) => u,
+            other => panic!("not a Done with usage: {other:?}"),
+        }
+    }
+
+    /// (D-304) The same fixture read the old way (the result's main-loop `usage`) leaves the subagent's
+    /// tokens out; the per-model report counts them.
+    #[test]
+    fn a_subagent_turn_counts_the_subagents_tokens_and_drops_the_cost() {
+        let u = done_usage(run(SUBAGENT).1);
+        let old: Value = serde_json::from_str(SUBAGENT.lines().last().unwrap()).unwrap();
+        assert_eq!(old["usage"]["input_tokens"], 100, "the old reading");
+        assert_eq!(u["input_tokens"], 400, "main 100 + subagent 300");
+        assert_eq!(u["output_tokens"], 130);
+        assert_eq!(u["cache_read_tokens"], 10);
+        assert_eq!(u["cache_write_tokens"], 5);
+        assert_eq!(
+            u["by_model"],
+            json!([
+                {"model": "m-main", "input_tokens": 100, "output_tokens": 40,
+                 "cache_read_tokens": 10, "cache_write_tokens": 5},
+                {"model": "m-small", "input_tokens": 300, "output_tokens": 90,
+                 "cache_read_tokens": 0, "cache_write_tokens": 0},
+            ])
+        );
+        let text = u.to_string();
+        assert!(
+            !text.contains("cost") && !text.contains("0.5"),
+            "no money is stored: {text}"
+        );
+    }
+
+    #[test]
+    fn without_the_per_model_report_the_main_loop_usage_is_the_fallback() {
+        let no_report: String = SUBAGENT
+            .lines()
+            .map(|l| {
+                if l.contains(r#""type":"result""#) {
+                    let mut v: Value = serde_json::from_str(l).unwrap();
+                    v.as_object_mut().unwrap().remove("modelUsage");
+                    v.to_string()
+                } else {
+                    l.to_owned()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let u = done_usage(run(&no_report).1);
+        assert_eq!(u["input_tokens"], 100);
+        assert_eq!(u["cache_read_tokens"], 10);
+        assert_eq!(u["cache_write_tokens"], 5);
+        assert!(u.get("by_model").is_none(), "{u}");
+    }
+
+    /// The CLI's report is cumulative for the child: a second turn reports its own share, and a counter
+    /// that went down (a fresh child) is taken whole.
+    #[test]
+    fn the_cumulative_report_is_reduced_to_each_turns_share() {
+        let result = |main: i64, small: i64| {
+            format!(
+                r#"{{"type":"result","subtype":"success","is_error":false,"modelUsage":{{"m-main":{{"inputTokens":{main},"outputTokens":0,"cacheReadInputTokens":0,"cacheCreationInputTokens":0,"costUSD":1.0}},"m-small":{{"inputTokens":{small},"outputTokens":0,"cacheReadInputTokens":0,"cacheCreationInputTokens":0,"costUSD":1.0}}}}}}"#
+            )
+        };
+        let base = Baseline::default();
+        let turn = |line: String| {
+            let mut m = StreamMapper::with_baseline(base.clone());
+            done_usage(m.map_line(&line).terminal)
+        };
+        let first = turn(result(100, 300));
+        assert_eq!(first["input_tokens"], 400);
+        let second = turn(result(150, 300));
+        assert_eq!(second["input_tokens"], 50, "only the main model grew");
+        assert_eq!(second["by_model"].as_array().unwrap().len(), 1, "{second}");
+        assert_eq!(second["by_model"][0]["model"], "m-main");
+        let fresh = turn(result(10, 20));
+        assert_eq!(fresh["input_tokens"], 30, "counters went down: a new child");
     }
 }

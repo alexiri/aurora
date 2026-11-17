@@ -126,6 +126,57 @@ fn schedules_summary(rows: &[hosted::HomeSchedule]) -> Value {
     json!(out)
 }
 
+/// (P5-MODELS-1, C-884) The *Models* fragment's inputs: the default model, the resolved roles and the subagent
+/// role, from the same function the dispatcher uses. Null (nothing rendered) when the harness maps no roles or no
+/// role resolves and there is no subagent role. Ids are pattern-checked, so they are inserted verbatim.
+async fn models_input(
+    state: &AppState,
+    conn: &mut PgConnection,
+    agent: uuid::Uuid,
+    inputs: &hosted::HomeInputs,
+) -> Value {
+    let harness = inputs
+        .harness
+        .clone()
+        .unwrap_or_else(|| state.ops().hosted.default_harness.clone());
+    if aurora_protocol::runner::harness_model_roles(&harness).is_empty() {
+        return Value::Null;
+    }
+    let llm = state.llm();
+    let r = match super::model::readiness(
+        state,
+        &llm,
+        conn,
+        agent,
+        inputs.org_id,
+        inputs.workspace_id,
+        &harness,
+    )
+    .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!(%agent, error = %e.message(), "models line not rendered: readiness failed");
+            return Value::Null;
+        }
+    };
+    let (Some(d), Some(rr)) = (&r.default, &r.roles) else {
+        return Value::Null;
+    };
+    let ids = rr.role_ids();
+    if ids.is_empty() && rr.subagent_role.is_none() {
+        return Value::Null;
+    }
+    let mut v = json!({"default": d.model});
+    for (role, id) in ids.set() {
+        v[role] = json!(id);
+    }
+    if let Some(role) = rr.subagent_role {
+        v["subagent_role"] = json!(role);
+    }
+    v
+}
+
 /// `render_inputs` entry: shapes of `aurora-supervisor`'s `instructions::RenderInputs`.
 async fn render_inputs(
     state: &AppState,
@@ -257,9 +308,11 @@ async fn render_inputs(
             })
         })
         .collect();
+    let models = models_input(state, conn, agent, inputs).await;
     Ok(json!({
         "agent": {"name": inputs.name, "handle": inputs.handle, "workspace": inputs.workspace_name},
         "brief": if inputs.brief.trim().is_empty() { Value::Null } else { json!(inputs.brief) },
+        "models": models,
         "apps": apps, "databases": databases, "channels": channels, "peers": peers,
         "memory_language": inputs.memory_language,
         "schedules": schedules,

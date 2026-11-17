@@ -509,6 +509,8 @@ mod tests {
             region: Some(region.into()),
             project_id: None,
             location: None,
+            model_roles: Default::default(),
+            model_info: Default::default(),
         }
     }
 

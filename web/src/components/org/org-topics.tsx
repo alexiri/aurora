@@ -7,7 +7,7 @@ import { AvailabilityView } from "@/components/apps/availability-view";
 import { InstancesView } from "@/components/apps/instances-view";
 import { OAuthClientsPanel } from "@/components/apps/oauth-clients-panel";
 import { ChannelsView } from "@/components/channels/channels-view";
-import { AccountsPanel } from "@/components/credentials/credentials-view";
+import { AccountsPanel } from "@/components/accounts/accounts-panel";
 import { GovernanceView, type Tab as GovernancePanel } from "@/components/governance/governance-view";
 import { AppsPosturePanel } from "@/components/governance/apps-posture-panel";
 import { GroupsView } from "@/components/groups/groups-view";

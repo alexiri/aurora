@@ -4,6 +4,10 @@
 //! (`422 settings_invalid`, `details.fields[] = { path: "/llm.endpoints/<id>/<key>", code }`), so a rule is written once.
 //! The entry's JSON keys are classified by [`unknown_key_code`] before it is deserialized into [`LlmEndpoint`].
 use crate::LlmEndpoint;
+use aurora_core::limits::MODEL_INFO_MAX;
+use aurora_core::model_id::{
+    CONTEXT_WINDOW_MAX, CONTEXT_WINDOW_MIN, MODEL_CAPABILITIES, MODEL_ROLES, validate_model_id,
+};
 
 /// One refusal: the offending key and the stable code of C-800.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -42,6 +46,8 @@ pub const ENDPOINT_KEYS: &[&str] = &[
     "region",
     "project_id",
     "location",
+    "model_roles",
+    "model_info",
 ];
 
 /// The code for a key that is not part of an entry: `credential_in_entry` for anything named like a credential
@@ -195,6 +201,33 @@ fn allowed_paths_shape_ok(paths: &[String]) -> bool {
                     .split('/')
                     .skip(1)
                     .any(|s| s.is_empty() || s == ".."))
+        })
+}
+
+/// (C-875) Role names from the closed vocabulary; each model matches `MODEL_ID_PATTERN`, is on `allowed_models` when
+/// that is set and on `models` when the list is static.
+fn model_roles_ok(e: &LlmEndpoint) -> bool {
+    e.model_roles.iter().all(|(role, model)| {
+        MODEL_ROLES.contains(&role.as_str())
+            && validate_model_id(model)
+            && (e.allowed_models.is_empty() || e.allowed_models.contains(model))
+            && (e.models.is_empty() || e.models.contains(model))
+    })
+}
+
+/// (C-875) At most `MODEL_INFO_MAX` entries; ids are valid; `context_window` 1 000..10 000 000; capabilities from the
+/// closed vocabulary.
+fn model_info_ok(e: &LlmEndpoint) -> bool {
+    e.model_info.len() <= MODEL_INFO_MAX
+        && e.model_info.iter().all(|(id, info)| {
+            validate_model_id(id)
+                && info.context_window.is_none_or(|w| {
+                    (i64::from(CONTEXT_WINDOW_MIN)..=i64::from(CONTEXT_WINDOW_MAX)).contains(&w)
+                })
+                && info
+                    .capabilities
+                    .iter()
+                    .all(|c| MODEL_CAPABILITIES.contains(&c.as_str()))
         })
 }
 
@@ -366,6 +399,20 @@ pub fn endpoint_field_errors(e: &LlmEndpoint, source: EntrySource) -> Vec<Endpoi
         }
     }
 
+    // (P5-MODELS-1, C-875, SEC-122) model ids, roles and metadata are inert data
+    if e.default_model
+        .as_deref()
+        .is_some_and(|m| !validate_model_id(m))
+    {
+        err("default_model", "value_invalid");
+    }
+    if !model_roles_ok(e) {
+        err("model_roles", "value_invalid");
+    }
+    if !model_info_ok(e) {
+        err("model_info", "value_invalid");
+    }
+
     // key-origin method per provider
     if is_new && let Some(o) = &e.key_origin {
         let ok: &[&str] = match provider {
@@ -409,6 +456,98 @@ mod tests {
             default_model: s("claude-sonnet-4-5@20250929"),
             ..ep("vertex")
         }
+    }
+
+    fn roles(pairs: &[(&str, &str)]) -> std::collections::BTreeMap<String, String> {
+        pairs
+            .iter()
+            .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+            .collect()
+    }
+
+    /// (C-875, SEC-122) Every bad role, id or metadata value is `value_invalid` naming the key.
+    #[test]
+    fn model_roles_and_info_refusals_name_the_key() {
+        let ok = LlmEndpoint {
+            model_roles: roles(&[("large", "glm-4.6"), ("small", "glm-4.5-air")]),
+            ..ep("litellm")
+        };
+        assert!(codes(&ok).is_empty());
+        let bad = |e: LlmEndpoint, key: &'static str| {
+            assert_eq!(codes(&e), [(key, "value_invalid")], "{key}");
+        };
+        // an unknown role, a bad id, a credential-shaped id, a 201-character id
+        for r in [
+            roles(&[("huge", "m")]),
+            roles(&[("large", "a b")]),
+            roles(&[("large", "$(id)")]),
+            roles(&[("large", "a'b")]),
+            roles(&[("large", "sk-ant-api03-xyz")]),
+            roles(&[("large", &"a".repeat(201))]),
+        ] {
+            bad(
+                LlmEndpoint {
+                    model_roles: r,
+                    ..ep("litellm")
+                },
+                "model_roles",
+            );
+        }
+        // not on allowed_models / not on a static models list
+        bad(
+            LlmEndpoint {
+                model_roles: roles(&[("large", "m2")]),
+                allowed_models: vec!["m1".into()],
+                ..ep("litellm")
+            },
+            "model_roles",
+        );
+        bad(
+            LlmEndpoint {
+                model_roles: roles(&[("large", "m2")]),
+                models: vec!["m1".into()],
+                ..ep("litellm")
+            },
+            "model_roles",
+        );
+        // default model
+        bad(
+            LlmEndpoint {
+                default_model: Some("a b".into()),
+                ..ep("litellm")
+            },
+            "default_model",
+        );
+        // model_info: bad id, window range, unknown capability, too many entries
+        let info = |id: &str, w: Option<i64>, caps: &[&str]| {
+            let mut m = std::collections::BTreeMap::new();
+            m.insert(
+                id.to_owned(),
+                crate::ModelInfoEntry {
+                    context_window: w,
+                    capabilities: caps.iter().map(|c| (*c).to_owned()).collect(),
+                },
+            );
+            LlmEndpoint {
+                model_info: m,
+                ..ep("litellm")
+            }
+        };
+        assert!(codes(&info("glm-4.6", Some(200_000), &["thinking", "effort"])).is_empty());
+        bad(info("a b", None, &[]), "model_info");
+        bad(info("m", Some(999), &[]), "model_info");
+        bad(info("m", Some(10_000_001), &[]), "model_info");
+        bad(info("m", None, &["telepathy"]), "model_info");
+        let many = LlmEndpoint {
+            model_info: (0..=aurora_core::limits::MODEL_INFO_MAX)
+                .map(|i| (format!("m{i}"), crate::ModelInfoEntry::default()))
+                .collect(),
+            ..ep("litellm")
+        };
+        bad(many, "model_info");
+        // the new keys are not credential-named
+        assert_eq!(unknown_key_code("model_roles"), None);
+        assert_eq!(unknown_key_code("model_info"), None);
     }
 
     #[test]

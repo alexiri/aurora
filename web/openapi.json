@@ -9077,7 +9077,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/PutConnectionGrant"
+                "$ref": "#/components/schemas/PutConnectionAccess"
               }
             }
           },
@@ -9125,7 +9125,7 @@
             }
           },
           "422": {
-            "description": "grant_invalid (details.reason: empty_custom | tool_in_both | unknown_tool)",
+            "description": "grant_invalid (details.reason: empty_custom | tool_in_both | unknown_tool | level_or_mode | level_with_tools), full_grant_forbidden, or above_account_limit (an organization's account; details.who_can, details.limit)",
             "content": {
               "application/json": {
                 "schema": {
@@ -19721,6 +19721,134 @@
             }
           },
           "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/orgs/{org}/accounts": {
+      "get": {
+        "tags": [
+          "accounts"
+        ],
+        "summary": "The accounts shared with the whole organization (owners and admins; C-917), each with the\nagents of every workspace that use it and its limit.",
+        "operationId": "listOrgAccounts",
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "description": "Organization id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "agent_id",
+            "in": "query",
+            "description": "Workspace list only: read the list for this agent (adds `given`, given first, the model\nline on AI keys).",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "description": "`app` | `website` | `ai_key`.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "app_id",
+            "in": "query",
+            "description": "Only the accounts of this app.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Accounts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_Account"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid filter",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
             "content": {
               "application/json": {
                 "schema": {
@@ -30489,6 +30617,124 @@
         ]
       }
     },
+    "/v1/workspaces/{ws}/accounts": {
+      "get": {
+        "tags": [
+          "accounts"
+        ],
+        "summary": "One list of what a workspace's agents can use (`can_use`; C-917): the workspace's own apps,\nwebsites and AI keys, and the organization's accounts its agents can be given. With\n`agent_id` the list is read for that agent (`given`, given first).",
+        "operationId": "listWorkspaceAccounts",
+        "parameters": [
+          {
+            "name": "ws",
+            "in": "path",
+            "description": "Workspace id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "agent_id",
+            "in": "query",
+            "description": "Workspace list only: read the list for this agent (adds `given`, given first, the model\nline on AI keys).",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "description": "`app` | `website` | `ai_key`.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "app_id",
+            "in": "query",
+            "description": "Only the accounts of this app.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Accounts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_Account"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid filter",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
     "/v1/workspaces/{ws}/action-approvals": {
       "get": {
         "tags": [
@@ -33756,6 +34002,217 @@
           }
         }
       },
+      "Account": {
+        "type": "object",
+        "required": [
+          "ref",
+          "kind",
+          "name",
+          "scope",
+          "levels",
+          "health",
+          "agents",
+          "can"
+        ],
+        "properties": {
+          "agents": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AgentAccess"
+            }
+          },
+          "app": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/AccountApp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "can": {
+            "$ref": "#/components/schemas/AccountCan"
+          },
+          "connected_by": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PersonName"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "given": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Only with `agent_id`: whether that agent can use the account (given ones come first)."
+          },
+          "health": {
+            "$ref": "#/components/schemas/Health"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/AccountKind"
+          },
+          "levels": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Level"
+            },
+            "description": "The choices that exist for the account, already cut to the limit; empty = no choice."
+          },
+          "limit": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Level",
+                "description": "An organization's account of an app that can change things: the most any agent may do."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "managed_by": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/WhoCan"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "ref": {
+            "$ref": "#/components/schemas/AccountRef"
+          },
+          "scope": {
+            "type": "string",
+            "description": "`workspace` | `organization`."
+          }
+        }
+      },
+      "AccountAgent": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "handle"
+        ],
+        "properties": {
+          "handle": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "AccountApp": {
+        "type": "object",
+        "required": [
+          "app_id",
+          "name",
+          "custom_only"
+        ],
+        "properties": {
+          "app_id": {
+            "type": "string"
+          },
+          "custom_only": {
+            "type": "boolean",
+            "description": "The app allows custom access only (C-410): no `act` choice, the actions table opens\ndirectly."
+          },
+          "family": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/AppFamily"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "AccountCan": {
+        "type": "object",
+        "required": [
+          "give_access",
+          "change_access",
+          "manage"
+        ],
+        "properties": {
+          "change_access": {
+            "type": "boolean"
+          },
+          "give_access": {
+            "type": "boolean"
+          },
+          "manage": {
+            "type": "boolean"
+          }
+        }
+      },
+      "AccountKind": {
+        "type": "string",
+        "enum": [
+          "app",
+          "website",
+          "ai_key"
+        ]
+      },
+      "AccountRef": {
+        "type": "object",
+        "required": [
+          "type",
+          "id"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "type": {
+            "$ref": "#/components/schemas/AccountRefType"
+          }
+        }
+      },
+      "AccountRefType": {
+        "type": "string",
+        "enum": [
+          "connection",
+          "secret"
+        ]
+      },
+      "AccountWorkspace": {
+        "type": "object",
+        "required": [
+          "id",
+          "name"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
       "Action": {
         "type": "string",
         "enum": [
@@ -34546,6 +35003,7 @@
           "name",
           "kind",
           "is_default",
+          "subagent_model",
           "proactive_messaging",
           "brief",
           "effective_frozen",
@@ -34638,6 +35096,17 @@
               "null"
             ]
           },
+          "model_roles": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ModelRoles",
+                "description": "(P5-MODELS-1, C-876) Role models, stamped with the endpoint they were chosen for; null = none."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "name": {
             "type": "string"
           },
@@ -34649,6 +35118,10 @@
             "type": "string",
             "description": "`ask` | `allow` | `off`."
           },
+          "subagent_model": {
+            "type": "string",
+            "description": "(P5-MODELS-1, C-876) `inherit` | `large` | `medium` | `small`: the model of subagents whose\ndefinition names none."
+          },
           "updated_at": {
             "type": "string",
             "format": "date-time"
@@ -34658,6 +35131,63 @@
             "format": "uuid"
           }
         }
+      },
+      "AgentAccess": {
+        "type": "object",
+        "required": [
+          "agent",
+          "workspace",
+          "level"
+        ],
+        "properties": {
+          "agent": {
+            "$ref": "#/components/schemas/AccountAgent"
+          },
+          "always_allowed": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/AlwaysAllowed"
+            },
+            "description": "Under `ask`: the changes the saved choice allows without asking."
+          },
+          "custom": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/CustomChoice"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "level": {
+            "$ref": "#/components/schemas/AgentAccessLevel"
+          },
+          "model": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "AI-key rows of a list read for one agent (`agent_id`): the model that agent's next turn\nuses through the key."
+          },
+          "workspace": {
+            "$ref": "#/components/schemas/AccountWorkspace"
+          }
+        }
+      },
+      "AgentAccessLevel": {
+        "type": "string",
+        "description": "What one agent's saved choice reads as. `use` is the level of accounts with no choice.",
+        "enum": [
+          "read",
+          "ask",
+          "act",
+          "custom",
+          "use"
+        ]
       },
       "AgentLink": {
         "type": "object",
@@ -34961,6 +35491,21 @@
           }
         },
         "additionalProperties": false
+      },
+      "AlwaysAllowed": {
+        "type": "object",
+        "required": [
+          "tool_id",
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "tool_id": {
+            "type": "string"
+          }
+        }
       },
       "ApiKey": {
         "type": "object",
@@ -39109,6 +39654,25 @@
           }
         }
       },
+      "CustomChoice": {
+        "type": "object",
+        "required": [
+          "base",
+          "differs"
+        ],
+        "properties": {
+          "base": {
+            "$ref": "#/components/schemas/Level",
+            "description": "The nearest level."
+          },
+          "differs": {
+            "type": "integer",
+            "format": "int32",
+            "description": "How many actions differ from it.",
+            "minimum": 0
+          }
+        }
+      },
       "DatabaseRef": {
         "type": "object",
         "description": "How an agent reaches a database connection (P2-DBL-2, C-230); `null` for other apps.",
@@ -39160,7 +39724,10 @@
           "endpoint_id",
           "provider",
           "model_id",
-          "source"
+          "source",
+          "roles",
+          "roles_dropped",
+          "subagent_model"
         ],
         "properties": {
           "endpoint_id": {
@@ -39172,9 +39739,31 @@
           "provider": {
             "type": "string"
           },
+          "roles": {
+            "$ref": "#/components/schemas/RolesView",
+            "description": "(P5-MODELS-1, C-878) The role resolution of this selection, from the dispatcher's function."
+          },
+          "roles_dropped": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Agent roles dropped for the next turn (`large` | `medium` | `small`)."
+          },
           "source": {
             "type": "string",
             "description": "`override` | `endpoint_default` | `provider_default` | `allow_list` | `static_list`."
+          },
+          "subagent_model": {
+            "type": "string",
+            "description": "The agent's subagent default: `inherit` or a role."
+          },
+          "subagent_warning": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`subagent_role_unset` when the named role resolves to nothing on a non-`anthropic` endpoint."
           }
         }
       },
@@ -40761,6 +41350,7 @@
           "id",
           "display_name",
           "dialects",
+          "model_roles",
           "available"
         ],
         "properties": {
@@ -40781,8 +41371,58 @@
           "id": {
             "type": "string",
             "description": "`claude-code` | `codex` (| `fake` when enabled)."
+          },
+          "model_roles": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "(P5-MODELS-1, C-882) The model roles the adapter maps (`large`, `medium`, `small`); empty = none."
           }
         }
+      },
+      "Health": {
+        "type": "object",
+        "description": "C-944. Until P5-UX-14 adds the check fields: `sign_in_expired`, `disabled`, else `unknown`.",
+        "required": [
+          "state"
+        ],
+        "properties": {
+          "checked_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "detail": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "last_used_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "state": {
+            "$ref": "#/components/schemas/HealthState"
+          }
+        }
+      },
+      "HealthState": {
+        "type": "string",
+        "enum": [
+          "ok",
+          "rejected",
+          "sign_in_expired",
+          "unreachable",
+          "disabled",
+          "unknown"
+        ]
       },
       "HookAccepted": {
         "type": "object",
@@ -43493,6 +44133,69 @@
           }
         }
       },
+      "ModelRoles": {
+        "type": "object",
+        "description": "(P5-MODELS-1, C-876) The agent's role models; `endpoint_id` is the endpoint they were chosen for.\nA role that is null or absent is unset.",
+        "required": [
+          "endpoint_id"
+        ],
+        "properties": {
+          "endpoint_id": {
+            "type": "string"
+          },
+          "large": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "medium": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "small": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "ModelUsage": {
+        "type": "object",
+        "description": "One model's share of a turn's usage (C-879).",
+        "required": [
+          "model",
+          "input_tokens",
+          "output_tokens",
+          "cache_read_tokens",
+          "cache_write_tokens"
+        ],
+        "properties": {
+          "cache_read_tokens": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "cache_write_tokens": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "input_tokens": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "model": {
+            "type": "string"
+          },
+          "output_tokens": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
       "Models": {
         "type": "object",
         "required": [
@@ -44542,6 +45245,118 @@
           }
         }
       },
+      "Page_Account": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "ref",
+                "kind",
+                "name",
+                "scope",
+                "levels",
+                "health",
+                "agents",
+                "can"
+              ],
+              "properties": {
+                "agents": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AgentAccess"
+                  }
+                },
+                "app": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/AccountApp"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "can": {
+                  "$ref": "#/components/schemas/AccountCan"
+                },
+                "connected_by": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/PersonName"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "given": {
+                  "type": [
+                    "boolean",
+                    "null"
+                  ],
+                  "description": "Only with `agent_id`: whether that agent can use the account (given ones come first)."
+                },
+                "health": {
+                  "$ref": "#/components/schemas/Health"
+                },
+                "kind": {
+                  "$ref": "#/components/schemas/AccountKind"
+                },
+                "levels": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Level"
+                  },
+                  "description": "The choices that exist for the account, already cut to the limit; empty = no choice."
+                },
+                "limit": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Level",
+                      "description": "An organization's account of an app that can change things: the most any agent may do."
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "managed_by": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/WhoCan"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "name": {
+                  "type": "string"
+                },
+                "ref": {
+                  "$ref": "#/components/schemas/AccountRef"
+                },
+                "scope": {
+                  "type": "string",
+                  "description": "`workspace` | `organization`."
+                }
+              }
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
       "Page_ActionApproval": {
         "type": "object",
         "required": [
@@ -44860,6 +45675,7 @@
                 "name",
                 "kind",
                 "is_default",
+                "subagent_model",
                 "proactive_messaging",
                 "brief",
                 "effective_frozen",
@@ -44952,6 +45768,17 @@
                     "null"
                   ]
                 },
+                "model_roles": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/ModelRoles",
+                      "description": "(P5-MODELS-1, C-876) Role models, stamped with the endpoint they were chosen for; null = none."
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
                 "name": {
                   "type": "string"
                 },
@@ -44962,6 +45789,10 @@
                 "proactive_messaging": {
                   "type": "string",
                   "description": "`ask` | `allow` | `off`."
+                },
+                "subagent_model": {
+                  "type": "string",
+                  "description": "(P5-MODELS-1, C-876) `inherit` | `large` | `medium` | `small`: the model of subagents whose\ndefinition names none."
                 },
                 "updated_at": {
                   "type": "string",
@@ -47278,6 +48109,13 @@
                   "type": "integer",
                   "format": "int32"
                 },
+                "llm_model": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "(phase 5, P5-MODELS-2, C-880) The model an LLM request asked for, when the gateway could read it."
+                },
                 "method": {
                   "type": "string"
                 },
@@ -48390,6 +49228,17 @@
               "null"
             ]
           },
+          "model_roles": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ModelRoles",
+                "description": "(P5-MODELS-1, C-876) Absent = unchanged, `null` = clear, an object = replace (the roles it\nnames; the others become unset). Hosted agents only."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "name": {
             "type": [
               "string",
@@ -48408,6 +49257,13 @@
               "null"
             ],
             "description": "Instance admins only."
+          },
+          "subagent_model": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "(P5-MODELS-1, C-876) `inherit` | `large` | `medium` | `small`."
           }
         },
         "additionalProperties": false
@@ -49149,6 +50005,17 @@
           "hour",
           "day"
         ]
+      },
+      "PersonName": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        }
       },
       "PersonalOf": {
         "type": "object",
@@ -50696,6 +51563,53 @@
         },
         "additionalProperties": false
       },
+      "PutConnectionAccess": {
+        "type": "object",
+        "description": "(P5-UX-4, C-980) Body of `PUT /agents/{agent}/grants/connections/{conn}`: a `level`, or a\n`mode` with its tool lists (the Custom editor). Exactly one of the two; a level carries no tool\nlist (the tools come from the app's catalogue, never from the request).",
+        "properties": {
+          "allow_tools": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "ask_timeout_secs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "ask_tools": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "level": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Level",
+                "description": "`read` | `ask` | `act`: replaces what was saved, always-allowed changes included."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "mode": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/GrantMode"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
       "PutConnectionGrant": {
         "type": "object",
         "required": [
@@ -51461,6 +52375,13 @@
             "type": "integer",
             "format": "int32"
           },
+          "llm_model": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "(phase 5, P5-MODELS-2, C-880) The model an LLM request asked for, when the gateway could read it."
+          },
           "method": {
             "type": "string"
           },
@@ -51653,6 +52574,50 @@
             "type": "integer",
             "format": "int64",
             "minimum": 0
+          }
+        }
+      },
+      "RoleView": {
+        "type": "object",
+        "required": [
+          "source"
+        ],
+        "properties": {
+          "model_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source": {
+            "type": "string",
+            "description": "`agent` | `endpoint` | `none`."
+          },
+          "warning": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`role_unset` | `role_not_allowed`; null when none."
+          }
+        }
+      },
+      "RolesView": {
+        "type": "object",
+        "required": [
+          "large",
+          "medium",
+          "small"
+        ],
+        "properties": {
+          "large": {
+            "$ref": "#/components/schemas/RoleView"
+          },
+          "medium": {
+            "$ref": "#/components/schemas/RoleView"
+          },
+          "small": {
+            "$ref": "#/components/schemas/RoleView"
           }
         }
       },
@@ -56318,12 +57283,30 @@
           "output_tokens"
         ],
         "properties": {
+          "by_model": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/ModelUsage"
+            },
+            "description": "Tokens per model, subagents included; the totals above are their sum. Absent on turns recorded\nbefore per-model usage."
+          },
           "cache_read_tokens": {
             "type": [
               "integer",
               "null"
             ],
             "format": "int64"
+          },
+          "cache_write_tokens": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "(P5-MODELS-2, C-879)"
           },
           "cost_usd": {
             "type": [
@@ -56332,13 +57315,36 @@
             ],
             "format": "double"
           },
+          "endpoint_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "input_tokens": {
             "type": "integer",
             "format": "int64"
           },
+          "model": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "output_tokens": {
             "type": "integer",
             "format": "int64"
+          },
+          "provider": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The provider, endpoint and default model, stamped from the turn's model choice."
+          },
+          "unverified_models": {
+            "type": "boolean",
+            "description": "Set when the harness reported models outside what the turn could have used: those tokens were\nfolded into the default model's entry."
           }
         }
       },

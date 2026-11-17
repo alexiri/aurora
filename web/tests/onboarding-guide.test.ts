@@ -19,7 +19,17 @@ const readiness = (keys: ModelReadiness["keys"], withDefault = true): ModelReadi
   harness: "claude-code",
   keys,
   override_dropped: false,
-  default: withDefault ? { endpoint_id: "litellm", model_id: "claude-sonnet", provider: "litellm", source: "endpoint_default" } : null,
+  default: withDefault
+    ? {
+        endpoint_id: "litellm", model_id: "claude-sonnet", provider: "litellm", source: "endpoint_default",
+        roles: {
+          large: { model_id: null, source: "none", warning: null },
+          medium: { model_id: null, source: "none", warning: null },
+          small: { model_id: null, source: "none", warning: null },
+        },
+        roles_dropped: [], subagent_model: "inherit",
+      }
+    : null,
 });
 const ORG_KEY: GuideKey = { id: "k1", name: "AIGW", scope: "organization" };
 

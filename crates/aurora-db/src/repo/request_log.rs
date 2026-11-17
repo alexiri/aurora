@@ -38,6 +38,8 @@ pub struct LogRow {
     /// (P4-011B, C-827)
     pub approval_id: Option<Uuid>,
     pub resumed: bool,
+    /// (P5-MODELS-2, C-880) the model an LLM request asked for; audit only.
+    pub llm_model: Option<String>,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -65,7 +67,7 @@ pub async fn list_activity(
         "SELECT id, ts, agent_id, conversation_id, turn_id, credential_kind, lane, method, host, \
                 path, app_id, tool_id, connection_id, secret_id, decision, rule_logical_id, \
                 rule_name, upstream_status, status, error_code, injected, latency_ms, bytes_up, \
-                bytes_down, context_label, approval_id, resumed \
+                bytes_down, context_label, approval_id, resumed, llm_model \
          FROM request_log WHERE workspace_id = $1 AND NOT {} \
            AND ($2::uuid IS NULL OR agent_id = $2) \
            AND ($3::uuid IS NULL OR conversation_id = $3) \

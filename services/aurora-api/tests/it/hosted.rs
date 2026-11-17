@@ -31,7 +31,7 @@ pub(crate) fn caps() -> Value {
         "backend": "fake", "home_durability": "resident",
         "resources": {"cpu": {"min": 250, "max": 4000}, "memory_mib": {"min": 256, "max": 8192},
                       "pids": {"min": 64, "max": 4096}, "home_gib": {"min": 1, "max": 100}},
-        "max_sandboxes": 4, "harnesses": ["fake"], "max_attachment_bytes": 1048576,
+        "max_sandboxes": 4, "harnesses": ["fake", "claude-code", "codex"], "max_attachment_bytes": 1048576,
         "image": "registry.example/aurora-sandbox:9.9.9"
     })
 }
@@ -220,6 +220,11 @@ impl Rig {
     /// Message, start, running, channel, ready, home sync; returns after `home.synced`.
     pub(crate) async fn boot(&self, handle: &str) -> Live {
         let agent = self.agent(handle, true).await;
+        self.boot_agent(agent).await
+    }
+
+    /// [`Rig::boot`] for an agent the test set up itself (its own harness, keys and fields).
+    pub(crate) async fn boot_agent(&self, agent: Uuid) -> Live {
         let conv = self.direct(agent).await;
         self.say(conv, "hello").await;
         let items = self.work().await;
