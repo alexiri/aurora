@@ -475,13 +475,16 @@ pub async fn abandon_pending_depending_on(
     Ok(rows)
 }
 
-/// `pending` past `deadline + grace` -> `expired`. Returns `(id, workspace_id)`.
+/// `pending` past `deadline + grace` -> `expired`; a **parked** approval (nobody holds it, so no
+/// gateway expires it first) expires at its deadline without grace (P4-011B, C-828). Returns
+/// `(id, workspace_id)`.
 pub async fn expire_overdue(pool: &PgPool, grace_secs: f64) -> Result<Vec<(Uuid, Uuid)>, DbError> {
     let mut tx = pool.begin().await?;
     let rows: Vec<(Uuid, Uuid)> = sqlx::query_as(
         "UPDATE approvals SET status = 'expired', decided_at = now(), resolved_at = now(), \
          updated_at = now() \
-         WHERE status = 'pending' AND deadline + make_interval(secs => $1) < now() \
+         WHERE status = 'pending' \
+           AND deadline + CASE WHEN parked THEN interval '0' ELSE make_interval(secs => $1) END < now() \
          RETURNING id, workspace_id",
     )
     .bind(grace_secs)
@@ -495,12 +498,13 @@ pub async fn expire_overdue(pool: &PgPool, grace_secs: f64) -> Result<Vec<(Uuid,
 }
 
 /// `pending` rows whose gateway instance has not been seen for `unseen_secs`
-/// (or is unknown) -> `abandoned`. Returns `(id, workspace_id)`.
+/// (or is unknown) -> `abandoned`. Parked approvals have no holder and are skipped (P4-011B).
+/// Returns `(id, workspace_id)`.
 pub async fn abandon_unseen(pool: &PgPool, unseen_secs: f64) -> Result<Vec<(Uuid, Uuid)>, DbError> {
     let mut tx = pool.begin().await?;
     let rows: Vec<(Uuid, Uuid)> = sqlx::query_as(
         "UPDATE approvals a SET status = 'abandoned', resolved_at = now(), updated_at = now() \
-         WHERE a.status = 'pending' AND NOT EXISTS (SELECT 1 FROM gateway_instances g \
+         WHERE a.status = 'pending' AND NOT a.parked AND NOT EXISTS (SELECT 1 FROM gateway_instances g \
            WHERE g.id = a.gateway_instance_id AND g.stopped_at IS NULL \
              AND g.last_seen_at >= now() - make_interval(secs => $1)) \
          RETURNING a.id, a.workspace_id",

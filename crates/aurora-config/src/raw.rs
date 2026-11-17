@@ -985,6 +985,9 @@ pub struct ApprovalsSection {
     pub max_timeout_secs: u64,
     /// (RFE-011a) E-mail deciders when an approval has no live surface.
     pub email_notifications: bool,
+    /// (phase 5, P4-011B, RFE-011b, D-265(c)) park approvals with long deadlines (`07 §Park and
+    /// resume`).
+    pub park: ApprovalsParkSection,
 }
 impl Default for ApprovalsSection {
     fn default() -> Self {
@@ -992,6 +995,44 @@ impl Default for ApprovalsSection {
             timeout_secs: aurora_core::limits::APPROVAL_TIMEOUT.as_secs(),
             max_timeout_secs: 3600,
             email_notifications: true,
+            park: ApprovalsParkSection::default(),
+        }
+    }
+}
+
+/// `[approvals.park]` (phase 5, P4-011B, D-265(c), C-829; docs/15). Bounds and the cross-key rule
+/// are checked in `validate`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ApprovalsParkSection {
+    /// Park approvals whose effective timeout exceeds `threshold_secs` instead of holding the
+    /// connection. Off = exactly the phase 2 behaviour; governs only new approvals.
+    pub enabled: bool,
+    /// Effective timeouts above this park (60..=`max_timeout_secs`).
+    pub threshold_secs: u64,
+    /// Longest deadline of a parked approval (3600..=604800).
+    pub max_timeout_secs: u64,
+    /// How long an approved parked request can be repeated once (60..=86400; the API's).
+    pub resume_window_secs: u64,
+    /// A denied fingerprint repeated within this is answered `manual_approval_denied`
+    /// (0..=86400).
+    pub deny_cooldown_secs: u64,
+    /// Largest request body that can be parked (4096..=1048576).
+    pub max_body_bytes: u64,
+    /// Parked pending approvals per agent (1..=200).
+    pub max_pending_per_agent: u32,
+}
+impl Default for ApprovalsParkSection {
+    fn default() -> Self {
+        use aurora_core::limits as l;
+        Self {
+            enabled: false,
+            threshold_secs: l::PARK_THRESHOLD.as_secs(),
+            max_timeout_secs: l::PARK_MAX_TIMEOUT.as_secs(),
+            resume_window_secs: 1800,
+            deny_cooldown_secs: l::PARK_DENY_COOLDOWN.as_secs(),
+            max_body_bytes: l::PARK_BODY_MAX as u64,
+            max_pending_per_agent: l::PARK_PENDING_PER_AGENT,
         }
     }
 }

@@ -244,6 +244,8 @@ impl Settings {
                     std::time::Duration::from_secs(a.timeout_secs),
                     std::time::Duration::from_secs(a.max_timeout_secs),
                 );
+                // (P4-011B, D-265(c)) `approvals.park.*` are read per request from here.
+                holds.set_park(crate::park::ParkConfig::from(&a.park));
             }
         }));
     }

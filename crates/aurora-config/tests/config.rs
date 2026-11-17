@@ -326,8 +326,17 @@ fn approvals_max_timeout_bounds_and_turn_ceiling() {
     assert_eq!(raw.approvals.max_timeout_secs, 3600);
     assert!(raw.approvals.email_notifications);
     assert_eq!(raw.api_config().unwrap().approvals.max_timeout_secs, 3600);
+    // (P4-011B, D-265(c)) The park threshold (default 900 s) must not exceed the maximum, so the
+    // lowest maxima come with a lower threshold.
     for ok in ["300", "14400"] {
-        let raw = load_with(BASE, &[("AURORA__APPROVALS__MAX_TIMEOUT_SECS", ok)]).unwrap();
+        let raw = load_with(
+            BASE,
+            &[
+                ("AURORA__APPROVALS__MAX_TIMEOUT_SECS", ok),
+                ("AURORA__APPROVALS__PARK__THRESHOLD_SECS", "300"),
+            ],
+        )
+        .unwrap();
         assert!(raw.api_config().is_ok(), "{ok}");
     }
     for bad in ["299", "14401", "0"] {
@@ -349,6 +358,107 @@ fn approvals_max_timeout_bounds_and_turn_ceiling() {
     let e = env("4500").api_config().unwrap_err();
     assert!(e.has_key("approvals.max_timeout_secs"), "{e}");
     assert!(env("4501").api_config().is_ok());
+}
+
+// P4-011B (D-265(c), C-829): `approvals.park.*` defaults, bounds and the cross-key rule
+// `threshold_secs <= approvals.max_timeout_secs <= park.max_timeout_secs`.
+#[test]
+fn approvals_park_defaults_bounds_and_cross_key_rule() {
+    let raw = load_with(BASE, &[]).unwrap();
+    let p = &raw.approvals.park;
+    assert!(!p.enabled);
+    assert_eq!(
+        (p.threshold_secs, p.max_timeout_secs, p.resume_window_secs),
+        (900, 86_400, 1800)
+    );
+    assert_eq!(
+        (
+            p.deny_cooldown_secs,
+            p.max_body_bytes,
+            p.max_pending_per_agent
+        ),
+        (900, 262_144, 20)
+    );
+    assert!(raw.api_config().is_ok());
+    assert!(raw.gateway_config().is_ok());
+    let key = |k: &str, v: &str| {
+        let raw = load_with(BASE, &[(k, v)]).unwrap();
+        raw.api_config().unwrap_err()
+    };
+    for (k, v, field) in [
+        (
+            "AURORA__APPROVALS__PARK__MAX_TIMEOUT_SECS",
+            "3599",
+            "approvals.park.max_timeout_secs",
+        ),
+        (
+            "AURORA__APPROVALS__PARK__MAX_TIMEOUT_SECS",
+            "604801",
+            "approvals.park.max_timeout_secs",
+        ),
+        (
+            "AURORA__APPROVALS__PARK__RESUME_WINDOW_SECS",
+            "59",
+            "approvals.park.resume_window_secs",
+        ),
+        (
+            "AURORA__APPROVALS__PARK__DENY_COOLDOWN_SECS",
+            "86401",
+            "approvals.park.deny_cooldown_secs",
+        ),
+        (
+            "AURORA__APPROVALS__PARK__MAX_BODY_BYTES",
+            "4095",
+            "approvals.park.max_body_bytes",
+        ),
+        (
+            "AURORA__APPROVALS__PARK__MAX_BODY_BYTES",
+            "1048577",
+            "approvals.park.max_body_bytes",
+        ),
+        (
+            "AURORA__APPROVALS__PARK__MAX_PENDING_PER_AGENT",
+            "0",
+            "approvals.park.max_pending_per_agent",
+        ),
+        (
+            "AURORA__APPROVALS__PARK__THRESHOLD_SECS",
+            "59",
+            "approvals.park.threshold_secs",
+        ),
+        // Cross-key: the threshold above the hold maximum, the hold maximum above the park one.
+        (
+            "AURORA__APPROVALS__PARK__THRESHOLD_SECS",
+            "3601",
+            "approvals.park.threshold_secs",
+        ),
+    ] {
+        let e = key(k, v);
+        assert!(e.has_key(field), "{k}={v}: {e}");
+    }
+    let raw = load_with(
+        BASE,
+        &[
+            ("AURORA__APPROVALS__MAX_TIMEOUT_SECS", "3700"),
+            ("AURORA__APPROVALS__PARK__MAX_TIMEOUT_SECS", "3600"),
+            ("AURORA__APPROVALS__PARK__THRESHOLD_SECS", "900"),
+        ],
+    )
+    .unwrap();
+    let e = raw.api_config().unwrap_err();
+    assert!(e.has_key("approvals.park.max_timeout_secs"), "{e}");
+    // The boundaries are accepted.
+    let ok = load_with(
+        BASE,
+        &[
+            ("AURORA__APPROVALS__PARK__ENABLED", "true"),
+            ("AURORA__APPROVALS__PARK__THRESHOLD_SECS", "3600"),
+            ("AURORA__APPROVALS__PARK__MAX_TIMEOUT_SECS", "3600"),
+            ("AURORA__APPROVALS__PARK__DENY_COOLDOWN_SECS", "0"),
+        ],
+    )
+    .unwrap();
+    assert!(ok.api_config().is_ok());
 }
 
 #[test]

@@ -107,6 +107,10 @@ struct Ctx {
     /// (P4-CNT, D-119) the rate-limit count of this request came from the local fallback because
     /// the shared counter backend was unreachable: the row carries `counter_fallback`.
     counter_fallback: bool,
+    /// (P4-011B, C-827) the approval this request was held, parked or resumed under.
+    approval_id: Option<Uuid>,
+    /// (P4-011B, C-827) a parked approval's grant was consumed by this request.
+    resumed: bool,
 }
 
 impl Ctx {
@@ -143,6 +147,8 @@ impl Ctx {
             bytes_down: 0,
             context_label: i.context_label.clone(),
             speaker_user_id: i.speaker_user_id,
+            approval_id: self.approval_id,
+            resumed: self.resumed,
         }
     }
 }
@@ -409,6 +415,37 @@ fn facts_identity(i: &Ident) -> RequestIdentity {
         speaker_user_id: i.speaker_user_id,
         speaker_group_ids: i.speaker_group_ids.clone(),
     }
+}
+
+/// (P4-011B-1, `07 §Park and resume` eligibility 4) Does the decision not depend on who is
+/// speaking? The resume turn is a system turn without a speaker, so the evaluator is run again
+/// with the speaker and its groups removed: it must select the same credentials and give the
+/// same verdict from the same requiring rule. Anything else is held, never parked. (Without a
+/// speaker the two runs are the same run: nothing to check.)
+fn speaker_independent(
+    rv: &ResolvedHost,
+    facts: &RequestFacts,
+    d: &Decision,
+    selected: &HashSet<aurora_policy::CredentialKey>,
+    creds: &[Credential],
+    agent_id: Uuid,
+) -> bool {
+    if facts.identity.speaker_user_id.is_none() && facts.identity.speaker_group_ids.is_empty() {
+        return true;
+    }
+    let anon = RequestIdentity {
+        agent_id,
+        speaker_user_id: None,
+        speaker_group_ids: Vec::new(),
+    };
+    if selected_candidates(rv.all_rules(), &anon, creds) != *selected {
+        return false;
+    }
+    let mut again = facts.clone();
+    again.identity = anon;
+    let d2 = evaluate(&rv.org_policy, &rv.ws_policy, &again, &NoCount);
+    d2.verdict == Verdict::NeedsApproval
+        && d2.deciding_rule().map(|r| r.logical_id) == d.deciding_rule().map(|r| r.logical_id)
 }
 
 /// Reads up to `limit` bytes of the body; returns the prefix, `truncated`, and a
@@ -713,6 +750,72 @@ impl PolicyHandler {
         guidance::response(err)
     }
 
+    /// (P4-011B-1, C-820, C-827) The answer to a park attempt: 403 `approval_parked` (a new
+    /// approval and its identical repeats), 403 `manual_approval_denied` inside the deny cooldown,
+    /// 403 `approval_limit_reached`, or 503 `approval_store_unavailable`. Nothing of the request
+    /// (body, header or query value) is ever put in `details`.
+    fn park_refusal(
+        &self,
+        mut ctx: Ctx,
+        rv: &ResolvedHost,
+        cfg: &crate::park::ParkConfig,
+        answer: crate::park::ParkAnswer,
+    ) -> Response<Body> {
+        use crate::park::ParkAnswer;
+        match answer {
+            ParkAnswer::Parked { id, expires_at } | ParkAnswer::Existing { id, expires_at } => {
+                ctx.approval_id = Some(id);
+                let err = ApiError::new(
+                    StatusCode::FORBIDDEN,
+                    "approval_parked",
+                    crate::park::parked_message(cfg.resume_window_secs),
+                )
+                .with_details(json!({
+                    "approval_id": id,
+                    "expires_at": expires_at.to_rfc3339(),
+                    "resume_window_secs": cfg.resume_window_secs,
+                    "manage_url": self.url(rv, &format!("approvals?focus={id}")),
+                }));
+                self.refuse(ctx, &err, "approval_parked")
+            }
+            ParkAnswer::Cooldown { id, until } => {
+                ctx.approval_id = Some(id);
+                let err = ApiError::new(
+                    StatusCode::FORBIDDEN,
+                    "manual_approval_denied",
+                    "A reviewer denied this identical request a short while ago, so no new approval was created. Do not retry it unchanged; tell the user it was denied.",
+                )
+                .with_details(json!({
+                    "approval_id": id,
+                    "cooldown_until": until.to_rfc3339(),
+                }));
+                self.refuse(ctx, &err, "approval_denied")
+            }
+            ParkAnswer::Limit { limit, per } => {
+                let err = ApiError::new(
+                    StatusCode::FORBIDDEN,
+                    "approval_limit_reached",
+                    format!(
+                        "This agent already has too many approvals waiting (limit {limit} per {per}), so this request was not sent and no approval was created. Do not retry it now: finish what you can without it and tell the user what is waiting for a decision."
+                    ),
+                )
+                .with_details(json!({ "limit": limit, "per": per }));
+                self.refuse(ctx, &err, "rate_limited")
+            }
+            ParkAnswer::StoreUnavailable => {
+                if self.db_down() {
+                    crate::health::count_refused("approval_store_unavailable");
+                }
+                let err = ApiError::unavailable(
+                    "approval_store_unavailable",
+                    "The approval store is unavailable. Retry shortly.",
+                )
+                .with_details(json!({ "reason": "database_unavailable" }));
+                self.refuse(ctx, &err, "error")
+            }
+        }
+    }
+
     /// Maps a non-allow verdict to its guidance error and log decision.
     fn verdict_error(
         &self,
@@ -889,6 +992,8 @@ struct Released {
     /// The held request had a credential to inject. One that no longer has any is refused
     /// (`credential_unavailable`), not forwarded without it.
     had_credential: bool,
+    /// The approval the request was held under (C-827: the second pass logs it).
+    approval_id: Option<Uuid>,
 }
 
 /// The counter of a released request: its rule quotas were consumed once when the hold was
@@ -945,7 +1050,11 @@ impl PolicyHandler {
             tool_id: None,
             connection_id: None,
             counter_fallback: false,
+            approval_id: None,
+            resumed: false,
         };
+        // (P4-011B, C-827) The second pass of a released hold logs under the hold's approval.
+        ctx.approval_id = released.and_then(|r| r.approval_id);
         let rv = match self.resolver.resolve(&identity, &host, port).await {
             Ok(r) => r,
             Err(e) => {
@@ -1241,8 +1350,89 @@ impl PolicyHandler {
                 Settled::Proceed { fallback } => ctx.counter_fallback = fallback,
             }
         }
+        // 8a. (P4-011B-1, SEC-74, D-264(b)) Grant lookup, on every `needs_approval` verdict
+        // whatever `approvals.park.enabled` says now: an approved parked request repeated
+        // identically is let through exactly once. The verdict was just evaluated above, so the
+        // grant only replaces the outcome `needs_approval` (same rule, same credential, same
+        // conversation); it never bypasses policy.
+        let rule_id = ctx.rule.as_ref().map(|r| r.0);
+        let cred_ref = match &winner {
+            Some(Cand::App(c)) => aurora_policy::park::CredentialRef::Connection(c.id),
+            Some(Cand::Secret(s)) => aurora_policy::park::CredentialRef::Secret(s.id),
+            None => aurora_policy::park::CredentialRef::None,
+        };
+        let mut whole_body: Option<Bytes> = None;
+        let mut whole_tried = false;
+        let mut granted = false;
         if d.verdict == Verdict::NeedsApproval
             && released.is_none()
+            && let Some(holds) = &self.holds
+            && let Some(conversation_id) = identity.conversation_id
+            && let Some(rule_id) = rule_id
+        {
+            match holds.open_grants(identity.agent_id, conversation_id).await {
+                None => {
+                    if self.db_down() {
+                        crate::health::count_refused("approval_store_unavailable");
+                    }
+                    let err = ApiError::unavailable(
+                        "approval_store_unavailable",
+                        "The approval store is unavailable. Retry shortly.",
+                    )
+                    .with_details(json!({ "reason": "database_unavailable" }));
+                    return Outcome::Respond(self.refuse(ctx, &err, "error"));
+                }
+                Some(rows) if !rows.is_empty() => {
+                    let cap = holds.park_config().max_body_bytes;
+                    whole_tried = true;
+                    whole_body = crate::park::buffer_whole(
+                        &mut body,
+                        cap,
+                        aurora_core::limits::PARK_BODY_READ_TIMEOUT,
+                    )
+                    .await
+                    .whole;
+                    if let Some(bytes) = &whole_body {
+                        let inputs = aurora_policy::park::Inputs {
+                            agent_id: identity.agent_id,
+                            conversation_id,
+                            method: &ctx.method,
+                            host: &host,
+                            port,
+                            path: &path,
+                            query: query.as_deref(),
+                            body_sha256: aurora_policy::park::body_digest(bytes),
+                            rule_logical_id: rule_id,
+                            credential: cred_ref,
+                            tool_id: ctx.tool_id.as_deref(),
+                        };
+                        match holds.consume_from(&rows, &inputs).await {
+                            crate::park::GrantOutcome::Consumed(id) => {
+                                ctx.approval_id = Some(id);
+                                ctx.resumed = true;
+                                granted = true;
+                            }
+                            crate::park::GrantOutcome::None => {}
+                            crate::park::GrantOutcome::StoreUnavailable => {
+                                if self.db_down() {
+                                    crate::health::count_refused("approval_store_unavailable");
+                                }
+                                let err = ApiError::unavailable(
+                                    "approval_store_unavailable",
+                                    "The approval store is unavailable. Retry shortly.",
+                                )
+                                .with_details(json!({ "reason": "database_unavailable" }));
+                                return Outcome::Respond(self.refuse(ctx, &err, "error"));
+                            }
+                        }
+                    }
+                }
+                Some(_) => {}
+            }
+        }
+        if d.verdict == Verdict::NeedsApproval
+            && released.is_none()
+            && !granted
             && let Some(holds) = &self.holds
         {
             // 8. approval hold (nothing decrypted yet).
@@ -1278,19 +1468,75 @@ impl PolicyHandler {
                 },
             )
             .await;
-            let outcome = holds
-                .hold(HoldRequest {
-                    identity: &identity,
-                    method: &ctx.method,
-                    host: &host,
-                    path: &red_path,
-                    rule: ctx.rule.as_ref().map(|(i, n)| (*i, n.as_str())),
-                    connection_id: ctx.connection_id,
-                    batch: &aurora_headers,
-                    summary: &summary,
-                    rule_timeout_secs: d.approval_timeout_secs,
-                })
-                .await;
+            let mk_hold = || HoldRequest {
+                identity: &identity,
+                method: &ctx.method,
+                host: &host,
+                path: &red_path,
+                rule: ctx.rule.as_ref().map(|(i, n)| (*i, n.as_str())),
+                connection_id: ctx.connection_id,
+                batch: &aurora_headers,
+                summary: &summary,
+                rule_timeout_secs: d.approval_timeout_secs,
+            };
+            // 8b. (P4-011B-1, C-820) Park instead of hold when every eligibility condition of
+            // `07 §Park and resume` holds at this moment; otherwise the request is held exactly as
+            // before (timeout clamped to `approvals.max_timeout_secs`).
+            let park_cfg = holds.park_config();
+            if park_cfg.enabled
+                && identity.kind == CredentialKind::Context
+                && identity.byo.is_none()
+                && identity.turn_id.is_some()
+                && upgrade.is_none()
+                && !rv.is_llm_host
+                && holds.park_timeout(d.approval_timeout_secs)
+                    > Duration::from_secs(park_cfg.threshold_secs)
+                && let Some(conversation_id) = identity.conversation_id
+                && let Some(rule_id) = rule_id
+                && (whole_tried
+                    || bodyless
+                    || headers
+                        .get(http::header::CONTENT_LENGTH)
+                        .and_then(|v| v.to_str().ok())
+                        .and_then(|s| s.parse::<usize>().ok())
+                        .is_some_and(|n| n <= park_cfg.max_body_bytes))
+            {
+                if !whole_tried {
+                    whole_body = crate::park::buffer_whole(
+                        &mut body,
+                        park_cfg.max_body_bytes,
+                        aurora_core::limits::PARK_BODY_READ_TIMEOUT,
+                    )
+                    .await
+                    .whole;
+                }
+                if let Some(bytes) = &whole_body
+                    && speaker_independent(&rv, &facts, &d, &selected, &creds, identity.agent_id)
+                {
+                    let inputs = aurora_policy::park::Inputs {
+                        agent_id: identity.agent_id,
+                        conversation_id,
+                        method: &ctx.method,
+                        host: &host,
+                        port,
+                        path: &path,
+                        query: query.as_deref(),
+                        body_sha256: aurora_policy::park::body_digest(bytes),
+                        rule_logical_id: rule_id,
+                        credential: cred_ref,
+                        tool_id: ctx.tool_id.as_deref(),
+                    };
+                    let answer = holds
+                        .park(crate::park::ParkRequest {
+                            hold: mk_hold(),
+                            inputs: &inputs,
+                        })
+                        .await;
+                    return Outcome::Respond(self.park_refusal(ctx, &rv, &park_cfg, answer));
+                }
+            }
+            let (recorded, outcome) = holds.hold_with_id(mk_hold()).await;
+            ctx.approval_id = recorded;
             match outcome {
                 // (FIX-084) Not forwarded on the strength of the pre-hold decision: the second
                 // pass resolves the credential and evaluates policy again, against the policy in
@@ -1314,6 +1560,7 @@ impl PolicyHandler {
                         started: ctx.started,
                         bodyless,
                         had_credential: winner.is_some(),
+                        approval_id: recorded,
                     };
                     return Box::pin(self.handle_with(again, Some(released))).await;
                 }
@@ -1353,9 +1600,11 @@ impl PolicyHandler {
                     return Outcome::Respond(self.refuse(ctx, &err, "error"));
                 }
             }
-        } else if released.is_some() && matches!(d.verdict, Verdict::Allow | Verdict::NeedsApproval)
+        } else if granted
+            || (released.is_some() && matches!(d.verdict, Verdict::Allow | Verdict::NeedsApproval))
         {
-            // The approval stands: released, whatever the rules now say about asking.
+            // The approval stands: released, whatever the rules now say about asking (or a
+            // parked approval's grant was consumed above: logged `approved`, `resumed = true`).
             ctx.decision = "approved";
         } else if let Some((err, decision)) = self.verdict_error(
             &rv,
@@ -1960,6 +2209,8 @@ impl RequestHandler for PolicyHandler {
             tool_id: None,
             connection_id: None,
             counter_fallback: false,
+            approval_id: None,
+            resumed: false,
         };
         let _ = reason;
         self.log
@@ -1982,6 +2233,8 @@ impl RequestHandler for PolicyHandler {
             tool_id: None,
             connection_id: None,
             counter_fallback: false,
+            approval_id: None,
+            resumed: false,
         };
         let rv = match self.resolver.resolve(identity, host, port).await {
             Ok(r) => r,
@@ -2147,6 +2400,8 @@ impl RequestHandler for PolicyHandler {
             tool_id: None,
             connection_id: None,
             counter_fallback: false,
+            approval_id: None,
+            resumed: false,
         };
         let mut row = ctx.row(200, None, None);
         row.bytes_up = i64::try_from(r.bytes_up).unwrap_or(i64::MAX);
@@ -2335,6 +2590,8 @@ impl DbSession {
             tool_id: None,
             connection_id: Some(self.conn.id),
             counter_fallback: false,
+            approval_id: None,
+            resumed: false,
         };
         let rv = match h.resolver.resolve(&self.identity, &self.host, 443).await {
             Ok(r) => r,

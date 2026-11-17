@@ -2950,6 +2950,73 @@ fn check_approvals(c: &mut Ctx, a: &ApprovalsSection, h: &HostedSection) {
             "must not exceed approvals.max_timeout_secs",
         );
     }
+    check_approvals_park(c, a);
+}
+
+/// (P4-011B, D-265(c), C-829) `approvals.park.*` bounds and the cross-key rule
+/// `park.threshold_secs ≤ approvals.max_timeout_secs ≤ park.max_timeout_secs`, so every timeout
+/// the hold cannot serve is parkable rather than silently clamped.
+fn check_approvals_park(c: &mut Ctx, a: &ApprovalsSection) {
+    let p = &a.park;
+    let range = |c: &mut Ctx, key: &str, v: u64, lo: u64, hi: u64| {
+        if !(lo..=hi).contains(&v) {
+            c.err(key, format!("must be between {lo} and {hi}"));
+        }
+    };
+    range(
+        c,
+        "approvals.park.max_timeout_secs",
+        p.max_timeout_secs,
+        3600,
+        604_800,
+    );
+    range(
+        c,
+        "approvals.park.resume_window_secs",
+        p.resume_window_secs,
+        60,
+        86_400,
+    );
+    range(
+        c,
+        "approvals.park.deny_cooldown_secs",
+        p.deny_cooldown_secs,
+        0,
+        86_400,
+    );
+    range(
+        c,
+        "approvals.park.max_body_bytes",
+        p.max_body_bytes,
+        4096,
+        1_048_576,
+    );
+    range(
+        c,
+        "approvals.park.max_pending_per_agent",
+        u64::from(p.max_pending_per_agent),
+        1,
+        200,
+    );
+    range(
+        c,
+        "approvals.park.threshold_secs",
+        p.threshold_secs,
+        60,
+        p.max_timeout_secs.max(60),
+    );
+    if p.threshold_secs > a.max_timeout_secs {
+        c.err(
+            "approvals.park.threshold_secs",
+            "must not exceed approvals.max_timeout_secs (park_threshold_above_hold_max)",
+        );
+    }
+    if a.max_timeout_secs > p.max_timeout_secs {
+        c.err(
+            "approvals.park.max_timeout_secs",
+            "must be at least approvals.max_timeout_secs (park_max_below_hold_max)",
+        );
+    }
 }
 
 /// (RFE-016) `events.delta_bus` must name a known implementation; the window is 100..=500 ms.
