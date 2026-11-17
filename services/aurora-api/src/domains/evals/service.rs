@@ -24,6 +24,11 @@ fn invalid(field: &str, msg: &str) -> ApiError {
     ApiError::unprocessable("invalid", msg).with_details(json!({ "field": field }))
 }
 
+/// 422 `invalid` for a list filter with an unknown value.
+pub fn invalid_filter(field: &str, allowed: &str) -> ApiError {
+    invalid(field, &format!("one of: {allowed}"))
+}
+
 pub fn question_404() -> ApiError {
     ApiError::not_found("Question not found.")
 }

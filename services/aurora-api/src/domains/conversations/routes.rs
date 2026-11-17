@@ -21,8 +21,8 @@ use tokio::sync::broadcast::{self, error::RecvError};
 use utoipa_axum::{router::OpenApiRouter, routes};
 use uuid::Uuid;
 
-const KINDS: [&str; 7] = [
-    "direct", "group", "schedule", "webhook", "watch", "peer", "api",
+const KINDS: [&str; 8] = [
+    "direct", "group", "schedule", "webhook", "watch", "peer", "api", "eval",
 ];
 /// Safety net: re-read from the database even without a notification.
 const RESYNC_EVERY: Duration = Duration::from_secs(15);

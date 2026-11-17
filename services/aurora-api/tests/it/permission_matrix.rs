@@ -1082,6 +1082,18 @@ const ROWS: &[Row] = &[
         G::WsUse,
         false,
     ),
+    // P4-EVAL-2 (C-864, C-870): runs and schedules are `can_use`; deleting a run needs `can_own`
+    // inside the service (decided after the run is found, so the floor here is `can_use`).
+    r("GET", "/v1/agents/{agent}/eval-runs", G::WsUse, false),
+    r("POST", "/v1/agents/{agent}/eval-runs", G::WsUse, false),
+    r("GET", "/v1/eval-runs/{id}", G::WsUse, false),
+    r("DELETE", "/v1/eval-runs/{id}", G::WsUse, false),
+    r("POST", "/v1/eval-runs/{id}/cancel", G::WsUse, false),
+    r("GET", "/v1/agents/{agent}/eval-schedules", G::WsUse, false),
+    r("POST", "/v1/agents/{agent}/eval-schedules", G::WsUse, false),
+    r("GET", "/v1/eval-schedules/{id}", G::WsUse, false),
+    r("PATCH", "/v1/eval-schedules/{id}", G::WsUse, false),
+    r("DELETE", "/v1/eval-schedules/{id}", G::WsUse, false),
     r("GET", "/v1/agents/{agent}/peer-tasks", G::WsUse, false),
     r("POST", "/v1/conversations/{id}/continue", G::WsUse, false),
     // P2-010 (RFE-010): the per-conversation decision (direct user / turn author / `can_own`) needs
@@ -1637,6 +1649,9 @@ fn body_for(method: &str, path: &str, fx: &Fx) -> Value {
         }
         ("PUT", "/v1/agents/{agent}/eval-settings") => {
             json!({"judge": null, "regression_notify": true})
+        }
+        ("POST", "/v1/agents/{agent}/eval-schedules") => {
+            json!({"name": "n", "cron": "0 * * * *", "timezone": "UTC"})
         }
         _ => json!({}),
     }

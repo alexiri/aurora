@@ -177,6 +177,24 @@ impl Registry {
                 },
             );
         };
+        // (P4-EVAL-2, C-868, SEC-114) In an eval turn every platform write is refused, decided by
+        // the conversation's kind (never by anything the agent says): no approval, no effect.
+        // Decided before availability, so no tool state can let a write through.
+        if is_write_tool(tool) && is_eval_conversation(&ctx.agent.pool, ctx.conversation_id).await {
+            if let Some(turn) = ctx.turn_id
+                && let Ok(mut conn) = ctx.agent.pool.acquire().await
+                && let Err(e) = aurora_db::repo::evals::add_tool_refusal(&mut conn, turn).await
+            {
+                tracing::warn!(error = %e, "eval refusal count failed");
+            }
+            return ToolResult::failure(
+                id,
+                WireError {
+                    code: code_of("eval_read_only"),
+                    message: "This is an evaluation run: it cannot change anything. Answer from what you can read.".into(),
+                },
+            );
+        }
         if !t.available(&ctx.agent) || !t.enabled(&ctx.agent).await {
             return fail(ToolError::Unavailable(t.unavailable_reason().into()));
         }
@@ -192,6 +210,44 @@ impl Registry {
             Ok(Ok(content)) => ToolResult::success(id, bound(content)),
         }
     }
+}
+
+/// Platform tools whose effect is a write (C-868): messages and files sent as the agent or as its
+/// owner, memory and skill writes, the creation or change of schedules, webhooks, peer tasks and
+/// connection requests. Reads (`*_list`, `*_get`, `*_search`, `read_*`, `list_*`) are not here.
+const WRITE_TOOLS: &[&str] = &[
+    "send_message",
+    "send_as_me",
+    "edit_my_message",
+    "delete_my_message",
+    "memory_save",
+    "memory_delete",
+    "skill_create",
+    "skill_update",
+    "skill_delete",
+    "schedule_create",
+    "schedule_update",
+    "schedule_delete",
+    "webhook_update",
+    "message_agent",
+    "complete_task",
+    "cancel_peer_task",
+    "propose_custom_connection",
+    "request_app_connection",
+];
+
+fn is_write_tool(name: &str) -> bool {
+    WRITE_TOOLS.contains(&name)
+}
+
+/// Whether the conversation is an eval question's (`conversations.kind = 'eval'`). A lookup
+/// failure refuses the write: fail closed.
+async fn is_eval_conversation(pool: &PgPool, conversation: Uuid) -> bool {
+    sqlx::query_scalar::<_, String>("SELECT kind FROM conversations WHERE id = $1")
+        .bind(conversation)
+        .fetch_optional(pool)
+        .await
+        .map_or(true, |k| k.as_deref() == Some("eval"))
 }
 
 /// Truncates oversized results (with a note) to `MAX_RESULT_BYTES` serialized.

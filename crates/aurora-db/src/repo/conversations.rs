@@ -109,6 +109,8 @@ pub async fn list_for_agent<'e, E: PgExecutor<'e>>(
     Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {COLS} FROM conversations
          WHERE agent_id = $1 AND ($2::text IS NULL OR kind = $2)
+           -- (P4-EVAL-2, C-860) eval conversations show only when asked for with `?kind=eval`.
+           AND ($2::text IS NOT NULL OR kind <> 'eval')
            AND (kind <> 'direct' OR direct_user_id = $3 OR $7)
            AND ((archived_at IS NOT NULL) = $8)
            AND ($4::timestamptz IS NULL OR (last_activity_at, id) < ($4, $5))

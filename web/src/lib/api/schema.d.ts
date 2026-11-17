@@ -1449,6 +1449,42 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/agents/{agent}/eval-runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** An agent's eval runs, newest first. */
+        get: operations["listEvalRuns"];
+        put?: never;
+        /** Start a run: it is queued and the due-work arm runs its questions one at a time. */
+        post: operations["startEvalRun"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/agents/{agent}/eval-schedules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** An agent's eval schedules. */
+        get: operations["listEvalSchedules"];
+        put?: never;
+        /** Create an eval schedule (at least one hour between occurrences). */
+        post: operations["createEvalSchedule"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/agents/{agent}/eval-settings": {
         parameters: {
             query?: never;
@@ -2919,6 +2955,60 @@ export interface paths {
          *     changes. The kind is fixed.
          */
         patch: operations["updateEvalQuestion"];
+        trace?: never;
+    };
+    "/v1/eval-runs/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** A run with its fingerprint and one page of its results. */
+        get: operations["getEvalRun"];
+        put?: never;
+        post?: never;
+        /** Delete a finished run, its results and its eval conversations (`can_own`). */
+        delete: operations["deleteEvalRun"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/eval-runs/{id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Cancel a queued or running run; the remaining questions are not scored. */
+        post: operations["cancelEvalRun"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/eval-schedules/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One eval schedule. */
+        get: operations["getEvalSchedule"];
+        put?: never;
+        post?: never;
+        /** Delete an eval schedule (its past runs stay). */
+        delete: operations["deleteEvalSchedule"];
+        options?: never;
+        head?: never;
+        /** Edit an eval schedule. */
+        patch: operations["patchEvalSchedule"];
         trace?: never;
     };
     "/v1/gateway/ca.pem": {
@@ -7236,6 +7326,14 @@ export interface components {
              */
             tolerance?: number | null;
         };
+        CreateEvalSchedule: {
+            /** @description `creator` (default) | `workspace` (`can_own` only). */
+            anchor?: string | null;
+            cron: string;
+            enabled?: boolean | null;
+            name: string;
+            timezone: string;
+        };
         CreateGroupRequest: {
             description?: string | null;
             /** @description (D-156) Required for `source = idp`: a configured OIDC provider id with a `group_claim`. */
@@ -7760,6 +7858,17 @@ export interface components {
             /** Format: uuid */
             secret_id: string;
         };
+        EvalJudgeUsage: {
+            /** Format: int64 */
+            input_tokens: number;
+            /** Format: int64 */
+            output_tokens: number;
+        };
+        EvalPersonRef: {
+            /** Format: uuid */
+            id: string;
+            label: string;
+        };
         /**
          * @description An eval question (C-861). Expected answers are agent-audience data: this shape is served only
          *     to callers who `can_use` the agent's workspace.
@@ -7792,6 +7901,137 @@ export interface components {
         };
         EvalQuestionList: {
             questions: components["schemas"]["EvalQuestion"][];
+        };
+        EvalRegression: {
+            /** Format: double */
+            drop_points: number;
+            /** Format: uuid */
+            from_run_id: string;
+        };
+        /** @description One question's result (C-867). */
+        EvalResult: {
+            answer?: string | null;
+            /** Format: uuid */
+            conversation_id?: string | null;
+            expected?: components["schemas"]["EvalResultExpected"] | null;
+            expected_kind: string;
+            extracted_value?: string | null;
+            /** Format: date-time */
+            finished_at?: string | null;
+            judge?: components["schemas"]["EvalResultJudge"] | null;
+            /** @description `pass` | `fail` | `error` | `not_scored`. */
+            outcome: string;
+            /** Format: int32 */
+            position: number;
+            question: components["schemas"]["EvalResultQuestion"];
+            reason_code?: string | null;
+            /** Format: int32 */
+            refused_writes: number;
+            /** Format: date-time */
+            started_at?: string | null;
+        };
+        /** @description The expected answer of a result (agent-audience data: `can_use` only). */
+        EvalResultExpected: {
+            criteria?: string | null;
+            /** Format: double */
+            number?: number | null;
+            text?: string | null;
+            /** Format: double */
+            tolerance?: number | null;
+        };
+        EvalResultJudge: {
+            rationale?: string | null;
+            verdict: string;
+        };
+        EvalResultQuestion: {
+            /** Format: uuid */
+            id?: string | null;
+            text: string;
+        };
+        /** @description An eval run (C-864). */
+        EvalRun: {
+            agent: components["schemas"]["EvalAgentRef"];
+            counts: components["schemas"]["EvalRunCounts"];
+            /** Format: date-time */
+            created_at: string;
+            error_code?: string | null;
+            fingerprint_hash: string;
+            /** Format: date-time */
+            finished_at?: string | null;
+            /** Format: uuid */
+            id: string;
+            judge_usage?: components["schemas"]["EvalJudgeUsage"] | null;
+            /**
+             * Format: double
+             * @description Percent, `pass ÷ (pass + fail)`; null when nothing was scored.
+             */
+            pass_rate?: number | null;
+            question_set_version: string;
+            regression?: components["schemas"]["EvalRegression"] | null;
+            schedule?: components["schemas"]["EvalScheduleRef"] | null;
+            /** Format: date-time */
+            started_at?: string | null;
+            started_by?: components["schemas"]["EvalPersonRef"] | null;
+            /** @description `queued` | `running` | `done` | `failed` | `cancelled`. */
+            status: string;
+            /** @description `manual` | `schedule`. */
+            trigger: string;
+        };
+        EvalRunCounts: {
+            /** Format: int32 */
+            errored: number;
+            /** Format: int32 */
+            failed: number;
+            /** Format: int32 */
+            not_scored: number;
+            /** Format: int32 */
+            passed: number;
+            /** Format: int32 */
+            refused_writes: number;
+            /** Format: int32 */
+            total: number;
+        };
+        /** @description A run with its fingerprint and one page of results (`GET /eval-runs/{id}`). */
+        EvalRunDetail: components["schemas"]["EvalRun"] & {
+            /** @description The C-866 object recorded at start. */
+            fingerprint: unknown;
+            /**
+             * Format: int32
+             * @description Position to pass as `results_after` for the next page; null on the last page.
+             */
+            next_results_after?: number | null;
+            results: components["schemas"]["EvalResult"][];
+        };
+        /** @description An eval schedule (C-870). */
+        EvalSchedule: {
+            agent: components["schemas"]["EvalAgentRef"];
+            /** @description `creator` | `workspace`. */
+            anchor: string;
+            creator?: components["schemas"]["EvalPersonRef"] | null;
+            cron: string;
+            /** @description `user` | `authorization` | `failures`. */
+            disabled_reason?: string | null;
+            enabled: boolean;
+            /** Format: uuid */
+            id: string;
+            /** Format: date-time */
+            last_fire_at?: string | null;
+            /** @description `ok` | `failed` | `skipped_busy` | `skipped_frozen`. */
+            last_outcome?: string | null;
+            /** Format: uuid */
+            last_run_id?: string | null;
+            name: string;
+            /** Format: date-time */
+            next_fire_at?: string | null;
+            timezone: string;
+        };
+        EvalScheduleList: {
+            schedules: components["schemas"]["EvalSchedule"][];
+        };
+        EvalScheduleRef: {
+            /** Format: uuid */
+            id: string;
+            name: string;
         };
         EvalSettings: {
             judge?: components["schemas"]["EvalJudge"] | null;
@@ -9787,6 +10027,37 @@ export interface components {
             }[];
             next_cursor?: string | null;
         };
+        Page_EvalRun: {
+            items: {
+                agent: components["schemas"]["EvalAgentRef"];
+                counts: components["schemas"]["EvalRunCounts"];
+                /** Format: date-time */
+                created_at: string;
+                error_code?: string | null;
+                fingerprint_hash: string;
+                /** Format: date-time */
+                finished_at?: string | null;
+                /** Format: uuid */
+                id: string;
+                judge_usage?: components["schemas"]["EvalJudgeUsage"] | null;
+                /**
+                 * Format: double
+                 * @description Percent, `pass ÷ (pass + fail)`; null when nothing was scored.
+                 */
+                pass_rate?: number | null;
+                question_set_version: string;
+                regression?: components["schemas"]["EvalRegression"] | null;
+                schedule?: components["schemas"]["EvalScheduleRef"] | null;
+                /** Format: date-time */
+                started_at?: string | null;
+                started_by?: components["schemas"]["EvalPersonRef"] | null;
+                /** @description `queued` | `running` | `done` | `failed` | `cancelled`. */
+                status: string;
+                /** @description `manual` | `schedule`. */
+                trigger: string;
+            }[];
+            next_cursor?: string | null;
+        };
         Page_Group: {
             items: {
                 /** Format: date-time */
@@ -10507,6 +10778,12 @@ export interface components {
             question?: string | null;
             /** Format: double */
             tolerance?: number | null;
+        };
+        PatchEvalSchedule: {
+            cron?: string | null;
+            enabled?: boolean | null;
+            name?: string | null;
+            timezone?: string | null;
         };
         PatchGroupRequest: {
             description?: string | null;
@@ -19427,6 +19704,273 @@ export interface operations {
             };
         };
     };
+    listEvalRuns: {
+        parameters: {
+            query?: {
+                /** @description Page size, 1..=200 (default 50). */
+                limit?: number;
+                /** @description Opaque cursor from a previous response's `next_cursor`. */
+                cursor?: string;
+                /** @description `queued` | `running` | `done` | `failed` | `cancelled`. */
+                status?: string;
+                /** @description `manual` | `schedule`. */
+                trigger?: string;
+            };
+            header?: never;
+            path: {
+                /** @description Agent id */
+                agent: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_EvalRun"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description eval_not_supported, invalid */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    startEvalRun: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent id */
+                agent: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvalRun"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description eval_run_active */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description eval_no_questions, eval_not_supported */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description frozen */
+            423: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description eval_runs_limited */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    listEvalSchedules: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent id */
+                agent: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvalScheduleList"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description eval_not_supported */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    createEvalSchedule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent id */
+                agent: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateEvalSchedule"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvalSchedule"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description invalid, eval_schedule_limit, eval_not_supported */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     getEvalSettings: {
         parameters: {
             query?: never;
@@ -25715,6 +26259,332 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["EvalQuestion"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description invalid */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    getEvalRun: {
+        parameters: {
+            query?: {
+                /** @description Position after which the next page of results starts (default 0). */
+                results_after?: number;
+            };
+            header?: never;
+            path: {
+                /** @description Run id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvalRunDetail"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    deleteEvalRun: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Run id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description eval_run_active */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    cancelEvalRun: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Run id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvalRun"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description eval_run_finished */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    getEvalSchedule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Schedule id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvalSchedule"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    deleteEvalSchedule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Schedule id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    patchEvalSchedule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Schedule id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PatchEvalSchedule"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvalSchedule"];
                 };
             };
             /** @description Unauthenticated: no credential, or an invalid or expired one */

@@ -53,6 +53,16 @@ const SCAN_MAX: usize = 2_100;
 /// Validate the pair and enforce the minimum interval over a full cycle of occurrences (a week);
 /// returns the first occurrence after `now`.
 pub fn validate(expr: &str, tz: &str, now: DateTime<Utc>) -> Result<DateTime<Utc>, ApiError> {
+    validate_min(expr, tz, now, MIN_INTERVAL)
+}
+
+/// As [`validate`] with a caller-chosen minimum interval (eval schedules, `EVAL_SCHEDULE_MIN_INTERVAL`).
+pub fn validate_min(
+    expr: &str,
+    tz: &str,
+    now: DateTime<Utc>,
+    min: Duration,
+) -> Result<DateTime<Utc>, ApiError> {
     let first = next_after(expr, tz, now)?;
     let mut prev = first;
     for _ in 0..SCAN_MAX {
@@ -62,10 +72,13 @@ pub fn validate(expr: &str, tz: &str, now: DateTime<Utc>) -> Result<DateTime<Utc
         if n - first > SCAN_SPAN {
             break;
         }
-        if n - prev < MIN_INTERVAL {
+        if n - prev < min {
             return Err(bad(
                 "/cron",
-                "must not fire more often than every 5 minutes",
+                &format!(
+                    "must not fire more often than every {} minutes",
+                    min.num_minutes()
+                ),
             ));
         }
         prev = n;

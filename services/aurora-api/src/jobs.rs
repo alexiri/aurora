@@ -388,6 +388,35 @@ pub fn spawn_user_token_sweep(state: crate::app::AppState) {
     });
 }
 
+/// (P4-EVAL-2, D-294) Eval retention: finished runs older than `EVAL_RUN_RETENTION`, their results
+/// and their eval conversations are deleted through the normal delete path. Singleton across
+/// replicas; `Ok(None)` when another replica holds the lock.
+pub const EVAL_RETENTION_EVERY: Duration = Duration::from_secs(3600);
+const EVAL_RETENTION_JOB: &str = "eval_retention";
+
+pub async fn sweep_eval_retention(pool: &PgPool) -> Result<Option<usize>, aurora_core::ApiError> {
+    let ran = aurora_db::jobs::try_singleton(pool, EVAL_RETENTION_JOB, || {
+        crate::domains::evals::runs::sweep_retention(pool)
+    })
+    .await?;
+    ran.transpose()
+}
+
+pub fn spawn_eval_retention(pool: PgPool) {
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(EVAL_RETENTION_EVERY);
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            tick.tick().await;
+            match sweep_eval_retention(&pool).await {
+                Ok(Some(n)) if n > 0 => tracing::info!(deleted = n, "eval retention"),
+                Ok(_) => {}
+                Err(e) => tracing::warn!(error = %e.message(), "eval retention failed"),
+            }
+        }
+    });
+}
+
 /// Run the preview-housekeeping arm on this replica every [`PREVIEW_HOUSEKEEPING_EVERY`].
 pub const PREVIEW_HOUSEKEEPING_EVERY: Duration = Duration::from_secs(60);
 
