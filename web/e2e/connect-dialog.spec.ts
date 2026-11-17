@@ -40,14 +40,12 @@ for (const scheme of ["light", "dark"] as const) {
         expect(opened).toEqual([]);
       });
 
-      test("Details shows the close icon too", async ({ page }) => {
+      // (P5-UX-9, C-933) Details is the app's setup page now, not a dialog (e2e/app-setup.spec.ts).
+      test("Details leads to the app's setup page and opens no dialog", async ({ page }) => {
         await openRoute(page, APPS, scheme);
-        await page.getByRole("button", { name: "Details of GitHub" }).click();
-        const dialog = page.getByRole("dialog", { name: "GitHub" });
-        const close = dialog.getByRole("button", { name: "Close" });
-        await expect(close).toBeVisible();
-        await close.click();
-        await expect(dialog).toBeHidden();
+        await page.getByRole("link", { name: "Details of GitHub" }).click();
+        await expect(page).toHaveURL(/\/o\/acme\/w\/main\/apps\/github$/);
+        await expect(page.getByRole("dialog")).toHaveCount(0);
       });
 
       test("the deep link opens the dialog and closing it removes the parameter", async ({ page }) => {
