@@ -5,7 +5,7 @@
 //! duplicates a turn or a result. Answers and expected values are never logged or audited
 //! (SEC-116).
 
-use super::scoring;
+use super::{judge, scoring};
 use crate::app::AppState;
 use crate::domains::conversations::service::{self as conv, NewMessage};
 use aurora_core::{ApiError, limits};
@@ -25,15 +25,27 @@ const ARM_LIMIT: i64 = 8;
 const STEPS_PER_TICK: usize = 16;
 /// Lease taken when a run is claimed; released when the tick ends (the tick holds the row lock).
 const CLAIM_LEASE_SECS: f64 = 30.0;
+/// Added to `EVAL_JUDGE_TIMEOUT` for the lease kept while a judge call runs (the call, the write).
+const JUDGE_LEASE_MARGIN: std::time::Duration = std::time::Duration::from_secs(30);
 
-/// Arm: claim active runs and advance each in its own savepoint.
-pub async fn arm(s: &AppState, tx: &mut PgConnection) -> Result<(), ApiError> {
+/// Arm: claim active runs and advance each in its own savepoint. Judge calls (P4-EVAL-3) are not
+/// made here: a run waiting for one keeps a lease that outlasts the call, and its [`judge::Job`] is
+/// returned for the caller to [`judge::spawn`] once the work transaction has committed.
+pub async fn arm(s: &AppState, tx: &mut PgConnection) -> Result<Vec<judge::Job>, ApiError> {
     let ids = repo::claim_runs(tx, CLAIM_LEASE_SECS, ARM_LIMIT).await?;
+    let mut jobs = Vec::new();
     for id in ids {
         let mut sp = tx.begin().await.map_err(aurora_db::DbError::from)?;
         match tick(s, &mut sp, id).await {
-            Ok(()) => {
-                repo::release_lease(&mut sp, id).await?;
+            Ok(job) => {
+                match job {
+                    Some(job) => {
+                        let lease = (limits::EVAL_JUDGE_TIMEOUT + JUDGE_LEASE_MARGIN).as_secs_f64();
+                        repo::extend_lease(&mut sp, id, lease).await?;
+                        jobs.push(job);
+                    }
+                    None => repo::release_lease(&mut sp, id).await?,
+                }
                 sp.commit().await.map_err(aurora_db::DbError::from)?;
             }
             Err(e) => {
@@ -43,11 +55,13 @@ pub async fn arm(s: &AppState, tx: &mut PgConnection) -> Result<(), ApiError> {
             }
         }
     }
-    Ok(())
+    Ok(jobs)
 }
 
 /// What a step decided.
 enum Step {
+    /// A judged answer waits for the judge, whose call is made outside this transaction.
+    Judge(Box<judge::Job>),
     /// The current question advanced or ended; look at the next one.
     Continue,
     /// Waiting for a turn (or for the request log); nothing more to do this tick.
@@ -56,12 +70,16 @@ enum Step {
     Ended,
 }
 
-async fn tick(s: &AppState, conn: &mut PgConnection, id: Uuid) -> Result<(), ApiError> {
+async fn tick(
+    s: &AppState,
+    conn: &mut PgConnection,
+    id: Uuid,
+) -> Result<Option<judge::Job>, ApiError> {
     let Some(run) = repo::get_run(&mut *conn, id).await? else {
-        return Ok(());
+        return Ok(None);
     };
     if !matches!(run.status.as_str(), "queued" | "running") {
-        return Ok(());
+        return Ok(None);
     }
     if run.status == "queued" {
         repo::mark_running(conn, id).await?;
@@ -70,9 +88,10 @@ async fn tick(s: &AppState, conn: &mut PgConnection, id: Uuid) -> Result<(), Api
         match step(s, conn, &run).await? {
             Step::Continue => {}
             Step::Wait | Step::Ended => break,
+            Step::Judge(job) => return Ok(Some(*job)),
         }
     }
-    Ok(())
+    Ok(None)
 }
 
 async fn step(s: &AppState, conn: &mut PgConnection, run: &RunRow) -> Result<Step, ApiError> {
@@ -158,6 +177,19 @@ async fn step(s: &AppState, conn: &mut PgConnection, run: &RunRow) -> Result<Ste
     };
     match turn.status.as_str() {
         "done" | "failed" | "aborted" => {
+            if turn.status == "done" && open.expected_kind == "judged" {
+                // The judge is called outside this transaction and the conversation lock.
+                let answer = transcript::answer_texts(&mut *conn, c.id, turn.id)
+                    .await?
+                    .join("\n\n");
+                return match judge::prepare(conn, run, &open, &answer).await? {
+                    judge::Prepared::Now(scored) => {
+                        repo::finish_result(conn, open.id, &scored).await?;
+                        Ok(Step::Continue)
+                    }
+                    judge::Prepared::Job(job) => Ok(Step::Judge(job)),
+                };
+            }
             let scored = score_turn(conn, &open, &c.id, &turn).await?;
             repo::finish_result(conn, open.id, &scored).await?;
             Ok(Step::Continue)

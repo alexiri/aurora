@@ -5,6 +5,7 @@
 pub mod dto;
 pub mod engine;
 pub mod fingerprint;
+pub mod judge;
 mod routes;
 mod run_routes;
 pub mod runs;

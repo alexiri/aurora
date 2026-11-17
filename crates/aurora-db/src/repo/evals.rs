@@ -469,6 +469,18 @@ pub async fn release_lease(conn: &mut PgConnection, id: Uuid) -> Result<(), DbEr
     Ok(())
 }
 
+/// Keep the claim for `secs` more (a judge call runs outside the tick, P4-EVAL-3).
+pub async fn extend_lease(conn: &mut PgConnection, id: Uuid, secs: f64) -> Result<(), DbError> {
+    sqlx::query(
+        "UPDATE eval_runs SET lease_until = now() + make_interval(secs => $2) WHERE id = $1",
+    )
+    .bind(id)
+    .bind(secs)
+    .execute(conn)
+    .await?;
+    Ok(())
+}
+
 /// `queued → running` (fenced).
 pub async fn mark_running(conn: &mut PgConnection, id: Uuid) -> Result<(), DbError> {
     sqlx::query(
@@ -495,7 +507,7 @@ pub async fn request_cancel(conn: &mut PgConnection, id: Uuid) -> Result<bool, D
         == 1)
 }
 
-/// Add judge token usage to the run (P4-EVAL-3 writes it; here only the column).
+/// Add judge token usage to the run (`eval_runs.judge_usage`; never a turn's usage).
 pub async fn add_judge_usage(
     conn: &mut PgConnection,
     id: Uuid,

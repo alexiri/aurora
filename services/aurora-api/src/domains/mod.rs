@@ -32,6 +32,7 @@ pub mod hosted;
 pub mod instance;
 pub mod invitations;
 pub mod keys;
+pub mod llm;
 pub mod me;
 pub mod memory;
 pub mod oauth_clients;

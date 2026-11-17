@@ -1,6 +1,7 @@
 //! Scoring of numeric and text eval questions (docs/10 §Evals, C-862). Pure: no database, no
 //! logging of answers or expected values (SEC-116). Judged questions are scored by the judge
-//! (P4-EVAL-3); until it lands they are recorded `error` with `judge_not_available`.
+//! (`judge.rs`, P4-EVAL-3), outside this pure path; `score` is never asked to score one and
+//! answers `judge_not_available` if it is.
 
 use aurora_core::limits;
 use aurora_db::repo::evals::Scored;

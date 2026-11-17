@@ -32,6 +32,7 @@ export const REASON: Record<string, string> = {
   judge_not_configured: "No judge key is set. Choose one in the judge settings.",
   judge_not_granted: "The judge key is no longer granted to this agent.",
   judge_not_permitted: "Your organization does not permit the judge key's scope.",
+  judge_not_usable: "The judge key or its model cannot be used right now.",
   judge_unavailable: "The judge's model provider could not be reached.",
   judge_timeout: "The judge took too long to answer.",
   judge_unparseable: "The judge's answer could not be read.",

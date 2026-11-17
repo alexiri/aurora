@@ -294,6 +294,9 @@ pub async fn catalogue(pool: &PgPool, agent_id: Uuid) -> Result<Vec<ToolDescript
     Ok(registry().catalogue_for(&ctx).await)
 }
 
+/// Default per-call budget.
+pub const CALL_TIMEOUT: Duration = limits::TOOL_CALL_TIMEOUT;
+
 #[cfg(test)]
 mod eval_classification_tests {
     use super::*;
@@ -336,6 +339,3 @@ mod eval_classification_tests {
         assert!(both.is_empty(), "both read and write: {both:?}");
     }
 }
-
-/// Default per-call budget.
-pub const CALL_TIMEOUT: Duration = limits::TOOL_CALL_TIMEOUT;

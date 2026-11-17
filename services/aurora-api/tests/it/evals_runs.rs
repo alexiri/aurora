@@ -548,7 +548,8 @@ async fn failed_turns_timeouts_and_cancel_are_recorded_not_scored_as_passes() {
     assert_eq!(v["counts"]["errored"], 2);
     assert_eq!(v["counts"]["not_scored"], 2);
     assert!(v["pass_rate"].is_null());
-    // A judged question cannot be scored until the judge exists.
+    // A judged question of an agent with no judge key is an `error` (P4-EVAL-3; the judge itself is
+    // in `evals_judge.rs`).
     sqlx::query("DELETE FROM eval_questions WHERE agent_id = $1")
         .bind(w.agent)
         .execute(w.r.h.pool())
@@ -562,7 +563,7 @@ async fn failed_turns_timeouts_and_cancel_are_recorded_not_scored_as_passes() {
     let r = results(&w.run(&id).await);
     assert_eq!(
         (r[0]["outcome"].as_str(), r[0]["reason_code"].as_str()),
-        (Some("error"), Some("judge_not_available"))
+        (Some("error"), Some("judge_not_configured"))
     );
 }
 

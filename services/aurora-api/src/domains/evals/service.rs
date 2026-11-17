@@ -10,6 +10,7 @@ use super::fingerprint::{self, SkillEntry};
 use crate::app::AppState;
 use crate::audit::{self, AuditActor, AuditEvent, Outcome};
 use crate::domains::hosted::model::{self, Reason};
+use crate::domains::llm::platform;
 use crate::domains::secrets::gov;
 use crate::domains::skills::service as skills;
 use crate::http::auth::{Caller, require_own};
@@ -390,6 +391,19 @@ async fn judge_check(
     let Some(ep) = key.ep else {
         return Ok(JudgeCheck::NotUsable);
     };
+    // (P4-EVAL-3) `PlatformLlm` calls plain-header, Anthropic-Messages or OpenAI-chat endpoints only.
+    let mode = key
+        .secret
+        .llm_auth_mode
+        .as_deref()
+        .and_then(aurora_llm::AuthMode::parse)
+        .unwrap_or(aurora_llm::AuthMode::ApiKey);
+    if !llm
+        .provider_for(ep)
+        .is_some_and(|p| platform::supported(p.as_ref(), ep, mode).is_some())
+    {
+        return Ok(JudgeCheck::NotUsable);
+    }
     // The model is data (SEC-122): a valid id, allowed for the org on this endpoint, and on the
     // endpoint's static list when it has one.
     let eff = gov::effective_for(s, a.org_id).await?;

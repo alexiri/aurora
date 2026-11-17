@@ -585,6 +585,16 @@ pub const EVAL_RUN_RETENTION: Duration = Duration::from_secs(90 * 24 * 3600);
 /// (P4-EVAL-2, D-293(d), C-871) percentage points of pass rate below the previous finished run
 /// of the same question-set version at which a regression is recorded.
 pub const EVAL_REGRESSION_DROP: f64 = 10.0;
+/// (P4-EVAL-3, D-292, C-869) one judge call (the request through `PlatformLlm`) is abandoned after
+/// this long: `judge_timeout`, an `error` for that question.
+pub const EVAL_JUDGE_TIMEOUT: Duration = Duration::from_secs(60);
+/// (P4-EVAL-3, C-869) `max_tokens` of a judge request.
+pub const EVAL_JUDGE_MAX_TOKENS: u32 = 512;
+/// (P4-EVAL-3, SEC-115) bytes of the question's own answer sent to the judge; the rest is cut.
+pub const EVAL_JUDGE_INPUT_MAX: usize = 8 * 1024;
+/// (P4-EVAL-3, C-869) characters of the judge's rationale kept (one line, sanitised); longer is
+/// cut, never a failure.
+pub const EVAL_RATIONALE_CHARS: usize = 300;
 /// (P4-SSH-1, C-791) default validity of a minted SSH user certificate; `ssh.cert_ttl_secs`
 /// (60 … 86 400 s) overrides it. `valid_after` is backdated 60 s for clock skew.
 pub const SSH_CERT_TTL: Duration = Duration::from_secs(900);
@@ -720,6 +730,10 @@ mod tests {
         assert_eq!(EVAL_SCHEDULES_PER_AGENT, 5);
         assert_eq!(EVAL_RUN_RETENTION, Duration::from_secs(90 * 24 * 3600));
         assert!((EVAL_REGRESSION_DROP - 10.0).abs() < f64::EPSILON);
+        assert_eq!(EVAL_JUDGE_TIMEOUT, Duration::from_secs(60));
+        assert_eq!(EVAL_JUDGE_MAX_TOKENS, 512);
+        assert_eq!(EVAL_JUDGE_INPUT_MAX, 8192);
+        assert_eq!(EVAL_RATIONALE_CHARS, 300);
         assert_eq!(SSH_CERT_TTL, Duration::from_secs(900));
         assert_eq!(SSH_MINTS_PER_USER_AGENT_HOUR, 30);
         const { assert!(CONDITION_BODY_BUFFER_MIN <= CONDITION_BODY_BUFFER) };
