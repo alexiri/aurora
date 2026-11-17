@@ -2,6 +2,7 @@
 #![forbid(unsafe_code)]
 
 pub mod account_health;
+pub mod account_test;
 pub mod apps;
 pub mod auth;
 pub mod byo;

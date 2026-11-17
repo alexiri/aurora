@@ -95,6 +95,9 @@ pub struct AppState {
     pub card_requests: Arc<dyn crate::domains::channels::card_requests::CardRequests>,
     /// (phase 4, P4-GSL) git skill library: the gateway client and the browse cache.
     pub library: Arc<crate::domains::skill_libraries::LibraryEnv>,
+    /// (phase 5, P5-UX-14, C-943) The checks of Test only the gateway can make (a database login, a token
+    /// mint, a refresh), over the internal listener.
+    pub account_gateway: Arc<dyn crate::domains::accounts::gateway::AccountGateway>,
     /// (phase 5, SET-1, D-236) Instance settings: the deployment configuration's presence and the
     /// snapshot every replica serves from. Nothing reads it yet except the Admin › Settings routes.
     pub settings: Arc<domains::settings::handle::SettingsHandle>,
@@ -196,6 +199,12 @@ impl AppState {
                 config.tls.extra_ca_bundle.as_deref(),
             )?,
         )));
+        let account_gateway: Arc<dyn domains::accounts::gateway::AccountGateway> =
+            Arc::new(domains::accounts::gateway::HttpAccountGateway::new(
+                &config.gateway_internal_url,
+                &config.internal_ring,
+                config.tls.extra_ca_bundle.as_deref(),
+            )?);
         let browser_spans = domains::telemetry::BrowserSpans::from_config(&config.telemetry)
             .map_err(|e| format!("telemetry.otlp_endpoint: {e}"))?
             .map(Arc::new);
@@ -236,6 +245,7 @@ impl AppState {
             connect,
             card_requests,
             library,
+            account_gateway,
             settings: Arc::new(domains::settings::handle::SettingsHandle::new(None)),
             ssh_signer,
             sse_keepalive: aurora_core::limits::SSE_KEEPALIVE,
@@ -579,6 +589,16 @@ impl AppState {
         gw: Arc<dyn crate::domains::skill_libraries::gateway::LibraryGateway>,
     ) -> Self {
         self.library = Arc::new(crate::domains::skill_libraries::LibraryEnv::new(gw));
+        self
+    }
+
+    /// Replace the gateway client of Test (tests: a fake that answers as the gateway would).
+    #[must_use]
+    pub fn with_account_gateway(
+        mut self,
+        gw: Arc<dyn crate::domains::accounts::gateway::AccountGateway>,
+    ) -> Self {
+        self.account_gateway = gw;
         self
     }
 

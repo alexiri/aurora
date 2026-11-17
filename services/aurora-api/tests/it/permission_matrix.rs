@@ -985,6 +985,8 @@ const ROWS: &[Row] = &[
     r("POST", "/v1/secrets/{id}/accept", G::WsOwn, false),
     r("POST", "/v1/secrets/{id}/reject", G::WsOwn, false),
     r("POST", "/v1/secrets/{id}/verify", G::WsOwn, false),
+    // (P5-UX-14, C-943, SEC-129) Test of an account: `can_own` of its workspace (owner/admin for an organization's).
+    r("POST", "/v1/accounts/{type}/{id}/test", G::WsOwn, false),
     r("PUT", "/v1/secrets/{id}/value", G::WsOwn, false),
     r("GET", "/v1/secrets/{id}/models", G::WsOwn, false),
     // BE-065 (M5): action approvals, agent links, peer tasks, app-turn cap reset.
@@ -1379,6 +1381,7 @@ fn fill(path: &str, fx: &Fx) -> String {
             "agent" => fx.agent.to_string(),
             "user" => fx.victim.to_string(),
             "rev" | "seq" => "1".to_owned(),
+            "type" => "connection".to_owned(),
             _ => Uuid::now_v7().to_string(),
         };
         out.push_str(&v);

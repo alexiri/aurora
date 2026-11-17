@@ -414,10 +414,29 @@ async fn serve(
         port: 443,
         limiter: aurora_gateway::library_fetch::Limiter::default(),
     });
+    // (phase 5, P5-UX-14, C-943, SEC-129) The checks of Test that only the gateway can make, through the same
+    // destination guard and egress proxy as agent traffic.
+    let account_test = Arc::new(aurora_gateway::account_test::AccountTest {
+        ring: ring.clone(),
+        snapshots: snapshots.clone(),
+        pool: pool.clone(),
+        tokens: tokens.clone(),
+        plaintext: plaintext.clone(),
+        guard: guard.clone(),
+        egress: cfg
+            .gateway
+            .egress_proxy
+            .as_deref()
+            .map(aurora_gateway::upstream::EgressProxy::parse)
+            .transpose()?,
+        external_url: cfg.external_url.clone(),
+        limiter: aurora_gateway::library_fetch::Limiter::default(),
+    });
     let internal = service::traced(
         aurora_gateway::status::readyz_router(outage.clone())
             .merge(aurora_gateway::status::router_with(ring, Some(outage)))
             .merge(aurora_gateway::library_fetch::router(library))
+            .merge(aurora_gateway::account_test::router(account_test))
             .fallback_service(service::ops_router(metrics, Vec::new())),
         service::INTERNAL_TRUST,
     );

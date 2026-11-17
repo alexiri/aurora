@@ -877,6 +877,34 @@ async fn llm_key_admission_validation_and_origin() {
         .await;
     assert_eq!(s, 403);
 
+    // (P5-UX-14, C-943) Test of an AI key is the same verification: `ok`, stored on the key, audited; a member is refused.
+    let (s, v) = w
+        .call(
+            Method::POST,
+            &format!("/v1/accounts/secret/{aid}/test"),
+            &w.owner,
+            None,
+        )
+        .await;
+    assert_eq!((s, v["result"].as_str()), (200, Some("ok")), "{v}");
+    let stored: Option<String> =
+        sqlx::query_scalar("SELECT last_check_result FROM secrets WHERE id = $1::uuid")
+            .bind(&aid)
+            .fetch_one(w.h.pool())
+            .await
+            .unwrap();
+    assert_eq!(stored.as_deref(), Some("ok"));
+    wait_audit(&w, "account.test").await;
+    let (s, _) = w
+        .call(
+            Method::POST,
+            &format!("/v1/accounts/secret/{aid}/test"),
+            &w.member,
+            None,
+        )
+        .await;
+    assert_eq!(s, 403);
+
     // LLM host/injection are read-only
     let (s, _) = w.call(Method::POST, &w.org_url(), &w.owner, Some(json!({
         "name": "z", "kind": "llm", "llm": {"endpoint_id": "central"}, "host_pattern": "x.com", "value": GOOD_KEY}))).await;
