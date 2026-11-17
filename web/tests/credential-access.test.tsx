@@ -171,7 +171,7 @@ describe("model readiness on the Access tab", () => {
     secret_id: "k" + Math.random(), name: "Team key", scope: "workspace", endpoint_id: "aigw", provider: "litellm", usable: true, reason: null, ...over,
   });
   const tab = (canOwn = true, hosted = true) =>
-    wrap(<AccessTab agentId="a1" wsId="w1" orgId="o1" canOwn={canOwn} hosted={hosted} base="/o/acme/w/ops" />);
+    wrap(<AccessTab agentId="a1" agentName="Daneel" wsId="w1" orgId="o1" canOwn={canOwn} hosted={hosted} base="/o/acme/w/ops" />);
   beforeEach(() => {
     routes["GET /v1/workspaces/w1/secrets"] = () => json(200, { items: [] });
     routes["GET /v1/orgs/o1/secrets"] = () => json(200, { items: [] });
@@ -266,14 +266,15 @@ describe("Give agents access step", () => {
     return onDone;
   };
   const check = async (name: string) => fireEvent.click(await screen.findByRole("checkbox", { name: `Give ${name} access` }));
-  const give = () => fireEvent.click(screen.getByRole("button", { name: "Give access" }));
+  // (C-925) The button names the result: "Give Ada access" with one agent ticked.
+  const give = () => fireEvent.click(screen.getByRole("button", { name: /^Give .*access$/ }));
 
   it("lists the workspace's agents with nothing preselected and Give access disabled", async () => {
     step(wsSubject({ kind: "secret", id: "s1" }));
     const boxes = await screen.findAllByRole("checkbox");
     expect(boxes).toHaveLength(3);
     expect(boxes.every((b) => !(b as HTMLInputElement).checked)).toBe(true);
-    expect((screen.getByRole("button", { name: "Give access" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: /^Give .*access$/ }) as HTMLButtonElement).disabled).toBe(true);
     expect(screen.getByRole("button", { name: "Skip" })).toBeTruthy();
   });
 
@@ -457,7 +458,7 @@ describe("row Access dialog", () => {
     open();
     await screen.findByRole("button", { name: "Remove access for Daneel" });
     fireEvent.click(await screen.findByRole("checkbox", { name: "Give Giskard access" }));
-    fireEvent.click(screen.getByRole("button", { name: "Give access" }));
+    fireEvent.click(screen.getByRole("button", { name: /^Give .*access$/ }));
     await screen.findByText("Access given to 1 agent.");
     expect(calls.find((c) => c.key === "POST /v1/secrets/s1/grants")?.body).toEqual({ agent_ids: ["a2"] });
     expect(screen.getByRole("button", { name: "Done" })).toBeTruthy();

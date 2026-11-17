@@ -13,6 +13,7 @@ import { useSecrets, type SecretScope } from "@/lib/api/secrets";
 import { useWhoCan } from "@/lib/api/who-can";
 import { useTabParam } from "@/lib/use-tab-param";
 
+import { AccountsList } from "@/components/accounts/accounts-list";
 import { AppsTab } from "@/components/apps/apps-tab";
 import { ConnectionsTab } from "@/components/apps/connections-tab";
 import { OAuthClientsPanel } from "@/components/apps/oauth-clients-panel";
@@ -82,51 +83,15 @@ function SecretsList({
  * workspace, agents' requests for an account come last (`#requests`).
  */
 export function AccountsPanel({ scope, orgId, canOwn }: { scope: SecretScope; orgId: string; canOwn: boolean }) {
-  const kind = useSearchParams().get("kind");
-  const [adding, setAdding] = useState(false);
-  const secrets = useSecrets(scope);
-  const who = useWhoCan(
-    scope.kind === "workspace" ? { workspaceId: scope.id } : { orgId: scope.id },
-    scope.kind === "workspace" ? "workspace_owner" : "org_admin",
-    "add_account",
-  );
-  const only = (k: string) => !kind || kind === k;
+  const param = useSearchParams().get("kind");
+  const kind = param === "app" || param === "website" ? param : param === "ai-key" ? "ai_key" : null;
+  const secrets = useSecrets(scope, scope.kind === "workspace" && canOwn);
+  // (P5-UX-4, C-917, C-925) One list for apps, websites and AI keys. The requests banner slot is P5-UX-17's; agents'
+  // proposals of a secret stay below the list until then.
   return (
     <div className="space-y-8">
-      {only("app") ? (
-        <Section id="accounts-apps" title="Apps" description="Accounts of apps from the catalogue, such as GitHub.">
-          <ConnectionsTab scope={scope} canOwn={canOwn} />
-        </Section>
-      ) : null}
-      {only("website") ? (
-        <Section id="accounts-websites" title="Websites" description="Any other website or API, reached with a token you store.">
-          <div className="space-y-4">
-            <MainAction canAct={canOwn} whoCan={who}>
-              {adding ? (
-                <GenericSecretForm scope={scope} orgId={orgId} onDone={() => setAdding(false)} />
-              ) : (
-                <div>
-                  <Button variant="outline" onClick={() => setAdding(true)}>
-                    Add a website
-                  </Button>
-                </div>
-              )}
-            </MainAction>
-            <SecretsList scope={scope} orgId={orgId} canOwn={canOwn} kind="generic" secrets={secrets} />
-          </div>
-        </Section>
-      ) : null}
-      {only("ai-key") ? (
-        <Section id="accounts-ai-keys" title="AI keys" description="The keys to AI providers, for the models your agents think with.">
-          <div className="space-y-4">
-            <MainAction canAct={canOwn} whoCan={who}>
-              <LlmKeyForm scope={scope} orgId={orgId} />
-            </MainAction>
-            <SecretsList scope={scope} orgId={orgId} canOwn={canOwn} kind="llm" secrets={secrets} />
-          </div>
-        </Section>
-      ) : null}
-      {scope.kind === "workspace" && !kind ? (
+      <AccountsList scope={scope} orgId={orgId} canOwn={canOwn} kind={kind} />
+      {scope.kind === "workspace" && canOwn && !kind ? (
         <Section id="requests" title="Requests" description="Accounts that agents asked for.">
           {secrets.isPending ? (
             <Loading />

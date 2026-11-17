@@ -162,7 +162,7 @@ describe("connection list (owners)", () => {
           { app_id: "github", connection_id: C_GH, tool_id: "create_issue", decision: "block", inert: false },
         ],
       });
-    wrap(<AccessTab agentId={AGENT} wsId={WS} orgId={ORG} canOwn={false} />);
+    wrap(<AccessTab agentId={AGENT} agentName="Daneel" wsId={WS} orgId={ORG} canOwn={false} />);
     const list = await screen.findByRole("list", { name: "Connection access (read only)" });
     expect(within(list).getByText("1 allowed, 1 ask, 1 blocked")).toBeTruthy();
     expect(screen.queryByRole("button", { name: /Edit access|Give access|Remove access/ })).toBeNull();
@@ -221,7 +221,7 @@ describe("editor", () => {
     setup();
     routes[`GET /v1/workspaces/${WS}/secrets`] = () => json(200, { items: [] });
     routes[`GET /v1/orgs/${ORG}/secrets`] = () => json(200, { items: [] });
-    wrap(<AccessTab agentId={AGENT} wsId={WS} orgId={ORG} canOwn hosted base="/o/acme/w/main" />);
+    wrap(<AccessTab agentId={AGENT} agentName="Daneel" wsId={WS} orgId={ORG} canOwn hosted base="/o/acme/w/main" />);
     await openEditor("Give access to acme-bot");
     await waitFor(() => expect(count(`GET /v1/agents/${AGENT}/model-readiness`)).toBe(1));
     const eff = count(`GET /v1/agents/${AGENT}/effective`);

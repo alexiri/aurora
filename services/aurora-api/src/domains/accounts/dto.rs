@@ -81,7 +81,7 @@ pub struct AccountWorkspace {
 /// What one agent's saved choice reads as. `use` is the level of accounts with no choice.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum AccessLevel {
+pub enum AgentAccessLevel {
     Read,
     Ask,
     Act,
@@ -89,7 +89,7 @@ pub enum AccessLevel {
     Use,
 }
 
-impl From<Level> for AccessLevel {
+impl From<Level> for AgentAccessLevel {
     fn from(l: Level) -> Self {
         match l {
             Level::Read => Self::Read,
@@ -117,7 +117,7 @@ pub struct CustomChoice {
 pub struct AgentAccess {
     pub agent: AccountAgent,
     pub workspace: AccountWorkspace,
-    pub level: AccessLevel,
+    pub level: AgentAccessLevel,
     /// Under `ask`: the changes the saved choice allows without asking.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub always_allowed: Option<Vec<AlwaysAllowed>>,

@@ -263,49 +263,57 @@ describe("SimulationResult", () => {
 });
 
 describe("AccessTab", () => {
-  it("toggles a grant with PUT and DELETE", async () => {
-    const calls: string[] = [];
-    const secret = { id: "s1", name: "Stripe", scope: "workspace", kind: "generic", status: "active" };
-    mockFetch({
-      "GET /v1/workspaces/w1/secrets": () => json(200, { items: [secret] }),
-      "GET /v1/orgs/o1/secrets": () => json(200, { items: [] }),
-      "GET /v1/agents/a1/grants": () => json(200, { secrets: [], connections: [] }),
-      "GET /v1/agents/a1/effective": () => json(200, { credentials: [{ id: "s1", kind: "secret", name: "Stripe", scope: "workspace", selected: true, selected_by: ["r1"] }], tools: [] }),
-      "PUT /v1/agents/a1/grants/secrets/s1": () => {
-        calls.push("PUT");
-        return json(200, { id: "g", agent_id: "a1", secret_id: "s1", created_at: "2026-01-01T00:00:00Z" });
-      },
-    });
-    wrap(<AccessTab agentId="a1" wsId="w1" orgId="o1" canOwn />);
-    const box = await screen.findByLabelText("Grant Stripe");
-    fireEvent.click(box);
-    await waitFor(() => expect(calls).toEqual(["PUT"]));
-    expect(await screen.findByText("selected")).toBeInTheDocument();
+  // (P5-UX-4) The Access tab is the accounts list read for this agent; its detailed tests are in accounts.test.tsx.
+  const account = (over: Record<string, unknown>) => ({
+    ref: { type: "secret", id: "s1" },
+    kind: "website",
+    name: "Stripe",
+    scope: "workspace",
+    levels: [],
+    health: { state: "unknown" },
+    agents: [],
+    can: { give_access: true, change_access: true, manage: true },
+    ...over,
   });
 
-  it("offers org secrets to workspace owners (I-27 amendment)", async () => {
-    const ws = { id: "s1", name: "Stripe", scope: "workspace", kind: "generic", status: "active" };
-    const org = { id: "s2", name: "Shared LLM", scope: "organization", kind: "llm", status: "active" };
+  it("shows the accounts the agent can use first and the others collapsed", async () => {
     mockFetch({
-      "GET /v1/workspaces/w1/secrets": () => json(200, { items: [ws] }),
-      "GET /v1/orgs/o1/secrets": () => json(200, { items: [org] }),
-      "GET /v1/agents/a1/grants": () => json(200, { secrets: [], connections: [] }),
-      "GET /v1/agents/a1/effective": () => json(200, { credentials: [], tools: [] }),
+      "GET /v1/workspaces/w1/accounts": () =>
+        json(200, {
+          items: [
+            account({
+              given: true,
+              agents: [{ agent: { id: "a1", name: "Daneel", handle: "daneel" }, workspace: { id: "w1", name: "Ops" }, level: "use" }],
+            }),
+            account({ ref: { type: "secret", id: "s2" }, name: "Wiki", given: false }),
+          ],
+          next_cursor: null,
+        }),
     });
-    wrap(<AccessTab agentId="a1" wsId="w1" orgId="o1" canOwn />);
-    expect(await screen.findByLabelText("Grant Stripe")).toBeInTheDocument();
-    expect(await screen.findByLabelText("Grant Shared LLM")).toBeInTheDocument();
+    wrap(<AccessTab agentId="a1" agentName="Daneel" wsId="w1" orgId="o1" canOwn />);
+    expect(await screen.findByLabelText("Accounts Daneel can use")).toBeInTheDocument();
+    expect(screen.getByText("Not given to Daneel (1)")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Give Daneel an app" })).toBeInTheDocument();
   });
 
-  it("members only see effective access and never call the can_own lists", async () => {
-    const fn = mockFetch({
-      "GET /v1/agents/a1/effective": () => json(200, { credentials: [], tools: [] }),
+  it("members see the same list as text and no controls", async () => {
+    mockFetch({
+      "GET /v1/workspaces/w1/accounts": () =>
+        json(200, {
+          items: [
+            account({
+              given: true,
+              can: { give_access: false, change_access: false, manage: false },
+              agents: [{ agent: { id: "a1", name: "Daneel", handle: "daneel" }, workspace: { id: "w1", name: "Ops" }, level: "use" }],
+            }),
+          ],
+          next_cursor: null,
+        }),
     });
-    wrap(<AccessTab agentId="a1" wsId="w1" orgId="o1" canOwn={false} />);
-    expect(await screen.findByText("No credentials are available to this agent.")).toBeInTheDocument();
-    expect(screen.queryByLabelText(/^Grant /)).toBeNull();
-    const urls = fn.mock.calls.map((c) => (c[0] as Request).url);
-    expect(urls.some((u) => u.includes("/secrets") || u.includes("/grants"))).toBe(false);
+    wrap(<AccessTab agentId="a1" agentName="Daneel" wsId="w1" orgId="o1" canOwn={false} />);
+    expect(await screen.findByText("Daneel")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /More for/ })).toBeNull();
+    expect(screen.queryByText("Add")).toBeNull();
   });
 });
 

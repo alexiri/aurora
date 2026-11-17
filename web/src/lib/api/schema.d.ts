@@ -5680,7 +5680,7 @@ export interface components {
             /** @description Under `ask`: the changes the saved choice allows without asking. */
             always_allowed?: components["schemas"]["AlwaysAllowed"][] | null;
             custom?: components["schemas"]["CustomChoice"] | null;
-            level: components["schemas"]["AccessLevel"];
+            level: components["schemas"]["AgentAccessLevel"];
             /**
              * @description AI-key rows of a list read for one agent (`agent_id`): the model that agent's next turn
              *     uses through the key.
@@ -5688,6 +5688,11 @@ export interface components {
             model?: string | null;
             workspace: components["schemas"]["AccountWorkspace"];
         };
+        /**
+         * @description What one agent's saved choice reads as. `use` is the level of accounts with no choice.
+         * @enum {string}
+         */
+        AgentAccessLevel: "read" | "ask" | "act" | "custom" | "use";
         /** @description A link seen from one of its two agents. */
         AgentLink: {
             /** Format: date-time */

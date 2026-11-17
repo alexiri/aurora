@@ -34845,7 +34845,7 @@
             ]
           },
           "level": {
-            "$ref": "#/components/schemas/AccessLevel"
+            "$ref": "#/components/schemas/AgentAccessLevel"
           },
           "model": {
             "type": [
@@ -34858,6 +34858,17 @@
             "$ref": "#/components/schemas/AccountWorkspace"
           }
         }
+      },
+      "AgentAccessLevel": {
+        "type": "string",
+        "description": "What one agent's saved choice reads as. `use` is the level of accounts with no choice.",
+        "enum": [
+          "read",
+          "ask",
+          "act",
+          "custom",
+          "use"
+        ]
       },
       "AgentLink": {
         "type": "object",

@@ -3,8 +3,8 @@
 //! workspaces, the registry snapshot), whatever the number of accounts.
 
 use super::dto::{
-    AccessLevel, Account, AccountAgent, AccountApp, AccountCan, AccountKind, AccountRef,
-    AccountRefType, AccountWorkspace, AccountsQuery, AgentAccess, AlwaysAllowed, CustomChoice,
+    Account, AccountAgent, AccountApp, AccountCan, AccountKind, AccountRef, AccountRefType,
+    AccountWorkspace, AccountsQuery, AgentAccess, AgentAccessLevel, AlwaysAllowed, CustomChoice,
     Health, HealthState, PersonName,
 };
 use crate::app::AppState;
@@ -419,7 +419,7 @@ fn agent_access(g: &AccountGrantRow, r: &Row) -> AgentAccess {
             id: g.workspace_id,
             name: g.workspace_name.clone(),
         },
-        level: AccessLevel::Use,
+        level: AgentAccessLevel::Use,
         always_allowed: None,
         custom: None,
         model: None,
@@ -456,7 +456,7 @@ fn agent_access(g: &AccountGrantRow, r: &Row) -> AgentAccess {
             }
         }
         Choice::Custom { base, differs } => {
-            a.level = AccessLevel::Custom;
+            a.level = AgentAccessLevel::Custom;
             a.custom = Some(CustomChoice {
                 base,
                 differs: u32::try_from(differs).unwrap_or(u32::MAX),

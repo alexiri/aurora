@@ -13,6 +13,7 @@ import { ApiError } from "@/lib/api/client";
 import { appRestrictions, useApp, useConnections } from "@/lib/api/apps";
 import { appDisplayName } from "@/lib/api/app-name";
 import { useGrants } from "@/lib/api/policy";
+import { preselectAgents } from "@/lib/accounts";
 import {
   grantValueBody,
   grantValueProblem,
@@ -52,6 +53,11 @@ export interface GrantSubject {
   customOnly?: boolean;
   /** Agents ticked when the picker opens (the getting-started guide preselects the workspace's own agent). */
   preselect?: string[];
+  /**
+   * (C-925) The agent whose page opened the picker: preselected. Without one, the only agent the person may choose
+   * (a workspace's list) is preselected, else none.
+   */
+  contextAgentId?: string;
 }
 
 type AgentLite = { id: string; name: string; handle: string; kind: string };
@@ -64,6 +70,7 @@ function AgentChecklist({
   disabled,
   idp,
   onEdit,
+  prefix,
 }: {
   agents: AgentLite[];
   has: Set<string>;
@@ -73,6 +80,8 @@ function AgentChecklist({
   idp: string;
   /** Connections: opens the agent's grant editor (the bulk call never changes an existing grant, C-504). */
   onEdit?: (agentId: string) => void;
+  /** (C-948) The workspace's name, when agents of more than one workspace are listed: "<workspace> · <agent>". */
+  prefix?: string;
 }) {
   if (agents.length === 0) return <p className="text-sm text-muted">No agents.</p>;
   return (
@@ -91,7 +100,7 @@ function AgentChecklist({
                 onChange={() => toggle(a.id)}
                 aria-label={`Give ${a.name} access`}
               />
-              <span className="min-w-0 break-words font-medium text-ink">{a.name}</span>
+              <span className="min-w-0 break-words font-medium text-ink">{prefix ? `${prefix} · ${a.name}` : a.name}</span>
               <span className="font-mono text-xs text-muted">@{a.handle}</span>
               {already ? <Badge tone="accent">Has access</Badge> : null}
               {already && onEdit ? (
@@ -122,6 +131,7 @@ export function WorkspaceAgents({
   disabled: boolean;
   idp: string;
   onEdit?: (agentId: string) => void;
+  prefix?: string;
 }) {
   const agents = useAgents(wsId);
   const items = useMemo(() => agents.data?.items ?? [], [agents.data]);
@@ -167,7 +177,7 @@ function AgentPicker({
   return (
     <div className="space-y-3">
       {owned.map((w) => (
-        <WorkspaceAgents key={w.id} wsId={w.id} name={w.name} register={register} {...rest} />
+        <WorkspaceAgents key={w.id} wsId={w.id} name={w.name} prefix={owned.length > 1 ? w.name : undefined} register={register} {...rest} />
       ))}
     </div>
   );
@@ -215,7 +225,9 @@ export function GiveAccessPanel({
 }) {
   const grants = useCredentialGrants(subject.target);
   const add = useAddCredentialGrants(subject.target);
-  const [selected, setSelected] = useState<Set<string>>(() => new Set(subject.preselect ?? []));
+  // (C-925) The contextual agent, else the only agent the person may choose, else none.
+  // `picked` is what the person ticked; until they tick something the default below applies.
+  const [picked, setPicked] = useState<Set<string> | null>(null);
   const [names, setNames] = useState<Record<string, string>>({});
   const [result, setResult] = useState<{ created: number; existing: number } | null>(null);
   // `full_grant_forbidden` (422) on a `custom_only` app: the form switches to Custom.
@@ -243,13 +255,28 @@ export function GiveAccessPanel({
       }),
     [],
   );
-  const toggle = (id: string) =>
-    setSelected((cur) => {
-      const next = new Set(cur);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
+  // The default (C-925): the guide's or the page's agent; else, in a workspace's list, the only agent the person may
+  // choose (an organization's list loads per workspace, so it never guesses); else none.
+  const explicit = subject.preselect ?? (subject.contextAgentId ? [subject.contextAgentId] : null);
+  const defaults: string[] =
+    explicit ??
+    (subject.scope.kind === "workspace" && grants.data
+      ? preselectAgents(
+          Object.keys(names)
+            .filter((id) => !has.has(id))
+            .map((id) => ({ id })),
+          null,
+        )
+      : []);
+  const selected = picked ?? new Set(defaults);
+  const setSelected = setPicked;
+  const toggle = (id: string) => {
+    const next = new Set(selected);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    setPicked(next);
+  };
+  const only = selected.size === 1 ? names[[...selected][0]] : undefined;
 
   const failing = add.error ? failingAgentId(add.error) : null;
   const errorText = add.error
@@ -330,7 +357,7 @@ export function GiveAccessPanel({
       ) : null}
       <div className="flex flex-wrap gap-2">
         <Button size="sm" disabled={add.isPending || selected.size === 0 || needsTools} onClick={submit}>
-          {add.isPending ? "Giving access…" : "Give access"}
+          {add.isPending ? "Giving access…" : only ? `Give ${only} access` : "Give access"}
         </Button>
         <Button size="sm" variant="outline" onClick={onDismiss}>
           {result ? "Done" : dismissLabel}
