@@ -265,7 +265,13 @@ export function AgentPage() {
           {tab === "webhooks" && !byo ? <WebhooksTab agentId={agent.id} wsId={workspace.data?.id} canOwn={canOwn} /> : null}
           {tab === "peers" && !byo ? <PeersTab agentId={agent.id} /> : null}
           {tab === "channels" && !byo && workspace.data ? (
-            <AgentChannelsTab agentId={agent.id} orgId={workspace.data.org_id} canOwn={workspace.data.my_role === "owner"} />
+            <AgentChannelsTab
+              agentId={agent.id}
+              orgId={workspace.data.org_id}
+              canOwn={workspace.data.my_role === "owner"}
+              wsId={workspace.data.id}
+              narrationCards={agent.narration_cards}
+            />
           ) : null}
           {tab === "channels" && !byo && workspace.isPending ? <Loading /> : null}
           {tab === "computer" && !byo ? (

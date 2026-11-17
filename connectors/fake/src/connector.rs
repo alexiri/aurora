@@ -244,6 +244,33 @@ impl FakeConnector {
     ) -> Result<(String, Option<aurora_channels::Card>), OpError> {
         let c: Content = serde_json::from_value(content.clone())
             .map_err(|e| OpError::new(ErrorCode::Invalid, e.to_string()))?;
+        // (P4-NARR, C-847) A narration card renders as plain lines, defused like any platform text.
+        if let Some(n) = &c.narration {
+            use aurora_channels::NarrationStatus as S;
+            let header = match n.status {
+                S::Running => "Working on it",
+                S::Done => "Done",
+                S::Failed | S::Stopped => "Stopped",
+            };
+            let mut text = if n.collapsed {
+                format!(
+                    "{header} - {} steps, {} failed",
+                    n.step_count.unwrap_or(0),
+                    n.failed_count.unwrap_or(0)
+                )
+            } else {
+                let mut t = header.to_owned();
+                for s in &n.steps {
+                    t.push_str(&format!("\n- {}: {:?}", s.name, s.status));
+                }
+                if n.earlier > 0 {
+                    t.push_str(&format!("\n- {} earlier", n.earlier));
+                }
+                t
+            };
+            text = to_platform_text(&text, p);
+            return Ok((text, None));
+        }
         let mut text = c
             .text
             .as_deref()

@@ -49,7 +49,7 @@ const APP = {
   agent_instructions: null,
   credentials: [],
   metadata: [],
-  oauth_clients: [{ client_key: "oa", fields: [{ name: "client_id", label: "Application ID", secret: false }, { name: "client_secret", label: "Secret", secret: true }], setup_note: null, redirect_uri: "https://a.test/v1/oauth/callback" }],
+  oauth_clients: [{ client_key: "oa", used_by_methods: [{ id: "oauth", label: "Sign in with Desk" }], fields: [{ name: "client_id", label: "Application ID", secret: false }, { name: "client_secret", label: "Secret", secret: true }], setup_note: null, redirect_uri: "https://a.test/v1/oauth/callback" }],
   instances: { label: "Desk instance", default_host: "saas.desk.example" },
 };
 const PLAIN = { ...APP, app_id: "plain", name: "Plain", instances: null, oauth_clients: [], package_id: "plainpkg" };
@@ -374,7 +374,7 @@ describe("instance on OAuth clients", () => {
     expect(await screen.findByText("https://desk.acme.example")).toBeInTheDocument();
     fireEvent.click(screen.getByText("Add an OAuth client"));
     const app = await screen.findByLabelText("App");
-    await within(app).findByRole("option", { name: "Desk (oa)" });
+    await within(app).findByRole("option", { name: "Desk — for Sign in with Desk" });
     fireEvent.change(app, { target: { value: "selfhost|oa" } });
     const picker = await screen.findByLabelText("Self-hosted app");
     await within(picker).findByRole("option", { name: "Acme desk (https://desk.acme.example)" });

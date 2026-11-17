@@ -12,6 +12,8 @@ import { appDisplayName } from "@/lib/api/app-name";
 import { connectDeepLink, useApps, type AppSummary } from "@/lib/api/apps";
 import { useWorkspaces } from "@/lib/api/queries";
 
+import { AppLink } from "./app-link";
+
 /** One owned workspace in the Connect dialog: shows whether the app is available there (C-894). */
 function WorkspaceChoice({
   orgSlug,
@@ -53,7 +55,7 @@ function WorkspaceChoice({
   );
 }
 
-function ConnectInWorkspaceDialog({
+export function ConnectInWorkspaceDialog({
   orgId,
   orgSlug,
   app,
@@ -61,7 +63,7 @@ function ConnectInWorkspaceDialog({
 }: {
   orgId: string;
   orgSlug: string;
-  app: AppSummary;
+  app: Pick<AppSummary, "app_id" | "name" | "family">;
   onClose: () => void;
 }) {
   const workspaces = useWorkspaces(orgId);
@@ -91,8 +93,21 @@ function ConnectInWorkspaceDialog({
   );
 }
 
-/** (FIX-153, C-894) The installed apps with **Connect…**, whatever the org posture. */
-export function OrgAppsList({ orgId, orgSlug, apps }: { orgId: string; orgSlug: string; apps: AppSummary[] }) {
+/**
+ * (FIX-153, C-894) The installed apps with **Connect…**, whatever the org posture. (P5-UX-9, C-933) Each name leads to
+ * the app's setup page; with `switches` (the organization allows only some apps) each row has its on/off switch.
+ */
+export function OrgAppsList({
+  orgId,
+  orgSlug,
+  apps,
+  switches,
+}: {
+  orgId: string;
+  orgSlug: string;
+  apps: AppSummary[];
+  switches?: { isOn: (appId: string) => boolean; onToggle: (appId: string) => void; disabled?: boolean };
+}) {
   const [choosing, setChoosing] = useState<AppSummary | null>(null);
   if (apps.length === 0)
     return (
@@ -107,14 +122,31 @@ export function OrgAppsList({ orgId, orgSlug, apps }: { orgId: string; orgSlug: 
           <ListRow
             key={a.app_id}
             actions={
-              <Button size="sm" variant="outline" aria-label={`Connect ${appDisplayName(a)}`} onClick={() => setChoosing(a)}>
-                Connect…
-              </Button>
+              <>
+                {switches ? (
+                  <label className="inline-flex items-center gap-2 text-sm text-ink-2">
+                    <input
+                      type="checkbox"
+                      className="size-4 accent-accent"
+                      aria-label={appDisplayName(a)}
+                      checked={switches.isOn(a.app_id)}
+                      disabled={switches.disabled}
+                      onChange={() => switches.onToggle(a.app_id)}
+                    />
+                    {switches.isOn(a.app_id) ? "On" : "Off"}
+                  </label>
+                ) : null}
+                <Button size="sm" variant="outline" aria-label={`Connect ${appDisplayName(a)}`} onClick={() => setChoosing(a)}>
+                  Connect…
+                </Button>
+              </>
             }
           >
             <AppIcon appId={a.app_id} name={appDisplayName(a)} hasDarkIcon={a.has_dark_icon} size={32} />
             <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-medium text-ink">{appDisplayName(a)}</p>
+              <p className="truncate text-sm font-medium text-ink">
+                <AppLink app={a}>{appDisplayName(a)}</AppLink>
+              </p>
               <p className="line-clamp-2 text-xs text-ink-2">{a.description}</p>
             </div>
           </ListRow>

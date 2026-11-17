@@ -12,7 +12,10 @@
 
 use std::time::Duration;
 
-use aurora_channels::{Block, ButtonItem, ButtonStyle, Card, Content, Field};
+use aurora_channels::{
+    Block, ButtonItem, ButtonStyle, Card, Content, Field, Narration, NarrationStatus,
+    NarrationStep, NarrationStepStatus,
+};
 use aurora_conformance_connector::driver::*;
 use aurora_conformance_connector::fake_core::eventually;
 use aurora_conformance_connector::target::{BOT_REF, Harness, StartOptions};
@@ -58,7 +61,21 @@ fn text(t: &str) -> Content {
     Content {
         text: Some(t.to_owned()),
         card: None,
+        narration: None,
     }
+}
+
+fn narration(status: NarrationStatus, steps: Vec<NarrationStep>, collapsed: bool) -> Content {
+    Content::narration(Narration {
+        turn_id: Uuid::nil().to_string(),
+        status,
+        earlier: 0,
+        collapsed,
+        step_count: collapsed.then_some(steps.len() as u32),
+        failed_count: collapsed.then_some(0),
+        elapsed_ms: collapsed.then_some(3_000),
+        steps: if collapsed { Vec::new() } else { steps },
+    })
 }
 
 fn space_target(space: &str, thread: Option<&str>) -> Value {
@@ -1463,6 +1480,74 @@ async fn s19_working_status_shows_while_the_turn_runs_and_ends_with_the_answer()
             "the working status is still shown after status.clear"
         );
     }
+    c.0.finish().await?;
+    Ok(())
+}
+
+/// (P4-NARR, C-847..C-851) A narration card is created, updated in place and collapsed (never
+/// deleted); a hostile step label pings nobody.
+#[tokio::test]
+async fn s20_narration_card_is_created_updated_and_collapsed() -> R {
+    let c = ctx(StartOptions::default()).await?;
+    let hostile = |status| NarrationStep {
+        name: "@here @all <@user:U1> https://evil.example/x".into(),
+        detail: None,
+        status,
+    };
+    let (_, r) = c
+        .post(
+            space_target("C1", None),
+            &narration(
+                NarrationStatus::Running,
+                vec![hostile(NarrationStepStatus::Running)],
+                false,
+            ),
+        )
+        .await?;
+    let res: MessagePostResult = serde_json::from_value(ok_data(&r))?;
+    let post = c.find_post(&res.message_ref).await?;
+    assert!(post.text.contains("Working on it"), "{:?}", post.text);
+    assert_eq!(
+        c.0.driver.live_broadcasts(&post),
+        Vec::<String>::new(),
+        "the card pinged: {:?}",
+        post.text
+    );
+    for content in [
+        narration(
+            NarrationStatus::Running,
+            vec![
+                hostile(NarrationStepStatus::Ok),
+                hostile(NarrationStepStatus::Running),
+            ],
+            false,
+        ),
+        narration(
+            NarrationStatus::Done,
+            vec![hostile(NarrationStepStatus::Ok)],
+            true,
+        ),
+    ] {
+        let r = c
+            .op(
+                "message.update",
+                json!({"space_ref": "C1", "message_ref": res.message_ref,
+                       "sender": "shared", "content": content}),
+            )
+            .await?;
+        ok_data(&r);
+    }
+    let after = c.find_post(&res.message_ref).await?;
+    assert!(
+        after.text.starts_with("Done"),
+        "collapsed in place: {:?}",
+        after.text
+    );
+    assert!(
+        !after.text.contains("evil.example"),
+        "no step list after the collapse"
+    );
+    assert_eq!(c.0.driver.live_broadcasts(&after), Vec::<String>::new());
     c.0.finish().await?;
     Ok(())
 }

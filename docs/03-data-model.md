@@ -777,6 +777,7 @@ Pruning: the API's `counters_prune` due-work arm (every 60 s, any replica, `FOR 
 | model_id | text null | provider's model id; null ⇒ endpoint/provider default. (phase 5, P5-MODELS, D-302(a)) The harness's **default** model, not a limit |
 | model_roles | jsonb null | (phase 5, P5-MODELS-1, D-303) `{ endpoint_id, large?, medium?, small? }`: role models stamped with the endpoint they were chosen for; CHECK: an object with a string `endpoint_id`, only those keys, role ids matching `MODEL_ID_PATTERN` (migration `20261201000245`). Dropped per role under the override rule (`08 §Model roles`) |
 | subagent_model | text not null default `'inherit'` | (phase 5, P5-MODELS-1) CHECK in (`inherit`,`large`,`medium`,`small`); which role subagents use when their definition names no model |
+| narration_cards | bool not null default false | (phase 5, P4-NARR, D-279, migration `20261201000231`) the agent's live progress card on chat platforms that can edit messages (`10 §Live narration cards`); existing rows are `false` |
 | proactive_messaging | text CHECK in (`ask`,`allow`,`off`) default `ask` | `13 §Messaging tools` |
 | effort | text null CHECK in (`low`,`medium`,`high`,`max`) | |
 | brief | text not null default `''` | ≤20 000 chars |
@@ -1299,26 +1300,6 @@ the agent's own generation; a share change bumps `agents.home_sync_generation`.
 | org_id, agent_id | uuid | pk part |
 | day | date | pk part (UTC) |
 | awake_seconds | bigint not null | rebuildable from intervals |
-| workspace_id | uuid not null | (phase 5, P5-USAGE-1, C-1002; migration `20261201000247`) indexes (workspace_id, day) and (day); the migration truncates the never-written table and the hourly rollup rebuilds it |
-
-### `usage_daily` — *no FKs* (phase 5, P5-USAGE-1, D-359, C-1001; migration `20261201000247`)
-A ledger of tokens and turn time, added to at turn end and never decremented.
-| Column | Type | Notes |
-|---|---|---|
-| org_id, workspace_id, agent_id | uuid not null | |
-| day | date not null | UTC day of `turns.finished_at` |
-| provider, model | text null | the turn's stamp (`turns.usage`, else `turns.model_basis`); `model` is the `by_model` entry's for tokens, the default model's for turns |
-| endpoint_id | uuid null | |
-| turns, turn_seconds | bigint not null default 0 | counted under the default model's key |
-| input_tokens, output_tokens, cache_read_tokens, cache_write_tokens | bigint not null default 0 | |
-| key | | `UNIQUE NULLS NOT DISTINCT (workspace_id, agent_id, day, provider, endpoint_id, model)`; indexes (workspace_id, day), (org_id, day), (day) |
-
-### `usage_rollup_state` (phase 5, P5-USAGE-1, C-1002; migration `20261201000247`)
-One row: the runtime rollup's watermark.
-| Column | Type | Notes |
-|---|---|---|
-| singleton | bool pk default true | CHECK (singleton) |
-| runtime_watermark | timestamptz null | start of the last successful "Runtime daily rollup" run; null = rebuild everything; returned as `runtime_as_of` |
 
 ---
 
@@ -1614,6 +1595,30 @@ headings and a different header so that the extractor ignores it. A migration
 for a planned change lands with its phase; the corresponding rows move into the
 tables above in the same change (and this section shrinks).
 
+#### `runtime_daily` (P5-USAGE-1)
+| Planned column | Type | Notes |
+|---|---|---|
+| workspace_id | uuid not null | (phase 5, P5-USAGE-1, C-1002; migration `20261201000247`) indexes (workspace_id, day) and (day); the migration truncates the never-written table and the hourly rollup rebuilds it |
+
+#### `usage_daily` (new table) — *no FKs* (phase 5, P5-USAGE-1, D-359, C-1001; migration `20261201000247`)
+A ledger of tokens and turn time, added to at turn end and never decremented.
+| Planned column | Type | Notes |
+|---|---|---|
+| org_id, workspace_id, agent_id | uuid not null | |
+| day | date not null | UTC day of `turns.finished_at` |
+| provider, model | text null | the turn's stamp (`turns.usage`, else `turns.model_basis`); `model` is the `by_model` entry's for tokens, the default model's for turns |
+| endpoint_id | uuid null | |
+| turns, turn_seconds | bigint not null default 0 | counted under the default model's key |
+| input_tokens, output_tokens, cache_read_tokens, cache_write_tokens | bigint not null default 0 | |
+| key | | `UNIQUE NULLS NOT DISTINCT (workspace_id, agent_id, day, provider, endpoint_id, model)`; indexes (workspace_id, day), (org_id, day), (day) |
+
+#### `usage_rollup_state` (new table) (phase 5, P5-USAGE-1, C-1002; migration `20261201000247`)
+One row: the runtime rollup's watermark.
+| Planned column | Type | Notes |
+|---|---|---|
+| singleton | bool pk default true | CHECK (singleton) |
+| runtime_watermark | timestamptz null | start of the last successful "Runtime daily rollup" run; null = rebuild everything; returned as `runtime_as_of` |
+
 #### `attachments` (S3 blob backend; phase 6, D-318)
 | Planned column | Type | Notes | Phase |
 |---|---|---|---|
@@ -1753,10 +1758,7 @@ The migrations land with P5-MODELS-1 and -2 (next free numbers when placed); the
 Migrations `20261201000231` (P4-NARR) and `…000232`, `…000233` (P4-UTOK); `…000234` and `…000235` are unused and
 returned to the block. No gateway database role grant: the gateway reads none of these.
 
-#### `agents` column: `narration_cards` (phase 5, P4-NARR, D-279, migration `20261201000231_agent_narration_cards.sql`)
-| Planned column | Type | Notes | Phase |
-|---|---|---|---|
-| narration_cards | boolean not null default false | the agent's progress card on chat platforms that can edit messages (`10 §Live narration cards`); existing rows become `false` | 5 (P4-NARR, D-279) |
+(P4-NARR landed: `agents.narration_cards` is in `§agents` above; migration `20261201000231_agent_narration_cards.sql`.)
 
 #### `user_tokens` (new table; a person's platform tokens; phase 5, P4-UTOK, D-281..D-284, migration `20261201000232_user_tokens.sql`)
 | Planned column | Type | Notes | Phase |

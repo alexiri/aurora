@@ -13,8 +13,8 @@ terminal command, the dashboard and the operator docs. `hosted.default_harness` 
 
 ## Linked requirements
 
-- D-361 (owner), D-362 (design); open questions Q-HARN-1 and Q-HARN-2 (PROGRESS §Open questions). The
-  recommended answers are the defaults below until the owner says otherwise.
+- D-361 (owner), D-362 (design), D-363 (owner answers): the new harnesses are **not enabled by default**,
+  and **OpenCode is pinned on v1.19.x**.
 - Contracts **C-1010..C-1016** (`docs/API_CONTRACTS.md` §Phase 5 — P5-HARN).
 - **SEC-133**, which extends SEC-66 (`17`).
 - Normative: `12 §Adapters pi, goose and opencode` (the per-adapter contract; read it first),
@@ -59,14 +59,16 @@ terminal command, the dashboard and the operator docs. `hosted.default_harness` 
     `GOOSE_CONTEXT_LIMIT` is also available. Other switches: `GOOSE_TELEMETRY_ENABLED=false`,
     `GOOSE_DISABLE_KEYRING=1`, `GOOSE_DISABLE_SESSION_NAMING=true`. The stream-json event schema is
     undocumented.
-  - **OpenCode**: MIT, release binaries. GitHub marks v1.19.x as Latest, and v2.3.0 is newer. Their config
-    schemas differ, and the docs site now documents v2. Commands: `opencode run --format json --session <id>
-    --standalone --auto`. Config is `opencode.json` with `{env:VAR}` substitution, and providers come in
-    Anthropic, OpenAI Responses, OpenAI Chat and OpenAI-compatible packages. MCP servers are `type: local`
-    (Code Mode by default), and instructions are `AGENTS.md` only. Skills live in `.opencode/skills`,
-    `.agents/skills` and `.claude/skills`. Sessions are stored in SQLite (`OPENCODE_DB`), and
-    `opencode session delete <id>` removes one. Also `update: "disable"` and per-model `limit.context`.
-    Without `--standalone`, the CLI talks to a shared background service.
+  - **OpenCode**: MIT, release binaries. **We pin v1.19.x** (D-363), which GitHub marks Latest. v2.3.0 is
+    newer, but its config schema, permission format and server API differ, and **the research read mostly
+    the v2 docs** that opencode.ai shows by default. Use `https://opencode.ai/v1/docs` and the v1 notes in
+    `/docs/migrate-v1`. Part A must re-derive the v1 facts from those docs and the binary. What the v1
+    material showed: `opencode run --format json`, `--session <id>`, `--continue`, `--model`. Config is
+    `opencode.json` with `{env:VAR}` substitution, `provider.<id>` with `npm`, `options` and `models`
+    (`limit.context`), `autoupdate: false`, a `permission` block keyed by tool, `mcp.<name>` with
+    `type: "local"`, `command` and `enabled`, and `AGENTS.md`, with `CLAUDE.md` as a fallback. The v2-only
+    items (`--standalone`, `--auto`, `update: "disable"`, `permissions` rules, Code Mode, the
+    `/api/session` server) do **not** apply until Part A finds them in the pinned v1 binary.
 
 ## Scope
 
@@ -75,7 +77,7 @@ others. B, C and D are independent of each other but share the image and registr
 after another. E comes last.
 
 **A — Pin, verify, and generalize the registry.**
-1. Pin one version of each CLI (Q-HARN-2: OpenCode on the line GitHub marks **Latest**). Run each pinned
+1. Pin one version of each CLI (OpenCode: the latest **v1.19.x** release, D-363). Run each pinned
    binary in the dev sandbox image against `aurora-testkit`'s mock upstreams (Messages, Responses and Chat).
    Record in `12 §Adapters pi, goose and opencode` the exact flags, config keys, event names and
    variables you find, as was done for Claude Code 2.1.319 in P5-MODELS-1. Fix the section where the docs
@@ -135,7 +137,7 @@ after another. E comes last.
   search, if the pinned version has one). Expose MCP tools directly, not through the harness's own code
   mode, so on-demand platform tools (D-297) behave as they do for `claude-code`.
 - Platform-tool calls must come from descendants of the harness process the supervisor started (D-301).
-  For OpenCode that means `--standalone` and never the shared service. The MCP round-trip conformance test
+  For OpenCode that means its private in-process mode, never a shared or background server. The MCP round-trip conformance test
   proves this for each adapter.
 - Add no dependency without a pin and a checksum. Keep `Cargo.lock` changes to what the adapters need.
 - Disk: `df -h /home` before every image build, and stop below 50 GB. Change files only with the Edit/Write

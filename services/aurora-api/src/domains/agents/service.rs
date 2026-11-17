@@ -586,6 +586,7 @@ pub async fn patch(
             resource_overrides: req.resource_overrides.as_ref(),
             model_roles: roles_json.as_ref().map(Option::as_ref),
             subagent_model: req.subagent_model.as_deref(),
+            narration_cards: req.narration_cards,
         },
     )
     .await?;

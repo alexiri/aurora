@@ -1,6 +1,6 @@
 "use client";
 
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 
 import { wsRoutes } from "@/lib/routes";
@@ -31,6 +31,7 @@ export const appKeys = {
   apps: (ws: string | undefined) => ["apps", ws ?? ""] as const,
   app: (app: string, ws: string | undefined) => ["app", app, ws ?? ""] as const,
   guide: (app: string) => ["app-guide", app] as const,
+  setup: (app: string, scopeId: string) => ["app-setup", app, scopeId] as const,
   connections: (s: CredScope) => ["connections", s.kind, "id" in s ? s.id : ""] as const,
   clients: (s: CredScope) => ["oauth-clients", s.kind, "id" in s ? s.id : ""] as const,
   availability: (org: string) => ["app-availability", org] as const,
@@ -161,12 +162,33 @@ export function appRestrictions(...sources: (HasAppRestrictions | null | undefin
   return out;
 }
 
-export function useAppGuide(app: string | undefined, enabled = true) {
+/** (C-931) Where a setup page (and its guide) is read: a workspace's view or an organization's. */
+export type SetupScope = { workspaceId: string; orgId?: undefined } | { orgId: string; workspaceId?: undefined };
+
+function setupQuery(scope: SetupScope): { workspace_id: string } | { org_id: string } {
+  return scope.workspaceId ? { workspace_id: scope.workspaceId } : { org_id: scope.orgId! };
+}
+
+export type AppSetup = components["schemas"]["AppSetupStatus"];
+export type SetupClientRef = components["schemas"]["ClientRef"];
+
+/** (C-931) The setup status of one app for a workspace or an organization: methods, clients, instances, values, `can`. */
+export function useAppSetup(app: string | undefined, scope: SetupScope) {
   return useQuery({
-    queryKey: appKeys.guide(app ?? ""),
+    queryKey: appKeys.setup(app ?? "", scope.workspaceId ?? scope.orgId ?? ""),
+    queryFn: () => unwrap(api.GET("/v1/apps/{app}/setup", { params: { path: { app: app! }, query: setupQuery(scope) } })),
+    enabled: !!app,
+    retry: false,
+  });
+}
+
+/** `scope`: the guide is filled with the viewer's values (C-940: callback URL, external id, page links). */
+export function useAppGuide(app: string | undefined, enabled = true, scope?: SetupScope) {
+  return useQuery({
+    queryKey: [...appKeys.guide(app ?? ""), scope?.workspaceId ?? scope?.orgId ?? ""] as const,
     queryFn: async (): Promise<string | null> => {
       const { data, response } = await api.GET("/v1/apps/{app}/guide", {
-        params: { path: { app: app! } },
+        params: { path: { app: app! }, ...(scope ? { query: setupQuery(scope) } : {}) },
         parseAs: "text",
       });
       if (response.status === 404) return null;
@@ -225,6 +247,13 @@ export function useDeleteConnection(scope: CredScope & { kind: "workspace" | "or
   });
 }
 
+/** A client changed: its list, and every app's setup status and connect plan that counted it (C-931). */
+function refreshClients(qc: QueryClient, scope: CredScope): Promise<void> {
+  void qc.invalidateQueries({ queryKey: ["app-setup"] });
+  void qc.invalidateQueries({ queryKey: ["app-connect-plan"] });
+  return qc.invalidateQueries({ queryKey: appKeys.clients(scope) });
+}
+
 export function useOAuthClients(scope: CredScope) {
   return useQuery({
     queryKey: appKeys.clients(scope),
@@ -247,7 +276,7 @@ export function useCreateOAuthClient(scope: CredScope) {
         : scope.kind === "organization"
           ? unwrap(api.POST("/v1/orgs/{org}/oauth-clients", { params: { path: { org: scope.id } }, body }))
           : unwrap(api.POST("/v1/admin/oauth-clients", { body })),
-    onSuccess: () => qc.invalidateQueries({ queryKey: appKeys.clients(scope) }),
+    onSuccess: () => refreshClients(qc, scope),
   });
 }
 
@@ -256,7 +285,7 @@ export function usePatchOAuthClient(scope: CredScope) {
   return useMutation({
     mutationFn: ({ id, ...body }: { id: string } & components["schemas"]["PatchOAuthClientRequest"]) =>
       unwrap(api.PATCH("/v1/oauth-clients/{id}", { params: { path: { id } }, body })),
-    onSuccess: () => qc.invalidateQueries({ queryKey: appKeys.clients(scope) }),
+    onSuccess: () => refreshClients(qc, scope),
   });
 }
 
@@ -267,7 +296,7 @@ export function useDeleteOAuthClient(scope: CredScope) {
       const { error, response } = await api.DELETE("/v1/oauth-clients/{id}", { params: { path: { id } } });
       if (error !== undefined || !response.ok) throw ApiError.fromBody(error, response.status);
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: appKeys.clients(scope) }),
+    onSuccess: () => refreshClients(qc, scope),
   });
 }
 

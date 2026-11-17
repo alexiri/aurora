@@ -342,7 +342,7 @@ its last tool call is written as durable `text` events before the `error` event 
 
 (phase 5, P4-NARR) A chat-platform connector may show a turn's progress as one **narration card**
 instead of the seen-receipt: a message listing the turn's tool steps and their status, updated as
-the steps run and deleted when the answer is posted (`13 §5.12`, `20 §Rendering`). It is a view of
+the steps run and collapsed to one line when the turn ends (`13 §5.12`, `20 §Rendering`; owner, D-286). It is a view of
 existing durable events and changes nothing else:
 
 - **Events.** Only `tool.started` and `tool.finished` (durable, `§Transcript events`) and

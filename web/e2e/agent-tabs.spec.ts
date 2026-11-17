@@ -57,6 +57,10 @@ for (const scheme of ["light", "dark"] as const satisfies readonly Scheme[]) {
           expect(await page.evaluate(() => getComputedStyle(document.body).backgroundColor)).toBe(CANVAS[scheme]);
           expect(await overflow(page), `${tab} @${width}: the page scrolls sideways`).toBeLessThanOrEqual(0);
           expect(await tablistOverflow(page), `${tab} @${width}: a tablist scrolls sideways`).toBeLessThanOrEqual(0);
+          // (P4-NARR, C-852) The Channels page carries the progress switch, off by default.
+          if (tab === "channels") {
+            await expect(page.getByLabel("Show progress in chat")).not.toBeChecked();
+          }
         }
         expect(errors).toEqual([]);
       });

@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 
+import { AppLink } from "@/components/apps/app-link";
 import { AppIcon } from "@/components/ui/app-icon";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -83,7 +84,21 @@ export function AccountRow({
         <div className="min-w-0 flex-1 space-y-1">
           <div className="flex flex-wrap items-center gap-2">
             <h3 className="min-w-0 break-words font-display text-base font-semibold text-ink">
-              {account.app && account.app.name !== account.name ? `${account.app.name} · ${account.name}` : account.name}
+              {account.app ? (
+                <>
+                  {/* (C-933) The setup page is for people who can change things; a member reads the name. */}
+                  {account.can.manage || account.can.give_access ? (
+                    <AppLink app={{ app_id: account.app.app_id }} className="font-display text-base font-semibold">
+                      {account.app.name}
+                    </AppLink>
+                  ) : (
+                    account.app.name
+                  )}
+                  {account.app.name !== account.name ? ` · ${account.name}` : null}
+                </>
+              ) : (
+                account.name
+              )}
             </h3>
             <Badge>{kindLabel(account.kind)}</Badge>
             {shared ? <Badge tone="accent">Shared by your organization</Badge> : null}

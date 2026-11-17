@@ -17,6 +17,10 @@ use std::time::Duration;
 use tokio::time::Instant;
 use uuid::Uuid;
 
+// P4-NARR: live narration cards (uses this file's fake-connector world).
+#[path = "narration.rs"]
+mod narration;
+
 const ALL_CAPS: [&str; 13] = [
     "threads",
     "edits",

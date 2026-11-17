@@ -26,6 +26,9 @@ pub struct Agent {
     /// (P5-MODELS-1, C-876) `inherit` | `large` | `medium` | `small`: the model of subagents whose
     /// definition names none.
     pub subagent_model: String,
+    /// (P4-NARR, C-846) Show a live steps card for this agent's turns on chat platforms that can
+    /// edit messages; default `false`.
+    pub narration_cards: bool,
     /// `ask` | `allow` | `off`.
     pub proactive_messaging: String,
     pub brief: String,
@@ -60,6 +63,7 @@ impl From<AgentRow> for Agent {
             effort: a.effort,
             model_roles: a.model_roles.as_ref().and_then(ModelRoles::from_json),
             subagent_model: a.subagent_model,
+            narration_cards: a.narration_cards,
             proactive_messaging: a.proactive_messaging,
             brief: a.brief,
             avatar_url: a
@@ -151,6 +155,8 @@ pub struct PatchAgentRequest {
     pub model_roles: Option<Option<ModelRoles>>,
     /// (P5-MODELS-1, C-876) `inherit` | `large` | `medium` | `small`.
     pub subagent_model: Option<String>,
+    /// (P4-NARR, C-846) A non-boolean is refused with 422 `invalid`.
+    pub narration_cards: Option<bool>,
     pub proactive_messaging: Option<String>,
     /// Instance admins only.
     #[schema(value_type = Option<Object>)]
