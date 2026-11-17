@@ -2179,45 +2179,24 @@ async fn k9_ssh_journey() {
         .unwrap();
     assert!(other.success());
     let other_pub = std::fs::read_to_string(id.dir.join("other.pub")).unwrap();
+    // (ssh keeps the FIRST value of an option, so the files themselves are swapped for the duration of each check.)
+    std::fs::rename(id.dir.join("known_hosts"), id.dir.join("known_hosts-good")).unwrap();
     std::fs::write(
-        id.dir.join("known_hosts-wrong"),
+        id.dir.join("known_hosts"),
         format!("[127.0.0.1]:{port} {}\n", other_pub.trim()),
     )
     .unwrap();
-    let (rc, _, err) = run_client(
-        id.command(
-            "ssh",
-            &[
-                "-o",
-                &format!("UserKnownHostsFile={}", id.path("known_hosts-wrong")),
-            ],
-            &["echo not-here"],
-        ),
-        b"",
-        60,
-    )
-    .await;
+    let (rc, _, err) = run_client(id.command("ssh", &[], &["echo not-here"]), b"", 60).await;
+    std::fs::rename(id.dir.join("known_hosts-good"), id.dir.join("known_hosts")).unwrap();
     assert_eq!(rc, 255, "{err}");
     assert!(
         err.contains("Host key verification failed")
             || err.contains("REMOTE HOST IDENTIFICATION HAS CHANGED"),
         "a wrong host key must be refused by the client: {err}"
     );
-    let (rc, out, err) = run_client(
-        id.command(
-            "ssh",
-            &[
-                "-o",
-                "CertificateFile=/nonexistent",
-                "-o",
-                "PreferredAuthentications=publickey",
-            ],
-            &["echo not-here"],
-        ),
-        b"",
-        60,
-    )
-    .await;
+    std::fs::rename(id.dir.join("id-cert.pub"), id.dir.join("id-cert.pub.off")).unwrap();
+    let (rc, out, err) = run_client(id.command("ssh", &[], &["echo not-here"]), b"", 60).await;
+    std::fs::rename(id.dir.join("id-cert.pub.off"), id.dir.join("id-cert.pub")).unwrap();
     assert_eq!(rc, 255, "{out} {err}");
     assert!(err.contains("Permission denied (publickey)"), "{err}");
     assert!(!out.contains("not-here"));
