@@ -1036,6 +1036,14 @@ pub async fn accept(
             )
             .await?;
             credentials::notify_gateway_invalidate(&mut *tx, "agent", agent).await?;
+            // (P5-UX-17, SEC-132) The agent's open request for this website is resolved here.
+            crate::domains::access_requests::service::on_secret_given(
+                &mut tx,
+                agent,
+                row.id,
+                &row.host_pattern,
+            )
+            .await?;
         }
         credentials::notify_gateway_invalidate(&mut *tx, "workspace", ws).await?;
         let ev = event(

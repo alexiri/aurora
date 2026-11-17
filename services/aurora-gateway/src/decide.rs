@@ -168,7 +168,10 @@ struct Hook {
     passthrough_challenge: bool,
     create_secret_url: String,
     manage_url: String,
+    /// (C-959) The journey's deep link for the requesting agent and the matched app.
     connect_url: String,
+    /// (C-959) The workspace-level connect link, for people who start from the workspace.
+    connect_url_workspace: String,
     /// (FIX-153, C-893) The requesting agent's Access tab.
     access_url: String,
     /// (FIX-153, C-892) The matched app's id and display name, for LDAP refusals.
@@ -198,6 +201,7 @@ impl Hook {
         app_id: &str,
         free: bool,
         connect_url: &str,
+        connect_url_workspace: &str,
         access_url: &str,
     ) -> ApiError {
         let msg = if free {
@@ -210,7 +214,8 @@ impl Hook {
             )
         };
         ApiError::new(status, "app_not_connected", msg).with_details(json!({
-            "app_id": app_id, "connect_url": connect_url, "access_url": access_url
+            "app_id": app_id, "connect_url": connect_url,
+            "connect_url_workspace": connect_url_workspace, "access_url": access_url
         }))
     }
 }
@@ -258,7 +263,9 @@ impl PostHook for Hook {
                 ApiError::new(StatusCode::FORBIDDEN, "ldap_no_connection", msg).with_details(
                     json!({
                         "app_id": app_id, "app_name": n, "reason": "not_connected",
-                        "connect_url": self.connect_url, "access_url": self.access_url
+                        "connect_url": self.connect_url,
+                        "connect_url_workspace": self.connect_url_workspace,
+                        "access_url": self.access_url
                     }),
                 )
             }
@@ -366,6 +373,7 @@ impl PostHook for Hook {
                     app_id,
                     matches!(&self.app, Some((id, _, true)) if id == app_id),
                     &self.connect_url,
+                    &self.connect_url_workspace,
                     &self.access_url,
                 ),
                 Fallback::PathUnserved => ApiError::new(
@@ -2569,9 +2577,14 @@ impl PolicyHandler {
         echo: Vec<Vec<u8>>,
     ) -> Box<Hook> {
         let links = self.links(rv);
-        let connect_url = match &ctx.app_id {
-            Some(a) => links.connect(a),
-            None => links.connect_any(),
+        // (C-959) A refusal that knows the agent (every request has one) carries the journey's
+        // deep link as `connect_url` and keeps the workspace link as `connect_url_workspace`.
+        let (connect_url, connect_url_workspace) = match &ctx.app_id {
+            Some(a) => (
+                links.connect(ctx.identity.agent_id, a),
+                links.connect_workspace(a),
+            ),
+            None => (links.connect_any(), links.connect_any()),
         };
         let access_url = links.access(ctx.identity.agent_id);
         let account_health = match (&self.touch_pool, self.db_down()) {
@@ -2588,6 +2601,7 @@ impl PolicyHandler {
             create_secret_url: links.secrets(),
             manage_url: links.policy(),
             connect_url,
+            connect_url_workspace,
             access_url,
             app,
             backstop,

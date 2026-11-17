@@ -6,7 +6,8 @@ use crate::domains::apps::service as apps;
 use crate::domains::conversations::service as conv;
 use crate::domains::secrets::dto::InjectionRecipe;
 use crate::domains::secrets::service::{self as secrets, Proposal};
-use aurora_core::{ApiError, sanitize};
+use aurora_core::{ApiError, dash_paths, sanitize};
+use aurora_db::repo::access_requests::{self, NewRequest};
 use aurora_db::repo::{agents, conversations as convs, gateway, workspaces};
 use aurora_protocol::tools::{JsonContent, ToolContent};
 use serde::Deserialize;
@@ -169,12 +170,26 @@ impl PlatformTool for ProposeCustomConnection {
              Credentials, never in this chat. Reason (the agent's words): {reason}",
             host = sanitize::label(&a.host),
         );
+        let (request, _) = access_requests::open(
+            &mut tx,
+            &NewRequest {
+                org_id: ctx.agent.org_id,
+                workspace_id: ctx.agent.workspace_id,
+                agent_id: ctx.agent.agent_id,
+                conversation_id: ctx.conversation_id,
+                turn_id: ctx.turn_id,
+                app_id: None,
+                secret_id: Some(id),
+                reason: &reason,
+            },
+        )
+        .await?;
         append_notice(
             &mut tx,
             ctx,
             "secret_proposed",
             &text,
-            json!({"secret_id": id, "name": sanitize::label(&a.name),
+            json!({"request_id": request.id, "secret_id": id, "name": sanitize::label(&a.name),
                    "host": sanitize::label(&a.host), "reason": reason}),
         )
         .await?;
@@ -246,19 +261,19 @@ impl PlatformTool for RequestAppConnection {
             .bind(ctx.agent.org_id)
             .fetch_one(&ctx.agent.pool)
             .await?;
-        let base = format!(
-            "{}/o/{}/w/{}",
-            ctx.state.config.external_url.trim_end_matches('/'),
-            org_slug,
-            ws.slug
-        );
+        let site = ctx.state.config.external_url.trim_end_matches('/');
+        let agent_id = ctx.agent.agent_id.to_string();
         let agent = agent_label(ctx).await?;
         let app_name = sanitize::label(&app.about.name);
         // (FIX-154, C-897) An app with nothing to sign in to needs no connect window: the notice
-        // links to this agent's Access tab (the agent page accepts an id, FIX-153).
+        // links to this agent's Access tab (the agent page accepts an id, FIX-153). Any other app
+        // links to the journey for this agent and app (C-959), from the shared table of paths.
         let free = aurora_registry::credential_free::entry_is_credential_free(app);
         let (link, text) = if free {
-            let link = format!("{base}/agents/{}?tab=access", ctx.agent.agent_id);
+            let link = format!(
+                "{site}{}",
+                dash_paths::ws_agent_access(&org_slug, &ws.slug, &agent_id)
+            );
             let text = format!(
                 "{agent} asks you to give this agent access to {app_name} ({app_id}). Give access \
                  on its Access tab: {link} Reason (the agent's words): {reason}",
@@ -266,7 +281,10 @@ impl PlatformTool for RequestAppConnection {
             );
             (link, text)
         } else {
-            let link = format!("{base}/credentials?tab=apps&connect={}", app.app_id);
+            let link = format!(
+                "{site}{}",
+                dash_paths::ws_agent_connect(&org_slug, &ws.slug, &agent_id, &app.app_id)
+            );
             let text = format!(
                 "{agent} asks you to connect {app_name} ({app_id}). Connect it here: {link} \
                  Reason (the agent's words): {reason}",
@@ -275,15 +293,43 @@ impl PlatformTool for RequestAppConnection {
             (link, text)
         };
         let mut tx = ctx.agent.pool.begin().await?;
-        append_notice(
+        // (C-984, SEC-132) A record, not access. One open request per agent and app: asking again
+        // refreshes it, and a card is added only when it is new or in another conversation.
+        let (request, card) = access_requests::open(
             &mut tx,
-            ctx,
-            "app_connection_requested",
-            &text,
-            json!({"app_id": app.app_id, "app_name": app_name, "reason": reason,
-                   "connect_url": link}),
+            &NewRequest {
+                org_id: ctx.agent.org_id,
+                workspace_id: ctx.agent.workspace_id,
+                agent_id: ctx.agent.agent_id,
+                conversation_id: ctx.conversation_id,
+                turn_id: ctx.turn_id,
+                app_id: Some(&app.app_id),
+                secret_id: None,
+                reason: &reason,
+            },
         )
         .await?;
+        if card {
+            append_notice(
+                &mut tx,
+                ctx,
+                "app_connection_requested",
+                &text,
+                json!({"request_id": request.id, "app_id": app.app_id, "app_name": app_name,
+                       "reason": reason, "connect_url": link}),
+            )
+            .await?;
+            // (C-984) A direct chat-platform conversation gets one line with the link.
+            crate::domains::channels::mirror::post_access_request(
+                &mut tx,
+                ctx.conversation_id,
+                request.id,
+                &agent,
+                &app_name,
+                &link,
+            )
+            .await;
+        }
         tx.commit().await?;
         out(json!({"status": "requested"}))
     }

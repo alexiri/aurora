@@ -4,6 +4,23 @@
  */
 
 export interface paths {
+    "/v1/access-requests/{id}/dismiss": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** "Not now": dismisses an open request. `can_own` of the workspace. */
+        post: operations["dismissAccessRequest"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/accounts/{type}/{id}/test": {
         parameters: {
             query?: never;
@@ -5119,6 +5136,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/workspaces/{ws}/access-requests": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Agents' requests for access in a workspace (`status=open` by default), newest first. They feed
+         *     the banner above the Accounts list (C-984).
+         */
+        get: operations["listAccessRequests"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/workspaces/{ws}/access/by-email": {
         parameters: {
             query?: never;
@@ -5714,6 +5751,37 @@ export interface components {
             group_bindings?: components["schemas"]["GroupAccessBinding"][] | null;
             items: components["schemas"]["AccessBinding"][];
             next_cursor?: string | null;
+        };
+        /** @description An agent's request for an app (or a proposed website's token). Never carries access. */
+        AccessRequest: {
+            agent_handle: string;
+            /** Format: uuid */
+            agent_id: string;
+            agent_name: string;
+            /** @description For `app`. */
+            app_id?: string | null;
+            app_name?: string | null;
+            /** Format: uuid */
+            conversation_id: string;
+            /** Format: date-time */
+            created_at: string;
+            host?: string | null;
+            /** Format: uuid */
+            id: string;
+            /** @description `app` | `website` */
+            kind: string;
+            /** @description The agent's own words: one line, at most 300 characters. Show it as such. */
+            reason: string;
+            /**
+             * Format: uuid
+             * @description For `website`: the proposed secret and its host.
+             */
+            secret_id?: string | null;
+            /** @description `open` | `given` | `dismissed` | `expired` */
+            status: string;
+        };
+        AccessRequestList: {
+            items: components["schemas"]["AccessRequest"][];
         };
         /** @description Why a person has access: informational only (`04 §Groups`). */
         AccessSourceView: {
@@ -13423,6 +13491,71 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    dismissAccessRequest: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Request id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccessRequest"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description already_resolved */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     testAccount: {
         parameters: {
             query?: never;
@@ -36085,6 +36218,65 @@ export interface operations {
                 };
             };
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    listAccessRequests: {
+        parameters: {
+            query?: {
+                /** @description `open` (default) | `given` | `dismissed` | `expired` */
+                status?: string | null;
+            };
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                ws: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccessRequestList"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -1066,6 +1066,22 @@ async fn write_connection_grant(
         sync_connection_access(tx, conn.id, &conn.app_id, &conn.access).await?;
     }
     credentials::notify_gateway_invalidate(&mut **tx, "agent", agent.id).await?;
+    // (P5-UX-17, SEC-132) The agent's open request for this app is resolved by this real change of
+    // access, in this transaction: the conversation is told and, if the asking turn has ended,
+    // one system turn restarts the agent. Fixed platform text only.
+    crate::domains::access_requests::service::on_access_given(
+        tx,
+        state,
+        agent,
+        &conn.app_id,
+        crate::domains::access_requests::service::level_of(
+            req.mode == GrantMode::Full,
+            &allow,
+            &ask,
+            &app_tools,
+        ),
+    )
+    .await?;
     let ev = event_by(
         actor,
         "grant.create",

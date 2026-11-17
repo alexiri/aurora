@@ -1,11 +1,12 @@
 {
-  "_comment": "FIX-153, C-891: every dashboard URL the gateway emits in an error. Placeholders: {external} {org} {ws} {app} {connection} {agent}. The gateway's links.rs test pins its builder to these templates; web/src/lib/dashboard-links.test.ts checks each is a real route and each tab is accepted.",
+  "_comment": "FIX-153, C-891, C-959 (P5-UX-17): every dashboard URL the gateway emits in an error, taken from the shared table of paths (crates/aurora-core dash_paths). Placeholders: {external} {org} {ws} {app} {connection} {agent}. The gateway's links.rs test pins its builder to these templates; web/tests/dashboard-links.test.tsx checks each is a real route and each tab is accepted.",
   "templates": {
-    "connect": "{external}/o/{org}/w/{ws}/credentials?tab=apps&connect={app}",
-    "connect_any": "{external}/o/{org}/w/{ws}/credentials?tab=apps",
-    "reconnect": "{external}/o/{org}/w/{ws}/credentials?tab=connections&reconnect={connection}",
-    "secrets": "{external}/o/{org}/w/{ws}/credentials?tab=secrets",
+    "connect": "{external}/o/{org}/w/{ws}/agents/{agent}?tab=access&connect={app}",
+    "connect_workspace": "{external}/o/{org}/w/{ws}/apps?tab=apps&connect={app}",
+    "connect_any": "{external}/o/{org}/w/{ws}/apps?tab=apps",
+    "reconnect": "{external}/o/{org}/w/{ws}/apps?tab=accounts&reconnect={connection}",
+    "secrets": "{external}/o/{org}/w/{ws}/apps?tab=accounts",
     "access": "{external}/o/{org}/w/{ws}/agents/{agent}?tab=access",
-    "policy": "{external}/o/{org}/w/{ws}/policy"
+    "policy": "{external}/o/{org}/w/{ws}/internet-access"
   }
 }

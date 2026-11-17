@@ -257,6 +257,8 @@ pub const ATTACH_OUT_COUNT: u32 = 10;
 pub const ATTACH_OUT_DAILY_PER_CONVERSATION: u64 = 200 * MIB as u64;
 pub const ATTACH_CAPTION_MAX: usize = 500;
 pub const ATTACH_PENDING_TTL: Duration = Duration::from_secs(86400);
+/// (phase 5, P5-UX-17, D-348) how long an agent's open request for access stays open.
+pub const ACCESS_REQUEST_TTL: Duration = Duration::from_secs(14 * 86400);
 /// (phase 2, RFE-010) bounds of an org's conversation retention window, in days.
 pub const RETENTION_MIN_DAYS: i64 = 7;
 pub const RETENTION_MAX_DAYS: i64 = 3650;

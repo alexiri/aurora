@@ -10,6 +10,94 @@
     "version": "0.1.0"
   },
   "paths": {
+    "/v1/access-requests/{id}/dismiss": {
+      "post": {
+        "tags": [
+          "access-requests"
+        ],
+        "summary": "\"Not now\": dismisses an open request. `can_own` of the workspace.",
+        "operationId": "dismissAccessRequest",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Request id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccessRequest"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "already_resolved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
     "/v1/accounts/{type}/{id}/test": {
       "post": {
         "tags": [
@@ -31429,6 +31517,96 @@
         ]
       }
     },
+    "/v1/workspaces/{ws}/access-requests": {
+      "get": {
+        "tags": [
+          "access-requests"
+        ],
+        "summary": "Agents' requests for access in a workspace (`status=open` by default), newest first. They feed\nthe banner above the Accounts list (C-984).",
+        "operationId": "listAccessRequests",
+        "parameters": [
+          {
+            "name": "ws",
+            "in": "path",
+            "description": "Workspace id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "description": "`open` (default) | `given` | `dismissed` | `expired`",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccessRequestList"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
     "/v1/workspaces/{ws}/access/by-email": {
       "post": {
         "tags": [
@@ -35511,6 +35689,98 @@
               "string",
               "null"
             ]
+          }
+        }
+      },
+      "AccessRequest": {
+        "type": "object",
+        "description": "An agent's request for an app (or a proposed website's token). Never carries access.",
+        "required": [
+          "id",
+          "agent_id",
+          "agent_name",
+          "agent_handle",
+          "conversation_id",
+          "kind",
+          "reason",
+          "status",
+          "created_at"
+        ],
+        "properties": {
+          "agent_handle": {
+            "type": "string"
+          },
+          "agent_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "agent_name": {
+            "type": "string"
+          },
+          "app_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "For `app`."
+          },
+          "app_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "conversation_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "host": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "kind": {
+            "type": "string",
+            "description": "`app` | `website`"
+          },
+          "reason": {
+            "type": "string",
+            "description": "The agent's own words: one line, at most 300 characters. Show it as such."
+          },
+          "secret_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "For `website`: the proposed secret and its host."
+          },
+          "status": {
+            "type": "string",
+            "description": "`open` | `given` | `dismissed` | `expired`"
+          }
+        }
+      },
+      "AccessRequestList": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AccessRequest"
+            }
           }
         }
       },

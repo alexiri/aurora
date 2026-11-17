@@ -488,6 +488,60 @@ async fn dedicated_dm_creates_direct_turn_with_receipt() {
     assert!(r[0]["sender"]["presence_id"].is_string());
 }
 
+/// (P5-UX-17, C-984) An agent's request for an app: a direct conversation gets one platform line
+/// with the link (once per request); a shared space gets nothing (D-192).
+#[tokio::test]
+async fn an_access_request_posts_one_line_in_a_direct_conversation_and_nothing_in_a_shared_space() {
+    let w = world().await;
+    let a = w.agent("rex").await;
+    w.presence(w.integ, a, "dedicated", Some("BD1")).await;
+    w.link(w.integ, "U1", w.member).await;
+    w.post(w.integ, "e1", dm("U1", "hello", "BD1")).await;
+    let conv: uuid::Uuid = sqlx::query_scalar("SELECT conversation_id FROM turns")
+        .fetch_one(w.h.pool())
+        .await
+        .unwrap();
+    let req = uuid::Uuid::now_v7();
+    let link = "https://aurora.test/o/acme/w/main/agents/a1?tab=access&connect=linear";
+    for _ in 0..2 {
+        let mut c = w.h.pool().acquire().await.unwrap();
+        aurora_api::domains::channels::mirror::post_access_request(
+            &mut c, conv, req, "rex", "Linear", link,
+        )
+        .await;
+    }
+    let posts = w.ops("message.post").await;
+    assert_eq!(posts.len(), 1, "once per request: {posts:?}");
+    assert_eq!(
+        posts[0]["content"]["text"],
+        format!("rex needs Linear for this. Give access: {link}")
+    );
+
+    // A shared space: nothing is posted.
+    let w = world_with(json!({"_capabilities": {"history": false}})).await;
+    let a = w.agent("rex").await;
+    w.presence(w.integ, a, "shared", None).await;
+    w.link(w.integ, "U1", w.member).await;
+    w.bind_space(w.integ, "C1", a, "mentions", false).await;
+    w.post(w.integ, "e1", chan("U1", "q1", Some("T1"), true))
+        .await;
+    let conv: uuid::Uuid = sqlx::query_scalar("SELECT conversation_id FROM turns")
+        .fetch_one(w.h.pool())
+        .await
+        .unwrap();
+    let mut c = w.h.pool().acquire().await.unwrap();
+    aurora_api::domains::channels::mirror::post_access_request(
+        &mut c,
+        conv,
+        uuid::Uuid::now_v7(),
+        "rex",
+        "Linear",
+        link,
+    )
+    .await;
+    assert!(w.ops("message.post").await.is_empty());
+}
+
 /// C-326 (RFE-018, SEC-55): `api:` is reserved for `Idempotency-Key` values; ordinary connector
 /// dedupe is unchanged.
 #[tokio::test]
