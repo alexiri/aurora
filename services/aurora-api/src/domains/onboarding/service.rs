@@ -499,6 +499,8 @@ pub async fn setup(state: &AppState, admin: Uuid) -> Result<SetupStatus, ApiErro
                     format!("People can't sign in to {} yet.", gap.name),
                 )
             };
+            // `value` carries the app's display name for the page.
+            c.value = Some(gap.name);
             c.app_id = Some(gap.app_id);
             c.package = Some(gap.package);
             c.client_key = Some(gap.client_key);

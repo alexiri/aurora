@@ -275,8 +275,8 @@ function PlacementForm({ saved, embedded, onSaved }: { saved: Placement; embedde
                   </Field>
                   <Field
                     id="pl-template"
-                    label="Workspace name"
-                    hint="Variables: {sub} {preferred_username} {name} {email_local} {given_name} {family_name} {claim:path}. Separate fallbacks with |."
+                    label="Workspace address"
+                    hint="The name people see is the person's own name. The address uses: {sub} {preferred_username} {name} {email_local} {given_name} {family_name} {claim:path}. Separate fallbacks with |."
                     error={errs["personal_workspace/name_template"]}
                   >
                     <input
@@ -304,8 +304,10 @@ function PlacementForm({ saved, embedded, onSaved }: { saved: Placement; embedde
                       <span className="text-danger-ink">{errorMessage(preview.error)}</span>
                     ) : preview.data ? (
                       <>
-                        {sample.trim() ? <q>{sample.trim()}</q> : "You"} → workspace <strong>{preview.data.name}</strong> (
-                        <code className="font-mono">{preview.data.slug}</code>)
+                        {sample.trim() ? <q>{sample.trim()}</q> : "You"} → address{" "}
+                        <code className="font-mono">
+                          /o/{saved.default_org?.slug ?? "<organization>"}/w/{preview.data.slug}
+                        </code>
                         {preview.data.unresolved.length > 0 ? (
                           <span className="text-muted"> · no value here for {preview.data.unresolved.join(", ")}</span>
                         ) : null}

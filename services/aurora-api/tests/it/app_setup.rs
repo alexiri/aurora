@@ -503,6 +503,7 @@ async fn setup_status_lists_apps_people_cannot_sign_in_to_and_missing_email() {
         ),
         (Some("lin"), Some("multi"), Some("linear"))
     );
+    assert_eq!(lin["value"], "Linear Like");
     // GitHub-like: a token works, so it is only informational.
     let gh = by_id(&checks, "app:ghlike").unwrap();
     assert_eq!(gh["reason"], "app_token_only", "{gh}");

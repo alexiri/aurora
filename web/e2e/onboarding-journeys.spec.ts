@@ -90,11 +90,10 @@ test("1. fresh instance: the admin walks the setup wizard to a working chat", as
   await form.getByRole("button", { name: "Add LLM key" }).click();
   // The key is saved when the wizard shows it from the server's state: the form gives way to the starter
   // switch ("Saved …" is transient — the Setup query refetch replaces the form as soon as the key exists).
-  const starter = llm.getByRole("checkbox", { name: "Give it to every new user's agent" });
+  const starter = llm.getByRole("checkbox", { name: "Give the organization's AI key to every new person's agent" });
   await expect(starter).toBeVisible({ timeout: 60_000 });
-  // The checkbox is controlled: it only renders checked once the PUT and the refetch have round-tripped,
-  // so click once and then wait for the server's state (a `check()` verifies the state straight away).
-  await starter.click();
+  // (C-922) The first key is a starter grant by default: nothing to click. The checkbox is controlled, so it
+  // renders checked once the PUT and the refetch have round-tripped.
   await expect(starter).toBeChecked({ timeout: 30_000 });
 
   // 4. Agents can run: the runner and the gateway report ready on the stack.

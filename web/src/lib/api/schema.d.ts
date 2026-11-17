@@ -12052,7 +12052,10 @@ export interface components {
             package?: string | null;
             reason: string;
             status: components["schemas"]["SetupState"];
-            /** @description The current value (never a secret): a model id, an image, a count. */
+            /**
+             * @description The current value (never a secret): a model id, an image, a count; an app's name for
+             *     the `app_*` checks.
+             */
             value?: string | null;
         };
         SetupClients: {

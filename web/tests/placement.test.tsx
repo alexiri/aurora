@@ -94,12 +94,14 @@ describe("Admin › Sign-up & placement (P4-ONB-1, D-140)", () => {
     // The hint lists every variable, `{sub}` first (FIX-045/D-162).
     expect(
       screen.getByText(
-        "Variables: {sub} {preferred_username} {name} {email_local} {given_name} {family_name} {claim:path}. Separate fallbacks with |.",
+        "The name people see is the person's own name. The address uses: {sub} {preferred_username} {name} {email_local} {given_name} {family_name} {claim:path}. Separate fallbacks with |.",
       ),
     ).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("Try it with a name"), { target: { value: "Ada Lovelace" } });
-    fireEvent.change(screen.getByLabelText("Workspace name"), { target: { value: "{name}" } });
-    await waitFor(() => expect(screen.getByTestId("placement-preview")).toHaveTextContent("workspace Ada Lovelace (ada-lovelace)"));
+    // (C-923) The field sets the address; the name is the person's own.
+    fireEvent.change(screen.getByLabelText("Workspace address"), { target: { value: "{name}" } });
+    expect(screen.getByText(/The name people see is the person's own name\./)).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByTestId("placement-preview")).toHaveTextContent(/address \/o\/.*\/w\/ada-lovelace/));
   });
 
   it("saves the form with workspaces and starter grants", async () => {

@@ -82,7 +82,8 @@ pub struct SetupCheck {
     pub reason: String,
     /// One short plain sentence for the page.
     pub message: String,
-    /// The current value (never a secret): a model id, an image, a count.
+    /// The current value (never a secret): a model id, an image, a count; an app's name for
+    /// the `app_*` checks.
     pub value: Option<String>,
     /// The Helm value that changes it, for config-only things.
     pub helm: Option<String>,

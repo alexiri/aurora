@@ -33,6 +33,17 @@ export function useSavePlacement() {
   });
 }
 
+/** (C-922) Give the starter grants to the agents of people who signed in before: `{ granted, skipped }`. */
+export function useBackfillStarterGrants() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => unwrap(api.POST("/v1/admin/placement/starter-grants/backfill", { body: {} })),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["admin", "setup"] });
+    },
+  });
+}
+
 /** Workspaces and org-level credentials the form may offer for the chosen default organization. */
 export function usePlacementChoices(orgId: string | null) {
   return useQuery({
