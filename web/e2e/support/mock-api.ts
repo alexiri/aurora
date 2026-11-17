@@ -20,6 +20,7 @@ export const agent = {
   id: id(11), org_id: id(1), workspace_id: id(2), handle: "daneel", name: "Daneel", kind: "hosted", is_default: true,
   avatar_url: null, brief: "Triage the team's pull requests and issues.", harness: null, model_provider: null, model_endpoint_id: null, model_id: null,
   effort: null, proactive_messaging: "ask", frozen: null, effective_frozen: false, created_at: now, updated_at: now,
+  model_roles: null, subagent_model: "inherit",
 };
 
 /** Real built-in packages: id, display name (plugin.yaml `name:`). Every one ships icon.png and icon-dark.png. */
@@ -137,7 +138,20 @@ export const readinessReady = {
   harness: "claude-code",
   keys: [{ secret_id: id(300), name: "AIGW", scope: "organization", provider: "litellm", endpoint_id: "litellm", usable: true, reason: null }],
   override_dropped: false,
-  default: { endpoint_id: "litellm", model_id: "claude-sonnet-4", provider: "litellm", source: "endpoint_default" },
+  default: {
+    endpoint_id: "litellm",
+    model_id: "claude-sonnet-4",
+    provider: "litellm",
+    source: "endpoint_default",
+    roles: {
+      large: { model_id: "claude-opus-4", source: "endpoint", warning: null },
+      medium: { model_id: "claude-sonnet-4", source: "endpoint", warning: null },
+      small: { model_id: null, source: "none", warning: "role_unset" },
+    },
+    roles_dropped: [],
+    subagent_model: "inherit",
+    subagent_warning: null,
+  },
 };
 /** Nothing granted yet: the guide opens the key step. */
 export const readinessEmpty = { harness: "claude-code", keys: [], override_dropped: false, default: null };

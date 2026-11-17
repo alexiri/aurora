@@ -12,6 +12,7 @@ import { CheckboxField } from "@/components/ui/form";
 import { Notice } from "@/components/ui/notice";
 import { ItemList, ListRow } from "@/components/ui/section";
 import { SettingField, settingControlId } from "@/components/ui/setting-field";
+import { ROLE_LABEL, ROLES } from "@/lib/model-roles";
 import { adminRoutes } from "@/lib/routes";
 
 export const ENABLED = "llm.enabled_providers";
@@ -161,6 +162,28 @@ function HarnessLine({ harnesses }: { harnesses: string[] | undefined }) {
   );
 }
 
+/**
+ * (phase 5, P5-MODELS-3, C-875) The roles an endpoint names, or "Roles from the provider" for Anthropic, or the notice
+ * that agents will ask for Claude model names when a non-Anthropic endpoint names none.
+ */
+function RolesLine({ entry }: { entry: Record<string, unknown> }) {
+  const roles = (entry.model_roles ?? {}) as Record<string, unknown>;
+  const named = ROLES.filter((r) => typeof roles[r] === "string" && roles[r] !== "");
+  if (named.length > 0) {
+    return (
+      <p className="break-words text-xs text-ink-2" data-testid="endpoint-roles">
+        Roles: {named.map((r) => `${ROLE_LABEL[r]} ${String(roles[r])}`).join(" · ")}
+      </p>
+    );
+  }
+  if (entry.provider === "anthropic") return <p className="text-xs text-ink-2">Roles from the provider</p>;
+  return (
+    <Notice tone="pending" role="status" className="max-w-xl text-xs" data-testid="no-roles-notice">
+      Agents on this endpoint will ask for Claude model names for subagents and background work. Set the roles.
+    </Notice>
+  );
+}
+
 /** The endpoints: Helm entries read-only ("Managed by Helm"), dashboard entries editable and removable. */
 export function EndpointsControl({
   ctx,
@@ -222,6 +245,7 @@ export function EndpointsControl({
           </div>
           {hostOf(v.base_url) ? <p className="break-all text-xs text-ink-2">{hostOf(v.base_url)}</p> : null}
           <HarnessLine harnesses={harnesses?.[e.id]} />
+          <RolesLine entry={v} />
         </div>
       </ListRow>,
     );
@@ -263,6 +287,7 @@ export function EndpointsControl({
             </p>
           ) : null}
           <HarnessLine harnesses={harnesses?.[id]} />
+          <RolesLine entry={e} />
           {bad ? (
             <ul className="list-disc pl-5 text-xs text-danger-ink">
               {Object.entries(errs).map(([f, m]) => (

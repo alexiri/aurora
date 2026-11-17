@@ -154,6 +154,8 @@ Each entry of `[[llm.endpoints]]` accepts:
 | `models` | Optional static fallback list when the model list endpoint is not available. |
 | `allowed_models` | Instance-wide model allow-list. Empty means any model. |
 | `key_origin` | Key-origin rule (below). |
+| `model_roles` | Optional, every provider (phase 5, C-875): `{ large, medium, small }`, each a model id the endpoint serves. See [llm-model-roles.md](llm-model-roles.md). |
+| `model_info` | Optional, every provider (phase 5, C-875): `{ "<model id>" = { context_window, capabilities } }` for models the harness does not recognise. See [llm-model-roles.md](llm-model-roles.md). |
 | `allowed_paths` | `litellm`, `anthropic`, `openai` and `openai_compatible` endpoints: extra paths the key may be used on, see [Inference paths only](#inference-paths-only). Up to 32 absolute paths; a trailing `/*` admits a subtree. |
 
 Unknown keys are rejected (`deny_unknown_fields`), so a misspelled key stops startup and names the key.

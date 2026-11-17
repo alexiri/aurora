@@ -10,6 +10,9 @@ import { Notice } from "@/components/ui/notice";
 import { StatusDot } from "@/components/ui/status-dot";
 import { errorMessage } from "@/lib/api/errors";
 import { useTestLlmEndpoint, type LlmEndpointTestResult } from "@/lib/api/settings";
+import { MODEL_ID_PATTERN, ROLES, type Role } from "@/lib/model-roles";
+
+import { CAPABILITIES, ModelDetailsFieldset, ModelRolesFieldset, type InfoRowDraft } from "./llm-model-fields";
 
 export const PROVIDER_LABEL: Record<string, string> = {
   litellm: "LiteLLM",
@@ -74,9 +77,18 @@ interface Draft {
   org_ids: string;
   ws_ids: string;
   team_ids: string;
+  /** (P5-MODELS-3, C-875) The model each role stands for on this endpoint; empty = unset. */
+  roles: Record<Role, string>;
+  /** (P5-MODELS-3, C-875) `model_info`, one row per model id; `k` is a stable React key. */
+  info: InfoRowDraft[];
 }
 
-const str = (v: unknown): string => (typeof v === "string" ? v : "");
+const CONTEXT_MIN = 1_000;
+const CONTEXT_MAX = 10_000_000;
+/** `MODEL_INFO_MAX` (C-875). */
+const MODEL_INFO_MAX = 64;
+
+const str =(v: unknown): string => (typeof v === "string" ? v : "");
 const lines = (v: unknown): string => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string").join("\n") : "");
 const split = (t: string): string[] =>
   t
@@ -88,6 +100,8 @@ function toDraft(e: Entry | null, provider: string): Draft {
   const o = (e?.key_origin ?? {}) as Record<string, unknown>;
   const extra: Record<string, string> = {};
   for (const k of Object.keys(EXTRA_LABEL)) extra[k] = str(e?.[k]);
+  const roles = (e?.model_roles ?? {}) as Record<string, unknown>;
+  const infoIn = (e?.model_info ?? {}) as Record<string, unknown>;
   return {
     id: str(e?.id),
     provider: str(e?.provider) || provider,
@@ -102,7 +116,46 @@ function toDraft(e: Entry | null, provider: string): Draft {
     org_ids: lines(o.allowed_organization_ids),
     ws_ids: lines(o.allowed_workspace_ids),
     team_ids: lines(o.allowed_team_ids),
+    roles: {
+      large: str(roles.large),
+      medium: str(roles.medium),
+      small: str(roles.small),
+    },
+    info: Object.entries(infoIn).map(([id, v], k) => {
+      const i = (v ?? {}) as Record<string, unknown>;
+      return {
+        k,
+        id,
+        ctx: typeof i.context_window === "number" ? String(i.context_window) : "",
+        caps: Array.isArray(i.capabilities) ? i.capabilities.filter((c): c is string => typeof c === "string") : [],
+      };
+    }),
   };
+}
+
+/** What is wrong with the roles and model details as typed, by field (the server stays authoritative). */
+function modelErrors(d: Draft): { roles: Partial<Record<Role, string>>; info: Record<number, { id?: string; ctx?: string }>; any: boolean } {
+  const roles: Partial<Record<Role, string>> = {};
+  for (const r of ROLES) {
+    const v = d.roles[r].trim();
+    if (v && !MODEL_ID_PATTERN.test(v)) roles[r] = "Letters, digits and . _ : / @ - only, up to 200 characters.";
+  }
+  const info: Record<number, { id?: string; ctx?: string }> = {};
+  const seen = new Set<string>();
+  for (const row of d.info) {
+    const id = row.id.trim();
+    const e: { id?: string; ctx?: string } = {};
+    if (!id) e.id = "Enter the model id.";
+    else if (!MODEL_ID_PATTERN.test(id)) e.id = "Letters, digits and . _ : / @ - only, up to 200 characters.";
+    else if (seen.has(id)) e.id = "This model is already listed.";
+    seen.add(id);
+    const c = row.ctx.trim();
+    if (c && !(/^\d+$/.test(c) && Number(c) >= CONTEXT_MIN && Number(c) <= CONTEXT_MAX)) {
+      e.ctx = `A whole number from ${CONTEXT_MIN.toLocaleString("en")} to ${CONTEXT_MAX.toLocaleString("en")}.`;
+    }
+    if (e.id || e.ctx) info[row.k] = e;
+  }
+  return { roles, info, any: Object.keys(roles).length > 0 || Object.keys(info).length > 0 || d.info.length > MODEL_INFO_MAX };
 }
 
 /** The entry the draft describes: the fields of the chosen provider, every key the dialog does not edit kept. */
@@ -122,6 +175,20 @@ function toEntry(d: Draft, base: Entry | null): Entry {
   put("allowed_models", split(d.allowed_models));
   put("allowed_paths", f?.allowedPaths === false ? undefined : split(d.allowed_paths));
   for (const k of Object.keys(EXTRA_LABEL)) put(k, f?.extra.includes(k as never) ? d.extra[k]?.trim() : undefined);
+  const roles = Object.fromEntries(ROLES.filter((r) => d.roles[r].trim()).map((r) => [r, d.roles[r].trim()]));
+  if (Object.keys(roles).length > 0) out.model_roles = roles;
+  else delete out.model_roles;
+  const info: Record<string, Entry> = {};
+  for (const row of d.info) {
+    const id = row.id.trim();
+    if (!id) continue;
+    const v: Entry = {};
+    if (row.ctx.trim()) v.context_window = Number(row.ctx.trim());
+    if (row.caps.length > 0) v.capabilities = CAPABILITIES.map((c) => c.id).filter((c) => row.caps.includes(c));
+    info[id] = v;
+  }
+  if (Object.keys(info).length > 0) out.model_info = info;
+  else delete out.model_info;
   if (d.method) {
     const o: Entry = { method: d.method };
     const [orgs, wss, teams] = [split(d.org_ids), split(d.ws_ids), split(d.team_ids)];
@@ -230,6 +297,8 @@ export function EndpointDialog({
     setD((x) => ({ ...x, [k]: v }));
   };
   const id = d.id.trim();
+  const mErr = modelErrors(d);
+  const offered = [...new Set([...split(d.models), ...split(d.allowed_models), d.default_model.trim()].filter(Boolean))];
   const idError =
     errors.id ??
     (id && helmIds.includes(id)
@@ -243,7 +312,8 @@ export function EndpointDialog({
     !id ||
     (f.baseUrl === "required" && !d.base_url.trim()) ||
     (f.models === "required" && split(d.models).length === 0) ||
-    (f.defaultModel === "required" && !d.default_model.trim());
+    (f.defaultModel === "required" && !d.default_model.trim()) ||
+    mErr.any;
   const entry = () => toEntry(d, existing);
   function submit(e: FormEvent) {
     e.preventDefault();
@@ -336,6 +406,21 @@ export function EndpointDialog({
       <Field id="ep-allowed" label="Allowed models" error={errors.allowed_models} hint="One per line. Empty allows every model. Organizations can narrow this, never widen it.">
         <textarea id="ep-allowed" rows={3} spellCheck={false} className={`${inputClass} font-mono`} value={d.allowed_models} onChange={(e) => set("allowed_models", e.target.value)} />
       </Field>
+      <ModelRolesFieldset
+        provider={d.provider}
+        roles={d.roles}
+        onChange={(r) => set("roles", r)}
+        offered={offered}
+        errors={mErr.roles}
+        serverError={errors.model_roles}
+      />
+      <ModelDetailsFieldset
+        rows={d.info}
+        onChange={(rows) => set("info", rows)}
+        errors={mErr.info}
+        serverError={errors.model_info}
+        max={MODEL_INFO_MAX}
+      />
       <fieldset className="space-y-3 rounded-control border border-line p-3">
         <legend className="px-1 text-sm font-medium text-ink">Key origin</legend>
         <Field id="ep-method" label="Method" error={errors["key_origin/method"] ?? errors.key_origin} hint="Which account a key must belong to before it may carry prompts.">

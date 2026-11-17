@@ -77,3 +77,40 @@ models per model. Write the operator recipe for LiteLLM roles and cross-provider
 ## Suggested agent/model and reason
 
 Sonnet (`nextjs-developer`). Several screens, plus a shared primitive that may need extending.
+
+## Completion report (lane `p5-apps`, 2026-11-17)
+
+Commits (branch `alexiri/p5-apps`): `e0a56426` (1 Instructions), `f5982aaf` (2 readiness), `32fac38f` (3 endpoint
+dialog), `4dd72b94` (4 request log, `TurnUsage`), `10850cc7` (5 operator recipe), `a4e185bb` (Playwright),
+`eaba4f57` (fixture fix found by the batch gate).
+
+**Where the brief was adapted to master**
+- Pages: the endpoint dialog lives under Administration › AI models › Endpoints (`/admin/ai-models?tab=endpoints`,
+  P5-IA-3). No navigation entry was added. The dialog is a custom control inside the settings form, not a P5-IA-5
+  field row, so it needed no field metadata.
+- Scope 3 "shared keyed-list primitive": SET-3 has none for a keyed list *inside* a dialog, so **Model details** is
+  composed from `Field`, `CheckboxField`, `Button` and the dialog's own fieldset pattern
+  (`web/src/components/admin/settings/llm-model-fields.tsx`); no one-off classes.
+- Scope 4: **no turn-details surface and no usage view exist yet** (`Turn.usage` is rendered nowhere; P5-USAGE-2 builds
+  the `UsageView`). Delivered: the request-log **Model** column (`llm_model`, `activity-view.tsx`) and
+  `web/src/components/chat/turn-usage.tsx` (`TurnUsage`: tokens per model, a turn without `by_model` counted under
+  `model`, the `unverified_models` marker with the text from `14`), unit-tested but **not mounted**. P5-USAGE-2 should
+  mount it (or reuse its rows) in the agent Computer page's usage card and the per-model aggregate (C-879 route
+  belongs to P5-USAGE-1). Acceptance 4 is therefore met for the request log and the marker component only.
+- Roles use `GET /v1/agents/{a}/model-readiness` for the default endpoint and the warnings (owners only); a non-owner
+  sees the group without warnings. `llm_model_not_allowed` / `model_id_invalid` map by `details.field`
+  (`model_roles.large`, `subagent_model`, else the Default model field); `model_role_endpoint_mismatch` shows on the
+  group. A server `value_invalid` on an endpoint appears on its field (`model_roles`, `model_info`) — the server names
+  the field, not the model id inside it.
+- Changing the Default model to another endpoint empties the role selects (roles never cross endpoints, D-303) and
+  the save sends `model_roles: null`.
+- No backend, `package.json` or lockfile change. The recipe's two TOML blocks were checked with a throwaway test
+  against `aurora_config::endpoint_field_errors` (passed, then deleted).
+
+**Gates:** `cargo clippy --workspace --all-targets --all-features -- -D warnings` ok; `bash scripts/guards/run-all.sh` ok
+(exit 0); `python3 scripts/extract-schema.py --check` ok; `openapi_matches_checked_in` ok and `pnpm -C web gen:api` no
+diff; no Rust crate touched, so no crate suites; web `typecheck` ok, `lint` 0 errors (5 warnings in files not touched),
+`vitest` **138 files / 2272 tests passed** (the first run found 4 failures from a stale harness fixture, fixed in
+`eaba4f57`), `build` ok; Playwright mocked **1170 passed** (incl. stage4-axe 258, stage4-routes 204, ia-navigation 60,
+agent-page-p5 14; both themes, 390 px), production project **11 passed**. Fail-before: the new vitest tests exercise
+components that did not exist, so they fail without the change.

@@ -24,6 +24,7 @@ public origin, so the full URL is `https://<your-host>/v1/admin/runners`.
 | [install-helm.md](install-helm.md) | Kubernetes install with the Helm chart (`deploy/helm/aurora/`) |
 | [install-kind-dev.md](install-kind-dev.md) | Local development and test stack on kind with Helm (`deploy/dev/kind-dev.sh`, phase 1, OPS-017; replaces podman compose) |
 | [llm-endpoints.md](llm-endpoints.md) | `[[llm.endpoints]]`, key origin, governance ceilings |
+| [llm-model-roles.md](llm-model-roles.md) | Model roles (`large`, `medium`, `small`), `model_roles` and `model_info` on an endpoint, a LiteLLM config serving Claude and GLM, subagents on a cheaper model, a LiteLLM model group with router fallbacks, allow-lists as cost control (phase 5, P5-MODELS-3) |
 | [runners.md](runners.md) | Adding a runner, podman and kubernetes backends, `runner.k8s.*` |
 | [plugins-and-connectors.md](plugins-and-connectors.md) | Plugin upload and approval, trusted keys, host claims, managed connectors (dashboard), self-hosted connector provisioning and approval |
 | [backups.md](backups.md) | Stateful components, what to back up, restore order, key pointers |
