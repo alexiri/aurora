@@ -1109,7 +1109,7 @@ snapshot carrying them and keeps the previous one (`06 §Registry snapshot loadi
 
 | Source | Behaviour |
 |--------|-----------|
-| `builtin` | Packages under `/usr/share/aurora/plugins` in the API image (phase 2 catalogue; phase 0 ships none). Signed with the project key; activated automatically on first sight and on upgrade **unless permissions widened** relative to the previously approved version. |
+| `builtin` | Packages under `/usr/share/aurora/plugins` in the API image (the eleven packages of `plugins/builtin`). Signed with the project key; activated automatically on first sight and on upgrade **unless permissions widened** relative to the previously approved version. |
 | `directory` | `plugins.dir` scanned at startup and every 60 s. |
 | `upload` | `POST /v1/admin/plugins` (multipart). |
 | `addon` | (phase 5, P5-ASRC, D-250) ingested from a registered addon source (`09 §10` above; format doc `22-addon-repos.md`): the repo's manifest lists versions, the poll job or "Check now" ingests newer ones; the first version of every addon package is `pending_approval` — third-party permissions are never auto-activated; a version whose `min_core` exceeds the running core is listed but not ingested. |

@@ -34,6 +34,11 @@ devIdp:
   allowAnyHint: true
 
 config:
+  # P5-UX-6 (D-326(d)): kind-dev.sh bakes the builtin app packages into the API image UNSIGNED (the project
+  # signing key is a release secret), in `plugins.dir`. The API takes unsigned packages only with this switch,
+  # which the chart refuses unless externalUrl is a loopback origin: dev only, never for a real install.
+  plugins:
+    allow_unsigned: true
   auth:
     signup_mode: open
     org_creation: anyone
