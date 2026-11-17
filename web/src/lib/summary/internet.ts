@@ -77,10 +77,15 @@ export function internetSummary(a: InternetAccess, subject: string): string {
  * A level's `InternetAccess` from its policy generation, given whether a level above already blocks requests without an
  * account (the instance's or the organization's `credentialed_only` posture, which a level below can only tighten).
  */
-export function internetAccessOf(gen: Pick<PolicyGeneration, "rules" | "uncredentialed_default" | "uncredentialed_allowlist">, aboveBlocks = false): InternetAccess {
+export function internetAccessOf(
+  gen: Pick<PolicyGeneration, "rules" | "uncredentialed_default" | "uncredentialed_allowlist">,
+  aboveBlocks = false,
+  /** Entries of the allow-lists above (the instance's baseline and the organization's): they are on the list here too. */
+  aboveAllowlist = 0,
+): InternetAccess {
   return {
     withoutAccount: aboveBlocks || gen.uncredentialed_default === "block" ? "block" : "allow",
-    allowlist: gen.uncredentialed_allowlist.length,
+    allowlist: gen.uncredentialed_allowlist.length + aboveAllowlist,
     rules: gen.rules.map((r) => {
       const targets = r.targets ?? [];
       const network = targets.filter((t) => t.type === "network");

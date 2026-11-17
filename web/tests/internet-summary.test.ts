@@ -171,4 +171,12 @@ describe("Internet access summary (C-986)", () => {
     expect(internetAccessOf(gen([{ type: "secret", id: "s1" }])).rules[0]!.hosts).toBeNull();
     expect(internetAccessOf(gen([{ type: "network", host: "github.com" }, { type: "secret", id: "s1" }])).rules[0]!.hosts).toEqual(["github.com"]);
   });
+
+  it("counts the allow-lists above: a level whose own list is empty still reaches what the organization or the instance lists", () => {
+    const gen = { rules: [] as never, uncredentialed_default: "none" as const, uncredentialed_allowlist: [] };
+    // Blocked from above, own list empty, nothing above on the list: nothing is reachable.
+    expect(internetSummary(internetAccessOf(gen, true), "Agents here")).toBe("Agents here can't reach the internet. Nothing asks you first.");
+    // The organization lists one website: that one is reachable, so the sentence says "the allow-list".
+    expect(internetSummary(internetAccessOf(gen, true, 1), "Agents here")).toBe("Agents here can reach only the websites on the allow-list. Nothing asks you first.");
+  });
 });

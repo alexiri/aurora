@@ -50,7 +50,8 @@ export function ScopeLadder({
   className,
 }: {
   above: LadderAbove[];
-  here: ReactNode;
+  /** This level's controls; none for a viewer who cannot change this level (the ladder is then only what is above). */
+  here?: ReactNode;
   minimumNote?: ReactNode;
   collapsed?: boolean;
   tightenLabel?: string;
@@ -81,23 +82,25 @@ export function ScopeLadder({
         </section>
       ) : null}
 
-      <section aria-label="This level" className="space-y-2">
-        {minimumNote ? <div className="text-sm text-ink-2">{minimumNote}</div> : null}
-        {collapsed ? (
-          <>
-            <Button type="button" variant="outline" size="sm" aria-expanded={open} aria-controls={panelId} onClick={() => setOpen((o) => !o)}>
-              {open ? "Hide" : tightenLabel}
-            </Button>
-            {open ? (
-              <div id={panelId} className="space-y-4">
-                {here}
-              </div>
-            ) : null}
-          </>
-        ) : (
-          here
-        )}
-      </section>
+      {here ? (
+        <section aria-label="This level" className="space-y-2">
+          {minimumNote ? <div className="text-sm text-ink-2">{minimumNote}</div> : null}
+          {collapsed ? (
+            <>
+              <Button type="button" variant="outline" size="sm" aria-expanded={open} aria-controls={panelId} onClick={() => setOpen((o) => !o)}>
+                {open ? "Hide" : tightenLabel}
+              </Button>
+              {open ? (
+                <div id={panelId} className="space-y-4">
+                  {here}
+                </div>
+              ) : null}
+            </>
+          ) : (
+            here
+          )}
+        </section>
+      ) : null}
 
       {below ? (
         <section aria-label="Tightened below" className="space-y-2">

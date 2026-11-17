@@ -529,6 +529,10 @@ export async function mockApi(
         next_cursor: null,
       });
     }
+    // P5-IA-2 (C-964): the workspaces that tightened Internet access below the organization.
+    if (p === `/v1/orgs/${id(1)}/workspace-overrides`) {
+      return json({ items: [{ workspace: { id: ws.id, name: ws.name }, uncredentialed: "block", open_lane: "disabled", default_rule: "none", rule_count: 2 }], next_cursor: null });
+    }
     if (/^\/v1\/orgs\/[^/]+$/.test(p)) return json(org);
     return json({ items: [] });
   });
