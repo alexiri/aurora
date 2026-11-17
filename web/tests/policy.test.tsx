@@ -250,6 +250,7 @@ describe("SimulationResult", () => {
   it("renders verdict, guidance, credential and trace", () => {
     const sim: Simulation = {
       verdict: "needs_approval", reason: "rule", guidance_code: "approval_required",
+      approval_parks: false, approval_timeout_clamped: false,
       winning_credential: { kind: "secret", id: "s1", name: "Stripe" }, candidates: [],
       trace: {
         organization: { verdict: null, considered: [] },
