@@ -1654,6 +1654,101 @@ async fn the_sweep_clears_a_receipt_left_open_when_nothing_is_pending_any_more()
     assert_eq!(sweep().await.unwrap(), 0, "idempotent");
 }
 
+/// Collects formatted log lines (a scoped subscriber; the test runtime is current-thread, so
+/// every task of the request stays on the thread that owns it).
+#[derive(Clone, Default)]
+struct ReceiptLogs(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+impl std::io::Write for ReceiptLogs {
+    fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(b);
+        Ok(b.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for ReceiptLogs {
+    type Writer = ReceiptLogs;
+    fn make_writer(&'a self) -> ReceiptLogs {
+        self.clone()
+    }
+}
+impl ReceiptLogs {
+    /// The receipt lines as JSON objects (`fields.*`).
+    fn lines(&self) -> Vec<Value> {
+        let raw = String::from_utf8(self.0.lock().unwrap().clone()).unwrap();
+        raw.lines()
+            .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+            .filter(|v| v["target"] == "aurora_api::channels::receipt")
+            .collect()
+    }
+}
+
+#[tokio::test]
+async fn every_receipt_add_and_clear_logs_one_line_with_its_reason() {
+    let logs = ReceiptLogs::default();
+    let _g = tracing::subscriber::set_default(
+        tracing_subscriber::fmt()
+            .json()
+            .with_max_level(tracing::Level::INFO)
+            .with_writer(logs.clone())
+            .finish(),
+    );
+    // Other tests of this binary may have cached "disabled" interest for the callsites.
+    tracing::callsite::rebuild_interest_cache();
+    let w = world().await;
+    let a = w.agent("rex").await;
+    w.presence(w.integ, a, "dedicated", Some("BD1")).await;
+    w.link(w.integ, "U1", w.member).await;
+    w.post(w.integ, "e1", dm("U1", "q1", "BD1")).await;
+    w.post(w.integ, "e2", dm("U1", "q2", "BD1")).await;
+    w.mark_receipts_delivered().await;
+    let first = w.turns().await[0];
+    // Ends silent while the follow-up is pending: kept open, said so.
+    w.finish_turn(first, "done", None).await;
+    // The promoted turn dies without the mirror, and the sweep clears both: reason `orphan`.
+    let promoted = w.turns().await[1];
+    sqlx::query("UPDATE turns SET status='failed' WHERE id=$1")
+        .bind(promoted)
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+    sqlx::query("UPDATE channel_ops SET created_at = now() - interval '1 hour'")
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+    sqlx::query("UPDATE turns SET finished_at = now() - interval '1 hour', created_at = now() - interval '1 hour'")
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+    aurora_api::domains::channels::mirror::sweep_orphan_receipts(w.h.pool())
+        .await
+        .unwrap();
+    let lines = logs.lines();
+    let reasons = |r: &str| {
+        lines
+            .iter()
+            .filter(|l| l["fields"]["reason"] == r)
+            .collect::<Vec<_>>()
+    };
+    let added = reasons("message_received");
+    assert_eq!(added.len(), 2, "{lines:?}");
+    for l in added.iter().chain(reasons("follow_on_pending").iter()) {
+        assert!(l["fields"]["event_id"].is_string(), "{l}");
+        assert!(l["fields"]["integration_id"].is_string(), "{l}");
+        assert_eq!(l["level"], "INFO");
+    }
+    let kept = reasons("follow_on_pending");
+    assert_eq!(kept.len(), 1, "{lines:?}");
+    assert_eq!(kept[0]["fields"]["turn_id"], first.to_string());
+    let orphans = reasons("orphan");
+    assert_eq!(orphans.len(), 2, "one clear per open receipt: {lines:?}");
+    for l in orphans {
+        assert!(l["fields"]["event_id"].is_string(), "{l}");
+        assert!(l["fields"]["integration_id"].is_string(), "{l}");
+    }
+}
+
 #[tokio::test]
 async fn a_running_turn_sets_the_working_status_and_the_finish_clears_it_before_the_answer() {
     let w = world().await;
