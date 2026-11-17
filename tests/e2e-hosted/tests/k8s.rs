@@ -1919,7 +1919,12 @@ async fn ssh_identity(api: &Api, agent: &str, port: u16, host_key: &str) -> SshI
 }
 
 /// Waits for the person's open sessions on the agent to number `n`; returns them.
-async fn open_sessions(api: &Api, n: usize, secs: u64) -> Vec<Value> {
+async fn open_sessions(
+    api: &Api,
+    n: usize,
+    secs: u64,
+    mut client: Option<&mut std::process::Child>,
+) -> Vec<Value> {
     let end = Instant::now() + Duration::from_secs(secs);
     loop {
         let (s, v) = api.get("/v1/me/ssh-sessions").await;
@@ -1928,11 +1933,27 @@ async fn open_sessions(api: &Api, n: usize, secs: u64) -> Vec<Value> {
         if items.len() == n {
             return items;
         }
-        assert!(
-            Instant::now() < end,
-            "expected {n} open SSH sessions, have {}: {v}",
-            items.len()
-        );
+        if Instant::now() >= end {
+            // What the client that should hold the session said (it is piped, and ended if it already failed).
+            let said = client
+                .as_mut()
+                .map_or(String::new(), |c| match c.try_wait() {
+                    Ok(Some(st)) => {
+                        use std::io::Read;
+                        let mut e = String::new();
+                        if let Some(mut se) = c.stderr.take() {
+                            let _ = se.read_to_string(&mut e);
+                        }
+                        format!("; the client exited with {st}: {e}")
+                    }
+                    Ok(None) => "; the client is still running".to_owned(),
+                    Err(e) => format!("; the client: {e}"),
+                });
+            panic!(
+                "expected {n} open SSH sessions, have {}: {v}{said}",
+                items.len()
+            );
+        }
         tokio::time::sleep(Duration::from_millis(500)).await;
     }
 }
@@ -2242,19 +2263,19 @@ async fn k9_ssh_journey() {
 
     // 7. Sessions are listed and a person's disconnect ends one within a heartbeat (≤ 35 s).
     let mut s1 = spawn_sleeper(&id);
-    let list = open_sessions(&api, 1, 60).await;
+    let list = open_sessions(&api, 1, 60, Some(&mut s1)).await;
     assert_eq!(list[0]["agent"]["id"], agent.as_str(), "{list:?}");
     let sid = list[0]["id"].as_str().unwrap().to_owned();
     let (s, v) = api.delete(&format!("/v1/ssh-sessions/{sid}")).await;
     assert_eq!(s, 202, "{v}");
     let (_, took) = wait_child(&mut s1, 60).await;
     assert!(took <= 40, "disconnect took {took} s");
-    open_sessions(&api, 0, 40).await;
+    open_sessions(&api, 0, 40, None).await;
 
     // 8. Freeze closes an open session within 35 s and refuses a new one (423 -> the hint-free failure); unfreeze
     // lets the next connect through.
     let mut s2 = spawn_sleeper(&id);
-    open_sessions(&api, 1, 60).await;
+    open_sessions(&api, 1, 60, Some(&mut s2)).await;
     let (s, v) = api
         .post(
             &format!("/v1/agents/{agent}/freeze"),
@@ -2264,7 +2285,7 @@ async fn k9_ssh_journey() {
     assert_eq!(s, 200, "{v}");
     let (_, took) = wait_child(&mut s2, 60).await;
     assert!(took <= 40, "freeze took {took} s to close the session");
-    open_sessions(&api, 0, 40).await;
+    open_sessions(&api, 0, 40, None).await;
     let (rc, _, err) = run_client(id.command("ssh", &[], &["echo frozen"]), b"", 60).await;
     assert_eq!(rc, 255, "{err}");
     assert!(err.contains("Permission denied (publickey)"), "{err}");
