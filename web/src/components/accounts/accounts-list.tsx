@@ -1,20 +1,26 @@
 "use client";
 
 import Link from "next/link";
-import { useState, type ReactNode } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { useCallback, useState, type ReactNode } from "react";
 
+import { ConnectDialog } from "@/components/apps/connect-dialog";
+import { useUrlDialog } from "@/components/apps/use-url-dialog";
+import { Notice } from "@/components/ui/notice";
+import { appKeys, useConnectChannel } from "@/lib/api/apps";
 import { LlmKeyForm } from "@/components/credentials/llm-form";
 import { EmptyState, ErrorState, Loading } from "@/components/states";
 import { Button } from "@/components/ui/button";
 import { buttonVariants } from "@/components/ui/button";
 import { Menu, MenuContent, MenuItem, MenuTrigger } from "@/components/ui/menu";
-import { useAccounts, type Account } from "@/lib/api/accounts";
+import { accountKeys, useAccounts, type Account } from "@/lib/api/accounts";
 import type { SecretScope } from "@/lib/api/secrets";
 import { useWhoCan } from "@/lib/api/who-can";
 import { splitGiven } from "@/lib/accounts";
 import { cn } from "@/lib/utils";
 
 import { AccountRow } from "./account-row";
+import { FreeApps } from "./free-apps";
 
 /**
  * The one list of what agents can use (C-925, `14 §1`), over the accounts API (C-917). Used by a workspace's Accounts
@@ -42,6 +48,14 @@ export function AccountsList({
 }) {
   const accounts = useAccounts(scope.kind === "workspace" ? { kind: "workspace", id: scope.id, agentId: agent?.id } : { kind: "organization", id: scope.id });
   const [addingKey, setAddingKey] = useState(false);
+  // The Reconnect dialog (D-272, C-842): opened by a row's menu or the deep link `?reconnect=<connection id>`.
+  const [reconnecting, setReconnecting] = useUrlDialog("reconnect");
+  const qc = useQueryClient();
+  const refresh = useCallback(() => {
+    void qc.invalidateQueries({ queryKey: accountKeys.all });
+    void qc.invalidateQueries({ queryKey: appKeys.connections(scope) });
+  }, [qc, scope]);
+  useConnectChannel(refresh);
   const who = useWhoCan(
     scope.kind === "workspace" ? { workspaceId: scope.id } : { orgId: scope.id },
     scope.kind === "workspace" ? "workspace_owner" : "org_admin",
@@ -51,6 +65,7 @@ export function AccountsList({
   if (accounts.isPending) return <Loading />;
   if (accounts.isError) return <ErrorState error={accounts.error} onRetry={() => accounts.refetch()} />;
   const items = accounts.data.items.filter((a) => !kind || a.kind === kind);
+  const canReconnect = (a: Account) => canOwn && scope.kind === "workspace" && a.ref.type === "connection" && a.scope === "workspace";
   const row = (a: Account) => (
     <AccountRow
       key={a.ref.id}
@@ -59,8 +74,11 @@ export function AccountsList({
       orgId={orgId}
       workspaceId={scope.kind === "workspace" ? scope.id : undefined}
       agent={agent}
+      onReconnect={canReconnect(a) ? () => setReconnecting(a.ref.id) : undefined}
     />
   );
+  const target = reconnecting ? items.find((a) => a.ref.id === reconnecting && a.ref.type === "connection") : undefined;
+  const reconnectOk = target ? canReconnect(target) : false;
 
   const addEntries = agent ? (
     <>
@@ -93,6 +111,15 @@ export function AccountsList({
   return (
     <div className="space-y-4">
       {banner}
+      {reconnecting && !reconnectOk ? (
+        <Notice tone="pending" role="status">
+          {!target
+            ? "That account no longer exists, or it is not in this workspace."
+            : !canOwn
+              ? `Only a workspace owner can reconnect ${target.name}.`
+              : `${target.name} cannot be reconnected here.`}
+        </Notice>
+      ) : null}
       {addEntries ? <div className="flex flex-wrap items-center justify-end gap-2">{addEntries}</div> : null}
       {addingKey ? (
         <div className="rounded-card border border-line bg-surface p-4">
@@ -151,6 +178,20 @@ export function AccountsList({
           ) : null}
         </>
       )}
+      {agent && canOwn && scope.kind === "workspace" ? <FreeApps agent={agent} workspaceId={scope.id} accounts={accounts.data.items} /> : null}
+      {target && reconnectOk && target.app && scope.kind === "workspace" ? (
+        <ConnectDialog
+          appId={target.app.app_id}
+          name={target.app.name}
+          workspaceId={scope.id}
+          orgId={orgId}
+          reconnect={target.ref.id}
+          onClose={() => {
+            setReconnecting(null);
+            refresh();
+          }}
+        />
+      ) : null}
     </div>
   );
 }

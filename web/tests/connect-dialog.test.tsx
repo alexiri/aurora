@@ -3,7 +3,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AppsTab } from "@/components/apps/apps-tab";
-import { ConnectionsTab } from "@/components/apps/connections-tab";
+import { AccountsList } from "@/components/accounts/accounts-list";
 import { ConfirmDialog, FormDialog } from "@/components/ui/confirm-dialog";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import RedirectPage from "../src/app/o/[org]/w/[ws]/apps/[app]/connect/page";
@@ -127,6 +127,14 @@ const CONN = {
   last_used_at: null, created_at: "", updated_at: "", injecting: [], access: "write",
 };
 
+/** The accounts-list row of CONN (C-917). */
+const ACCOUNT = {
+  ref: { type: "connection", id: "c1" }, kind: "app", name: "me@acme.io", scope: "workspace", levels: ["read", "ask", "act"],
+  app: { app_id: "github", name: "GitHub", custom_only: false }, health: { state: "unknown" }, agents: [],
+  can: { give_access: true, change_access: true, manage: true },
+};
+const list = () => <AccountsList scope={{ kind: "workspace", id: "w1" }} orgId="o1" canOwn />;
+
 interface Call {
   method: string;
   path: string;
@@ -140,6 +148,8 @@ function stub(extra: Record<string, (c: Call) => Response> = {}) {
     "GET /v1/apps/github/guide": () => json(404, { error: { code: "not_found", message: "x" } }),
     "GET /v1/workspaces/w1/oauth-clients": () => json(200, { items: [], next_cursor: null }),
     "GET /v1/workspaces/w1/connections": () => json(200, { items: [CONN], next_cursor: null }),
+    "GET /v1/workspaces/w1/accounts": () => json(200, { items: [ACCOUNT], next_cursor: null }),
+    "GET /v1/workspaces/w1/agents": () => json(200, { items: [], next_cursor: null }),
     ...extra,
   };
   vi.stubGlobal(
@@ -301,11 +311,12 @@ describe("OAuth sign-in in the dialog (C-842)", () => {
   });
 });
 
-describe("Reconnect on the Connections tab", () => {
+describe("Reconnect on the Accounts tab", () => {
   it("opens Reconnect <App> in place with the connection's method preselected", async () => {
     stub();
-    wrap(<ConnectionsTab scope={{ kind: "workspace", id: "w1" }} canOwn />);
-    fireEvent.click(await screen.findByRole("button", { name: "Reconnect me@acme.io" }));
+    wrap(list());
+    fireEvent.keyDown(await screen.findByRole("button", { name: "More for me@acme.io" }), { key: "Enter" });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Reconnect" }));
     const dialog = await screen.findByRole("dialog", { name: "Reconnect GitHub" });
     await waitFor(() => expect(within(dialog).getByRole("radio", { name: /Sign in/ })).toBeChecked());
     expect(openSpy).not.toHaveBeenCalled();
@@ -332,11 +343,24 @@ describe("deep links", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
-  it("?reconnect=<id> opens the Reconnect dialog on the Connections tab", async () => {
-    search = "tab=connections&reconnect=c1";
+  it("?reconnect=<id> opens the Reconnect dialog on the Accounts tab", async () => {
+    search = "tab=accounts&reconnect=c1";
     stub();
-    wrap(<ConnectionsTab scope={{ kind: "workspace", id: "w1" }} canOwn />);
+    wrap(list());
     await screen.findByRole("dialog", { name: "Reconnect GitHub" });
+  });
+
+  it("?reconnect=<id> of an account that is not in the list says so, and members are told who can", async () => {
+    search = "tab=accounts&reconnect=nope";
+    stub();
+    wrap(list());
+    expect(await screen.findByText(/no longer exists/)).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    cleanup();
+    search = "tab=accounts&reconnect=c1";
+    wrap(<AccountsList scope={{ kind: "workspace", id: "w1" }} orgId="o1" canOwn={false} />);
+    expect(await screen.findByText(/Only a workspace owner can reconnect me@acme.io/)).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 
   it("the old apps/<app>/connect route redirects, with and without reconnect", async () => {

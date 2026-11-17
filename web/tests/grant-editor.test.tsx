@@ -3,9 +3,11 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { AccessTab } from "@/components/agents/access-tab";
-import { ConnectionGrants } from "@/components/agents/connection-grants";
-import { appIsCustomOnly, appRestrictions } from "@/lib/api/apps";
+import { useState } from "react";
+
+import { GrantEditor } from "@/components/agents/grant-editor";
+import { appIsCustomOnly, appRestrictions, useConnections, type Connection } from "@/lib/api/apps";
+import { useGrants } from "@/lib/api/policy";
 import {
   customBody,
   grantState,
@@ -125,6 +127,44 @@ function setup(s: Setup = {}) {
   routes[`DELETE /v1/agents/${AGENT}/grants/connections/${C_JIRA}`] = () => json(204, null);
 }
 
+/**
+ * (P5-UX-4) The per-tool editor is opened from the picker's Edit and from the actions table's old form; the Access tab's
+ * list no longer hosts it, so these tests open it from a plain list of the workspace's and organization's connections.
+ */
+function ConnectionGrants({ agentId, wsId, orgId }: { agentId: string; wsId: string; orgId: string }) {
+  const ws = useConnections({ kind: "workspace", id: wsId });
+  const org = useConnections({ kind: "organization", id: orgId });
+  const grants = useGrants(agentId);
+  const [editing, setEditing] = useState<Connection | null>(null);
+  if (ws.isPending || grants.isPending) return null;
+  const items = [...(ws.data?.items ?? []), ...(org.data?.items ?? [])];
+  const byId = new Map((grants.data?.connections ?? []).map((g) => [g.connection_id, g]));
+  return (
+    <>
+      <ul aria-label="Connection grants">
+        {items.map((c) => (
+          <li key={c.id}>
+            <button onClick={() => setEditing(c)}>{`${byId.has(c.id) ? "Edit" : "Give"} access to ${c.label}`}</button>
+          </li>
+        ))}
+      </ul>
+      {editing ? (
+        <GrantEditor
+          key={editing.id}
+          agentId={agentId}
+          wsId={wsId}
+          connection={editing}
+          grant={byId.get(editing.id) ?? null}
+          restrictions={byId.get(editing.id)}
+          open
+          onOpenChange={(o) => {
+            if (!o) setEditing(null);
+          }}
+        />
+      ) : null}
+    </>
+  );
+}
 const view = () => wrap(<ConnectionGrants agentId={AGENT} wsId={WS} orgId={ORG} />);
 async function openEditor(name: string) {
   fireEvent.click(await screen.findByRole("button", { name }));
@@ -133,42 +173,6 @@ async function openEditor(name: string) {
 const radio = (group: string, label: string) => within(screen.getByRole("radiogroup", { name: group })).getByRole("radio", { name: label }) as HTMLInputElement;
 const choose = (group: string, label: string) => fireEvent.click(radio(group, label));
 
-describe("connection list (owners)", () => {
-  it("shows none, full and custom states for every connection in scope, with Edit and Remove", async () => {
-    setup();
-    view();
-    const list = await screen.findByRole("list", { name: "Connection grants" });
-    const rows = within(list).getAllByRole("listitem");
-    expect(rows).toHaveLength(4);
-    expect(within(rows[0]).getByText("acme-bot")).toBeTruthy();
-    expect(within(rows[0]).getByTestId("grant-state").textContent).toBe("No access");
-    expect(within(rows[0]).getByRole("button", { name: "Give access to acme-bot" })).toBeTruthy();
-    expect(within(rows[0]).queryByRole("button", { name: /Remove/ })).toBeNull();
-    expect(within(rows[1]).getByTestId("grant-state").textContent).toBe("Full access");
-    expect(within(rows[1]).getByRole("button", { name: "Edit access to Jira Cloud" })).toBeTruthy();
-    expect(within(rows[1]).getByRole("button", { name: "Remove access to Jira Cloud" })).toBeTruthy();
-    expect(within(rows[2]).getByTestId("grant-state").textContent).toBe("Custom: 1 allowed, 1 ask");
-    expect(within(rows[3]).getByText("org-bot")).toBeTruthy();
-  });
-
-  it("is read-only for non-owners: no Edit or Remove, decisions from the effective view", async () => {
-    setup();
-    routes[`GET /v1/agents/${AGENT}/effective`] = () =>
-      json(200, {
-        credentials: [],
-        tools: [
-          { app_id: "github", connection_id: C_GH, tool_id: "get_repo", decision: "allow", inert: false },
-          { app_id: "github", connection_id: C_GH, tool_id: "merge_pull", decision: "needs_approval", inert: false },
-          { app_id: "github", connection_id: C_GH, tool_id: "create_issue", decision: "block", inert: false },
-        ],
-      });
-    wrap(<AccessTab agentId={AGENT} agentName="Daneel" wsId={WS} orgId={ORG} canOwn={false} />);
-    const list = await screen.findByRole("list", { name: "Connection access (read only)" });
-    expect(within(list).getByText("1 allowed, 1 ask, 1 blocked")).toBeTruthy();
-    expect(screen.queryByRole("button", { name: /Edit access|Give access|Remove access/ })).toBeNull();
-    expect(count(`GET /v1/agents/${AGENT}/grants`)).toBe(0);
-  });
-});
 
 describe("editor", () => {
   it("offers only the tools that apply to the connection's connect method (FIX-123, D-214)", async () => {
@@ -217,18 +221,6 @@ describe("editor", () => {
     expect(before.ready).toBe(0);
   });
 
-  it("on the Access tab a save refreshes Model readiness and the effective view too", async () => {
-    setup();
-    routes[`GET /v1/workspaces/${WS}/secrets`] = () => json(200, { items: [] });
-    routes[`GET /v1/orgs/${ORG}/secrets`] = () => json(200, { items: [] });
-    wrap(<AccessTab agentId={AGENT} agentName="Daneel" wsId={WS} orgId={ORG} canOwn hosted base="/o/acme/w/main" />);
-    await openEditor("Give access to acme-bot");
-    await waitFor(() => expect(count(`GET /v1/agents/${AGENT}/model-readiness`)).toBe(1));
-    const eff = count(`GET /v1/agents/${AGENT}/effective`);
-    fireEvent.click(await screen.findByRole("button", { name: "Save access" }));
-    await waitFor(() => expect(count(`GET /v1/agents/${AGENT}/model-readiness`)).toBe(2));
-    await waitFor(() => expect(count(`GET /v1/agents/${AGENT}/effective`)).toBeGreaterThan(eff));
-  });
 
   it("saves Full access as { mode: full }", async () => {
     setup();
@@ -293,21 +285,6 @@ describe("editor", () => {
     expect(screen.queryByRole("radio", { name: "Full access" })).toBeNull();
     for (const t of ghTools) expect(radio(`Access for ${t.name}`, "Block").checked).toBe(true);
     expect(screen.getByText("Requests that are not in the tool list are always blocked.")).toBeTruthy();
-    expect(screen.getByText("Custom access only")).toBeTruthy();
-  });
-
-  it("shows the Custom access only badge from the catalogue's app_restrictions", async () => {
-    setup({ catalogueRestrictions: { custom_only: true, block_untooled: false } });
-    view();
-    const list = await screen.findByRole("list", { name: "Connection grants" });
-    await waitFor(() => expect(within(within(list).getAllByRole("listitem")[0]).getByText("Custom access only")).toBeTruthy());
-  });
-
-  it("tells the owner when an app update converted a grant from full to custom", async () => {
-    setup({ converted: [{ connection_id: C_GH, app_id: "github", converted_at: now }] });
-    view();
-    const note = await screen.findByRole("status", { name: "Access converted" });
-    expect(note.textContent).toContain("Access for GitHub was converted from full to custom by an app update");
   });
 
   it("learns custom_only from a 422 full_grant_forbidden and switches to the custom form", async () => {
@@ -388,27 +365,6 @@ describe("editor", () => {
   });
 });
 
-describe("remove", () => {
-  it("asks, calls DELETE and refreshes the grants", async () => {
-    setup();
-    view();
-    fireEvent.click(await screen.findByRole("button", { name: "Remove access to Jira Cloud" }));
-    const dlg = await screen.findByRole("dialog");
-    const before = count(`GET /v1/agents/${AGENT}/grants`);
-    fireEvent.click(within(dlg).getByRole("button", { name: "Remove access" }));
-    await waitFor(() => expect(count(`DELETE /v1/agents/${AGENT}/grants/connections/${C_JIRA}`)).toBe(1));
-    await waitFor(() => expect(count(`GET /v1/agents/${AGENT}/grants`)).toBeGreaterThan(before));
-  });
-
-  it("reports a failed removal", async () => {
-    setup();
-    routes[`DELETE /v1/agents/${AGENT}/grants/connections/${C_JIRA}`] = () => json(403, { error: { code: "forbidden", message: "no" } });
-    view();
-    fireEvent.click(await screen.findByRole("button", { name: "Remove access to Jira Cloud" }));
-    fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Remove access" }));
-    expect((await screen.findByText(/Could not remove access/)).textContent).toContain("permission");
-  });
-});
 
 describe("pure rules", () => {
   it("builds bodies, states and timeouts", () => {

@@ -11,7 +11,8 @@ import { Dialog, DialogClose, DialogContent } from "@/components/ui/dialog";
 import { Menu, MenuContent, MenuItem, MenuTrigger } from "@/components/ui/menu";
 import { accountKeys, type Account } from "@/lib/api/accounts";
 import { useDeleteConnection, usePatchConnection } from "@/lib/api/apps";
-import { useDeleteSecret, usePatchSecret, useVerifySecret, type SecretScope } from "@/lib/api/secrets";
+import { ValueInput } from "@/components/credentials/value-input";
+import { useDeleteSecret, usePatchSecret, useSetSecretValue, useVerifySecret, type SecretScope } from "@/lib/api/secrets";
 
 /**
  * The row's menu, in the order of `14 §1`: Give access, Rename, Reconnect or Replace, Test, Turn off (or Turn on),
@@ -38,6 +39,9 @@ export function AccountMenu({
   const [giving, setGiving] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [removing, setRemoving] = useState(false);
+  const [replacing, setReplacing] = useState(false);
+  const setValue = useSetSecretValue(scope, account.ref.id);
+  const [newValue, setNewValue] = useState("");
   const [label, setLabel] = useState(account.name);
   const credScope = { kind: scope.kind, id: scope.id } as const;
   const patchConn = usePatchConnection(credScope);
@@ -60,6 +64,7 @@ export function AccountMenu({
           {account.can.give_access ? <MenuItem onSelect={() => setGiving(true)}>Give access</MenuItem> : null}
           <MenuItem onSelect={() => setRenaming(true)}>Rename</MenuItem>
           {isConn && onReconnect ? <MenuItem onSelect={onReconnect}>Reconnect</MenuItem> : null}
+          {!isConn ? <MenuItem onSelect={() => setReplacing(true)}>Replace</MenuItem> : null}
           {!isConn ? <MenuItem onSelect={() => verify.mutate(undefined, { onSuccess: refresh })}>Test</MenuItem> : null}
           {isConn ? (
             <MenuItem onSelect={() => patchConn.mutate({ id: account.ref.id, status: off ? "active" : "disabled" }, { onSuccess: refresh })}>
@@ -108,6 +113,28 @@ export function AccountMenu({
                 <Button variant="outline" type="button">Cancel</Button>
               </DialogClose>
               <Button type="submit" disabled={!label.trim()}>Save</Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={replacing} onOpenChange={(o) => { setReplacing(o); if (!o) setNewValue(""); }}>
+        <DialogContent title={`Replace ${account.name}`}>
+          <form
+            className="space-y-3"
+            aria-label={`Replace value of ${account.name}`}
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (!newValue) return;
+              setValue.mutate({ value: newValue }, { onSuccess: () => { setReplacing(false); refresh(); }, onSettled: () => setNewValue("") });
+            }}
+          >
+            <ValueInput id={`rv-${account.ref.id}`} label="New value" value={newValue} onChange={setNewValue} />
+            {setValue.error ? <ErrorState error={setValue.error} /> : null}
+            <div className="flex justify-end gap-2">
+              <DialogClose asChild>
+                <Button variant="outline" type="button">Cancel</Button>
+              </DialogClose>
+              <Button type="submit" disabled={!newValue || setValue.isPending}>Replace</Button>
             </div>
           </form>
         </DialogContent>

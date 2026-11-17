@@ -15,6 +15,7 @@ import { entryText, kindLabel } from "@/lib/accounts";
 import { AccessControl } from "./access-control";
 import { AccountHealth } from "./account-health";
 import { AccountMenu } from "./account-menu";
+import { ConnectionDetails } from "./connection-details";
 
 /** One agent's entry in "who can use it": opens the access choice and **Remove access** (`14 §1`). */
 function AgentEntry({ account, entry, workspaceId, canChange }: { account: Account; entry: AgentAccess; workspaceId: string; canChange: boolean }) {
@@ -116,6 +117,14 @@ export function AccountRow({
           ))}
         </ul>
       )}
+      {account.ref.type === "connection" ? (
+        <details className="text-sm">
+          <summary className="cursor-pointer text-muted">Technical details</summary>
+          <div className="mt-2">
+            <ConnectionDetails scope={own} id={account.ref.id} canManage={account.can.manage} />
+          </div>
+        </details>
+      ) : null}
     </li>
   );
 }

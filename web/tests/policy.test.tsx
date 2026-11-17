@@ -2,6 +2,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+vi.mock("next/navigation", () => ({ useSearchParams: () => new URLSearchParams(), useParams: () => ({ org: "acme", ws: "ops" }) }));
+
 import { AccessTab } from "@/components/agents/access-tab";
 import { InternetLevel } from "@/components/internet/internet-level";
 import { SimulatePanel, SimulationResult } from "@/components/policy/simulate-panel";
@@ -311,7 +313,7 @@ describe("AccessTab", () => {
         }),
     });
     wrap(<AccessTab agentId="a1" agentName="Daneel" wsId="w1" orgId="o1" canOwn={false} />);
-    expect(await screen.findByText("Daneel")).toBeInTheDocument();
+    expect(await screen.findByText("Stripe")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /More for/ })).toBeNull();
     expect(screen.queryByText("Add")).toBeNull();
   });

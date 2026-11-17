@@ -5,7 +5,7 @@ import type { ReactNode } from "react";
 
 import { AppsTab } from "@/components/apps/apps-tab";
 import { OAuthClientsPanel } from "@/components/apps/oauth-clients-panel";
-import { AccountsPanel } from "@/components/credentials/credentials-view";
+import { AccountsPanel } from "@/components/accounts/accounts-panel";
 import { WorkspaceFreeze } from "@/components/freeze/freeze-sections";
 import { WorkspaceInternet } from "@/components/internet/workspace-internet";
 import { AccessTab } from "@/components/settings/access-tab";

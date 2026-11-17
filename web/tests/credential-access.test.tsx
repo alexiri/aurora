@@ -12,12 +12,9 @@ vi.mock("next/navigation", () => ({
 /** The page URL the tab hook reads (`?tab=`) and replaces (History API, like the chat's `?c=`). */
 const setUrl = (search: string) => window.history.replaceState(null, "", `/o/acme/w/ops/credentials${search ? `?${search}` : ""}`);
 vi.mock("@/components/apps/apps-tab", () => ({ AppsTab: () => <div>apps-tab</div> }));
-vi.mock("@/components/apps/connections-tab", () => ({ ConnectionsTab: () => <div>connections-tab</div> }));
 vi.mock("@/components/apps/oauth-clients-panel", () => ({ OAuthClientsPanel: () => <div>oauth-tab</div> }));
 
 import { AccessTab } from "@/components/agents/access-tab";
-import { ConnectionsTab as RealConnectionsTab } from "@/components/apps/connections-tab";
-import { CredentialsView } from "@/components/credentials/credentials-view";
 import { AccessDialog, GiveAccessStep, type GrantSubject } from "@/components/credentials/give-access";
 import { LlmKeyForm } from "@/components/credentials/llm-form";
 import { OriginView, originDetailText } from "@/components/credentials/origin-view";
@@ -67,52 +64,11 @@ const ws = { id: "w1", org_id: "o1", name: "Ops", my_role: "owner" };
 const agent = (id: string, name: string, kind = "hosted") => ({ id, handle: name.toLowerCase(), name, kind, is_default: false, frozen: null });
 
 // ---------------------------------------------------------------------------------------------------------------------
-describe("Credentials tabs are addressable (C-506)", () => {
-  const view = (scopeKind: "workspace" | "organization" = "workspace") =>
-    wrap(<CredentialsView scope={{ kind: scopeKind, id: "x1" }} orgId="o1" canOwn title="Credentials" />);
-  const selected = () => screen.getAllByRole("tab").find((t) => t.getAttribute("aria-selected") === "true")?.textContent;
-
+describe("tab values", () => {
   it("resolves a value or falls back", () => {
     expect(resolveTab("llm", ["secrets", "llm"], "secrets")).toBe("llm");
     expect(resolveTab("nope", ["secrets", "llm"], "secrets")).toBe("secrets");
     expect(resolveTab(null, ["secrets", "llm"], "secrets")).toBe("secrets");
-  });
-
-  it.each([
-    ["secrets", "Secrets"],
-    ["llm", "LLM keys"],
-    ["proposals", "Proposals"],
-    ["apps", "Apps"],
-    ["connections", "Connections"],
-    ["oauth", "OAuth clients"],
-  ])("?tab=%s selects %s on a workspace page", (value, label) => {
-    routes["GET /v1/workspaces/x1/secrets"] = () => json(200, { items: [] });
-    setUrl(`tab=${value}`);
-    view();
-    expect(selected()).toBe(label);
-  });
-
-  it("falls back to Secrets for an unknown value, and for workspace-only tabs on an org page", () => {
-    routes["GET /v1/workspaces/x1/secrets"] = () => json(200, { items: [] });
-    routes["GET /v1/orgs/x1/secrets"] = () => json(200, { items: [] });
-    setUrl("tab=bogus");
-    view();
-    expect(selected()).toBe("Secrets");
-    cleanup();
-    setUrl("tab=apps");
-    view("organization");
-    expect(selected()).toBe("Secrets");
-  });
-
-  it("updates the URL with replace when the tab changes, keeping other parameters", () => {
-    routes["GET /v1/workspaces/x1/secrets"] = () => json(200, { items: [] });
-    setUrl("x=1");
-    const before = window.history.length;
-    view();
-    fireEvent.click(screen.getByRole("tab", { name: "LLM keys" }));
-    expect(`${window.location.pathname}${window.location.search}`).toBe("/o/acme/w/ops/credentials?x=1&tab=llm");
-    expect(window.history.length).toBe(before); // replaced, not pushed
-    expect(selected()).toBe("LLM keys");
   });
 });
 
@@ -175,8 +131,7 @@ describe("model readiness on the Access tab", () => {
   beforeEach(() => {
     routes["GET /v1/workspaces/w1/secrets"] = () => json(200, { items: [] });
     routes["GET /v1/orgs/o1/secrets"] = () => json(200, { items: [] });
-    routes["GET /v1/agents/a1/grants"] = () => json(200, { secrets: [], connections: [] });
-    routes["GET /v1/agents/a1/effective"] = () => json(200, { credentials: [] });
+    routes["GET /v1/workspaces/w1/accounts"] = () => json(200, { items: [], next_cursor: null });
   });
 
   it.each([
@@ -232,21 +187,11 @@ describe("model readiness on the Access tab", () => {
 
   it("is hidden for non-owners and BYO agents (no request is made)", async () => {
     tab(false, true);
-    await screen.findByText("Effective access");
+    await screen.findByText("Nothing is given yet");
     cleanup();
     tab(true, false);
-    await screen.findByText("Effective access");
+    await screen.findByText("Nothing is given yet");
     expect(calls.some((c) => c.key.includes("model-readiness"))).toBe(false);
-  });
-
-  it("calls LLM secrets 'LLM key' in the effective view", async () => {
-    routes["GET /v1/agents/a1/model-readiness"] = () => readiness([], null);
-    routes["GET /v1/agents/a1/effective"] = () =>
-      json(200, {
-        credentials: [{ id: "s1", name: "Team key", kind: "llm", scope: "workspace", selected: true, selected_by: [], depends_on_speaker: false }],
-      });
-    tab();
-    expect(await screen.findByText("(LLM key, workspace)")).toBeTruthy();
   });
 });
 
@@ -349,7 +294,7 @@ describe("Give agents access step", () => {
     await check("Daneel");
     expect(await screen.findByText(/This app only supports custom access/)).toBeTruthy();
     expect(screen.queryByRole("radiogroup", { name: "Access mode" })).toBeNull();
-    expect((screen.getByRole("button", { name: "Give access" }) as HTMLButtonElement).disabled).toBe(true); // nothing allowed yet
+    expect((screen.getByRole("button", { name: /^Give .*access$/ }) as HTMLButtonElement).disabled).toBe(true); // nothing allowed yet
     fireEvent.click(within(screen.getByRole("radiogroup", { name: "Access for Read issues" })).getByLabelText("Allow"));
     fireEvent.click(within(screen.getByRole("radiogroup", { name: "Access for Create issues" })).getByLabelText("Ask"));
     fireEvent.change(screen.getByLabelText("Approval timeout (seconds)"), { target: { value: "600" } });
@@ -394,7 +339,7 @@ describe("Give agents access step", () => {
     expect(calls.some((c) => c.key === "GET /v1/workspaces/w3/agents")).toBe(false);
   });
 
-  it("appears after creating an LLM key, in place of the form", async () => {
+  it("a workspace's AI key is saved with its agents in one request (C-988), the only agent preticked", async () => {
     routes["GET /v1/llm/providers"] = () =>
       json(200, {
         providers: [{ id: "litellm", display_name: "LiteLLM", dialects: [], auth_modes: ["api_key"] }],
@@ -402,20 +347,50 @@ describe("Give agents access step", () => {
       });
     routes["POST /v1/workspaces/w1/secrets"] = () =>
       json(201, sec({ id: "s1", kind: "llm", name: "Team key", llm: { endpoint_id: "aigw", provider: "litellm", auth_mode: "api_key" }, origin: { status: "verified", method: "endpoint", value_version: 1 } }));
+    routes["GET /v1/workspaces/w1/agents"] = () => json(200, { items: [agent("a1", "Daneel")], next_cursor: null });
     wrap(<LlmKeyForm scope={{ kind: "workspace", id: "w1" }} orgId="o1" />);
     await screen.findByText(/AI gateway/);
+    const box = await screen.findByRole("checkbox", { name: "Daneel can use this key" });
+    expect(box).toBeChecked();
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Team key" } });
     fireEvent.change(screen.getByLabelText("Provider endpoint"), { target: { value: "aigw" } });
     fireEvent.change(screen.getByLabelText("API key"), { target: { value: "sk-1" } });
     fireEvent.click(screen.getByRole("button", { name: "Add LLM key" }));
-    expect(await screen.findByRole("region", { name: "Give agents access" })).toBeTruthy();
-    expect(screen.getByText("Saved Team key")).toBeTruthy();
+    expect(await screen.findByText("Saved Team key")).toBeTruthy();
     expect(screen.getByText("Verified (endpoint)")).toBeTruthy();
     expect(screen.queryByLabelText("API key")).toBeNull();
-    await check("Daneel");
-    routes["POST /v1/secrets/s1/grants"] = () => json(200, { items: [{ agent_id: "a1", grant: {}, status: "created" }] });
-    give();
-    await screen.findByText("Access given to 1 agent.");
+    const posts = calls.filter((c) => c.key.startsWith("POST"));
+    expect(posts.map((c) => c.key)).toEqual(["POST /v1/workspaces/w1/secrets"]);
+    expect((posts[0].body as { grant: unknown }).grant).toEqual({ agent_ids: ["a1"] });
+  });
+
+  it("with several agents nothing is preticked and no grant is sent; an organization's key keeps the two steps", async () => {
+    routes["GET /v1/llm/providers"] = () =>
+      json(200, {
+        providers: [{ id: "litellm", display_name: "LiteLLM", dialects: [], auth_modes: ["api_key"] }],
+        endpoints: [{ id: "aigw", provider: "litellm", display_name: "AI gateway", base_url: "https://x", dialects: [], permitted: true, key_scopes: ["workspace", "organization"] }],
+      });
+    routes["POST /v1/workspaces/w1/secrets"] = () => json(201, sec({ id: "s1", kind: "llm", name: "Team key", llm: { endpoint_id: "aigw", provider: "litellm", auth_mode: "api_key" }, origin: null }));
+    routes["GET /v1/workspaces/w1/agents"] = () => json(200, { items: [agent("a1", "Daneel"), agent("a2", "Giskard")], next_cursor: null });
+    wrap(<LlmKeyForm scope={{ kind: "workspace", id: "w1" }} orgId="o1" />);
+    await screen.findByText(/AI gateway/);
+    expect(await screen.findByRole("checkbox", { name: "Daneel can use this key" })).not.toBeChecked();
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Team key" } });
+    fireEvent.change(screen.getByLabelText("Provider endpoint"), { target: { value: "aigw" } });
+    fireEvent.change(screen.getByLabelText("API key"), { target: { value: "sk-1" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add LLM key" }));
+    await screen.findByText("Saved Team key");
+    expect(calls.find((c) => c.key === "POST /v1/workspaces/w1/secrets")?.body).not.toHaveProperty("grant");
+    cleanup();
+    routes["POST /v1/orgs/o1/secrets"] = () => json(201, sec({ id: "s2", scope: "organization", kind: "llm", name: "Org key", llm: { endpoint_id: "aigw", provider: "litellm", auth_mode: "api_key" }, origin: null }));
+    wrap(<LlmKeyForm scope={{ kind: "organization", id: "o1" }} orgId="o1" />);
+    await screen.findByText(/AI gateway/);
+    expect(screen.queryByRole("checkbox", { name: /can use this key/ })).toBeNull();
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Org key" } });
+    fireEvent.change(screen.getByLabelText("Provider endpoint"), { target: { value: "aigw" } });
+    fireEvent.change(screen.getByLabelText("API key"), { target: { value: "sk-2" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add LLM key" }));
+    expect(await screen.findByRole("region", { name: "Give agents access" })).toBeTruthy();
   });
 });
 
@@ -457,43 +432,12 @@ describe("row Access dialog", () => {
     routes["POST /v1/secrets/s1/grants"] = () => json(200, { items: [{ agent_id: "a2", grant: {}, status: "created" }] });
     open();
     await screen.findByRole("button", { name: "Remove access for Daneel" });
-    fireEvent.click(await screen.findByRole("checkbox", { name: "Give Giskard access" }));
-    fireEvent.click(screen.getByRole("button", { name: /^Give .*access$/ }));
+    // (C-925) Giskard is the only agent that can still be chosen: ticked from the start, and the button names it.
+    expect(await screen.findByRole("checkbox", { name: "Give Giskard access" })).toBeChecked();
+    fireEvent.click(screen.getByRole("button", { name: "Give Giskard access" }));
     await screen.findByText("Access given to 1 agent.");
     expect(calls.find((c) => c.key === "POST /v1/secrets/s1/grants")?.body).toEqual({ agent_ids: ["a2"] });
     expect(screen.getByRole("button", { name: "Done" })).toBeTruthy();
-  });
-
-  it("is reachable from a connection row's Access action (owners only)", async () => {
-    // The real ConnectionsTab (the file mock above hides it for the Credentials tests).
-    const { ConnectionsTab } = await vi.importActual<{ ConnectionsTab: typeof RealConnectionsTab }>("@/components/apps/connections-tab");
-    routes["GET /v1/workspaces/w1/connections"] = () =>
-      json(200, {
-        items: [{
-          id: "c1", app_id: "github", app_version: "1", label: "GitHub org", status: "active", scopes: [], missing_scopes: [], injecting: [],
-          metadata: {}, org_id: "o1", package_id: "p", scope: "workspace", workspace_id: "w1", created_at: "", updated_at: "",
-        }],
-      });
-    routes["GET /v1/connections/c1/grants"] = () => json(200, { items: [{ ...gv("a1", "Daneel"), connection_id: "c1", mode: "full", allow_tools: [], ask_tools: [] }] });
-    wrap(<ConnectionsTab scope={{ kind: "workspace", id: "w1" }} canOwn />);
-    fireEvent.click(await screen.findByRole("button", { name: "Access to GitHub org" }));
-    expect(await screen.findByRole("button", { name: "Remove access for Daneel" })).toBeTruthy();
-    cleanup();
-    wrap(<ConnectionsTab scope={{ kind: "workspace", id: "w1" }} canOwn={false} />);
-    await screen.findByText("GitHub org");
-    expect(screen.queryByRole("button", { name: "Access to GitHub org" })).toBeNull();
-  });
-});
-
-describe("secret row", () => {
-  it("offers Access to owners only", async () => {
-    routes["GET /v1/workspaces/w1/secrets"] = () => json(200, { items: [sec()] });
-    wrap(<CredentialsView scope={{ kind: "workspace", id: "w1" }} orgId="o1" canOwn title="Credentials" />);
-    expect(await screen.findByRole("button", { name: "Access to gh" })).toBeTruthy();
-    cleanup();
-    wrap(<CredentialsView scope={{ kind: "workspace", id: "w1" }} orgId="o1" canOwn={false} title="Credentials" />);
-    await screen.findByText("gh");
-    expect(screen.queryByRole("button", { name: "Access to gh" })).toBeNull();
   });
 });
 

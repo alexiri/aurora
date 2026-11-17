@@ -22,9 +22,8 @@ vi.mock("@/components/agents/connect-tab", () => ({ ConnectTab: () => <div /> })
 
 import { AgentPage } from "@/components/agents/agent-page";
 import { AvailabilityView } from "@/components/apps/availability-view";
-import { ConnectionsTab } from "@/components/apps/connections-tab";
+import { AccountsList } from "@/components/accounts/accounts-list";
 import { AGENT_PAGE_IDS } from "@/components/agents/sections";
-import { CREDENTIAL_TAB_IDS } from "@/components/credentials/credentials-view";
 import { legacyTarget } from "@/lib/legacy-routes";
 
 const json = (status: number, body: unknown) =>
@@ -83,8 +82,13 @@ describe("the conformance fixture (C-891)", () => {
     for (const [name, tpl] of Object.entries(fixture.templates)) {
       const tab = new URL(tpl.replace("{external}", "http://x"), "http://x").searchParams.get("tab");
       if (!tab) continue;
-      const accepted = routeOf(tpl).endsWith("/credentials") ? CREDENTIAL_TAB_IDS : (AGENT_PAGE_IDS as readonly string[]);
-      expect(accepted, `${name}: tab=${tab}`).toContain(tab);
+      // An old `/credentials` address is redirected, whatever its tab (C-960); the others name a tab of the agent page.
+      if (routeOf(tpl).endsWith("/credentials")) {
+        const to = legacyTarget(routeOf(tpl).replace("{org}", "acme").replace("{ws}", "ops"), new URL(tpl.replace("{external}", "http://x"), "http://x").searchParams);
+        expect(to, `${name}: tab=${tab}`).not.toBeNull();
+        continue;
+      }
+      expect(AGENT_PAGE_IDS as readonly string[], `${name}: tab=${tab}`).toContain(tab);
     }
   });
 });
@@ -165,22 +169,20 @@ describe("org Apps page (C-894)", () => {
 describe("Connections empty state", () => {
   const none = () => json(200, { items: [], next_cursor: null });
   const empty = () => ({
-    "GET /v1/orgs/o1/connections": none,
-    "GET /v1/workspaces/w1/connections": none,
-    "GET /v1/apps": none,
+    "GET /v1/orgs/o1/accounts": none,
+    "GET /v1/workspaces/w1/accounts": none,
   });
 
-  it("at org scope links to the org Apps page", async () => {
+  it("at org scope the empty list says what an organization account is for, with no link", async () => {
     mockFetch(empty());
-    wrap(<ConnectionsTab scope={{ kind: "organization", id: "o1" }} canOwn />);
-    const link = await screen.findByRole("link", { name: "Connect an app from Apps" });
-    expect(link).toHaveAttribute("href", "/o/acme/apps?tab=apps");
-    expect(screen.queryByText(/Apps tab/)).toBeNull();
+    wrap(<AccountsList scope={{ kind: "organization", id: "o1" }} orgId="o1" canOwn />);
+    expect(await screen.findByText("No accounts for the whole organization yet")).toBeInTheDocument();
+    expect(screen.queryByRole("link")).toBeNull();
   });
 
-  it("at workspace scope the Apps tab is a link", async () => {
+  it("at workspace scope the empty list links to the Apps tab", async () => {
     mockFetch(empty());
-    wrap(<ConnectionsTab scope={{ kind: "workspace", id: "w1" }} canOwn />);
-    expect(await screen.findByRole("link", { name: "Apps tab" })).toHaveAttribute("href", "?tab=apps");
+    wrap(<AccountsList scope={{ kind: "workspace", id: "w1" }} orgId="o1" canOwn />);
+    expect(await screen.findByRole("link", { name: "Connect an app or website" })).toHaveAttribute("href", "?tab=apps");
   });
 });
