@@ -12997,6 +12997,15 @@
               }
             }
           },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
           "429": {
             "description": "Too many requests: the per-principal rate limit",
             "content": {
@@ -35135,6 +35144,23 @@
           }
         }
       },
+      "AccountRefDto": {
+        "type": "object",
+        "required": [
+          "type",
+          "id"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "type": {
+            "type": "string",
+            "description": "`connection`"
+          }
+        }
+      },
       "AccountRefType": {
         "type": "string",
         "enum": [
@@ -36457,6 +36483,40 @@
           }
         }
       },
+      "AlwaysApplied": {
+        "type": "object",
+        "description": "(C-982) Only on the answer of an Always allow.",
+        "required": [
+          "tool",
+          "also_approved"
+        ],
+        "properties": {
+          "also_approved": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Other pending approvals of the same agent, account and tool that went ahead too.",
+            "minimum": 0
+          },
+          "tool": {
+            "$ref": "#/components/schemas/AlwaysTool"
+          }
+        }
+      },
+      "AlwaysTool": {
+        "type": "object",
+        "required": [
+          "id",
+          "name"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
       "ApiKey": {
         "type": "object",
         "required": [
@@ -37059,6 +37119,8 @@
         "type": "object",
         "required": [
           "id",
+          "sentence",
+          "can_always_allow",
           "org_id",
           "workspace_id",
           "method",
@@ -37081,10 +37143,31 @@
               }
             ]
           },
+          "always_applied": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/AlwaysApplied"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "app_id": {
             "type": [
               "string",
               "null"
+            ]
+          },
+          "asked_by": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/AskedBy",
+                "description": "`None` when no rule asked (nothing to name)."
+              },
+              {
+                "type": "null"
+              }
             ]
           },
           "batch": {
@@ -37096,6 +37179,10 @@
                 "type": "null"
               }
             ]
+          },
+          "can_always_allow": {
+            "type": "boolean",
+            "description": "Whether the caller may choose Always allow for this question (SEC-131)."
           },
           "connection_id": {
             "type": [
@@ -37215,6 +37302,10 @@
               "string",
               "null"
             ]
+          },
+          "sentence": {
+            "$ref": "#/components/schemas/ApprovalSentence",
+            "description": "(P5-UX-16, C-982)"
           },
           "status": {
             "type": "string",
@@ -37473,6 +37564,43 @@
           }
         }
       },
+      "ApprovalSentence": {
+        "type": "object",
+        "description": "(P5-UX-16, C-982) The sentence an approval reads as: \"<agent> wants to <action> in <app>\".",
+        "required": [
+          "agent",
+          "action"
+        ],
+        "properties": {
+          "account": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SentenceAccount"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "action": {
+            "type": "string",
+            "description": "The app's approval title when the package provides one, else the tool's name, else\n\"send a <METHOD> request to <host>\". Completes \"<agent> wants to …\"."
+          },
+          "agent": {
+            "$ref": "#/components/schemas/SentenceAgent"
+          },
+          "app": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SentenceApp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
       "ApprovalSummary": {
         "type": "object",
         "required": [
@@ -37553,6 +37681,69 @@
             "format": "uuid"
           }
         }
+      },
+      "AskedBy": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "agent_id",
+              "connection_id",
+              "kind"
+            ],
+            "properties": {
+              "agent_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "connection_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "access"
+                ]
+              },
+              "tool_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "rule_id",
+              "rule_name",
+              "scope",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "rule"
+                ]
+              },
+              "rule_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "rule_name": {
+                "type": "string"
+              },
+              "scope": {
+                "type": "string",
+                "description": "`workspace` | `organization`"
+              }
+            }
+          }
+        ],
+        "description": "(P5-UX-16, C-982) What asked the question: the agent's access, or a rule."
       },
       "AttachPresenceRequest": {
         "type": "object",
@@ -40800,6 +40991,13 @@
           "decision"
         ],
         "properties": {
+          "always": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "(C-982, SEC-131) With `approve`: also stop asking for this kind of change. Needs\n`can_own` of the agent's workspace; only for a question the agent's access asked."
+          },
           "decision": {
             "$ref": "#/components/schemas/Decision"
           }
@@ -47270,6 +47468,8 @@
               "type": "object",
               "required": [
                 "id",
+                "sentence",
+                "can_always_allow",
                 "org_id",
                 "workspace_id",
                 "method",
@@ -47292,10 +47492,31 @@
                     }
                   ]
                 },
+                "always_applied": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/AlwaysApplied"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
                 "app_id": {
                   "type": [
                     "string",
                     "null"
+                  ]
+                },
+                "asked_by": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/AskedBy",
+                      "description": "`None` when no rule asked (nothing to name)."
+                    },
+                    {
+                      "type": "null"
+                    }
                   ]
                 },
                 "batch": {
@@ -47307,6 +47528,10 @@
                       "type": "null"
                     }
                   ]
+                },
+                "can_always_allow": {
+                  "type": "boolean",
+                  "description": "Whether the caller may choose Always allow for this question (SEC-131)."
                 },
                 "connection_id": {
                   "type": [
@@ -47426,6 +47651,10 @@
                     "string",
                     "null"
                   ]
+                },
+                "sentence": {
+                  "$ref": "#/components/schemas/ApprovalSentence",
+                  "description": "(P5-UX-16, C-982)"
                 },
                 "status": {
                   "type": "string",
@@ -55435,6 +55664,52 @@
           "text": {
             "type": "string",
             "description": "May be empty or absent when `attachment_ids` is non-empty (C-726)."
+          }
+        }
+      },
+      "SentenceAccount": {
+        "type": "object",
+        "required": [
+          "ref",
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "ref": {
+            "$ref": "#/components/schemas/AccountRefDto"
+          }
+        }
+      },
+      "SentenceAgent": {
+        "type": "object",
+        "required": [
+          "id",
+          "name"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "SentenceApp": {
+        "type": "object",
+        "required": [
+          "app_id",
+          "name"
+        ],
+        "properties": {
+          "app_id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
           }
         }
       },

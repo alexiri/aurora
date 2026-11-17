@@ -64,12 +64,10 @@ pub fn approval(
     shared: bool,
     resume_window_secs: u64,
 ) -> Result<Card, ApiError> {
-    let title = row
-        .summary
-        .get("title")
-        .and_then(Value::as_str)
-        .unwrap_or("An agent request needs a decision");
-    let mut blocks = vec![Block::header("Approval needed"), Block::data(title)];
+    // (P5-UX-16, C-983) The same sentence as the dashboard's card: "<Agent> wants to <action>".
+    let sentence = crate::domains::approvals::dto::Approval::from(row.clone()).sentence;
+    let title = format!("{} wants to {}", sentence.agent.name, sentence.action);
+    let mut blocks = vec![Block::header("Approval needed"), Block::data(&title)];
     let fields: Vec<(String, String)> = row
         .summary
         .get("fields")
@@ -110,7 +108,7 @@ pub fn approval(
         m,
         row.id,
         |decision| ActionKind::ApprovalDecide { decision },
-        ("Approve", "Deny"),
+        ("Allow once", "Block"),
     )?;
     if let (Some(batch), Some(total)) = (&row.batch_id, row.batch_total)
         && total > 1
@@ -123,7 +121,7 @@ pub fn approval(
                 agent_id: row.agent_id,
                 decision,
             },
-            ("Approve all", "Deny all"),
+            ("Allow all once", "Block all"),
         )?);
     }
     blocks.push(blk(Block::buttons(items))?);

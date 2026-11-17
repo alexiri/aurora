@@ -130,7 +130,7 @@ impl W {
             "INSERT INTO approvals (id, org_id, workspace_id, agent_id, conversation_id, gateway_instance_id,
                 method, host, path, summary, batch_id, batch_total, status, deadline)
              VALUES ($1,$2,$3,$4,$5,$6,'POST','api.example.com','/x',
-                '{\"title\":\"Send **mail**\",\"fields\":[{\"label\":\"to\",\"value\":\"a@b.c\"}],\"text\":null,\"link\":null,\"group\":null,\"source\":\"generic\"}',
+                '{\"title\":\"Send **mail**\",\"fields\":[{\"label\":\"to\",\"value\":\"a@b.c\"}],\"text\":null,\"link\":null,\"group\":null,\"source\":\"template\"}',
                 $7,$8,'pending', now() + interval '5 minutes')",
         )
         .bind(id).bind(self.org).bind(self.ws).bind(self.agent).bind(self.conv).bind(self.gw)
@@ -283,7 +283,7 @@ async fn approval_created_posts_one_card_and_click_approves_and_settles() {
         json!({"type": "header", "text": "Approval needed"})
     );
     let labels: Vec<_> = W::tokens(op).into_iter().map(|t| t.0).collect();
-    assert_eq!(labels, ["Approve", "Deny"]);
+    assert_eq!(labels, ["Allow once", "Block"]);
     let card: (String, String) =
         sqlx::query_as("SELECT subject_kind, state FROM channel_cards WHERE subject_id=$1")
             .bind(id)
@@ -301,7 +301,7 @@ async fn approval_created_posts_one_card_and_click_approves_and_settles() {
     assert_eq!(state, "posted");
 
     let out = w
-        .click(w.integ, &W::token(op, "Approve"), "U_MEMBER", None)
+        .click(w.integ, &W::token(op, "Allow once"), "U_MEMBER", None)
         .await;
     assert_eq!(out["result"], "done", "{out}");
     let (st, by, via): (String, Option<Uuid>, Option<String>) =
@@ -529,7 +529,7 @@ async fn a_revoked_grant_and_an_abandoned_parked_approval_settle_their_cards() {
 async fn unlinked_clicker_gets_a_link_prompt_and_nothing_happens() {
     let w = W::new(&FULL).await;
     let (id, op) = w.approval_card().await;
-    let tok = W::token(&op, "Approve");
+    let tok = W::token(&op, "Allow once");
     let out = w.click_in(w.integ, &tok, "U_NONE", None, Some("C1")).await;
     assert_eq!(out["result"], "link_prompt");
     assert_eq!(w.status("approvals", id).await, "pending");
@@ -566,7 +566,7 @@ async fn unlinked_clicker_gets_a_link_prompt_and_nothing_happens() {
 async fn non_members_are_refused_without_a_decision() {
     let w = W::new(&FULL).await;
     let (id, op) = w.approval_card().await;
-    let tok = W::token(&op, "Approve");
+    let tok = W::token(&op, "Allow once");
     // U_STR is not in the org; U_OUT is an org member with no workspace access.
     for who in ["U_STR", "U_OUT"] {
         let out = w.click_in(w.integ, &tok, who, None, Some("C1")).await;
@@ -592,7 +592,7 @@ async fn non_members_are_refused_without_a_decision() {
 async fn reused_token_is_refused() {
     let w = W::new(&FULL).await;
     let (id, op) = w.approval_card().await;
-    let tok = W::token(&op, "Approve");
+    let tok = W::token(&op, "Allow once");
     assert_eq!(
         w.click(w.integ, &tok, "U_MEMBER", None).await["result"],
         "done"
@@ -604,7 +604,7 @@ async fn reused_token_is_refused() {
         "{out}"
     );
     // The sibling button of an already decided approval does not flip the decision.
-    let deny = W::token(&op, "Deny");
+    let deny = W::token(&op, "Block");
     let out = w.click(w.integ, &deny, "U_OWNER", None).await;
     assert_eq!(out["result"], "refused");
     assert_eq!(w.status("approvals", id).await, "approved");
@@ -676,9 +676,12 @@ async fn batch_cards_decide_all_of_the_agents_batch() {
         .unwrap()
         .1;
     let labels: Vec<_> = W::tokens(op).into_iter().map(|t| t.0).collect();
-    assert_eq!(labels, ["Approve", "Deny", "Approve all", "Deny all"]);
+    assert_eq!(
+        labels,
+        ["Allow once", "Block", "Allow all once", "Block all"]
+    );
     let out = w
-        .click(w.integ, &W::token(op, "Approve all"), "U_MEMBER", None)
+        .click(w.integ, &W::token(op, "Allow all once"), "U_MEMBER", None)
         .await;
     assert_eq!(out["result"], "done", "{out}");
     assert_eq!(w.status("approvals", a).await, "approved");
@@ -1052,7 +1055,7 @@ fn approval_code_is_eight_base32_chars_and_spreads_uuidv7() {
 async fn suspended_member_click_is_refused_everywhere() {
     let w = W::new(&FULL).await;
     let (id, op) = w.approval_card().await;
-    let tok = W::token(&op, "Approve");
+    let tok = W::token(&op, "Allow once");
     w.h.set_member_status(w.org, w.member, "suspended").await;
     let out = w
         .click_in(w.integ, &tok, "U_MEMBER", None, Some("C1"))
@@ -1079,7 +1082,7 @@ async fn suspended_member_click_is_refused_everywhere() {
 async fn member_click_on_approval_is_refused_and_card_stays_pending() {
     let w = W::new(&FULL).await;
     let (id, op) = w.approval_card().await;
-    let tok = W::token(&op, "Approve");
+    let tok = W::token(&op, "Allow once");
     let ctx = op["content"]["card"]["blocks"].to_string();
     assert!(ctx.contains("Needs an approver"), "{ctx}");
     sqlx::query(
@@ -1138,7 +1141,7 @@ async fn dm_approval_card_click_by_non_participant_is_refused() {
         .execute(w.pool())
         .await
         .unwrap();
-    let tok = W::token(&op, "Approve");
+    let tok = W::token(&op, "Allow once");
     let out = w
         .click_in(w.integ, &tok, "U_MEMBER", None, Some("C1"))
         .await;

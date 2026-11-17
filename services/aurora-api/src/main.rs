@@ -534,6 +534,8 @@ async fn serve(
     aurora_api::domains::push::jobs::spawn(state.clone());
     aurora_api::jobs::spawn(pool, state.ops_live.clone(), quota_mail);
     aurora_api::domains::approvals::notify::spawn(state.clone());
+    // (P5-UX-16, C-983) The transcript events of approvals that belong to a conversation.
+    aurora_api::domains::approvals::transcript::spawn(state.clone());
     // (FIX-025, D-158) No turn waits forever for a sandbox, runner connected or not.
     aurora_api::domains::hosted::readiness::spawn(state.clone());
     aurora_api::domains::connectors::inbox::spawn(state.clone());

@@ -5635,6 +5635,12 @@ export interface components {
             id: string;
             type: components["schemas"]["AccountRefType"];
         };
+        AccountRefDto: {
+            /** Format: uuid */
+            id: string;
+            /** @description `connection` */
+            type: string;
+        };
         /** @enum {string} */
         AccountRefType: "connection" | "secret";
         AccountWorkspace: {
@@ -6060,6 +6066,19 @@ export interface components {
             name: string;
             tool_id: string;
         };
+        /** @description (C-982) Only on the answer of an Always allow. */
+        AlwaysApplied: {
+            /**
+             * Format: int32
+             * @description Other pending approvals of the same agent, account and tool that went ahead too.
+             */
+            also_approved: number;
+            tool: components["schemas"]["AlwaysTool"];
+        };
+        AlwaysTool: {
+            id: string;
+            name: string;
+        };
         ApiKey: {
             /** Format: date-time */
             created_at: string;
@@ -6246,8 +6265,12 @@ export interface components {
         };
         Approval: {
             agent?: components["schemas"]["ApprovalAgent"] | null;
+            always_applied?: components["schemas"]["AlwaysApplied"] | null;
             app_id?: string | null;
+            asked_by?: components["schemas"]["AskedBy"] | null;
             batch?: components["schemas"]["ApprovalBatch"] | null;
+            /** @description Whether the caller may choose Always allow for this question (SEC-131). */
+            can_always_allow: boolean;
             /** Format: uuid */
             connection_id?: string | null;
             /** Format: date-time */
@@ -6288,6 +6311,8 @@ export interface components {
             /** Format: uuid */
             rule_logical_id?: string | null;
             rule_name?: string | null;
+            /** @description (P5-UX-16, C-982) */
+            sentence: components["schemas"]["ApprovalSentence"];
             /** @description `pending` | `approved` | `denied` | `expired` | `abandoned` */
             status: string;
             summary: components["schemas"]["ApprovalSummary"];
@@ -6375,6 +6400,17 @@ export interface components {
             /** @description `ready` */
             state: string;
         };
+        /** @description (P5-UX-16, C-982) The sentence an approval reads as: "<agent> wants to <action> in <app>". */
+        ApprovalSentence: {
+            account?: components["schemas"]["SentenceAccount"] | null;
+            /**
+             * @description The app's approval title when the package provides one, else the tool's name, else
+             *     "send a <METHOD> request to <host>". Completes "<agent> wants to …".
+             */
+            action: string;
+            agent: components["schemas"]["SentenceAgent"];
+            app?: components["schemas"]["SentenceApp"] | null;
+        };
         ApprovalSummary: {
             fields: components["schemas"]["SummaryField"][];
             group?: string | null;
@@ -6396,6 +6432,24 @@ export interface components {
             user_code: string;
             /** Format: uuid */
             workspace_id: string;
+        };
+        /** @description (P5-UX-16, C-982) What asked the question: the agent's access, or a rule. */
+        AskedBy: {
+            /** Format: uuid */
+            agent_id: string;
+            /** Format: uuid */
+            connection_id: string;
+            /** @enum {string} */
+            kind: "access";
+            tool_id?: string | null;
+        } | {
+            /** @enum {string} */
+            kind: "rule";
+            /** Format: uuid */
+            rule_id: string;
+            rule_name: string;
+            /** @description `workspace` | `organization` */
+            scope: string;
         };
         AttachPresenceRequest: {
             /** @description Values for the connector's `presence_setup.dedicated.fields` (manual setup). */
@@ -7416,6 +7470,11 @@ export interface components {
         /** @enum {string} */
         Decision: "approve" | "deny";
         DecisionBody: {
+            /**
+             * @description (C-982, SEC-131) With `approve`: also stop asking for this kind of change. Needs
+             *     `can_own` of the agent's workspace; only for a question the agent's access asked.
+             */
+            always?: boolean | null;
             decision: components["schemas"]["Decision"];
         };
         /** @enum {string} */
@@ -9427,8 +9486,12 @@ export interface components {
         Page_Approval: {
             items: {
                 agent?: components["schemas"]["ApprovalAgent"] | null;
+                always_applied?: components["schemas"]["AlwaysApplied"] | null;
                 app_id?: string | null;
+                asked_by?: components["schemas"]["AskedBy"] | null;
                 batch?: components["schemas"]["ApprovalBatch"] | null;
+                /** @description Whether the caller may choose Always allow for this question (SEC-131). */
+                can_always_allow: boolean;
                 /** Format: uuid */
                 connection_id?: string | null;
                 /** Format: date-time */
@@ -9469,6 +9532,8 @@ export interface components {
                 /** Format: uuid */
                 rule_logical_id?: string | null;
                 rule_name?: string | null;
+                /** @description (P5-UX-16, C-982) */
+                sentence: components["schemas"]["ApprovalSentence"];
                 /** @description `pending` | `approved` | `denied` | `expired` | `abandoned` */
                 status: string;
                 summary: components["schemas"]["ApprovalSummary"];
@@ -11878,6 +11943,19 @@ export interface components {
             reply_to?: components["schemas"]["ReplyToRef"] | null;
             /** @description May be empty or absent when `attachment_ids` is non-empty (C-726). */
             text?: string;
+        };
+        SentenceAccount: {
+            name: string;
+            ref: components["schemas"]["AccountRefDto"];
+        };
+        SentenceAgent: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+        };
+        SentenceApp: {
+            app_id: string;
+            name: string;
         };
         SetDmDefaultRequest: {
             /** Format: uuid */
@@ -22564,6 +22642,14 @@ export interface operations {
                 };
             };
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };
