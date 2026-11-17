@@ -53,7 +53,7 @@ export function ConnectorBlocked({
             </Button>
           ) : (
             <Link href={adminRoutes.chatPlatforms()} className={cn(buttonVariants({ size: "sm" }), "text-on-primary!")}>
-              Open Admin › Connectors
+              Open Administration › Chat platforms
             </Link>
           )
         ) : null}
@@ -79,7 +79,7 @@ export function NoConnectorsYet({ admins, isInstanceAdmin }: { admins: { name: s
       </span>
       {isInstanceAdmin ? (
         <Link href={adminRoutes.chatPlatforms()} className={cn(buttonVariants({ size: "sm" }), "text-on-primary!")}>
-          Open Admin › Connectors
+          Open Administration › Chat platforms
         </Link>
       ) : null}
     </Notice>

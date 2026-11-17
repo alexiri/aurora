@@ -171,6 +171,11 @@ export async function mockApi(
 ) {
   const exact = new Map<string, unknown>();
   const patterns: [RegExp, unknown][] = [];
+  // (P5-IA-4, C-969) The organization's retention: Administration's maximums above, saved values kept across requests.
+  let retention: Record<string, unknown> = {
+    conversations_days: 180, conversations_days_max: 365, attachments_days: null, attachments_days_max: 90,
+    attachment_quota_mib: null, attachment_quota_mib_max: 102_400, attachment_quota_mib_effective: 51_200,
+  };
   for (const [k, v] of Object.entries(overrides)) {
     if (/[\^*+()[\]{}|\\]/.test(k)) patterns.push([new RegExp(k.startsWith("/") ? `^${k}$` : k), v]);
     else exact.set(k, v);
@@ -219,6 +224,10 @@ export async function mockApi(
     if (p.endsWith("/policy") && (p.startsWith("/v1/orgs/") || p.startsWith("/v1/workspaces/"))) return json(policyDoc);
     if (p === "/v1/llm/providers") return json({ providers: [] });
     if (p.endsWith("/governance/effective")) return json(effective);
+    if (/^\/v1\/orgs\/[^/]+\/retention$/.test(p)) {
+      if (route.request().method() === "PUT") retention = { ...retention, ...(route.request().postDataJSON() as Record<string, unknown>) };
+      return json(retention);
+    }
     if (p === "/v1/admin/storage") {
       return json({
         attachment_bytes: 850_000_000, attachment_files: 12, blob_bytes: 1_200_000, blob_count: 4, purged_files: 3,

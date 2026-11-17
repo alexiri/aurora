@@ -66,7 +66,7 @@ export function ConnectorsAdminView() {
     <div className="max-w-page space-y-8">
       {view.kind === "detail" && detail ? null : (
         <PageHeader
-          title="Connectors"
+          title="Chat platforms"
           description="Chat-platform connectors that organizations can build integrations on."
           className="mb-6"
           actions={
