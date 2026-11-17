@@ -50,10 +50,24 @@ export function useTestAccount() {
   });
 }
 
+export type AppAccess = S["AppAccess"];
+export type AppAccessTool = S["AppAccessTool"];
+
+/** C-934: what actually happens for each tool of an app, per account the agent has been given. */
+export function useAppAccess(agentId: string, appId: string | undefined) {
+  return useQuery({
+    queryKey: ["app-access", agentId, appId ?? ""] as const,
+    enabled: !!appId,
+    queryFn: () => unwrap(api.GET("/v1/agents/{agent}/apps/{app}/access", { params: { path: { agent: agentId, app: appId! } } })),
+    retry: false,
+  });
+}
+
 /** Anything that changed an agent's access to an account refreshes the lists and the agent's grant views. */
 function useAccessInvalidation() {
   const qc = useQueryClient();
   return (agentId: string) => {
+    void qc.invalidateQueries({ queryKey: ["app-access", agentId] });
     void qc.invalidateQueries({ queryKey: accountKeys.all });
     void qc.invalidateQueries({ queryKey: ["connections"] });
     void qc.invalidateQueries({ queryKey: policyKeys.grants(agentId) });

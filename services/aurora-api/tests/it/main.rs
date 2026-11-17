@@ -9,6 +9,7 @@ mod admin_overview_previews;
 mod agent_token_age;
 mod agents;
 mod api_ratelimit;
+mod app_access;
 mod app_instances;
 mod app_setup;
 mod approval_always;

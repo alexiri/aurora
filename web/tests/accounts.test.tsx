@@ -285,7 +285,8 @@ describe("AccessControl", () => {
     expect(screen.getByText("Ask before changes")).toBeInTheDocument();
     expect(screen.getByText(/Merge a pull request/)).toBeInTheDocument();
     expect(screen.queryByRole("radio")).toBeNull();
-    expect(screen.queryByRole("button")).toBeNull();
+    // The only control is the one that opens the details, which are text for them (C-934).
+    expect(screen.getAllByRole("button").map((b) => b.textContent)).toEqual(["What exactly?"]);
   });
 });
 
@@ -314,10 +315,60 @@ describe("the actions table", () => {
       json(200, { secrets: [], connections: [{ connection_id: "c1", mode: "custom", allow_tools: ["get"], ask_tools: ["push"], ask_timeout_secs: null }], converted_by_app: [] });
     routes["PUT /v1/agents/a1/grants/connections/c1"] = () => json(200, {});
     routes["GET /v1/workspaces/w1/accounts"] = () => json(200, { items: [], next_cursor: null });
+    routes["GET /v1/agents/a1/apps/aws/access"] = () => json(200, ACCESS);
     wrap(<AccessControl account={a} entry={e} workspaceId="w1" canChange />);
     fireEvent.click(await screen.findByRole("button", { name: "Custom…" }));
-    return screen.findByRole("dialog");
+    return screen.findByRole("region", { name: /What Daneel can do in AWS/ });
   }
+  const ACCESS = {
+    accounts: [
+      {
+        ref: { type: "connection", id: "c1" },
+        name: "AWS prod",
+        tools: [
+          { tool_id: "get", name: "Look up a repository", description: "Reads one repository.", access: "read", decision: "allow", own: "allow" },
+          { tool_id: "push", name: "Push a commit", description: "Pushes.", access: "write", decision: "block", own: "ask", reason: { layer: "limit", label: "Limited by Acme" } },
+          { tool_id: "merge", name: "Merge a pull request", description: "Merges it.", access: "write", decision: "block", own: "allow", reason: { layer: "org_rule", label: "No merging", link: "internet_access" } },
+        ],
+      },
+    ],
+  };
+
+  it("opens the same table from What exactly? and from Custom…; reasons appear only where something else decided", async () => {
+    const dlg = await openTable(entry({ level: "custom", custom: { differs: 1, base: "read" } }));
+    // The chip of an action with a reason shows what actually happens, and why; the one without shows only the control.
+    expect(await within(dlg).findByText("Limited by Acme")).toBeInTheDocument();
+    expect(within(dlg).getByText(/No merging/)).toBeInTheDocument();
+    expect(within(dlg).getByRole("link", { name: "Internet access" })).toHaveAttribute("href", "/o/acme/internet-access");
+    expect(within(dlg).getAllByText("Blocked").filter((e) => e.tagName === "SPAN")).toHaveLength(2);
+    expect(within(dlg).queryByText(/Look up a repository.*Limited/)).toBeNull();
+    // What exactly? closes the table that Custom… opened: one table, one toggle.
+    const exactly = screen.getByRole("button", { name: "What exactly?" });
+    expect(exactly).toHaveAttribute("aria-expanded", "true");
+    fireEvent.click(exactly);
+    expect(screen.queryByRole("region", { name: /What Daneel can do in AWS/ })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "What exactly?" }));
+    expect(await screen.findByRole("region", { name: /What Daneel can do in AWS/ })).toBeInTheDocument();
+  });
+
+  it("is text for someone who may not change the access: the chip, the reason and the agent's own choice beside it", async () => {
+    routes["GET /v1/agents/a1/apps/aws/access"] = () => json(200, ACCESS);
+    wrap(<AccessControl account={app({ can: MEMBER })} entry={entry({ level: "ask" })} workspaceId="w1" canChange={false} />);
+    fireEvent.click(await screen.findByRole("button", { name: "What exactly?" }));
+    const region = await screen.findByRole("region", { name: /What Daneel can do in AWS/ });
+    expect(within(region).queryByRole("combobox")).toBeNull();
+    expect(within(region).getByText("Allowed")).toBeInTheDocument();
+    expect(within(region).getByText("Limited by Acme")).toBeInTheDocument();
+    expect(within(region).getByText("Daneel's access: Asks you")).toBeInTheDocument();
+    // Without a reason the agent's own choice is the answer and is not repeated.
+    expect(within(region).getAllByText(/Daneel's access:/)).toHaveLength(2);
+    expect(within(region).getByRole("heading", { name: "Changing things" })).toBeInTheDocument();
+  });
+
+  it("has no details for websites and AI keys", () => {
+    wrap(<AccessControl account={website()} entry={entry({ level: "use" })} workspaceId="w1" canChange />);
+    expect(screen.queryByRole("button", { name: "What exactly?" })).toBeNull();
+  });
 
   it("shows each action with its saved choice and keeps the method and host under Technical details; Save sends the custom body", async () => {
     const dlg = await openTable(entry({ level: "custom", custom: { differs: 1, base: "read" } }));
