@@ -127,6 +127,26 @@ pub async fn list_workspace<'e, E: PgExecutor<'e>>(
     .await?)
 }
 
+/// (P4-UTOK, C-856) The `send_as_me` approvals whose token belongs to `owner`, newest first
+/// (the owner sees their own posts with the full text; nobody else does).
+pub async fn list_send_as_me_for_owner<'e, E: PgExecutor<'e>>(
+    exec: E,
+    owner: Uuid,
+    status: Option<&str>,
+    limit: i64,
+) -> Result<Vec<ActionApprovalRow>, DbError> {
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "{SELECT} WHERE a.action_key = 'send_as_me' AND a.payload ->> 'owner_id' = $1
+           AND ($2::text IS NULL OR a.status = $2)
+         ORDER BY a.created_at DESC, a.id DESC LIMIT $3"
+    )))
+    .bind(owner.to_string())
+    .bind(status)
+    .bind(limit)
+    .fetch_all(exec)
+    .await?)
+}
+
 /// `pending` -> `approved` | `rejected` (fenced). `None` when the row is no longer pending.
 pub async fn decide(
     conn: &mut PgConnection,

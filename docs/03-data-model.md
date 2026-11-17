@@ -1758,27 +1758,8 @@ returned to the block. No gateway database role grant: the gateway reads none of
 
 (P4-NARR landed: `agents.narration_cards` is in `§agents` above; migration `20261201000231_agent_narration_cards.sql`.)
 
-#### `user_tokens` (new table; a person's platform tokens; phase 5, P4-UTOK, D-281..D-284, migration `20261201000232_user_tokens.sql`)
-| Planned column | Type | Notes | Phase |
-|---|---|---|---|
-| id | uuid pk | id format of `00`; not a bearer token, so no `au?_` prefix | 5 (P4-UTOK) |
-| user_id | uuid FK→users (cascade) | the owner; the token is usable only for this person's link | 5 (P4-UTOK) |
-| integration_id | uuid FK→channel_integrations (cascade) | one platform integration per token | 5 (P4-UTOK) |
-| platform_user_ref | text not null | the platform user the verify op returned; must equal the owner's `user_links.platform_user_ref` on this integration; a partial unique index on (integration_id, platform_user_ref) where `status <> 'revoked'`: one live token per platform user | 5 (P4-UTOK) |
-| label | text null | owner's name for the token, ≤ 80 characters | 5 (P4-UTOK) |
-| token_ref | text not null | a SecretRef, purpose `user_token`, owner = this row's id (`08 §1`); never returned | 5 (P4-UTOK, D-282) |
-| status | text CHECK in (`active`,`invalid`,`revoked`) | `invalid` set by a platform `401`; `revoked` on any end of standing (D-284(a)) and then `token_ref` is discarded and null | 5 (P4-UTOK) |
-| created_at / last_used_at / revoked_at | timestamptz | `last_used_at` set when a send is claimed | 5 (P4-UTOK) |
-
-#### `user_token_agents` (new table; the owner's grants; phase 5, P4-UTOK, D-283, migration `20261201000233_user_token_agents.sql`)
-| Planned column | Type | Notes | Phase |
-|---|---|---|---|
-| user_token_id | uuid FK→user_tokens (cascade) | primary key with agent_id | 5 (P4-UTOK) |
-| agent_id | uuid FK→agents (cascade) | a grant ends with the agent | 5 (P4-UTOK) |
-| granted_at | timestamptz not null | | 5 (P4-UTOK) |
-
-Per-op copies of a token are not columns: they live in `channel_ops.payload.user_credential_ref` (`08 §1`),
-discarded at the op's terminal state (`13 §4.2`, `§5.11`).
+(P4-UTOK landed: `user_tokens` and `user_token_agents` are real sections below (after `§ssh_keys`);
+migrations `20261201000232_user_tokens.sql` and `20261201000233_user_token_agents.sql`.)
 
 #### SSH access (phase 5, P4-SSH-1, P4-SSH-2, D-239, SEC-92..SEC-96)
 
@@ -1923,6 +1904,36 @@ pattern). File contents are never stored anywhere; the gateway database role get
 | unique | `(user_id, fingerprint)` | the same key twice for one person is 409 `ssh_key_exists`; two people may register the same public key (a row grants nothing by itself: a certificate also needs the private key) |
 
 The gateway database role gets nothing on this table.
+
+### `user_tokens` (a person's chat-platform token, phase 5, P4-UTOK, D-281..D-284, SEC-112, SEC-113, C-853, C-855; migration `20261201000232`)
+| Column | Type | Notes |
+|---|---|---|
+| id | uuid pk | id format of `00`; not a bearer token, so no `au?_` prefix |
+| user_id | uuid not null FK→users (cascade) | the owner; the token is usable only for this person's own link; at most `USER_TOKENS_PER_PERSON` (5) not `revoked` |
+| integration_id | uuid not null FK→channel_integrations (cascade) | one platform integration per token |
+| platform_user_ref | text not null | the platform user the verify op returned; equal to the owner's `user_links.platform_user_ref` on this integration. A partial unique index on `(integration_id, platform_user_ref)` where `status <> 'revoked'`: one live token per platform user (409 `user_token_exists`) |
+| platform_user_label | text not null | the handle the verify op returned, shown to the owner (never the platform user id) |
+| label | text null CHECK (char_length(label) BETWEEN 1 AND 80) | the owner's name for the token |
+| token_ref | text null | a SecretRef, purpose `user_token`, owner = this row's id (`08 §1`); never returned. CHECK: set whenever `status = 'active'`. After the token ends (`invalid`, `revoked`) it stays only until the sealed value is discarded (right after the ending transaction commits, else by the custody sweep, `13 §5.11`) and is then null |
+| status | text not null CHECK in (`active`,`invalid`,`revoked`) | `invalid` set by a platform `401` on a verify or send; `revoked` on any end of standing (D-284(a)): the owner's `DELETE`, the owner's link on the integration removed, SCIM deprovisioning or deletion of the owner, deletion of the integration or its organization |
+| last_used_at | timestamptz null | set when a send is claimed (churn column) |
+| revoked_at | timestamptz null | |
+| index | `(user_id, created_at DESC, id DESC)`, `(integration_id)` | and two partial expression indexes that find a token's open work: `action_approvals ((payload->>'token_id'))` for pending `send_as_me` rows and `channel_ops ((payload->'sender'->>'user_token'))` for pending or claimed `message.post` rows |
+
+Per-op copies of a token are not columns: they live in `channel_ops.payload.user_credential_ref` (`08 §1`),
+with the internal keys `user_org_id` and `user_meta` (agent, conversation, approval, owner for the audit row);
+all three are stripped at claim and the reference is set to JSON `null` and discarded at the op's terminal
+state (`13 §4.2`, `§5.11`). The gateway database role gets nothing on this table.
+
+### `user_token_agents` (the owner's grants of a token to single agents, phase 5, P4-UTOK, D-283(a), C-855; migration `20261201000233`)
+| Column | Type | Notes |
+|---|---|---|
+| user_token_id | uuid not null FK→user_tokens (cascade) | pk part |
+| agent_id | uuid not null FK→agents (cascade) | pk part; a grant ends with the agent (its pending posts are cancelled by the deletion path, `13 §5.11`) |
+| granted_at | timestamptz not null default now() | |
+| index | `(agent_id)` | |
+
+A grant of one agent is no grant of another. The gateway database role gets nothing on this table.
 
 ### `ssh_mint_counters` (certificate-mint rate limit, a ledger, phase 5, P4-SSH-1, D-239(c), C-791; migration `20261201000201`)
 | Column | Type | Notes |

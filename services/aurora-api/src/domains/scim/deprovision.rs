@@ -111,6 +111,20 @@ pub async fn remove_membership(
     Ok(())
 }
 
+/// (P4-UTOK, D-284(a)) The person's chat-platform tokens on this org's integrations end with the
+/// deprovisioning, in the same transaction. Their sealed values are discarded by the token sweep
+/// (a minute at most): the rows no longer let anything use them.
+pub async fn end_user_tokens(
+    conn: &mut PgConnection,
+    org: Uuid,
+    user: Uuid,
+    actor: &AuditActor,
+) -> Result<(), ApiError> {
+    let ids = aurora_db::repo::user_tokens::live_ids_for_user_in_org(conn, user, org).await?;
+    crate::domains::user_tokens::end::revoke(conn, &ids, actor, "scim_deprovision").await?;
+    Ok(())
+}
+
 /// Org API keys of the user (never of other orgs; never revived by a reactivation).
 pub async fn revoke_org_keys(
     conn: &mut PgConnection,

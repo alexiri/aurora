@@ -303,7 +303,14 @@ Error mapping: 401 → `credential_dead`; 403 → `forbidden`; 404 → `not_foun
   is added by the connector at send time, not by the model; the owner approves the text without it, and the
   approval summary (`13 §5.11`) does not count it.
 - **Tokens.** A person's token is used only for the calls of the Operations table above. Its value is never
-  written to a log, a metric label or an error message; a `401` answers `credential_dead` with no detail.
+  written to a log, a metric label or an error message; a `401` answers `credential_dead` with no detail. In the
+  connector the token reaches Mattermost through `PersonClient` (`src/person.rs`) only: a type with exactly two
+  methods, `me` (`GET /api/v4/users/me`) and `post` (`POST /api/v4/posts`), that takes the token per call and has no
+  generic request method; the bot's client has no way to take one. A post with a person's token is plain text: no
+  `ephemeral`, file, card or attachment, no direct-channel creation (a `target` that is a person is `invalid`), a
+  `root_id` only in a thread, and the footer's labels are Markdown-escaped with `@`, `~` and `:` broken so a name
+  can neither ping nor link. `maybe_sent`: the bot's token looks for the op marker in the channel; when it cannot
+  tell, the post is not repeated (`13 §4.2`).
 
 ## Managed (dashboard)
 

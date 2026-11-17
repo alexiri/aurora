@@ -220,6 +220,41 @@ const EXEMPT: &[(&str, &str, &str)] = &[
     ),
     ("POST", "/v1/me/ssh-keys", "P4-SSH-1: see GET /me/ssh-keys"),
     (
+        "GET",
+        "/v1/me/user-tokens",
+        "P4-UTOK (C-853): a person's own tokens only (another person's is 404 on every route); writes are session-only; the matrix of who may do what is it/user_tokens.rs",
+    ),
+    (
+        "POST",
+        "/v1/me/user-tokens",
+        "P4-UTOK: see GET /me/user-tokens",
+    ),
+    (
+        "PATCH",
+        "/v1/me/user-tokens/{}",
+        "P4-UTOK: see GET /me/user-tokens",
+    ),
+    (
+        "DELETE",
+        "/v1/me/user-tokens/{}",
+        "P4-UTOK: see GET /me/user-tokens",
+    ),
+    (
+        "PUT",
+        "/v1/me/user-tokens/{}/agents/{}",
+        "P4-UTOK: see GET /me/user-tokens",
+    ),
+    (
+        "DELETE",
+        "/v1/me/user-tokens/{}/agents/{}",
+        "P4-UTOK: see GET /me/user-tokens",
+    ),
+    (
+        "GET",
+        "/v1/me/user-token-approvals",
+        "P4-UTOK (C-856): the caller's own proposed posts with their text (session only); nobody else's rows, it/user_tokens.rs only_the_owner_decides…",
+    ),
+    (
         "PATCH",
         "/v1/me/ssh-keys/{id}",
         "P4-SSH-1: see GET /me/ssh-keys",

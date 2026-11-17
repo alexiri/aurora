@@ -87,7 +87,81 @@ Per-task gates of `docs/tasks/LANE_RULES.md`. Rust: `cargo fmt --check`; `cargo 
 - **Q-UTOK-8 — Footer on every send.** Recommended: every post a token sends ends with `_Sent by <agent> for <owner>_`, added by the connector and not waivable, so recipients can tell that an agent wrote it. Alternative: a per-token option to drop it (not recommended: it hides the agent's authorship from the people who read the post).
 
 ## Completion report
-- Files changed:
-- Tests/checks (exact commands and results):
-- Decisions taken on open questions:
-- Remaining risks:
+(lane `p5-agent`, 2026-11-17; commits `864fe700` Parts A/B, `79e473bd` connector tests + conformance, `968f0f10` Part C, then the docs commit.)
+
+- **Brief references checked against master and what was adapted.** FIX-160 (sqlx 0.9): no runtime-built SQL needed
+  `AssertSqlSafe` beyond the usual `format!` of the repo's `SELECT` constant; tests that read best-effort audit rows poll
+  (`wait_audit`). P5-IA-1: no new nav entry; the Account section sits in `AccountChannelsView` (route `/account/channels`);
+  the approvals text sits on the existing workspace Approvals page (Pending tab). SET-5, P5-UX-1/2/13, P5-MODELS: no overlap
+  (the `Purpose` enum gained two variants after `InstanceSetting`; `ActionContext` gained a `state` field). `ResourceTable`
+  does not exist in the codebase: cards (the page's own pattern) and `DataTable` are the primitives; the token list is cards so
+  rows stack at 390 px. `docs/14`'s "Account page" is `/account/channels`.
+- **Files changed (grouped).** Migrations `20261201000232_user_tokens.sql`, `…000233_user_token_agents.sql`; `aurora-db`
+  `repo/user_tokens.rs` (the brief's two repo modules are one file), `repo/channel_ops.rs` (claim returns the internal keys,
+  finished-copy sweep), `repo/action_approvals.rs` (owner list); `aurora-secrets` (purposes `user_token`,
+  `channel_op_user_token`); `aurora-core` (limits, `user_token.revoke` critical); `aurora-protocol` (`OpKind::UserTokenVerify`,
+  `Sender::UserToken`, `Operation.user_credential`, `MessagePostOp.user_footer`, verify op/result, schemas);
+  `aurora-api` `domains/user_tokens/{custody,claim,end,send,service,routes,dto,events}.rs`, the claim and result paths of
+  `domains/connectors/ops.rs`, the decide rule of `domains/action_approvals`, `domains/tools/messaging.rs` (+ `pub(crate)`
+  helpers in `channels/messaging.rs`), the revocation hooks in `channels/{links,commands,integrations}.rs`,
+  `agents/service.rs`, `me/service.rs`, `tenancy/service.rs`, `scim/{deprovision,resource_users}.rs`, `secrets_migrate.rs`, the
+  custody sweep (`jobs.rs`, `main.rs`); `connectors/mattermost/src/{person,ops,render,api,connector}.rs`;
+  `connectors/fake` (person tokens), `tests/conformance/connector` (driver trait, fake core, scenario s21); web
+  `lib/api/user-tokens.ts`, `components/account/send-as-me.tsx`, `components/approvals/{own-send-approvals,approvals-view}.tsx`,
+  `components/channels/account-channels-view.tsx`; `web/openapi.json` and `schema.d.ts` regenerated; docs 03, 04, 05, 08, 12, 13,
+  14, 17, 18, 20, API_CONTRACTS, operator/vault; `limits-gaps.allow` (the two `USER_TOKEN*` lines removed).
+- **Tests/checks that ran (exact commands, results).** `cargo test -p aurora-api --test it -- user_tokens` 24/24;
+  `cargo test -p aurora-connector-mattermost` 86 lib + 5 + 2 + 7 (`tests/user_tokens.rs`) ok; `cargo test -p
+  aurora-conformance-connector` 21/21 (s21 against the fake connector); `cargo test -p aurora-db` 8 + 40 ok;
+  `cargo test -p aurora-protocol` (`UPDATE_SCHEMAS=1`) 33 ok; `cargo clippy --workspace --all-targets --all-features -- -D
+  warnings` clean; `bash scripts/guards/run-all.sh` exit 0; `python3 scripts/extract-schema.py --check` up to date;
+  `UPDATE_OPENAPI=1 … openapi_matches_checked_in` + `pnpm -C web gen:api`; web `typecheck`, eslint on the touched files,
+  `vitest run` 125 files / 2083 tests, Playwright `e2e/send-as-me.spec.ts` 16/16 (both themes, 1280 and 390 px, axe, no
+  horizontal scroll).
+- **Batch gate (run after the last code change).** `bash scripts/fixtures/build.sh` 57/0; `cargo test -p aurora-api --locked --
+  --test-threads=8` (lib 128 ok; it 1353 of 1354, the one failure being `channels_inbox::a_channel_event_turn_belongs_to_the_inbox_job_trace`,
+  the known load flake: it passes alone); `cargo test -p aurora-core -p aurora-secrets -p aurora-connector-fake -p
+  aurora-connector-host -p aurora-protocol -p aurora-db -p aurora-connector-sdk -p aurora-channels` all ok; `cargo test -p
+  aurora-connector-mattermost` and `-p aurora-conformance-connector` ok; workspace clippy `-D warnings` clean; `cargo fmt --all
+  --check` ok; guards exit 0; `extract-schema.py --check` up to date; OpenAPI regenerated and `gen:api` run; web `typecheck`, `lint` (0
+  errors, 4 old warnings in other files), `vitest` 125 files / 2083 tests, `pnpm build`, Playwright (`AURORA_E2E_WEB_PORT=4183
+  AURORA_E2E_WEB_PROD_PORT=4184`, all 1045: the 1039 `mocked` tests pass, stage4-axe included; the 4 failures are `real-stack`
+  specs that need a running stack). **The first full api run found two defects of mine that no targeted test touched**, both
+  fixed in the gate commit: the claim's `user_op` column was NULL for an op without a `sender` (500 on every such claim) and
+  `payload - key` fails on a non-object payload; `secrets_migrate` ITs counted 8 purposes (now 10) and the permission matrix
+  lacked the new routes. **Not run:** `bash scripts/e2e/upgrade.sh` (two builds and images, about 15 GB, on a box with 63 GB
+  free and a 50 GB floor; the migrations are additive tables and apply on a fresh database in the `aurora-db` tests and every IT),
+  `scripts/e2e/mattermost.sh` (podman netns suite; the box load was 7 to 23 throughout), `hosted.sh`, `gateway.sh` (nothing in
+  this task touches the gateway or the runner).
+- **Fail-before (new tests that fail without the code).** The owner-only decision (`only_the_owner_decides…`): with the
+  `send_as_me` branch of `action_approvals::service::decide` disabled the approver's decision answers 200 instead of 403
+  (`left: 200, right: 403`). The claim check (`a_claim_after_revoke_finds_no_copy…`): with the token/grant/link check at
+  the claim bypassed the claim hands the op out (`left: 1, right: 0`). Both mutations were reverted.
+- **Decisions taken on open questions (all recommendations, D-288) and where the spec was silent.**
+  (1) Grant removal and the deletion of an agent or workspace end *that agent's standing* (pending approvals rejected
+  `credential_revoked`, unclaimed sends failed, one `user_token.ungrant` row) and leave the token; the owner's `DELETE`, link
+  removal, SCIM suspend/remove, owner deletion, integration/org deletion end the **token** (`user_token.revoke`, critical); a
+  platform `401` makes it `invalid` (acceptance 6 and D-284(a) say "ends the token" for all; I read grant removal as the
+  agent's standing, because revoking the whole token on one switch would be harsher than the spec's own `ungrant` audit
+  action implies — please confirm). (2) `token_ref` stays set on an ended token until its sealed value is discarded (right
+  after the commit, else by the one-minute custody sweep): SCIM deprovisioning runs in four large transactions whose callers
+  return no value to run after commit, so they leave the discard to the sweep. (3) The per-op copy is made at approval
+  execution (`custody::copy_for_send` opens the stored token and seals the copy under the op id); it is opened only by the
+  claim. `Purpose::UserToken`/`ChannelOpUserToken` appear only in `custody.rs` and `secrets_migrate.rs` (a static test).
+  (4) `send_as_me` posts only to a channel or thread (a person target would need `POST /channels/direct`, a third
+  endpoint), on the token's integration, and keeps `send_message`'s reach rule (own thread, bound space, approved grant).
+  (5) The owner's text is served on a new `GET /v1/me/user-token-approvals` (the workspace list is `can_approve`-only and
+  must not carry the text); new refusals `422 user_link_required`, `409 user_token_exists`, `409 token_inactive` (grant of a
+  non-active token); `UserToken.platform_user_label` needs a column `platform_user_label` (not in the planned table). (6) A
+  decision by an approver on an approval in the owner's *direct* conversation is 404 (RFE-009: the approver cannot see it);
+  in a shared channel thread it is 403 `not_token_owner`. (7) `maybe_sent` on a person's post: the bot's token searches the
+  marker; if it cannot tell, the post is not repeated. (8) Numbers: no new C-/D-/SEC- numbers used; the new route and codes
+  are written into C-853/C-855/C-856 and docs/05.
+- **Remaining risks / not done.** Acceptance 9 (the live Mattermost journey: dashboard approval, post under the owner's
+  account) is **not implemented or run**: it needs the podman netns suite (`scripts/e2e/mattermost.sh`) on an idle box; the
+  conformance scenario s21 has Mattermost-driver support (`person_token`, `revoke_person_token`) but only ran against the
+  fake connector. The Opus review of the claim branch, the eligibility checks, the revocation cascades and the person-token
+  client is still to do. The `user_token.*` rows are visible in the org audit log (actor = the owner); there is no
+  owner-only audit view (Q-UTOK-7's "owner sees their own rows" needs a per-person audit route that no contract defines).
+  `user_token.send` rows are written best-effort after the terminal state, so a crash between the result and the row loses
+  one row. A send claimed before its revocation still completes (the connector holds the value); documented in `13 §5.11`.

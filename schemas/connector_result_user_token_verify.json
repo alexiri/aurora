@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "The platform user a verified token belongs to (C-854).",
+  "properties": {
+    "handle": {
+      "type": "string"
+    },
+    "platform_user_ref": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "platform_user_ref",
+    "handle"
+  ],
+  "title": "UserTokenVerifyResult",
+  "type": "object"
+}

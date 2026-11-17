@@ -243,7 +243,7 @@ code `reserved_event_id`.
 | `credentials.validate` | `{ config, credentials, mode?: "probe" }` → `{ tenant_ref, tenant_label, shared_bot?, capabilities? }` — `capabilities` may only **narrow** the manifest's for this integration (e.g. no `ephemeral` without an admin token); stored in `channel_integrations.config._capabilities` and used by the core for fallbacks. (FIX-127, C-710, D-217) **Probe mode**: `mode: "probe"` validates what it can (a field not yet set is not an error), has **no effect on the platform** (no command registration, profile edit or webhook) and returns `choices: { <field>: [{ value, label }] }` for every `integration_setup` field declaring `choices: "from_validate"`, plus `warnings: [string]`; the result fields above become optional. Nothing is stored. A connector without probe support returns `unsupported`. The dashboard's guided setup uses it (`§5.8`) |
 | `space.members` listing for binding | (FIX-127) also used by `POST /v1/agents/{agent}/space-bindings` and `GET /v1/integrations/{id}/spaces?mine=true` (§5.3) to check the caller's linked account is a member |
 
-(phase 5, P4-UTOK, D-282, C-857) `message.post` gains `sender: { user_token: <user_tokens id> }`, which posts as the token's owner (§5.11). Its payload carries `user_credential_ref`, a fresh SecretRef with purpose `channel_op_user_token` and owner = the op id; it is opened at claim, delivered to the connector as `user_credential` in the claimed operation, stripped from the stored payload, and discarded at the op's terminal state by the rule that follows for deprovision. A user-token post refuses `ephemeral_to` and `files` (`invalid`) in phase 5. A `401` marks the token `invalid` (§5.11), never the presence.
+(phase 5, P4-UTOK, D-282, C-857) `message.post` gains `sender: { user_token: <user_tokens id> }`, which posts as the token's owner (§5.11). Its payload carries `user_credential_ref`, a fresh SecretRef with purpose `channel_op_user_token` and owner = the op id; it is opened at claim, delivered to the connector as `user_credential` in the claimed operation (the wire `Operation` gains the optional string `user_credential`, redacted in `Debug`, present only on `user_token.verify` and on a `message.post` whose sender is a `user_token`), stripped from the payload the connector receives together with the other internal keys (`user_org_id`, `user_meta`), and discarded at the op's terminal state by the rule that follows for deprovision (the stored reference becomes JSON `null`; a failed discard is retried by the sweep). The claim hands a send out only while the token is `active`, the agent's grant is present and the owner's link on the integration exists; otherwise the op fails `credential_revoked` and its copy is discarded. A user-token post refuses `ephemeral_to` and `files` (`invalid`) in phase 5, and a `target` that is a person (a direct channel would need a second endpoint). `MessagePostOp` gains `user_footer: { agent_name, owner_label }`, the names of the footer the connector appends (`20 §Rendering`); the owner approved the text without it. A `401` marks the token `invalid` (§5.11), never the presence. `maybe_sent` on a user-token post: the connector looks for the op marker with the **bot's** token (a person's token has no other endpoint) and, when it cannot tell, does not post again.
 
 **Self-contained deprovision operations** (phase 3, RFE-024, D-67). Phase 0–2
 enqueued `presence.deprovision` "before the delete commits", but the delete then
@@ -788,21 +788,40 @@ stays hidden until Q-UTOK-1 is answered.
 - **The tool.** `send_as_me` (§5.10) is refused, with an agent-facing code, unless at the call the turn
   speaker is the owner, the turn came through the owner's direct conversation with the agent or a thread
   the owner started on that platform, the agent holds the grant, and the token and link are `active`.
-  Codes: `not_eligible` (no reason beyond that), `not_granted`, `token_inactive`. Scheduled, webhook,
-  watch, peer-task, system-follow-up, dashboard and API turns never qualify.
+  Codes: `not_eligible` (no reason beyond that), `not_granted`, `token_inactive`, `pending_limit`. Scheduled,
+  webhook, watch, peer-task, system-follow-up, dashboard and API turns never qualify. Concretely, the running
+  turn must have a `person` speaker who is the owner and a `thread` door; the conversation is the owner's
+  `direct` one or a `group` one whose first person turn is the owner's. The tool is listed only for an agent that
+  holds a grant of an `active` token. `to` is a channel or thread (`here`, an alias, an id or an exact name; a
+  person is refused: a direct channel would need a second endpoint), on the integration of the token, and the
+  agent's reach is not widened: the thread it is in, a bound space or an approved grant (`§5.10`, `reachable`).
+  A refusal creates no approval row.
 - **Approval.** A permitted call creates an action approval (`07 §Action approvals`, action key
-  `send_as_me`) whose frozen payload is `{ token id, conversation, text }`. Its platform-composed summary
+  `send_as_me`) whose frozen payload is `{ token_id, conversation_id, text }` plus the keys the execution needs
+  (`owner_id`, `agent_id`, `integration_id`, `space_ref`, `thread_ref`, `label`). Its platform-composed summary
   names the conversation and the text length, never the text. Only the token's owner may decide it, with
-  the clicker rule of `§5.5` applied to the owner alone, whatever other approval rights they hold. It
-  expires at `APPROVAL_TIMEOUT`. The dashboard approval page shows the full text before the decision.
+  the clicker rule of `§5.5` applied to the owner alone, whatever other approval rights they hold (anyone else:
+  403 `not_token_owner`; a person who cannot see the owner's direct conversation: 404; an API key: 403). It
+  expires at `APPROVAL_TIMEOUT`. The dashboard shows the full text to the owner only, on
+  `GET /v1/me/user-token-approvals` and the Approvals page ("Posts as you"); the workspace approvals list carries
+  the row without the text and without a decide control. Approving re-checks the token, the grant, the link, the
+  platform and the agent's reach, then queues the post with its own per-op copy; a check that fails makes the
+  approval `failed` with a platform-composed line.
 - **The send.** An approved send is a `message.post` with `sender: { user_token }` (§4.2). The connector
   calls `POST /api/v4/posts` with that token and no other endpoint. The post ends with the platform-authored
   footer naming the agent and the owner (`20 §Rendering`). A `401` marks the token `invalid` and fails the op
   with `credential_dead`, which does not disable the presence.
-- **Revocation and audit.** Revocation, grant removal and the other ends of standing listed in D-284(a)
-  end the token in the same transaction as its discard and the cancellation of its pending approvals
-  (rejected with `credential_revoked`). Each attempted send writes one `user_token.send` audit row without
-  text (C-858).
+- **Revocation and audit.** Revocation and the other ends of standing listed in D-284(a)
+  end the token in the same transaction as the cancellation of its pending approvals
+  (rejected with `credential_revoked`), of its unclaimed sends (failed `credential_revoked`), the
+  `user_token.revoke` audit row (critical) and the clearing of its standing; the sealed values are discarded right
+  after that transaction commits, and the custody sweep (every minute, every replica) discards any that a failed
+  discard or a directory deprovisioning left (`token_ref` stays set on an ended token until then). The triggers:
+  the owner's `DELETE`; removal of the owner's link on the integration (account, admin or chat command); SCIM
+  deprovisioning (suspend or remove) or deletion of the owner; deletion of the integration or its organization; a
+  platform `401` (token `invalid`). Deleting an agent or a workspace, or removing one grant, ends **that agent's**
+  standing (its pending approvals and unclaimed sends, one `user_token.ungrant` row) and leaves the token for the
+  owner's other agents. Each attempted send writes one `user_token.send` audit row without text (C-858).
 - **Invariants.** (1) Only the owner's own turns start a send. (2) No send without a held approval the owner
   decided. (3) The token never reaches an agent, a sandbox, the gateway, a runner or a response (SEC-112).
   (4) A grant of one agent is no grant of another.

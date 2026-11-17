@@ -204,6 +204,22 @@ impl PlatformDriver for FakeDriver {
         })))
     }
 
+    async fn person_token(&self, user_ref: &str) -> Result<Option<String>> {
+        let v = self
+            .post_json("/fake/person-tokens", json!({"user_ref": user_ref}))
+            .await?;
+        Ok(Some(v["token"].as_str().context("no token")?.to_owned()))
+    }
+
+    async fn revoke_person_token(&self, token: &str) -> Result<()> {
+        self.post_json(
+            "/fake/person-tokens",
+            json!({"user_ref": "", "revoke": token}),
+        )
+        .await?;
+        Ok(())
+    }
+
     async fn posts(&self, space_ref: Option<&str>) -> Result<Vec<Post>> {
         let path = match space_ref {
             Some(s) => format!("/fake/posted?space_ref={s}"),
