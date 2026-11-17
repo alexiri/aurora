@@ -71,7 +71,7 @@ describe("dynamic form", () => {
 describe("connect channel messages (C-842)", () => {
   it("accepts the callback page's two shapes and nothing else", () => {
     expect(parseConnectMessage({ type: "aurora:connected", app_id: "a", connection_id: "c1", missing_scopes: ["x"] })).toEqual({
-      type: "connected", appId: "a", connectionId: "c1", missingScopes: ["x"],
+      type: "connected", appId: "a", connectionId: "c1", missingScopes: ["x"], grantedAgentIds: [], grantFailed: null,
     });
     expect(parseConnectMessage({ type: "aurora:connect-failed", app_id: "a", error: "oauth_exchange_failed" })).toEqual({
       type: "failed", appId: "a", error: "oauth_exchange_failed",

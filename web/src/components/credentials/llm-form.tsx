@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Loading } from "@/components/states";
 import { CopyBlock } from "@/components/account/ssh-copy";
 import { ChoiceCards } from "@/components/ui/choice-cards";
+import { CopyValue } from "@/components/ui/copy-value";
 import { Field, inputClass } from "@/components/ui/field";
 import { Form, FormActions } from "@/components/ui/form";
 import { Notice } from "@/components/ui/notice";
@@ -258,6 +259,9 @@ export function LlmKeyForm({
           <ValueInput id="l-value" label="API key" value={value} onChange={setValue} />
         ) : null}
         {endpoint && shape === "gcp_service_account" ? <KeyFileInput id="l-value" value={value} onChange={setValue} /> : null}
+        {endpoint && shape === "aws_assume_role" && externalId ? (
+          <CopyValue label="Your organization's external id" value={externalId} hint="Not a secret. Put it in the role's trust policy." />
+        ) : null}
         {endpoint && shape !== "string" && shape !== "gcp_service_account"
           ? SHAPE_FIELDS[shape].map((f) =>
               f.secret ? (
@@ -290,12 +294,7 @@ export function LlmKeyForm({
               external id.
             </p>
             {externalId ? (
-              <>
-                <p className="text-xs text-ink-2">
-                  External id: <code className="break-all font-mono">{externalId}</code>
-                </p>
-                <CopyBlock text={trustPolicy(externalId)} label="the trust policy" />
-              </>
+              <CopyBlock text={trustPolicy(externalId)} label="the trust policy" />
             ) : (
               <p className="text-xs text-muted">Loading the organization&apos;s external id…</p>
             )}

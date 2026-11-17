@@ -37,7 +37,6 @@ export function AccessTab({
         orgId={orgId}
         canOwn={canOwn}
         agent={{ id: agentId, name: agentName }}
-        appsHref={`${base}/apps?tab=apps`}
       />
     </div>
   );

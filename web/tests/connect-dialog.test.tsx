@@ -110,8 +110,14 @@ const APP_SUMMARY = {
 const field = { name: "access_token", label: "Token", type: "secret", store: "credentials", required: true };
 const method = (over: Record<string, unknown>) => ({
   kind: "fields", label: null, description: null, recommended: false, fields: [], scopes: [], default_scopes: [],
-  access_levels: [], probe_scopes: [], client_key: null, callback: null, ...over,
+  access_levels: [], probe_scopes: [], client_key: null, callback: null, audience: "person",
+  scope_presets: { read: [], write: [] }, show_context: [], ...over,
 });
+const planMethod = (id: string, kind: string, over: Record<string, unknown> = {}) => ({
+  id, kind, label: id, description: null, recommended: false, audience: "person", needs: [], ready: true,
+  scope_presets: { read: [], write: [] }, ...over,
+});
+const PLAN = { app_id: "github", available: true, suggested_method: "token", methods: [planMethod("token", "fields"), planMethod("oauth", "oauth2")] };
 const DETAIL = {
   ...APP_SUMMARY, category: "development", api_docs: null, connect_note: null, label_hint: null,
   connect: [
@@ -146,6 +152,7 @@ function stub(extra: Record<string, (c: Call) => Response> = {}) {
     "GET /v1/apps": () => json(200, { items: [APP_SUMMARY], next_cursor: null }),
     "GET /v1/apps/github": () => json(200, DETAIL),
     "GET /v1/apps/github/guide": () => json(404, { error: { code: "not_found", message: "x" } }),
+    "GET /v1/apps/github/connect-plan": () => json(200, PLAN),
     "GET /v1/workspaces/w1/oauth-clients": () => json(200, { items: [], next_cursor: null }),
     "GET /v1/workspaces/w1/connections": () => json(200, { items: [CONN], next_cursor: null }),
     "GET /v1/workspaces/w1/accounts": () => json(200, { items: [ACCOUNT], next_cursor: null }),
@@ -174,24 +181,22 @@ describe("Connect on the Apps tab", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Connect GitHub" }));
     const dialog = await screen.findByRole("dialog", { name: "Connect GitHub" });
     expect(await within(dialog).findByRole("button", { name: "Close" })).toBeInTheDocument();
-    expect(within(dialog).getByText("github 2.0.0")).toBeInTheDocument();
     expect(openSpy).not.toHaveBeenCalled();
   });
 
-  it("a fields method: submit in the dialog, missing scopes and Give agents access, then Skip closes it and refreshes", async () => {
+  it("a fields method: the token, Connect, missing permissions and the Done sentence; Close refreshes the lists", async () => {
     const calls = stub({
-      "POST /v1/apps/github/connect": () => json(200, { kind: "connected", connection: { ...CONN, id: "c9", scopes: ["repo"] }, missing_scopes: ["admin"] }),
+      "POST /v1/apps/github/connect": () => json(200, { kind: "connected", connection: { ...CONN, id: "c9", scopes: ["repo"] }, grants: [], missing_scopes: ["admin"] }),
     });
     wrap(apps());
     fireEvent.click(await screen.findByRole("button", { name: "Connect GitHub" }));
     fireEvent.change(await screen.findByLabelText("Token"), { target: { value: "ghp_x" } });
     const before = calls.filter((c) => c.path === "/v1/apps").length;
     fireEvent.click(screen.getByRole("button", { name: "Connect" }));
-    expect(await screen.findByText(/Some requested scopes were not granted: admin/)).toBeInTheDocument();
-    expect(screen.getByText("give-access scopes:repo")).toBeInTheDocument();
-    // scopes were refused: the notice stays after the step, with Done
-    fireEvent.click(screen.getByRole("button", { name: "Skip" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Done" }));
+    expect(await screen.findByText(/Some requested permissions were not granted: admin/)).toBeInTheDocument();
+    expect(screen.getByText("GitHub is connected. No agent can use it yet.")).toBeInTheDocument();
+    expect(calls.find((c) => c.method === "POST")?.body).toMatchObject({ scope: "workspace", workspace_id: "w1", method_id: "token", fields: { access_token: "ghp_x" } });
+    fireEvent.click(screen.getByRole("button", { name: "Done" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     await waitFor(() => expect(calls.filter((c) => c.path === "/v1/apps").length).toBeGreaterThan(before));
     expect(openSpy).not.toHaveBeenCalled();
@@ -218,6 +223,8 @@ function fakeWindow() {
 describe("OAuth sign-in in the dialog (C-842)", () => {
   async function openOauth() {
     fireEvent.click(await screen.findByRole("button", { name: "Connect GitHub" }));
+    // The journey suggests the token; signing in is one of the other ways, under Advanced.
+    fireEvent.click(await screen.findByText(/^Advanced/));
     fireEvent.click(await screen.findByRole("radio", { name: /Sign in/ }));
   }
 
@@ -229,7 +236,7 @@ describe("OAuth sign-in in the dialog (C-842)", () => {
     stub({ "POST /v1/apps/github/connect": () => json(200, { kind: "redirect", url: "https://provider.example/authorize?state=s" }) });
     wrap(apps());
     await openOauth();
-    fireEvent.click(screen.getByRole("button", { name: "Continue to sign in" }));
+    fireEvent.click(screen.getByRole("button", { name: "Sign in to GitHub" }));
     // synchronously: nothing was fetched yet, the window is already open and blank
     expect(openSpy).toHaveBeenCalledWith("about:blank", "aurora-sign-in", expect.stringContaining("popup"));
     expect(w.location.replace).not.toHaveBeenCalled();
@@ -239,24 +246,21 @@ describe("OAuth sign-in in the dialog (C-842)", () => {
     expect(screen.getByRole("button", { name: "Open the sign-in window again" })).toBeInTheDocument();
   });
 
-  it("a connected result for this app moves on to Give agents access and is acknowledged", async () => {
+  it("a connected result for this app moves on to Done and is acknowledged", async () => {
     const w = fakeWindow();
     openSpy.mockReturnValue(w);
     stub({ "POST /v1/apps/github/connect": () => json(200, { kind: "redirect", url: "https://provider.example/a" }) });
     wrap(apps());
     await openOauth();
-    fireEvent.click(screen.getByRole("button", { name: "Continue to sign in" }));
+    fireEvent.click(screen.getByRole("button", { name: "Sign in to GitHub" }));
     await screen.findByText("Waiting for you to sign in to GitHub…");
     // another app's result is ignored
     await emit({ type: "aurora:connected", app_id: "other", connection_id: "x", missing_scopes: [] });
     expect(screen.queryByText(/is connected/)).toBeNull();
-    await emit({ type: "aurora:connected", app_id: "github", connection_id: "c1", missing_scopes: [] });
-    expect(await screen.findByText("GitHub is connected.")).toBeInTheDocument();
-    // the scopes come from the refreshed connection
-    expect(await screen.findByText("give-access scopes:repo")).toBeInTheDocument();
+    await emit({ type: "aurora:connected", app_id: "github", connection_id: "c1", missing_scopes: [], granted_agent_ids: [] });
+    expect(await screen.findByText("GitHub is connected. No agent can use it yet.")).toBeInTheDocument();
     expect(FakeChannel.sent).toContainEqual({ type: "aurora:connect-ack", connection_id: "c1" });
-    // no missing scopes: Skip ends the step and closes the dialog
-    fireEvent.click(screen.getByRole("button", { name: "Skip" }));
+    fireEvent.click(screen.getByRole("button", { name: "Done" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
 
@@ -265,12 +269,12 @@ describe("OAuth sign-in in the dialog (C-842)", () => {
     stub({ "POST /v1/apps/github/connect": () => json(200, { kind: "redirect", url: "https://provider.example/a" }) });
     wrap(apps());
     await openOauth();
-    fireEvent.click(screen.getByRole("button", { name: "Continue to sign in" }));
+    fireEvent.click(screen.getByRole("button", { name: "Sign in to GitHub" }));
     await screen.findByText("Waiting for you to sign in to GitHub…");
     await emit({ type: "aurora:connect-failed", error: "oauth_exchange_failed" });
     expect(await screen.findByText(/did not complete \(oauth_exchange_failed\)/)).toBeInTheDocument();
     expect(FakeChannel.sent).toContainEqual({ type: "aurora:connect-ack", error: "oauth_exchange_failed" });
-    expect(screen.getByRole("button", { name: "Continue to sign in" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Sign in to GitHub" })).toBeInTheDocument();
   });
 
   it("a sign-in window closed without a result returns to the form", async () => {
@@ -279,11 +283,11 @@ describe("OAuth sign-in in the dialog (C-842)", () => {
     stub({ "POST /v1/apps/github/connect": () => json(200, { kind: "redirect", url: "https://provider.example/a" }) });
     wrap(apps());
     await openOauth();
-    fireEvent.click(screen.getByRole("button", { name: "Continue to sign in" }));
+    fireEvent.click(screen.getByRole("button", { name: "Sign in to GitHub" }));
     await screen.findByText("Waiting for you to sign in to GitHub…");
     w.closed = true;
     expect(await screen.findByText("Sign-in was cancelled.", undefined, { timeout: 3000 })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Continue to sign in" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Sign in to GitHub" })).toBeInTheDocument();
   });
 
   it("a blocked window says so, sends nothing, and offers a retry", async () => {
@@ -291,7 +295,7 @@ describe("OAuth sign-in in the dialog (C-842)", () => {
     const calls = stub();
     wrap(apps());
     await openOauth();
-    fireEvent.click(screen.getByRole("button", { name: "Continue to sign in" }));
+    fireEvent.click(screen.getByRole("button", { name: "Sign in to GitHub" }));
     expect(await screen.findByText(/browser blocked the sign-in window/)).toBeInTheDocument();
     expect(calls.some((c) => c.method === "POST")).toBe(false);
     openSpy.mockReturnValue(fakeWindow());
@@ -305,7 +309,7 @@ describe("OAuth sign-in in the dialog (C-842)", () => {
     stub({ "POST /v1/apps/github/connect": () => json(422, { error: { code: "validation_failed", message: "No OAuth client is configured." } }) });
     wrap(apps());
     await openOauth();
-    fireEvent.click(screen.getByRole("button", { name: "Continue to sign in" }));
+    fireEvent.click(screen.getByRole("button", { name: "Sign in to GitHub" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(/OAuth client/);
     expect(w.close).toHaveBeenCalled();
   });

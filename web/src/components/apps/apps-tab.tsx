@@ -14,7 +14,7 @@ import { appDisplayName, productKey, productName } from "@/lib/api/app-name";
 
 import { Markdown } from "@/components/ui/markdown";
 
-import { ConnectDialog } from "./connect-dialog";
+import { ConnectJourney } from "./connect-journey/connect-journey";
 import { useUrlDialog } from "./use-url-dialog";
 
 export function AppDetailBody({ app, workspaceId }: { app: string; workspaceId: string }) {
@@ -171,9 +171,8 @@ export function AppsTab({ workspaceId, orgId, canOwn }: { workspaceId: string; o
         ))}
       </ul>
       {target && target.available && canOwn ? (
-        <ConnectDialog
+        <ConnectJourney
           appId={target.app_id}
-          name={appDisplayName(target)}
           workspaceId={workspaceId}
           orgId={orgId}
           onClose={() => {

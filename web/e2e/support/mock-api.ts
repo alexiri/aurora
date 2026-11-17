@@ -164,6 +164,9 @@ export const previewShares = [
 
 export const user ={ id: id(99), display_name: "Ada Lovelace", email: "ada@example.test", is_instance_admin: true };
 
+/** (P5-UX-3) Accounts a spec's saves made, listed first by the workspace's accounts list; emptied by every `mockApi` call. */
+export const extraAccounts: Record<string, unknown>[] = [];
+
 export async function mockApi(
   page: Page,
   /** (FIX-029) Extra canned responses: a regex or exact path → JSON body, or `{status, body}`. */
@@ -171,6 +174,7 @@ export async function mockApi(
 ) {
   const exact = new Map<string, unknown>();
   const patterns: [RegExp, unknown][] = [];
+  extraAccounts.length = 0;
   // (P5-IA-4, C-969) The organization's retention: Administration's maximums above, saved values kept across requests.
   let retention: Record<string, unknown> = {
     conversations_days: 180, conversations_days_max: 365, attachments_days: null, attachments_days_max: 90,
@@ -479,7 +483,9 @@ export async function mockApi(
           ],
         },
         {
-          id: "token", kind: "fields", access_levels: [], default_scopes: [], scopes: [], recommended: false, label: "Personal access token",
+          id: "token", kind: "fields", access_levels: [], default_scopes: [], recommended: false, label: "Personal access token",
+          scopes: [{ scope: "repo", name: "Repositories", access: "write" }, { scope: "read:org", name: "Read your organizations", access: "read" }],
+          scope_presets: { read: ["read:org"], write: ["repo", "read:org"] },
           description: "Acts as you, on everything your account can reach. The quickest way to start for personal use; a fine-grained token can be limited to chosen repositories.",
           fields: [{ name: "access_token", label: "Personal access token", type: "secret", store: "credentials", required: true, placeholder: "Fine-grained or classic personal access token", help_url: "https://github.com/settings/personal-access-tokens" }],
         },
@@ -489,7 +495,27 @@ export async function mockApi(
           scopes: [{ scope: "read:user", name: "Read your profile", access: "read" }], fields: [],
         },
       ];
-      return json({ ...apps.find((x) => x.app_id === a.id), connect, credentials: [], hosts: [], metadata: [], oauth_clients: [], tools: [] });
+      // (P5-UX-2/3) Every method also carries the audience, the scope presets per access and the values to show.
+      const full = connect.map((m) => ({ probe_scopes: [], audience: "person", scope_presets: { read: [], write: [] }, show_context: [], ...m }));
+      return json({
+        ...apps.find((x) => x.app_id === a.id), connect: full, credentials: [], hosts: [], metadata: [], oauth_clients: [], tools: [
+          { id: "get_repo", name: "Get a repository", group: "read" }, { id: "create_issue", name: "Create an issue", group: "write" },
+        ],
+      });
+    }
+    // (P5-UX-2, C-955) What people here can do to connect an app. Sentry's sign-in is not set up: only an organization
+    // administrator can fix it (the journey's "Needs setup by an admin" group); every other app is ready with a token.
+    if (/^\/v1\/apps\/[^/]+\/connect-plan$/.test(p)) {
+      const app = p.split("/")[3]!;
+      const method = (mid: string, kind: string, over: Record<string, unknown> = {}) => ({
+        id: mid, kind, label: mid === "token" ? "Personal access token" : "OAuth", description: null, recommended: mid === "token", audience: "person", needs: [],
+        ready: true, scope_presets: mid === "token" ? { read: ["read:org"], write: ["repo", "read:org"] } : { read: [], write: [] }, ...over,
+      });
+      if (app === "sentry") {
+        const who = { action: "set_up_oauth", role: "org_admin", people: [{ id: id(99), name: "Ada Lovelace" }], you_can: false };
+        return json({ app_id: app, available: false, available_who_can: who, suggested_method: null, methods: [method("oauth", "oauth2", { ready: false, needs: ["oauth_client"], who_can: who })] });
+      }
+      return json({ app_id: app, available: true, suggested_method: "token", methods: [method("token", "fields"), method("oauth", "oauth2")] });
     }
     // (P5-UX-4, C-917) The one list of accounts: two apps, a website nobody can use yet and an AI key; the organization's
     // list has an app and an AI key. With `agent_id` the agent's own come first (`given`).
@@ -509,6 +535,7 @@ export async function mockApi(
       }
       return json({
         items: [
+          ...extraAccounts,
           { ref: { type: "connection", id: id(40) }, kind: "app", name: "acme-bot", scope: "workspace", levels: ["read", "ask", "act"], app: { app_id: "github", name: "GitHub", custom_only: false }, health: { state: "unknown", last_used_at: now }, agents: [{ ...who, level: "read" }], can, ...mark(true) },
           { ref: { type: "connection", id: id(41) }, kind: "app", name: "Product team", scope: "workspace", levels: ["read", "ask", "act"], app: { app_id: "linear", name: "Linear", custom_only: false }, health: { state: "sign_in_expired" }, agents: [{ ...who, level: "ask", always_allowed: [{ tool_id: "create_issue", name: "Create an issue" }] }], can, ...mark(true) },
           { ref: { type: "secret", id: id(60) }, kind: "ai_key", name: "Team key", scope: "workspace", levels: [], health: { state: "unknown", last_used_at: now }, agents: [{ ...who, level: "use", ...(forAgent ? { model: "claude-sonnet" } : {}) }], can, ...mark(true) },
@@ -679,7 +706,11 @@ const TOPIC_ROUTES: RouteEntry[] = [
   ...tab("/o/acme/data", ["retention", "storage", "audit"], "org-data"),
   ...tab("/o/acme/settings", ["general", "api-keys", "danger"], "org-settings"),
   ...tab("/o/acme/w/main/apps", ["accounts", "apps"], "ws-apps"),
-  { name: "ws-app-connect", path: "/o/acme/w/main/apps?tab=apps&connect=github" },
+  // (P5-UX-3) The connect journey: a given app (the Connect button, with the one agent preselected), the app step (empty
+  // `connect`, from Accounts › Add) and the agent's Access tab.
+  { name: "ws-connect-journey", path: "/o/acme/w/main/apps?tab=apps&connect=github" },
+  { name: "ws-connect-journey-apps", path: "/o/acme/w/main/apps?tab=accounts&connect=" },
+  { name: "ws-connect-journey-agent", path: "/o/acme/w/main/agents/daneel?tab=access&connect=github" },
   { name: "ws-internet-access", path: "/o/acme/w/main/internet-access" },
   { name: "ws-people", path: "/o/acme/w/main/people" },
   ...tab("/o/acme/w/main/settings", ["general", "api-keys", "audit", "danger"], "ws-settings"),
