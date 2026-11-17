@@ -111,7 +111,7 @@ test("1. fresh instance: the admin walks the setup wizard to a working chat", as
   await expect(guide.getByText(/Your organization provides an LLM key: Mock LLM/)).toBeVisible({ timeout: 30_000 });
   // Access: Daneel is preselected, one click — done from the server's state.
   await expect(guide.getByRole("checkbox", { name: /Daneel/ })).toBeChecked();
-  await guide.getByRole("button", { name: "Give access" }).click();
+  await guide.getByRole("button", { name: "Give Daneel access" }).click(); // (C-925) the button names who
   await expect(guide.getByText("2 of 3 done")).toBeVisible({ timeout: 30_000 });
   await guide.getByRole("link", { name: "Say hello to Daneel" }).click();
   await chatGetsAnswer(page);
@@ -165,7 +165,7 @@ test("3. new user without a starter grant: the guide waits for access, then the 
 
   // Access: Daneel is preselected, one click — done from the server's state.
   await expect(guide.getByRole("checkbox", { name: /Daneel/ })).toBeChecked();
-  await guide.getByRole("button", { name: "Give access" }).click();
+  await guide.getByRole("button", { name: "Give Daneel access" }).click(); // (C-925) the button names who
   await expect(guide.getByText("2 of 3 done")).toBeVisible({ timeout: 30_000 });
 
   // Reply.

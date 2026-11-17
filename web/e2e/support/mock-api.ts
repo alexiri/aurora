@@ -491,6 +491,32 @@ export async function mockApi(
       ];
       return json({ ...apps.find((x) => x.app_id === a.id), connect, credentials: [], hosts: [], metadata: [], oauth_clients: [], tools: [] });
     }
+    // (P5-UX-4, C-917) The one list of accounts: two apps, a website nobody can use yet and an AI key; the organization's
+    // list has an app and an AI key. With `agent_id` the agent's own come first (`given`).
+    if (/^\/v1\/(workspaces|orgs)\/[^/]+\/accounts$/.test(p)) {
+      const who = { agent: { id: agent.id, name: agent.name, handle: agent.handle }, workspace: { id: ws.id, name: ws.name } };
+      const can = { give_access: true, change_access: true, manage: true };
+      const forAgent = url.searchParams.get("agent_id") === agent.id;
+      const mark = (given: boolean) => (forAgent ? { given } : {});
+      if (p.startsWith("/v1/orgs/")) {
+        return json({
+          items: [
+            { ref: { type: "connection", id: id(43) }, kind: "app", name: "platform-prod", scope: "organization", levels: ["read", "ask", "act"], limit: "ask", app: { app_id: "aws-keys", name: "AWS", custom_only: false }, health: { state: "unknown", last_used_at: now }, agents: [{ ...who, level: "ask" }], can },
+            { ref: { type: "secret", id: id(62) }, kind: "ai_key", name: "Users AI gateway", scope: "organization", levels: [], health: { state: "unknown", last_used_at: now }, agents: [{ ...who, level: "use" }], can },
+          ],
+          next_cursor: null,
+        });
+      }
+      return json({
+        items: [
+          { ref: { type: "connection", id: id(40) }, kind: "app", name: "acme-bot", scope: "workspace", levels: ["read", "ask", "act"], app: { app_id: "github", name: "GitHub", custom_only: false }, health: { state: "unknown", last_used_at: now }, agents: [{ ...who, level: "read" }], can, ...mark(true) },
+          { ref: { type: "connection", id: id(41) }, kind: "app", name: "Product team", scope: "workspace", levels: ["read", "ask", "act"], app: { app_id: "linear", name: "Linear", custom_only: false }, health: { state: "sign_in_expired" }, agents: [{ ...who, level: "ask", always_allowed: [{ tool_id: "create_issue", name: "Create an issue" }] }], can, ...mark(true) },
+          { ref: { type: "secret", id: id(60) }, kind: "ai_key", name: "Team key", scope: "workspace", levels: [], health: { state: "unknown", last_used_at: now }, agents: [{ ...who, level: "use", ...(forAgent ? { model: "claude-sonnet" } : {}) }], can, ...mark(true) },
+          { ref: { type: "secret", id: id(61) }, kind: "website", name: "Weather API", scope: "workspace", levels: [], health: { state: "unknown" }, agents: [], can, ...mark(false) },
+        ],
+        next_cursor: null,
+      });
+    }
     // The two lists are different scopes: these are workspace connections, the organization's list has none.
     // (Serving them for both made the Access tab, which merges the lists, render ids 40/41 twice.)
     if (p.endsWith("/connections")) {

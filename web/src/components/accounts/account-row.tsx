@@ -82,11 +82,12 @@ export function AccountRow({
         {account.app ? <AppIcon appId={account.app.app_id} name={account.app.name} size={32} /> : null}
         <div className="min-w-0 flex-1 space-y-1">
           <div className="flex flex-wrap items-center gap-2">
-            <h3 className="min-w-0 break-words font-display text-base font-semibold text-ink">{account.name}</h3>
+            <h3 className="min-w-0 break-words font-display text-base font-semibold text-ink">
+              {account.app && account.app.name !== account.name ? `${account.app.name} · ${account.name}` : account.name}
+            </h3>
             <Badge>{kindLabel(account.kind)}</Badge>
             {shared ? <Badge tone="accent">Shared by your organization</Badge> : null}
           </div>
-          {account.app && account.app.name !== account.name ? <p className="text-sm text-muted">{account.app.name}</p> : null}
           <AccountHealth account={account} reconnectHref={account.can.manage ? reconnectHref : undefined} />
           {shared && account.managed_by ? <WhoCan value={account.managed_by} /> : null}
         </div>
