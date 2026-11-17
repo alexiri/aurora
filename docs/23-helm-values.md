@@ -350,8 +350,8 @@ Deployment, its LoadBalancer Service (published port → 2222) and a headless op
 PodDisruptionBudget (from two replicas) and the terminator NetworkPolicy, adds the api ingress from the terminator and
 the runner ingress on :4108, opens the runner's :4108 beside previews and the terminal, makes the `secrets` hook
 generate `AURORA_TERMINATOR_TOKEN`, `AURORA_SSH_CA_KEY` and `AURORA_SSH_HOST_KEY` when absent (never overwriting;
-with `secrets.existingSecret` create them yourself), mounts the CA key into the **api pods only** and the host key into
-the **terminator pods only**, and mirrors `config.ssh.enabled`. **SSH needs the web terminal enabled, because the sandbox boot document carries the exec capability only with it**
+with `secrets.existingSecret` create them yourself), mounts the CA key into the **api pods only** (and the `migrate` hook Job, which runs the API image and
+validates the same configuration) and the host key into the **terminator pods only**, and mirrors `config.ssh.enabled`. **SSH needs the web terminal enabled, because the sandbox boot document carries the exec capability only with it**
 (`domains/runner_plane/boot.rs`: `terminal` is added only when `terminal.enabled`; the supervisor refuses every exec
 without it) — an open follow-up is to widen that gate so SSH can run without the web terminal. The render **fails**
 when `ssh.enabled` is set without `runner.enabled`, without `terminal.enabled` or — while `networkPolicy.enabled` — with an empty `networkPolicy.sshFrom`; and when

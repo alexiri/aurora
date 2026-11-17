@@ -466,6 +466,12 @@ spec:
                    same extra environment (e.g. AURORA_*_CLIENT_SECRET for OIDC providers): a
                    missing `*_env` variable fails the configuration check before any migration runs. */}}
             {{- with .Values.api.extraEnv }}{{ toYaml . | nindent 12 }}{{ end }}
+            {{- /* (P4-SSH-2) the same check refuses `ssh.enabled` without a parsable AURORA_SSH_CA_KEY: the migrate
+                   Job runs the API image, so the CA key reaches it as it reaches the api pods (and nothing else). */}}
+            {{- if .Values.ssh.enabled }}
+            - name: AURORA_SSH_CA_KEY
+              valueFrom: {secretKeyRef: {name: {{ include "aurora.secretName" . }}, key: AURORA_SSH_CA_KEY}}
+            {{- end }}
           volumeMounts: [{name: config, mountPath: /etc/aurora, readOnly: true}, {name: tmp, mountPath: /tmp}]
       volumes:
         - {name: config, configMap: {name: {{ $full }}-config}}

@@ -1242,7 +1242,7 @@ notice to the client); clients reconnect.
 never overwritten; with `secrets.existingSecret` create them yourself):
 - `AURORA_TERMINATOR_TOKEN` — `aut_` + 48 hex characters; the terminator's anchor (the API reads the
   same key as `AURORA_BOOTSTRAP_TERMINATOR_TOKEN`). Rotate by replacing the value and rolling both.
-- `AURORA_SSH_CA_KEY` — the user-certificate CA, mounted **into the API pods only**. Generated as
+- `AURORA_SSH_CA_KEY` — the user-certificate CA, mounted **into the API pods only** (and the `migrate` hook Job, which runs the API image and refuses `ssh.enabled` without it). Generated as
   `ed25519:` + base64 of 32 random bytes (the hook has no `ssh-keygen`); an operator may supply an
   OpenSSH key (`ssh-keygen -t ed25519 -N '' -f ca`). **Rotation**: put the old public key into
   `config.ssh.ca.previous_public_keys`, replace the private key, roll the API; terminators learn both at

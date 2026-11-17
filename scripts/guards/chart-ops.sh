@@ -201,6 +201,13 @@ if ports_from(next(p for n, p in pol.items() if n.endswith("-api")), "terminator
 if ports_from(next(p for n, p in pol.items() if n.endswith("-runner")), "terminator") != {4108}: fail("runner must admit the terminator on 4108")
 if sum(1 for d in docs if d["kind"] == "PodMonitor" and d["metadata"]["name"].endswith("-terminator")) != 1: fail("no terminator PodMonitor")
 if not any(d["kind"] == "PodDisruptionBudget" and d["metadata"]["name"].endswith("-terminator") for d in docs): fail("no terminator PDB at two replicas")
+# The migrate hook Job validates the API configuration, so it needs the CA key too (and no other Job does).
+for d in docs:
+    if d["kind"] == "Job":
+        names = {e["name"] for c in d["spec"]["template"]["spec"]["containers"] for e in (c.get("env") or [])}
+        want = d["metadata"]["name"].endswith("-migrate")
+        if ("AURORA_SSH_CA_KEY" in names) != want:
+            fail("the CA key must reach the migrate Job and no other Job (%s)" % d["metadata"]["name"])
 print("chart-ops: ssh terminator posture ok")
 '
 "${H[@]}" "${SSH_ON[@]}" | analyse "ssh on"
