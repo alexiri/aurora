@@ -141,7 +141,7 @@ describe("org Apps page (C-894)", () => {
     wrap(<AvailabilityView orgId="o1" orgSlug="acme" canEdit />);
     const list = await screen.findByRole("list", { name: "Installed apps" });
     expect(within(list).getByText("CERN Phonebook")).toBeInTheDocument();
-    expect(screen.getByText(/Every app is available/)).toBeInTheDocument();
+    expect(screen.getByLabelText("People can connect every app")).toBeChecked();
     fireEvent.click(within(list).getByRole("button", { name: "Connect CERN Phonebook" }));
     const dlg = await screen.findByRole("dialog");
     await within(dlg).findByRole("list", { name: "Your workspaces" });

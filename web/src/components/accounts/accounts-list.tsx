@@ -32,10 +32,13 @@ export function AccountsList({
   agent,
   banner,
   kind,
+  appId,
 }: {
   scope: SecretScope;
   orgId: string;
   canOwn: boolean;
+  /** (P5-UX-9) Only this app's accounts, for the app's setup page: no Add, and an empty list says so in one line. */
+  appId?: string;
   /** The agent whose Access tab this is: its accounts come first, the others are collapsed under "Not given to …". */
   agent?: { id: string; name: string };
   banner?: ReactNode;
@@ -62,7 +65,7 @@ export function AccountsList({
 
   if (accounts.isPending) return <Loading />;
   if (accounts.isError) return <ErrorState error={accounts.error} onRetry={() => accounts.refetch()} />;
-  const items = accounts.data.items.filter((a) => !kind || a.kind === kind);
+  const items = accounts.data.items.filter((a) => (!kind || a.kind === kind) && (!appId || a.app?.app_id === appId));
   const canReconnect = (a: Account) => canOwn && scope.kind === "workspace" && a.ref.type === "connection" && a.scope === "workspace";
   const row = (a: Account) => (
     <AccountRow
@@ -78,7 +81,7 @@ export function AccountsList({
   const target = reconnecting ? items.find((a) => a.ref.id === reconnecting && a.ref.type === "connection") : undefined;
   const reconnectOk = target ? canReconnect(target) : false;
 
-  const addEntries = agent ? (
+  const addEntries = appId ? null : agent ? (
     <>
       {canOwn ? (
         <Button size="sm" onClick={() => setConnecting("")}>
@@ -127,7 +130,9 @@ export function AccountsList({
           </Button>
         </div>
       ) : null}
-      {items.length === 0 ? (
+      {items.length === 0 && appId ? (
+        <p className="text-sm text-ink-2">No accounts of this app {scope.kind === "workspace" ? "in this workspace" : "for the whole organization"} yet.</p>
+      ) : items.length === 0 ? (
         scope.kind === "workspace" ? (
           agent ? (
             <EmptyState

@@ -9,7 +9,6 @@ import { OAuthClientsPanel } from "@/components/apps/oauth-clients-panel";
 import { ChannelsView } from "@/components/channels/channels-view";
 import { AccountsPanel } from "@/components/accounts/accounts-panel";
 import { GovernanceView, type Tab as GovernancePanel } from "@/components/governance/governance-view";
-import { AppsPosturePanel } from "@/components/governance/apps-posture-panel";
 import { GroupsView } from "@/components/groups/groups-view";
 import { OrgAuditView } from "@/components/org/audit-view";
 import { OrgDirectoryView } from "@/components/org/directory-view";
@@ -91,10 +90,7 @@ export function OrgAppsPage() {
               label: "Apps",
               content: (
                 <EmbeddedPage headed>
-                  <div className="space-y-8">
-                    <AvailabilityView orgId={org.id} orgSlug={slug} canEdit />
-                    <AppsPosturePanel orgId={org.id} orgSlug={slug} readOnly={false} />
-                  </div>
+                  <AvailabilityView orgId={org.id} orgSlug={slug} canEdit />
                 </EmbeddedPage>
               ),
             },

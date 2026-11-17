@@ -1,10 +1,13 @@
 "use client";
 
+import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { useState, type FormEvent } from "react";
 
 import { EmptyState, ErrorState, Loading } from "@/components/states";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Field, inputClass } from "@/components/ui/field";
 import { Form, FormActions } from "@/components/ui/form";
 import { Notice } from "@/components/ui/notice";
@@ -12,12 +15,14 @@ import { appDisplayName } from "@/lib/api/app-name";
 import { errorMessage } from "@/lib/api/errors";
 import {
   buildClientPatchFields,
+  useApp,
   useAppInstances,
   useApps,
   useCreateOAuthClient,
   useDeleteOAuthClient,
   useOAuthClients,
   usePatchOAuthClient,
+  type AppDetail,
   type AppInstance,
   type CredScope,
   type InstanceScope,
@@ -27,14 +32,36 @@ import {
 import { useQueries } from "@tanstack/react-query";
 import { api } from "@/lib/api/client";
 import { unwrap } from "@/lib/api/unwrap";
+import { clientLabel } from "@/lib/apps/setup-copy";
+import { cn } from "@/lib/utils";
+
+import { useAppHref } from "./app-link";
 
 interface Definition {
+  app_id: string;
   package_id: string;
   app_name: string;
   def: OAuthClientDefinition;
   /** The app can be served by self-hosted instances (D-74): a client may be bound to one. */
   instance_bound: boolean;
   default_host: string | null;
+}
+
+/** (C-946) "<app> — for <method label>": what the picker and the lists call a client; the `client_key` is its tooltip. */
+function definitionLabel(d: Definition): string {
+  return clientLabel(d.app_name, d.def.used_by_methods);
+}
+
+function definitionsOf(detail: AppDetail, into: Map<string, Definition>): void {
+  for (const d of detail.oauth_clients ?? [])
+    into.set(`${detail.package_id}|${d.client_key}`, {
+      app_id: detail.app_id,
+      package_id: detail.package_id,
+      app_name: appDisplayName(detail),
+      def: d,
+      instance_bound: detail.instances != null,
+      default_host: detail.instances?.default_host ?? null,
+    });
 }
 
 /** Definitions (fields, setup note, redirect URI) come from AppDetail.oauth_clients; no app knowledge lives in the bundle. */
@@ -48,15 +75,7 @@ function useDefinitions(scope: CredScope) {
     })),
   });
   const defs = new Map<string, Definition>();
-  for (const q of detailQueries)
-    for (const d of q.data?.oauth_clients ?? [])
-      defs.set(`${q.data!.package_id}|${d.client_key}`, {
-        package_id: q.data!.package_id,
-        app_name: appDisplayName(q.data!),
-        def: d,
-        instance_bound: q.data!.instances != null,
-        default_host: q.data!.instances?.default_host ?? null,
-      });
+  for (const q of detailQueries) if (q.data) definitionsOf(q.data, defs);
   return defs;
 }
 
@@ -121,14 +140,20 @@ function CreateForm({
   onDone,
   defs,
   instances,
+  initialChoice = "",
+  bare = false,
 }: {
   scope: CredScope;
   onDone: () => void;
   defs: Map<string, Definition>;
   instances: AppInstance[];
+  /** `<package>|<client key>` chosen when the form opens (the page that opened it knows the app). */
+  initialChoice?: string;
+  /** In a dialog: no card around the form. */
+  bare?: boolean;
 }) {
   const create = useCreateOAuthClient(scope);
-  const [choice, setChoice] = useState("");
+  const [choice, setChoice] = useState(initialChoice);
   const [instanceId, setInstanceId] = useState("");
   const [values, setValues] = useState<Record<string, string>>({});
   const selected = defs.get(choice);
@@ -156,7 +181,11 @@ function CreateForm({
     }
   }
   return (
-    <Form onSubmit={(e) => void submit(e)} className="rounded-card border border-line bg-surface p-4 shadow-card sm:p-5" aria-label="Add OAuth client">
+    <Form
+      onSubmit={(e) => void submit(e)}
+      className={cn(!bare && "rounded-card border border-line bg-surface p-4 shadow-card sm:p-5")}
+      aria-label="Add OAuth client"
+    >
       <Field id="oc-app" label="App">
         <select
           id="oc-app"
@@ -171,7 +200,7 @@ function CreateForm({
         >
           <option value="">Select…</option>
           {[...defs.entries()].map(([k, o]) => (
-            <option key={k} value={k}>{`${o.app_name} (${o.def.client_key})`}</option>
+            <option key={k} value={k} title={o.def.client_key}>{definitionLabel(o)}</option>
           ))}
         </select>
       </Field>
@@ -204,19 +233,29 @@ function CreateForm({
   );
 }
 
-function ClientRow({
+export function ClientRow({
   scope,
   c,
   canOwn,
   def,
+  appName,
+  appId,
   instanceHost,
+  linkApp = true,
 }: {
   scope: CredScope;
   c: OAuthClient;
   canOwn: boolean;
   def?: OAuthClientDefinition;
+  /** The app's name (C-946: the row says "<app> — for <method>"); the package id when the app is not installed. */
+  appName?: string;
+  appId?: string;
   instanceHost?: string;
+  /** The app's name is a link (C-933); off on the app's own page. */
+  linkApp?: boolean;
 }) {
+  const linkTarget = useAppHref()({ app_id: appId ?? "", package_id: c.package_id });
+  const title = clientLabel(appName ?? c.package_id, def?.used_by_methods);
   const patch = usePatchOAuthClient(scope);
   const del = useDeleteOAuthClient(scope);
   const [mode, setMode] = useState<"none" | "edit" | "delete">("none");
@@ -245,8 +284,12 @@ function ClientRow({
     <li className="space-y-3 rounded-card border border-line bg-surface p-4 shadow-card">
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
         <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-          <span className="font-medium text-ink">{c.package_id}</span>{" "}
-          <span className="font-mono text-xs text-muted">{c.client_key} · {c.scope} · {c.connection_count} connection{c.connection_count === 1 ? "" : "s"}</span>
+          {linkApp && linkTarget && (appId || scope.kind === "instance") ? (
+            <Link href={linkTarget} className="font-medium text-link hover:underline" title={c.client_key}>{title}</Link>
+          ) : (
+            <span className="font-medium text-ink" title={c.client_key}>{title}</span>
+          )}{" "}
+          <span className="text-xs text-muted">{c.scope} · {c.connection_count} connection{c.connection_count === 1 ? "" : "s"}</span>
           {c.instance_id ? <Badge className="font-mono normal-case tracking-normal">{instanceHost ?? "self-hosted app"}</Badge> : null}
           {!c.enabled ? <Badge>Disabled</Badge> : null}
         </div>
@@ -254,7 +297,7 @@ function ClientRow({
           <div className="flex flex-wrap gap-2">
             <Button size="sm" variant="outline" disabled={patch.isPending} onClick={() => patch.mutate({ id: c.id, enabled: !c.enabled })}>{c.enabled ? "Turn off" : "Turn on"}</Button>
             <Button size="sm" variant="outline" onClick={startEdit}>Edit</Button>
-            <Button size="sm" variant="danger" onClick={() => setMode("delete")} aria-label={`Delete ${c.client_key}`}>Delete</Button>
+            <Button size="sm" variant="danger" onClick={() => setMode("delete")} aria-label={`Delete ${title}`}>Delete</Button>
           </div>
         ) : null}
       </div>
@@ -264,7 +307,7 @@ function ClientRow({
         ))}
       </dl>
       {mode === "edit" ? (
-        <Form onSubmit={(e) => void save(e)} aria-label={`Edit ${c.client_key}`} className="border-t border-line pt-3">
+        <Form onSubmit={(e) => void save(e)} aria-label={`Edit ${title}`} className="border-t border-line pt-3">
           {def ? (
             <DefinitionInputs def={def} values={edits} onChange={setEdits} existing />
           ) : (
@@ -279,7 +322,7 @@ function ClientRow({
         </Form>
       ) : null}
       {mode === "delete" ? (
-        <Notice tone="danger" role="alertdialog" aria-label={`Delete ${c.client_key}`} className="space-y-2">
+        <Notice tone="danger" role="alertdialog" aria-label={`Delete ${title}`} className="space-y-2">
           <p>Delete this OAuth client?</p>
           {del.error ? <p role="alert">{errorMessage(del.error)}</p> : null}
           <div className="flex gap-2">
@@ -306,14 +349,22 @@ export function OAuthClientsPanel({ scope, canOwn, orgId }: { scope: CredScope; 
           : undefined;
   const instances = useAppInstances(instScope).data?.items ?? [];
   const hosts = new Map(instances.map((i) => [i.id, i.base_url]));
-  const [adding, setAdding] = useState(false);
+  // (C-933) `?package=<package>[&client_key=<key>]` opens the form with that app's client chosen ("OAuth clients for this app").
+  const params = useSearchParams();
+  const wantPackage = params.get("package");
+  const wantKey = params.get("client_key");
+  const wanted = wantPackage
+    ? ([...defs.entries()].find(([k]) => (wantKey ? k === `${wantPackage}|${wantKey}` : k.startsWith(`${wantPackage}|`)))?.[0] ?? "")
+    : "";
+  const [adding, setAdding] = useState(!!wantPackage && canOwn);
   if (list.isPending) return <Loading />;
   if (list.isError) return <ErrorState error={list.error} onRetry={() => list.refetch()} />;
   return (
     <div className="space-y-3">
       {canOwn ? (
         adding ? (
-          <CreateForm scope={scope} defs={defs} instances={instances} onDone={() => setAdding(false)} />
+          // Keyed by the definitions that arrived: the definitions load after the form opens, and the choice follows them.
+          <CreateForm key={wanted} scope={scope} defs={defs} instances={instances} initialChoice={wanted} onDone={() => setAdding(false)} />
         ) : (
           <div>
             <Button variant="outline" onClick={() => setAdding(true)}>Add an OAuth client</Button>
@@ -331,11 +382,60 @@ export function OAuthClientsPanel({ scope, canOwn, orgId }: { scope: CredScope; 
               c={c}
               canOwn={canOwn}
               def={defs.get(`${c.package_id}|${c.client_key}`)?.def}
+              appName={defs.get(`${c.package_id}|${c.client_key}`)?.app_name}
+              appId={defs.get(`${c.package_id}|${c.client_key}`)?.app_id}
               instanceHost={c.instance_id ? hosts.get(c.instance_id) : undefined}
             />
           ))}
         </ul>
       )}
     </div>
+  );
+}
+
+/**
+ * (P5-UX-9, C-932) **Register an OAuth client** for one app, in a dialog: the panel's form with the app (and, when it has
+ * one client definition, the client) chosen and the callback URL shown. Opened from the app's setup page.
+ */
+export function OAuthClientDialog({
+  scope,
+  appId,
+  orgId,
+  onClose,
+}: {
+  scope: CredScope;
+  appId: string;
+  orgId?: string;
+  onClose: () => void;
+}) {
+  const detail = useApp(appId, scope.kind === "workspace" ? scope.id : undefined);
+  const instScope: InstanceScope | undefined =
+    scope.kind === "organization" ? { kind: "organization", id: scope.id } : orgId ? { kind: "organization", id: orgId } : undefined;
+  const instances = useAppInstances(instScope).data?.items ?? [];
+  const defs = new Map<string, Definition>();
+  if (detail.data) definitionsOf(detail.data, defs);
+  const only = defs.size === 1 ? [...defs.keys()][0]! : "";
+  return (
+    <Dialog open onOpenChange={(o) => (o ? undefined : onClose())}>
+      <DialogContent
+        size="md"
+        title="Register an OAuth client"
+        description={
+          scope.kind === "workspace"
+            ? "Only this workspace uses it. Everyone in the organization can use one registered for the organization."
+            : "Everyone in the organization can use it."
+        }
+      >
+        {detail.isPending ? (
+          <Loading />
+        ) : detail.isError ? (
+          <ErrorState error={detail.error} onRetry={() => detail.refetch()} />
+        ) : defs.size === 0 ? (
+          <p className="text-sm text-ink-2">{appDisplayName(detail.data)} does not sign in with an OAuth client.</p>
+        ) : (
+          <CreateForm key={only} bare scope={scope} defs={defs} instances={instances} initialChoice={only} onDone={onClose} />
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }

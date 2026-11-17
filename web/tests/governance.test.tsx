@@ -147,40 +147,12 @@ describe("GovernanceView", () => {
     expect(body!.document.egress.open_lane).toBe("disabled");
   });
 
-  it("the app posture is changed on the Apps tab through its own route, keeping the allow-list (FIX-130)", async () => {
-    const puts: unknown[] = [];
-    const governancePuts: unknown[] = [];
-    mockFetch(routes({
-      "GET /v1/orgs/o1/app-availability": () => json(200, { posture: "open", allow: [{ app_id: "gh" }] }),
-      "PUT /v1/orgs/o1/app-availability": async (req) => {
-        const b = await req.json();
-        puts.push(b);
-        return json(200, b);
-      },
-      "PUT /v1/orgs/o1/governance": async (req) => {
-        governancePuts.push(await req.json());
-        return json(200, { document: doc, revision: 5 });
-      },
-    }));
-    wrap(<GovernanceView orgId="o1" orgSlug="acme" canEdit />);
-    fireEvent.click(await screen.findByRole("tab", { name: "Apps" }));
-    expect(await screen.findByRole("link", { name: /Choose available apps/ })).toHaveAttribute("href", "/o/acme/apps?tab=apps");
-    // no governance document save on this tab
-    expect(screen.queryByRole("button", { name: "Save governance" })).toBeNull();
-    const save = screen.getByRole("button", { name: "Save app posture" });
-    expect(save).toBeDisabled();
-    fireEvent.click(screen.getByLabelText(/Restricted/));
-    fireEvent.click(save);
-    await waitFor(() => expect(puts).toEqual([{ posture: "restricted", allow: [{ app_id: "gh" }] }]));
-    expect(await screen.findByText("App posture saved.")).toBeTruthy();
-    expect(governancePuts).toEqual([]);
-  });
-
-  it("members get no Apps tab (the posture is owner/admin only)", async () => {
+  it("has no Apps tab: which apps people may connect is set on Apps & accounts › Apps (P5-UX-9, C-933)", async () => {
     mockFetch(routes());
-    wrap(<GovernanceView orgId="o1" orgSlug="acme" canEdit={false} />);
+    wrap(<GovernanceView orgId="o1" orgSlug="acme" canEdit />);
     await screen.findByText("Anthropic");
     expect(screen.queryByRole("tab", { name: "Apps" })).toBeNull();
+    expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(expect.not.arrayContaining(["Apps"]));
   });
 
   it("admins save with revision; stale revision prompts reload", async () => {

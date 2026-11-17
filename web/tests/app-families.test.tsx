@@ -101,7 +101,7 @@ describe("app names", () => {
       "components/accounts/free-apps.tsx",
       "components/agents/grant-editor.tsx",
       "components/credentials/give-access.tsx",
-      "components/apps/availability-view.tsx",
+      "components/apps/org-apps-list.tsx",
       "components/apps/instances-view.tsx",
       "components/apps/oauth-clients-panel.tsx",
       "components/apps/apps-tab.tsx",

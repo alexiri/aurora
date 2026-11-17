@@ -116,25 +116,28 @@ describe("availability editor", () => {
       return json(200, state);
     }));
 
-  it("PUTs the whole list with the posture as it is (restricted: the toggles show)", async () => {
+  const GH = { app_id: "gh", name: "GitHub", package_id: "github", description: "Code", has_dark_icon: false, available: true } as unknown as Parameters<typeof AvailabilityEditor>[0]["apps"][number];
+
+  it("(C-933) one Save sends the choice and the list together; the switches show when only some apps are allowed", async () => {
     const puts: unknown[] = [];
-    availabilityFetch({ posture: "restricted", allow: [] }, puts);
-    wrap(<AvailabilityEditor orgId="o1" orgSlug="acme" initial={{ posture: "restricted", allow: [] }} apps={[{ app_id: "gh", name: "GitHub" }]} canEdit />);
-    // the posture is not set here any more (FIX-130): no radio, a link to the posture panel on Apps & accounts › Apps
-    expect(screen.queryByLabelText(/Restricted/)).toBeNull();
-    expect(screen.getByRole("link", { name: "Apps & accounts › Apps" })).toHaveAttribute("href", "/o/acme/apps?tab=apps");
-    fireEvent.click(screen.getByLabelText("GitHub"));
+    availabilityFetch({ posture: "open", allow: [] }, puts);
+    wrap(<AvailabilityEditor orgId="o1" orgSlug="acme" initial={{ posture: "open", allow: [] }} apps={[GH]} canEdit />);
+    // open: the list has no switches; the app's name leads to its setup page
+    expect(screen.getByLabelText("People can connect every app")).toBeChecked();
+    expect(screen.queryByRole("checkbox", { name: "GitHub" })).toBeNull();
+    expect(screen.getByRole("link", { name: "GitHub" })).toHaveAttribute("href", "/o/o1/w/w1/apps/gh");
+    fireEvent.click(screen.getByLabelText("People can connect only the apps switched on below"));
+    fireEvent.click(screen.getByRole("checkbox", { name: "GitHub" }));
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(puts).toEqual([{ posture: "restricted", allow: [{ app_id: "gh" }] }]));
     await screen.findByText("Saved.");
   });
 
-  it("while the posture is open it says so and links to the posture, with no toggles", () => {
-    availabilityFetch({ posture: "open", allow: [] }, []);
-    wrap(<AvailabilityEditor orgId="o1" orgSlug="acme" initial={{ posture: "open", allow: [] }} apps={[{ app_id: "gh", name: "GitHub" }]} canEdit />);
-    expect(screen.getByText(/Every app is available/)).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Apps & accounts › Apps" })).toHaveAttribute("href", "/o/acme/apps?tab=apps");
-    expect(screen.queryByLabelText("GitHub")).toBeNull();
+  it("a restricted organization shows its switches; a member sees who can change them instead of Save", () => {
+    availabilityFetch({ posture: "restricted", allow: [{ app_id: "gh" }] }, []);
+    wrap(<AvailabilityEditor orgId="o1" orgSlug="acme" initial={{ posture: "restricted", allow: [{ app_id: "gh" }] }} apps={[GH]} canEdit={false} />);
+    expect(screen.getByRole("checkbox", { name: "GitHub" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "GitHub" })).toBeDisabled();
     expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
   });
 });
@@ -147,7 +150,7 @@ describe("oauth client secrets", () => {
   it("edit form is built from the definition; secrets are password inputs, never prefilled", async () => {
     const detail = {
       app_id: "a1", package_id: "p", name: "App", connect: [],
-      oauth_clients: [{ client_key: "main", setup_note: "Create an app first.", redirect_uri: "https://x.test/v1/oauth/callback",
+      oauth_clients: [{ client_key: "main", used_by_methods: [{ id: "oauth", label: "Sign in with App" }], setup_note: "Create an app first.", redirect_uri: "https://x.test/v1/oauth/callback",
         fields: [{ name: "client_id", label: "Client ID", secret: false }, { name: "client_secret", label: "Client secret", secret: true }] }],
     };
     vi.stubGlobal("fetch", vi.fn(async (input: Request) => {
@@ -158,7 +161,8 @@ describe("oauth client secrets", () => {
       return json(200, { items: [] });
     }));
     wrap(<OAuthClientsPanel scope={{ kind: "workspace", id: "w1" }} canOwn />);
-    await screen.findByText("main", { exact: false });
+    // (C-946) the row says what the client is for, never its key
+    await screen.findByText("App — for Sign in with App");
     await waitFor(() => fireEvent.click(screen.getByRole("button", { name: "Edit" })));
     const secret = await screen.findByLabelText("Client secret");
     expect(secret).toHaveAttribute("type", "password");
