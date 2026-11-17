@@ -34,6 +34,8 @@ import {
 } from "@/lib/api/action-approvals";
 import { errorMessage } from "@/lib/api/errors";
 
+import { OwnSendApprovals } from "./own-send-approvals";
+
 /** Summary text is untrusted data: React text nodes only, never HTML. */
 export function ApprovalCard({
   approval: a,
@@ -234,14 +236,19 @@ export function ActionApprovalCard({
           {message}
         </p>
       ) : null}
-      <div className="flex flex-wrap justify-end gap-2">
-        <Button size="lg" variant="outline" disabled={pending} onClick={() => onDecide("deny")}>
-          Block
-        </Button>
-        <Button size="lg" variant="approve" disabled={pending} onClick={() => onDecide("approve")}>
-          Allow once
-        </Button>
-      </div>
+      {a.action_key === "send_as_me" ? (
+        // (P4-UTOK, D-283) A post as a person is decided by that person alone, on their own page with the full text.
+        <p className="text-sm text-ink-2">Only the person it would speak for can decide this.</p>
+      ) : (
+        <div className="flex flex-wrap justify-end gap-2">
+          <Button size="lg" variant="outline" disabled={pending} onClick={() => onDecide("deny")}>
+            Block
+          </Button>
+          <Button size="lg" variant="approve" disabled={pending} onClick={() => onDecide("approve")}>
+            Allow once
+          </Button>
+        </div>
+      )}
     </li>
   );
 }
@@ -415,6 +422,7 @@ export function ApprovalsView({ wsId }: { wsId: string }) {
         className="mb-4"
       />
       <div role="tabpanel" id={tabPanelId("approvals", tab)} aria-labelledby={tabId("approvals", tab)} className="space-y-8">
+        {tab === "pending" ? <OwnSendApprovals /> : null}
         {tab === "pending" ? <PendingTab wsId={wsId} /> : <HistoryTab wsId={wsId} />}
         <section aria-label="Action approvals" className="space-y-3">
           <h2 className="text-lg font-semibold text-ink">Action approvals</h2>
