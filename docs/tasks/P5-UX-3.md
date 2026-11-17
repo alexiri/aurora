@@ -133,3 +133,20 @@ agent's access are made in one request. The existing controls stay under **Advan
 
 Sonnet (`nextjs-developer`). A multi-step dialog with extraction from a large existing component and an
 OAuth window round trip.
+
+## Completion report (partial, lane p5-apps, 2026-11-17)
+
+**Done (commit 6de40829, web only; `pnpm typecheck` clean, `eslint src tests` 0 errors, full `vitest run` before the last fixes: 2063 pass, the 4 failures it showed were fixed and re-run green by file — a final full run was not repeated):**
+- `components/apps/connect-journey/`: `connect-journey.tsx` (dialog, step state, existing-account save, grant_failed retry, Done), `app-step.tsx` (tiles in three groups, plan read on focus/click only, blocked tile with `WhoCan`, family one tile and `DeploymentStep` only when a self-hosted server is registered), `sign-in-step.tsx` (suggested method only; **Sign in to <App>**; **Create a token on <App>** + "tick" line from `scope_presets`; `CopyValue` for `show_context`; blocked method → `WhoCan`; **Advanced** with the other methods (blocked ones disabled with the reason), scopes, OAuth client, instance, **Use a self-hosted <App>**, setup guide; `WebsiteStep` for **Another website or API**, saved through C-988 with `grant`), `logic.ts` (pure: steps and skips, levels, Done sentences, tick list, payload, C-958 sentences, host), `advanced-fields.tsx` and `use-sign-in-window.ts` (extracted from `connect-dialog.tsx`; Reconnect's `ConnectForm` uses them, no duplicate).
+- Entry points: Accounts › Add › **Connect an app or website**, agent Access › **Give <Agent> an app**, empty states, the Apps tab's **Connect**, and the deep links `?tab=access&connect=<app>`, `?tab=apps&connect=<app>`, `?connect=` (empty = App step). `appsHref` removed. Only owners see the buttons.
+- API client: `useConnectPlan`, `ConnectChannelMessage.connected` gains `grantedAgentIds`/`grantFailed`, `buildGenericCreate` takes `agentIds`; `ChoiceCards` option `disabled` (shared primitive).
+- C-942: the Bedrock assume-role form shows the organization's external id as `CopyValue` above its fields (the trust-policy snippet stays below).
+- Vitest: `tests/connect-journey.test.tsx` (22: steps/skips, Done sentences, payload per access, blocked tile, blocked method, existing account saves only access, grant_failed retry, website one request, one-agent preselection); `connect-dialog.test.tsx` rewritten for the journey (token, OAuth window, channel, Reconnect unchanged); `accounts`, `dashboard-links`, `policy`, `apps`, `ui-text` tests follow the new buttons.
+
+**Not done (left for the next session):**
+1. **Playwright**: no spec written or run; the existing `connect-dialog`, `connect-access`, `connect-scopes`, `grant-form`, `credential-access` specs and `e2e/support/mock-api.ts` still drive the old dialog and have no `connect-plan` route — expect failures. Missing: the four journey cases of the brief, `ws-connect-journey` axe/narrow entries (both themes, 390 px).
+2. **Batch gate not run** (api/clippy/guards/schema/OpenAPI/build/Playwright/hosted).
+3. **Website host/path/recipe editing** (P5-UX-4's open item): not rebuilt; a website's host pattern is not editable from the list yet.
+4. Design boards were read (Journey board: step bar, three-column tiles) but not compared pixel by pixel. **Custom…** (the actions table) is not offered inside the journey's Access step (needs an existing account; it stays on the agent's row afterwards). The Advanced "account name" is not offered: `ConnectRequest` has no name field.
+5. `ConnectDialog` still routes new connects (DeploymentStep, CredentialFreeForm) for non-reconnect use; nothing opens it that way any more (dead path, kept so the old pieces stay tested; trim in P5-UX-14).
+6. Brief's fail-before check was not run for the new tests (the new journey has no pre-existing behaviour to fail against).
