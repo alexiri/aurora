@@ -142,6 +142,9 @@ judgement about the pinned CLI's real behaviour.
 
 **Left open**
 - Eval fingerprint (C-883): `fingerprint`/C-866 is not in the code on this branch, so nothing was added. PROGRESS note needed: whichever of P4-EVAL-2 and this merges second adds `model_roles` and `subagent_model`.
-- Live conformance (acceptance 6) and verification of the variable names against the pinned CLI 2.1.319 (`scripts/e2e/llm.sh`, LiteLLM serving two models): not run. Names in `ROLE_ALIASES` are the documented ones, unverified.
-- Tests not written: settings-write refusal over HTTP (only the shared validator is unit-tested), `role_not_allowed` via an org allow-list narrower than the endpoint's, the dispatcher's DB clear of dropped roles.
-- Fail-before: the new tests cannot compile or pass without the feature (new fields/routes); no separate red run was recorded.
+- Live conformance (acceptance 6): **not run.** `scripts/e2e/llm.sh` fronts a scripted VidaiMock, not a model: it would need a second LiteLLM model plus scenarios in which the main model emits an Agent tool call with `model: haiku`, and none exists. It is a separate piece of work (a scenario set), not built here; the gateway-side evidence arrives with `request_log.llm_model` (P5-MODELS-2).
+
+**Worker 16 (continuation)**
+- Variable names **verified against the pinned 2.1.319 binary** (strings of the linux-x64 native `claude`, not executed): all of `ANTHROPIC_DEFAULT_{OPUS,SONNET,HAIKU}_MODEL`, `…_SUPPORTED_CAPABILITIES`, `CLAUDE_CODE_SUBAGENT_MODEL`(+`_FORCE`, unused), `CLAUDE_CODE_MAX_CONTEXT_TOKENS` exist; no per-alias context variable exists (the one value applies to every unrecognised model); also present: `ANTHROPIC_SMALL_FAST_MODEL`, `fable` alias (unmapped). Written into `12 §Adapter claude-code`.
+- The three missing tests, now written, each **seen failing with its rule broken** (llm_endpoint.rs `model_roles_ok` check disabled, `role_usable` without the allow-list, `set_model_roles` skipped in dispatch; reverted): `settings_llm::settings_writes_refuse_bad_model_roles_and_model_info` (8 refusals + one accepted write, over `PUT /v1/admin/settings/llm`), `model_roles::an_endpoint_role_outside_the_orgs_narrower_allow_list_is_not_sent`, `model_roles::the_dispatcher_clears_dropped_agent_roles_in_the_database` (boots a `claude-code` agent through the runner rig). Test-rig changes: `Rig::boot_agent` split out of `Rig::boot`; the rig's runner capabilities advertise `claude-code` and `codex` too.
+- Gate level: targeted (`model_roles::` and the new settings test: 9 passed).

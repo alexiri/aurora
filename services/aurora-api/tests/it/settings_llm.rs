@@ -411,6 +411,67 @@ async fn invalid_endpoints_and_lists_are_refused_with_their_paths() {
     assert_eq!(w.section().await["generation"], 0, "nothing was written");
 }
 
+/// P5-MODELS-1 (C-875, C-779, SEC-122): a settings write validates `model_roles` and `model_info` with the same
+/// validator as the TOML path, and names the key.
+#[tokio::test]
+async fn settings_writes_refuse_bad_model_roles_and_model_info() {
+    let w = world(false, "").await;
+    let base = "https://llm.example.com";
+    let ep = |extra: Value| {
+        let mut e = json!({"id": "x", "provider": "litellm", "base_url": base});
+        for (k, v) in extra.as_object().unwrap() {
+            e[k] = v.clone();
+        }
+        e
+    };
+    let many: serde_json::Map<String, Value> = (0..=aurora_core::limits::MODEL_INFO_MAX)
+        .map(|i| (format!("m{i}"), json!({})))
+        .collect();
+    let cases: Vec<(Value, &str)> = vec![
+        (ep(json!({"model_roles": {"large": "a b"}})), "model_roles"),
+        (
+            ep(json!({"model_roles": {"large": "m$(id)"}})),
+            "model_roles",
+        ),
+        (ep(json!({"model_roles": {"huge": "m"}})), "model_roles"),
+        (
+            ep(json!({"models": ["m1"], "model_roles": {"large": "m2"}})),
+            "model_roles",
+        ),
+        (
+            ep(json!({"allowed_models": ["m1"], "model_roles": {"small": "m2"}})),
+            "model_roles",
+        ),
+        (
+            ep(json!({"model_info": {"m": {"capabilities": ["telepathy"]}}})),
+            "model_info",
+        ),
+        (
+            ep(json!({"model_info": {"m": {"context_window": 999}}})),
+            "model_info",
+        ),
+        (ep(json!({"model_info": many})), "model_info"),
+    ];
+    for (entry, key) in cases {
+        let (s, e) = w
+            .put(json!({"llm.endpoints": [entry.clone()], "llm.enabled_providers": ["litellm"], "llm.provider_preference": ["litellm"]}))
+            .await;
+        assert_eq!(s, 422, "{entry}: {e}");
+        assert!(
+            fields(&e).contains(&(format!("/llm.endpoints/x/{key}"), "value_invalid".into())),
+            "{entry}: expected {key} value_invalid in {e}"
+        );
+    }
+    // A good entry is accepted.
+    let (s, e) = w
+        .put(json!({"llm.endpoints": [ep(json!({
+            "model_roles": {"large": "glm-4.6", "small": "glm-4.5-air"},
+            "model_info": {"glm-4.6": {"context_window": 200000, "capabilities": ["thinking"]}}}))],
+            "llm.enabled_providers": ["litellm"], "llm.provider_preference": ["litellm"]}))
+        .await;
+    assert_eq!(s, 200, "{e}");
+}
+
 /// Criterion 3: the cross-section rule on the merged view, in both directions.
 #[tokio::test]
 async fn require_key_origin_names_the_endpoint_without_one() {

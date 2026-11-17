@@ -332,3 +332,54 @@ async fn a_role_change_bumps_the_home_sync_generation() {
     assert_eq!(s, 200);
     assert!(gen_of().await > mid);
 }
+
+/// (D-303) An endpoint role the org's allow-list excludes counts as unset for that org's agents, with the warning,
+/// and is not sent; the operator's own list is wider.
+#[tokio::test]
+async fn an_endpoint_role_outside_the_orgs_narrower_allow_list_is_not_sent() {
+    let r = rig().await;
+    let ck = owner(&r).await;
+    let a = agent_on(&r, "narrow", "listed").await;
+    let d = readiness(&r, &ck, a).await["default"].clone();
+    assert_eq!(d["roles"]["large"]["model_id"], "m-big", "before narrowing");
+    sqlx::query("UPDATE organizations SET governance = $2 WHERE id = $1")
+        .bind(r.org)
+        .bind(json!({"llm": {"endpoints": {"listed": {"allowed_models": ["m-def"]}}}}))
+        .execute(r.h.pool())
+        .await
+        .unwrap();
+    let d = readiness(&r, &ck, a).await["default"].clone();
+    assert_eq!(d["model_id"], "m-def");
+    assert_eq!(
+        d["roles"]["large"],
+        json!({"model_id": null, "source": "none", "warning": "role_not_allowed"})
+    );
+}
+
+/// (D-303 drop rule) The dispatcher clears an agent's unusable roles in the database once, delivers only the
+/// usable ones, and never re-points a dropped role.
+#[tokio::test]
+async fn the_dispatcher_clears_dropped_agent_roles_in_the_database() {
+    let r = rig().await;
+    let a = agent_on(&r, "clearing", "listed").await;
+    sqlx::query("UPDATE agents SET model_roles = $2 WHERE id = $1")
+        .bind(a)
+        .bind(json!({"endpoint_id": "listed", "large": "m-other", "small": "m-gone"}))
+        .execute(r.h.pool())
+        .await
+        .unwrap();
+    let _lv = r.boot_agent(a).await;
+    let d = r.deliver().await;
+    let stored: Value = sqlx::query_scalar("SELECT model_roles FROM agents WHERE id = $1")
+        .bind(a)
+        .fetch_one(r.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(stored, json!({"endpoint_id": "listed", "large": "m-other"}));
+    assert_eq!(d["model"]["roles"]["large"], "m-other", "{d}");
+    // `small` falls back to the endpoint, which names none: it is absent, not re-pointed
+    assert!(
+        d["model"]["roles"].get("small").is_none_or(Value::is_null),
+        "{d}"
+    );
+}
