@@ -59,7 +59,7 @@ The seven redesign briefs left after P5-UX-14 go ahead of every other queued tas
 - `p5-agent`: **P5-UX-6 → P5-UX-10** (both ready: their dependencies are merged), then P4-EVAL-2..4.
 - `p5-platform`: P4-011B-5's e2e (P5-UX-16 shares the approvals decision route with P4-011B) → **P5-UX-16 → P5-UX-17 → P5-UX-11**, then P5-HARN.
 - `p5-apps`: P5-UX-14 → **P5-UX-7 → P5-UX-5**, then P5-MODELS-3.
-- Follow-ups: FIX-163 (Turn on for a deleted-instance account) with the next P5-UX lane work; the ~80 approval titles and the C-825 transcript events inside P5-UX-16; the members' read of a workspace's Internet access rules waits for the owner (the policy routes are owner-only, I-27). End check: the vocabulary test's exempt list is empty after the last of these.
+- Follow-ups: FIX-163 (Turn on for a deleted-instance account) with the next P5-UX lane work; the ~80 approval titles and the C-825 transcript events inside P5-UX-16; FIX-164 (members read their workspace's published Internet access rules, owner 2026-11-17, D-365) with the next P5-UX web work. End check: the vocabulary test's exempt list is empty after the last of these.
 
 ### New spec batches (2026-11-17)
 

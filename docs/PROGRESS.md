@@ -21,9 +21,9 @@ One row per task id, counted from the task tables (closed phases: from their his
 | 2 | 52 | 51 | 1 (FIX-017: the owner's real-cluster install) | 0 | 0 | 0 | `docs/history/phase-1-2.md` (closed 2026-11-09, AUDIT-002) |
 | 3 | 15 | 15 | 0 | 0 | 0 | 0 | `docs/history/phase-3.md` (closed 2026-11-10, AUDIT-003) |
 | 4 | 124 | 123 | 0 | 0 | 0 | 1 (FIX-131 closed without a build, D-195) | `docs/history/phase-4.md` (closed 2026-11-14, AUDIT-004) |
-| 5 | 123 | 88 | 3 (P5-UX-14, P4-011B-5, P4-EVAL-1) | 28 (incl. P5-HARN, D-361; P5-WEBHOOK-1..4, D-320; the twenty P5-UX, P5-IA and FIX-159 briefs, merged 2026-11-16) | 0 (every phase-5 item has a brief) | 4 (OPS-022 cancelled, D-318; FIX-049 moved to phase 4; P5-SLACK moved to phase 6, D-285; P4-S3 moved to phase 6, D-318) | §Phase 5 tasks (TEST-021 and FIX-057, done, are counted here but their rows are in `docs/history/phase-0.md`'s task graph) |
+| 5 | 124 | 88 | 3 (P5-UX-14, P4-011B-5, P4-EVAL-1) | 29 (incl. P5-HARN, D-361; P5-WEBHOOK-1..4, D-320; the twenty P5-UX, P5-IA and FIX-159 briefs, merged 2026-11-16) | 0 (every phase-5 item has a brief) | 4 (OPS-022 cancelled, D-318; FIX-049 moved to phase 4; P5-SLACK moved to phase 6, D-285; P4-S3 moved to phase 6, D-318) | §Phase 5 tasks (TEST-021 and FIX-057, done, are counted here but their rows are in `docs/history/phase-0.md`'s task graph) |
 | 6 (proposed) | 4 | 0 | 0 | 1 (P4-S3: specified and briefed, moved from phase 5, D-318) | 3 (P6-ORGTREE, P6-LIMITS: proposals awaiting the owner; P6-SLACK, moved from phase 5, D-285) | 0 | §Phase 6 tasks (proposed) |
-| **All** | **445** | **399** | **4** | **29** | **3** | **10** | (column sums; P5-SLACK/P6-SLACK and P4-S3 are counted in both phases) |
+| **All** | **446** | **399** | **4** | **30** | **3** | **10** | (column sums; P5-SLACK/P6-SLACK and P4-S3 are counted in both phases) |
 
 ## Environment
 
@@ -98,6 +98,7 @@ Lane order, waves and number blocks: `docs/tasks/PHASE5-PLAN.md`. Lanes `p5-apps
 | P5-FILES-2 | Files page: browse, upload (files, folders, drag and drop), download, rename, delete | D-316, C-904 | M | Next.js | P5-FILES-1 | `P5-FILES-2.md` | done (merged e5ffd05f) |
 | P5-FILES-3 | Files viewer: CodeMirror editor with conflict dialog, raster image preview | D-316, C-905, SEC-126 | M | Next.js | P5-FILES-2 | `P5-FILES-3.md` | done (merged e5ffd05f; CodeMirror editor, conflict dialog, image preview) |
 | P5-FILES-4 | Files end to end: `scripts/e2e/files.sh` + Playwright journey | D-316, C-907 | S–M | tests | P5-FILES-1..3 | `P5-FILES-4.md` | done (merged e5ffd05f; batch gate green at 6d8b38f8: files.sh on kind twice incl. 20 MiB, hosted.sh 17/17, upgrade.sh 241/242, Playwright mocked incl. stage4-axe and files.spec) |
+| FIX-164 | Workspace members read their workspace's published Internet access rules, read-only (owner 2026-11-17, D-365, amends I-27): a member-readable route, the page's read-only view, ITs and a security-coverage row | D-365 | S–M | both | P5-IA-2 | `FIX-164.md` | ready (not placed; with the next P5-UX web work) |
 | FIX-163 | "Turn on" is offered for an account whose self-hosted instance was deleted (P5-UX-4 follow-up): the accounts API carries `status_reason`; the row hides Turn on and says why; the API refuses the turn-on | — | S | both | P5-UX-4 | `FIX-163.md` | ready (not placed; with the next P5-UX lane work) |
 | FIX-161 | The inbox trace test (`channels_inbox::a_channel_event_turn_belongs_to_the_inbox_job_trace`) fails under load in nearly every full it-suite run and passes alone; make it deterministic without weakening it (global tracer provider shared by parallel tests, flush timing, or a real propagation bug) | — | S | Rust | — | `FIX-161.md` | done (merged d831cedb: with one registered dispatcher, tracing cached callsite interest per thread, so a parallel test's thread could cache 'never' and the trace test lost every span; fixed in trace_e2e::install with a process-long second dispatcher + rebuild_interest_cache; 3/3 failing before, 5/5 passing under load 15–58 after) |
 | FIX-162 | The API refuses to start with `ssh.enabled` and not `terminal.enabled` (the chart already refuses the render); `SshSection` comment, fixtures with SSH on also turn the terminal on; the same rule on a settings write if either key is runtime-settable | D-358 | S | Rust | — | `FIX-162.md` | ready (not placed; any lane between tasks) |
@@ -218,7 +219,7 @@ Proposed order (Q-P6-LIM-8): the limits framework (P6-LIM-1) together with the s
 
 ## Number allocation
 
-**Next free: FIX-164, D-365, C-1020, SEC-134, migration `20261201000249`** (`000244` is P5-IA-1's, `000245`/`000246` P5-MODELS-1/2's, `000247` P5-USAGE-1's, `000248` P5-UX-14's; FIX-160 and D-355 are the bulk dependency update). Edit this line in place when you take a number (check `git log -3`, `ls docs/tasks`, and this line right before committing; several sessions write briefs). Task briefs are `docs/tasks/<ID>.md`, named after the task id (`P<phase>-<NAME>` for phase features, `FIX-nnn` for fixes).
+**Next free: FIX-165, D-366, C-1020, SEC-134, migration `20261201000249`** (`000244` is P5-IA-1's, `000245`/`000246` P5-MODELS-1/2's, `000247` P5-USAGE-1's, `000248` P5-UX-14's; FIX-160 and D-355 are the bulk dependency update). Edit this line in place when you take a number (check `git log -3`, `ls docs/tasks`, and this line right before committing; several sessions write briefs). Task briefs are `docs/tasks/<ID>.md`, named after the task id (`P<phase>-<NAME>` for phase features, `FIX-nnn` for fixes).
 
 Live reservations (numbers inside a block that a lane has already used are recorded in its commits; unused blocks are released when the lane or task closes):
 
