@@ -3314,6 +3314,83 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/me/user-token-approvals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The posts agents proposed to make as you, with their full text (yours only). Decide one with
+         *     `POST /action-approvals/{id}/decision`; no one else can.
+         */
+        get: operations["listOwnSendApprovals"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/me/user-tokens": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The caller's own tokens (never the value). */
+        get: operations["listUserTokens"];
+        put?: never;
+        /**
+         * Add a chat-platform token of your own (session only). It is sealed, verified against the
+         *     platform and compared with your own link before it is stored; the value is never returned.
+         */
+        post: operations["createUserToken"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/me/user-tokens/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Revoke one of your tokens: agents stop posting as you and pending posts are cancelled. */
+        delete: operations["deleteUserToken"];
+        options?: never;
+        head?: never;
+        /** Rename one of your tokens. */
+        patch: operations["patchUserToken"];
+        trace?: never;
+    };
+    "/v1/me/user-tokens/{id}/agents/{agent}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Grant one agent the use of a token (idempotent). */
+        put: operations["grantUserToken"];
+        post?: never;
+        /** Remove an agent's grant (idempotent); its pending posts are cancelled. */
+        delete: operations["ungrantUserToken"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/oauth-clients/{id}": {
         parameters: {
             query?: never;
@@ -7142,6 +7219,18 @@ export interface components {
             /** Format: uuid */
             user_id: string;
         };
+        /**
+         * @description `POST /v1/me/user-tokens` (C-853). The `token` is a personal access token of the person's own
+         *     chat-platform account; it is sealed at once and never returned or logged.
+         */
+        CreateUserTokenRequest: {
+            /** Format: uuid */
+            integration_id: string;
+            /** @description At most 80 characters. */
+            label?: string | null;
+            /** @description At most 256 characters. */
+            token: string;
+        };
         CreateWebhookRequest: {
             /** @description `creator` (default) or `workspace`; `workspace` needs `can_own` (RFE-021). */
             anchor?: string | null;
@@ -8959,6 +9048,34 @@ export interface components {
             /** Format: int64 */
             relay_replicas: number;
         };
+        /**
+         * @description A post an agent proposed to make as the caller (C-856), with the exact text the caller is
+         *     asked to approve. Only the token's owner ever receives this.
+         */
+        OwnSendApproval: {
+            /** Format: uuid */
+            agent_id: string;
+            /** Format: date-time */
+            created_at: string;
+            error?: string | null;
+            /** Format: date-time */
+            expires_at: string;
+            /** Format: uuid */
+            id: string;
+            /** @description `pending` | `approved` | `executed` | `failed` | `rejected` | `expired` */
+            status: string;
+            /** @description Platform-composed: "Post as <you> in <conversation> (<n> characters)". */
+            summary: string;
+            /** @description The full text, exactly as it will be posted (the footer naming the agent is added). */
+            text: string;
+            /** Format: uuid */
+            token_id: string;
+            /** Format: uuid */
+            workspace_id: string;
+        };
+        OwnSendApprovalList: {
+            items: components["schemas"]["OwnSendApproval"][];
+        };
         /** @description (FIX-050, C-630) One ownerless organization of the admin overview. */
         OwnerlessOrg: {
             /** Format: date-time */
@@ -10201,6 +10318,10 @@ export interface components {
             ref?: string | null;
             /** @description `active` | `paused`. */
             status?: string | null;
+        };
+        PatchUserTokenRequest: {
+            /** @description At most 80 characters; empty or `null` clears it. */
+            label?: string | null;
         };
         PatchWorkspaceRequest: {
             /**
@@ -12589,6 +12710,37 @@ export interface components {
             email: string;
             /** Format: uuid */
             id: string;
+        };
+        /** @description A person's chat-platform token (C-855). The value is never returned. */
+        UserToken: {
+            /** @description The agents the owner granted this token to. */
+            agents: components["schemas"]["UserTokenAgent"][];
+            /** Format: date-time */
+            created_at: string;
+            /** Format: uuid */
+            id: string;
+            integration: components["schemas"]["UserTokenIntegration"];
+            label?: string | null;
+            /** Format: date-time */
+            last_used_at?: string | null;
+            /** @description The platform account the token belongs to (its handle), never the platform user id. */
+            platform_user_label: string;
+            /** @description `active` | `invalid` | `revoked` */
+            status: string;
+        };
+        UserTokenAgent: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+        };
+        UserTokenIntegration: {
+            /** Format: uuid */
+            id: string;
+            /** @description The connector id of the integration. */
+            type: string;
+        };
+        UserTokenList: {
+            tokens: components["schemas"]["UserToken"][];
         };
         /** @description A value and where it comes from. */
         ValueWithSource: {
@@ -26725,6 +26877,397 @@ export interface operations {
                     "application/json": components["schemas"]["SshSessionList"];
                 };
             };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    listOwnSendApprovals: {
+        parameters: {
+            query?: {
+                /** @description `pending` | `approved` | `executed` | `failed` | `rejected` | `expired` */
+                status?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OwnSendApprovalList"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    listUserTokens: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserTokenList"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    createUserToken: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateUserTokenRequest"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserToken"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    deleteUserToken: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Token id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    patchUserToken: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Token id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PatchUserTokenRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserToken"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    grantUserToken: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Token id */
+                id: string;
+                /** @description Agent id */
+                agent: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    ungrantUserToken: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Token id */
+                id: string;
+                /** @description Agent id */
+                agent: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
             401: {
                 headers: {
                     [name: string]: unknown;

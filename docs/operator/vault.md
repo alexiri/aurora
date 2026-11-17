@@ -243,7 +243,7 @@ in the log, the output or an error.
 | Flag | Meaning |
 |------|---------|
 | `--to` | target store id (`inline` or a configured Vault store); must support managed values |
-| `--purpose` | only one of `secret.value`, `connection.credentials`, `oauth_client.secret`, `integration.credentials`, `presence.credentials`, `webhook.verification`, `channel_op.deprovision`, `connector.settings` |
+| `--purpose` | only one of `secret.value`, `connection.credentials`, `oauth_client.secret`, `integration.credentials`, `presence.credentials`, `webhook.verification`, `channel_op.deprovision`, `connector.settings`, `user_token`, `channel_op_user_token` |
 | `--dry-run` | count what would move; reads and writes nothing, not even to the store |
 | `--discard-grace-secs` | wait (default 2) after a purpose's commits before discarding old values, so gateway caches (which reload on commit) never hold a ref whose value is gone |
 

@@ -146,6 +146,14 @@ pub fn all() -> Vec<(&'static str, Schema)> {
         ("connector_operation", schema_for!(c::Operation)),
         ("connector_op_message_post", schema_for!(c::MessagePostOp)),
         (
+            "connector_op_user_token_verify",
+            schema_for!(c::UserTokenVerifyOp),
+        ),
+        (
+            "connector_result_user_token_verify",
+            schema_for!(c::UserTokenVerifyResult),
+        ),
+        (
             "connector_op_message_update",
             schema_for!(c::MessageUpdateOp),
         ),

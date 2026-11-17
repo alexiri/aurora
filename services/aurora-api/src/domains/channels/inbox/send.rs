@@ -92,7 +92,7 @@ impl Ctx {
 pub fn presence_of(s: &Sender) -> Option<Uuid> {
     match s {
         Sender::Presence { presence_id } => Some(*presence_id),
-        Sender::Shared(_) => None,
+        Sender::Shared(_) | Sender::UserToken { .. } => None,
     }
 }
 
@@ -130,6 +130,7 @@ pub async fn post(conn: &mut PgConnection, ctx: &Ctx, p: Post) -> Result<Uuid, A
         files: p.files,
         ephemeral_to: p.ephemeral_to,
         op_marker: String::new(),
+        user_footer: None,
     })?;
     ops::enqueue(
         conn,

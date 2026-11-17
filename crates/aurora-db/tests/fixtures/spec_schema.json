@@ -1254,6 +1254,23 @@
       "user_id",
       "welcome_seen"
     ],
+    "user_token_agents": [
+      "agent_id",
+      "granted_at",
+      "user_token_id"
+    ],
+    "user_tokens": [
+      "id",
+      "integration_id",
+      "label",
+      "last_used_at",
+      "platform_user_label",
+      "platform_user_ref",
+      "revoked_at",
+      "status",
+      "token_ref",
+      "user_id"
+    ],
     "users": [
       "approval_email_enabled",
       "default_org_id",
@@ -2581,6 +2598,23 @@
       "tour_completed_at": "timestamptz null",
       "user_id": "uuid not null",
       "welcome_seen": "boolean not null"
+    },
+    "user_token_agents": {
+      "agent_id": "uuid not null",
+      "granted_at": "timestamptz not null",
+      "user_token_id": "uuid not null"
+    },
+    "user_tokens": {
+      "id": "uuid not null",
+      "integration_id": "uuid not null",
+      "label": "text null",
+      "last_used_at": "timestamptz null",
+      "platform_user_label": "text not null",
+      "platform_user_ref": "text not null",
+      "revoked_at": "timestamptz null",
+      "status": "text not null",
+      "token_ref": "text null",
+      "user_id": "uuid not null"
     },
     "users": {
       "approval_email_enabled": "bool not null",

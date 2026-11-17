@@ -1176,8 +1176,12 @@ you approve each post." Refusals render inline in plain language: "This token be
 account" (`user_token_mismatch`), "Mattermost rejected this token" (`user_token_invalid`), "You can keep
 at most 5 tokens" (`user_token_limit`). **Grant agents** is a `Dialog` with one switch per agent you can
 use. **Revoke** is a `ConfirmDialog`: "Agents stop posting as you and pending posts are cancelled." A
-`send_as_me` approval appears on your Approvals page with the full text and the decision controls; no
-other person sees its decide control. Empty state: "Agents post as themselves unless you add a token."
+`send_as_me` approval appears on your Approvals page (Pending tab, "Posts as you", from `GET /v1/me/user-token-approvals`)
+with the full text, as plain text, and the decision controls ("Post as me", "Don't post"); in the workspace action
+approvals list the same row shows its summary and "Only the person it would speak for can decide this." with no decide
+control. A token row shows its status (`invalid` adds "The chat platform rejected this token. Revoke it and add a new
+one…" and disables Grant agents); the typed value is cleared after any refused add. Empty state: "Agents post as
+themselves unless you add a token." (a person with no linked chat account is told to link one first).
 At 390 px the rows stack. Shared primitives only.
 
 (phase 5, P4-SSH-1/2, D-239, C-795) **SSH keys** (`/account/ssh`), shown only when `/v1/instance`

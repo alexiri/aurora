@@ -524,6 +524,12 @@ pub const TERMINAL_PTY_OPEN_TIMEOUT: Duration = Duration::from_secs(5);
 /// (phase 5, P4-SSH-1, D-239(b), C-790) registered SSH public keys per person (409
 /// `ssh_key_limit`).
 pub const SSH_KEYS_PER_USER: usize = 10;
+/// (phase 5, P4-UTOK, D-284(c), C-853) chat-platform tokens a person keeps (`active` or
+/// `invalid`; 409 `user_token_limit`).
+pub const USER_TOKENS_PER_PERSON: usize = 5;
+/// (P4-UTOK, D-284(c), C-856) pending `send_as_me` approvals per token (the sixth is refused
+/// `pending_limit`).
+pub const USER_TOKEN_PENDING_MAX: usize = 5;
 /// (P4-SSH-1, C-791) default validity of a minted SSH user certificate; `ssh.cert_ttl_secs`
 /// (60 … 86 400 s) overrides it. `valid_after` is backdated 60 s for clock skew.
 pub const SSH_CERT_TTL: Duration = Duration::from_secs(900);
@@ -644,6 +650,8 @@ mod tests {
         assert_eq!(TERMINAL_WAKES_PER_AGENT_HOUR, 12);
         assert_eq!(TERMINAL_PTY_OPEN_TIMEOUT, Duration::from_secs(5));
         assert_eq!(SSH_KEYS_PER_USER, 10);
+        assert_eq!(USER_TOKENS_PER_PERSON, 5);
+        assert_eq!(USER_TOKEN_PENDING_MAX, 5);
         assert_eq!(SSH_CERT_TTL, Duration::from_secs(900));
         assert_eq!(SSH_MINTS_PER_USER_AGENT_HOUR, 30);
         const { assert!(CONDITION_BODY_BUFFER_MIN <= CONDITION_BODY_BUFFER) };

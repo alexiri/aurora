@@ -619,10 +619,19 @@ pub async fn delete(state: &AppState, id: Uuid) -> Result<(), ApiError> {
     // refuses the delete with 503), the ops committed with the delete, before the cascade.
     let mut dep = deprovision::prepare(state, Scope::Agent(id)).await?;
     let mut refs = Vec::new();
+    let mut token_discards = crate::domains::user_tokens::custody::Discards::default();
     let done = async {
         let mut tx = state.pool.begin().await.map_err(DbError::from)?;
         credentials::revoke_for_agent(&mut *tx, id, true).await?;
         dep.enqueue(&mut tx).await?;
+        // (P4-UTOK, D-284(a)) Every grant of a person's token to this agent ends with it: the
+        // agent's pending posts as that person are cancelled in this transaction.
+        token_discards = crate::domains::user_tokens::end::for_agent(
+            &mut tx,
+            id,
+            &crate::audit::AuditActor::system("agent-delete"),
+        )
+        .await?;
         // (FIX-122) The agent's webhook secrets and dedicated-presence credentials lose their
         // rows with the cascade: collect the refs now, discard the stored values after the
         // commit (a failed discard is logged; the row and every reference are already gone).
@@ -651,6 +660,7 @@ pub async fn delete(state: &AppState, id: Uuid) -> Result<(), ApiError> {
         return Err(e);
     }
     dep.committed(state).await;
+    token_discards.run(state).await;
     crate::domains::tenancy::service::discard_managed(state, refs).await;
     Ok(())
 }

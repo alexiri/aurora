@@ -365,6 +365,9 @@ pub async fn discard_managed(state: &AppState, refs: Vec<orgs::ManagedRef>) {
 pub struct WorkspaceDeletion {
     dep: crate::domains::channels::deprovision::Prepared,
     refs: Vec<orgs::ManagedRef>,
+    /// (P4-UTOK) Sealed values of person tokens granted to the workspace's agents (their posts
+    /// end with the agents).
+    token_discards: crate::domains::user_tokens::custody::Discards,
 }
 
 impl WorkspaceDeletion {
@@ -375,6 +378,7 @@ impl WorkspaceDeletion {
         Ok(Self {
             dep: deprovision::prepare(state, Scope::Workspace(ws)).await?,
             refs: Vec::new(),
+            token_discards: Default::default(),
         })
     }
 
@@ -385,6 +389,15 @@ impl WorkspaceDeletion {
         ws: Uuid,
     ) -> Result<(), ApiError> {
         self.dep.enqueue(tx).await?;
+        // (P4-UTOK, D-284(a)) The grants of the workspace's agents end with the agents.
+        self.token_discards.extend(
+            crate::domains::user_tokens::end::for_workspace(
+                tx,
+                ws,
+                &crate::audit::AuditActor::system("workspace-delete"),
+            )
+            .await?,
+        );
         self.refs
             .extend(orgs::managed_refs(&mut *tx, org, Some(ws)).await?);
         // (P5-ADMDEL) A deleted workspace leaves the placement's shared list in this transaction.
@@ -397,6 +410,7 @@ impl WorkspaceDeletion {
 
     pub async fn committed(self, state: &AppState) {
         self.dep.committed(state).await;
+        self.token_discards.run(state).await;
         discard_managed(state, self.refs).await;
     }
 
@@ -415,9 +429,17 @@ pub async fn delete_org(
     // each op carries its own sealed credential copy. The org's shared bot stays (C-364).
     let mut dep = deprovision::prepare(state, Scope::Org(org_id)).await?;
     let mut refs = Vec::new();
+    let mut token_discards = crate::domains::user_tokens::custody::Discards::default();
     let done = async {
         let mut tx = state.pool.begin().await.map_err(aurora_db::DbError::from)?;
         dep.enqueue(&mut tx).await?;
+        // (P4-UTOK, D-284(a)) Every person's token on the org's integrations ends with the org.
+        token_discards = crate::domains::user_tokens::end::for_org(
+            &mut tx,
+            org_id,
+            &crate::audit::AuditActor::system("org-delete"),
+        )
+        .await?;
         // (FIX-097) The managed values of the org's secrets, connections and OAuth clients
         // lose their rows with the cascade: collect them now, discard after the commit.
         refs = orgs::managed_refs(&mut tx, org_id, None).await?;
@@ -433,6 +455,7 @@ pub async fn delete_org(
         return Err(e);
     }
     dep.committed(state).await;
+    token_discards.run(state).await;
     discard_managed(state, refs).await;
     Ok(())
 }

@@ -250,21 +250,27 @@ impl Cmd<'_> {
             .await
             .retry()?;
         // RFE-008: `user_link.delete` is security-critical: it commits with the unlink.
-        audit::commit_critical(
-            tx,
-            &AuditEvent::new(
-                AuditActor::system(self.ctx.integ.connector_id.clone()).with_source("channel"),
-                "user_link.delete",
-                Outcome::Success,
-            )
-            .org(l.org_id)
-            .target("user_link", l.id)
-            .metadata(
-                json!({"integration_id": l.integration_id, "user_id": l.user_id, "via": "command"}),
-            ),
+        let ev = AuditEvent::new(
+            AuditActor::system(self.ctx.integ.connector_id.clone()).with_source("channel"),
+            "user_link.delete",
+            Outcome::Success,
+        )
+        .org(l.org_id)
+        .target("user_link", l.id)
+        .metadata(
+            json!({"integration_id": l.integration_id, "user_id": l.user_id, "via": "command"}),
+        );
+        // (P4-UTOK, D-284(a)) A token of that account ends with the link, in the same transaction.
+        let discards = crate::domains::user_tokens::end::for_link(
+            &mut tx,
+            l.user_id,
+            l.integration_id,
+            &ev.actor,
         )
         .await
         .retry()?;
+        audit::commit_critical(tx, &ev).await.retry()?;
+        discards.run(self.state).await;
         self.reply("Unlinked. You'll be asked to link again next time you write to an agent.")
             .await?;
         Ok(outcome("unlinked"))

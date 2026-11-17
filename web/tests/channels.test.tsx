@@ -470,6 +470,7 @@ describe("AccountChannelsView", () => {
       "GET /v1/me/channel-links": () =>
         json(200, { items: [{ id: "l1", integration_id: "i1", connector_id: "slack", tenant_label: "Acme Slack", platform_user_ref: "U123", user: { id: "u1", display_name: "Ada" }, method: "verified_email", created_at: T }] }),
       "GET /v1/me/dm-defaults": () => json(200, { items: [{ integration_id: "i1", platform_user_ref: "U123", agent_id: null }] }),
+      "GET /v1/me/user-tokens": () => json(200, { tokens: [] }),
       "PUT /v1/me/dm-defaults": () => err(422, "agent_not_reachable"),
       "DELETE /v1/me/channel-links/l1": () => json(204, null),
     });

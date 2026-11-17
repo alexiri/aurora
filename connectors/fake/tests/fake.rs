@@ -25,6 +25,7 @@ fn op(kind: &str, payload: Value) -> Operation {
         maybe_sent: false,
         payload,
         credentials: None,
+        user_credential: None,
     }
 }
 

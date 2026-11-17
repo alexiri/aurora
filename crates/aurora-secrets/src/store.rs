@@ -21,10 +21,17 @@ pub enum Purpose {
     /// (phase 5, SET-1, D-236(g)) A secret field of an instance setting (OIDC client secret,
     /// SMTP password, …): always the inline store; owner = the field's own uuid, org = nil UUID.
     InstanceSetting,
+    /// (phase 5, P4-UTOK, D-282, SEC-112) A person's chat-platform token; owner = the
+    /// `user_tokens` row id, org = the integration's org. Opened only by the claim and verify
+    /// paths' copies, never directly.
+    UserToken,
+    /// (P4-UTOK, D-282) The per-op copy of a person's token for one `message.post` or
+    /// `user_token.verify`; owner = the op id; discarded at the op's terminal state.
+    ChannelOpUserToken,
 }
 
 impl Purpose {
-    pub const ALL: [Purpose; 9] = [
+    pub const ALL: [Purpose; 11] = [
         Purpose::SecretValue,
         Purpose::ConnectionCredentials,
         Purpose::OauthClientSecret,
@@ -34,6 +41,8 @@ impl Purpose {
         Purpose::ChannelOpDeprovision,
         Purpose::ConnectorSettings,
         Purpose::InstanceSetting,
+        Purpose::UserToken,
+        Purpose::ChannelOpUserToken,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -47,6 +56,8 @@ impl Purpose {
             Self::ChannelOpDeprovision => "channel_op.deprovision",
             Self::ConnectorSettings => "connector.settings",
             Self::InstanceSetting => "instance_setting",
+            Self::UserToken => "user_token",
+            Self::ChannelOpUserToken => "channel_op_user_token",
         }
     }
 }

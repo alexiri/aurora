@@ -172,8 +172,23 @@ pub async fn decide(
     {
         return Err(not_found());
     }
-    // RFE-012 (D-55, SEC-28): only `can_approve` decides; a plain member gets 403.
-    crate::http::auth::require_approve(&auth)?;
+    if existing.action_key == "send_as_me" {
+        // (P4-UTOK, D-283(b), SEC-113) A post as a person is decided by that person alone,
+        // whatever other approval rights the decider holds, and by a person (a dashboard session
+        // or their own chat click), never by an API key.
+        let owner = existing.payload.get("owner_id").and_then(Value::as_str);
+        let by_key = matches!(c.principal, crate::http::auth::Principal::ApiKey { .. });
+        if owner != Some(c.user_id.to_string().as_str()) || by_key {
+            return Err(ApiError::new(
+                http::StatusCode::FORBIDDEN,
+                "not_token_owner",
+                "Only the person whose token this is can decide this.",
+            ));
+        }
+    } else {
+        // RFE-012 (D-55, SEC-28): only `can_approve` decides; a plain member gets 403.
+        crate::http::auth::require_approve(&auth)?;
+    }
     // Fail loud (07): an unregistered key is a deployment defect, not a client error.
     let Some(handler) = handlers::handler(&existing.action_key) else {
         tracing::error!(approval = %id, key = %existing.action_key,
@@ -222,6 +237,7 @@ pub async fn decide(
         let ctx = ActionContext {
             approval: &row,
             decided_by: c.user_id,
+            state: s,
         };
         match handler.execute(&mut sp, &ctx).await {
             Ok(out) => {

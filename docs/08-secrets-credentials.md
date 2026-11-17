@@ -14,8 +14,12 @@ Phase: **0** (inline store, LiteLLM, Anthropic) · **3** (HashiCorp Vault store,
 | Dedicated presence credentials | `channel_presences.credentials_ref` | `presence.credentials` |
 | Webhook verification secret | `webhooks.verification.secret_ref` | `webhook.verification` |
 | Credential copy of a self-contained deprovision op (RFE-024, owner = op id) | `channel_ops.payload.credentials_ref` | `channel_op.deprovision` |
-| A person's chat-platform token (phase 5, P4-UTOK, D-282, SEC-112; owner = the `user_tokens` row id) | `user_tokens.token_ref` | `user_token` |
-| Per-op copy of a person's token for one `message.post` or `user_token.verify` (phase 5, P4-UTOK, D-282; owner = the op id; discarded at the op's terminal state) | `channel_ops.payload.user_credential_ref` | `channel_op_user_token` |
+| A person's chat-platform token (phase 5, P4-UTOK, D-282, SEC-112; owner = the `user_tokens` row id; org = the integration's) | `user_tokens.token_ref` (set while `active`; an ended token keeps it only until the value is discarded, right after the ending commits or by the custody sweep) | `user_token` |
+| Per-op copy of a person's token for one `message.post` or `user_token.verify` (phase 5, P4-UTOK, D-282; owner = the op id; org = the integration's, kept in the op payload as `user_org_id`; opened only by the connector claim, discarded at the op's terminal state, a failed discard retried by the sweep every minute) | `channel_ops.payload.user_credential_ref` | `channel_op_user_token` |
+
+The two purposes are sealed, opened and discarded in exactly one module of the API (`domains/user_tokens/custody.rs`): no
+other code touches them, and `secrets migrate` moves both like every other purpose (a static test in
+`api/it/user_tokens.rs` fails on any other use).
 | Managed connector secret settings (phase 4, P4-MCON; owner = `connectors.secret_owner`, org = nil UUID) | `connectors.secret_refs` (one per field) | `connector.settings` |
 | Web Push VAPID private key (phase 5 (D-138, moved from phase 4), RFE-011b; owner = the key id, org = nil UUID; always the `inline` store, D-266(b)) | `webpush_vapid_keys.private_ref` | `webpush.vapid` |
 | Web Push subscription endpoint and keys (phase 5 (D-138, moved from phase 4), RFE-011b; owner = the subscription id, org = nil UUID; always the `inline` store, D-266(b)) | `push_subscriptions.secret_ref` | `webpush.subscription` |

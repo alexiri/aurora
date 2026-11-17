@@ -272,6 +272,18 @@ pub trait PlatformDriver: Send + Sync {
         Ok(None)
     }
 
+    /// (P4-UTOK) A personal access token of the platform user `user_ref`, as the person would
+    /// create it in their own account settings. `None`: the platform or the driver has no such
+    /// token (the person-token scenarios are skipped).
+    async fn person_token(&self, _user_ref: &str) -> Result<Option<String>> {
+        Ok(None)
+    }
+
+    /// Revokes a personal access token the platform issued (a later use answers `401`).
+    async fn revoke_person_token(&self, _token: &str) -> Result<()> {
+        anyhow::bail!("this driver cannot revoke a person's token")
+    }
+
     /// Everything posted on the platform (optionally one space), oldest first.
     async fn posts(&self, space_ref: Option<&str>) -> Result<Vec<Post>>;
     /// Bytes of a file attached to a post the connector made.
