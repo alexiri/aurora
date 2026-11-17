@@ -466,6 +466,9 @@ spec:
                    same extra environment (e.g. AURORA_*_CLIENT_SECRET for OIDC providers): a
                    missing `*_env` variable fails the configuration check before any migration runs. */}}
             {{- with .Values.api.extraEnv }}{{ toYaml . | nindent 12 }}{{ end }}
+            {{- /* (P4-011B-3) the same check refuses `push.vapid.private_key_env` naming an unset variable:
+                   the operator-managed VAPID key reaches this Job as it reaches the api pods. */}}
+            {{- with (include "aurora.pushEnv" .) }}{{ . | nindent 12 }}{{ end }}
             {{- /* (P4-SSH-2) the same check refuses `ssh.enabled` without a parsable AURORA_SSH_CA_KEY: the migrate
                    Job runs the API image, so the CA key reaches it as it reaches the api pods (and nothing else). */}}
             {{- if .Values.ssh.enabled }}

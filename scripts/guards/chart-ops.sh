@@ -293,6 +293,13 @@ must_fail "config.ssh.enabled=true without ssh.enabled" --set config.ssh.enabled
 must_fail "ssh.enabled with config.ssh.enabled=false" "${SSH_ON[@]}" --set config.ssh.enabled=false
 must_fail "ssh without a runner" "${SSH_ON[@]}" --set runner.enabled=false
 must_fail "ssh without the terminal's wiring" --set ssh.enabled=true --set 'networkPolicy.sshFrom[0].ipBlock.cidr=203.0.113.0/24'
+PUSH_ON=(--set push.enabled=true --set 'push.networkPolicy.egressTo[0].ipBlock.cidr=0.0.0.0/0')
+must_fail "push.enabled without push.networkPolicy.egressTo" --set push.enabled=true
+must_fail "config.push.enabled=true without push.enabled" --set config.push.enabled=true
+must_fail "push.enabled with config.push.enabled=false" "${PUSH_ON[@]}" --set config.push.enabled=false
+must_fail "config.push.dev_endpoint_overrides" --set config.push.dev_endpoint_overrides.x=y
+"${H[@]}" "${PUSH_ON[@]}" >/dev/null || fail "push.enabled with egressTo must render"
+"${H[@]}" "${PUSH_ON[@]}" --set push.vapid.existingSecret=vk >/dev/null || fail "push.enabled with an operator key must render"
 "${H[@]}" --set runner.enabled=false >/dev/null || fail "runner.enabled=false alone must render"
 echo "chart-ops: half-enabled switches refuse to render"
 

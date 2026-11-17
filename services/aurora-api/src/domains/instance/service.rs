@@ -24,6 +24,8 @@ pub struct Features {
     /// (phase 5, P4-SSH-1, C-791) SSH access to sandboxes is enabled on this instance; the
     /// Account › SSH keys page and the agent page's SSH page exist only when this is true.
     pub ssh: bool,
+    /// (phase 5, P4-011B-3, C-830) Web Push is enabled on this instance (`push.enabled`).
+    pub push: bool,
 }
 
 /// (phase 4, P4-PRV-1) The instance's preview configuration; the domain is public in DNS, so it
@@ -89,6 +91,7 @@ pub fn instance_info(
             previews: cfg.previews.enabled,
             terminal: cfg.terminal.enabled,
             ssh: cfg.ssh.enabled,
+            push: cfg.push.enabled,
         },
         previews: PreviewsInfo {
             enabled: cfg.previews.enabled,

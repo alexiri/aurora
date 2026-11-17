@@ -152,6 +152,14 @@
       "stage",
       "user_id"
     ],
+    "approval_push_claims": [
+      "approval_id",
+      "delivery",
+      "kind",
+      "sent_at",
+      "stage",
+      "user_id"
+    ],
     "approval_watchers": [
       "last_seen_at",
       "replica_id",
@@ -727,6 +735,23 @@
       "started_at",
       "status",
       "tail"
+    ],
+    "push_subscriptions": [
+      "disabled_at",
+      "endpoint_hash",
+      "endpoint_host",
+      "expires_at",
+      "failure_count",
+      "id",
+      "label",
+      "last_failure_at",
+      "last_success_at",
+      "paused_at",
+      "secret_ref",
+      "session_id",
+      "show_details",
+      "user_id",
+      "vapid_key_id"
     ],
     "rate_limit_buckets": [
       "expires_at",
@@ -1319,6 +1344,13 @@
       "token_hash",
       "verification"
     ],
+    "webpush_vapid_keys": [
+      "id",
+      "private_ref",
+      "public_key",
+      "retired_at",
+      "status"
+    ],
     "workspace_access": [
       "base_role",
       "idp_role",
@@ -1495,6 +1527,14 @@
       "kind": "text",
       "sent_at": "timestamptz not null",
       "stage": "text not null",
+      "user_id": "uuid"
+    },
+    "approval_push_claims": {
+      "approval_id": "uuid",
+      "delivery": "text",
+      "kind": "text",
+      "sent_at": "timestamptz not null",
+      "stage": "text",
       "user_id": "uuid"
     },
     "approval_watchers": {
@@ -2072,6 +2112,23 @@
       "started_at": "timestamptz",
       "status": "text",
       "tail": "text not null"
+    },
+    "push_subscriptions": {
+      "disabled_at": "timestamptz null",
+      "endpoint_hash": "bytea not null",
+      "endpoint_host": "text not null",
+      "expires_at": "timestamptz null",
+      "failure_count": "int not null",
+      "id": "uuid not null",
+      "label": "text not null",
+      "last_failure_at": "timestamptz null",
+      "last_success_at": "timestamptz null",
+      "paused_at": "timestamptz null",
+      "secret_ref": "text not null",
+      "session_id": "uuid not null",
+      "show_details": "bool not null",
+      "user_id": "uuid not null",
+      "vapid_key_id": "uuid null"
     },
     "rate_limit_buckets": {
       "expires_at": "timestamptz not null",
@@ -2663,6 +2720,13 @@
       "run_conversation_id": "uuid null",
       "token_hash": "bytea",
       "verification": "jsonb null"
+    },
+    "webpush_vapid_keys": {
+      "id": "uuid not null",
+      "private_ref": "text not null",
+      "public_key": "text not null",
+      "retired_at": "timestamptz null",
+      "status": "text"
     },
     "workspace_access": {
       "base_role": "text null",

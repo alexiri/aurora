@@ -3258,6 +3258,65 @@ export interface paths {
         patch: operations["patchMeOnboarding"];
         trace?: never;
     };
+    "/v1/me/push-subscriptions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The caller's registered devices (session only). */
+        get: operations["listPushSubscriptions"];
+        put?: never;
+        /**
+         * Register this browser (session only). 201 for a new registration, 200 when the endpoint
+         *     already belonged to the caller (the session is re-bound).
+         */
+        post: operations["createPushSubscription"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/me/push-subscriptions/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Remove one of the caller's devices (session only; idempotent). */
+        delete: operations["deletePushSubscription"];
+        options?: never;
+        head?: never;
+        /** Rename, pause or change the details of one of the caller's devices (session only). */
+        patch: operations["updatePushSubscription"];
+        trace?: never;
+    };
+    "/v1/me/push-subscriptions/{id}/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Send one test notification to one of the caller's devices (session only). The outcome shows in
+         *     the device row (`last_success_at` / `last_failure_at`).
+         */
+        post: operations["testPushSubscription"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/me/ssh-keys": {
         parameters: {
             query?: never;
@@ -4263,6 +4322,23 @@ export interface paths {
         };
         /** Public avatar by its current key (a capability: no authentication). Rotated keys give 404. */
         get: operations["getPublicAvatar"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/push/config": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The application-server key and the allowed push hosts. */
+        get: operations["getPushConfig"];
         put?: never;
         post?: never;
         delete?: never;
@@ -7140,6 +7216,25 @@ export interface components {
             /** @description Optional on-demand start command (one line, ≤ 1024 chars). */
             start_command?: string | null;
         };
+        CreatePushSubscription: {
+            endpoint: string;
+            /**
+             * Format: int64
+             * @description The browser's `expirationTime` (milliseconds since the epoch), when it has one.
+             */
+            expiration_time?: number | null;
+            keys: components["schemas"]["PushKeys"];
+            /** @description At most 80 characters. */
+            label?: string | null;
+            /**
+             * @description Re-attach this browser's registration to the current session; succeeds only when the
+             *     endpoint is already registered to the caller.
+             */
+            rebind?: boolean | null;
+            show_details?: boolean | null;
+            /** @description The application-server key the browser subscribed with (`GET /v1/push/config`). */
+            vapid_public_key: string;
+        };
         CreateRunnerRequest: {
             /** @description Unique runner name (1-64 chars). */
             name: string;
@@ -7565,6 +7660,8 @@ export interface components {
             hosted: boolean;
             /** @description (phase 4, P4-PRV-1) Port previews are configured on this instance. */
             previews: boolean;
+            /** @description (phase 5, P4-011B-3, C-830) Web Push is enabled on this instance (`push.enabled`). */
+            push: boolean;
             /**
              * @description (phase 5, P4-SSH-1, C-791) SSH access to sandboxes is enabled on this instance; the
              *     Account › SSH keys page and the agent page's SSH page exist only when this is true.
@@ -10901,6 +10998,39 @@ export interface components {
              */
             total: number;
         };
+        PushConfig: {
+            /** @description The endpoint hosts a subscription may name (exact, or `*.suffix`). */
+            allowed_hosts: string[];
+            /** @description `push.enabled` and a usable key. */
+            available: boolean;
+            /** @description base64url of the 65-byte uncompressed P-256 point of the active VAPID key. */
+            vapid_public_key?: string | null;
+        };
+        PushKeys: {
+            auth: string;
+            p256dh: string;
+        };
+        /** @enum {string} */
+        PushState: "active" | "paused" | "disabled" | "expired" | "stale_key";
+        PushSubscription: {
+            /** Format: date-time */
+            created_at: string;
+            /** Format: uuid */
+            id: string;
+            label: string;
+            /** Format: date-time */
+            last_failure_at?: string | null;
+            /** Format: date-time */
+            last_success_at?: string | null;
+            paused: boolean;
+            show_details: boolean;
+            state: components["schemas"]["PushState"];
+            /** @description Registered by the session making this request. */
+            this_session: boolean;
+        };
+        PushSubscriptionList: {
+            subscriptions: components["schemas"]["PushSubscription"][];
+        };
         PutAccessRequest: {
             role: components["schemas"]["WorkspaceRole"];
         };
@@ -12606,6 +12736,11 @@ export interface components {
         UpdateAddonSourceRequest: {
             /** @description `6h|12h|1d|1w|2w|1mo|never`. */
             update_interval: string;
+        };
+        UpdatePushSubscription: {
+            label?: string | null;
+            paused?: boolean | null;
+            show_details?: boolean | null;
         };
         UpdateScheduleRequest: {
             /** @description `creator` | `workspace`; changing it needs `can_own` and is audited (RFE-021). */
@@ -26621,6 +26756,307 @@ export interface operations {
             };
         };
     };
+    listPushSubscriptions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PushSubscriptionList"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    createPushSubscription: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreatePushSubscription"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PushSubscription"];
+                };
+            };
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PushSubscription"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    deletePushSubscription: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Subscription id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    updatePushSubscription: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Subscription id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdatePushSubscription"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PushSubscription"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    testPushSubscription: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Subscription id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     listSshKeys: {
         parameters: {
             query?: never;
@@ -31752,6 +32188,50 @@ export interface operations {
                 };
             };
             /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    getPushConfig: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PushConfig"];
+                };
+            };
             401: {
                 headers: {
                     [name: string]: unknown;

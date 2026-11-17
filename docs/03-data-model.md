@@ -1693,46 +1693,48 @@ The gateway role gains `UPDATE (last_check_at, last_check_result)` on both table
 
 UNIQUE (agent_id, app_id) WHERE status = `open` and kind = `app`; UNIQUE (agent_id, secret_id) WHERE status = `open` and kind = `website`. Open rows expire after `ACCESS_REQUEST_TTL` (14 days). The gateway role gets nothing on this table.
 
-#### `approval_push_claims` (new table; phase 5, D-138)
-| Planned column | Type | Notes | Phase |
-|---|---|---|---|
-| approval_id | uuid | gateway or action approval id; pk part (no FK: history survives) | 5 (RFE-011b, D-138) |
-| user_id | uuid FK→users (cascade) | pk part | 5 (RFE-011b, D-138) |
-| stage | text CHECK in (`initial`,`reminder`) | pk part | 5 (RFE-011b, D-138) |
-| kind | text CHECK in (`gateway`,`action`) | | 5 (RFE-011b, D-138) |
-| delivery | text CHECK in (`push`,`batch`,`digest`) | its own push; folded into the push of its `batch_id`; folded into the hourly digest (`PUSH_PER_USER_HOUR`) | 5 (RFE-011b, D-138) |
-| sent_at | timestamptz not null default now() | insert-on-conflict claim, idempotent across replicas; pruned daily with the other notification claims; index `(user_id, sent_at)` | 5 (RFE-011b, D-138) |
+### `approval_push_claims`
+(phase 5, P4-011B-3, D-138; migration `20261201000223`) One row per (approval, decider, stage) Web Push claim.
+| Column | Type | Notes |
+|---|---|---|
+| approval_id | uuid | gateway or action approval id; pk part (no FK: history survives) |
+| user_id | uuid FK→users (cascade) | pk part |
+| stage | text CHECK in (`initial`,`reminder`) | pk part |
+| kind | text CHECK in (`gateway`,`action`) | |
+| delivery | text CHECK in (`push`,`batch`,`digest`) | its own push; folded into the push of its `batch_id`; folded into the hourly digest (`PUSH_PER_USER_HOUR`) |
+| sent_at | timestamptz not null default now() | insert-on-conflict claim, idempotent across replicas; pruned daily with the other notification claims; index `(user_id, sent_at)` |
 
-#### `webpush_vapid_keys` (new table; instance-wide; phase 5, D-138)
-| Planned column | Type | Notes | Phase |
-|---|---|---|---|
-| id | uuid pk | the `vapid_key_id` of subscriptions | 5 (RFE-011b, D-138) |
-| public_key | text not null | base64url, 65-byte uncompressed P-256 point; the application server key | 5 (RFE-011b, D-138) |
-| private_ref | text not null | SecretRef, purpose `webpush.vapid` (`08 §1`); owner id = this id, org = nil UUID; never returned | 5 (RFE-011b, D-138) |
-| status | text CHECK in (`active`,`retired`) | exactly one `active` (partial unique index) | 5 (RFE-011b, D-138) |
-| created_at / retired_at | timestamptz | `retired_at` set at rotation; destroyed after `PUSH_VAPID_RETIRE` or when unreferenced | 5 (RFE-011b, D-138) |
+### `webpush_vapid_keys`
+(phase 5, P4-011B-3, D-138; instance-wide) The instance's VAPID (RFC 8292) keys.
+| Column | Type | Notes |
+|---|---|---|
+| id | uuid pk | the `vapid_key_id` of subscriptions |
+| public_key | text not null | base64url, 65-byte uncompressed P-256 point; the application server key |
+| private_ref | text not null | SecretRef, purpose `webpush.vapid` (`08 §1`), **`inline` store**; owner id = this id, org = nil UUID; never returned |
+| status | text CHECK in (`active`,`retired`) | exactly one `active` (partial unique index `webpush_vapid_keys_one_active`); `retired` ⇔ `retired_at` set |
+| retired_at | timestamptz null | set at rotation; destroyed after `PUSH_VAPID_RETIRE` or when unreferenced |
 
 Absent when the operator supplies the key through `push.vapid.private_key_env` (nothing is stored). The gateway role has no access.
 
-#### `push_subscriptions` (new table; phase 5, D-138)
-| Planned column | Type | Notes | Phase |
-|---|---|---|---|
-| id | uuid pk | | 5 (RFE-011b, D-138) |
-| user_id | uuid not null FK→users (cascade) | at most `PUSH_SUBSCRIPTIONS_PER_USER` (10) | 5 (RFE-011b, D-138) |
-| session_id | uuid not null FK→sessions (cascade) | the session that registered it; delivery only while that session is live (`07 §Web Push`) | 5 (RFE-011b, D-138) |
-| vapid_key_id | uuid null FK→webpush_vapid_keys (restrict) | null with an operator-managed key | 5 (RFE-011b, D-138) |
-| endpoint_hash | bytea unique not null | SHA-256 of the endpoint URL; one row per endpoint (re-registration under another user moves the row) | 5 (RFE-011b, D-138) |
-| endpoint_host | text not null | for the allow-list check and metrics; not secret | 5 (RFE-011b, D-138) |
-| secret_ref | text not null | SecretRef, purpose `webpush.subscription`, owner id = this id: sealed JSON `{ endpoint, p256dh, auth }` — the endpoint URL and keys are send capabilities and are never stored in clear or returned | 5 (RFE-011b, D-138) |
-| label | text not null | ≤ 80, sanitized, user-visible (e.g. "Firefox on Linux") | 5 (RFE-011b, D-138) |
-| show_details | bool not null default false | include agent and workspace names in the notification (`07 §Web Push`) | 5 (RFE-011b, D-138) |
-| paused_at | timestamptz null | | 5 (RFE-011b, D-138) |
-| expires_at | timestamptz null | the browser's `expirationTime` when given | 5 (RFE-011b, D-138) |
-| failure_count | int not null default 0 | consecutive; 5 sets `disabled_at` | 5 (RFE-011b, D-138) |
-| disabled_at | timestamptz null | | 5 (RFE-011b, D-138) |
-| last_success_at, last_failure_at | timestamptz null | churn columns | 5 (RFE-011b, D-138) |
-| created_at | timestamptz not null default now() | | 5 (RFE-011b, D-138) |
-| index | `(user_id)`, `(session_id)` | delivery and cascade | 5 (RFE-011b, D-138) |
+### `push_subscriptions`
+(phase 5, P4-011B-3, D-138) One row per browser subscription, bound to the session that registered it.
+| Column | Type | Notes |
+|---|---|---|
+| id | uuid pk | |
+| user_id | uuid not null FK→users (cascade) | at most `PUSH_SUBSCRIPTIONS_PER_USER` (10) |
+| session_id | uuid not null FK→sessions (cascade) | the session that registered it; delivery only while that session is live (`07 §Web Push`) |
+| vapid_key_id | uuid null FK→webpush_vapid_keys (restrict) | null with an operator-managed key |
+| endpoint_hash | bytea unique not null | SHA-256 of the endpoint URL; one row per endpoint (re-registration under another user moves the row) |
+| endpoint_host | text not null | for the allow-list check and metrics; not secret |
+| secret_ref | text not null | SecretRef, purpose `webpush.subscription`, owner id = this id: sealed JSON `{ endpoint, p256dh, auth }` — the endpoint URL and keys are send capabilities and are never stored in clear or returned |
+| label | text not null | ≤ 80, sanitized, user-visible (e.g. "Firefox on Linux") |
+| show_details | bool not null default false | include agent and workspace names in the notification (`07 §Web Push`) |
+| paused_at | timestamptz null | |
+| expires_at | timestamptz null | the browser's `expirationTime` when given |
+| failure_count | int not null default 0 | consecutive; 5 sets `disabled_at` |
+| disabled_at | timestamptz null | |
+| last_success_at, last_failure_at | timestamptz null | churn columns |
+| index | `(user_id)`, `(session_id)` | delivery and cascade |
 
 The gateway role has no access to any of these tables. Rows of revoked or expired sessions are removed by the daily session pruning (the foreign key cascades). (P4-011B spec batch, D-266(c)) Sign-out, "sign out other sessions", an administrator's revocation and deactivation delete the session's `push_subscriptions` rows in the revoking transaction (the cascade only covers deleted session rows). The sealed secrets (`webpush.vapid`, `webpush.subscription`) are always in the `inline` store (D-266(b)). Migration `20261201000223_web_push.sql` (P4-011B-3) creates `webpush_vapid_keys`, `push_subscriptions` and `approval_push_claims` together; the partial unique index `webpush_vapid_keys (status) WHERE status = 'active'` enforces one active key.
 
