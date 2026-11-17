@@ -439,6 +439,23 @@ impl FakeCore {
         id
     }
 
+    /// As [`Self::enqueue_with_id`] for an op that acts with a person's token (P4-UTOK): the core
+    /// delivers the token as `Operation.user_credential`, never in the payload.
+    pub fn enqueue_with_user_credential(
+        &self,
+        op_id: Uuid,
+        kind: &str,
+        integration: Option<Uuid>,
+        payload: Value,
+        token: &str,
+    ) -> Uuid {
+        self.enqueue_with_id(op_id, kind, integration, payload);
+        if let Some(r) = self.st().ops.iter_mut().find(|r| r.op.op_id == op_id) {
+            r.op.user_credential = Some(token.to_owned());
+        }
+        op_id
+    }
+
     /// As [`Self::enqueue`] with a caller-chosen op id.
     pub fn enqueue_with_id(
         &self,
