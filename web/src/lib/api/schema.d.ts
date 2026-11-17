@@ -577,6 +577,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/admin/placement/starter-grants/backfill": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Give the starter grants to people who signed in before (instance administrators; audited
+         *     per grant). Idempotent: a grant that exists is left alone.
+         */
+        post: operations["adminBackfillStarterGrants"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/admin/plugins": {
         parameters: {
             query?: never;
@@ -6504,6 +6524,24 @@ export interface components {
             /** @description `string` | `aws_sigv4` | `aws_assume_role` | `azure_entra` | `gcp_service_account`. */
             value_shape: string;
         };
+        /**
+         * @description What a backfill did: grants written, and grants that already existed or were refused
+         *     (an unusable credential, or an app that allows only custom access).
+         */
+        BackfillResult: {
+            /** Format: int32 */
+            granted: number;
+            /** Format: int32 */
+            skipped: number;
+        };
+        /** @description `POST /v1/admin/placement/starter-grants/backfill` (C-922). */
+        BackfillStarterGrants: {
+            /**
+             * @description Only these starter credentials; absent = every starter grant of the saved placement.
+             *     An id that is not one of the placement's starter grants is refused.
+             */
+            credential_ids?: string[] | null;
+        };
         BatchDecided: {
             /** Format: int32 */
             decided: number;
@@ -12044,15 +12082,26 @@ export interface components {
             set_availability: boolean;
         };
         SetupCheck: {
+            /** @description (C-924) `app_needs_oauth_client` and `app_token_only`: the app the check is about. */
+            app_id?: string | null;
+            client_key?: string | null;
             /** @description The Helm value that changes it, for config-only things. */
             helm?: string | null;
             /** @description Stable id, e.g. `endpoint:litellm`, `default_model:litellm`, `gateway`. */
             id: string;
             /** @description One short plain sentence for the page. */
             message: string;
+            /**
+             * @description (C-924) Those checks: the app's package id and the OAuth client key its sign-in method
+             *     reads (`null` for `app_token_only` when it has none to name).
+             */
+            package?: string | null;
             reason: string;
             status: components["schemas"]["SetupState"];
-            /** @description The current value (never a secret): a model id, an image, a count. */
+            /**
+             * @description The current value (never a secret): a model id, an image, a count; an app's name for
+             *     the `app_*` checks.
+             */
             value?: string | null;
         };
         SetupClients: {
@@ -12097,6 +12146,13 @@ export interface components {
         SetupState: "ok" | "warning" | "todo";
         /** @description `GET /v1/admin/setup` (C-533): the setup wizard's live status, no secrets. */
         SetupStatus: {
+            /**
+             * Format: int64
+             * @description (C-922) Personal workspaces of the default organization whose default agent lacks a
+             *     starter grant of the saved placement: people who signed in before it was set. `0` when
+             *     no placement or no starter grant is saved.
+             */
+            personal_workspaces_without_starter: number;
             /** @description A placement has been saved: the wizard is no longer shown at sign-in. */
             placement_saved: boolean;
             /** @description In order: `roles`, `placement`, `llm`, `runners`, `optional`. ("Try it" is the client's.) */
@@ -15540,6 +15596,63 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PlacementPreview"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminBackfillStarterGrants: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BackfillStarterGrants"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BackfillResult"];
                 };
             };
             400: {

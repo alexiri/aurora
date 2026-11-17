@@ -471,3 +471,60 @@ pub async fn setup_status(
         },
     })
 }
+
+/// An app people cannot sign in to for lack of an OAuth client (C-924).
+#[derive(Debug, Clone)]
+pub struct SignInGap {
+    pub app_id: String,
+    pub name: String,
+    pub package: String,
+    /// The OAuth client key a person's sign-in method reads (the first one missing).
+    pub client_key: String,
+    /// Another way for a person to connect works (a token), so this is only informational.
+    pub token_only: bool,
+}
+
+/// The apps of the active catalogue that have a method for a person that needs an OAuth client
+/// which does not exist for `org`, computed by [`setup_status`] (C-924). An app whose people
+/// methods are all blocked by the client is a gap to fix; one with another working way is
+/// `token_only`. Apps blocked by something else (a self-hosted server) are not listed.
+pub async fn sign_in_gaps(state: &AppState, org: Uuid) -> Result<Vec<SignInGap>, ApiError> {
+    let Some(snap) = snapshot(state).await? else {
+        return Ok(Vec::new());
+    };
+    let view = SetupView {
+        org,
+        workspace: None,
+        org_admin: true,
+    };
+    let mut out = Vec::new();
+    for app in &snap.apps {
+        let status = setup_status(state, &app.app_id, view).await?;
+        let people: Vec<&SetupMethod> = status
+            .methods
+            .iter()
+            .filter(|m| m.audience == MethodAudience::Person)
+            .collect();
+        let Some(blocked) = people
+            .iter()
+            .find(|m| m.needs == [SetupNeed::OauthClient] && m.client_key.is_some())
+        else {
+            continue;
+        };
+        let works = people.iter().any(|m| m.needs.is_empty());
+        let only_client = people
+            .iter()
+            .all(|m| m.needs.is_empty() || m.needs == [SetupNeed::OauthClient]);
+        if !works && !only_client {
+            continue;
+        }
+        out.push(SignInGap {
+            app_id: app.app_id.clone(),
+            name: status.name,
+            package: app.package_id.clone(),
+            client_key: blocked.client_key.clone().unwrap_or_default(),
+            token_only: works,
+        });
+    }
+    Ok(out)
+}

@@ -195,12 +195,15 @@ function WorkspaceSelector({ orgSlug, wsSlug, pathname }: { orgSlug: string; wsS
   const resolved = useResolve(orgSlug);
   const workspaces = useWorkspaces(resolved.data?.org.id);
   const ws = workspaces.data?.items.find((w) => w.slug === wsSlug);
+  // (C-923) The person's own personal workspace reads "<name> (personal)".
+  const mine = useMe().data?.memberships?.find((m) => m.org.slug === orgSlug)?.workspaces ?? [];
+  const label = (w: { slug: string; name: string }) => (mine.some((x) => x.slug === w.slug && x.personal === true) ? `${w.name} (personal)` : w.name);
   const atRoot = !pathname.startsWith(`${orgRoutes(orgSlug).base}/w/`);
   return (
     <SidebarSelect
       caption="Workspace"
       placeholder={atRoot ? "All workspaces" : (wsSlug ?? "?")}
-      value={atRoot ? "All workspaces" : ws?.name}
+      value={atRoot ? "All workspaces" : ws ? label(ws) : undefined}
       testId="workspace-selector"
     >
       <MenuLabel>Workspaces</MenuLabel>
@@ -210,7 +213,7 @@ function WorkspaceSelector({ orgSlug, wsSlug, pathname }: { orgSlug: string; wsS
       {workspaces.data?.items.map((w) => (
         <MenuItem key={w.id} asChild>
           <Link href={wsRoutes(orgSlug, w.slug).home()} className={cn(w.slug === wsSlug && "font-semibold")}>
-            {w.name}
+            {label(w)}
           </Link>
         </MenuItem>
       ))}

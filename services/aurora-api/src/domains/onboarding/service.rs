@@ -108,6 +108,9 @@ fn check(
         message: message.into(),
         value: None,
         helm: None,
+        app_id: None,
+        package: None,
+        client_key: None,
     }
 }
 
@@ -475,6 +478,44 @@ pub async fn setup(state: &AppState, admin: Uuid) -> Result<SetupStatus, ApiErro
         )
         .value(counts.managed_connectors.to_string()),
     ];
+    // (C-924) Apps people cannot sign in to yet, for the default organization.
+    if let Some(org) = default_org {
+        for gap in crate::domains::apps::setup::sign_in_gaps(state, org).await? {
+            let mut c = if gap.token_only {
+                check(
+                    format!("app:{}", gap.app_id),
+                    SetupState::Ok,
+                    "app_token_only",
+                    format!(
+                        "People can connect {} with a token. Signing in needs an OAuth client.",
+                        gap.name
+                    ),
+                )
+            } else {
+                check(
+                    format!("app:{}", gap.app_id),
+                    SetupState::Warning,
+                    "app_needs_oauth_client",
+                    format!("People can't sign in to {} yet.", gap.name),
+                )
+            };
+            // `value` carries the app's display name for the page.
+            c.value = Some(gap.name);
+            c.app_id = Some(gap.app_id);
+            c.package = Some(gap.package);
+            c.client_key = Some(gap.client_key);
+            opt.push(c);
+        }
+    }
+    // (C-924) Nothing can send mail until an SMTP server is set.
+    if !state.auth().smtp {
+        opt.push(check(
+            "email",
+            SetupState::Warning,
+            "email_not_configured",
+            "E-mail is not set up. Aurora cannot send approval or invitation e-mails.",
+        ));
+    }
     if counts.plugins_pending > 0 {
         opt.push(
             check(
@@ -495,6 +536,7 @@ pub async fn setup(state: &AppState, admin: Uuid) -> Result<SetupStatus, ApiErro
 
     Ok(SetupStatus {
         placement_saved: placed.saved,
+        personal_workspaces_without_starter: placement::personal_without_starter(state).await?,
         you,
         steps: vec![
             step("roles", "roles_ok", roles),
