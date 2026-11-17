@@ -53,7 +53,17 @@ struct Static(Arc<World>);
 impl CredentialResolver for Static {
     async fn resolve(&self, token: &str) -> Result<Option<RequestIdentity>, ResolveError> {
         // `BOOT` is a boot credential minted with the `browser` capability (RFE-003).
-        if ![TOKEN, BOOT, BYO_CTX_REQ, BYO_CONTEXT, SPK_ALICE, SPK_BOB].contains(&token) {
+        if ![
+            TOKEN,
+            BOOT,
+            BYO_CTX_REQ,
+            BYO_CONTEXT,
+            SPK_ALICE,
+            SPK_BOB,
+            EVAL_CTX,
+        ]
+        .contains(&token)
+        {
             return Ok(None);
         }
         // (RFE-005) hosted context credentials of a turn spoken by Alice / by Bob.
@@ -82,7 +92,7 @@ impl CredentialResolver for Static {
             credential_id: Uuid::nil(),
             kind: if boot {
                 CredentialKind::Boot
-            } else if token == BYO_CONTEXT || speaker.is_some() {
+            } else if token == BYO_CONTEXT || token == EVAL_CTX || speaker.is_some() {
                 CredentialKind::Context
             } else {
                 CredentialKind::Agent
@@ -96,11 +106,21 @@ impl CredentialResolver for Static {
             context_label: (token == BYO_CONTEXT).then(|| "aurora run: make test".to_owned()),
             speaker_user_id: speaker,
             speaker_group_ids: Vec::new(),
-            capabilities: if boot { vec!["browser".into()] } else { vec![] },
+            capabilities: if boot {
+                vec!["browser".into()]
+            } else if token == EVAL_CTX {
+                // (P4-EVAL-2) minted for a turn of an `eval` conversation.
+                vec![aurora_gateway::auth::CAP_EVAL_READ_ONLY.into()]
+            } else {
+                vec![]
+            },
             byo,
         }))
     }
 }
+
+/// (P4-EVAL-2) the `auc_` credential of a turn in an eval conversation.
+const EVAL_CTX: &str = "auc_eval";
 
 /// `aug_` of a BYO agent with `byo_require_context`, and one of its `auc_` credentials.
 const BYO_CTX_REQ: &str = "aug_ctxreq";
@@ -1048,6 +1068,140 @@ async fn post_status(env: &Env, payload: &str) -> u16 {
         .nth(1)
         .and_then(|s| s.parse().ok())
         .unwrap_or(0)
+}
+
+/// Absolute-form request with `method` and `payload` as `token`; returns (status, body).
+async fn send_as(env: &Env, token: &str, method: &str, path: &str, payload: &str) -> Reply {
+    let mut s = crate::common::connect(env.proxy).await;
+    let auth = format!(
+        "Proxy-Authorization: Basic {}\r\n",
+        base64::engine::general_purpose::STANDARD.encode(format!("agent:{token}"))
+    );
+    let req = format!(
+        "{method} http://{}{path} HTTP/1.1\r\nHost: {}\r\n{auth}Content-Length: {}\r\nConnection: close\r\n\r\n{payload}",
+        env.up,
+        env.up,
+        payload.len()
+    );
+    s.write_all(req.as_bytes()).await.unwrap();
+    let mut out = Vec::new();
+    let _ = tokio::time::timeout(Duration::from_secs(5), s.read_to_end(&mut out)).await;
+    let text = String::from_utf8_lossy(&out).into_owned();
+    let (head, body) = text.split_once("\r\n\r\n").unwrap_or((&text, ""));
+    let status = head
+        .split_whitespace()
+        .nth(1)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+    Reply {
+        status,
+        head: head.to_owned(),
+        body: dechunk(body),
+    }
+}
+
+/// (P4-EVAL-2, C-868, SEC-114) A turn of an eval conversation (its `auc_` credential carries
+/// `eval_read_only`): every non-GET/HEAD request to a host that is not a model endpoint is refused
+/// 403 `eval_read_only` before it leaves, is logged with that decision, and reaches no upstream;
+/// reads pass; the same write with an ordinary context credential or the agent credential is
+/// unchanged.
+#[tokio::test]
+async fn eval_turn_writes_are_refused_at_the_gateway() {
+    let env = start(|_, _| Rows::default(), no_llm()).await;
+    for method in ["POST", "PUT", "PATCH", "DELETE"] {
+        let r = send_as(&env, EVAL_CTX, method, "/canary", "x").await;
+        assert_eq!(r.status, 403, "{method}: {}", r.body);
+        assert_eq!(
+            r.json()["error"]["code"],
+            "eval_read_only",
+            "{method}: {}",
+            r.body
+        );
+        // Never reached the upstream (its echo would list the path).
+        assert!(!r.body.contains("path="), "{method}: {}", r.body);
+    }
+    // Reads pass.
+    for method in ["GET", "HEAD"] {
+        let r = send_as(&env, EVAL_CTX, method, "/canary", "").await;
+        assert_eq!(r.status, 200, "{method}: {}", r.body);
+    }
+    // Unchanged for everything else, including the same write.
+    for token in [TOKEN, BYO_CONTEXT, SPK_ALICE] {
+        let r = send_as(&env, token, "POST", "/canary", "x").await;
+        assert_eq!(r.status, 200, "{token}: {}", r.body);
+        assert!(r.body.contains("path=/canary"), "{token}: {}", r.body);
+    }
+    env.log.flush().await;
+    let rows = env.captured.0.lock().unwrap().clone();
+    let refused = rows
+        .iter()
+        .filter(|x| x.decision == "eval_read_only")
+        .collect::<Vec<_>>();
+    assert_eq!(refused.len(), 4, "one logged refusal per write: {rows:?}");
+    assert!(
+        refused
+            .iter()
+            .all(|x| x.status == 403 && x.error_code.as_deref() == Some("eval_read_only")),
+        "{refused:?}"
+    );
+}
+
+/// The model provider's own calls are the turn itself: a POST to an LLM host passes with the eval
+/// credential (the key is injected as for any turn).
+#[tokio::test]
+async fn eval_turn_model_calls_pass() {
+    let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let up = l.local_addr().unwrap();
+    let port = up.port();
+    let env = start(
+        |w, v| {
+            let mut s = secret(w, "llm", json!({}), v);
+            s.kind = "llm".into();
+            s.llm_provider = Some("litellm".into());
+            s.llm_auth_mode = Some("api_key".into());
+            s.llm_endpoint_id = Some("central".into());
+            s.host_pattern = format!("127.0.0.1:{port}");
+            let mut rows = Rows::default();
+            rows.ws.rules.push(rule(
+                "llm",
+                "allow",
+                json!([{"type":"secrets","scope":"any","kind":"llm"}]),
+                json!({}),
+            ));
+            rows.secrets.push(s);
+            rows
+        },
+        LlmSection {
+            enabled_providers: vec!["litellm".into()],
+            provider_preference: vec![],
+            dev_upstream_overrides: Default::default(),
+            endpoints: vec![LlmEndpoint {
+                id: "central".into(),
+                provider: "litellm".into(),
+                base_url: Some(format!("http://127.0.0.1:{port}")),
+                ..Default::default()
+            }],
+        },
+    )
+    .await;
+    tokio::spawn(async move {
+        loop {
+            let (s, _) = l.accept().await.unwrap();
+            tokio::spawn(async move {
+                let _ = auto::Builder::new(TokioExecutor::new())
+                    .serve_connection(TokioIo::new(s), service_fn(upstream))
+                    .await;
+            });
+        }
+    });
+    let env = Env { up, ..env };
+    let r = send_as(&env, EVAL_CTX, "POST", "/v1/chat/completions", "{}").await;
+    assert_eq!(r.status, 200, "{}", r.body);
+    assert!(
+        r.body.contains("authorization: Bearer s3cr3t"),
+        "{}",
+        r.body
+    );
 }
 
 /// `gateway.condition_body_bytes`: a body condition beyond the buffered prefix does not

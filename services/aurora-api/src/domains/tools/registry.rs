@@ -294,5 +294,48 @@ pub async fn catalogue(pool: &PgPool, agent_id: Uuid) -> Result<Vec<ToolDescript
     Ok(registry().catalogue_for(&ctx).await)
 }
 
+#[cfg(test)]
+mod eval_classification_tests {
+    use super::*;
+
+    /// Platform tools with no effect on the world. A new built-in tool must be listed here or in
+    /// `WRITE_TOOLS`; otherwise an eval turn (C-868) could reach a write the refusal does not know.
+    const READ_TOOLS: &[&str] = &[
+        "conversation_read",
+        "conversation_search",
+        "find_recipient",
+        "list_agents",
+        "list_apps",
+        "list_my_messages",
+        "list_peer_tasks",
+        "memory_get",
+        "memory_list",
+        "memory_search",
+        "read_conversation",
+        "skill_get",
+        "schedule_list",
+        "skill_list",
+        "webhook_deliveries",
+        "webhook_list",
+    ];
+
+    #[test]
+    fn every_registered_tool_is_classified_read_or_write_for_eval_turns() {
+        let unclassified: Vec<&str> = registry()
+            .order
+            .iter()
+            .copied()
+            .filter(|n| !is_write_tool(n) && !READ_TOOLS.contains(n))
+            .collect();
+        assert!(
+            unclassified.is_empty(),
+            "classify as read (READ_TOOLS here) or write (WRITE_TOOLS): {unclassified:?}"
+        );
+        // No stale entries either: every name listed is a registered tool or a known future one.
+        let both: Vec<&&str> = READ_TOOLS.iter().filter(|n| is_write_tool(n)).collect();
+        assert!(both.is_empty(), "both read and write: {both:?}");
+    }
+}
+
 /// Default per-call budget.
 pub const CALL_TIMEOUT: Duration = limits::TOOL_CALL_TIMEOUT;

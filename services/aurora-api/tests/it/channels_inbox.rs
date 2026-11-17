@@ -1159,6 +1159,103 @@ async fn mirror_posts_answer_once_then_clears_receipt() {
     assert_eq!(w.ops("message.post").await.len(), 1);
 }
 
+/// (P4-EVAL-2, SEC-116) An agent whose chat conversation is linked to a channel (a DM with its
+/// bot) still has its eval turns kept off the platform: the finished eval turn is run through the
+/// mirror hook (door `eval`, which is not web or API) and no message, receipt, reaction or thread
+/// link is created, while the chat conversation's own answer was mirrored as usual.
+#[tokio::test]
+async fn mirror_never_posts_the_turn_of_an_eval_conversation() {
+    use aurora_db::repo::conversations::{self as convs, NewConversation};
+    use aurora_db::repo::turns;
+    let w = world().await;
+    let a = w.agent("rex").await;
+    w.presence(w.integ, a, "dedicated", Some("BD1")).await;
+    w.link(w.integ, "U1", w.member).await;
+    w.post(w.integ, "e1", dm("U1", "q", "BD1")).await;
+    w.mark_receipts_delivered().await;
+    w.finish("done", Some("the chat answer"), None).await;
+    assert_eq!(w.ops("message.post").await.len(), 1);
+    let ops_before = w.count("SELECT count(*) FROM channel_ops").await;
+    let links_before = w.count("SELECT count(*) FROM thread_links").await;
+
+    // An eval question of the same agent, answered with a canary.
+    let mut tx = w.h.pool().begin().await.unwrap();
+    let reference = format!("eval:{}:1", Uuid::now_v7());
+    let (c, _) = convs::get_or_create(
+        &mut tx,
+        &NewConversation {
+            agent_id: a,
+            workspace_id: w.ws,
+            kind: "eval",
+            external_ref: &reference,
+            direct_user_id: None,
+            title: Some("Eval question 1"),
+            origin_conversation_id: None,
+        },
+    )
+    .await
+    .unwrap();
+    let created = conv::create_turn_tx(
+        &mut tx,
+        &c,
+        &conv::NewMessage {
+            door: json!({"kind": "eval", "ref": "r:1"}),
+            speaker_kind: "system",
+            speaker_user_id: None,
+            speaker_label: "Eval",
+            text: "What is 6 times 7?",
+            source_event_id: Some(&reference),
+            attachment_ids: &[],
+            reply_to_seq: None,
+        },
+    )
+    .await
+    .unwrap();
+    let (turns::Created::Turn(t) | turns::Created::Followup(t)) = created;
+    sqlx::query("UPDATE turns SET status='running' WHERE id=$1")
+        .bind(t.id)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    conv::append_event(
+        &mut tx,
+        c.id,
+        Some(t.id),
+        "text",
+        &json!({"turn_id": t.id, "message_id": "m-eval", "text": "canary-mirror-77 ANSWER: 42"}),
+    )
+    .await
+    .unwrap();
+    let row = lifecycle::finish(&mut tx, t.id, "done", None, None, None)
+        .await
+        .unwrap()
+        .expect("eval turn finished");
+    // The hook again, as a replay would.
+    aurora_api::domains::channels::mirror::on_turn_finished(&mut tx, &row)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+
+    assert_eq!(
+        w.ops("message.post").await.len(),
+        1,
+        "no post for the eval answer"
+    );
+    assert_eq!(
+        w.count("SELECT count(*) FROM channel_ops").await,
+        ops_before
+    );
+    assert_eq!(
+        w.count("SELECT count(*) FROM thread_links").await,
+        links_before
+    );
+    assert_eq!(
+        w.count("SELECT count(*) FROM channel_ops WHERE payload::text LIKE '%canary-mirror-77%'")
+            .await,
+        0
+    );
+}
+
 /// (FIX-142, D-226, D-227) A formatted answer reaches the platform exactly as written.
 #[tokio::test]
 async fn mirror_posts_a_formatted_answer_unchanged() {

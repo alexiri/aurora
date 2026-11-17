@@ -55,13 +55,18 @@ struct Static(World);
 #[async_trait]
 impl CredentialResolver for Static {
     async fn resolve(&self, token: &str) -> Result<Option<RequestIdentity>, ResolveError> {
-        if token != TOKEN {
+        if token != TOKEN && token != EVAL_CTX {
             return Ok(None);
         }
         let w = self.0;
+        let eval = token == EVAL_CTX;
         Ok(Some(RequestIdentity {
             credential_id: Uuid::nil(),
-            kind: CredentialKind::Agent,
+            kind: if eval {
+                CredentialKind::Context
+            } else {
+                CredentialKind::Agent
+            },
             agent_id: w.agent,
             workspace_id: w.ws,
             org_id: w.org,
@@ -71,11 +76,18 @@ impl CredentialResolver for Static {
             context_label: None,
             speaker_user_id: None,
             speaker_group_ids: Vec::new(),
-            capabilities: vec![],
+            capabilities: if eval {
+                vec![aurora_gateway::auth::CAP_EVAL_READ_ONLY.into()]
+            } else {
+                vec![]
+            },
             byo: None,
         }))
     }
 }
+
+/// (P4-EVAL-2) the `auc_` credential of a turn in an eval conversation.
+const EVAL_CTX: &str = "auc_eval";
 
 #[derive(Default)]
 struct Rows {
@@ -372,8 +384,19 @@ impl Reply {
 }
 
 async fn send(env: &Env, method: &str, path: &str, extra: &str, body: &str) -> Reply {
+    send_as(env, TOKEN, method, path, extra, body).await
+}
+
+async fn send_as(
+    env: &Env,
+    token: &str,
+    method: &str,
+    path: &str,
+    extra: &str,
+    body: &str,
+) -> Reply {
     let mut s = crate::common::connect(env.proxy).await;
-    let auth = base64::engine::general_purpose::STANDARD.encode(format!("agent:{TOKEN}"));
+    let auth = base64::engine::general_purpose::STANDARD.encode(format!("agent:{token}"));
     let req = format!(
         "{method} http://{up}{path} HTTP/1.1\r\nHost: {up}\r\nProxy-Authorization: Basic {auth}\r\n{extra}Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
         body.len(),
@@ -1448,6 +1471,53 @@ fn derived_custom(c: &AppConnectionRow) -> Vec<(Uuid, Value)> {
                    "targets":[{"type":"connection","id":c.id}]}),
         ),
     ]
+}
+
+/// (P4-EVAL-2, C-868, SEC-114) On an app host an eval turn keeps the app's read tools (even a
+/// POST one: a GraphQL query) and plain GETs, and is refused `eval_read_only` for a write tool or
+/// an untooled non-GET, under a `full` grant that would allow all of them. Nothing is injected on a
+/// refusal; the agent credential is unchanged.
+#[tokio::test]
+async fn eval_turn_keeps_read_tools_and_refuses_write_tools_on_an_app_host() {
+    let snap = snapshot(
+        vec![app_json("demo", tools_json(), false)],
+        vec![host_json(
+            "demo",
+            None,
+            json!({"inject": [{"bearer": "{credentials.tok}"}]}),
+        )],
+    );
+    let (env, ..) = start(snap, &[("c1", r#"{"tok":"T0K"}"#)], |w| {
+        let c = conn(w, "demo", "c1", None);
+        let mut r = Rows::default();
+        r.ws.rules.push(allow_conn(&c, None));
+        r.conns.push(c);
+        r
+    })
+    .await;
+    let q = r#"{"query":"query { a }"}"#;
+    let m = r#"{"query":"mutation { a }"}"#;
+    // Reads pass and are injected as usual.
+    let r = send_as(&env, EVAL_CTX, "GET", "/items", "", "").await;
+    assert_eq!(r.status, 200, "{}", r.body);
+    assert!(r.body.contains("authorization: Bearer T0K"), "{}", r.body);
+    let r = send_as(&env, EVAL_CTX, "POST", "/graphql", "", q).await;
+    assert_eq!(r.status, 200, "read tool by POST: {}", r.body);
+    // Writes are refused before injection.
+    for (method, path, body) in [
+        ("POST", "/items", "{}"),
+        ("POST", "/graphql", m),
+        ("POST", "/untooled", "{}"),
+        ("DELETE", "/items", ""),
+    ] {
+        let r = send_as(&env, EVAL_CTX, method, path, "", body).await;
+        assert_eq!(r.status, 403, "{method} {path}: {}", r.body);
+        assert_eq!(r.code(), "eval_read_only", "{method} {path}: {}", r.body);
+        assert!(!r.body.contains("T0K"), "{}", r.body);
+    }
+    // The same write with the agent credential is not refused by this rule.
+    let r = send(&env, "POST", "/items", "", "{}").await;
+    assert_eq!(r.status, 200, "{}", r.body);
 }
 
 /// FIX-133 (D-240): a read-only connection allows the app's read tools and blocks its write tools
