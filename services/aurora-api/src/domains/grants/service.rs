@@ -749,15 +749,14 @@ async fn write_connection_grant(
                     "An ask timeout needs a custom grant with ask tools.",
                 ));
             }
-            if let Some(m) = crate::domains::policy::validate::timeout_range_error(
-                t,
-                state.ops().approvals.max_timeout_secs,
-            ) {
+            let bound = crate::domains::policy::validate::timeout_bound(&state.ops());
+            if let Some(m) = crate::domains::policy::validate::timeout_range_error(t, bound) {
                 return Err(crate::domains::policy::validate::timeout_out_of_range(
                     vec![aurora_core::FieldError::new("/ask_timeout_secs", m)],
+                    bound,
                 ));
             }
-            // Range-checked above (60..=14400): the conversion cannot fail.
+            // Range-checked above (60..=604800): the conversion cannot fail.
             i32::try_from(t).ok()
         }
     };

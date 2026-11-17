@@ -560,7 +560,7 @@ Only consulted when `organizations.app_posture = 'restricted'`.
 | require_approval | bool not null default false | allow only |
 | rate_limit | jsonb null | `{ "count": int, "per": "minute"|"hour"|"day" }`; allow only |
 | conditions | jsonb not null default `[]` | `[Condition]` |
-| approval_timeout_secs | int null | (phase 2, RFE-011a) only with `require_approval`; 60 … `approvals.max_timeout_secs` (CHECK 60…14400, the instance maximum is checked at authoring); null = no preference (`07 §Approval deadlines`) |
+| approval_timeout_secs | int null | (phase 2, RFE-011a) only with `require_approval`; 60 … `approvals.max_timeout_secs` (`approvals.park.max_timeout_secs` while parking is on; CHECK 60…604800 since P4-011B-2, the instance maximum in force is checked at authoring); null = no preference (`07 §Approval deadlines`) |
 
 Shapes of `Identity`, `Target`, `Condition`: `07 §Rule anatomy`.
 
@@ -575,7 +575,7 @@ Shapes of `Identity`, `Target`, `Condition`: `07 §Rule anatomy`.
 | mode | text CHECK in (`full`,`custom`) null | connections only |
 | allow_tools | text[] not null default `{}` | custom mode |
 | ask_tools | text[] not null default `{}` | custom mode |
-| ask_timeout_secs | int null | (phase 2, RFE-011a) custom connection grants with `ask_tools`; compiled into the derived ask rule as `approval_timeout_secs` (CHECK 60…14400; the instance maximum is checked at authoring) |
+| ask_timeout_secs | int null | (phase 2, RFE-011a) custom connection grants with `ask_tools`; compiled into the derived ask rule as `approval_timeout_secs` (CHECK 60…604800 since P4-011B-2; the instance maximum in force is checked at authoring) |
 | created_by | uuid null FK→users (set null) | |
 | unique | (agent_id, connection_id), (agent_id, secret_id) | |
 
@@ -647,6 +647,7 @@ The gateway database role's column-level `SELECT (id, status, gateway_instance_i
 |---|---|---|
 | approval_id | uuid | gateway or action approval id; pk part (no FK: approval history survives) |
 | user_id | uuid FK→users (cascade) | pk part |
+| stage | text not null default `initial` CHECK in (`initial`,`reminder`) | (P4-011B-2) pk part: the primary key is `(approval_id, user_id, stage)`; the parked reminder e-mail (`07 §Park and resume`) is its own idempotent claim |
 | kind | text CHECK in (`gateway`,`action`) | |
 | sent_at | timestamptz not null default now() | insert-on-conflict claim makes the e-mail idempotent across replicas; pruned with the daily retention pruning; index (user_id, sent_at) |
 | delivery | text not null default `mail` CHECK in (`mail`,`batch`,`digest_mail`,`digest`) | how the claim was served: its own e-mail; folded into the e-mail of its `batch_id`; the "N more waiting" digest e-mail; or folded silently into a digest already sent this hour (hourly cap `APPROVAL_EMAIL_PER_USER_HOUR`, D-81) |
@@ -1662,13 +1663,6 @@ The gateway role gains `UPDATE (last_check_at, last_check_result)` on both table
 | created_at, resolved_at | timestamptz | `resolved_by uuid null FK → users` beside them | 5 (P5-UX-17) |
 
 UNIQUE (agent_id, app_id) WHERE status = `open` and kind = `app`; UNIQUE (agent_id, secret_id) WHERE status = `open` and kind = `website`. Open rows expire after `ACCESS_REQUEST_TTL` (14 days). The gateway role gets nothing on this table.
-
-#### `approval_notifications` (reminder stage; phase 5, P4-011B, D-265(b))
-| Planned column | Type | Notes | Phase |
-|---|---|---|---|
-| stage | text not null default `initial` CHECK in (`initial`,`reminder`) | pk part: the primary key becomes `(approval_id, user_id, stage)`; the parked reminder e-mail (`07 §Park and resume`) is its own idempotent claim | 5 (P4-011B) |
-
-Migration `20261201000222_approval_notification_stage.sql` (P4-011B-2): add the column (existing rows become `initial`), drop and re-create the primary key.
 
 #### `approval_push_claims` (new table; phase 5, D-138)
 | Planned column | Type | Notes | Phase |

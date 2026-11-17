@@ -29,6 +29,68 @@ async fn world_with(extra: &str) -> W {
     W { h, admin }
 }
 
+// P4-011B-2 (C-829, D-357): `approvals.park.*` are live settings; the cross-key rule is checked
+// only while parking is on and when a write turns it on; `GET /v1/policy/approval-limits` and the
+// rule/grant timeout bound follow the switch.
+#[tokio::test]
+async fn park_settings_are_live_and_the_cross_key_rule_follows_the_switch() {
+    let w = world().await;
+    // Parking off: a hold maximum below the 900 s threshold is accepted (D-357).
+    let (s, v) = w
+        .put("approvals", json!({ "approvals.max_timeout_secs": 600 }))
+        .await;
+    assert_eq!(s, 200, "{v}");
+    // Turning parking on with values that break the rule is refused, naming the key and code.
+    let (s, v) = w
+        .put(
+            "approvals",
+            json!({ "approvals.max_timeout_secs": 600, "approvals.park.enabled": true }),
+        )
+        .await;
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (422, Some("settings_invalid")),
+        "{v}"
+    );
+    assert!(
+        v.to_string().contains("park_threshold_above_hold_max"),
+        "{v}"
+    );
+    // Consistent values turn it on; the readers follow without a restart.
+    let (s, v) = w
+        .put(
+            "approvals",
+            json!({
+                "approvals.max_timeout_secs": 600,
+                "approvals.park.enabled": true,
+                "approvals.park.threshold_secs": 300,
+            }),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let (s, v) = w
+        .call(Method::GET, "/v1/policy/approval-limits", None)
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["park"]["enabled"], true);
+    assert_eq!(v["park"]["threshold_secs"], 300);
+    assert_eq!(v["max_timeout_secs"], 600);
+    // A hold maximum above the park maximum is refused while parking is on.
+    let (s, v) = w
+        .put(
+            "approvals",
+            // (A write replaces the section's values, so the switch is part of it.)
+            json!({
+                "approvals.park.enabled": true,
+                "approvals.park.max_timeout_secs": 3600,
+                "approvals.max_timeout_secs": 7200,
+            }),
+        )
+        .await;
+    assert_eq!(s, 422, "{v}");
+    assert!(v.to_string().contains("park_max_below_hold_max"), "{v}");
+}
+
 impl W {
     async fn call(&self, m: Method, uri: &str, body: Option<Value>) -> (u16, Value) {
         let c = cookie(&self.admin);

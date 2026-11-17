@@ -275,6 +275,10 @@ pub struct EffectiveTool {
     /// (phase 2, RFE-011a) Only for `needs_approval`: the hold timeout in seconds a call of this
     /// tool would get (minimum of the set rule timeouts, else `approvals.timeout_secs`).
     pub approval_timeout_secs: Option<u64>,
+    /// (P4-011B-2, C-829) Only for `needs_approval`: the call parks (see `Simulation`).
+    pub approval_parks: bool,
+    /// (P4-011B-2, C-829) Only for `needs_approval`: the wanted timeout was cut to the maximum.
+    pub approval_timeout_clamped: bool,
 }
 
 #[derive(Debug, Serialize, ToSchema)]

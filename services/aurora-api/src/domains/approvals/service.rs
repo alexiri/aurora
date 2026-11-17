@@ -54,6 +54,8 @@ fn decision_event(c: &Caller, row: &ApprovalRow, decision: Decision, batch: bool
     .metadata(serde_json::json!({
         "decision": verb, "via": via(c), "batch": batch,
         "agent_id": row.agent_id, "host": row.host, "method": row.method,
+        // (P4-011B-2, C-838) a parked approval's grant window; absent for held approvals.
+        "parked": row.parked, "resume_expires_at": row.resume_expires_at,
     }))
 }
 
@@ -105,6 +107,7 @@ pub async fn decide(
         decision == Decision::Approve,
         c.user_id,
         via(c),
+        s.ops().approvals.park.resume_window_secs,
     )
     .await?;
     let Some(row) = row else {
@@ -113,10 +116,21 @@ pub async fn decide(
         }
         return Err(already_decided());
     };
+    // (P4-011B-2, C-823/C-824) The follow-up of a parked approval is written in this transaction;
+    // a failure rolls the decision back with it.
+    super::resume::after_decide(
+        &mut tx,
+        s,
+        std::slice::from_ref(&row),
+        decision == Decision::Approve,
+    )
+    .await?;
+    // A frozen agent or a gone conversation turned the grant `revoked`: answer what is stored.
+    let row = approvals::get(&mut *tx, id).await?.unwrap_or(row);
     // RFE-008: the decision commits with its audit row, or does not happen.
     audit::commit_critical(tx, &decision_event(c, &row, decision, false)).await?;
     after_decision(s, &row);
-    Ok(row.into())
+    Ok(Approval::from(row).with_resume())
 }
 
 pub async fn decide_batch(
@@ -147,6 +161,7 @@ pub async fn decide_batch(
         batch_id,
         decision == Decision::Approve,
         via(c),
+        s.ops().approvals.park.resume_window_secs,
     )
     .await?;
     if rows.is_empty() && expired > 0 {
@@ -154,10 +169,19 @@ pub async fn decide_batch(
         tx.commit().await.map_err(aurora_db::DbError::from)?;
         return Err(already_decided());
     }
+    // (P4-011B-2, C-824) One follow-up per conversation for the parked members of the batch.
+    let mut decided_rows = Vec::new();
+    for (id, _, _) in &rows {
+        if let Some(r) = approvals::get(&mut *tx, *id).await? {
+            decided_rows.push(r);
+        }
+    }
+    super::resume::after_decide(&mut tx, s, &decided_rows, decision == Decision::Approve).await?;
     // RFE-008: every decided row commits with its audit row (all or nothing).
     let events: Vec<AuditEvent> = rows
         .iter()
         .map(|(id, workspace_id, org_id)| {
+            let stored = decided_rows.iter().find(|r| r.id == *id);
             AuditEvent::new(AuditActor::from_caller(c), "approval.decide", Outcome::Success)
                 .org(*org_id)
                 .workspace(*workspace_id)
@@ -165,6 +189,8 @@ pub async fn decide_batch(
                 .metadata(serde_json::json!({
                     "decision": match decision { Decision::Approve => "approved", Decision::Deny => "denied" },
                     "via": via(c), "batch": true, "batch_id": batch_id, "agent_id": agent_id,
+                    "parked": stored.is_some_and(|r| r.parked),
+                    "resume_expires_at": stored.and_then(|r| r.resume_expires_at),
                 }))
         })
         .collect();
@@ -256,6 +282,7 @@ pub async fn notice_for(s: &AppState, a: &Approval) -> Option<super::dto::Approv
         title: aurora_core::sanitize::one_line(&a.summary.title, 120),
         kind: "gateway".to_owned(),
         expires_at: a.deadline,
+        parked: a.parked,
     })
 }
 

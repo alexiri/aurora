@@ -91,6 +91,8 @@ pub async fn delete_conversation(conn: &mut PgConnection, id: Uuid) -> Result<De
             .bind(id)
             .fetch_all(&mut *conn)
             .await?;
+    // (P4-011B-2, C-826) Parked approvals and `ready` grants of the conversation end with it.
+    super::approvals::end_parked_of(&mut *conn, super::approvals::Scope::Conversation(id)).await?;
     // `approvals` (gateway) has no FK to conversations; `action_approvals` is set null by its FK.
     sqlx::query(
         "UPDATE approvals SET conversation_id = NULL, turn_id = NULL WHERE conversation_id = $1",
@@ -351,6 +353,13 @@ pub async fn reset_session(
     conn: &mut PgConnection,
     conversation: Uuid,
 ) -> Result<(Uuid, Option<String>), DbError> {
+    // (P4-011B-2, C-826) A new session epoch ends the parked approvals and grants of the
+    // conversation: the approval was for the session that asked.
+    super::approvals::end_parked_of(
+        &mut *conn,
+        super::approvals::Scope::Conversation(conversation),
+    )
+    .await?;
     Ok(sqlx::query_as(
         "UPDATE conversations c SET harness_session_epoch = c.harness_session_epoch + 1,
              harness_session_ref = NULL, updated_at = now()
@@ -371,6 +380,9 @@ pub async fn switch_harness_sessions(
     agent: Uuid,
     old_harness: &str,
 ) -> Result<u64, DbError> {
+    // (P4-011B-2, C-826) Every conversation of the agent gets a new epoch: its parked approvals
+    // end and its `ready` grants are revoked.
+    super::approvals::end_parked_of(&mut *conn, super::approvals::Scope::Agent(agent)).await?;
     let old: Vec<(Uuid, Option<String>)> = sqlx::query_as(
         "SELECT id, harness_session_ref FROM conversations WHERE agent_id = $1 ORDER BY id",
     )

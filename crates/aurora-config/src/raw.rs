@@ -1029,7 +1029,7 @@ impl Default for ApprovalsParkSection {
             enabled: false,
             threshold_secs: l::PARK_THRESHOLD.as_secs(),
             max_timeout_secs: l::PARK_MAX_TIMEOUT.as_secs(),
-            resume_window_secs: 1800,
+            resume_window_secs: l::PARK_RESUME_WINDOW.as_secs(),
             deny_cooldown_secs: l::PARK_DENY_COOLDOWN.as_secs(),
             max_body_bytes: l::PARK_BODY_MAX as u64,
             max_pending_per_agent: l::PARK_PENDING_PER_AGENT,

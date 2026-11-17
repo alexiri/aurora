@@ -41,6 +41,33 @@ pub async fn sweep_approvals(pool: &PgPool) -> Result<(usize, usize), aurora_db:
     Ok((expired.len(), abandoned.len()))
 }
 
+/// (P4-011B-2, C-828) Approved parked approvals whose resume window ended unused -> `expired`,
+/// each with the `approval_window_ended` notice in its conversation (no turn), in one transaction;
+/// also refreshes the `aurora_approvals_parked_pending` gauge. Runs whatever the parking switch
+/// says (D-264(b)). Returns how many windows ended.
+pub async fn sweep_resume_windows(pool: &PgPool) -> Result<usize, aurora_core::ApiError> {
+    let mut tx = pool.begin().await.map_err(aurora_db::DbError::from)?;
+    let ended = approvals::expire_resume_windows(&mut tx).await?;
+    for (id, _, conversation) in &ended {
+        crate::domains::approvals::resume::notice(
+            &mut tx,
+            *conversation,
+            *id,
+            "approval_window_ended",
+            "The approved request was not repeated in time; a new approval is needed.",
+        )
+        .await?;
+    }
+    tx.commit().await.map_err(aurora_db::DbError::from)?;
+    if !ended.is_empty() {
+        metrics::counter!("aurora_approvals_resume_expired_total").increment(ended.len() as u64);
+    }
+    if let Ok(n) = approvals::count_parked_pending(pool).await {
+        metrics::gauge!("aurora_approvals_parked_pending").set(n as f64);
+    }
+    Ok(ended.len())
+}
+
 /// Delete `pending` attachments older than `ATTACH_PENDING_TTL` with their blobs, then blobs no
 /// attachment row references (older than 1 h). Idempotent, safe on every replica. Returns the
 /// number of rows plus orphan blobs removed.
@@ -504,6 +531,13 @@ pub fn spawn(
                 }
                 Ok(_) => {}
                 Err(e) => tracing::warn!(error = %e, "approval sweep failed"),
+            }
+            match sweep_resume_windows(&p).await {
+                Ok(n) if n > 0 => tracing::info!(ended = n, "approval resume-window sweep"),
+                Ok(_) => {}
+                Err(e) => {
+                    tracing::warn!(error = %e.message(), "approval resume-window sweep failed")
+                }
             }
         }
     });

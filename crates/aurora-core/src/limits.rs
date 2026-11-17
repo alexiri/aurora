@@ -36,6 +36,11 @@ pub const PARK_BODY_READ_TIMEOUT: Duration = Duration::from_secs(10);
 pub const PARK_PENDING_PER_AGENT: u32 = 20;
 /// (P4-011B) new parked approvals per agent per hour (not configurable).
 pub const PARK_PER_AGENT_HOUR: u32 = 60;
+/// (P4-011B-2) default `approvals.park.resume_window_secs`: how long an approved parked approval
+/// can be consumed by the identical repeat.
+pub const PARK_RESUME_WINDOW: Duration = Duration::from_secs(1800);
+/// (P4-011B-2, D-264(e), C-824) approvals listed in one resume follow-up, then "…and N more".
+pub const PARK_FOLLOWUP_LINES_MAX: usize = 10;
 /// (RFE-011a) The effective hold timeout in seconds: the rule-level minimum clamped to
 /// `[min, max]`, else `default` (`approvals.timeout_secs`). One definition for the gateway hold
 /// and for the simulate / effective views, so they cannot disagree.

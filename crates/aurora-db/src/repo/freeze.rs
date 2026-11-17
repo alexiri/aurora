@@ -432,14 +432,26 @@ pub async fn abandon_pending_approvals(
     conn: &mut PgConnection,
     agents: &[Uuid],
 ) -> Result<Vec<(Uuid, Uuid)>, DbError> {
-    Ok(sqlx::query_as(
+    let mut rows: Vec<(Uuid, Uuid)> = sqlx::query_as(
         "UPDATE approvals SET status = 'abandoned', decided_at = now(), resolved_at = now(),
              updated_at = now()
          WHERE status = 'pending' AND agent_id = ANY($1) RETURNING id, workspace_id",
     )
     .bind(agents)
     .fetch_all(&mut *conn)
-    .await?)
+    .await?;
+    // (P4-011B-2, C-826) The `ready` grants of the agents are revoked in the same transaction and
+    // never revive on unfreeze; they are notified like the abandoned rows.
+    rows.extend(
+        sqlx::query_as::<_, (Uuid, Uuid)>(
+            "UPDATE approvals SET resume_state = 'revoked', resolved_at = now(), updated_at = now()
+             WHERE resume_state = 'ready' AND agent_id = ANY($1) RETURNING id, workspace_id",
+        )
+        .bind(agents)
+        .fetch_all(&mut *conn)
+        .await?,
+    );
+    Ok(rows)
 }
 
 /// Pending action approvals of `agents` -> `rejected` with reason `frozen`.

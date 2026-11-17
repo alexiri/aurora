@@ -146,6 +146,7 @@
       "delivery",
       "kind",
       "sent_at",
+      "stage",
       "user_id"
     ],
     "approval_watchers": [
@@ -1468,6 +1469,7 @@
       "delivery": "text not null",
       "kind": "text",
       "sent_at": "timestamptz not null",
+      "stage": "text not null",
       "user_id": "uuid"
     },
     "approval_watchers": {

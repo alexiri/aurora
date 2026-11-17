@@ -455,11 +455,35 @@ pub struct SimTrace {
     pub workspace: ScopeTrace,
 }
 
+/// (P4-011B-2, C-829) `GET /v1/policy/approval-limits`: the live effective values, no other key.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct ApprovalLimits {
+    /// `approvals.timeout_secs`
+    pub timeout_secs: u64,
+    /// `approvals.max_timeout_secs`
+    pub max_timeout_secs: u64,
+    pub park: ApprovalLimitsPark,
+}
+
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct ApprovalLimitsPark {
+    pub enabled: bool,
+    pub threshold_secs: u64,
+    pub max_timeout_secs: u64,
+    pub resume_window_secs: u64,
+}
+
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct Simulation {
     /// (phase 2, RFE-011a) Only for `needs_approval`: the hold timeout in seconds the request
     /// would get (minimum of the set rule timeouts, else `approvals.timeout_secs`).
     pub approval_timeout_secs: Option<u64>,
+    /// (P4-011B-2, C-829) Only for `needs_approval`: parking is on and the timeout is above its
+    /// threshold, so the agent is refused at once and resumes when a person approves.
+    pub approval_parks: bool,
+    /// (P4-011B-2, C-829) Only for `needs_approval`: the wanted timeout was cut to the instance's
+    /// current maximum.
+    pub approval_timeout_clamped: bool,
     pub verdict: SimVerdict,
     pub reason: Option<SimReason>,
     pub guidance_code: Option<String>,

@@ -46,6 +46,10 @@ pub struct RequestLogEntry {
     pub bytes_down: i64,
     /// (phase 2, RFE-025) Label of the BYO context credential (a labelled `aurora run`), if any.
     pub context_label: Option<String>,
+    /// (P4-011B, C-827) The approval this request held on, parked on, or consumed.
+    pub approval_id: Option<Uuid>,
+    /// (P4-011B, C-827) The request was let through by a parked approval's single-use grant.
+    pub resumed: bool,
 }
 
 impl From<LogRow> for RequestLogEntry {
@@ -76,6 +80,8 @@ impl From<LogRow> for RequestLogEntry {
             bytes_up: r.bytes_up,
             bytes_down: r.bytes_down,
             context_label: r.context_label,
+            approval_id: r.approval_id,
+            resumed: r.resumed,
         }
     }
 }

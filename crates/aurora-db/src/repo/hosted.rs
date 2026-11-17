@@ -606,7 +606,7 @@ pub async fn stale_turns(
             // approvals are not holds (the agent continued), so they never exempt.
             "t.status = 'running' \
              AND NOT EXISTS (SELECT 1 FROM approvals ap WHERE ap.turn_id = t.id \
-                 AND ap.status = 'pending' AND ap.deadline > now()) \
+                 AND ap.status = 'pending' AND ap.deadline > now() AND NOT ap.parked) \
              AND GREATEST(coalesce(t.last_progress_at, t.started_at), \
                  (SELECT max(ap.resolved_at) FROM approvals ap WHERE ap.turn_id = t.id)) \
                  < now() - make_interval(secs => $3)"

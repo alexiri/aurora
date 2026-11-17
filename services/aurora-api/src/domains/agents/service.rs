@@ -501,6 +501,12 @@ pub async fn delete(state: &AppState, id: Uuid) -> Result<(), ApiError> {
         // (FIX-097) The agent's grants cascade without touching their compiled rules: remove
         // those first, or they stay in the policy as rules of a source that no longer exists.
         aurora_db::repo::derived_rules::delete_for_agent_grants(&mut *tx, id).await?;
+        // (P4-011B-2, C-826) Parked approvals and `ready` grants of the agent end with it.
+        aurora_db::repo::approvals::end_parked_of(
+            &mut tx,
+            aurora_db::repo::approvals::Scope::Agent(id),
+        )
+        .await?;
         agents::delete(&mut *tx, id).await?;
         credentials::notify_gateway_invalidate(&mut *tx, "agent", id).await?;
         tx.commit().await.map_err(DbError::from)?;
