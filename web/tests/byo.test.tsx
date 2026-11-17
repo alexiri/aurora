@@ -3,6 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ByoSettings } from "@/components/agents/byo-settings";
+import { WorkspaceByoRow } from "@/components/agents/workspace-byo";
 import { ConnectTab } from "@/components/agents/connect-tab";
 import { CreateAgentDialog } from "@/components/agents/create-agent-dialog";
 import { AgentsList } from "@/components/agents-list";
@@ -173,27 +174,44 @@ const workspace = (over: Record<string, unknown> = {}) =>
     my_role: "owner", created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z", ...over,
   }) as never;
 
-describe("workspace BYO posture", () => {
-  it("offers only postures not below the inherited one and patches it only when changed", async () => {
+describe("workspace BYO setting (P5-IA-4, C-967)", () => {
+  it("moved out of Settings › General", () => {
+    mockFetch({});
+    wrap(<GeneralTab workspace={workspace()} canOwn />);
+    expect(screen.queryByLabelText("BYO agent posture")).toBeNull();
+    expect(screen.getByLabelText("Time zone")).toBeTruthy();
+    expect(screen.getByLabelText("Memory language")).toBeTruthy();
+  });
+
+  it("is a ladder row in the agents list header: the organization's value above, the choice behind Tighten…", async () => {
     const bodies: Record<string, unknown>[] = [];
     mockFetch({
-      "GET /v1/orgs/o1/governance/effective": () => json(200, eff()),
+      "GET /v1/orgs/o1/governance/effective": () => json(200, eff({ posture: { value: "owners_only", source: "org" } })),
       "PATCH /v1/workspaces/w1": async (req) => {
         bodies.push(await req.json());
         return json(200, workspace({ byo_posture: "disabled" }));
       },
     });
-    wrap(<GeneralTab workspace={workspace()} canOwn />);
-    await screen.findByText(/Effective BYO posture/);
-    const sel = (await screen.findByLabelText("BYO agent posture")) as HTMLSelectElement;
-    await waitFor(() => expect([...sel.options].map((o) => o.value)).toEqual(["", "owners_only", "disabled"]));
-    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
-    await waitFor(() => expect(bodies.length).toBe(1));
-    expect("byo_posture" in bodies[0]).toBe(false);
+    wrap(<WorkspaceByoRow workspace={workspace({ effective_byo_posture: { value: "owners_only", level: "org" } })} />);
+    const above = await screen.findByRole("region", { name: "Limits from above" });
+    expect(above).toHaveTextContent("Only workspace owners can create BYO agents");
+    expect(above).toHaveTextContent("Set by your organization");
+    expect(screen.queryByLabelText("In this workspace")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Tighten…" }));
+    const sel = (await screen.findByLabelText("In this workspace")) as HTMLSelectElement;
+    expect([...sel.options].map((o) => o.value)).toEqual(["", "disabled"]);
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
     fireEvent.change(sel, { target: { value: "disabled" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
-    await waitFor(() => expect(bodies.length).toBe(2));
-    expect(bodies[1].byo_posture).toBe("disabled");
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(bodies).toEqual([{ byo_posture: "disabled" }]));
+  });
+
+  it("a workspace member reads the value as text, with no controls", async () => {
+    const calls = mockFetch({});
+    wrap(<WorkspaceByoRow workspace={workspace({ my_role: "member", effective_byo_posture: { value: "disabled", level: "org" } })} />);
+    expect(await screen.findByRole("region", { name: "Limits from above" })).toHaveTextContent("Nobody can create BYO agents");
+    expect(screen.queryByRole("button", { name: "Tighten…" })).toBeNull();
+    expect(calls.mock.calls.some(([r]) => String((r as Request).url).includes("/governance/"))).toBe(false);
   });
 });
 
