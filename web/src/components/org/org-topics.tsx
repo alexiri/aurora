@@ -26,6 +26,7 @@ import { EmbeddedPage, PageHeader } from "@/components/ui/page-header";
 import { Section } from "@/components/ui/section";
 import { useScimSettings } from "@/lib/api/scim";
 import type { Org } from "@/lib/api/queries";
+import { UsageView } from "@/components/usage/usage-view";
 import { type TABS } from "@/lib/routes";
 
 type Tabs<K extends keyof typeof TABS> = (typeof TABS)[K][number];
@@ -191,6 +192,7 @@ export function OrgDataPage() {
             },
             { id: "storage", label: "Storage", content: <OrgStorageView orgId={org.id} /> },
             { id: "audit", label: "Audit log", content: <OrgAuditView orgId={org.id} /> },
+            { id: "usage", label: "Usage", content: <UsageView level={{ kind: "org", orgId: org.id, orgSlug: org.slug }} /> },
           ]}
         />
       )}
