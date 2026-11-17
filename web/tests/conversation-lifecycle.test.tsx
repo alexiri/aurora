@@ -4,8 +4,6 @@ import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ChatPane, ChatTab } from "@/components/agents/chat-tab";
-import { OrgSettingsView } from "@/components/org/settings-view";
-import type { Org } from "@/lib/api/queries";
 import { applyEvent, emptyTranscript } from "@/lib/chat/transcript";
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ replace: vi.fn() }) }));
@@ -157,46 +155,3 @@ describe("conversation actions", () => {
   });
 });
 
-describe("org retention setting", () => {
-  const org = { id: "o1", slug: "acme", name: "Acme", my_role: "admin", settings: { members_can_create_workspaces: true } } as unknown as Org;
-
-  it("validates the window and saves it", async () => {
-    const calls = mock({
-      "GET /v1/orgs/o1/retention": () => json(200, { conversations_days: null, conversations_days_max: 365 }),
-      "PUT /v1/orgs/o1/retention": () => json(200, { conversations_days: 30, conversations_days_max: 365 }),
-    });
-    wrap(<OrgSettingsView org={org} />);
-    const input = await screen.findByLabelText("Days of inactivity");
-    const save = screen.getByRole("button", { name: "Save retention" });
-    fireEvent.change(input, { target: { value: "3" } });
-    fireEvent.click(save);
-    expect((await screen.findByRole("alert")).textContent).toMatch(/7 to 3650/);
-    fireEvent.change(input, { target: { value: "400" } });
-    fireEvent.click(save);
-    expect((await screen.findByRole("alert")).textContent).toMatch(/at most 365/);
-    expect(calls.some((c) => c.method === "PUT")).toBe(false);
-    fireEvent.change(input, { target: { value: "30" } });
-    fireEvent.click(save);
-    expect(await screen.findByText("Retention saved.")).toBeTruthy();
-    expect(calls.find((c) => c.method === "PUT")?.body).toEqual({ conversations_days: 30 });
-  });
-
-  it("an empty value clears the window", async () => {
-    const calls = mock({
-      "GET /v1/orgs/o1/retention": () => json(200, { conversations_days: 30, conversations_days_max: null }),
-      "PUT /v1/orgs/o1/retention": () => json(200, { conversations_days: null, conversations_days_max: null }),
-    });
-    wrap(<OrgSettingsView org={org} />);
-    const input = (await screen.findByLabelText("Days of inactivity")) as HTMLInputElement;
-    await waitFor(() => expect(input.value).toBe("30"));
-    fireEvent.change(input, { target: { value: "" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save retention" }));
-    await waitFor(() => expect(calls.find((c) => c.method === "PUT")?.body).toEqual({ conversations_days: null }));
-  });
-
-  it("members do not get the retention form", () => {
-    mock({});
-    wrap(<OrgSettingsView org={{ ...org, my_role: "member" } as Org} />);
-    expect(screen.queryByLabelText("Days of inactivity")).toBeNull();
-  });
-});

@@ -9,10 +9,9 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Field, inputClass } from "@/components/ui/field";
 import { CheckboxField, Form, FormActions } from "@/components/ui/form";
 import { Notice } from "@/components/ui/notice";
-import { PageHeader } from "@/components/ui/page-header";
 import { DangerZone, Section } from "@/components/ui/section";
 import { errorMessage, fieldErrors } from "@/lib/api/errors";
-import { deleteOrg, usePatchOrg, usePutRetention, useRetention } from "@/lib/api/org";
+import { deleteOrg, usePatchOrg } from "@/lib/api/org";
 import { useInstance } from "@/lib/api/queries";
 import { orgRoutes } from "@/lib/routes";
 import type { Org } from "@/lib/api/queries";
@@ -208,65 +207,6 @@ function isOwnerAdmin(org: Org): boolean {
   return org.my_role === "owner" || org.my_role === "admin";
 }
 
-/** Conversation retention (RFE-010): a window of 7 to 3650 days, or none; owners and admins. */
-export function RetentionForm({ orgId }: { orgId: string }) {
-  const current = useRetention(orgId);
-  const put = usePutRetention(orgId);
-  const [days, setDays] = useState<string | null>(null);
-  const [clientErr, setClientErr] = useState<string | undefined>();
-  const [saved, setSaved] = useState(false);
-  if (current.isPending) return null;
-  const max = current.data?.conversations_days_max ?? null;
-  const value = days ?? current.data?.conversations_days?.toString() ?? "";
-
-  function submit(e: FormEvent) {
-    e.preventDefault();
-    setSaved(false);
-    const t = value.trim();
-    let n: number | null = null;
-    if (t !== "") {
-      n = /^\d+$/.test(t) ? Number(t) : NaN;
-      if (!(n >= 7 && n <= 3650)) return setClientErr("Enter a whole number of days from 7 to 3650, or leave empty to keep conversations.");
-      if (max !== null && n > max) return setClientErr(`Your instance allows at most ${max} days.`);
-    }
-    setClientErr(undefined);
-    put.mutate(n, { onSuccess: () => setSaved(true) });
-  }
-
-  const serverErr = put.error ? errorMessage(put.error) : undefined;
-  return (
-    <Form onSubmit={submit} noValidate aria-label="Conversation retention" className="max-w-md">
-      <Field
-        id="retention-days"
-        label="Days of inactivity"
-        hint={max !== null ? `Between 7 and ${max} days.` : "Between 7 and 3650 days."}
-        error={clientErr ?? serverErr}
-      >
-        <input
-          id="retention-days"
-          inputMode="numeric"
-          className={inputClass}
-          value={value}
-          onChange={(e) => {
-            setDays(e.target.value);
-            setSaved(false);
-          }}
-        />
-      </Field>
-      {saved ? (
-        <Notice tone="accent" role="status">
-          Retention saved.
-        </Notice>
-      ) : null}
-      <FormActions>
-        <Button type="submit" size="lg" disabled={put.isPending}>
-          {put.isPending ? "Saving…" : "Save retention"}
-        </Button>
-      </FormActions>
-    </Form>
-  );
-}
-
 export function OrgDangerZone({
   orgId,
   slug,
@@ -338,32 +278,6 @@ export function OrgDangerSections({ org }: { org: Org }) {
     <div className="space-y-8">
       <OrgFreeze orgId={org.id} name={org.name} frozen={org.frozen} />
       <OrgDangerZone orgId={org.id} slug={org.slug} onDeleted={() => router.replace("/")} />
-    </div>
-  );
-}
-
-export function OrgSettingsView({ org }: { org: Org }) {
-  const router = useRouter();
-  const isOwner = org.my_role === "owner";
-  return (
-    <div className="max-w-page-narrow space-y-8">
-      <PageHeader title="Organization settings" description="Name, limits, conversation retention and deletion." className="mb-6" />
-      <Section id="org-general" title="General" card>
-        <GeneralForm key={`${org.slug}:${org.name}`} org={org} isOwner={isOwner} />
-      </Section>
-      {isOwner || org.my_role === "admin" ? <PreviewsForm org={org} /> : null}
-      {isOwner || org.my_role === "admin" ? (
-        <Section
-          id="org-retention"
-          title="Conversation retention"
-          description="Delete conversations (messages, attachments and the agent's stored session) after this many days without activity. Leave empty to keep them until someone deletes them."
-          card
-        >
-          <RetentionForm orgId={org.id} />
-        </Section>
-      ) : null}
-      {isOwner ? <OrgFreeze orgId={org.id} name={org.name} frozen={org.frozen} /> : null}
-      {isOwner ? <OrgDangerZone orgId={org.id} slug={org.slug} onDeleted={() => router.replace("/")} /> : null}
     </div>
   );
 }

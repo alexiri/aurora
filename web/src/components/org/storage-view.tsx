@@ -1,21 +1,15 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
-
 import { ErrorState, Loading } from "@/components/states";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { DataTable, Td, Th } from "@/components/ui/data-table";
-import { Field, inputClass } from "@/components/ui/field";
-import { Form, FormActions } from "@/components/ui/form";
 import { Meter } from "@/components/ui/meter";
 import { Notice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
 import { Section } from "@/components/ui/section";
 import { formatBytes } from "@/lib/api/attachments";
-import { errorMessage } from "@/lib/api/errors";
 import { StorageFreshness } from "@/components/storage-freshness";
-import { useOrgStorage, usePutAttachmentLimits, useRefreshOrgStorage, useRetention } from "@/lib/api/org";
+import { useOrgStorage, useRefreshOrgStorage } from "@/lib/api/org";
 
 const NOTICE: Record<string, { tone: "neutral" | "pending" | "danger"; label: string }> = {
   clear: { tone: "neutral", label: "OK" },
@@ -42,100 +36,6 @@ export function UsageBar({ used, quota }: { used: number; quota: number | null |
         {formatBytes(used)} of {formatBytes(quota)} ({pct} %)
       </p>
     </div>
-  );
-}
-
-function toNumber(t: string, min: number, max: number): number | undefined | "invalid" {
-  const v = t.trim();
-  if (v === "") return undefined;
-  const n = /^\d+$/.test(v) ? Number(v) : NaN;
-  return n >= min && n <= max ? n : "invalid";
-}
-
-/** Attachment retention window and quota (RFE-015), validated against the instance maximums. */
-function LimitsForm({ orgId }: { orgId: string }) {
-  const current = useRetention(orgId);
-  const put = usePutAttachmentLimits(orgId);
-  const [days, setDays] = useState<string | null>(null);
-  const [quota, setQuota] = useState<string | null>(null);
-  const [clientErr, setClientErr] = useState<{ days?: string; quota?: string }>({});
-  const [saved, setSaved] = useState(false);
-  if (current.isPending || !current.data) return null;
-  const d = current.data;
-  const daysMax = d.attachments_days_max ?? null;
-  const quotaMax = d.attachment_quota_mib_max ?? null;
-  const daysValue = days ?? d.attachments_days?.toString() ?? "";
-  const quotaValue = quota ?? d.attachment_quota_mib?.toString() ?? "";
-
-  function submit(e: FormEvent) {
-    e.preventDefault();
-    setSaved(false);
-    const nd = toNumber(daysValue, 7, 3650);
-    const nq = toNumber(quotaValue, 0, 1 << 30);
-    const err: { days?: string; quota?: string } = {};
-    if (nd === "invalid") err.days = "Enter a whole number of days from 7 to 3650, or leave empty to keep files.";
-    else if (nd !== undefined && daysMax !== null && nd > daysMax) err.days = `Your instance allows at most ${daysMax} days.`;
-    if (nq === "invalid") err.quota = "Enter a whole number of MiB, or leave empty for the default.";
-    else if (nq !== undefined && quotaMax !== null && (nq === 0 || nq > quotaMax)) err.quota = `Your instance allows at most ${quotaMax} MiB.`;
-    setClientErr(err);
-    if (err.days || err.quota) return;
-    put.mutate(
-      {
-        attachments_days: typeof nd === "number" ? nd : null,
-        attachment_quota_mib: typeof nq === "number" ? nq : null,
-      },
-      { onSuccess: () => setSaved(true) },
-    );
-  }
-
-  const serverErr = put.error ? errorMessage(put.error) : undefined;
-  return (
-    <Form onSubmit={submit} noValidate aria-label="Attachment limits" className="max-w-md">
-      <Field
-        id="attachments-days"
-        label="Delete file contents after (days)"
-        hint={`Files stay in transcripts as “expired by retention”. ${daysMax !== null ? `Between 7 and ${daysMax} days.` : "Between 7 and 3650 days."} Empty keeps them.`}
-        error={clientErr.days ?? serverErr}
-      >
-        <input
-          id="attachments-days"
-          inputMode="numeric"
-          className={inputClass}
-          value={daysValue}
-          onChange={(e) => {
-            setDays(e.target.value);
-            setSaved(false);
-          }}
-        />
-      </Field>
-      <Field
-        id="attachment-quota"
-        label="Storage quota (MiB)"
-        hint={`Empty uses the default (${d.attachment_quota_mib_effective ?? "unlimited"} MiB in force).${quotaMax !== null ? ` At most ${quotaMax} MiB.` : " 0 means unlimited."}`}
-        error={clientErr.quota}
-      >
-        <input
-          id="attachment-quota"
-          inputMode="numeric"
-          className={inputClass}
-          value={quotaValue}
-          onChange={(e) => {
-            setQuota(e.target.value);
-            setSaved(false);
-          }}
-        />
-      </Field>
-      {saved ? (
-        <Notice tone="accent" role="status">
-          Limits saved.
-        </Notice>
-      ) : null}
-      <FormActions>
-        <Button type="submit" size="lg" disabled={put.isPending}>
-          {put.isPending ? "Saving…" : "Save limits"}
-        </Button>
-      </FormActions>
-    </Form>
   );
 }
 
@@ -189,9 +89,6 @@ export function OrgStorageView({ orgId }: { orgId: string }) {
             </tbody>
           </DataTable>
         )}
-      </Section>
-      <Section id="attachment-limits" title="Attachment limits" card>
-        <LimitsForm orgId={orgId} />
       </Section>
     </div>
   );

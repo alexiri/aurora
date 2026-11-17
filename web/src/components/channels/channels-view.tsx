@@ -222,7 +222,7 @@ export function ChannelsView({ orgId }: { orgId: string }) {
   return (
     <div className="max-w-page space-y-8">
       <PageHeader
-        title="Channels"
+        title="Chat platforms"
         description="Connect chat platforms so people can talk to agents where they already work."
         className="mb-6"
       />

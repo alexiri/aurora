@@ -292,11 +292,11 @@ export function useAdminOverview() {
   });
 }
 
-/** Attachment retention window and quota; `undefined` leaves a value unchanged, `null` clears it. */
-export function usePutAttachmentLimits(orgId: string) {
+/** Conversation and attachment retention and the attachment quota (C-969); `undefined` leaves a value unchanged, `null` clears it. */
+export function usePutRetentionLimits(orgId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: { attachments_days?: number | null; attachment_quota_mib?: number | null }) =>
+    mutationFn: (body: { conversations_days?: number | null; attachments_days?: number | null; attachment_quota_mib?: number | null }) =>
       unwrap(api.PUT("/v1/orgs/{org}/retention", { params: { path: { org: orgId } }, body })),
     onSuccess: (r) => {
       qc.setQueryData(["orgs", orgId, "retention"], r);
@@ -305,11 +305,3 @@ export function usePutAttachmentLimits(orgId: string) {
   });
 }
 
-export function usePutRetention(orgId: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (conversations_days: number | null) =>
-      unwrap(api.PUT("/v1/orgs/{org}/retention", { params: { path: { org: orgId } }, body: { conversations_days } })),
-    onSuccess: (r) => qc.setQueryData(["orgs", orgId, "retention"], r),
-  });
-}

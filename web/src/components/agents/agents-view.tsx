@@ -10,6 +10,7 @@ import { useAgents, useResolve, useWorkspace } from "@/lib/api/queries";
 import { whoCanFromContacts } from "@/lib/who-can";
 
 import { CreateAgentDialog } from "./create-agent-dialog";
+import { WorkspaceByoRow } from "./workspace-byo";
 
 export function AgentsView() {
   const { org, ws } = useParams<{ org: string; ws: string }>();
@@ -35,6 +36,7 @@ export function AgentsView() {
         }
         className="mb-2"
       />
+      {workspace.data ? <WorkspaceByoRow workspace={workspace.data} /> : null}
       {agents.isPending ? <Loading /> : null}
       {agents.isError ? <ErrorState error={agents.error} onRetry={() => agents.refetch()} /> : null}
       {agents.data ? (

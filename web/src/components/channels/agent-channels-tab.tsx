@@ -44,7 +44,7 @@ function NoIntegration({ orgId }: { orgId?: string }) {
     <Notice tone="neutral" role="status" className="space-y-2" data-testid="no-integration">
       <p>
         This organization has no chat integration yet. An organization owner or admin connects one (for example Mattermost) under
-        Channels.
+        Chat platforms.
       </p>
       {admin && org.data ? (
         <Link href={orgRoutes(org.data.slug).chatPlatforms()} className={cn(buttonVariants({ variant: "outline", size: "sm" }))}>

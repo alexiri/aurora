@@ -89,7 +89,7 @@ describe("Channels: blocked states name the next actor", () => {
     expect(note.textContent).toContain(text);
     expect(note.textContent).toContain("Ask: Ada Admin, Bo Boss.");
     expect(screen.queryByRole("button", { name: "Add Mattermost" })).toBeNull();
-    expect(screen.queryByRole("link", { name: /Admin › Connectors/ })).toBeNull();
+    expect(screen.queryByRole("link", { name: /Administration › Chat platforms/ })).toBeNull();
   });
 
   it("not added, as an instance admin: an inline Add Mattermost opens the one-click flow", async () => {
@@ -114,10 +114,10 @@ describe("Channels: blocked states name the next actor", () => {
     });
   });
 
-  it("other states, as an instance admin: a link to Admin › Connectors, no names to ask", async () => {
+  it("other states, as an instance admin: a link to Administration › Chat platforms, no names to ask", async () => {
     base({}, { availability: avail("disabled"), admin: true });
     wrap(<ChannelsView orgId="o1" />);
-    expect(await screen.findByRole("link", { name: /Admin › Connectors/ })).toHaveAttribute("href", "/admin/chat-platforms");
+    expect(await screen.findByRole("link", { name: /Administration › Chat platforms/ })).toHaveAttribute("href", "/admin/chat-platforms");
     expect(screen.getByTestId("blocked-mattermost").textContent).not.toContain("Ask:");
   });
 
@@ -242,7 +242,7 @@ describe("Admin › Setup: connector callout", () => {
     type_id: "mattermost", name: "Mattermost", version: "1", publisher: "Aurora", icon_png_b64: null, setup_guide_md: "x",
     manifest: {}, manifest_digest: "d", instance_setup: { fields: [] }, hosts: 1, added, signed,
   });
-  it("says a built-in type is available and links to Admin › Connectors; nothing is added by itself", async () => {
+  it("says a built-in type is available and links to Administration › Chat platforms; nothing is added by itself", async () => {
     const calls = mockFetch({ "GET /v1/admin/connector-types": () => json(200, { host_running: true, items: [type(false)] }) });
     wrap(<ConnectorAvailableCallout />);
     expect(await screen.findByText("Mattermost is available — add it.")).toBeInTheDocument();

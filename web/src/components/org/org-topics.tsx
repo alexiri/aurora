@@ -16,7 +16,8 @@ import { OrgDirectoryView } from "@/components/org/directory-view";
 import { OrgKeysView } from "@/components/org/keys-view";
 import { OrgGate } from "@/components/org/org-gate";
 import { MembersView } from "@/components/org/members-view";
-import { OrgDangerSections, GeneralForm, PreviewsForm, RetentionForm } from "@/components/org/settings-view";
+import { OrgDangerSections, GeneralForm, PreviewsForm } from "@/components/org/settings-view";
+import { OrgRetentionForm } from "@/components/org/retention-form";
 import { OrgStorageView } from "@/components/org/storage-view";
 import { OrgInternet } from "@/components/internet/org-internet";
 import { OrgSkills } from "@/components/skills/org-skills";
@@ -170,10 +171,7 @@ export function OrgChatPlatformsPage() {
   return (
     <AdminTopic>
       {(org) => (
-        <div className="max-w-page space-y-4">
-          <PageHeader title="Chat platforms" description="Mattermost and similar: where people can talk to agents." className="mb-2" />
-          <ChannelsView orgId={org.id} />
-        </div>
+        <ChannelsView orgId={org.id} />
       )}
     </AdminTopic>
   );
@@ -186,24 +184,17 @@ export function OrgDataPage() {
         <TopicPage<Tabs<"orgData">>
           idBase="org-data"
           title="Data"
-          description="How long conversations are kept, what the organization stores, and its audit log."
+          description="How long conversations and files are kept, how much the organization stores, and its audit log."
           tabs={[
             {
               id: "retention",
               label: "Retention",
               content: (
-                <Section
-                  id="org-retention"
-                  title="Conversation retention"
-                  description="Delete conversations (messages, attachments and the agent's stored session) after this many days without activity. Leave empty to keep them until someone deletes them."
-                  card
-                >
-                  <RetentionForm orgId={org.id} />
-                </Section>
+                <OrgRetentionForm orgId={org.id} />
               ),
             },
             { id: "storage", label: "Storage", content: <OrgStorageView orgId={org.id} /> },
-            { id: "audit", label: "Audit", content: <OrgAuditView orgId={org.id} /> },
+            { id: "audit", label: "Audit log", content: <OrgAuditView orgId={org.id} /> },
           ]}
         />
       )}
