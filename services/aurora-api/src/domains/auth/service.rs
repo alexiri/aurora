@@ -76,12 +76,13 @@ pub(crate) fn actor(user: &UserRow, client: &Client) -> AuditActor {
 }
 
 /// Revoke one session and drop it from the local auth cache.
-pub async fn logout(state: &AppState, session_id: Uuid) -> Result<(), ApiError> {
-    sessions::revoke(&state.pool, session_id).await?;
+pub async fn logout(state: &AppState, session_id: Uuid) -> Result<u64, ApiError> {
+    // The count is the Web Push subscriptions deleted with the session (D-266(c)).
+    let (_, push) = sessions::revoke_counted(&state.pool, session_id).await?;
     state
         .session_cache
         .invalidate(&json!({"kind": "session", "id": session_id}));
-    Ok(())
+    Ok(push)
 }
 
 pub async fn revoke_others(
@@ -91,7 +92,10 @@ pub async fn revoke_others(
     current: Uuid,
     email: &str,
 ) -> Result<u64, ApiError> {
-    let n = sessions::revoke_all_for_user_except(&state.pool, user_id, Some(current)).await?;
+    let mut tx = state.pool.begin().await.map_err(aurora_db::DbError::from)?;
+    let (n, push) =
+        sessions::revoke_all_for_user_except_counted_tx(&mut tx, user_id, Some(current)).await?;
+    tx.commit().await.map_err(aurora_db::DbError::from)?;
     state
         .session_cache
         .invalidate(&json!({"kind": "user", "id": user_id}));
@@ -108,7 +112,7 @@ pub async fn revoke_others(
             "session.revoke_others",
             Outcome::Success,
         )
-        .metadata(json!({"revoked": n})),
+        .metadata(json!({"revoked": n, "push_subscriptions_removed": push})),
     );
     Ok(n)
 }

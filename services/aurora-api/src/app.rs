@@ -104,6 +104,9 @@ pub struct AppState {
     /// (phase 5, P4-SSH-1, D-239(d)) The SSH user-certificate signer: `Some` only while
     /// `ssh.enabled` (built from `AURORA_SSH_CA_KEY`; the `local` implementation).
     pub ssh_signer: Option<Arc<dyn domains::ssh::signer::SshCaSigner>>,
+    /// (phase 5, P4-011B-3, D-134) Web Push: the operator key, loaded generated keys and caches;
+    /// `enabled` mirrors `push.enabled` (off = every push route 404s and nothing is sent).
+    pub push: Arc<domains::push::PushRuntime>,
     /// SSE keepalive interval.
     pub sse_keepalive: std::time::Duration,
     /// How often open SSE streams re-validate their principal (besides revocation NOTIFYs).
@@ -209,6 +212,7 @@ impl AppState {
         } else {
             None
         };
+        let push = Arc::new(domains::push::PushRuntime::from_config(&config)?);
         let ops_live = Arc::new(arc_swap::ArcSwap::from_pointee(config.clone()));
         let state = Self {
             pool,
@@ -238,6 +242,7 @@ impl AppState {
             library,
             settings: Arc::new(domains::settings::handle::SettingsHandle::new(None)),
             ssh_signer,
+            push,
             sse_keepalive: aurora_core::limits::SSE_KEEPALIVE,
             stream_recheck: crate::http::auth::STREAM_RECHECK,
         };
@@ -613,6 +618,7 @@ pub fn v1_router() -> OpenApiRouter<AppState> {
         .merge(domains::terminal::router())
         .merge(domains::files::router())
         .merge(domains::ssh::router())
+        .merge(domains::push::router())
         .merge(domains::telemetry::router())
         .merge(domains::relay::router())
         .merge(domains::groups::router())

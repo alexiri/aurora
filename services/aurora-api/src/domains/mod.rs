@@ -41,6 +41,7 @@ pub mod placement;
 pub mod plugins;
 pub mod policy;
 pub mod previews;
+pub mod push;
 pub mod relay;
 pub mod runner_plane;
 pub mod runners_admin;

@@ -21,9 +21,18 @@ pub enum Purpose {
     /// (phase 5, SET-1, D-236(g)) A secret field of an instance setting (OIDC client secret,
     /// SMTP password, …): always the inline store; owner = the field's own uuid, org = nil UUID.
     InstanceSetting,
+    /// (phase 5, P4-011B-3, D-266(b)) The generated Web Push VAPID private key; owner = the key
+    /// id, org = nil UUID; always the inline store.
+    WebpushVapid,
+    /// (phase 5, P4-011B-3, D-266(b)) A Web Push subscription's `{ endpoint, p256dh, auth }`;
+    /// owner = the subscription id, org = nil UUID; always the inline store.
+    WebpushSubscription,
 }
 
 impl Purpose {
+    /// The purposes the migration job and CLI know (one source table each). The Web Push
+    /// purposes are not here: they are sealed in the `inline` store whatever the default store is
+    /// (D-266(b)) and are never moved, rekeyed or counted by those tools.
     pub const ALL: [Purpose; 9] = [
         Purpose::SecretValue,
         Purpose::ConnectionCredentials,
@@ -47,6 +56,8 @@ impl Purpose {
             Self::ChannelOpDeprovision => "channel_op.deprovision",
             Self::ConnectorSettings => "connector.settings",
             Self::InstanceSetting => "instance_setting",
+            Self::WebpushVapid => "webpush.vapid",
+            Self::WebpushSubscription => "webpush.subscription",
         }
     }
 }
