@@ -6,7 +6,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ConnectTab } from "@/components/agents/connect-tab";
 import { AgentRevealDialog } from "@/components/agents/reveal";
 import { AgentsList } from "@/components/agents-list";
-import { GovernanceView } from "@/components/governance/governance-view";
+import { OrgByo } from "@/components/governance/org-governance";
+import type { Org } from "@/lib/api/queries";
 import {
   expiryText,
   lastUsedText,
@@ -26,6 +27,8 @@ import {
 // the agent-list badges (stale, expiring, expired; owners only).
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ replace: vi.fn() }) }));
+
+const ORG = { id: "o1", slug: "acme", name: "Acme", my_role: "owner" } as unknown as Org;
 
 const json = (status: number, body: unknown) =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -174,13 +177,13 @@ describe("governance page: BYO tab", () => {
         30,
       ),
     );
-    wrap(<GovernanceView orgId="o1" orgSlug="acme" canEdit />);
-    fireEvent.click(await screen.findByRole("tab", { name: "BYO agents" }));
+    wrap(<OrgByo org={ORG} />);
+    await screen.findByLabelText("Who may create BYO agents");
     expect(screen.getByTestId("effective-max-age").textContent).toBe("30 days");
     expect(screen.getByTestId("effective-max-age").parentElement?.textContent).toMatch(/set by instance/);
     expect(screen.getByText(/enforced by instance: 30 days/)).toBeTruthy();
     fireEvent.change(screen.getByLabelText("Maximum token age (days)"), { target: { value: "14" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save governance" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(body).not.toBeNull());
     expect(body!.document.agent_tokens).toEqual({ max_age_days: 14 });
   });
@@ -188,16 +191,19 @@ describe("governance page: BYO tab", () => {
   it("refuses a value above the instance limit or out of range before saving", async () => {
     const put = vi.fn(() => json(200, { document: emptyDoc, revision: 5 }));
     mockFetch(routes({ "PUT /v1/orgs/o1/governance": put }, null, 30));
-    wrap(<GovernanceView orgId="o1" orgSlug="acme" canEdit />);
-    fireEvent.click(await screen.findByRole("tab", { name: "BYO agents" }));
+    wrap(<OrgByo org={ORG} />);
+    await screen.findByLabelText("Who may create BYO agents");
     const input = screen.getByLabelText("Maximum token age (days)");
-    const save = screen.getByRole("button", { name: "Save governance" }) as HTMLButtonElement;
+    const save = screen.getByRole("button", { name: "Save" }) as HTMLButtonElement;
     fireEvent.change(input, { target: { value: "31" } });
     expect(screen.getByRole("alert").textContent).toMatch(/instance limit is 30/);
     expect(save.disabled).toBe(true);
     fireEvent.change(input, { target: { value: "0" } });
     expect(save.disabled).toBe(true);
+    // Back to what is stored: nothing to save. A valid value turns Save on.
     fireEvent.change(input, { target: { value: "" } });
+    expect(save.disabled).toBe(true);
+    fireEvent.change(input, { target: { value: "7" } });
     expect(save.disabled).toBe(false);
     expect(put).not.toHaveBeenCalled();
   });
@@ -215,10 +221,10 @@ describe("governance page: BYO tab", () => {
           }),
       }),
     );
-    wrap(<GovernanceView orgId="o1" orgSlug="acme" canEdit />);
-    fireEvent.click(await screen.findByRole("tab", { name: "BYO agents" }));
+    wrap(<OrgByo org={ORG} />);
+    await screen.findByLabelText("Who may create BYO agents");
     fireEvent.change(screen.getByLabelText("Maximum token age (days)"), { target: { value: "50" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save governance" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
     expect(await screen.findByText("longer than the instance maximum age")).toBeTruthy();
   });
 
@@ -244,8 +250,8 @@ describe("governance page: BYO tab", () => {
         },
       }),
     );
-    wrap(<GovernanceView orgId="o1" orgSlug="acme" canEdit />);
-    fireEvent.click(await screen.findByRole("tab", { name: "BYO agents" }));
+    wrap(<OrgByo org={ORG} />);
+    await screen.findByLabelText("Who may create BYO agents");
     const list = await screen.findByRole("list", { name: "BYO tokens that are unused or expiring" });
     const rows = within(list).getAllByRole("listitem");
     expect(rows).toHaveLength(2);
@@ -257,8 +263,8 @@ describe("governance page: BYO tab", () => {
     const fetchMock = mockFetch({
       "GET /v1/orgs/o1/governance/effective": () => json(200, eff(null, "instance")),
     });
-    wrap(<GovernanceView orgId="o1" orgSlug="acme" canEdit={false} />);
-    fireEvent.click(await screen.findByRole("tab", { name: "BYO agents" }));
+    wrap(<OrgByo org={{ ...ORG, my_role: "member" }} />);
+    await screen.findByLabelText("Who may create BYO agents");
     expect(screen.queryByTestId("token-attention")).toBeNull();
     expect(fetchMock.mock.calls.some(([r]) => String((r as Request).url).includes("agent-tokens"))).toBe(false);
   });

@@ -12,6 +12,7 @@ import { PlacementView } from "@/components/admin/placement-view";
 import { PluginsView } from "@/components/admin/plugins-view";
 import { AdminRunnersView } from "@/components/admin/runners-view";
 import { GovernanceFields, GovernanceRulesFields } from "@/components/admin/settings/governance-settings-view";
+import { AgentsDefaultsView, ComputersView, SkillsSettingsView } from "@/components/admin/settings/operational-settings-views";
 import { ProviderRolesView } from "@/components/admin/settings/provider-roles-view";
 import { SettingsIndexView } from "@/components/admin/settings/settings-index-view";
 import { SettingsSectionView } from "@/components/admin/settings/settings-section-view";
@@ -48,36 +49,10 @@ export function AdminAgentsPage() {
         title="Agents"
         description="Defaults for every agent, bring-your-own agents, their computers and skills."
         tabs={[
-          {
-            id: "defaults",
-            label: "Defaults",
-            content: (
-              <EmbeddedPage headed>
-                <div className="space-y-8">
-                  {section("agents")}
-                  {section("approvals")}
-                </div>
-              </EmbeddedPage>
-            ),
-          },
-          {
-            id: "byo",
-            label: "BYO",
-            content: <GovernanceFields part="byo" />,
-          },
-          {
-            id: "computers",
-            label: "Computers",
-            content: (
-              <EmbeddedPage headed>
-                <div className="space-y-8">
-                  {section("terminal")}
-                  {section("previews")}
-                </div>
-              </EmbeddedPage>
-            ),
-          },
-          { id: "skills", label: "Skills", content: section("skills") },
+          { id: "defaults", label: "Defaults", content: <AgentsDefaultsView /> },
+          { id: "byo", label: "BYO", content: <GovernanceFields part="byo" /> },
+          { id: "computers", label: "Computers", content: <ComputersView /> },
+          { id: "skills", label: "Skills", content: <SkillsSettingsView bare /> },
         ]}
       />
     </AdminGuard>
@@ -132,7 +107,7 @@ export function AdminAiModelsPage() {
         title="AI models"
         description="The AI providers and endpoints, and the rules for which models agents may use."
         tabs={[
-          { id: "endpoints", label: "Endpoints", content: section("llm") },
+          { id: "endpoints", label: "Endpoints", content: <EmbeddedPage>{section("llm")}</EmbeddedPage> },
           { id: "rules", label: "Rules", content: <GovernanceRulesFields /> },
         ]}
       />

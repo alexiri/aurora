@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 
-import { EgressTab } from "@/components/governance/governance-view";
+import { EgressTab } from "@/components/governance/egress-tab";
 import { InternetLevel, type GovernanceEditor } from "@/components/internet/internet-level";
 import { ErrorState, Loading } from "@/components/states";
 import { Button } from "@/components/ui/button";

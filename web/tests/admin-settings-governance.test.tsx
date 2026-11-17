@@ -10,7 +10,7 @@ vi.mock("next/navigation", () => ({
 }));
 
 import { SettingsSectionView } from "@/components/admin/settings/settings-section-view";
-import { Locked } from "@/components/governance/governance-view";
+import { Locked } from "@/components/governance/controls";
 import { withFields } from "./support/settings-fields";
 
 const json = (status: number, body: unknown) =>

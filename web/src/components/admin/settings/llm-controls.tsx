@@ -280,7 +280,7 @@ export function EndpointsControl({
     <SettingField
       id={s.key}
       label="Endpoints"
-      hint="Where agents' LLM requests go. Credentials are never part of an endpoint."
+      hint="Where agents' AI requests go. AI keys are never part of an endpoint."
       source={own.length > 0 ? "dashboard" : "default"}
       error={ctx.error}
     >
@@ -291,7 +291,7 @@ export function EndpointsControl({
         <Button type="button" variant="outline" size="sm" disabled={providers.length === 0} onClick={() => setEditing({ index: null })}>
           Add endpoint…
         </Button>
-        {providers.length === 0 ? <p className="text-xs text-muted">Enable a provider above first.</p> : null}
+        {providers.length === 0 ? <p className="text-xs text-muted">Turn on a provider above first.</p> : null}
       </div>
       {editing ? (
         <EndpointDialog
