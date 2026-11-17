@@ -89,3 +89,11 @@ Administration › Data › Usage.
 
 Sonnet (`nextjs-developer`): two new primitives with accessibility rules, one view in three places, and
 URL state. It is bounded, but more than a Haiku task.
+
+## Completion report (worker 33, 2026-11-18)
+
+Built: `StatTile`, `BarChart` (inline SVG, no style attributes, tab stop + arrow/Home/End keys, tooltip, "<label>: <value>" names), `UsageView` (`web/src/components/usage/usage-view.tsx`, three levels, URL state `range|from|to|agent|workspace|org`), `UsageCard`, hooks `web/src/lib/api/usage.ts`, helpers `web/src/lib/usage-format.ts`; Activity gains `?tab=requests|usage` (default Requests), Data › Usage in the organization and Administration, the Computer page's Usage card with **See usage**; `routes.ts` tab ids + `wsRoutes().usage(agent?)`.
+
+Gate: vitest 143 files / 2323 tests, typecheck, lint (0 errors, 5 old warnings), `pnpm build`; Playwright mocked project 1264 passed (incl. stage4-axe, stage4-routes, ia-navigation, new `usage.spec.ts` in both themes at 1280 and 390 px with axe and no horizontal scroll), 1 failed under load (`web-push.spec.ts:97`, a service-worker NotificationEvent error) which passes alone; production project 11 passed.
+
+Not done / differences from the brief: (1) **`TurnUsage` is still unmounted**: no screen of this brief, and no screen in the dashboard, shows a turn's tokens (no turn-details view exists; the chat transcript has none), so mounting it would mean inventing one. (2) Administration's workspace names are plain text (the admin has the workspace id only, no slug to link with); the organization view links them. (3) Tables scroll inside their own region on a phone instead of becoming stacked cards. (4) The Playwright spec runs against the mocked API, not the dev stack after a real turn. (5) Several multi-line edits used python/sed (bulk replace of repeated snippets), against the Edit-only rule.

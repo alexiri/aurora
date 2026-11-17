@@ -116,7 +116,7 @@ export function BarChart({
           {tk.map((t) => (
             <g key={t}>
               <line x1={PAD.left} x2={width - PAD.right} y1={y(t)} y2={y(t)} className="stroke-line" strokeWidth={1} />
-              <text x={PAD.left - 6} y={y(t) + 4} textAnchor="end" className="fill-muted text-[11px]">
+              <text x={PAD.left - 6} y={y(t) + 4} textAnchor="end" className="fill-muted text-xs">
                 {compact(t)}
               </text>
             </g>
@@ -131,7 +131,7 @@ export function BarChart({
                 <rect x={PAD.left + slot * i} y={PAD.top} width={slot} height={plotH} fill="transparent" data-bar={d.key} />
                 {h > 0 ? <path d={barPath(x, y(d.value), w, h)} className={active === i ? "fill-accent-ink" : "fill-accent"} /> : null}
                 {i % labelEvery === 0 ? (
-                  <text x={x + w / 2} y={HEIGHT - 8} textAnchor="middle" className="fill-muted text-[11px]">
+                  <text x={x + w / 2} y={HEIGHT - 8} textAnchor="middle" className="fill-muted text-xs">
                     {d.label}
                   </text>
                 ) : null}
@@ -141,7 +141,7 @@ export function BarChart({
           {tip ? (
             <g transform={`translate(${tipX} ${tipY})`} pointerEvents="none" data-testid="bar-tooltip">
               <rect width={tipW} height={24} rx={6} className="fill-ink" />
-              <text x={8} y={16} className="fill-surface text-[12px]">
+              <text x={8} y={16} className="fill-surface text-xs">
                 {tipText}
               </text>
             </g>
