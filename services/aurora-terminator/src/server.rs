@@ -40,6 +40,9 @@ use crate::state::{Sess, Shared};
 
 /// Per-channel queue from the SSH side to the leg task (stdin before the leg is up waits here).
 const CHAN_QUEUE: usize = 64;
+/// The size a `pty-req` of 0×0 ("unspecified", RFC 4254 §6.2: a client whose stdin is not a terminal) gets.
+const DEFAULT_COLS: u32 = 80;
+const DEFAULT_ROWS: u32 = 24;
 /// The SSH channel window: small on purpose (bulk data is paced by the runner's credit through
 /// the leg's backpressure, not by a large window).
 const WINDOW: u32 = 256 * 1024;
@@ -370,6 +373,12 @@ impl Handler for Conn {
         _modes: &[(Pty, u32)],
         session: &mut Session,
     ) -> Result<(), Self::Error> {
+        // RFC 4254 §6.2: a zero character dimension is "unspecified" — OpenSSH sends 0×0 when its stdin is not a
+        // terminal (`ssh -tt host` fed by a pipe, a script). It gets the usual 80×24; anything above 1000 is refused.
+        let (cols, rows) = (
+            if cols == 0 { DEFAULT_COLS } else { cols },
+            if rows == 0 { DEFAULT_ROWS } else { rows },
+        );
         let ok = self.permit_pty
             && (1..=64).contains(&term.len())
             && term.bytes().all(|b| (0x20..=0x7e).contains(&b))

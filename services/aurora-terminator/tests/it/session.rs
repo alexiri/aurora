@@ -166,6 +166,24 @@ async fn refused_channels_and_requests_open_nothing_downstream() {
     // A second `shell` on the same channel is refused.
     sh.request_shell(true).await.unwrap();
     assert!(!reply(&mut sh).await);
+
+    // A client with no terminal of its own (`ssh -tt host` fed by a pipe) sends 0×0: "unspecified", so the pty gets
+    // 80×24 (found by the kind SSH e2e with a real OpenSSH client). Above 1000 stays refused.
+    let mut z = c.channel_open_session().await.unwrap();
+    z.request_pty(true, "xterm", 0, 0, 0, 0, &[]).await.unwrap();
+    assert!(reply(&mut z).await, "pty-req 0x0");
+    z.request_shell(true).await.unwrap();
+    assert!(reply(&mut z).await, "shell");
+    let opens = r.runner.opens.lock().unwrap().clone();
+    assert_eq!(
+        opens.last().unwrap()["tty"],
+        serde_json::json!({"term": "xterm", "cols": 80, "rows": 24})
+    );
+    let mut big = c.channel_open_session().await.unwrap();
+    big.request_pty(true, "xterm", 1001, 24, 0, 0, &[])
+        .await
+        .unwrap();
+    assert!(!reply(&mut big).await, "pty-req above 1000 columns");
 }
 
 #[tokio::test(flavor = "multi_thread")]
