@@ -149,6 +149,46 @@ impl W {
             .bind(op).execute(self.h.pool()).await.unwrap();
     }
 
+    /// A platform user the agent may message (linked, with `can_use` on the workspace).
+    async fn link_user(&self, platform_ref: &str, email: &str) {
+        let u = self.h.user(email, false).await;
+        self.h.member(self.org, u, "member", "active").await;
+        self.h.bind_ws(self.ws, u, "approver").await;
+        sqlx::query("INSERT INTO user_links (id, integration_id, platform_user_ref, user_id, method) VALUES ($1,$2,$3,$4,'admin')")
+            .bind(Uuid::now_v7()).bind(self.integ).bind(platform_ref).bind(u)
+            .execute(self.h.pool()).await.unwrap();
+    }
+
+    /// How many correlated platform lookups (`user.lookup`) have been queued.
+    async fn lookups(&self) -> i64 {
+        sqlx::query_scalar("SELECT count(*) FROM channel_ops WHERE kind='user.lookup'")
+            .fetch_one(self.h.pool())
+            .await
+            .unwrap()
+    }
+
+    async fn pinned(&self) -> Vec<String> {
+        sqlx::query_scalar(
+            "SELECT alias FROM mention_anchors WHERE conversation_id=$1 ORDER BY alias",
+        )
+        .bind(self.conv)
+        .fetch_all(self.h.pool())
+        .await
+        .unwrap()
+    }
+
+    /// Fails every correlated op, as a connector that cannot search would.
+    fn failer(&self) -> tokio::task::JoinHandle<()> {
+        let pool = self.h.pool().clone();
+        tokio::spawn(async move {
+            loop {
+                let _ = sqlx::query("UPDATE channel_ops SET status='failed', error_code='unsupported', completed_at=now() WHERE correlation_id IS NOT NULL AND status='pending'")
+                    .execute(&pool).await;
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        })
+    }
+
     /// Answers correlated ops with canned results until the test ends.
     fn responder(
         &self,
@@ -744,4 +784,243 @@ async fn edit_and_delete_only_own_recent_messages() {
         .run("edit_my_message", json!({"message_id": id, "text": "x"}))
         .await;
     assert!(failed(&e).contains("not a message you sent"), "{e}");
+}
+
+// ---- FIX-150 / D-287: an exact handle is looked up by send_message itself
+
+fn mark_and_co() -> (Value, Value) {
+    (
+        json!([
+            {"ref": "U_MEMBER", "display_name": "Mark", "handle": "mark"},
+            {"ref": "U_MARCUS", "display_name": "Marcus", "handle": "marcus"},
+            {"ref": "U_STR", "display_name": "Stranger", "handle": "stranger"}
+        ]),
+        json!([]),
+    )
+}
+
+#[tokio::test]
+async fn send_message_resolves_an_exact_handle_by_itself() {
+    let w = W::new(&["threads"], "allow").await;
+    w.presence(w.integ).await;
+    w.link_user("U_MARCUS", "marcus@x.io").await;
+    let (users, spaces) = mark_and_co();
+    let r = w.responder(users, spaces, json!([]));
+    // `@Mark` (any case, with the @): nothing pinned, one platform lookup, sent.
+    let v = w
+        .run("send_message", json!({"to": "@Mark", "text": "hello"}))
+        .await;
+    assert_eq!(ok(&v)["status"], "sent", "{v}");
+    assert_eq!(ok(&v)["recipient"]["alias"], "mark", "{v}");
+    assert_eq!(ok(&v)["recipient"]["kind"], "user", "{v}");
+    assert_eq!(ok(&v)["recipient"]["label"], "Mark", "{v}");
+    assert_eq!(w.lookups().await, 1);
+    let posts = w.posts().await;
+    assert_eq!(posts.len(), 1);
+    assert_eq!(
+        posts[0].1["target"]["user_ref"], "U_MEMBER",
+        "{}",
+        posts[0].1
+    );
+    // Now pinned: the bare alias needs no further lookup.
+    let v = w
+        .run_as(
+            None,
+            "c2",
+            "send_message",
+            json!({"to": "mark", "text": "again"}),
+        )
+        .await;
+    assert_eq!(ok(&v)["status"], "sent", "{v}");
+    assert_eq!(w.lookups().await, 1, "a pinned alias is not looked up");
+    r.abort();
+}
+
+#[tokio::test]
+async fn exact_handle_under_ask_is_held_and_names_the_label() {
+    let w = W::new(&["threads"], "ask").await;
+    w.presence(w.integ).await;
+    let (users, spaces) = mark_and_co();
+    let r = w.responder(users, spaces, json!([]));
+    let v = w
+        .run("send_message", json!({"to": "mark", "text": "hi"}))
+        .await;
+    assert_eq!(ok(&v)["status"], "pending_approval", "{v}");
+    assert_eq!(ok(&v)["recipient"]["alias"], "mark", "{v}");
+    let id: Uuid = ok(&v)["approval_id"].as_str().unwrap().parse().unwrap();
+    let summary: String = sqlx::query_scalar("SELECT summary FROM action_approvals WHERE id=$1")
+        .bind(id)
+        .fetch_one(w.h.pool())
+        .await
+        .unwrap();
+    assert!(summary.contains("user Mark"), "{summary}");
+    assert!(w.posts().await.is_empty());
+    r.abort();
+}
+
+#[tokio::test]
+async fn a_prefix_lists_the_candidates_and_a_retry_with_an_alias_sends() {
+    let w = W::new(&["threads"], "allow").await;
+    w.presence(w.integ).await;
+    w.link_user("U_MARCUS", "marcus@x.io").await;
+    let (users, spaces) = mark_and_co();
+    let r = w.responder(users, spaces, json!([]));
+    let v = w
+        .run("send_message", json!({"to": "Mar", "text": "hi"}))
+        .await;
+    assert_eq!(v["error"]["code"], "invalid_arguments", "{v}");
+    let e = failed(&v);
+    assert!(e.contains("`mark` (Mark, user)"), "{e}");
+    assert!(e.contains("`marcus` (Marcus, user)"), "{e}");
+    assert!(
+        !e.contains("stranger"),
+        "an unreachable person is never listed: {e}"
+    );
+    assert!(w.posts().await.is_empty());
+    assert_eq!(w.pinned().await, vec!["marcus", "mark"]);
+    let v = w
+        .run_as(
+            None,
+            "c2",
+            "send_message",
+            json!({"to": "marcus", "text": "hi"}),
+        )
+        .await;
+    assert_eq!(ok(&v)["status"], "sent", "{v}");
+    assert_eq!(w.lookups().await, 1, "the retry used the pinned alias");
+    r.abort();
+}
+
+#[tokio::test]
+async fn an_unreachable_handle_reads_like_one_that_does_not_exist() {
+    let w = W::new(&["threads"], "allow").await;
+    w.presence(w.integ).await;
+    // The platform finds the stranger (linked, but without access to this workspace)...
+    let r = w.responder(
+        json!([{"ref": "U_STR", "display_name": "Stranger", "handle": "stranger"}]),
+        json!([]),
+        json!([]),
+    );
+    let unreachable = w
+        .run("send_message", json!({"to": "@stranger", "text": "hi"}))
+        .await;
+    r.abort();
+    // ...and finds nobody for a handle that does not exist.
+    let r = w.responder(json!([]), json!([]), json!([]));
+    let missing = w
+        .run("send_message", json!({"to": "@stranger2", "text": "hi"}))
+        .await;
+    let (a, b) = (failed(&unreachable), failed(&missing));
+    assert!(
+        a.starts_with("Nobody you may message matches `@stranger`"),
+        "{a}"
+    );
+    assert_eq!(
+        a.replace("@stranger", "@x"),
+        b.replace("@stranger2", "@x"),
+        "same text for both"
+    );
+    assert!(w.pinned().await.is_empty(), "nothing pinned for them");
+    assert!(w.posts().await.is_empty());
+    r.abort();
+}
+
+#[tokio::test]
+async fn a_user_and_a_space_with_the_same_name_are_ambiguous() {
+    let w = W::new(&["threads"], "allow").await;
+    w.presence(w.integ).await;
+    w.link_user("U_OPS", "ops@x.io").await;
+    w.bind_space("C_OPS").await;
+    let r = w.responder(
+        json!([{"ref": "U_OPS", "display_name": "Ops Person", "handle": "ops"}]),
+        json!([{"ref": "C_OPS", "kind": "channel", "label": "ops"}]),
+        json!([]),
+    );
+    let v = w
+        .run("send_message", json!({"to": "ops", "text": "hi"}))
+        .await;
+    assert_eq!(v["error"]["code"], "invalid_arguments", "{v}");
+    let e = failed(&v);
+    assert!(
+        e.contains("(Ops Person, user)") && e.contains("(ops, space)"),
+        "{e}"
+    );
+    assert!(w.posts().await.is_empty());
+    // A display name is never an exact match.
+    let v = w
+        .run("send_message", json!({"to": "Ops Person", "text": "hi"}))
+        .await;
+    assert_eq!(v["error"]["code"], "invalid_arguments", "{v}");
+    r.abort();
+}
+
+#[tokio::test]
+async fn an_unsearchable_platform_denies_and_sends_nothing() {
+    let w = W::new(&["threads"], "allow").await;
+    w.presence(w.integ).await;
+    let r = w.failer();
+    let v = w
+        .run("send_message", json!({"to": "mark", "text": "hi"}))
+        .await;
+    assert!(failed(&v).contains("could not be searched"), "{v}");
+    assert!(w.posts().await.is_empty());
+    r.abort();
+}
+
+#[tokio::test]
+async fn read_conversation_takes_an_exact_space_name_unpinned() {
+    let w = W::new(&["threads", "history"], "ask").await;
+    w.presence(w.integ).await;
+    w.bind_space("C_OPS").await;
+    let r = w.responder(
+        json!([]),
+        json!([{"ref": "C_OPS", "kind": "channel", "label": "ops"}]),
+        json!([{
+            "message_ref": "m1", "at": "2026-11-07T10:00:00Z",
+            "author": {"ref": "U1", "kind": "person", "display_name": "Eve"}, "text": "hi"
+        }]),
+    );
+    let v = w.run("read_conversation", json!({"target": "#ops"})).await;
+    assert_eq!(ok(&v)["messages"][0]["author"], "Eve", "{v}");
+    r.abort();
+}
+
+#[tokio::test]
+async fn here_ids_and_pinned_aliases_need_no_platform_call() {
+    let w = W::new(&["threads"], "allow").await;
+    w.presence(w.integ).await;
+    w.thread_link(w.integ, "C1", "T1").await;
+    w.bind_space("C_OPS").await;
+    sqlx::query("INSERT INTO mention_anchors (conversation_id, alias, integration_id, kind, ref, label) VALUES ($1,'ops',$2,'space','C_OPS','ops')")
+        .bind(w.conv).bind(w.integ).execute(w.h.pool()).await.unwrap();
+    // No responder: any platform call would stall for its whole wait.
+    for (n, to) in [
+        ("c1", "here".to_owned()),
+        ("c2", "ops".to_owned()),
+        ("c3", format!("{}:space:C_OPS", w.integ)),
+    ] {
+        let v = w
+            .run_as(None, n, "send_message", json!({"to": to, "text": "x"}))
+            .await;
+        assert_eq!(ok(&v)["status"], "sent", "{to}: {v}");
+    }
+    let here = w
+        .run_as(
+            None,
+            "c4",
+            "send_message",
+            json!({"to": "here", "text": "x"}),
+        )
+        .await;
+    assert!(ok(&here)["recipient"].get("alias").is_none(), "{here}");
+    let pinned = w
+        .run_as(
+            None,
+            "c5",
+            "send_message",
+            json!({"to": "ops", "text": "x"}),
+        )
+        .await;
+    assert_eq!(ok(&pinned)["recipient"]["alias"], "ops", "{pinned}");
+    assert_eq!(w.lookups().await, 0);
 }

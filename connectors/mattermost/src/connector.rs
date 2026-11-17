@@ -31,6 +31,7 @@ pub const DEFAULT_CAPABILITIES: &[&str] = &[
     "presence_dedicated",
     "email_verified",
     "ephemeral",
+    "native_status",
 ];
 
 pub const MAX_FILE_BYTES: u64 = 52_428_800;

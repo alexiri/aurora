@@ -196,6 +196,14 @@ impl PlatformDriver for FakeDriver {
         Ok(v["url"].as_str().context("no url")?.to_owned())
     }
 
+    async fn working(&self, space_ref: &str, thread_ref: &str) -> Result<Option<bool>> {
+        let v = self.get_json("/fake/working").await?;
+        let key = format!("{space_ref}|{thread_ref}");
+        Ok(Some(v["working"].as_array().is_some_and(|a| {
+            a.iter().any(|x| x.as_str() == Some(key.as_str()))
+        })))
+    }
+
     async fn posts(&self, space_ref: Option<&str>) -> Result<Vec<Post>> {
         let path = match space_ref {
             Some(s) => format!("/fake/posted?space_ref={s}"),
