@@ -1674,22 +1674,25 @@ the workspace is created.
 
 (Landed, P5-UX-14, D-335, D-350: `last_check_at` and `last_check_result` are in the `secrets` and `app_connections` sections above, migration `20261201000248_account_health.sql`. They are set by `POST /v1/accounts/{type}/{id}/test` and the post-connect test (C-943, C-945), and by the gateway when real use shows a change (C-985): an upstream 401 on a request with this account's credential, or a later success; the gateway writes only on a change of state, at most once a minute per account, next to its `last_used_at` write. The gateway role has `UPDATE (last_check_at, last_check_result)` on both tables, next to its `last_used_at` grant.)
 
-#### `agent_access_requests` (an agent asks for access; phase 5, P5-UX-17, D-348)
-| Planned column | Type | Notes | Phase |
-|---|---|---|---|
-| id | uuid PK | | 5 (P5-UX-17) |
-| org_id, workspace_id | uuid FK (cascade) | the agent's | 5 (P5-UX-17) |
-| agent_id | uuid FK → agents ON DELETE CASCADE | | 5 (P5-UX-17) |
-| conversation_id | uuid FK → conversations ON DELETE CASCADE | where the agent asked | 5 (P5-UX-17) |
-| turn_id | uuid null FK → turns ON DELETE SET NULL | the asking turn, so the API knows whether it has ended | 5 (P5-UX-17) |
-| kind | text not null | CHECK in (`app`, `website`) | 5 (P5-UX-17) |
-| app_id | text null | for `app` | 5 (P5-UX-17) |
-| secret_id | uuid null FK → secrets ON DELETE CASCADE | for `website`: the proposed secret (`08 §5`) | 5 (P5-UX-17) |
-| reason | text not null | the agent's words, one line, at most 300 characters | 5 (P5-UX-17) |
-| status | text not null default `open` | CHECK in (`open`, `given`, `dismissed`, `expired`) | 5 (P5-UX-17) |
-| created_at, resolved_at | timestamptz | `resolved_by uuid null FK → users` beside them | 5 (P5-UX-17) |
+### `agent_access_requests`
+(phase 5, P5-UX-17, D-348, C-984, SEC-132; migration `20261201000250_agent_access_requests.sql`) An agent asks for an app (or a website's token) it cannot use. A row gives no access.
+| Column | Type | Notes |
+|---|---|---|
+| id | uuid pk | |
+| org_id | uuid FK→organizations (cascade) | the agent's |
+| workspace_id | uuid FK→workspaces (cascade) | the agent's |
+| agent_id | uuid FK→agents (cascade) | |
+| conversation_id | uuid FK→conversations (cascade) | where the agent asked |
+| turn_id | uuid null FK→turns (set null) | the asking turn, so the API knows whether it has ended |
+| kind | text not null | CHECK in (`app`, `website`) |
+| app_id | text null | for `app` |
+| secret_id | uuid null FK→secrets (cascade) | for `website`: the proposed secret (`08 §5`) |
+| reason | text not null | the agent's words, one line, at most 300 characters |
+| status | text not null default `open` | CHECK in (`open`, `given`, `dismissed`, `expired`) |
+| resolved_at | timestamptz null | |
+| resolved_by | uuid null FK→users (set null) | the person who dismissed it; null when given or expired |
 
-UNIQUE (agent_id, app_id) WHERE status = `open` and kind = `app`; UNIQUE (agent_id, secret_id) WHERE status = `open` and kind = `website`. Open rows expire after `ACCESS_REQUEST_TTL` (14 days). The gateway role gets nothing on this table.
+UNIQUE (agent_id, app_id) WHERE status = `open` and kind = `app`; UNIQUE (agent_id, secret_id) WHERE status = `open` and kind = `website`; index (workspace_id, created_at DESC) WHERE status = `open`. Open rows expire after `ACCESS_REQUEST_TTL` (14 days). The gateway role gets nothing on this table.
 
 ### `approval_push_claims`
 (phase 5, P4-011B-3, D-138; migration `20261201000223`) One row per (approval, decider, stage) Web Push claim.

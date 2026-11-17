@@ -584,10 +584,7 @@ async fn reauth_required_connection_is_refused_with_guidance() {
         .as_str()
         .unwrap_or_default()
         .to_owned();
-    assert!(
-        url.contains("/credentials?tab=connections&reconnect="),
-        "{url}"
-    );
+    assert!(url.contains("/apps?tab=accounts&reconnect="), "{url}");
     assert!(!url.contains("/apps/"), "{url}");
     assert_eq!(r.hits.load(Ordering::SeqCst), 0);
 }

@@ -1081,6 +1081,14 @@ const ROWS: &[Row] = &[
         G::WsApprove,
         false,
     ),
+    // P5-UX-17 (C-984): agents' requests for access; dismissing is `can_own`.
+    r(
+        "GET",
+        "/v1/workspaces/{ws}/access-requests",
+        G::WsUse,
+        false,
+    ),
+    r("POST", "/v1/access-requests/{id}/dismiss", G::WsOwn, false),
     r("GET", "/v1/agents/{agent}/links", G::WsUse, false),
     r("PUT", "/v1/agent-links/{id}/policy", G::WsUse, false),
     r("GET", "/v1/agents/{agent}/peer-tasks", G::WsUse, false),

@@ -43,6 +43,21 @@
       "update_interval",
       "url"
     ],
+    "agent_access_requests": [
+      "agent_id",
+      "app_id",
+      "conversation_id",
+      "id",
+      "kind",
+      "org_id",
+      "reason",
+      "resolved_at",
+      "resolved_by",
+      "secret_id",
+      "status",
+      "turn_id",
+      "workspace_id"
+    ],
     "agent_links": [
       "agent_a_id",
       "agent_b_id",
@@ -1423,6 +1438,21 @@
       "status": "text not null",
       "update_interval": "text not null",
       "url": "text not null"
+    },
+    "agent_access_requests": {
+      "agent_id": "uuid",
+      "app_id": "text null",
+      "conversation_id": "uuid",
+      "id": "uuid not null",
+      "kind": "text not null",
+      "org_id": "uuid",
+      "reason": "text not null",
+      "resolved_at": "timestamptz null",
+      "resolved_by": "uuid null",
+      "secret_id": "uuid null",
+      "status": "text not null",
+      "turn_id": "uuid null",
+      "workspace_id": "uuid"
     },
     "agent_links": {
       "agent_a_id": "uuid",

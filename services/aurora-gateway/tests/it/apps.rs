@@ -738,9 +738,27 @@ async fn lost_claim_and_unavailable_and_guidance() {
         r.body
     );
     // (FIX-153, C-893) an app with a sign-in leads with connecting, then giving the agent access.
+    // (C-959, P5-UX-17) A refusal that knows the agent carries the journey's deep link as
+    // `connect_url` (the agent's Access tab with the journey open) and keeps the workspace link.
+    let v: Value = serde_json::from_str(&r.body).unwrap();
+    let d = &v["error"]["details"];
+    let agent_link = d["connect_url"].as_str().unwrap();
+    assert!(
+        agent_link.contains("/agents/") && agent_link.ends_with("?tab=access&connect=demo"),
+        "{}",
+        r.body
+    );
+    assert!(
+        d["connect_url_workspace"]
+            .as_str()
+            .unwrap()
+            .ends_with("/apps?tab=apps&connect=demo"),
+        "{}",
+        r.body
+    );
     assert!(
         r.body
-            .contains("/credentials?tab=apps&connect=demo, then give this agent access"),
+            .contains("?tab=access&connect=demo, then give this agent access"),
         "{}",
         r.body
     );

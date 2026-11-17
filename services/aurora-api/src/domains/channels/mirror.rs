@@ -216,6 +216,88 @@ async fn mirror(
     Ok(())
 }
 
+/// (P5-UX-17, C-984) An agent asked for an app in a conversation that is mirrored to a chat
+/// platform: in a **direct** conversation one platform line with the link to the journey, nothing
+/// in a shared space (D-192). Platform voice only; the agent's reason is not posted. Behind a
+/// savepoint: a mirror problem never fails the tool call. Idempotent per request.
+pub async fn post_access_request(
+    conn: &mut PgConnection,
+    conversation_id: uuid::Uuid,
+    request_id: uuid::Uuid,
+    agent_name: &str,
+    app_name: &str,
+    link: &str,
+) {
+    let mut sp = match conn.begin().await {
+        Ok(sp) => sp,
+        Err(e) => {
+            tracing::warn!(error = %e, "access-request line: no savepoint");
+            return;
+        }
+    };
+    match access_request_line(
+        &mut sp,
+        conversation_id,
+        request_id,
+        agent_name,
+        app_name,
+        link,
+    )
+    .await
+    {
+        Ok(()) => {
+            if let Err(e) = sp.commit().await {
+                tracing::warn!(error = %e, "access-request line: commit failed");
+            }
+        }
+        Err(e) => {
+            tracing::warn!(error = %e.message(), "access-request line failed; request kept");
+            let _ = sp.rollback().await;
+        }
+    }
+}
+
+async fn access_request_line(
+    conn: &mut PgConnection,
+    conversation_id: uuid::Uuid,
+    request_id: uuid::Uuid,
+    agent_name: &str,
+    app_name: &str,
+    link: &str,
+) -> Result<(), ApiError> {
+    let Some(tl) = thread_links::latest_for_conversation(&mut *conn, conversation_id).await? else {
+        return Ok(());
+    };
+    if tl.kind != "direct" {
+        return Ok(());
+    }
+    let Some(ctx) = ctx_of(conn, tl.integration_id).await? else {
+        return Ok(());
+    };
+    let Ok(sender) = serde_json::from_value::<Sender>(tl.sender.clone()) else {
+        return Ok(());
+    };
+    let text = format!(
+        "{} needs {} for this. Give access: {link}",
+        sanitize::label(agent_name),
+        sanitize::label(app_name)
+    );
+    send::post(
+        conn,
+        &ctx,
+        send::Post {
+            sender,
+            target: send::space_target(&tl.space_ref, &tl.thread_ref),
+            content: Content::platform(&text),
+            files: Vec::new(),
+            ephemeral_to: None,
+            dedupe: format!("access-request:{request_id}"),
+        },
+    )
+    .await?;
+    Ok(())
+}
+
 /// Hook from the supervisor's `turn.started` report (FIX-158 Part C, D-319): a running turn of a
 /// chat thread shows the platform's working status ("is typing…" where the platform has it) until the turn
 /// finishes. Only on integrations that declare `native_status`; web and API turns have none.

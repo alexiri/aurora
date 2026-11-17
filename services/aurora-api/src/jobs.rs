@@ -528,6 +528,11 @@ pub fn spawn(
                 Ok(_) => {}
                 Err(e) => tracing::warn!(error = %e.message(), "peer-task sweep failed"),
             }
+            match crate::domains::access_requests::service::sweep(&ap).await {
+                Ok(n) if n > 0 => tracing::info!(expired = n, "access-request expiry"),
+                Ok(_) => {}
+                Err(e) => tracing::warn!(error = %e.message(), "access-request expiry failed"),
+            }
             match expire_reach_grants(&ap).await {
                 Ok(n) if n > 0 => tracing::info!(expired = n, "reach-grant expiry"),
                 Ok(_) => {}

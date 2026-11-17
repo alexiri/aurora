@@ -561,9 +561,15 @@ async fn an_app_with_no_connection_says_not_connected_and_where_to_connect() {
     assert_eq!(d["reason"], "not_connected", "{}", r.body);
     assert_eq!(d["app_name"], "Phonebook");
     let c = d["connect_url"].as_str().unwrap();
+    // (C-959) The journey's deep link for this agent and app; the workspace link rides along.
+    assert!(c.ends_with("?tab=access&connect=phonebook"), "{c}");
+    assert!(c.contains("/agents/"), "{c}");
     assert!(
-        c.ends_with("/credentials?tab=apps&connect=phonebook"),
-        "{c}"
+        d["connect_url_workspace"]
+            .as_str()
+            .unwrap()
+            .ends_with("/apps?tab=apps&connect=phonebook"),
+        "{d}"
     );
     assert_access_url(&d);
     assert!(r.body.contains("Phonebook is not connected"), "{}", r.body);

@@ -142,6 +142,12 @@ pub fn ws_connect(org: &str, workspace: &str, app: &str) -> String {
     format!("{}&connect={app}", ws_apps(org, workspace, "apps"))
 }
 
+/// The Reconnect dialog of one account on the workspace's accounts list (C-842, C-959 `reconnect_url`).
+#[must_use]
+pub fn ws_reconnect(org: &str, workspace: &str, connection: &str) -> String {
+    format!("{}&reconnect={connection}", ws_accounts(org, workspace))
+}
+
 /// An app's setup page at the workspace level.
 #[must_use]
 pub fn ws_app_setup(org: &str, workspace: &str, app: &str) -> String {

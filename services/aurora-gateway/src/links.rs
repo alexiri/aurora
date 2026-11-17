@@ -2,6 +2,7 @@
 //! Every path must be a real dashboard route; `tests/conformance/dashboard-links.json` lists the
 //! templates and a web test checks each one against `web/src/app`.
 
+use aurora_core::dash_paths;
 use uuid::Uuid;
 
 /// Dashboard links for one resolved workspace.
@@ -35,43 +36,66 @@ impl<'a> Links<'a> {
         }
     }
 
-    fn ws_url(&self, tail: &str) -> String {
-        format!(
-            "{}/o/{}/w/{}/{tail}",
-            self.external_url,
-            enc(self.org),
-            enc(self.ws)
-        )
+    /// Joins a path of the shared table (`aurora_core::dash_paths`, C-960) to the external URL. The
+    /// slugs and ids are percent-encoded before they reach the table's functions.
+    fn url(&self, path: String) -> String {
+        format!("{}{path}", self.external_url)
     }
 
-    /// The C-842 connect deep link for an app.
-    pub fn connect(&self, app: &str) -> String {
-        self.ws_url(&format!("credentials?tab=apps&connect={}", enc(app)))
+    fn org(&self) -> String {
+        enc(self.org)
+    }
+
+    fn ws(&self) -> String {
+        enc(self.ws)
+    }
+
+    /// The journey's deep link for one agent and app (C-959): the agent's Access tab with the
+    /// connect journey open. `connect_url` for refusals that know the agent.
+    pub fn connect(&self, agent: Uuid, app: &str) -> String {
+        self.url(dash_paths::ws_agent_connect(
+            &self.org(),
+            &self.ws(),
+            &agent.to_string(),
+            &enc(app),
+        ))
+    }
+
+    /// The workspace-level connect link (C-959 `connect_url_workspace`, C-842).
+    pub fn connect_workspace(&self, app: &str) -> String {
+        self.url(dash_paths::ws_connect(&self.org(), &self.ws(), &enc(app)))
     }
 
     /// The Apps tab, no app chosen.
     pub fn connect_any(&self) -> String {
-        self.ws_url("credentials?tab=apps")
+        self.url(dash_paths::ws_apps(&self.org(), &self.ws(), "apps"))
     }
 
     pub fn reconnect(&self, connection: Uuid) -> String {
-        self.ws_url(&format!(
-            "credentials?tab=connections&reconnect={connection}"
+        self.url(dash_paths::ws_reconnect(
+            &self.org(),
+            &self.ws(),
+            &connection.to_string(),
         ))
     }
 
+    /// Where a website's secret is added: the workspace's accounts list.
     pub fn secrets(&self) -> String {
-        self.ws_url("credentials?tab=secrets")
+        self.url(dash_paths::ws_accounts(&self.org(), &self.ws()))
     }
 
     /// The agent's Access tab (the agent page accepts an id, C-894).
     pub fn access(&self, agent: Uuid) -> String {
-        self.ws_url(&format!("agents/{agent}?tab=access"))
+        self.url(dash_paths::ws_agent_access(
+            &self.org(),
+            &self.ws(),
+            &agent.to_string(),
+        ))
     }
 
-    /// The workspace policy page.
+    /// The workspace's Internet access page.
     pub fn policy(&self) -> String {
-        self.ws_url("policy")
+        self.url(dash_paths::ws_internet_access(&self.org(), &self.ws()))
     }
 }
 
@@ -100,7 +124,11 @@ mod tests {
                 .replace("{agent}", &agent.to_string())
         };
         let get = |k: &str| expand(t[k].as_str().unwrap_or_else(|| panic!("template {k}")));
-        assert_eq!(l.connect("cern-phonebook"), get("connect"));
+        assert_eq!(l.connect(agent, "cern-phonebook"), get("connect"));
+        assert_eq!(
+            l.connect_workspace("cern-phonebook"),
+            get("connect_workspace")
+        );
         assert_eq!(l.connect_any(), get("connect_any"));
         assert_eq!(l.reconnect(conn), get("reconnect"));
         assert_eq!(l.secrets(), get("secrets"));
@@ -112,8 +140,8 @@ mod tests {
     fn ids_are_percent_encoded() {
         let l = Links::new("https://a", "o", "w");
         assert_eq!(
-            l.connect("a b&c"),
-            "https://a/o/o/w/w/credentials?tab=apps&connect=a%20b%26c"
+            l.connect_workspace("a b&c"),
+            "https://a/o/o/w/w/apps?tab=apps&connect=a%20b%26c"
         );
     }
 }
