@@ -26,7 +26,7 @@ import { AccountMenu } from "./account-menu";
 import { ConnectionDetails } from "./connection-details";
 
 /** One agent's entry in "who can use it": opens the access choice and **Remove access** (`14 §1`). */
-function AgentEntry({ account, entry, workspaceId, canChange }: { account: Account; entry: AgentAccess; workspaceId: string; canChange: boolean }) {
+function AgentEntry({ account, entry, workspaceId, canChange, orgName }: { account: Account; entry: AgentAccess; workspaceId: string; canChange: boolean; orgName?: string }) {
   const [open, setOpen] = useState(false);
   const remove = useRemoveAccess();
   if (!canChange) return <li className="text-sm text-ink">{entryText(entry)}</li>;
@@ -39,7 +39,7 @@ function AgentEntry({ account, entry, workspaceId, canChange }: { account: Accou
         <DialogContent size="lg" title={`${entry.agent.name} and ${account.name}`}>
           {open ? (
             <div className="space-y-4">
-              <AccessControl account={account} entry={entry} workspaceId={workspaceId} canChange />
+              <AccessControl account={account} entry={entry} workspaceId={workspaceId} canChange orgName={orgName} />
               {remove.isError ? <ErrorState error={remove.error} /> : null}
               <Button
                 variant="outline"
@@ -81,7 +81,7 @@ export function AccountRow({
   onReconnect?: () => void;
 }) {
   const shared = account.scope === "organization" && scope.kind === "workspace";
-  const org = useOrg(shared ? orgId : undefined);
+  const org = useOrg(account.scope === "organization" ? orgId : undefined);
   const own: SecretScope = account.scope === "organization" ? { kind: "organization", id: orgId } : scope;
   const mine = agent ? account.agents.find((a) => a.agent.id === agent.id) : undefined;
   const ws = workspaceId ?? (scope.kind === "workspace" ? scope.id : "");
@@ -162,7 +162,7 @@ export function AccountRow({
         <div className="space-y-2">
           {mine ? (
             <>
-              <AccessControl account={account} entry={mine} workspaceId={ws} canChange={account.can.change_access} startOpen={false} />
+              <AccessControl account={account} entry={mine} workspaceId={ws} canChange={account.can.change_access} startOpen={false} orgName={org.data?.name} />
               {mine.model ? <p className="text-sm text-ink-2">{agent.name} thinks with {mine.model} through this key.</p> : null}
               {account.levels.length === 0 && account.can.change_access ? <RemoveOnly account={account} agentId={agent.id} /> : null}
             </>
@@ -177,7 +177,7 @@ export function AccountRow({
       ) : (
         <ul className="flex flex-wrap items-center gap-2" aria-label="Who can use it">
           {account.agents.map((a) => (
-            <AgentEntry key={a.agent.id} account={account} entry={a} workspaceId={a.workspace.id} canChange={account.can.change_access} />
+            <AgentEntry key={a.agent.id} account={account} entry={a} workspaceId={a.workspace.id} canChange={account.can.change_access} orgName={org.data?.name} />
           ))}
         </ul>
       )}

@@ -2,7 +2,7 @@
 
 import { useState, type ReactNode } from "react";
 
-import { AccessDialog } from "@/components/credentials/give-access";
+import { OrgGiveAccessDialog } from "@/components/accounts/org-give-access";
 import { ErrorState, Loading } from "@/components/states";
 import { Button } from "@/components/ui/button";
 import { ChoiceCards } from "@/components/ui/choice-cards";
@@ -61,6 +61,7 @@ export function OrgConnectJourney({ orgId, appId, onClose }: { orgId: string; ap
   const current: OrgStepId = !choice ? "app" : (step ?? (ready ? (steps[appId ? 0 : 1] ?? "done") : "app"));
   const orgName = org.data?.name ?? "your organization";
   const appName = app ? appDisplayName(app) : "";
+  const givenAccount = done ? (accounts.data?.items ?? []).find((a) => a.ref.id === done.accountId) : undefined;
   const effective: Level = choices.includes(limit) ? limit : (choices[0] ?? "read");
 
   const next = (from: OrgStepId) => setStep(steps[Math.min(steps.indexOf(from) + 1, steps.length - 1)] ?? "done");
@@ -169,14 +170,15 @@ export function OrgConnectJourney({ orgId, appId, onClose }: { orgId: string; ap
             Done
           </Button>
         </div>
-        {giving ? (
-          <AccessDialog
-            open
+        {giving && givenAccount ? (
+          <OrgGiveAccessDialog
+            account={givenAccount}
+            orgId={orgId}
+            orgName={orgName}
             onOpenChange={(o) => {
               setGiving(o);
               if (!o) refresh();
             }}
-            title={done.appName}
             subject={{
               target: { kind: "connection", id: done.accountId },
               scope: { kind: "organization", id: orgId },

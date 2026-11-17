@@ -17,6 +17,7 @@ export function AccessChoice({
   onChange,
   disabled = false,
   legend = "Access",
+  orgName,
 }: {
   account: Pick<Account, "levels" | "limit" | "app" | "managed_by">;
   agentName: string;
@@ -25,6 +26,8 @@ export function AccessChoice({
   onChange: (level: Level) => void;
   disabled?: boolean;
   legend?: string;
+  /** The organization that sets the limit: "Limited by <org>". */
+  orgName?: string;
 }) {
   const levels = LEVEL_ORDER.filter((l) => account.levels.includes(l));
   if (levels.length === 0) return null;
@@ -47,7 +50,7 @@ export function AccessChoice({
       />
       {isLimited(account) ? (
         <div className="text-sm text-ink-2">
-          <p>Limited by your organization.</p>
+          <p>Limited by {orgName ?? "your organization"}.</p>
           {account.managed_by ? <WhoCan value={account.managed_by} /> : null}
         </div>
       ) : null}

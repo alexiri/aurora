@@ -3,7 +3,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
-import { AccessDialog } from "@/components/credentials/give-access";
 import { ErrorState } from "@/components/states";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
@@ -13,7 +12,10 @@ import { accountKeys, type Account } from "@/lib/api/accounts";
 import { useDeleteConnection, usePatchConnection } from "@/lib/api/apps";
 import { ValueInput } from "@/components/credentials/value-input";
 
+import { useOrg } from "@/lib/api/queries";
+
 import { EditWebsite } from "./edit-website";
+import { OrgGiveAccessDialog } from "./org-give-access";
 import { useDeleteSecret, usePatchSecret, useSetSecretValue, type SecretScope } from "@/lib/api/secrets";
 
 /**
@@ -46,6 +48,7 @@ export function AccountMenu({
   const qc = useQueryClient();
   const refresh = () => void qc.invalidateQueries({ queryKey: accountKeys.all });
   const isConn = account.ref.type === "connection";
+  const org = useOrg(account.scope === "organization" ? orgId : undefined);
   const [giving, setGiving] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [removing, setRemoving] = useState(false);
@@ -90,10 +93,12 @@ export function AccountMenu({
       </Menu>
       {error ? <ErrorState error={error} /> : null}
       {giving ? (
-        <AccessDialog
-          open
+        <OrgGiveAccessDialog
+          account={account}
+          orgId={orgId}
+          orgName={org.data?.name}
+          useOrgPicker={scope.kind === "organization"}
           onOpenChange={setGiving}
-          title={account.name}
           subject={{
             target: { kind: isConn ? "connection" : "secret", id: account.ref.id },
             scope,

@@ -126,7 +126,11 @@ describe("the limit control", () => {
 describe("where to connect", () => {
   const ws = (id: string, name: string, extra: Record<string, unknown> = {}) => ({ id, name, slug: id, my_role: "owner", ...extra });
   it("splits the person's own and shared workspaces from other people's personal ones", () => {
-    const items = [ws("w1", "Shared"), ws("w2", "Alice", { personal_of: { id: "u2", name: "Alice" } }), ws("w3", "Me", { personal_of: { id: "u1", name: "Me" } })];
+    const items: Array<{ id: string; personal_of?: { id: string } | null }> = [
+      { id: "w1" },
+      { id: "w2", personal_of: { id: "u2" } },
+      { id: "w3", personal_of: { id: "u1" } },
+    ];
     const { mine, others } = splitWorkspaces(items, "u1");
     expect(mine.map((w) => w.id)).toEqual(["w1", "w3"]);
     expect(others.map((w) => w.id)).toEqual(["w2"]);
@@ -155,5 +159,37 @@ describe("where to connect", () => {
     wrap(<ConnectInWorkspaceDialog orgId="o1" orgSlug="acme" app={{ app_id: "aws", name: "AWS", family: null }} onClose={vi.fn()} />);
     await screen.findByText("Shared");
     expect(screen.queryByText("For the whole organization")).toBeNull();
+  });
+});
+
+describe("Give access on an organization's account", () => {
+  it("lists agents as <workspace> · <agent>, own workspaces first, one choice per ticked agent within the limit", async () => {
+    const ws = (id: string, name: string, extra: Record<string, unknown> = {}) => ({ id, name, slug: id, my_role: "owner", ...extra });
+    routes["GET /v1/orgs/o1/workspaces"] = () =>
+      json(200, { items: [ws("w2", "Alice", { personal_of: { id: "u2", name: "Alice" } }), ws("w1", "Shared")], next_cursor: null });
+    routes["GET /v1/me"] = () => json(200, { user: { id: "u1", display_name: "Me", email: "me@x.io" } });
+    routes["GET /v1/workspaces/w1/agents"] = () => json(200, { items: [{ id: "a1", name: "Daneel", handle: "daneel", kind: "hosted" }], next_cursor: null });
+    routes["GET /v1/workspaces/w2/agents"] = () => json(200, { items: [{ id: "a2", name: "Giskard", handle: "giskard", kind: "hosted" }], next_cursor: null });
+    routes["PUT /v1/agents/a1/grants/connections/c1"] = () => json(200, {});
+    routes["PUT /v1/agents/a2/grants/connections/c1"] = () => json(200, {});
+    const { OrgGiveAccessDialog } = await import("@/components/accounts/org-give-access");
+    const subject = { target: { kind: "connection", id: "c1" }, scope: { kind: "organization", id: "o1" }, orgId: "o1" } as const;
+    wrap(<OrgGiveAccessDialog account={account("ask")} orgId="o1" orgName="Acme" subject={subject} onOpenChange={vi.fn()} />);
+    const first = await screen.findByLabelText("Give Daneel access");
+    const second = await screen.findByLabelText("Give Giskard access");
+    expect(screen.getByText("Shared · Daneel")).toBeTruthy();
+    expect(screen.getByText("Alice · Giskard")).toBeTruthy();
+    expect(first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    fireEvent.click(first);
+    fireEvent.click(second);
+    // Within the limit: Change without asking is not a choice; the account is limited by the organization.
+    expect(screen.queryAllByLabelText(/Change without asking/)).toHaveLength(0);
+    expect(screen.getAllByText("Limited by Acme.").length).toBe(2);
+    const groups = screen.getAllByRole("radiogroup");
+    fireEvent.click(within(groups[1]!).getByLabelText(/Ask before changes/));
+    fireEvent.click(screen.getByRole("button", { name: "Give access" }));
+    await waitFor(() => expect(calls.filter((c) => c.key.startsWith("PUT /v1/agents/")).length).toBe(2));
+    expect(calls.find((c) => c.key === "PUT /v1/agents/a1/grants/connections/c1")?.body).toEqual({ level: "read" });
+    expect(calls.find((c) => c.key === "PUT /v1/agents/a2/grants/connections/c1")?.body).toEqual({ level: "ask" });
   });
 });
