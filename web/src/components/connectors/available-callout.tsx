@@ -10,7 +10,7 @@ import { cn } from "@/lib/utils";
 
 /**
  * (FIX-127, D-219) Admin › Setup: a signed connector type that the connector host announces and
- * nobody has added yet. It only points at Admin › Connectors; adding stays an explicit act there.
+ * nobody has added yet. It only points at Administration › Chat platforms; adding stays an explicit act there.
  * Renders nothing while loading, on error, with no host, or when everything is added.
  */
 export function ConnectorAvailableCallout() {

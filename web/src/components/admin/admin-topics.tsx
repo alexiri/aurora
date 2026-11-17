@@ -12,6 +12,7 @@ import { PlacementView } from "@/components/admin/placement-view";
 import { PluginsView } from "@/components/admin/plugins-view";
 import { AdminRunnersView } from "@/components/admin/runners-view";
 import { GovernanceFields, GovernanceRulesFields } from "@/components/admin/settings/governance-settings-view";
+import { ProviderRolesView } from "@/components/admin/settings/provider-roles-view";
 import { SettingsIndexView } from "@/components/admin/settings/settings-index-view";
 import { SettingsSectionView } from "@/components/admin/settings/settings-section-view";
 import { SetupView } from "@/components/admin/setup-view";
@@ -21,6 +22,7 @@ import { OAuthClientsPanel } from "@/components/apps/oauth-clients-panel";
 import { ConnectorsAdminView } from "@/components/connectors/connectors-admin-view";
 import { TopicPage } from "@/components/topic-page";
 import { EmbeddedPage, PageHeader } from "@/components/ui/page-header";
+import { Section } from "@/components/ui/section";
 import type { TABS } from "@/lib/routes";
 
 type Tabs<K extends keyof typeof TABS> = (typeof TABS)[K][number];
@@ -160,12 +162,25 @@ export function AdminPeoplePage() {
             id: "sign-in",
             label: "Sign-in",
             content: (
-              <EmbeddedPage headed>
-                <div className="space-y-8">
+              <div className="space-y-10">
+                <Section id="sign-in-providers" title="How people sign in" description="Who can sign up, how long a sign-in lasts, and the providers people sign in with.">
                   {section("sign_in")}
+                </Section>
+                <Section
+                  id="sign-in-roles"
+                  title="Roles from the provider"
+                  description="Which role values from the provider give which role in Aurora. Change a mapping on its provider."
+                >
+                  <ProviderRolesView />
+                </Section>
+                <Section
+                  id="sign-in-directory"
+                  title="Directory sync"
+                  description="Lets your identity system add and remove people and groups automatically. Organization owners then turn it on for their organization."
+                >
                   {section("scim")}
-                </div>
-              </EmbeddedPage>
+                </Section>
+              </div>
             ),
           },
           { id: "new-users", label: "New users", content: <PlacementView /> },
@@ -180,7 +195,9 @@ export function AdminChatPlatformsPage() {
     <AdminGuard>
       <div className="max-w-page space-y-4">
         <PageHeader title="Chat platforms" description="Mattermost and similar: where people can talk to agents." className="mb-2" />
-        <ConnectorsAdminView />
+        <EmbeddedPage>
+          <ConnectorsAdminView />
+        </EmbeddedPage>
       </div>
     </AdminGuard>
   );
