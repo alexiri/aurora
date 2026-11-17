@@ -337,7 +337,13 @@ pub async fn prune_preview_expiries<'e, E: PgExecutor<'e> + Copy>(exec: E) -> Re
     let f = crate::repo::file_grants::prune_file_grants(exec).await?;
     // (P4-SSH-1) the SSH mint ledger's rows older than 24 h ride the same sweep.
     let m = crate::repo::ssh::prune_mint_counters(exec).await?;
-    Ok(g + s + dead + t + f + m)
+    // (P4-SSH-2) closed sessions past `SSH_SESSION_RETENTION`, grants and replicas past 24 h.
+    let ssh = crate::repo::ssh_sessions::prune(
+        exec,
+        aurora_core::limits::SSH_SESSION_RETENTION.as_secs() as i64,
+    )
+    .await?;
+    Ok(g + s + dead + t + f + m + ssh)
 }
 
 // ------------------------------------------------------------ accounting

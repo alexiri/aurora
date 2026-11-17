@@ -1,0 +1,45 @@
+[package]
+name = "aurora-terminator"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Aurora SSH terminator: certificate-only SSH access into hosted agents' sandboxes (docs/15 §SSH access, P4-SSH-2, D-239)."
+
+[lints]
+workspace = true
+
+[lib]
+name = "aurora_terminator"
+path = "src/lib.rs"
+
+[[bin]]
+name = "aurora-terminator"
+path = "src/main.rs"
+
+[dependencies]
+aurora-core = { workspace = true, features = ["service"] }
+aurora-config = { workspace = true }
+aurora-protocol = { workspace = true }
+bytes = { workspace = true }
+chrono = { workspace = true }
+clap = { workspace = true, features = ["derive"] }
+futures = { workspace = true }
+metrics = { workspace = true }
+reqwest = { workspace = true }
+russh = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+ssh-key = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tokio-tungstenite = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true, features = ["v4"] }
+
+[dev-dependencies]
+axum = { workspace = true }
+http = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tracing-subscriber = { workspace = true }

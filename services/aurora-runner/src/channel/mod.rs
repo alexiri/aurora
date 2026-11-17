@@ -292,6 +292,9 @@ pub(crate) struct Shared {
     /// (P4-PRV-2, W18) Set by the runner when the API reported `previews.enabled` at
     /// registration: the stream listener's port opens only then.
     previews_on: watch::Sender<bool>,
+    /// (P4-SSH-2, D-239) Set after registration when the API answered `ssh_enabled`: the
+    /// listener then also redeems `auz_` SSH grants (and opens the port for them).
+    ssh_on: watch::Sender<bool>,
 }
 
 /// Late-bound [`StreamListener`] reference (the listener needs the `ChannelServer`, the
@@ -504,6 +507,7 @@ impl ChannelServer {
         let (events, rx) = mpsc::channel(256);
         let (api, _) = watch::channel(None);
         let (previews_on, _) = watch::channel(false);
+        let (ssh_on, _) = watch::channel(false);
         let preauth = Arc::new(Semaphore::new(settings.preauth_cap));
         Self(Arc::new(Shared {
             settings,
@@ -516,7 +520,19 @@ impl ChannelServer {
             plane: Semaphore::new(64),
             streams: streams_cell::StreamsCell::empty(),
             previews_on,
+            ssh_on,
         }))
+    }
+
+    /// (P4-SSH-2) Flip when the API answered `ssh_enabled` at registration (re-decided at each
+    /// registration, so it can also turn off).
+    pub fn set_ssh_enabled(&self, on: bool) {
+        let _ = self.0.ssh_on.send_replace(on);
+    }
+
+    /// Whether the listener redeems `auz_` SSH grants (`16 §W20`).
+    pub fn ssh_enabled(&self) -> bool {
+        *self.0.ssh_on.borrow()
     }
 
     /// Accept supervisor connections until `stop` turns true.
@@ -624,6 +640,10 @@ impl ChannelHub for ChannelServer {
 
     fn set_previews_enabled(&self, on: bool) {
         ChannelServer::set_previews_enabled(self, on);
+    }
+
+    fn set_ssh_enabled(&self, on: bool) {
+        ChannelServer::set_ssh_enabled(self, on);
     }
 }
 

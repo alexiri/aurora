@@ -22,6 +22,8 @@ export interface RailContext {
   agentId: string;
   agent: { kind: string; isDefault: boolean; brief: string | null | undefined };
   terminalAvailable: boolean;
+  /** (P4-SSH-2, C-795) The agent's SSH page exists: the Computer part links to it. Optional: absent means off. */
+  sshAvailable?: boolean;
   /** The open conversation, for "Show in conversation" and the running tool. */
   openConversation: { id: string; title: string } | null;
   titleOf: (c: Conversation) => string;
@@ -76,7 +78,7 @@ function StatusParts({ ctx, idPrefix, onShow }: { ctx: RailContext; idPrefix: st
         "computer",
         <MonitorIcon />,
         "Computer",
-        <ComputerPart sandbox={status.sandbox} terminalAvailable={ctx.terminalAvailable} onNavigate={ctx.onNavigate} />,
+        <ComputerPart sandbox={status.sandbox} terminalAvailable={ctx.terminalAvailable} sshAvailable={ctx.sshAvailable === true} onNavigate={ctx.onNavigate} />,
       )}
       {section("about", <BookIcon />, "About", <AboutPart kind={ctx.agent.kind} isDefault={ctx.agent.isDefault} brief={ctx.agent.brief} onNavigate={ctx.onNavigate} />)}
     </div>

@@ -220,10 +220,12 @@ export function RecentCalls({ status, activityHref }: { status: AgentStatus; act
 export function ComputerPart({
   sandbox,
   terminalAvailable,
+  sshAvailable = false,
   onNavigate,
 }: {
   sandbox: AgentStatus["sandbox"];
   terminalAvailable: boolean;
+  sshAvailable?: boolean;
   onNavigate: (page: AgentPageId) => void;
 }) {
   const look = sandbox ? sandboxLook(sandbox) : null;
@@ -249,6 +251,12 @@ export function ComputerPart({
         {terminalAvailable ? (
           <Button type="button" variant="outline" size="sm" onClick={() => onNavigate("files")}>
             Files
+          </Button>
+        ) : null}
+        {/* (P4-SSH-2, C-795) the agent's SSH page: how to connect and the open sessions. */}
+        {sshAvailable ? (
+          <Button type="button" variant="outline" size="sm" onClick={() => onNavigate("ssh")}>
+            SSH
           </Button>
         ) : null}
       </div>

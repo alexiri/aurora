@@ -284,8 +284,15 @@ impl ApiClient {
     /// (P4-TERM, C-620) The keep-awake stamp of a byte-carrying terminal session: refreshes
     /// `sandboxes.terminal_active_until` (`now() + TERMINAL_AWAKE_GRACE`, cap clock intact).
     /// Best effort; the runner sends at most one per grace per sandbox.
-    pub async fn terminal_keep_awake(&self, sandbox: Uuid) {
-        let body = serde_json::json!({ "sandbox_id": sandbox });
+    ///
+    /// (P4-SSH-2, C-796) `ssh` stamps `ssh_active_until` instead (`kind: "ssh"`; an older API
+    /// ignores the field and stamps the terminal column, which is harmless).
+    pub async fn keep_awake(&self, sandbox: Uuid, ssh: bool) {
+        let body = if ssh {
+            serde_json::json!({ "sandbox_id": sandbox, "kind": "ssh" })
+        } else {
+            serde_json::json!({ "sandbox_id": sandbox })
+        };
         let _ = self
             .once::<_, serde_json::Value>(
                 Method::POST,

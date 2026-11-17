@@ -264,6 +264,9 @@ metadata:
   labels: {{- include "aurora.labels" $r | nindent 4 }}
     app.kubernetes.io/component: {{ .name }}
 spec:
+  {{- if .headless }}
+  clusterIP: None
+  {{- end }}
   selector: {{- include "aurora.selector" (dict "root" $r "component" .name) | nindent 4 }}
   ports:
     {{- range .ports }}

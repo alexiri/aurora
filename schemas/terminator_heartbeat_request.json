@@ -1,0 +1,63 @@
+{
+  "$defs": {
+    "SessionBeat": {
+      "description": "One session's heartbeat figures (counts and bytes only; never content).",
+      "properties": {
+        "bytes_in": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "bytes_out": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "channels_open": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "channels_total": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "last_activity_at": {
+          "default": null,
+          "description": "RFC 3339 UTC of the last channel byte the terminator saw.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "channels_open",
+        "channels_total",
+        "bytes_in",
+        "bytes_out"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "sessions": {
+      "items": {
+        "$ref": "#/$defs/SessionBeat"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "sessions"
+  ],
+  "title": "HeartbeatRequest",
+  "type": "object"
+}

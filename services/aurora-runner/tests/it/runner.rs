@@ -78,6 +78,7 @@ fn register_response(runner_id: Uuid, interval: u32) -> ResponseTemplate {
             idle_stop_secs: 900,
             previews: false,
             terminal: false,
+            ssh_enabled: false,
         },
     })
 }

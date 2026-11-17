@@ -26,7 +26,7 @@ pub(crate) struct Live {
     pub(crate) boot: String,
 }
 
-fn caps() -> Value {
+pub(crate) fn caps() -> Value {
     json!({
         "backend": "fake", "home_durability": "resident",
         "resources": {"cpu": {"min": 250, "max": 4000}, "memory_mib": {"min": 256, "max": 8192},

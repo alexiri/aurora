@@ -201,6 +201,12 @@ pub struct RunnerCapabilities {
     /// runners, which refuse the unknown grant kind.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub files: bool,
+    /// (phase 5, P4-SSH-2, D-239) The runner redeems `kind: "ssh"` grants (`auz_`) and speaks the
+    /// W20 `exec.*` frames in modes `shell`/`exec`/`sftp` with `tty` (`16 §W20`); the API's
+    /// registration answer enables them (`RunnerConfig::ssh_enabled`) only for a runner with it.
+    /// Absent (false) from older runners, which refuse the unknown grant prefix.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub ssh: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -227,6 +233,11 @@ pub struct RunnerConfig {
     /// for older runners. The listener opens when **either** flag is set (C-623).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub terminal: bool,
+    /// (phase 5, P4-SSH-2, D-239) When true (instance `ssh.enabled` and the runner advertised
+    /// `ssh`) the runner opens :4108 and redeems `auz_` SSH grants. Absent (false) for older
+    /// runners and when SSH is off.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub ssh_enabled: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -781,7 +792,7 @@ pub struct ExecExit {
 }
 
 /// `SSH_EXEC_COMMAND_MAX` (`16 §W20`): the longest `exec` command.
-pub const EXEC_COMMAND_MAX: usize = 8 * 1024;
+pub const EXEC_COMMAND_MAX: usize = aurora_core::limits::SSH_EXEC_COMMAND_MAX;
 
 impl Validate for ExecOpen {
     fn validate(&self) -> Result<(), ValidationError> {
@@ -803,7 +814,7 @@ impl Validate for ExecOpen {
                 });
             }
         }
-        check_max("env", self.env.len(), 16)?;
+        check_max("env", self.env.len(), aurora_core::limits::SSH_ENV_VARS_MAX)?;
         for (k, v) in &self.env {
             check_chars("env name", k, 64)?;
             check_bytes("env value", v, 256)?;
@@ -906,10 +917,10 @@ pub struct PreviewStreamOpenResponse {
 impl Validate for PreviewStreamOpenRequest {
     fn validate(&self) -> Result<(), ValidationError> {
         match self.kind.as_deref() {
-            None | Some("port") | Some("terminal") | Some("files") => Ok(()),
+            None | Some("port") | Some("terminal") | Some("files") | Some("ssh") => Ok(()),
             Some(_) => Err(ValidationError::Invalid {
                 field: "kind",
-                reason: "must be `port`, `terminal` or `files`",
+                reason: "must be `port`, `terminal`, `files` or `ssh`",
             }),
         }
     }

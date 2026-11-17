@@ -91,8 +91,76 @@ pub struct SshFacts {
     pub host: String,
     pub port: u16,
     pub cert_ttl_secs: u64,
-    /// SSH terminator replicas seen in the last 90 s (`0` until P4-SSH-2's terminators exist).
+    /// SSH terminator replicas seen in the last 90 s (`0` until one registers).
     pub terminators_live: u32,
     pub host_keys: Vec<HostKey>,
     pub known_hosts: Vec<String>,
+}
+
+/// The agent an SSH session is on (C-793).
+#[derive(Debug, Serialize, ToSchema)]
+pub struct SshSessionAgent {
+    pub id: Uuid,
+    pub name: String,
+}
+
+/// The person behind a session, shown to `can_own` only.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct SshSessionUser {
+    pub id: Uuid,
+    pub label: String,
+}
+
+/// The key a session authenticated with; `id`/`name` are null once the key is deleted.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct SshSessionKey {
+    pub id: Option<Uuid>,
+    pub name: Option<String>,
+    pub fingerprint: String,
+}
+
+/// An open SSH session (C-793): names, a coarse client address and counts; never content.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct SshSession {
+    pub id: Uuid,
+    pub agent: SshSessionAgent,
+    pub workspace_id: Uuid,
+    /// Present for `can_own` listings of an agent's sessions.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user: Option<SshSessionUser>,
+    pub key: SshSessionKey,
+    /// Coarsened at insert (IPv4 /24, IPv6 /48).
+    pub client_address: Option<String>,
+    pub opened_at: DateTime<Utc>,
+    pub last_activity_at: Option<DateTime<Utc>>,
+    /// Channels open at the last heartbeat is not tracked by the API; `0` until then.
+    pub channels_open: u32,
+    pub channels_total: u32,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct SshSessionList {
+    pub sessions: Vec<SshSession>,
+}
+
+/// 202 body of `DELETE /v1/ssh-sessions/{id}`.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct Disconnecting {
+    pub disconnecting: bool,
+}
+
+/// One registered terminator replica (`GET /v1/admin/terminators`, C-793).
+#[derive(Debug, Serialize, ToSchema)]
+pub struct TerminatorInfo {
+    pub id: Uuid,
+    pub version: String,
+    pub host_key_fingerprint: String,
+    pub sessions_open: u32,
+    pub last_seen_at: DateTime<Utc>,
+    pub live: bool,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct TerminatorList {
+    pub terminators: Vec<TerminatorInfo>,
 }

@@ -28,7 +28,7 @@ fi
   && fail "self-test: an allow-list that does not match exempted a SKIPPED: line"
 
 # 2. the scripts go through run_logged
-for s in gateway hosted channels; do
+for s in gateway hosted channels ssh; do
   grep -q 'run_logged' "scripts/e2e/$s.sh" || fail "scripts/e2e/$s.sh does not run its cargo test through run_logged (a SKIPPED: line would pass in CI)"
 done
 

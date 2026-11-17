@@ -42,7 +42,7 @@ def fail(msg):
 deps = {d["metadata"]["name"]: d for d in docs if d["kind"] == "Deployment"}
 # probes
 for suffix, port in (("-api", 4101), ("-hookhost", 4104), ("-gateway", 4103), ("-runner", 4106),
-                     ("-relay", 4193), ("-connector-host", 4192)):
+                     ("-relay", 4193), ("-terminator", 4194), ("-connector-host", 4192)):
     for name, d in deps.items():
         if not name.endswith(suffix) or "connector-host" in name and suffix != "-connector-host":
             continue
@@ -138,13 +138,80 @@ pol = [d for d in docs if d["kind"] == "NetworkPolicy" and d["metadata"]["name"]
 if len(pol) != 1:
     sys.exit("chart-ops: FAIL: expected one -monitoring NetworkPolicy, got %d" % len(pol))
 ports = {p["port"] for r in pol[0]["spec"]["ingress"] for p in r["ports"]}
-want = {4101, 4103, 4104, 4106, 4192, 4193}
+want = {4101, 4103, 4104, 4106, 4192, 4193, 4194}
 if ports != want:
     sys.exit("chart-ops: FAIL: monitoring ports %s, want %s" % (sorted(ports), sorted(want)))
 print("chart-ops: monitoring peers ok")
 '
 "${H[@]}" --set monitoring.podMonitor.enabled=true --set relay.enabled=true --set relay.domain=previews.guard.invalid \
   | grep -c 'kind: PodMonitor' | grep -qx 6 || fail "the PodMonitor flag must render six monitors (api, gateway, hookhost, runner, relay, connector host)"
+
+# --- (P4-SSH-2, docs/15 §SSH access) the terminator: nothing without ssh.enabled; with it the workload has no
+#     service-account token, database URL or Vault, its policy admits only networkPolicy.sshFrom on 2222 and
+#     reaches only the api (4101), the runner (4108) and DNS; the CA key reaches the api pods only, the host key
+#     the terminator pods only; a PodMonitor and the ops port 4194 follow monitoringFrom ---
+SSH_ON=(--set ssh.enabled=true --set terminal.enabled=true --set 'networkPolicy.sshFrom[0].ipBlock.cidr=203.0.113.0/24')
+if "${H[@]}" | grep -qE 'component: terminator|aurora-terminator|AURORA_SSH_|AURORA_TERMINATOR|AURORA_BOOTSTRAP_TERMINATOR'; then
+  fail "SSH resources rendered while ssh.enabled is false (SSH off must change nothing)"
+fi
+"${H[@]}" "${SSH_ON[@]}" --set monitoring.podMonitor.enabled=true \
+  --set 'networkPolicy.monitoringFrom[0].namespaceSelector.matchLabels.kubernetes\.io/metadata\.name=monitoring' \
+  | python3 -I -c '
+import sys, yaml
+docs = [d for d in yaml.safe_load_all(sys.stdin) if d]
+def fail(m): sys.exit("chart-ops: FAIL: ssh: " + m)
+def env(d): return d["spec"]["template"]["spec"]["containers"][0].get("env") or []
+dep = {d["metadata"]["name"]: d for d in docs if d["kind"] == "Deployment"}
+term = next((d for n, d in dep.items() if n.endswith("-terminator")), None)
+if term is None: fail("no terminator Deployment")
+if term["spec"]["replicas"] != 2: fail("terminator replicas default must be 2")
+pod = term["spec"]["template"]["spec"]
+if pod.get("automountServiceAccountToken") is not False or pod.get("serviceAccountName"):
+    fail("the terminator pod must have no service-account token")
+names = {e["name"] for e in env(term)}
+if names != {"AURORA_CONFIG", "AURORA_TERMINATOR_TOKEN", "AURORA_SSH_HOST_KEY"}:
+    fail("terminator env must be the config path, its token and the host key, got %s" % sorted(names))
+for n, d in dep.items():
+    en = {e["name"] for e in env(d)}
+    if n.endswith("-api") and not {"AURORA_SSH_CA_KEY", "AURORA_BOOTSTRAP_TERMINATOR_TOKEN"} <= en:
+        fail("the api must get the CA key and the terminator anchor")
+    if not n.endswith("-api") and "AURORA_SSH_CA_KEY" in en: fail("the CA key reached %s" % n)
+    if not n.endswith("-terminator") and "AURORA_SSH_HOST_KEY" in en: fail("the host key reached %s" % n)
+svc = {d["metadata"]["name"]: d for d in docs if d["kind"] == "Service"}
+pub = next((s for n, s in svc.items() if n.endswith("-terminator-ssh")), None)
+if pub is None or pub["spec"]["type"] != "LoadBalancer" or pub["spec"]["externalTrafficPolicy"] != "Local":
+    fail("the published SSH Service must be a LoadBalancer with externalTrafficPolicy Local")
+if [(p["port"], p["targetPort"]) for p in pub["spec"]["ports"]] != [(22, 2222)]:
+    fail("the SSH Service must publish 22 -> 2222")
+ops = next((s for n, s in svc.items() if n.endswith("-terminator")), None)
+if ops is None or ops["spec"].get("clusterIP") != "None" or [p["port"] for p in ops["spec"]["ports"]] != [4194]:
+    fail("the ops Service must be headless on 4194 only")
+pol = {d["metadata"]["name"]: d for d in docs if d["kind"] == "NetworkPolicy"}
+tp = next((p for n, p in pol.items() if n.endswith("-terminator")), None)
+if tp is None: fail("no terminator NetworkPolicy")
+ing = tp["spec"]["ingress"]
+if len(ing) != 1 or ing[0]["from"] != [{"ipBlock": {"cidr": "203.0.113.0/24"}}] or [p["port"] for p in ing[0]["ports"]] != [2222]:
+    fail("terminator ingress must be sshFrom on 2222 only, got %s" % ing)
+eg = {(r["to"][0]["podSelector"]["matchLabels"]["app.kubernetes.io/component"], r["ports"][0]["port"]) for r in tp["spec"]["egress"]}
+if eg != {("api", 4101), ("runner", 4108)}: fail("terminator egress must be api:4101 + runner:4108, got %s" % sorted(eg))
+def ports_from(p, comp):
+    return {q["port"] for r in p["spec"].get("ingress") or [] for f in r.get("from") or []
+            if f.get("podSelector", {}).get("matchLabels", {}).get("app.kubernetes.io/component") == comp for q in r["ports"]}
+if ports_from(next(p for n, p in pol.items() if n.endswith("-api")), "terminator") != {4101}: fail("api must admit the terminator on 4101")
+if ports_from(next(p for n, p in pol.items() if n.endswith("-runner")), "terminator") != {4108}: fail("runner must admit the terminator on 4108")
+if sum(1 for d in docs if d["kind"] == "PodMonitor" and d["metadata"]["name"].endswith("-terminator")) != 1: fail("no terminator PodMonitor")
+if not any(d["kind"] == "PodDisruptionBudget" and d["metadata"]["name"].endswith("-terminator") for d in docs): fail("no terminator PDB at two replicas")
+# The migrate hook Job validates the API configuration, so it needs the CA key too (and no other Job does).
+for d in docs:
+    if d["kind"] == "Job":
+        names = {e["name"] for c in d["spec"]["template"]["spec"]["containers"] for e in (c.get("env") or [])}
+        want = d["metadata"]["name"].endswith("-migrate")
+        if ("AURORA_SSH_CA_KEY" in names) != want:
+            fail("the CA key must reach the migrate Job and no other Job (%s)" % d["metadata"]["name"])
+print("chart-ops: ssh terminator posture ok")
+'
+"${H[@]}" "${SSH_ON[@]}" | analyse "ssh on"
+echo "chart-ops: ssh render checks ok"
 
 # --- tracing (FIX-146 Part C, D-232): telemetryTo egress, the web env only with an endpoint, the NOTES warning ---
 telemetry_check() { # expect: none | policy, args after: helm --set flags
@@ -164,7 +231,7 @@ if expect == "none":
 else:
     if len(pol) != 1: fail("want one -telemetry NetworkPolicy, got %d" % len(pol))
     comps = [e for e in pol[0]["spec"]["podSelector"]["matchExpressions"] if e["key"].endswith("/component")][0]["values"]
-    want = {"api", "gateway", "hookhost", "runner", "relay", "connector-host", "connector-trace"}
+    want = {"api", "gateway", "hookhost", "runner", "relay", "terminator", "connector-host", "connector-trace"}
     if set(comps) != want: fail("telemetry policy components %s, want %s" % (sorted(comps), sorted(want)))
     if "web" in comps: fail("the web workload must not get collector egress")
     if pol[0]["spec"]["policyTypes"] != ["Egress"] or not pol[0]["spec"]["egress"][0]["to"]:
@@ -221,6 +288,11 @@ must_fail "config.scim.enabled=true without scim.enabled" --set config.scim.enab
 must_fail "config.terminal.enabled=true without terminal.enabled" --set config.terminal.enabled=true
 must_fail "terminal without a runner" --set terminal.enabled=true --set runner.enabled=false
 must_fail "previews without a runner" --set relay.enabled=true --set relay.domain=previews.guard.invalid --set runner.enabled=false
+must_fail "ssh without networkPolicy.sshFrom" --set ssh.enabled=true --set terminal.enabled=true
+must_fail "config.ssh.enabled=true without ssh.enabled" --set config.ssh.enabled=true
+must_fail "ssh.enabled with config.ssh.enabled=false" "${SSH_ON[@]}" --set config.ssh.enabled=false
+must_fail "ssh without a runner" "${SSH_ON[@]}" --set runner.enabled=false
+must_fail "ssh without the terminal's wiring" --set ssh.enabled=true --set 'networkPolicy.sshFrom[0].ipBlock.cidr=203.0.113.0/24'
 "${H[@]}" --set runner.enabled=false >/dev/null || fail "runner.enabled=false alone must render"
 echo "chart-ops: half-enabled switches refuse to render"
 

@@ -81,6 +81,8 @@ pub(crate) async fn rig(
     });
 
     server.set_previews_enabled(true);
+    // (P4-SSH-2) `ssh_enabled` of the registration answer: `auz_` grants redeem.
+    server.set_ssh_enabled(true);
     (ch_addr, st_addr, server, stop_tx, stop_tx2)
 }
 

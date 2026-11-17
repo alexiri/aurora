@@ -141,6 +141,9 @@ impl Runner {
         // (P5-FILES-1, D-316) `auf_` legs ride the same listener and are accepted wherever the
         // terminal is enabled; an older runner lacks this field and refuses the grant kind.
         caps.files = s.terminal;
+        // (P4-SSH-2, D-239) This binary redeems `auz_` SSH grants; the API's answer
+        // (`config.ssh_enabled`) decides whether it does.
+        caps.ssh = true;
         if let Some(image) = &self.settings.executor.image {
             caps.image_capabilities = self.backend.image_capabilities(image).await;
             // (P4-HAR) The registered `harnesses` are what the image contains.
@@ -177,7 +180,9 @@ impl Runner {
         // (P4-PRV-2, W18) The API decides whether this runner serves preview byte streams;
         // (P4-TERM, C-623) terminal grants share the listener: the port opens when either
         // feature is enabled.
-        self.hub.set_previews_enabled(cfg.previews || cfg.terminal);
+        self.hub
+            .set_previews_enabled(cfg.previews || cfg.terminal || cfg.ssh_enabled);
+        self.hub.set_ssh_enabled(cfg.ssh_enabled);
         let fingerprint = installation_fingerprint(&s.token);
 
         let (sink, reporter_task) =

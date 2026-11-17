@@ -226,7 +226,7 @@ NetworkPolicy and its key is a secret root.
 | `runner.stream_bind` / `runner.stream_tls.*` | `server.bind`:4108 / off | runner | (phase 4, P4-PRV-2) the relay-facing stream listener (only opened when the API's `previews.enabled` is true at registration) and optional TLS (`cert_file`, `key_file`). The runner registers the `stream_tls` capability; the API derives the endpoint scheme it hands the relay from it (`ws://` off, `wss://` on, `16 §W18`) — the relay verifies the presented certificate against its own trust configuration |
 | `terminal.enabled` | `false` | api | (phase 4, P4-TERM, D-161) the dashboard's web-terminal surface (`GET /v1/agents/{agent}/terminal`): off means every route answers 404 `terminal_disabled` and the runner registers no `terminal` capability; the runner opens :4108 when previews **or** the terminal is enabled. Helm: the chart value `terminal.enabled` is the single switch — it mirrors `config.terminal.enabled` (FIX-053), so `helm upgrade --set terminal.enabled=true` wires everything; set the config key only to agree explicitly, never alone. (phase 5, SET-5, D-237(d)) A movable setting (*Instance settings*): its default becomes the value of `terminal.available`, and the chart value renders `terminal.available` instead of this key |
 | `terminal.available` | `false` | api | (phase 5, SET-5, D-237(d)) the deployment provides the terminal's wiring (the runner's :4108 listener and, on Kubernetes, the NetworkPolicy flows). Rendered by the chart from its `terminal.enabled` value; set it to `true` by hand on other deployments that route :4108. Not a setting: `terminal.enabled` cannot be turned on while it is `false` (422 `setting_requires_deployment`) |
-| `ssh.enabled` | `false` | api, terminator, runner (via the API) | (phase 5, P4-SSH-1/2, D-239) SSH access to sandboxes: off means every SSH route answers 404 `ssh_disabled`, no key can be registered, the runner registers no `ssh` capability and the chart deploys no terminator. Helm: the chart value `ssh.enabled` is the single switch and mirrors `config.ssh.enabled` (the FIX-053/FIX-056 pattern: both set and unequal, or the config key alone, fails the render). Independent of `terminal.enabled` |
+| `ssh.enabled` | `false` | api, terminator, runner (via the API) | (phase 5, P4-SSH-1/2, D-239) SSH access to sandboxes: off means every SSH route answers 404 `ssh_disabled`, no key can be registered, the API answers registering runners `ssh_enabled: false` (a runner advertises its `ssh` capability always; the answer decides) and the chart deploys no terminator. Helm: the chart value `ssh.enabled` is the single switch and mirrors `config.ssh.enabled` (the FIX-053/FIX-056 pattern: both set and unequal, or the config key alone, fails the render). Independent of `terminal.enabled` |
 | `ssh.public_host` / `ssh.public_port` | host of `server.external_url` / `22` | api | (phase 5, P4-SSH-1) the name and port people connect to (the terminator's LoadBalancer address or a DNS name for it); shown in the dashboard, returned by `GET /v1/ssh` and the mint, used in `known_hosts` lines (`[host]:port` when the port is not 22) |
 | `ssh.cert_ttl_secs` | 900 | api | (phase 5, P4-SSH-1) `SSH_CERT_TTL`, 60 … 86 400 |
 | `ssh.ca.previous_public_keys` | `[]` | api | (phase 5, P4-SSH-1) OpenSSH public-key lines of retired CA keys the terminators still accept (a rotation's overlap, at least `ssh.cert_ttl_secs`); the API never signs with them |
@@ -1215,8 +1215,11 @@ deployment that does not set `ssh.enabled` has no terminator, no LoadBalancer, n
 NetworkPolicy; nothing else changes.
 
 **Turn it on** (Helm, one switch plus one required list): `ssh.enabled: true` and
-`networkPolicy.sshFrom` (who may reach the SSH port; the render fails while it is empty — to admit
-everyone, say so: `[{ipBlock: {cidr: 0.0.0.0/0}}, {ipBlock: {cidr: ::/0}}]`). Then point a DNS name at
+`networkPolicy.sshFrom` (who may reach the SSH port; the render fails while it is empty and
+`networkPolicy.enabled` — to admit everyone, say so: `[{ipBlock: {cidr: 0.0.0.0/0}}, {ipBlock: {cidr: ::/0}}]`).
+SSH sessions run on the web terminal's runner/supervisor exec path, so the deployment must also
+provide the terminal's wiring (`terminal.enabled`, `15 §Web terminal operations`; the render fails
+without it, and the runner must be enabled). Then point a DNS name at
 the Service's external address and set `config.ssh.public_host` to it (and `public_port` if the
 Service port is not 22). Wait for Admin › Overview's **SSH** line to show a replica.
 
@@ -1239,7 +1242,7 @@ notice to the client); clients reconnect.
 never overwritten; with `secrets.existingSecret` create them yourself):
 - `AURORA_TERMINATOR_TOKEN` — `aut_` + 48 hex characters; the terminator's anchor (the API reads the
   same key as `AURORA_BOOTSTRAP_TERMINATOR_TOKEN`). Rotate by replacing the value and rolling both.
-- `AURORA_SSH_CA_KEY` — the user-certificate CA, mounted **into the API pods only**. Generated as
+- `AURORA_SSH_CA_KEY` — the user-certificate CA, mounted **into the API pods only** (and the `migrate` hook Job, which runs the API image and refuses `ssh.enabled` without it). Generated as
   `ed25519:` + base64 of 32 random bytes (the hook has no `ssh-keygen`); an operator may supply an
   OpenSSH key (`ssh-keygen -t ed25519 -N '' -f ca`). **Rotation**: put the old public key into
   `config.ssh.ca.previous_public_keys`, replace the private key, roll the API; terminators learn both at
@@ -1276,8 +1279,10 @@ or SSH is enabled.
 `connections_total{outcome="rate_limited"}` (scanning or a forged-certificate attempt). Logs carry
 session ids, agent ids, coarse addresses and reasons; never certificates, commands or bytes.
 
-**kind dev**: `deploy/kind` maps the terminator Service as a NodePort on host port 2222
-(`ssh -p 2222 <agent id>@localhost`); `scripts/e2e/ssh.sh` is the end-to-end suite (`18 §SSH access`).
+**kind dev**: `deploy/dev/kind-dev.sh up --ssh` layers `deploy/kind/values-ssh.yaml` (the terminator as a
+NodePort 32222, one replica, `sshFrom` open) and, on a new cluster, maps it to host port 2222
+(`AURORA_DEV_SSH_PORT`; `ssh -p 2222 <agent id>@localhost`); `scripts/e2e/ssh.sh` is the end-to-end suite
+(`18 §SSH access`) and reaches the same Service through a port-forward.
 
 **Upgrade and rollback.** All SSH state is additive (new tables and two `sandboxes` columns). An
 older runner reports no `ssh` capability (channels fail, nothing else); an older supervisor ignores

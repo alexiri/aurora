@@ -119,6 +119,10 @@
         "resources": {
           "$ref": "#/$defs/ResourceRanges"
         },
+        "ssh": {
+          "description": "(phase 5, P4-SSH-2, D-239) The runner redeems `kind: \"ssh\"` grants (`auz_`) and speaks the\nW20 `exec.*` frames in modes `shell`/`exec`/`sftp` with `tty` (`16 §W20`); the API's\nregistration answer enables them (`RunnerConfig::ssh_enabled`) only for a runner with it.\nAbsent (false) from older runners, which refuse the unknown grant prefix.",
+          "type": "boolean"
+        },
         "stream_tls": {
           "description": "(P4-PRV-2, `16 §W18`) The stream listener speaks TLS (`runner.stream_tls`): the API\ndials `wss://` instead of `ws://` in the runner endpoint it gives the relay. Absent\n(false) from older runners — matches the default off in-cluster.",
           "type": "boolean"

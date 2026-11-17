@@ -47,6 +47,9 @@ pub trait ChannelHub: Send + Sync {
     /// (P4-PRV-2, W18) Called after registration with `config.previews`: the stream
     /// listener's :4108 port opens only when the API reports previews enabled.
     fn set_previews_enabled(&self, _on: bool) {}
+    /// (P4-SSH-2, D-239) Called after registration with `config.ssh_enabled`: the listener
+    /// redeems `auz_` SSH grants only when the API reports SSH enabled.
+    fn set_ssh_enabled(&self, _on: bool) {}
 }
 
 /// Hub with no connections (used until RUN-002 lands).

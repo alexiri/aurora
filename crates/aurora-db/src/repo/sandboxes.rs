@@ -132,6 +132,7 @@ pub async fn claim_stops(
     awake_cap_secs: f64,
     terminal_awake_cap_secs: f64,
     files_awake_cap_secs: f64,
+    ssh_awake_cap_secs: f64,
     limit: i64,
 ) -> Result<Vec<StopClaim>, DbError> {
     let sql = format!(
@@ -149,7 +150,8 @@ pub async fn claim_stops(
                -- (P4-TERM, C-620) keep-awake reason `terminal` in the same shape: byte activity
                -- refreshes `terminal_active_until`, bounded by the same cap clock per boot.
                -- (P5-FILES-1, C-900) keep-awake reason `files`: the API's request stamp, own cap.
-               WHEN {PREVIEW_KEEP} OR {TERMINAL_KEEP} OR {FILES_KEEP} THEN NULL
+               -- (P4-SSH-2, C-796) keep-awake reason `ssh`: the runner's stamp, own cap clock.
+               WHEN {PREVIEW_KEEP} OR {TERMINAL_KEEP} OR {FILES_KEEP} OR {SSH_KEEP} THEN NULL
                WHEN {BACKGROUND} THEN CASE WHEN {ENGAGED_AGE} >= $4 THEN 'cap' END
                WHEN {ENGAGED_AGE} >= $3 THEN 'idle'
              END AS reason
@@ -181,6 +183,9 @@ pub async fn claim_stops(
         FILES_KEEP = "s.files_active_until > now() \
              AND (s.files_awake_since IS NULL \
                   OR now() - s.files_awake_since < make_interval(secs => $9))",
+        SSH_KEEP = "s.ssh_active_until > now() \
+             AND (s.ssh_awake_since IS NULL \
+                  OR now() - s.ssh_awake_since < make_interval(secs => $10))",
     );
     Ok(sqlx::query_as(sqlx::AssertSqlSafe(&*sql))
         .bind(runner)
@@ -192,6 +197,7 @@ pub async fn claim_stops(
         .bind(awake_cap_secs)
         .bind(terminal_awake_cap_secs)
         .bind(files_awake_cap_secs)
+        .bind(ssh_awake_cap_secs)
         .fetch_all(conn)
         .await?)
 }
@@ -280,6 +286,28 @@ pub async fn keep_terminal_awake<'e, E: PgExecutor<'e>>(
     .execute(exec)
     .await?;
     Ok(())
+}
+
+/// (P4-SSH-2, C-796) The keep-awake stamp of reason `ssh`: the runner stamps it while an SSH
+/// channel carries bytes. `now() + grace`; the cap clock (`ssh_awake_since`) starts at the
+/// boot's first stamp. Never a turn, never an engagement stamp. `false` when the sandbox is
+/// not running.
+pub async fn keep_ssh_awake<'e, E: PgExecutor<'e>>(
+    exec: E,
+    sandbox: Uuid,
+    grace_secs: i64,
+) -> Result<bool, DbError> {
+    Ok(sqlx::query(
+        "UPDATE sandboxes SET ssh_active_until = now() + make_interval(secs => $2), \
+             ssh_awake_since = coalesce(ssh_awake_since, now()), updated_at = now() \
+           WHERE id = $1 AND state = 'running'",
+    )
+    .bind(sandbox)
+    .bind(grace_secs)
+    .execute(exec)
+    .await?
+    .rows_affected()
+        == 1)
 }
 
 /// (P5-FILES-1, C-900) The keep-awake stamp of reason `files`: the API stamps it on a Files
@@ -437,6 +465,7 @@ pub async fn begin_boot(
              -- (P4-TERM, C-620) and the terminal's.
              terminal_awake_since = NULL, terminal_active_until = NULL,
              files_awake_since = NULL, files_active_until = NULL,
+             ssh_awake_since = NULL, ssh_active_until = NULL,
              updated_at = now()
          WHERE id = $1",
     )

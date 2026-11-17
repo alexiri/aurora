@@ -38,7 +38,7 @@ spec:
   ingress:
     - from: {{- toYaml $np.monitoringFrom | nindent 8 }}
       ports:
-        {{- range (list 4101 4103 4104 4106 4192 4193) }}
+        {{- range (list 4101 4103 4104 4106 4192 4193 4194) }}
         - {protocol: TCP, port: {{ . }}}
         {{- end }}
 {{- end }}
@@ -67,6 +67,10 @@ spec:
         {{- end }}
         {{- if .Values.relay.enabled }}
         {{- include "aurora.peer" (dict "root" . "c" "relay") | nindent 8 }}
+        {{- end }}
+        {{- /* (P4-SSH-2) the terminator plane: register, sessions, channel grants, heartbeats, close */}}
+        {{- if .Values.ssh.enabled }}
+        {{- include "aurora.peer" (dict "root" . "c" "terminator") | nindent 8 }}
         {{- end }}
       ports: [{protocol: TCP, port: 4101}]
     - from:
@@ -196,10 +200,14 @@ spec:
     {{- /* (P4-PRV-2/P4-TERM) the stream listener :4108 serves relay leg-1 (previews) and
          api leg-1 (the terminal's own WebSocket proxy, C-617); open while either feature
          is on — the runner opens the port under the same condition. */ -}}
-    {{- if or .Values.relay.enabled .Values.terminal.enabled }}
+    {{- if or .Values.relay.enabled .Values.terminal.enabled .Values.ssh.enabled }}
     - from:
         {{- if .Values.relay.enabled }}
         {{- include "aurora.peer" (dict "root" . "c" "relay") | nindent 8 }}
+        {{- end }}
+        {{- /* (P4-SSH-2) the terminator's leg 1 (one WebSocket per SSH channel) */}}
+        {{- if .Values.ssh.enabled }}
+        {{- include "aurora.peer" (dict "root" . "c" "terminator") | nindent 8 }}
         {{- end }}
         {{- if .Values.terminal.enabled }}
         {{- include "aurora.peer" (dict "root" . "c" "api") | nindent 8 }}
@@ -264,6 +272,30 @@ spec:
         - namespaceSelector:
             matchLabels: {{- toYaml $np.edgeNamespaceSelector | nindent 14 }}
       ports: [{protocol: TCP, port: 4112}]
+  egress:
+    - to:
+        {{- include "aurora.peer" (dict "root" . "c" "api") | nindent 8 }}
+      ports: [{protocol: TCP, port: 4101}]
+    - to:
+        {{- include "aurora.peer" (dict "root" . "c" "runner") | nindent 8 }}
+      ports: [{protocol: TCP, port: 4108}]
+{{- end }}
+{{- if .Values.ssh.enabled }}
+---
+# (P4-SSH-2, docs/15 §SSH access) Terminator: SSH on 2222 from networkPolicy.sshFrom only (required, no
+# default), the terminator plane to api:4101, leg-1 WebSockets to runner:4108, DNS (the allow-dns policy)
+# and nothing else: no Postgres, no gateway, no sandboxes, no Internet, no Kubernetes API. The ops port
+# 4194 is opened only through networkPolicy.monitoringFrom.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: {{ $full }}-terminator, namespace: {{ $ns }}}
+spec:
+  podSelector:
+    matchLabels: {{- include "aurora.selector" (dict "root" . "component" "terminator") | nindent 6 }}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from: {{- toYaml $np.sshFrom | nindent 8 }}
+      ports: [{protocol: TCP, port: 2222}]
   egress:
     - to:
         {{- include "aurora.peer" (dict "root" . "c" "api") | nindent 8 }}
@@ -379,7 +411,7 @@ spec:
       - key: app.kubernetes.io/component
         operator: In
         values:
-          {{- range (list "api" "gateway" "hookhost" "runner" "relay" "connector-host") }}
+          {{- range (list "api" "gateway" "hookhost" "runner" "relay" "terminator" "connector-host") }}
           - {{ . }}
           {{- end }}
           {{- range .Values.connectors }}

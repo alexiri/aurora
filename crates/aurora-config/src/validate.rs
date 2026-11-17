@@ -45,6 +45,7 @@ pub enum Service {
     Runner,
     Connector,
     Relay,
+    Terminator,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -169,6 +170,12 @@ pub struct SshConfig {
     pub public_host: String,
     pub public_port: u16,
     pub cert_ttl_secs: u64,
+    /// (P4-SSH-2) validated against `aurora_core::limits` (only lower).
+    pub sessions_per_user: u32,
+    pub sessions_per_agent: u32,
+    pub idle_timeout_secs: u64,
+    pub awake_cap_secs: u64,
+    pub wake_wait_secs: u64,
     /// OpenSSH public-key lines of retired CA keys (each parsed as ed25519 at startup).
     pub previous_public_keys: Vec<String>,
 }
@@ -198,6 +205,8 @@ pub struct ApiConfig {
     pub ssh: SshConfig,
     /// (P4-SSH-1) `AURORA_SSH_CA_KEY` (api only); checked parsable when `ssh.enabled`.
     pub ssh_ca_key: Option<Redacted<String>>,
+    /// (P4-SSH-2, C-794) `aut_…` terminator anchor token (its hash is held in memory).
+    pub bootstrap_terminator_token: Option<Redacted<String>>,
     pub auth: AuthSection,
     pub signup_mode: SignupMode,
     pub org_creation: OrgCreation,
@@ -397,6 +406,23 @@ pub struct RelayConfig {
     pub telemetry: TelemetrySection,
 }
 
+/// The SSH terminator (`aurora-terminator`, P4-SSH-2, D-239).
+#[derive(Debug, Clone)]
+pub struct TerminatorConfig {
+    /// `aut_…`: the terminator's credential (the API anchors the same value).
+    pub token: Redacted<String>,
+    /// `AURORA_SSH_HOST_KEY` as given (validated: parsable ed25519, either format).
+    pub host_key: Redacted<String>,
+    pub api_url: String,
+    pub listen: String,
+    pub ops_port: u16,
+    pub max_preauth: u32,
+    pub max_preauth_per_ip: u32,
+    pub connect_rate_per_min: u32,
+    pub connect_burst: u32,
+    pub telemetry: TelemetrySection,
+}
+
 #[derive(Debug, Clone)]
 pub enum ServiceConfig {
     Api(Box<ApiConfig>),
@@ -405,6 +431,7 @@ pub enum ServiceConfig {
     Runner(Box<RunnerConfig>),
     Connector(Box<ConnectorConfig>),
     Relay(Box<RelayConfig>),
+    Terminator(Box<TerminatorConfig>),
 }
 
 impl RawConfig {
@@ -417,6 +444,7 @@ impl RawConfig {
             Service::Runner => ServiceConfig::Runner(Box::new(self.runner_config()?)),
             Service::Connector => ServiceConfig::Connector(Box::new(self.connector_config()?)),
             Service::Relay => ServiceConfig::Relay(Box::new(self.relay_config()?)),
+            Service::Terminator => ServiceConfig::Terminator(Box::new(self.terminator_config()?)),
         })
     }
 
@@ -484,6 +512,9 @@ impl RawConfig {
         }
         if let Some(t) = &s.bootstrap_relay_token {
             token_prefix(&mut c, "AURORA_BOOTSTRAP_RELAY_TOKEN", t, "aul_");
+        }
+        if let Some(t) = &s.bootstrap_terminator_token {
+            token_prefix(&mut c, "AURORA_BOOTSTRAP_TERMINATOR_TOKEN", t, "aut_");
         }
         let bootstrap_connector_tokens =
             bootstrap_connectors(&mut c, &s.bootstrap_connector_tokens);
@@ -562,7 +593,13 @@ impl RawConfig {
         }
         check_dev_switches(&mut c, self);
 
-        let ssh = check_ssh(&mut c, &self.ssh, s, external_url.as_deref());
+        let ssh = check_ssh(
+            &mut c,
+            &self.ssh,
+            s,
+            external_url.as_deref(),
+            self.hosted.background_cap_secs,
+        );
         let previews = check_previews(&mut c, &self.previews, self, &external_url);
         // (P4-TERM, C-623) the terminal's operator-tunable clocks; the limits live in
         // `aurora_core::limits`.
@@ -679,6 +716,7 @@ impl RawConfig {
             bootstrap_relay_token: s.bootstrap_relay_token.clone(),
             ssh,
             ssh_ca_key: s.ssh_ca_key.clone(),
+            bootstrap_terminator_token: s.bootstrap_terminator_token.clone(),
             auth,
             signup_mode: signup_mode.unwrap_or(SignupMode::InviteOnly),
             org_creation: org_creation.unwrap_or(OrgCreation::InstanceAdmins),
@@ -1144,6 +1182,72 @@ impl RawConfig {
             request_body_max_bytes: r.request_body_max_bytes,
             trusted_proxies: r.trusted_proxies.clone(),
             tls: self.tls.clone(),
+            telemetry: self.telemetry.clone(),
+        })
+    }
+
+    /// (P4-SSH-2, D-239) The terminator validates its own slice: its `aut_` credential, a
+    /// parsable ed25519 host key (either format; the error never quotes the key), the API URL
+    /// and the listen addresses. The pre-auth ceilings are operator-tunable (a balancer that
+    /// hides client addresses needs them raised, `15 §SSH access`), only required positive.
+    pub fn terminator_config(&self) -> Result<TerminatorConfig> {
+        let mut c = Ctx::default();
+        let token = match &self.env_secrets.terminator_token {
+            Some(t) => {
+                token_prefix(&mut c, "AURORA_TERMINATOR_TOKEN", t, "aut_");
+                Some(t.clone())
+            }
+            None => {
+                c.err("AURORA_TERMINATOR_TOKEN", "required");
+                None
+            }
+        };
+        let host_key = match &self.env_secrets.ssh_host_key {
+            Some(k) => {
+                if let Err(e) = crate::ssh::parse_ssh_ed25519_private_key(k.expose()) {
+                    c.err("AURORA_SSH_HOST_KEY", e);
+                }
+                Some(k.clone())
+            }
+            None => {
+                c.err("AURORA_SSH_HOST_KEY", "required");
+                None
+            }
+        };
+        let t = &self.terminator;
+        if !(t.api_url.starts_with("http://") || t.api_url.starts_with("https://")) {
+            c.err("terminator.api_url", "must be an http(s) URL");
+        }
+        if t.listen
+            .rsplit_once(':')
+            .is_none_or(|(_, p)| p.parse::<u16>().is_err())
+        {
+            c.err("terminator.listen", "must be host:port");
+        }
+        check_pos(&mut c, "terminator.max_preauth", Some(t.max_preauth));
+        check_pos(
+            &mut c,
+            "terminator.max_preauth_per_ip",
+            Some(t.max_preauth_per_ip),
+        );
+        check_pos(
+            &mut c,
+            "terminator.connect_rate_per_min",
+            Some(t.connect_rate_per_min),
+        );
+        check_pos(&mut c, "terminator.connect_burst", Some(t.connect_burst));
+        check_common(&mut c, &self.tls, &self.telemetry);
+        c.finish()?;
+        Ok(TerminatorConfig {
+            token: token.unwrap_or_default(),
+            host_key: host_key.unwrap_or_default(),
+            api_url: t.api_url.trim_end_matches('/').to_owned(),
+            listen: t.listen.clone(),
+            ops_port: t.ops_port,
+            max_preauth: t.max_preauth,
+            max_preauth_per_ip: t.max_preauth_per_ip,
+            connect_rate_per_min: t.connect_rate_per_min,
+            connect_burst: t.connect_burst,
             telemetry: self.telemetry.clone(),
         })
     }
@@ -1893,6 +1997,7 @@ fn check_ssh(
     ssh: &SshSection,
     s: &EnvSecrets,
     external_url: Option<&str>,
+    background_cap_secs: u64,
 ) -> SshConfig {
     let default_host = external_url
         .and_then(|u| parse_url(u, &["http", "https"]).ok())
@@ -1920,6 +2025,38 @@ fn check_ssh(
     if !(60..=86_400).contains(&ssh.cert_ttl_secs) {
         c.err("ssh.cert_ttl_secs", "must be between 60 and 86400 seconds");
     }
+    // (P4-SSH-2) the caps and clocks only tighten the limits of `aurora_core::limits`.
+    use aurora_core::limits as lim;
+    if ssh.sessions_per_user == 0 || ssh.sessions_per_user > lim::SSH_SESSIONS_PER_USER {
+        c.err(
+            "ssh.sessions_per_user",
+            format!("must be between 1 and {}", lim::SSH_SESSIONS_PER_USER),
+        );
+    }
+    if ssh.sessions_per_agent == 0 || ssh.sessions_per_agent > lim::SSH_SESSIONS_PER_AGENT {
+        c.err(
+            "ssh.sessions_per_agent",
+            format!("must be between 1 and {}", lim::SSH_SESSIONS_PER_AGENT),
+        );
+    }
+    if ssh.idle_timeout_secs == 0 || ssh.idle_timeout_secs > lim::SSH_IDLE_TIMEOUT.as_secs() {
+        c.err(
+            "ssh.idle_timeout_secs",
+            format!("must be between 1 and {}", lim::SSH_IDLE_TIMEOUT.as_secs()),
+        );
+    }
+    if ssh.awake_cap_secs == 0 || ssh.awake_cap_secs > background_cap_secs {
+        c.err(
+            "ssh.awake_cap_secs",
+            "must be greater than 0 and at most hosted.background_cap_secs",
+        );
+    }
+    if ssh.wake_wait_secs == 0 || ssh.wake_wait_secs > lim::SSH_WAKE_WAIT.as_secs() {
+        c.err(
+            "ssh.wake_wait_secs",
+            format!("must be between 1 and {}", lim::SSH_WAKE_WAIT.as_secs()),
+        );
+    }
     for (i, line) in ssh.ca.previous_public_keys.iter().enumerate() {
         if let Err(m) = crate::ssh::parse_ssh_ed25519_public_key(line) {
             c.err(format!("ssh.ca.previous_public_keys[{i}]"), m);
@@ -1943,6 +2080,11 @@ fn check_ssh(
         public_host,
         public_port: ssh.public_port,
         cert_ttl_secs: ssh.cert_ttl_secs,
+        sessions_per_user: ssh.sessions_per_user,
+        sessions_per_agent: ssh.sessions_per_agent,
+        idle_timeout_secs: ssh.idle_timeout_secs,
+        awake_cap_secs: ssh.awake_cap_secs,
+        wake_wait_secs: ssh.wake_wait_secs,
         previous_public_keys: ssh
             .ca
             .previous_public_keys

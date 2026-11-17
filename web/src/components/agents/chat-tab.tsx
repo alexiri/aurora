@@ -81,6 +81,7 @@ export function ChatTab({
   agentKind = "hosted",
   isDefault = false,
   terminalAvailable = false,
+  sshAvailable = false,
   onNavigate,
   statusSheetOpen = false,
   onStatusSheetOpenChange,
@@ -95,6 +96,8 @@ export function ChatTab({
   isDefault?: boolean;
   /** The Terminal page is available (the Computer part offers it). */
   terminalAvailable?: boolean;
+  /** (P4-SSH-2, C-795) The SSH page is available (the Computer part links to it). */
+  sshAvailable?: boolean;
   /** Switch the agent page to another page (the rail's "Open computer", "Edit instructions"). */
   onNavigate?: (page: AgentPageId) => void;
   /** Phones: the status sheet (opened by the header's Status button or the banner). */
@@ -234,6 +237,7 @@ export function ChatTab({
     agentId,
     agent: { kind: agentKind, isDefault, brief: agent?.brief },
     terminalAvailable,
+    sshAvailable,
     openConversation: convId ? { id: convId, title: conv ? conversationTitle(conv) : "Direct chat" } : null,
     titleOf,
     onSelectConversation: (id) => select(id),

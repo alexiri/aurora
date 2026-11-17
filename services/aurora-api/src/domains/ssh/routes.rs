@@ -3,8 +3,9 @@
 //! else takes a session or the person's own API key.
 use super::dto::*;
 use super::service;
+use super::sessions;
 use crate::app::AppState;
-use crate::http::auth::{Caller, SessionCaller};
+use crate::http::auth::{Caller, InstanceAdmin, SessionCaller};
 use crate::http::error::ErrorEnvelope;
 use crate::http::json::{Json, Path};
 use aurora_core::ApiError;
@@ -20,6 +21,76 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(rename_key, delete_key))
         .routes(routes!(mint_certificate))
         .routes(routes!(get_facts))
+        .routes(routes!(list_my_sessions))
+        .routes(routes!(list_agent_sessions))
+        .routes(routes!(disconnect_session))
+        .routes(routes!(list_terminators))
+        // The terminator plane (P4-SSH-2): plain routes, not in the dashboard OpenAPI document.
+        .merge(super::plane::router())
+}
+
+/// The caller's open SSH sessions.
+#[utoipa::path(get, path = "/me/ssh-sessions", operation_id = "listMySshSessions", tag = "ssh",
+    responses((status = 200, body = SshSessionList), (status = 401, body = ErrorEnvelope),
+        (status = 404, body = ErrorEnvelope)),
+    security(("session" = []), ("api_key" = [])))]
+async fn list_my_sessions(
+    _on: SshOn,
+    c: Caller,
+    State(s): State<AppState>,
+) -> Result<Json<SshSessionList>, ApiError> {
+    Ok(Json(sessions::list_mine(&s, &c).await?))
+}
+
+/// Open SSH sessions on an agent: everyone with `can_own` sees all (with the person), a member
+/// with `can_use` only their own.
+#[utoipa::path(get, path = "/agents/{agent}/ssh-sessions", operation_id = "listAgentSshSessions",
+    tag = "ssh", params(("agent" = Uuid, Path, description = "Agent id")),
+    responses((status = 200, body = SshSessionList), (status = 401, body = ErrorEnvelope),
+        (status = 404, body = ErrorEnvelope)),
+    security(("session" = []), ("api_key" = [])))]
+async fn list_agent_sessions(
+    _on: SshOn,
+    c: Caller,
+    State(s): State<AppState>,
+    Path(agent): Path<Uuid>,
+) -> Result<Json<SshSessionList>, ApiError> {
+    Ok(Json(sessions::list_for_agent(&s, &c, agent).await?))
+}
+
+/// Disconnect a session: its person or a workspace owner. The terminator closes it at its next
+/// heartbeat (within 30 s).
+#[utoipa::path(delete, path = "/ssh-sessions/{id}", operation_id = "disconnectSshSession",
+    tag = "ssh", params(("id" = Uuid, Path, description = "SSH session id")),
+    responses((status = 202, body = Disconnecting), (status = 401, body = ErrorEnvelope),
+        (status = 404, body = ErrorEnvelope)),
+    security(("session" = []), ("api_key" = [])))]
+async fn disconnect_session(
+    _on: SshOn,
+    c: Caller,
+    State(s): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<(StatusCode, Json<Disconnecting>), ApiError> {
+    sessions::disconnect(&s, &c, id).await?;
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(Disconnecting {
+            disconnecting: true,
+        }),
+    ))
+}
+
+/// The registered terminator replicas (instance admin).
+#[utoipa::path(get, path = "/admin/terminators", operation_id = "listTerminators", tag = "ssh",
+    responses((status = 200, body = TerminatorList), (status = 401, body = ErrorEnvelope),
+        (status = 403, body = ErrorEnvelope), (status = 404, body = ErrorEnvelope)),
+    security(("session" = [])))]
+async fn list_terminators(
+    _on: SshOn,
+    _a: InstanceAdmin,
+    State(s): State<AppState>,
+) -> Result<Json<TerminatorList>, ApiError> {
+    Ok(Json(sessions::admin_terminators(&s).await?))
 }
 
 /// Extractor placed first in every handler: 404 `ssh_disabled` while SSH is off, before any

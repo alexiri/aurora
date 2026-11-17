@@ -1,0 +1,45 @@
+{
+  "$defs": {
+    "SandboxHint": {
+      "description": "The sandbox's state at session open.",
+      "enum": [
+        "running",
+        "waking",
+        "stopped"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "agent_id": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "expires_at": {
+      "description": "RFC 3339 UTC: when the lease runs out unless a heartbeat renews it.",
+      "type": "string"
+    },
+    "lease_secs": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "sandbox": {
+      "$ref": "#/$defs/SandboxHint"
+    },
+    "session_id": {
+      "format": "uuid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "session_id",
+    "agent_id",
+    "sandbox",
+    "lease_secs",
+    "expires_at"
+  ],
+  "title": "SessionOpenResponse",
+  "type": "object"
+}

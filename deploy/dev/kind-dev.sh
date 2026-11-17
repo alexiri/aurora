@@ -37,7 +37,7 @@ VOL_REGISTRY="$LANE-kind-dev-cargo-registry"
 VOL_RUSTUP="$LANE-kind-dev-rustup"   # `stable` is auto-installed once, then kept
 BUILDER_IMAGE="$REG/builder:1"
 WORK="$ROOT/target/kind-dev"
-RUST_SVCS=(api gateway hookhost runner connector-host connector-fake dev-idp)
+RUST_SVCS=(api gateway hookhost runner connector-host connector-fake dev-idp terminator)
 
 k() { kubectl --context "$CTX" "$@"; }
 log() { echo "==> $*" >&2; }
@@ -124,10 +124,13 @@ build_sandbox_llm() {
 # kind config with the published host port (deploy/kind/kind-config-dev.yaml is the :4000 template).
 kind_config() {
   mkdir -p "$WORK"
-  [ "$PORT" = 4000 ] && { echo "deploy/kind/kind-config-dev.yaml"; return 0; }
+  [ "$PORT" = 4000 ] && [ "${SSH:-0}" != 1 ] && { echo "deploy/kind/kind-config-dev.yaml"; return 0; }
   local out="$WORK/kind-config-dev-$PORT.yaml" body
   body=$(<deploy/kind/kind-config-dev.yaml)
-  printf '%s\n' "${body//hostPort: 4000/hostPort: $PORT}" >"$out"
+  body="${body//hostPort: 4000/hostPort: $PORT}"
+  # (P4-SSH-2) --ssh on a new cluster: the terminator's NodePort on the host (127.0.0.1 only).
+  [ "${SSH:-0}" = 1 ] && body+=$'\n'"      - {containerPort: 32222, hostPort: ${AURORA_DEV_SSH_PORT:-2222}, listenAddress: \"127.0.0.1\", protocol: TCP}"
+  printf '%s\n' "$body" >"$out"
   echo "$out"
 }
 
@@ -171,10 +174,10 @@ ensure_cluster() {
 }
 
 cmd_up() {
-  local mock=0 fake=0 sandbox=1 tracing=0
+  local mock=0 fake=0 sandbox=1 tracing=0 SSH=0
   while [ $# -gt 0 ]; do
     case "$1" in
-      --llm-mock) mock=1 ;; --connector-fake) fake=1 ;; --no-sandbox) sandbox=0 ;; --tracing) tracing=1 ;;
+      --llm-mock) mock=1 ;; --connector-fake) fake=1 ;; --no-sandbox) sandbox=0 ;; --tracing) tracing=1 ;; --ssh) SSH=1 ;;
       *) die "unknown argument: $1" ;;
     esac; shift
   done
@@ -186,6 +189,9 @@ cmd_up() {
   local svcs=(api gateway hookhost runner connector-host web dev-idp) vals=(-f deploy/kind/values-dev.yaml)
   [ "$fake" = 1 ] && { svcs+=(connector-fake); vals+=(-f deploy/kind/values-connector-fake.yaml); }
   [ "$sandbox" = 1 ] && svcs+=(sandbox)
+  # (P4-SSH-2) SSH access: the terminator image, the ssh/terminal switches, a fixed NodePort (mapped to
+  # 127.0.0.1:2222 when the cluster was created with --ssh).
+  [ "$SSH" = 1 ] && { svcs+=(terminator); vals+=(-f deploy/kind/values-ssh.yaml); }
   build_and_load "${svcs[@]}" || die "image build/load failed"
   if [ "$mock" = 1 ]; then
     vals+=(-f deploy/kind/values-llm-mock.yaml)

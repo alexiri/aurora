@@ -332,6 +332,7 @@ impl PtyEngine {
         } = ends;
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
         let (task_tx, task_rx) = mpsc::unbounded_channel();
+        let execs = crate::exec::ExecTable::new(sftp_server, shells.clone(), bootstrap.clone());
         let pump = Self {
             out: sender,
             inbound,
@@ -346,7 +347,7 @@ impl PtyEngine {
             bootstrap,
             harness_env,
             live: HashMap::new(),
-            execs: crate::exec::ExecTable::new(sftp_server),
+            execs,
             violations: Violations::default(),
             closed: ClosedIds::default(),
         };
@@ -443,6 +444,8 @@ impl PtyEngine {
             M::PtyResize(r) => {
                 if let Some(l) = self.live.get(&r.pty_id) {
                     l.resize_tx.send_replace((r.cols, r.rows));
+                } else {
+                    self.execs.resize(r.pty_id, r.cols, r.rows);
                 }
             }
             M::PtyCredit(c) => {
@@ -501,6 +504,8 @@ impl PtyEngine {
             &self.bootstrap,
             o.cols,
             o.rows,
+            "xterm-256color",
+            &std::collections::BTreeMap::new(),
         ) {
             Ok(p) => p,
             Err(e) => {
@@ -694,7 +699,7 @@ impl PtyEngine {
 
 /// One live PTY: the shell's side of the pseudo-terminal (the master fd, async) plus the
 /// child handle for reaping.
-struct PtySession {
+pub(crate) struct PtySession {
     master: AsyncFd<OwnedFd>,
     /// Taken by `Drop`, which hands it to a detached reaper.
     child: Option<tokio::process::Child>,
@@ -747,13 +752,19 @@ impl PtySession {
     /// holds — so bash's `tcsetpgrp` fails (`cannot set terminal process group`/`no job
     /// control`). The bootstrap makes its own session, takes the slave as its controlling
     /// terminal and execs the shell in-process, so the shell *is* the session leader.
-    fn spawn(
+    ///
+    /// (P4-SSH-2) `term` is the `TERM` the program sees and `env` the client's accepted
+    /// `LANG`/`LC_*` (the caller validated both); a terminal passes the fixed defaults.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn spawn(
         shell: &ResolvedShell,
         uid: Option<u32>,
         cwd: &std::path::Path,
         bootstrap: &std::path::Path,
         cols: u16,
         rows: u16,
+        term: &str,
+        env: &std::collections::BTreeMap<String, String>,
     ) -> std::io::Result<Self> {
         // `CLOEXEC` is a security property (FIX-059, SEC-87): without it every shell — and every
         // later child the supervisor spawns, the agent's harness included — inherits the
@@ -788,12 +799,14 @@ impl PtySession {
         // cwd `/workspace`, agent uid when root. std applies environment, cwd and uid/gid
         // pre-exec, so the bootstrap starts with exactly the posture the shell must have.
         let extra = [
-            ("TERM", "xterm-256color".to_owned()),
+            ("TERM", term.to_owned()),
             ("COLORTERM", "truecolor".to_owned()),
             // (FIX-138) The one image `PATH` (harness wrappers included) and the chosen shell.
             ("PATH", crate::spawn::IMAGE_PATH.to_owned()),
             ("SHELL", shell.program.to_string_lossy().into_owned()),
-        ];
+        ]
+        .into_iter()
+        .chain(env.iter().map(|(k, v)| (k.as_str(), v.clone())));
         let mut cmd = crate::spawn::tokio_command(bootstrap, extra);
         for (k, _) in std::env::vars_os() {
             if k.to_str().is_some_and(|k| k.starts_with("AURORA_")) {
@@ -833,6 +846,12 @@ impl PtySession {
         })
     }
 
+    /// The child handle, for the `tty` execs that report an exit status: after this `Drop`
+    /// has nothing to hang up, so the taker owns ending the process group.
+    pub(crate) fn take_child(&mut self) -> Option<tokio::process::Child> {
+        self.child.take()
+    }
+
     /// Applies `TIOCSWINSZ` on a `pty.resize` (`12 §Terminal`).
     fn resize(&self, cols: u16, rows: u16) {
         winsize(self.master.get_ref(), cols, rows);
@@ -862,13 +881,43 @@ async fn pty_task(
     id: u32,
     pty: PtySession,
     send_credit: usize,
-    mut data_rx: mpsc::Receiver<Vec<u8>>,
+    data_rx: mpsc::Receiver<Vec<u8>>,
     credit_cell: Arc<Credit>,
-    mut resize_rx: watch::Receiver<(u16, u16)>,
+    resize_rx: watch::Receiver<(u16, u16)>,
     out: StreamSender,
     report: mpsc::UnboundedSender<TaskMsg>,
 ) {
     tracing::debug!(pty_id = id, "terminal pty open");
+    let (reason, bytes_in, bytes_out) =
+        pty_io(id, &pty, send_credit, data_rx, credit_cell, resize_rx, &out).await;
+    // Informational byte totals only: never logged beyond this debug line's counters, never
+    // stored (SEC-87).
+    tracing::debug!(
+        pty_id = id,
+        ?reason,
+        bytes_in,
+        bytes_out,
+        "terminal pty closed"
+    );
+    let _ = report.send(TaskMsg::Finished {
+        id,
+        reason,
+        bytes_in,
+        bytes_out,
+    });
+}
+
+/// The copy loop of [`pty_task`], shared with the `tty` execs of `crate::exec` (P4-SSH-2):
+/// returns why it ended and the byte totals.
+pub(crate) async fn pty_io(
+    id: u32,
+    pty: &PtySession,
+    send_credit: usize,
+    mut data_rx: mpsc::Receiver<Vec<u8>>,
+    credit_cell: Arc<Credit>,
+    mut resize_rx: watch::Receiver<(u16, u16)>,
+    out: &StreamSender,
+) -> (PtyCloseReason, u64, u64) {
     // Runner → shell bytes wait here until the shell reads them (window-bounded by the pump).
     // The write is a select arm like the others: a program that never reads stdin cannot stop
     // this task from draining credit, resizes and the queue, or from being aborted (FIX-091).
@@ -963,19 +1012,5 @@ async fn pty_task(
             }
         }
     };
-    // Informational byte totals only: never logged beyond this debug line's counters, never
-    // stored (SEC-87).
-    tracing::debug!(
-        pty_id = id,
-        ?reason,
-        bytes_in,
-        bytes_out,
-        "terminal pty closed"
-    );
-    let _ = report.send(TaskMsg::Finished {
-        id,
-        reason,
-        bytes_in,
-        bytes_out,
-    });
+    (reason, bytes_in, bytes_out)
 }
