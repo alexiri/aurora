@@ -601,6 +601,9 @@ impl RawConfig {
             s,
             external_url.as_deref(),
             self.hosted.background_cap_secs,
+            // (SET-5) `available` is the chart's rendering of the top-level `terminal.enabled`;
+            // the live switch is an instance setting that defaults to it.
+            self.terminal.enabled || self.terminal.available,
         );
         let previews = check_previews(&mut c, &self.previews, self, &external_url);
         check_push(&mut c, &self.push, &external_url);
@@ -2004,6 +2007,7 @@ fn check_ssh(
     s: &EnvSecrets,
     external_url: Option<&str>,
     background_cap_secs: u64,
+    terminal_enabled: bool,
 ) -> SshConfig {
     let default_host = external_url
         .and_then(|u| parse_url(u, &["http", "https"]).ok())
@@ -2069,6 +2073,13 @@ fn check_ssh(
         }
     }
     if ssh.enabled {
+        // (FIX-162, D-358) SSH runs on the web terminal's exec path; without it every exec is refused.
+        if !terminal_enabled {
+            c.err(
+                "ssh.enabled",
+                "requires terminal.enabled (or terminal.available) (SSH runs on the web terminal's exec path, D-358)",
+            );
+        }
         match &s.ssh_ca_key {
             None => c.err(
                 "AURORA_SSH_CA_KEY",

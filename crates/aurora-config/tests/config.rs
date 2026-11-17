@@ -2743,10 +2743,10 @@ fn ssh_section_defaults_bounds_and_ca_key_refusal() {
     assert_eq!((c.ssh.public_port, c.ssh.cert_ttl_secs), (22, 900));
     assert!(c.ssh_ca_key.is_none());
     // Enabled without the key, or with a garbled one: refused, naming the variable only.
-    let e = api("[ssh]\nenabled = true\n", &[]).unwrap_err();
+    let e = api("[terminal]\nenabled = true\n[ssh]\nenabled = true\n", &[]).unwrap_err();
     assert!(e.has_key("AURORA_SSH_CA_KEY"), "{e}");
     let e = api(
-        "[ssh]\nenabled = true\n",
+        "[terminal]\nenabled = true\n[ssh]\nenabled = true\n",
         &[("AURORA_SSH_CA_KEY", "super-secret-garbage")],
     )
     .unwrap_err();
@@ -2754,7 +2754,7 @@ fn ssh_section_defaults_bounds_and_ca_key_refusal() {
     assert!(!e.to_string().contains("super-secret-garbage"), "{e}");
     // Enabled with a good key; the key is redacted in Debug output.
     let c = api(
-        "[ssh]\nenabled = true\npublic_host = \"ssh.example.org\"\npublic_port = 2222\ncert_ttl_secs = 60\n",
+        "[terminal]\nenabled = true\n[ssh]\nenabled = true\npublic_host = \"ssh.example.org\"\npublic_port = 2222\ncert_ttl_secs = 60\n",
         &[("AURORA_SSH_CA_KEY", seed)],
     )
     .unwrap();
@@ -2777,6 +2777,30 @@ fn ssh_section_defaults_bounds_and_ca_key_refusal() {
         assert!(e.has_key(key), "{extra}: {e}");
     }
     api("[ssh]\ncert_ttl_secs = 86400\n", &[]).unwrap();
+}
+
+/// FIX-162 (D-358): SSH runs on the web terminal's exec path, so `ssh.enabled` without
+/// `terminal.enabled` is refused at startup, on the `ssh.enabled` key; both on passes.
+#[test]
+fn ssh_enabled_requires_terminal_enabled() {
+    let seed = "ed25519:BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc="; // 32 bytes of 0x07
+    let api = |extra: &str| {
+        load_with(&format!("{BASE}{extra}"), &[("AURORA_SSH_CA_KEY", seed)])
+            .unwrap()
+            .api_config()
+    };
+    for off in ["", "[terminal]\nenabled = false\n"] {
+        let e = api(&format!("{off}[ssh]\nenabled = true\n")).unwrap_err();
+        assert!(e.has_key("ssh.enabled"), "{e}");
+        assert!(e.to_string().contains("terminal.enabled"), "{e}");
+    }
+    let c = api("[terminal]\nenabled = true\n[ssh]\nenabled = true\n").unwrap();
+    assert!(c.ssh.enabled && c.terminal.enabled);
+    // (SET-5) the chart renders `terminal.available`; the live switch is an instance setting.
+    api("[terminal]\navailable = true\n[ssh]\nenabled = true\n").unwrap();
+    // Terminal alone, and neither, stay valid.
+    api("[terminal]\nenabled = true\n").unwrap();
+    api("").unwrap();
 }
 
 /// (P4-SSH-2) the session caps and clocks default to the limits, only lower them, and the

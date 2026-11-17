@@ -1087,6 +1087,24 @@ fn check_deployment(state: &AppState, reqs: &[SectionRequest]) -> Result<(), Api
     Ok(())
 }
 
+/// FIX-162 (D-358): SSH runs on the web terminal's exec path, so while `ssh.enabled` is on (a
+/// startup-only key) the terminal switch cannot be turned off here; 422 `settings_invalid` naming
+/// `terminal.enabled`. (The other direction, SSH on with the terminal off, is startup validation.)
+fn check_ssh_needs_terminal(state: &AppState, reqs: &[SectionRequest]) -> Result<(), ApiError> {
+    let off = reqs
+        .iter()
+        .filter(|r| r.section == "terminal")
+        .any(|r| r.values.get("terminal.enabled").and_then(Value::as_bool) == Some(false));
+    if off && state.config.ssh.enabled {
+        return Err(invalid(vec![field(
+            "/terminal.enabled".to_string(),
+            "requires_terminal_for_ssh",
+            "SSH access is on and runs on the web terminal; turn SSH off (ssh.enabled) before turning the terminal off.",
+        )]));
+    }
+    Ok(())
+}
+
 pub struct SectionRequest {
     pub section: String,
     /// The generation the writer read; `None` for the CLI (the current one under the row lock).
@@ -1113,6 +1131,7 @@ pub async fn apply(
     super::llm_dest::check_submitted(state, &reqs).await?;
     check_harnesses(state, &reqs).await?;
     check_deployment(state, &reqs)?;
+    check_ssh_needs_terminal(state, &reqs)?;
     for r in reqs.iter().filter(|r| r.section == "sign_in") {
         super::sign_in::check_submitted(state, &r.values).await?;
     }
