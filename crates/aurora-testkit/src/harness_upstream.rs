@@ -9,6 +9,7 @@
 //! | `tool`         | a `bash` call (`{"command":"echo hi"}`); after its result, the text `done`        |
 //! | `steer`        | a `bash` call (`sleep 2`), so a steer can land while it runs; then the text `done`|
 //! | `mcp`          | a call of the platform tool named by [`HarnessUpstream::start_with_mcp_tool`]     |
+//! | `delegate`     | a call of the harness's `delegate` tool (a subagent); after its result, `done`    |
 //! | `long`         | the first half of the text, then the stream stalls (abort tests)                  |
 //! | `fail-401`     | `401` authentication error                                                        |
 //! | `fail-429`     | `429` rate limit                                                                  |
@@ -62,6 +63,8 @@ pub struct HarnessUpstream {
     seen: Arc<Mutex<Vec<Seen>>>,
     base: String,
     mcp_tool: String,
+    /// The harness's shell tool (`bash` for Pi and OpenCode, `shell` for goose).
+    shell_tool: String,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -84,22 +87,27 @@ fn has_tool_result(body: &Value) -> bool {
         || s.contains("function_call_output")
 }
 
-fn plan(model: &str, body: &Value, mcp_tool: &str) -> Step {
+fn plan(model: &str, body: &Value, mcp_tool: &str, shell_tool: &str) -> Step {
     let done = has_tool_result(body);
     match model {
         "tool" if !done => Step::Tool {
-            name: "bash".into(),
+            name: shell_tool.to_owned(),
             input: json!({"command": "echo hi"}),
         },
         "steer" if !done => Step::Tool {
-            name: "bash".into(),
+            name: shell_tool.to_owned(),
             input: json!({"command": "sleep 2"}),
         },
         "mcp" if !done => Step::Tool {
             name: mcp_tool.to_owned(),
             input: json!({}),
         },
-        "tool" | "steer" | "mcp" => Step::Text("done"),
+        // A subagent: the harness's delegate tool, then (once its result is back) the text.
+        "delegate" if !done => Step::Tool {
+            name: "delegate".into(),
+            input: json!({"instructions": "say pong"}),
+        },
+        "tool" | "steer" | "mcp" | "delegate" => Step::Text("done"),
         _ => Step::Text("pong"),
     }
 }
@@ -360,7 +368,7 @@ async fn handle(
     if let Some(r) = failure(model, dialect) {
         return r;
     }
-    let step = plan(model, &json, &me.mcp_tool);
+    let step = plan(model, &json, &me.mcp_tool, &me.shell_tool);
     let all = frames(dialect, model, &step, n);
     let stall = model == "long" && matches!(step, Step::Text(_));
     let stream = futures::stream::unfold((all.into_iter(), stall), |(mut it, stall)| async move {
@@ -389,10 +397,16 @@ impl HarnessUpstream {
     /// The `mcp` scenario calls the platform tool with this name (it depends on the harness:
     /// `mcp__aurora__ping` for Pi, `aurora__ping` for goose, `aurora_ping` for OpenCode).
     pub async fn start_with_mcp_tool(tool: &str) -> Self {
+        Self::start_with_tools(tool, "bash").await
+    }
+
+    /// [`HarnessUpstream::start_with_mcp_tool`] with the harness's shell tool name too.
+    pub async fn start_with_tools(mcp_tool: &str, shell_tool: &str) -> Self {
         let me = Self {
             seen: Arc::default(),
             base: String::new(),
-            mcp_tool: tool.to_owned(),
+            mcp_tool: mcp_tool.to_owned(),
+            shell_tool: shell_tool.to_owned(),
         };
         let route = |d: Dialect, p: &'static str, me: &Self| {
             let me = me.clone();
@@ -413,7 +427,33 @@ impl HarnessUpstream {
             .route(
                 "/v1/chat/completions",
                 route(Dialect::Chat, "/v1/chat/completions", &me),
-            );
+            )
+            // Anything else a harness sends (a model listing, a catalogue): recorded, answered 404,
+            // so a test can see a request outside the inference paths.
+            .fallback({
+                let me = me.clone();
+                move |req: axum::extract::Request| {
+                    let me = me.clone();
+                    async move {
+                        me.seen.lock().unwrap().push(Seen {
+                            path: req.uri().path().to_owned(),
+                            headers: req
+                                .headers()
+                                .iter()
+                                .filter_map(|(k, v)| {
+                                    Some((k.as_str().to_owned(), v.to_str().ok()?.to_owned()))
+                                })
+                                .collect(),
+                            body: Value::Null,
+                        });
+                        Response::builder()
+                            .status(404)
+                            .header(header::CONTENT_TYPE, "application/json")
+                            .body(Body::from(r#"{"error":{"message":"mock: no such path"}}"#))
+                            .unwrap()
+                    }
+                }
+            });
         let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}", l.local_addr().unwrap());
         tokio::spawn(async move {

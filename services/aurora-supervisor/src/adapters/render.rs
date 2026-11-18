@@ -79,12 +79,22 @@ pub fn ensure_dir(dir: &Path) -> std::io::Result<()> {
     }
 }
 
-/// Renders every `(file name, content)` of `files` into `dir`, then removes each name in
-/// `forbidden` (the harness's credential stores).
+/// Renders every `(relative path, content)` of `files` into `dir` (creating the directories in
+/// between), then removes each relative path in `forbidden` (the harness's credential stores).
 pub fn render_dir(dir: &Path, files: &[(&str, String)], forbidden: &[&str]) -> std::io::Result<()> {
     ensure_dir(dir)?;
     for (name, content) in files {
-        write_exclusive(&dir.join(name), content)?;
+        let path = dir.join(name);
+        // Every directory on the way is checked one by one: a link planted at `data` must not
+        // redirect the write below it.
+        let mut at = dir.to_path_buf();
+        if let Some(parent) = Path::new(name).parent() {
+            for part in parent.components() {
+                at.push(part);
+                ensure_dir(&at)?;
+            }
+        }
+        write_exclusive(&path, content)?;
     }
     for name in forbidden {
         remove_any(&dir.join(name))?;

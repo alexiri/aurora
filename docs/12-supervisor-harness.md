@@ -397,8 +397,8 @@ OpenCode 206 MB) and 2.16 GB with `SANDBOX_HARNESSES=claude-code`.
   it and injects the key. All traffic uses the per-session proxy and the boot document's CA bundle.
 - **Dialects** in preference order (a dialect the pinned version cannot use without a credential is not
   declared). `pi`: `anthropic_messages`, `openai_responses`, `openai_chat`. `goose`: `anthropic_messages`,
-  `openai_chat`, plus `openai_responses` only if the pinned version sends a configured endpoint to the
-  Responses API. `opencode`: `anthropic_messages`, `openai_responses`, `openai_chat`. None declares
+  `openai_chat` (**not** `openai_responses`: its `openai` provider picks the Responses API by model name,
+  Part C). `opencode`: `anthropic_messages`, `openai_responses`, `openai_chat`. None declares
   `anthropic_bedrock` or `anthropic_vertex`: their SDK paths sign with cloud credentials and have no
   skip-auth switch, so Bedrock and Vertex reach them only through a `litellm` endpoint (D-260(a)).
 - **No vendor network**: telemetry, update checks, model catalogues, share links, session-naming calls and
@@ -484,45 +484,79 @@ OpenCode 206 MB) and 2.16 GB with `SANDBOX_HARNESSES=claude-code`.
   per `model` over the turn (`cost` dropped). Unknown models fold into the default (D-304).
 
 **`goose`** (Rust release binary, checksum verified):
-- **Drive** (*verified*): one `goose run -i - --output-format stream-json --no-profile --name <name>
-  [--resume] --provider <p> --model <m>` child per turn, prompt on stdin. **`stream-json` is used, not
-  `goose acp`**: its stream carries tool events and usage. stdout also has a banner (parse only lines that
-  start with `{`). `GOOSE_PATH_ROOT` is the conversation's directory; goose writes only there
-  (`config/config.yaml`, `data/sessions/sessions.db`, `state/logs/`), nothing in `HOME`. **A resumed session
-  keeps its stored model and ignores `GOOSE_MODEL`**, so the model is also passed as `--provider`/`--model`
-  (Part C proves a model change between turns).
+- **Drive** (*verified*): one `goose run -i - --output-format stream-json --name <ref> [--resume]
+  --provider <p> --model <m>` child per turn, prompt on stdin. **`stream-json` is used, not `goose acp`**:
+  its stream carries tool events and usage. stdout also has a banner (parse only lines that start with
+  `{`). **`--no-profile` is not used** (Part C correction): it makes goose ignore the extensions in
+  `config.yaml` ("only use CLI-specified extensions"), so the rendered `developer` and `aurora` extensions
+  would not load; without it goose loads exactly the extensions of the rendered file.
+  `GOOSE_PATH_ROOT` is the conversation's directory `<home>/.aurora/harness/goose/sessions/<ref>/` and
+  holds **everything**, rendered config included (goose has one root, so unlike `pi` the rendered
+  `config/config.yaml` lives inside the session directory; it is rendered and read back before every turn
+  and `config/secrets.yaml` is removed): `config/config.yaml`, `data/sessions/sessions.db`, the model
+  catalogue under `data/model_catalog/`, `state/logs/` (including `llm_request.*.jsonl`); nothing in
+  `HOME`. A purge by session ref removes that directory. The session name is the ref (the conversation's id,
+  or the resume reference); **`--resume` of a name that does not exist is an error** ("No session found with
+  name …", exit 1, nothing on stdout), so the adapter passes `--resume` only once a turn has produced a goose
+  event (or when it was given a resume reference), and a start that produced no event is a failed
+  `harness_failed` turn carrying goose's stderr. **A resumed session keeps its stored model and ignores
+  `GOOSE_MODEL`**, so the model is also passed as `--provider`/`--model` (*verified* by the conformance
+  suite: a restart that resumes the stored session with another model sends the new model, with the
+  earlier turns in the request).
 - **Events** (*verified*): `{"type":"message","message":{id,role,content:[…]}}` with content items `text`
   (deltas under one message id), `toolRequest` (`id`, `toolCall.value {name, arguments}`), `toolResponse`
   (`id`, `toolResult`) and `error`; `{"type":"complete", total_tokens, input_tokens, output_tokens,
   cache_read_input_tokens, cache_write_input_tokens}` → `Done` (`input_tokens` **includes** cached tokens,
   so Aurora's input = `input_tokens − cache_read − cache_write`); `{"type":"error","error":"…"}` and exit
   status 1 → `Error` (text such as `Authentication error: … Status: 401` or `Rate limit exceeded: …`,
-  classified through `provider_error.rs`; goose retries 429 three times). **No per-model usage**: one
-  `by_model` entry for the default model.
-- **Config and environment** (*verified* for `anthropic`): `GOOSE_PROVIDER` (`anthropic`, `openai`),
-  `GOOSE_MODEL`, `ANTHROPIC_HOST` (or `OPENAI_HOST`/`OPENAI_BASE_PATH`) from `ModelChoice` and the
-  placeholder key as `ANTHROPIC_API_KEY`/`OPENAI_API_KEY`. A LiteLLM endpoint is reached through its
-  `anthropic_messages` or `openai_chat` dialect with the same two providers. Also `GOOSE_MODE=auto`,
-  `GOOSE_TELEMETRY_ENABLED=false`, `GOOSE_DISABLE_KEYRING=1`, `GOOSE_DISABLE_SESSION_NAMING=true` and
-  `GOOSE_CA_CERT_PATH` = the boot CA bundle. `GOOSE_CONTEXT_LIMIT` comes from `model_meta`. `config/config.yaml` (rendered): `developer` on
-  (`type: builtin`), `aurora` as `type: stdio` (`cmd`, `args`, `envs`; tools are named `aurora__<tool>`),
-  and the other builtin platform extensions (`apps`, `extensionmanager`, `memory`, `computercontroller`)
-  off. The stdio server must answer goose's first request `server/discover` with a JSON-RPC error
-  (`-32601`) or a result; the bridge does, and goose then falls back to `initialize`.
-- **No vendor network**: goose fetches its model catalogue from `https://models.dev/api.json` **once per
-  start** and has no switch for it (*verified*: a refused connection is logged and tolerated). It is
-  refused by the session proxy like any host that is not the endpoint; the live suite asserts that the
-  endpoint host sees only inference paths. **Part C looks for a way to stop it without a switch** (a
-  pre-seeded catalogue cache file, a variable for the catalogue URL or path) and uses one if it exists.
-  Either way it reports (a) what a person sees for the refused fetch (a row in the workspace's Activity ›
-  Requests, the egress log or the audit log on every turn?) and (b) how long the refusal adds to a start.
-  If it shows up as a row per turn, the decision whether to suppress it is the owner's, and the proxy is
-  not special-cased.
+  classified through `provider_error.rs`; goose retries 429 and 5xx three times with backoff, so a refusal
+  arrives after **about 7 s** (*verified*, no setting; a 401 arrives at once). goose reports every 429 as
+  "Rate limit exceeded", so a quota or billing phrase in the text is read first and maps to
+  `provider_quota`). **No per-model usage**: one `by_model` entry, for the model the turn ran on. The
+  platform tools are reported as `mcp__aurora__<tool>`, like the other harnesses.
+- **Config and environment** (*verified*): **providers** (Part C correction). `GOOSE_PROVIDER=anthropic`
+  (`ANTHROPIC_HOST` = the endpoint host without `/v1`, `ANTHROPIC_API_KEY` = the placeholder) serves
+  `anthropic_messages`; `GOOSE_PROVIDER=litellm` (`LITELLM_HOST` = the host without `/v1`,
+  `LITELLM_BASE_PATH=v1/chat/completions`, `LITELLM_API_KEY` = the placeholder) serves `openai_chat`,
+  always on the Chat Completions path. **The `openai` provider is not used**: it chooses the Responses API
+  by model name (`o*`, `gpt-5*`, `*codex*` go to `/v1/responses` whatever `OPENAI_BASE_PATH` says, every
+  other model to chat), which an endpoint's declared dialect cannot promise, so **`openai_responses` is not
+  declared**. Also `GOOSE_MODEL`, `GOOSE_MODE=auto`, `GOOSE_TELEMETRY_ENABLED=false`,
+  `GOOSE_DISABLE_KEYRING=1`, `GOOSE_DISABLE_SESSION_NAMING=true`, `CONTEXT_FILE_NAMES=["AGENTS.md"]`,
+  `GOOSE_CA_CERT_PATH` = the boot CA bundle, `GOOSE_CONTEXT_LIMIT` from `model_meta`, and the effort table:
+  `GOOSE_THINKING_EFFORT` = `low`, `medium`, `high`, `max` (thinking budgets of 4000, 10000, 16000 and 32000
+  tokens on a Claude model). `config/config.yaml` (rendered): `developer` on (`type: builtin`), `aurora` as
+  `type: stdio` (`cmd`, `args`, `envs`; tools are named `aurora__<tool>`), and the platform extensions
+  `apps` and `extensionmanager` **off** (`type: platform`, `enabled: false`; goose enables them by default.
+  The old `memory` and `computercontroller` builtins are not in 1.59.2's default set and are not listed).
+  The agent's tools are then `analyze`, `edit`, `read_image`, `shell`, `tree`, `write` (developer), `load`,
+  `load_skill`, `delegate` (subagents and skills) and `aurora__<tool>`. The stdio server must answer goose's
+  first request `server/discover` with a JSON-RPC error (`-32601`) or a result; the bridge does, and goose
+  then falls back to `initialize`.
+- **No vendor network** (Part C): goose fetches its model catalogue from `https://models.dev/api.json`
+  **once per start** and has no switch for it, **but a pre-seeded cache stops the fetch** (*verified*): goose
+  reads `<root>/data/model_catalog/models_dev_api.json` and its `models_dev_api.etag`, and when both exist
+  and are fresh it makes no connection to models.dev. The adapter renders both before every turn (the
+  catalogue holds only the session's models, the default and the resolved roles, with their context
+  window; **the etag file must end with a newline**, otherwise goose fetches anyway: the conformance suite's
+  "the proxy saw no request" assertion caught that). So there is nothing to refuse and **no row per turn**;
+  without the seed the attempt would be one refused `CONNECT models.dev:443` per start (about 0.2 s here,
+  against a proxy that refuses at once) that the gateway records as a denied egress request in the
+  workspace's request log. No decision is left to the owner for it. **A second discovery request remains
+  for the `litellm` provider** (`openai_chat`): goose asks `GET /model/info` for the model's context
+  window at every start (the `anthropic` provider makes no such call; `GOOSE_CONTEXT_LIMIT` does not stop it
+  for `litellm`). It goes to the endpoint host on a path that is not an inference path, so the gateway
+  refuses it with `403 llm_path_not_permitted` before any credential is injected (SEC-65) and goose falls
+  back to the rendered limit ("Context-limit discovery failed"). It shows as one refused request per turn on
+  `openai_chat` endpoints; an operator who wants none lists `/model/info` in the endpoint's `allowed_paths`.
+  Aurora does not special-case it (owner's call if it should; reported in the completion report).
 - **Capabilities**: `resume`, `tool_events`, `platform_tools`; `thinking_deltas = false` (no thinking
   content in the stream); `steer = false`. `skills_dir = ".agents/skills"` (*verified*: found in the home
   and in the project, with `AGENTS.md` read by default and `CLAUDE.md` not). **Roles**: `subagent_role` →
-  `GOOSE_SUBAGENT_PROVIDER` and `GOOSE_SUBAGENT_MODEL` (the variables exist in the pinned binary; Part C
-  proves a subagent request reaches the role's model), so `model_roles = [large, medium, small]`.
+  `GOOSE_SUBAGENT_PROVIDER` and `GOOSE_SUBAGENT_MODEL` = the model of the role it names (*verified*: the
+  conformance suite's delegated subagent sends its requests to that model), so
+  `model_roles = [large, medium, small]` (`harness_model_roles("goose")`); with no role the subagent uses the
+  main model.
 
 **`opencode`** (release binary, checksum verified; **pinned on the v1.19.x line**, D-363, so the v1 CLI
 and config schema of `opencode.ai/v1/docs` apply, not the v2 docs):

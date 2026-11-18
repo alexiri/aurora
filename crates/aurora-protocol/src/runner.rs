@@ -421,7 +421,8 @@ pub struct ModelMeta {
 /// test keeps the adapters equal to it.
 pub fn harness_model_roles(harness: &str) -> &'static [&'static str] {
     match harness {
-        "claude-code" => &["large", "medium", "small"],
+        // goose: `subagent_role` -> `GOOSE_SUBAGENT_MODEL` (any of the three roles can be the one).
+        "claude-code" | "goose" => &["large", "medium", "small"],
         _ => &[],
     }
 }

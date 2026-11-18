@@ -782,3 +782,368 @@ async fn pi_live_conforms_when_enabled() {
     };
     suite_with(&PiAdapter::default(), &profile, &mk).await;
 }
+
+// ---- goose (phase 5, P5-HARN, D-361, D-362, SEC-133): the same cases against the mock Messages and
+// Chat upstreams, run with the real pinned CLI. Skipped when the binary is not installed
+// (`AURORA_GOOSE_BIN`, default `/opt/aurora/harness/goose/goose`); the env-gated variant
+// `AURORA_TEST_HARNESS_GOOSE_LIVE=1` (+ `GOOSE_LIVE_BASE_URL`, `GOOSE_LIVE_DIALECT`,
+// `AURORA_LIVE_MODEL`) runs it through a real gateway and LiteLLM.
+
+use aurora_supervisor::adapters::goose::GooseAdapter;
+use aurora_supervisor::adapters::goose::launcher::{ProcessLauncher as GooseLauncher, goose_bin};
+
+const GOOSE: Profile = Profile {
+    say: "Reply with exactly the word: pong",
+    long_running: "Count slowly from 1 to 500.",
+    fail: Some(("fail please", "provider_quota")),
+    tool: Some("Run `echo hi` with your shell tool, then say done."),
+    // `steer = false`: a follow-up becomes a separate turn, so nothing is steerable.
+    steerable: None,
+    steer_needs_ack: false,
+    missed_steer: false,
+};
+
+const GOOSE_DIALECTS: [(&str, &str); 2] = [
+    ("anthropic_messages", "/v1/messages"),
+    ("openai_chat", "/v1/chat/completions"),
+];
+
+fn goose_adapter() -> Option<GooseAdapter> {
+    // The test (not the release supervisor) may point at another binary.
+    let bin = std::env::var_os("AURORA_GOOSE_BIN").map_or_else(goose_bin, Into::into);
+    if !bin.exists() {
+        eprintln!(
+            "skipped: {} not installed (set AURORA_GOOSE_BIN)",
+            bin.display()
+        );
+        return None;
+    }
+    Some(GooseAdapter::with_launcher(std::sync::Arc::new(
+        GooseLauncher { program: bin },
+    )))
+}
+
+/// A goose session choice: the model is the mock scenario; `home` shares the sandbox home between
+/// sessions of one conversation (resume needs the same state directory).
+fn goose_opts(
+    base: &str,
+    proxy: &str,
+    dialect: &str,
+    model: &str,
+    home: Option<&std::path::Path>,
+    conversation: Uuid,
+    resume: Option<String>,
+) -> SessionOptions {
+    let mut o = pi_opts(base, proxy, dialect, "say", resume);
+    o.model.model = model.into();
+    o.conversation_id = conversation;
+    if let Some(h) = home {
+        o.working_dir = h.to_path_buf();
+    }
+    o
+}
+
+#[tokio::test]
+async fn goose_conforms_against_the_mock_upstream_of_every_dialect_it_declares() {
+    let Some(adapter) = goose_adapter() else {
+        return;
+    };
+    assert_eq!(
+        adapter.capabilities().dialects,
+        GOOSE_DIALECTS.map(|(d, _)| d.to_owned())
+    );
+    for (dialect, path) in GOOSE_DIALECTS {
+        eprintln!("== goose: {dialect}");
+        let up = HarnessUpstream::start_with_tools("aurora__ping", "shell").await;
+        let proxy = RefusingProxy::start().await;
+        let (base, purl) = (up.base().to_owned(), proxy.url.clone());
+        let mk = move |case: &str, resume: Option<String>| {
+            goose_opts(
+                &base,
+                &purl,
+                dialect,
+                pi_model(case),
+                None,
+                Uuid::now_v7(),
+                resume,
+            )
+        };
+        suite_with(&adapter, &GOOSE, &mk).await;
+
+        // SEC-66 / SEC-133 at the process level: every inference request carried the placeholder
+        // and nothing else; the only other request the endpoint saw is goose's discovery of the
+        // model's context window through the LiteLLM provider (`GET /model/info`: the gateway
+        // refuses it, goose falls back to the rendered limit); and **nothing went to any other
+        // host**: the proxy saw no request, so the models.dev catalogue fetch is gone (the rendered
+        // catalogue makes goose skip it).
+        let seen = up.requests();
+        assert!(!seen.is_empty());
+        for r in &seen {
+            if r.path == "/model/info" && dialect == "openai_chat" {
+                continue;
+            }
+            assert_eq!(r.path, path, "{dialect}: only the inference path");
+            assert_eq!(
+                r.credential().as_deref(),
+                Some("aurora-placeholder"),
+                "{dialect}: {r:?}"
+            );
+        }
+        assert_eq!(
+            proxy.requests(),
+            Vec::<String>::new(),
+            "{dialect}: vendor network (models.dev)"
+        );
+    }
+}
+
+#[tokio::test]
+async fn goose_resumes_its_session_and_a_model_change_between_turns_reaches_the_upstream() {
+    let Some(adapter) = goose_adapter() else {
+        return;
+    };
+    let up = HarnessUpstream::start_with_tools("aurora__ping", "shell").await;
+    let proxy = RefusingProxy::start().await;
+    let home = std::env::temp_dir().join(format!("p5-harn-goose-{}", Uuid::now_v7()));
+    std::fs::create_dir_all(&home).unwrap();
+    let conv = Uuid::now_v7();
+    let mut s = adapter
+        .start_session(goose_opts(
+            up.base(),
+            &proxy.url,
+            "anthropic_messages",
+            "say",
+            Some(&home),
+            conv,
+            None,
+        ))
+        .await
+        .unwrap();
+    let ev = drain(s.run_turn(turn("first")).await.unwrap()).await;
+    assert!(
+        matches!(assert_one_terminal(&ev), HarnessEvent::Done { .. }),
+        "{ev:?}"
+    );
+    let r = s.session_ref().expect("a session ref after the first turn");
+    // Second turn of the same session: `--resume`.
+    let ev = drain(s.run_turn(turn("second")).await.unwrap()).await;
+    assert!(
+        matches!(assert_one_terminal(&ev), HarnessEvent::Done { .. }),
+        "{ev:?}"
+    );
+    s.release().await.unwrap();
+    // A new process (a restart) resumes the stored session with a **different model**: goose keeps
+    // the stored model of a resumed session unless `--model` is passed, which the adapter always does.
+    let before = up.requests().len();
+    let mut s2 = adapter
+        .start_session(goose_opts(
+            up.base(),
+            &proxy.url,
+            "anthropic_messages",
+            "tool",
+            Some(&home),
+            conv,
+            Some(r.clone()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(s2.session_ref().as_deref(), Some(r.as_str()));
+    let ev = drain(s2.run_turn(turn("third")).await.unwrap()).await;
+    assert!(
+        matches!(assert_one_terminal(&ev), HarnessEvent::Done { .. }),
+        "{ev:?}"
+    );
+    let seen = up.requests();
+    assert_eq!(
+        seen[before].body["model"], "tool",
+        "the new model reached the upstream, not the stored one"
+    );
+    // The conversation's earlier turns are in the resumed context.
+    assert!(
+        seen[before].body.to_string().contains("first"),
+        "resumed history is sent"
+    );
+    assert_eq!(proxy.requests(), Vec::<String>::new(), "vendor network");
+}
+
+#[tokio::test]
+async fn goose_reports_the_four_counters_with_the_input_net_of_the_cache() {
+    let Some(adapter) = goose_adapter() else {
+        return;
+    };
+    for (dialect, _) in GOOSE_DIALECTS {
+        let up = HarnessUpstream::start_with_tools("aurora__ping", "shell").await;
+        let proxy = RefusingProxy::start().await;
+        let mut s = adapter
+            .start_session(goose_opts(
+                up.base(),
+                &proxy.url,
+                dialect,
+                "say",
+                None,
+                Uuid::now_v7(),
+                None,
+            ))
+            .await
+            .unwrap();
+        let ev = drain(s.run_turn(turn(GOOSE.say)).await.unwrap()).await;
+        let u = done_usage(&ev);
+        // The mock reports 11 input (3 cached, 2 written on Messages) and 4 output.
+        let (read, write) = (
+            3,
+            if dialect == "anthropic_messages" {
+                2
+            } else {
+                0
+            },
+        );
+        let input = if dialect == "anthropic_messages" {
+            11
+        } else {
+            8
+        };
+        let want = [
+            ("input_tokens", input),
+            ("output_tokens", 4),
+            ("cache_read_tokens", read),
+            ("cache_write_tokens", write),
+        ];
+        assert_eq!(u["by_model"].as_array().unwrap().len(), 1, "{dialect}: {u}");
+        assert_eq!(u["by_model"][0]["model"], "say", "{dialect}");
+        for (k, v) in want {
+            assert_eq!(u[k], v, "{dialect}: {k}: {u}");
+            assert_eq!(u["by_model"][0][k], v, "{dialect}: by_model {k}");
+        }
+        s.release().await.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn goose_platform_tool_calls_come_from_a_descendant_of_the_goose_process() {
+    let Some(adapter) = goose_adapter() else {
+        return;
+    };
+    let up = HarnessUpstream::start_with_tools("aurora__ping", "shell").await;
+    let proxy = RefusingProxy::start().await;
+    let log = std::env::temp_dir().join(format!("p5-harn-goose-probe-{}.log", Uuid::now_v7()));
+    let probe = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/mcp-probe.js");
+    let mut o = goose_opts(
+        up.base(),
+        &proxy.url,
+        "anthropic_messages",
+        "mcp",
+        None,
+        Uuid::now_v7(),
+        None,
+    );
+    o.mcp_bridge = McpBridgeSpec {
+        command: vec!["node".into(), probe.into()],
+    };
+    o.env
+        .push(("MCP_PROBE_LOG".into(), log.display().to_string()));
+    let mut s = adapter.start_session(o).await.unwrap();
+    let ev = drain(s.run_turn(turn("call the ping tool")).await.unwrap()).await;
+    assert!(
+        matches!(assert_one_terminal(&ev), HarnessEvent::Done { .. }),
+        "{ev:?}"
+    );
+    let call = ev.iter().find_map(|e| match e {
+        HarnessEvent::ToolStarted { call_id, name, .. } if name == "mcp__aurora__ping" => {
+            Some(call_id.clone())
+        }
+        _ => None,
+    });
+    let call = call.unwrap_or_else(|| panic!("no mcp__aurora__ping call: {ev:?}"));
+    assert!(
+        ev.iter().any(|e| matches!(e, HarnessEvent::ToolFinished { call_id, ok: true, .. } if *call_id == call)),
+        "{ev:?}"
+    );
+    // D-301: some ancestor of the MCP server is the goose process this adapter started.
+    let probed = std::fs::read_to_string(&log).expect("the MCP server was never called");
+    let first: serde_json::Value = serde_json::from_str(probed.lines().next().unwrap()).unwrap();
+    let chain = first["chain"].as_array().unwrap();
+    assert!(
+        chain.iter().skip(1).any(|p| p["cmd"]
+            .as_str()
+            .unwrap_or_default()
+            .split_whitespace()
+            .any(|w| w.rsplit('/').next() == Some("goose"))),
+        "no ancestor of the MCP server is the goose process: {first}"
+    );
+    assert_eq!(probed.lines().count(), 1, "one call, one probe line");
+    s.release().await.unwrap();
+}
+
+#[tokio::test]
+async fn goose_subagent_requests_reach_the_model_of_the_role_the_choice_names() {
+    let Some(adapter) = goose_adapter() else {
+        return;
+    };
+    let up = HarnessUpstream::start_with_tools("aurora__ping", "shell").await;
+    let proxy = RefusingProxy::start().await;
+    let mut o = goose_opts(
+        up.base(),
+        &proxy.url,
+        "anthropic_messages",
+        "delegate",
+        None,
+        Uuid::now_v7(),
+        None,
+    );
+    o.model.roles = Some(aurora_protocol::runner::ModelRoleIds {
+        large: None,
+        medium: None,
+        small: Some("sub-model".into()),
+    });
+    o.model.subagent_role = Some("small".into());
+    let mut s = adapter.start_session(o).await.unwrap();
+    let rx = s.run_turn(turn("use a subagent")).await.unwrap();
+    // The subagent must end by calling goose's own `final_output` tool, which the mock does not
+    // model: it keeps asking. The proof needed is its first request, so wait for it (within a
+    // deadline) and end the turn.
+    let models = |up: &HarnessUpstream| -> Vec<String> {
+        up.requests()
+            .iter()
+            .filter_map(|r| r.body["model"].as_str().map(str::to_owned))
+            .collect()
+    };
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    while !models(&up).contains(&"sub-model".to_owned()) && std::time::Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    s.abort().await.unwrap();
+    assert_one_terminal(&drain(rx).await);
+    let models = models(&up);
+    assert!(models.contains(&"delegate".to_owned()), "{models:?}");
+    assert!(
+        models.contains(&"sub-model".to_owned()),
+        "the subagent's request used the role's model: {models:?}"
+    );
+    s.release().await.unwrap();
+}
+
+#[tokio::test]
+async fn goose_live_conforms_when_enabled() {
+    if std::env::var("AURORA_TEST_HARNESS_GOOSE_LIVE").as_deref() != Ok("1") {
+        eprintln!(
+            "skipped: set AURORA_TEST_HARNESS_GOOSE_LIVE=1 (+ GOOSE_LIVE_BASE_URL, GOOSE_LIVE_DIALECT) for the live suite"
+        );
+        return;
+    }
+    let base = std::env::var("GOOSE_LIVE_BASE_URL").expect("GOOSE_LIVE_BASE_URL");
+    let dialect =
+        std::env::var("GOOSE_LIVE_DIALECT").unwrap_or_else(|_| "anthropic_messages".into());
+    let model = std::env::var("AURORA_LIVE_MODEL").unwrap_or_else(|_| "claude-sonnet-4-5".into());
+    let mk = move |case: &str, resume: Option<String>| {
+        let mut o = pi_opts("", "http://127.0.0.1:9", &dialect, case, resume);
+        o.model.base_url = base.clone();
+        o.model.model = model.clone();
+        o.env = vec![];
+        o
+    };
+    let profile = Profile {
+        fail: None,
+        ..GOOSE
+    };
+    suite_with(&GooseAdapter::default(), &profile, &mk).await;
+}
