@@ -2762,15 +2762,11 @@ default_model = "say"
     st.finish().await;
 }
 
-/// (P5-GUIDE-2, C-643, D-295, SEC-117) A hosted agent granted `fixture-guide` under a custom grant
-/// has `.aurora/apps/guide-demo/` projected into its real sandbox (generated files and the
-/// package's own, read-only), the instruction file lists the app as one index line with none of the
-/// package's notes, and revoking the grant removes the folder at the next sync.
-#[tokio::test]
-async fn s14_agent_guide_folder_is_projected_into_the_sandbox_and_removed_on_revoke() {
-    if !enabled() {
-        return;
-    }
+/// The checked-in `fixture-guide` package (with its operations file) installed on a fresh stack,
+/// one workspace connection of its app and a custom grant to Daneel: `list_rooms` allowed,
+/// `book_room` asking, `get_room` blocked. Returns the stack, the instance admin's client and the
+/// grant's URL (a `delete` of it revokes).
+async fn install_fixture_guide() -> (Stack, Api, String) {
     let (st, owner) = fx(Opts::default()).await;
     let email = "owner@e2e.test";
     sqlx::query(
@@ -2789,7 +2785,12 @@ async fn s14_agent_guide_folder_is_projected_into_the_sandbox_and_removed_on_rev
     let mut b = aurora_registry::builder::PackageBuilder::new(
         &String::from_utf8(read("plugin.yaml")).unwrap(),
     );
-    for f in ["book-free-room.md", "api.md", "codes.tsv"] {
+    for f in [
+        "book-free-room.md",
+        "api.md",
+        "codes.tsv",
+        "operations.json",
+    ] {
         b.set_file(
             &format!("agent/guide-demo/{f}"),
             &read(&format!("agent/guide-demo/{f}")),
@@ -2834,6 +2835,19 @@ async fn s14_agent_guide_folder_is_projected_into_the_sandbox_and_removed_on_rev
         )
         .await;
     assert_eq!(s, 200, "grant: {g}");
+    (st, admin, grant)
+}
+
+/// (P5-GUIDE-2, C-643, D-295, SEC-117) A hosted agent granted `fixture-guide` under a custom grant
+/// has `.aurora/apps/guide-demo/` projected into its real sandbox (generated files and the
+/// package's own, read-only), the instruction file lists the app as one index line with none of the
+/// package's notes, and revoking the grant removes the folder at the next sync.
+#[tokio::test]
+async fn s14_agent_guide_folder_is_projected_into_the_sandbox_and_removed_on_revoke() {
+    if !enabled() {
+        return;
+    }
+    let (st, admin, grant) = install_fixture_guide().await;
 
     // The sandbox boots with the folder (a turn makes sure the sync was applied).
     let conv = admin.direct().await;
@@ -2914,5 +2928,117 @@ async fn s14_agent_guide_folder_is_projected_into_the_sandbox_and_removed_on_rev
         !instr.contains("guide-demo"),
         "the app is still in the instruction file: {instr}"
     );
+    st.finish().await;
+}
+
+/// (P5-GUIDE-6, C-652, C-653, SEC-118, SEC-120) `aurora-agent` in a real sandbox, through the real
+/// gateway: the command reads the projected `api.json`, lists and describes the app's operations,
+/// and a call is decided by the gateway exactly like a raw request. A blocked operation exits 3
+/// with the gateway's refusal (the same status and code as a hand-written `curl`), an operation
+/// that needs approval is held until a human decides (deny: exit 3), an allowed one reaches the
+/// gateway's forwarding step (the mock cannot answer for a package host, so the page-joining of
+/// `--all` is covered by the supervisor's own suite), and the reserved `aurora` target exits 2
+/// until P5-GUIDE-7.
+#[tokio::test]
+async fn s43_aurora_agent_calls_are_decided_by_the_gateway_like_raw_requests() {
+    if !enabled() {
+        return;
+    }
+    let (st, admin, grant) = install_fixture_guide().await;
+    let conn = grant.rsplit('/').next().unwrap().to_owned();
+    let conv = admin.direct().await;
+    run_turn(&st, &admin, &conv, "[[say: warm]]").await;
+    let cs = containers();
+    assert_eq!(cs.len(), 1, "{cs:?}");
+    let c = cs[0].clone();
+    let api_json = "/workspace/.aurora/apps/guide-demo/api.json";
+    let present = eventually(60, || exec_in(&c, &format!("test -r {api_json}")).0 == 0).await;
+    assert!(present, "no api.json\n{}", st.log_tails());
+
+    // The command exists, and reads the file: list, describe.
+    let (rc, out) = exec_in(&c, "aurora-agent list 2>&1");
+    assert_eq!(rc, 0, "{out}");
+    assert!(out.contains("guide-demo"), "{out}");
+    let (rc, out) = exec_in(&c, "aurora-agent list guide-demo 2>&1");
+    assert_eq!(rc, 0, "{out}");
+    assert!(
+        out.contains("list_rooms") && out.contains("book_room"),
+        "{out}"
+    );
+    let (rc, out) = exec_in(&c, "aurora-agent describe guide-demo get_room 2>&1");
+    assert_eq!(rc, 0, "{out}");
+    assert!(out.contains("get_room"), "{out}");
+
+    // Blocked by the grant: exit 3, and the gateway's own refusal is what a raw request gets.
+    let (rc, out) = exec_in(&c, "aurora-agent call guide-demo get_room id=1 2>&1");
+    assert_eq!(rc, 3, "a blocked operation exits 3: {out}");
+    let (_, raw) = exec_in(
+        &c,
+        &format!(
+            "curl -s -w '\\n%{{http_code}}' -H 'x-aurora-connection-id: {conn}' https://api.guide.example.test/v1/rooms/1"
+        ),
+    );
+    let raw_status = raw.lines().last().unwrap_or_default().to_owned();
+    let raw_code: Value =
+        serde_json::from_str(raw.lines().next().unwrap_or("{}")).unwrap_or(json!({}));
+    assert_eq!(raw_status, "403", "the raw request is refused too: {raw}");
+    let code = raw_code["error"]["code"].as_str().unwrap_or_default();
+    assert!(!code.is_empty(), "the gateway's envelope: {raw}");
+    assert!(
+        out.contains(code),
+        "the command shows the gateway's code `{code}`: {out}"
+    );
+
+    // Needs approval: the call is held (nothing reaches the upstream), then denied: exit 3.
+    let held = {
+        let c = c.clone();
+        tokio::task::spawn_blocking(move || {
+            exec_in(
+                &c,
+                "timeout 60 aurora-agent call guide-demo book_room id=1 start=2030-01-01T10:00 2>&1",
+            )
+        })
+    };
+    let a = admin.wait_pending().await;
+    assert_eq!(a["status"], "pending", "{a}");
+    assert!(
+        a["path"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("/v1/rooms/1/bookings"),
+        "{a}"
+    );
+    let (s, d) = admin
+        .post(
+            &format!("/v1/approvals/{}/decision", a["id"].as_str().unwrap()),
+            json!({"decision": "deny"}),
+        )
+        .await;
+    assert_eq!(s, 200, "{d}");
+    let (rc, out) = held.await.unwrap();
+    assert_eq!(rc, 3, "a denied approval exits 3: {out}");
+
+    // Allowed by the grant: the gateway's decision lets it through and it fails only at the
+    // forwarding step (the package host does not resolve on the test network): a 502
+    // `resolution_failed`, not the 403 of a policy refusal.
+    let (rc, out) = exec_in(
+        &c,
+        "aurora-agent call guide-demo list_rooms building=40 2>&1",
+    );
+    assert!(
+        out.contains("resolution_failed") && !out.contains("blocked"),
+        "the allowed call reached forwarding (exit {rc}): {out}"
+    );
+
+    // The platform target is reserved until P5-GUIDE-7.
+    let (rc, out) = exec_in(&c, "aurora-agent call aurora memory_save 2>&1");
+    assert_eq!(rc, 2, "{out}");
+    assert!(out.contains("not available in this version"), "{out}");
+    // SEC-120: nothing it writes lands under the managed roots.
+    let (rc, out) = exec_in(
+        &c,
+        "aurora-agent call guide-demo list_rooms building=40 --out /workspace/.aurora/x.json 2>&1",
+    );
+    assert_eq!(rc, 2, "{out}");
     st.finish().await;
 }

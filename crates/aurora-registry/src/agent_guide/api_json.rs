@@ -187,8 +187,21 @@ fn placeholder_path(path: &str) -> String {
         .join("/")
 }
 
+/// The one host of a static (not instance-bound) app: every catalogue tool names the same plain
+/// host. An account of such an app has no stored host, yet its requests can only go there.
+fn sole_static_host(app: &AppEntry) -> Option<String> {
+    if app.instances.is_some() {
+        return None;
+    }
+    let (read, write) = catalogue(app);
+    let mut hosts = read.iter().chain(&write).map(|t| t.host.as_str());
+    let first = hosts.next()?;
+    let plain = !first.contains(['*', '{', ':', '/']);
+    (plain && hosts.all(|h| h == first)).then(|| first.to_owned())
+}
+
 /// The catalogue tool the gateway's own matcher selects for the operation (C-652). The host is
-/// the operation's, else the first account's, else the app's default host.
+/// the operation's, else the first account's, else the app's default host, else its only host.
 fn computed_tool(app: &AppEntry, op: &Operation, accounts: &[GuideAccount]) -> Option<String> {
     let instance = app.instances.is_some();
     let host: String = match op.host.as_deref() {
@@ -197,6 +210,7 @@ fn computed_tool(app: &AppEntry, op: &Operation, accounts: &[GuideAccount]) -> O
             .iter()
             .find_map(|a| a.host.clone())
             .or_else(|| app.instances.as_ref().and_then(|i| i.default_host.clone()))
+            .or_else(|| sole_static_host(app))
             .unwrap_or_default(),
     };
     identify_tool_in(
@@ -359,8 +373,9 @@ pub(super) fn render(
                 label: inline(&a.label, 120),
                 base_url: a
                     .host
-                    .as_deref()
-                    .map(|h| format!("https://{}", inline(h, 253))),
+                    .clone()
+                    .or_else(|| sole_static_host(app))
+                    .map(|h| format!("https://{}", inline(&h, 253))),
                 grant: match a.access {
                     GrantAccess::Full => "full",
                     GrantAccess::Custom { .. } => "custom",

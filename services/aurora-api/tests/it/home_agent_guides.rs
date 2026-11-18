@@ -657,8 +657,11 @@ async fn api_json_is_projected_beside_the_guide() {
     assert_eq!(api["accounts"][0]["connection_id"], conn.to_string());
     assert_eq!(api["accounts"][0]["grant"], "full");
     assert_eq!(api["operations"][0]["access"]["A"], "allowed");
-    // The app has no instance host, so no account base URL is known (the command refuses it).
-    assert!(api["accounts"][0]["base_url"].is_null(), "{api}");
+    // A static app has no stored host: its only host is the account's base URL.
+    assert_eq!(
+        api["accounts"][0]["base_url"], "https://api.gdemo.example",
+        "{api}"
+    );
     assert!(f[&format!("{ROOT}/guide.md")].contains("api.json"));
     // SEC-117 again: the credential reference is nowhere in the file.
     assert!(!f[&path].contains(CREDENTIAL_REF));

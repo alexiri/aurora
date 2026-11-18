@@ -210,5 +210,26 @@ changed in this continuation); web (untouched); the **hosted end-to-end** of the
 against a mock upstream behind the real gateway, a blocked operation → exit 3, `aurora-agent call aurora memory_save` → exit 2) and the full-image
 scenarios (the image changed: one wrapper). The `fixture-invalid-agent-operations-*` and `fixture-invalid-app-id-reserved` **packages** were not
 created: the corpus is inline in `crates/aurora-registry/tests/it/agent_operations.rs` (one case per code, incl. the reserved id). shellcheck not run (not installed).
+**Close-out (lane `p5-apps`, worker 40, 2026-11-18):**
+- **Home-sync test** (`services/aurora-api/tests/it/home_agent_guides.rs::api_json_is_projected_beside_the_guide`): an app with an operations
+  file gets `api.json` in its folder (format `aurora.app-api/1`, operations mapped to the catalogue tools, account with `grant`/`access`), listed in the
+  manifest, named in `guide.md`, the operations file itself not projected, no credential reference in it. The three existing folder tests of that file
+  now count `api.json` (catalogue-only apps get one: 5 → 6 files). `home_checksum.rs` got the `agent_cli` field of `HomeConfig` (it did not compile).
+  `cargo test -p aurora-api --test it -- home_agent_guides home_checksum`: 9 passed.
+- **Renderer fix found by the e2e:** a static app has no stored account host, so `base_url` was `null` and `aurora-agent` refused every call. `api_json`
+  now falls back to the app's only host (all catalogue tools name the same plain host; never for an instance-bound app) for `base_url` and for the
+  matcher. `cargo test -p aurora-registry`: 22 lib + 141 it, 0 failed (no snapshot moved).
+- **Hosted end-to-end** `tests/e2e-hosted/tests/hosted.rs::s43_aurora_agent_calls_are_decided_by_the_gateway_like_raw_requests` (the fixture install of
+  s14 became `install_fixture_guide`, now with the operations file): in a real sandbox `aurora-agent list`/`describe` read the projected file; a blocked
+  operation (`get_room`) exits 3 and shows the same gateway code as a raw `curl` with the connection header (403); an approval-held call (`book_room`)
+  waits until the human denies it, then exits 3; an allowed call (`list_rooms`) passes the decision and fails only at forwarding (502
+  `resolution_failed`, the package host does not resolve on the test network, so exit 3 by the envelope's shape); `aurora-agent call aurora memory_save`
+  exits 2 "not available in this version" (P5-GUIDE-7 changes this assertion); `--out` under `/workspace/.aurora/` exits 2. Passed alone
+  (`AURORA_E2EH_PREFIX=p5apps-w40 … hosted.sh s43`, 93 s). **Not possible without a gateway change:** `call --all` joining two pages through the gateway
+  against a mock upstream (an app host is HTTPS on port 443 and must be a DNS name; the mock is plain HTTP on a random loopback port). The page joining,
+  the one-header rule and the saved file are proved by `tests/it/agent_cli.rs` (supervisor) against a local server; the gateway half by the blocked /
+  held / allowed calls above.
+- **Process notes (this worker):** one `cat >> … <<EOF` append was attempted and denied, redone with Edit; a stray `sed` against `/dev/null` was a no-op.
+
 **Process notes:** two one-line edits were made with `sed` against the rule (`images/sandbox/Containerfile` COPY line, indico `version:`); `cp` was used to
 copy CLI output into `tests/golden/guide/guide-demo/` (generated output).
