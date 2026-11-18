@@ -797,7 +797,12 @@ async fn s3_approval_card_click() {
     assert_eq!(v["items"].as_array().map(Vec::len), Some(1), "{v}");
     // The card was settled in place: no live Allow once button remains.
     let deadline = Instant::now() + Duration::from_secs(20);
-    while w.mm.find_action(&dm, &w.bot.id, "Allow once").await.is_some() {
+    while w
+        .mm
+        .find_action(&dm, &w.bot.id, "Allow once")
+        .await
+        .is_some()
+    {
         assert!(Instant::now() < deadline, "card never settled");
         tokio::time::sleep(Duration::from_millis(400)).await;
     }
