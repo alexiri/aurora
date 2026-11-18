@@ -902,6 +902,78 @@ fn unknown_part_kinds_and_render_input_fields_are_skipped() {
     assert_eq!(fs::read(d2.path().join("AGENTS.md")).unwrap(), want);
 }
 
+/// (P5-GUIDE-7, C-654) The catalogue digest, which releases idle sessions, covers the core
+/// descriptors and the rendered instruction files: an on-demand tool's description changing in a
+/// core-only sandbox does not move it, a core descriptor does, and in mode `all` any descriptor
+/// does.
+#[test]
+fn the_catalogue_digest_follows_core_descriptors_and_instruction_files_only() {
+    let digest = |mode: &str, core_desc: &str, demand_desc: &str, brief: &str| -> String {
+        let d = TempDir::new();
+        let mut p = HomeProjector::new(HomeConfig {
+            root: d.path().to_path_buf(),
+            skills_dir: Some(".claude/skills".into()),
+            instruction_files: vec!["AGENTS.md".into()],
+            pg: None,
+            agent_cli: true,
+        });
+        let mut parts = generation(1, &[], &[]);
+        parts[2] = part(
+            1,
+            2,
+            6,
+            "render_inputs",
+            json!([
+                {"agent": {"name": "Ada", "handle": "ada", "workspace": "Acme"}},
+                {"brief": brief},
+                {"platform_tools": {"mode": mode, "families": [
+                    {"name": "memory", "purpose": "Notes.", "tools": ["memory_search"]}]}}
+            ]),
+        );
+        parts[3] = part(
+            1,
+            3,
+            6,
+            "tools",
+            json!([
+                {"name": "send_file", "description": core_desc, "exposure": "core"},
+                {"name": "memory_search", "description": demand_desc, "exposure": "on_demand"}
+            ]),
+        );
+        apply_all(&mut p, &parts);
+        assert_eq!(
+            p.catalogue_digest(),
+            None,
+            "nothing installed before the commit"
+        );
+        p.commit(1).unwrap();
+        p.catalogue_digest().unwrap()
+    };
+    let base = digest("on_demand", "c", "d", "b");
+    assert_eq!(base, digest("on_demand", "c", "d", "b"), "deterministic");
+    assert_eq!(
+        base,
+        digest("on_demand", "c", "d2", "b"),
+        "an on-demand description is not in the digest"
+    );
+    assert_ne!(
+        base,
+        digest("on_demand", "c2", "d", "b"),
+        "a core descriptor is"
+    );
+    assert_ne!(
+        base,
+        digest("on_demand", "c", "d", "b2"),
+        "the instruction file is"
+    );
+    let all = digest("all", "c", "d", "b");
+    assert_ne!(
+        all,
+        digest("all", "c", "d2", "b"),
+        "mode all lists every descriptor"
+    );
+}
+
 /// (P5-GUIDE-6, C-653) The `aurora-agent` sentences are rendered only when the supervisor found
 /// the wrapper (`agent_cli`); the same render inputs otherwise keep the `tools.md` sentence.
 #[test]

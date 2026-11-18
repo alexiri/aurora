@@ -381,6 +381,32 @@ impl Supervisor {
         }
     }
 
+    /// Releases one conversation's harness session; one with a running turn is never interrupted.
+    async fn release_session(&mut self, conversation_id: Uuid) {
+        if self
+            .turns
+            .values()
+            .any(|t| t.conversation_id == conversation_id)
+        {
+            return;
+        }
+        if let Some(e) = self.sessions.remove(&conversation_id)
+            && let Ok(m) = Arc::try_unwrap(e.session)
+        {
+            let _ = m.into_inner().release().await;
+        }
+    }
+
+    /// (P5-GUIDE-7, C-654) A sync changed what new sessions are told (core descriptors or the
+    /// instruction files): every idle session is released and picks the new list up at its next
+    /// message; a session with a turn running keeps its own until then.
+    async fn release_idle_sessions(&mut self) {
+        let ids: Vec<Uuid> = self.sessions.keys().copied().collect();
+        for id in ids {
+            self.release_session(id).await;
+        }
+    }
+
     async fn handle(&mut self, msg: RunnerToSupervisor, done_tx: &mpsc::UnboundedSender<Uuid>) {
         match msg {
             RunnerToSupervisor::TurnDeliver(d) => self.deliver(*d, done_tx).await,
@@ -394,18 +420,7 @@ impl Supervisor {
                 }
             }
             RunnerToSupervisor::SessionRelease(r) => {
-                if self
-                    .turns
-                    .values()
-                    .any(|t| t.conversation_id == r.conversation_id)
-                {
-                    return; // a running turn is never interrupted for a release
-                }
-                if let Some(e) = self.sessions.remove(&r.conversation_id)
-                    && let Ok(m) = Arc::try_unwrap(e.session)
-                {
-                    let _ = m.into_inner().release().await;
-                }
+                self.release_session(r.conversation_id).await;
             }
             RunnerToSupervisor::SessionPurge(p) => {
                 self.purge(p.conversation_id, p.session_ref, p.harness)
@@ -646,11 +661,19 @@ impl Supervisor {
         let committed = tokio::task::spawn_blocking(move || {
             home.lock()
                 .map_err(|_| "home state poisoned".to_owned())
-                .and_then(|mut g| g.projector.commit(generation).map_err(|e| e.to_string()))
+                .and_then(|mut g| {
+                    let before = g.projector.catalogue_digest();
+                    g.projector.commit(generation).map_err(|e| e.to_string())?;
+                    // A first install has no sessions to release (`before` is `None`).
+                    Ok(before.is_some() && before != g.projector.catalogue_digest())
+                })
         })
         .await;
         match committed {
-            Ok(Ok(())) => {
+            Ok(Ok(changed)) => {
+                if changed {
+                    self.release_idle_sessions().await;
+                }
                 // Deleted conversations' session files go before the sandbox can run any turn.
                 self.run_pending_purges().await;
                 self.sync_db_relay().await;

@@ -500,6 +500,42 @@ impl HomeProjector {
         })
     }
 
+    /// (P5-GUIDE-7, C-654) What a harness session captured at its start: the tool descriptors its
+    /// bridge lists (the core ones when the bridge is core-only, else all) and the rendered
+    /// instruction files. A change of this value is what releases idle sessions; an on-demand
+    /// tool changing in a core-only sandbox does not move it. `None` when nothing is installed.
+    pub fn catalogue_digest(&self) -> Option<String> {
+        use sha2::{Digest, Sha256};
+        let aurora = self.cfg.root.join(AURORA_DIR);
+        let tools: Vec<Value> =
+            crate::harvest::read_bounded(&aurora.join("tools.json"), STAGED_READ_MAX)
+                .ok()
+                .flatten()
+                .and_then(|b| serde_json::from_slice(&b).ok())
+                .unwrap_or_default();
+        let core_only = self.bridge_core_only();
+        let listed: Vec<&Value> = tools
+            .iter()
+            .filter(|t| !core_only || t.get("exposure").and_then(Value::as_str) == Some("core"))
+            .collect();
+        let mut h = Sha256::new();
+        h.update(serde_json::to_vec(&listed).ok()?);
+        let mut any = !listed.is_empty();
+        for name in &self.cfg.instruction_files {
+            let Some(rel) = clean_rel(name) else { continue };
+            if let Ok(Some(b)) =
+                crate::harvest::read_bounded(&self.cfg.root.join(rel), RENDER_INPUTS_READ_MAX)
+            {
+                any = true;
+                h.update([0u8]);
+                h.update(name.as_bytes());
+                h.update([0u8]);
+                h.update(&b);
+            }
+        }
+        any.then(|| h.finalize().iter().map(|b| format!("{b:02x}")).collect())
+    }
+
     /// Re-renders instruction files from the installed render inputs (boot and every sync).
     pub fn render_installed(&self) -> Result<(), HomeError> {
         let path = self.cfg.root.join(AURORA_DIR).join("render_inputs.json");

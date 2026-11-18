@@ -139,6 +139,16 @@ and the adapters' environment code. **Not concurrent** with any lane that edits
 and `docs/12:793` describe behaviour that does not exist. Either implement it (supervisor: after `projector.commit`, hash the core descriptors + the rendered instruction files, release idle
 sessions when it differs from the previous sync's) or reword the two paragraphs. Not done here.
 
+**Part 3 (lane `p5-apps`, worker 42, 2026-11-18) — item 6 implemented, supervisor-side:** the coordinator decided to implement it. The release is decided
+where the supervisor commits a home sync, not by an API-sent `session.release`: the supervisor alone knows which sessions are idle, `SessionRelease` has no API
+producer, and no new work-item plumbing is needed (it reuses the existing release path, which already refuses a conversation with a running turn). `HomeProjector::catalogue_digest()`
+(`home.rs`) hashes the descriptors the bridge lists (core only when `bridge_core_only()`, else all) plus the rendered instruction files; `supervisor.rs::home_sync` compares it before and
+after `commit` and calls `release_idle_sessions()` when it moved (a first install, no previous digest, releases nothing). Tests: `home.rs` `the_catalogue_digest_follows_core_descriptors_and_instruction_files_only`
+(on-demand description change: same digest; core descriptor, instruction file, mode `all` any descriptor: different); `turns.rs` `a_changed_catalogue_releases_idle_sessions_and_an_unchanged_one_does_not`
+(same render: session reused; changed render: fresh session start, seen as the fake harness's session marker being rewritten — **seen failing with the release disabled**) and
+`a_changed_catalogue_never_releases_a_running_turn`. Limitation: a session that had a turn running during the change is not released afterwards; it keeps the old list until the next change.
+Runs: `cargo nextest run -p aurora-supervisor -E 'test(/catalogue/)'` 5 passed (the build alone took 70 min at load 100–280).
+
 **Next steps (a fresh worker):**
 1. **Item 7 verification:** do both adapters hand `SessionOptions.env` to the harness process (claude-code, codex, pi, goose, opencode, fake)? Does `pty.rs`
    strip `AURORA_*` for the terminal, do SSH and `process_start` environments not carry it? Add tests (supervisor `tests/it`, adapters).
