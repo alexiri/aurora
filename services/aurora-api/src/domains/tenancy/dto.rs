@@ -84,6 +84,9 @@ pub struct OrgSettings {
     pub max_agents: Option<i64>,
     /// (phase 4, P4-PRV-1, C-549) Port previews for this organization (default `false`).
     pub previews_enabled: bool,
+    /// (phase 5, P5-CALINV, D-274, C-844) Calendar-invitation tools for the organization's agents
+    /// (default `true`); stored as `settings.calendar_invitations.enabled`.
+    pub calendar_invitations_enabled: bool,
 }
 
 impl OrgSettings {
@@ -99,7 +102,15 @@ impl OrgSettings {
                 .get("previews_enabled")
                 .and_then(serde_json::Value::as_bool)
                 .unwrap_or(false),
+            calendar_invitations_enabled: Self::calendar_invitations_enabled(v),
         }
+    }
+
+    /// The org switch of the calendar-invitation tools (default on).
+    pub fn calendar_invitations_enabled(v: &serde_json::Value) -> bool {
+        v.pointer("/calendar_invitations/enabled")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(true)
     }
 }
 
@@ -292,6 +303,8 @@ pub struct OrgSettingsPatch {
     /// (phase 4, P4-PRV-1, C-549) Port previews for the organization; audited
     /// `org.previews.update` (security-critical).
     pub previews_enabled: Option<bool>,
+    /// (phase 5, P5-CALINV, C-844) The calendar-invitation tools for the organization's agents.
+    pub calendar_invitations_enabled: Option<bool>,
 }
 
 #[derive(Deserialize, ToSchema)]

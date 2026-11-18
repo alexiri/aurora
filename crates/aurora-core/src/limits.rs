@@ -321,6 +321,14 @@ pub const CHANNEL_LEDGER_RETENTION: Duration = Duration::from_secs(604800);
 /// [`WEBHOOK_DELIVERY_MAX_PER_WEBHOOK`] per webhook (rejected requests write rows too).
 pub const WEBHOOK_DELIVERY_RETENTION: Duration = Duration::from_secs(30 * 24 * 3600);
 pub const WEBHOOK_DELIVERY_MAX_PER_WEBHOOK: i64 = 10_000;
+/// (phase 5, P5-CALINV, D-274, SEC-108) Calendar invitations: sends (invite, update or cancel) per
+/// person per agent per hour and per person per day across agents.
+pub const CALENDAR_SENDS_PER_AGENT_HOUR: i64 = 20;
+pub const CALENDAR_SENDS_PER_PERSON_DAY: i64 = 60;
+/// A single or cancelled invitation row is pruned this long after its event ended (or its last
+/// change); a repeating one this long after its last change.
+pub const CALENDAR_INVITATION_RETENTION: Duration = Duration::from_secs(90 * 24 * 3600);
+pub const CALENDAR_REPEATING_RETENTION: Duration = Duration::from_secs(5 * 365 * 24 * 3600);
 /// (phase 5, P5-UX-5, D-325, SEC-128) An unused pending workspace access row expires this long after it was added.
 pub const PENDING_ACCESS_TTL: Duration = Duration::from_secs(30 * 24 * 3600);
 /// (phase 5, P5-UX-5, D-325) Pending access rows per workspace; one more is refused (422 `pending_access_limit`).

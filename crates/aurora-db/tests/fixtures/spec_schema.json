@@ -261,6 +261,30 @@
       "content",
       "key"
     ],
+    "calendar_invitation_sends": [
+      "agent_id",
+      "id",
+      "org_id",
+      "person_id",
+      "sent_at"
+    ],
+    "calendar_invitations": [
+      "agent_id",
+      "all_day",
+      "conversation_id",
+      "ends_at",
+      "id",
+      "org_id",
+      "person_id",
+      "repeat",
+      "sequence",
+      "starts_at",
+      "status",
+      "timezone",
+      "title",
+      "uid",
+      "workspace_id"
+    ],
     "channel_cards": [
       "addressee_ref",
       "id",
@@ -1767,6 +1791,30 @@
     "blobs": {
       "content": "bytea not null",
       "key": "text not null"
+    },
+    "calendar_invitation_sends": {
+      "agent_id": "uuid",
+      "id": "uuid not null",
+      "org_id": "uuid",
+      "person_id": "uuid",
+      "sent_at": "timestamptz not null"
+    },
+    "calendar_invitations": {
+      "agent_id": "uuid",
+      "all_day": "boolean not null",
+      "conversation_id": "uuid null",
+      "ends_at": "timestamptz not null",
+      "id": "uuid not null",
+      "org_id": "uuid",
+      "person_id": "uuid",
+      "repeat": "jsonb null",
+      "sequence": "integer not null",
+      "starts_at": "timestamptz not null",
+      "status": "text not null",
+      "timezone": "text not null",
+      "title": "text not null",
+      "uid": "text not null",
+      "workspace_id": "uuid"
     },
     "channel_cards": {
       "addressee_ref": "text null",

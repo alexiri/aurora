@@ -4,7 +4,8 @@
 //! [`send_detached`] (fire and forget) or `state.mailer.send(mail).await`.
 
 use aurora_config::ApiConfig;
-use lettre::message::Mailbox;
+use lettre::message::header::{ContentDisposition, ContentType};
+use lettre::message::{Attachment, Mailbox, MultiPart, SinglePart};
 use lettre::transport::smtp::AsyncSmtpTransport;
 use lettre::{AsyncTransport, Message, Tokio1Executor};
 use std::sync::{Arc, Mutex};
@@ -17,6 +18,21 @@ pub struct Mail {
     pub body: String,
     /// The action link, kept separately for the log-only/in-memory mailers.
     pub link: String,
+    /// (P5-CALINV) Display name of the sender (`From: "<name>" <email.from>`); the address is
+    /// always the configured one.
+    pub from_name: Option<String>,
+    /// (P5-CALINV) An iTIP calendar part: the message becomes multipart/mixed with the plain body,
+    /// an inline `text/calendar; method=…` part and the same calendar as `invite.ics`.
+    pub calendar: Option<CalendarPart>,
+}
+
+/// The calendar of a calendar-invitation mail (iMIP, RFC 6047).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CalendarPart {
+    /// `REQUEST` or `CANCEL`.
+    pub method: &'static str,
+    /// The complete iCalendar object (CRLF line ends).
+    pub ics: String,
 }
 
 impl Mail {
@@ -27,8 +43,53 @@ impl Mail {
             subject: subject.to_owned(),
             body: format!("{intro}\n\n{link}\n"),
             link: link.to_owned(),
+            from_name: None,
+            calendar: None,
         }
     }
+}
+
+/// The SMTP message of a [`Mail`] from `from`: plain text, or multipart/mixed (plain, inline
+/// calendar, `invite.ics`) with a calendar part. Header values lettre receives never carry CR/LF/NUL
+/// (they are removed here as well as by the callers).
+pub fn build_message(from: &Mailbox, mail: &Mail) -> Result<Message, MailError> {
+    let err = |e: &dyn std::fmt::Display| MailError(e.to_string());
+    let from = match &mail.from_name {
+        Some(n) => Mailbox::new(Some(header_safe(n)), from.email.clone()),
+        None => from.clone(),
+    };
+    let builder = Message::builder()
+        .from(from)
+        .to(mail.to.parse().map_err(|e| err(&e))?)
+        .subject(header_safe(&mail.subject));
+    match &mail.calendar {
+        None => builder.body(mail.body.clone()).map_err(|e| err(&e)),
+        Some(c) => {
+            let ct = ContentType::parse(&format!(
+                "text/calendar; method={}; charset=utf-8",
+                c.method
+            ))
+            .map_err(|e| err(&e))?;
+            let inline = SinglePart::builder()
+                .header(ct.clone())
+                .header(ContentDisposition::inline())
+                .body(c.ics.clone());
+            let attachment = Attachment::new("invite.ics".to_owned()).body(c.ics.clone(), ct);
+            builder
+                .multipart(
+                    MultiPart::mixed()
+                        .singlepart(SinglePart::plain(mail.body.clone()))
+                        .singlepart(inline)
+                        .singlepart(attachment),
+                )
+                .map_err(|e| err(&e))
+        }
+    }
+}
+
+/// One line with no control characters (header injection: CR, LF, NUL and the rest are dropped).
+fn header_safe(s: &str) -> String {
+    s.chars().filter(|c| !c.is_control()).collect()
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -115,12 +176,7 @@ impl SmtpMailer {
 #[async_trait::async_trait]
 impl Mailer for SmtpMailer {
     async fn send(&self, mail: Mail) -> Result<(), MailError> {
-        let msg = Message::builder()
-            .from(self.from.clone())
-            .to(mail.to.parse().map_err(|e| MailError(format!("{e}")))?)
-            .subject(mail.subject)
-            .body(mail.body)
-            .map_err(|e| MailError(e.to_string()))?;
+        let msg = build_message(&self.from, &mail)?;
         self.transport
             .send(msg)
             .await
@@ -211,6 +267,65 @@ mod tests {
         drop(guard);
         let out = buf.0.lock().unwrap().clone();
         String::from_utf8(out).unwrap()
+    }
+
+    fn invite_mail(subject: &str, from_name: &str) -> Mail {
+        let mut m = Mail::new("ada@example.org", subject, "Intro", "https://x.example/a");
+        m.from_name = Some(from_name.to_owned());
+        m.calendar = Some(CalendarPart {
+            method: "REQUEST",
+            ics: "BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n".into(),
+        });
+        m
+    }
+
+    /// (P5-CALINV) A calendar mail is multipart/mixed: plain text, an inline `text/calendar`
+    /// part with the method, and the same calendar as `invite.ics`; the sender address is the
+    /// configured one whatever name is given.
+    #[test]
+    fn a_calendar_mail_is_plain_inline_calendar_and_attachment() {
+        let from: Mailbox = "Aurora <aurora@example.org>".parse().unwrap();
+        let msg = build_message(&from, &invite_mail("Invitation: Review", "Ada (Aurora)")).unwrap();
+        let raw = String::from_utf8(msg.formatted()).unwrap();
+        assert!(raw.contains("Content-Type: multipart/mixed"), "{raw}");
+        assert!(raw.contains("Content-Type: text/plain"), "{raw}");
+        assert!(
+            raw.contains("Content-Type: text/calendar; method=REQUEST; charset=utf-8"),
+            "{raw}"
+        );
+        assert!(raw.contains("Content-Disposition: inline"), "{raw}");
+        assert!(raw.contains("filename=\"invite.ics\""), "{raw}");
+        assert!(raw.contains("<aurora@example.org>"), "{raw}");
+        // The display name is an RFC 2047 encoded word (lettre encodes the parentheses).
+        assert!(
+            raw.contains("From: =?utf-8?b?QWRhIChBdXJvcmEp?= <aurora@example.org>"),
+            "{raw}"
+        );
+        assert_eq!(
+            raw.matches("BEGIN:VCALENDAR").count(),
+            2,
+            "inline and attachment: {raw}"
+        );
+    }
+
+    /// (SEC-108) CR/LF/NUL in an agent-supplied subject or name never starts a header.
+    #[test]
+    fn crlf_in_the_subject_or_the_name_never_creates_a_header() {
+        let from: Mailbox = "Aurora <aurora@example.org>".parse().unwrap();
+        let m = invite_mail(
+            "Invitation: x\r\nBcc: evil@example.org\r\nX-Injected: 1\0",
+            "Eve\r\nBcc: evil@example.org",
+        );
+        let raw = String::from_utf8(build_message(&from, &m).unwrap().formatted()).unwrap();
+        let head = raw.split("\r\n\r\n").next().unwrap();
+        for line in head.lines() {
+            assert!(
+                !line.to_ascii_lowercase().starts_with("bcc:")
+                    && !line.to_ascii_lowercase().starts_with("x-injected"),
+                "injected header line {line:?} in {head}"
+            );
+        }
+        assert!(!head.contains('\0'));
     }
 
     /// FIX-116: with SMTP unset the log carries recipient and subject, never the token link

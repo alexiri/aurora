@@ -381,7 +381,7 @@ pub async fn render(
     if fit_render_inputs(&mut render_inputs, PACK_MAX) {
         tracing::warn!(agent = %claim.agent_id, "render inputs over the part bound; lists truncated");
     }
-    let tools: Vec<Value> = crate::domains::tools::catalogue(&state.pool, claim.agent_id)
+    let tools: Vec<Value> = crate::domains::tools::catalogue(state, claim.agent_id)
         .await?
         .iter()
         .filter_map(|t| serde_json::to_value(t).ok())

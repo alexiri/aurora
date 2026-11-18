@@ -8,6 +8,8 @@
 mod agents;
 mod apps;
 mod builtin;
+mod calendar;
+mod calendar_ics;
 mod conversations;
 mod memory;
 mod messaging;

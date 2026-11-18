@@ -179,6 +179,8 @@ async fn patch_org(
     let meta = json!({
         "name": req.name.is_some(), "slug": req.slug.is_some(),
         "settings": req.settings.is_some(), "previews_enabled": previews_on,
+        "calendar_invitations_enabled":
+            req.settings.as_ref().and_then(|p| p.calendar_invitations_enabled),
     });
     let ev = event(&c, "org.update")
         .org(org)

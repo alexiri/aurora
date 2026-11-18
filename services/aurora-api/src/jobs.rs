@@ -3,8 +3,9 @@
 
 use aurora_config::AttachmentsSection;
 use aurora_core::limits::{
-    CHANNEL_LEDGER_RETENTION, RETENTION_PRUNE_BATCH, SESSION_PRUNE_GRACE,
-    WEBHOOK_DELIVERY_MAX_PER_WEBHOOK, WEBHOOK_DELIVERY_RETENTION,
+    CALENDAR_INVITATION_RETENTION, CALENDAR_REPEATING_RETENTION, CHANNEL_LEDGER_RETENTION,
+    RETENTION_PRUNE_BATCH, SESSION_PRUNE_GRACE, WEBHOOK_DELIVERY_MAX_PER_WEBHOOK,
+    WEBHOOK_DELIVERY_RETENTION,
 };
 use aurora_db::PgPool;
 use aurora_db::repo::{approvals, request_log};
@@ -152,6 +153,8 @@ pub struct PruneReport {
     pub cli_logins: u64,
     pub context_credentials: u64,
     pub webhook_deliveries: u64,
+    /// (P5-CALINV) Calendar invitation rows past retention, and rate-limit ledger rows past two days.
+    pub calendar_invitations: u64,
 }
 
 /// Run one batched delete until a batch comes back short (each statement removes at most
@@ -196,6 +199,16 @@ pub async fn run_retention_prune(pool: &PgPool) -> Result<PruneReport, aurora_db
                 r::prune_webhook_deliveries_over_cap(pool, WEBHOOK_DELIVERY_MAX_PER_WEBHOOK, b)
             })
             .await?,
+        calendar_invitations: drain(|| {
+            aurora_db::repo::calendar_invitations::prune_invitations(
+                pool,
+                CALENDAR_INVITATION_RETENTION.as_secs_f64(),
+                CALENDAR_REPEATING_RETENTION.as_secs_f64(),
+                b,
+            )
+        })
+        .await?
+            + drain(|| aurora_db::repo::calendar_invitations::prune_sends(pool, b)).await?,
     })
 }
 

@@ -29,6 +29,7 @@ mod auth;
 mod automation_continuity;
 mod avatars;
 mod byo;
+mod calendar_invitations;
 mod channels_cards;
 mod channels_inbox;
 mod channels_messaging;
