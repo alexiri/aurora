@@ -3,7 +3,12 @@
 //! The MCP bridge talks newline-delimited JSON over a Unix socket (`/run/aurora/tools.sock`):
 //! requests `{id, session, method: "list" | "call", tool?, arguments?}`, responses
 //! `{id, result}` or `{id, error: {code, message}}`. `session` is the conversation id. The socket
-//! is not a trust boundary: identity comes from the runner (sandbox/boot) and the API (turn check).
+//! is 0666 (the harness's bridge and its shell run as the sandbox user), but a call acts for a
+//! conversation only when the calling process descends from the harness process the supervisor
+//! started for it (FIX-151, D-301, SEC-121): the peer pid is read with `SO_PEERCRED` when the
+//! connection is accepted and its parent chain is walked in `/proc` for every request
+//! ([`crate::proc_ancestry`]). Any other caller is refused `session_not_caller`. The runner and
+//! the API still check the turn (`no_active_turn`).
 //!
 //! `list` answers with the local `process_*` descriptors merged with the synced remote catalogue
 //! (`.aurora/tools.json`, which holds remote tools only). `call` is executed locally for
@@ -15,6 +20,7 @@
 use std::collections::HashMap;
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -33,6 +39,7 @@ use uuid::Uuid;
 
 use crate::channel::ChannelSender;
 use crate::outbound::{OutboundError, OutboundFile, send_file};
+use crate::proc_ancestry::HarnessRegistry;
 use crate::process::{ProcessManager, code};
 
 pub const DEFAULT_SOCKET: &str = "/run/aurora/tools.sock";
@@ -62,6 +69,9 @@ pub struct ToolsConfig {
     pub file_timeout: Duration,
     /// (FIX-114) Tool calls in flight per socket connection; above it `tools_unavailable`.
     pub max_inflight: usize,
+    /// (FIX-151) Harnesses a caller may descend from; `None` is the process-wide registry the
+    /// launchers fill. Tests give their own.
+    pub registry: Option<Arc<HarnessRegistry>>,
 }
 
 impl Default for ToolsConfig {
@@ -74,6 +84,7 @@ impl Default for ToolsConfig {
             probe_interval: Duration::from_secs(5),
             home: PathBuf::from("/workspace"),
             file_timeout: FILE_RESULT_TIMEOUT,
+            registry: None,
         }
     }
 }
@@ -111,6 +122,13 @@ pub struct BridgeResponse {
     pub error: Option<BridgeError>,
 }
 
+/// The connecting process as `SO_PEERCRED` named it at accept, with its start time.
+#[derive(Debug, Clone, Copy)]
+struct Peer {
+    pid: u32,
+    start_time: u64,
+}
+
 #[derive(Default)]
 struct Breaker {
     failures: u32,
@@ -133,7 +151,14 @@ pub struct ToolHub {
     out: ChannelSender,
     procs: Arc<ProcessManager>,
     state: Mutex<HubState>,
+    registry: Arc<HarnessRegistry>,
+    /// (FIX-151) Calls refused `session_not_caller` since start (a count only: never arguments or
+    /// conversation ids).
+    refused: AtomicU64,
 }
+
+/// The uniform refusal text: it says nothing about which conversations exist.
+const NOT_CALLER: &str = "this process is not the harness of that conversation";
 
 fn fail(call_id: &str, c: &str, message: impl Into<String>) -> ToolResult {
     ToolResult::failure(
@@ -208,13 +233,49 @@ impl ToolHub {
         out: ChannelSender,
         procs: Arc<ProcessManager>,
     ) -> Arc<Self> {
+        let registry = cfg.registry.clone().unwrap_or_else(HarnessRegistry::global);
         Arc::new(Self {
             cfg,
             catalogue,
             out,
             procs,
             state: Mutex::default(),
+            registry,
+            refused: AtomicU64::new(0),
         })
+    }
+
+    /// Number of calls refused `session_not_caller` so far.
+    pub fn refused_calls(&self) -> u64 {
+        self.refused.load(Ordering::Relaxed)
+    }
+
+    /// (FIX-151) Whether the process behind a connection may act for `session`: the peer pid pinned
+    /// at accept (with its start time, so a recycled pid is a different peer) must still be the
+    /// same process and descend from the harness registered for that conversation.
+    fn caller_may_act_for(&self, peer: Option<Peer>, session: &str) -> bool {
+        let Some(peer) = peer else { return false };
+        let Ok(conversation) = Uuid::parse_str(session) else {
+            return false;
+        };
+        crate::proc_ancestry::read_stat(peer.pid).is_some_and(|s| s.start_time == peer.start_time)
+            && self.registry.conversation_of(peer.pid) == Some(conversation)
+    }
+
+    fn refusal(&self, id: u64) -> BridgeResponse {
+        let n = self.refused.fetch_add(1, Ordering::Relaxed) + 1;
+        tracing::warn!(
+            refused_total = n,
+            "tools socket call refused: session_not_caller"
+        );
+        BridgeResponse {
+            id,
+            result: None,
+            error: Some(BridgeError {
+                code: "session_not_caller".into(),
+                message: NOT_CALLER.into(),
+            }),
+        }
     }
 
     fn st(&self) -> std::sync::MutexGuard<'_, HubState> {
@@ -532,6 +593,18 @@ impl ToolHub {
     }
 
     async fn connection(self: Arc<Self>, conn: UnixStream) {
+        // (FIX-151) The kernel's record of who connected, read once at accept.
+        let peer = conn
+            .peer_cred()
+            .ok()
+            .and_then(|c| c.pid())
+            .and_then(|p| u32::try_from(p).ok())
+            .and_then(|pid| {
+                crate::proc_ancestry::read_stat(pid).map(|s| Peer {
+                    pid,
+                    start_time: s.start_time,
+                })
+            });
         let (r, mut w) = conn.into_split();
         let mut r = BufReader::new(r);
         let (tx, mut rx) = mpsc::channel::<BridgeResponse>(32);
@@ -570,6 +643,11 @@ impl ToolHub {
                     .await;
                 continue;
             };
+            // (FIX-151) Every request (list and call) is checked against the process tree now.
+            if !self.caller_may_act_for(peer, &req.session) {
+                let _ = tx.send(self.refusal(req.id)).await;
+                continue;
+            }
             // (FIX-114) In-flight cap per connection: above it the call is refused with
             // `tools_unavailable` instead of spawning one more task per request line.
             let Ok(permit) = inflight.clone().try_acquire_owned() else {

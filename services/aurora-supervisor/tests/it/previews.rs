@@ -129,6 +129,9 @@ async fn start_with_harvest(home: &TempDir, harvest: Option<Duration>) -> (TcpLi
     sc.process.uid = None;
     sc.process.debounce = Duration::from_millis(100);
     sc.tools.socket = Some(home.path().join("tools.sock"));
+    sc.tools.registry = Some(crate::common::registry_with_this_process_as_harness(
+        "00000000-0000-0000-0000-0000000000c1",
+    ));
     let sup = Supervisor::new(
         sc,
         chan.sender,
