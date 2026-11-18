@@ -355,6 +355,16 @@ by the owner 2026-11-15, D-318), see *S3-compatible blob store* under §Other la
   background starts before touching interactive chat, switchable live from Admin › Limits and from the
   CLI. Admin/Org/My usage views and abuse signals (report-only). **Abuse control only, not billing, plans or
   budgets (owner, D-276(b))**. Open questions Q-P6-LIM-1, 3..8, 10.
+- **Warm starts — proposed (`docs/tasks/P6-WARMPOOL.md`; owner, 2026-11-18, "a pool of warm
+  sandboxes").** A pool of generic pre-started sandboxes does not fit: the home volume, the boot
+  identity, the size and the runtime class are fixed when a sandbox is created. Proposed instead: measure
+  start time per phase (metric, Admin › Runners); start the agent's sandbox on the first keystroke in its
+  composer (a wake demand like the terminal's, which never evicts, never waits for capacity, is budgeted
+  per agent and person, and parks after a short grace); pre-created homes only if the measurement shows
+  a need. Companions in phase 5: FIX-175 (image pre-pulled on every sandbox node, D-378) and FIX-174
+  (`sandbox-min` on the minimal base, D-377). **Owner answers (D-379):** the first keystroke, on by
+  default, measurement and warm-on-intent together at the beginning of phase 6, pre-created homes or a
+  generic pool only after the measurements.
 - *(The P6-MODELS proposal moved to phase 5 by the owner, D-302(f); see §The harness chooses models
   above.)*
 

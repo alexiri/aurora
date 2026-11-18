@@ -25,6 +25,7 @@ import { TopicPage } from "@/components/topic-page";
 import { EmbeddedPage } from "@/components/ui/page-header";
 import { Section } from "@/components/ui/section";
 import { UsageView } from "@/components/usage/usage-view";
+import { OutgoingWebhooksAdminSection } from "@/components/webhook/admin-webhook-section";
 import type { TABS } from "@/lib/routes";
 
 type Tabs<K extends keyof typeof TABS> = (typeof TABS)[K][number];
@@ -90,6 +91,8 @@ export function AdminAppsPage() {
                   <section id="host-conflicts">
                     <HostClaimsView />
                   </section>
+                  {/* (P5-WEBHOOK-4, C-913) The `outgoing_webhooks` settings section, through SET-5's generic section form. */}
+                  <OutgoingWebhooksAdminSection />
                 </div>
               </EmbeddedPage>
             ),

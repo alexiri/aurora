@@ -263,31 +263,49 @@ async fn connection(
     conn
 }
 
-fn tools_sock(container: &str, req: &Value) -> String {
-    let script = "import socket,sys\ns=socket.socket(socket.AF_UNIX);s.settimeout(20)\ns.connect('/run/aurora/tools.sock');s.sendall((sys.argv[1]+'\\n').encode());print(s.makefile().readline())";
-    podman_rc(&[
-        "exec",
-        "--user",
-        "1000:1000",
-        container,
-        "python3",
-        "-c",
-        script,
-        &req.to_string(),
-    ])
-    .1
+/// (FIX-151) One tools-socket request made **from the harness's own child**: the fake adapter's
+/// `[[shell: …]]` directive runs the python client as a registered child of the harness, in a turn
+/// of `conv`; the response line is read back from the container. A plain `podman exec` caller
+/// descends from no harness and is refused `session_not_caller` (as in `hosted.rs`).
+async fn tools_sock(st: &Stack, api: &Api, c: &str, conv: &str, req: &Value) -> String {
+    let body = req.to_string();
+    assert!(
+        !body.contains("]]"),
+        "a directive cannot carry `]]`: {body}"
+    );
+    let script = "import socket,sys;s=socket.socket(socket.AF_UNIX);s.settimeout(20);s.connect(\"/run/aurora/tools.sock\");s.sendall((sys.argv[1]+\"\\n\").encode());print(s.makefile().readline())";
+    let q = |s: &str| format!("'{}'", s.replace('\'', "'\\''"));
+    let cmd = format!(
+        "python3 -c {} {} > /tmp/toolsock.out 2>&1",
+        q(script),
+        q(&body)
+    );
+    let v = api.say(conv, &format!("[[shell: {cmd}]]")).await;
+    let (s, e) = st
+        .wait_turn(
+            v["turn"]["id"].as_str().unwrap(),
+            &["done", "failed", "aborted"],
+            120,
+        )
+        .await;
+    assert_eq!((s.as_str(), e), ("done", None), "{}", st.log_tails());
+    exec_in(c, "cat /tmp/toolsock.out").1
 }
 
 /// Runs `command` as the agent would (the tools socket's `process_start`) and returns what it wrote.
-async fn run(c: &str, conv: &str, name: &str, command: &str) -> String {
+async fn run(st: &Stack, api: &Api, c: &str, conv: &str, name: &str, command: &str) -> String {
     let cmd = format!(
         "{{ {command}; }} > /workspace/{name}.out 2>&1; echo done-marker >> /workspace/{name}.out"
     );
     let r = tools_sock(
+        st,
+        api,
         c,
+        conv,
         &json!({"id": 1, "session": conv, "method": "call", "tool": "process_start",
                 "arguments": {"name": name, "command": cmd}}),
-    );
+    )
+    .await;
     assert!(r.contains("\"result\""), "process_start: {r}");
     let end = std::time::Instant::now() + Duration::from_secs(60);
     loop {
@@ -429,7 +447,7 @@ async fn s15_link_lanes_ics_and_caldav_hold_no_secret_in_the_sandbox() {
         "{url}"
     );
     let out = run(
-        cn, &conv, "ics",
+        &st, &api, cn, &conv, "ics",
         &format!("curl -sS -o /workspace/cal.ics -w 'status=%{{http_code}}\\n' '{url}'; head -c 200 /workspace/cal.ics"),
     )
     .await;
@@ -461,7 +479,7 @@ async fn s15_link_lanes_ics_and_caldav_hold_no_secret_in_the_sandbox() {
     assert_eq!(servers[0]["app"], "caldav");
     assert_eq!(servers[0]["url"], home.as_str());
     let out = run(
-        cn, &conv, "dav1",
+        &st, &api, cn, &conv, "dav1",
         &format!(
             "curl -sS -X PROPFIND -H 'Depth: 1' -w '\\nstatus=%{{http_code}}\\n' '{home}'; \
              printf 'BEGIN:VCALENDAR\\r\\nBEGIN:VEVENT\\r\\nUID:n1\\r\\nSUMMARY:Created by the agent\\r\\nEND:VEVENT\\r\\nEND:VCALENDAR\\r\\n' > /workspace/n1.ics; \
@@ -493,7 +511,7 @@ async fn s15_link_lanes_ics_and_caldav_hold_no_secret_in_the_sandbox() {
 
     // Credential scope: the same host on another port, and a pinned origin over plain http.
     let out = run(
-        cn, &conv, "scope",
+        &st, &api, cn, &conv, "scope",
         &format!(
             "curl -sS -X PROPFIND -w '\\nother=%{{http_code}}\\n' 'https://127.0.0.2:{other_port}/dav/'; \
              curl -sS -X PROPFIND -w '\\nplain=%{{http_code}}\\n' 'http://127.0.0.2:{plain_port}/dav/'"

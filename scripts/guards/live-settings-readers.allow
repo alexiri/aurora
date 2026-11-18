@@ -1,0 +1,8 @@
+# FIX-168: boot-config readers of live-settings sections that are correct as they are, one
+# `section.key reason` per line. Ratchet: an entry nobody reads fails the guard.
+# Deliberately not listed because not live: `ssh.*` (`ssh/plane.rs`, `ssh/sessions.rs`,
+# `settings/service.rs` `check_ssh_needs_terminal`) is a startup-only key (D-358): no `ssh.` key is in
+# the settings registry or in `install_live_ops`'s PREFIXES, so reading `config.ssh.enabled` is right.
+# Should `ssh.` ever become live, the guard picks it up from PREFIXES and these readers must move.
+previews.enabled configuration-only (NOT_SETTINGS, settings.rs)
+previews.domain configuration-only (NOT_SETTINGS, settings.rs)
