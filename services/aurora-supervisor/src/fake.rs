@@ -1,7 +1,8 @@
 //! Adapter `fake`: in-process, directive-driven, no LLM (`docs/12-supervisor-harness.md`).
 //!
 //! Directives in the turn text: `[[say: …]]`, `[[tool: name {json}]]`, `[[http: GET url]]`
-//! (through the session proxy; a JSON body may follow the URL), `[[sleep: 2s]]`, `[[fail: code]]`, `[[steer-accept]]`. Without any
+//! (through the session proxy; a JSON body may follow the URL), `[[shell: cmd]]` (FIX-151: `sh -c cmd` as a registered child of
+//! the fake harness, so it may call platform tools; the command must not contain `]]`), `[[sleep: 2s]]`, `[[fail: code]]`, `[[steer-accept]]`. Without any
 //! directive the turn echoes the text word by word.
 
 use std::path::{Path, PathBuf};
@@ -114,6 +115,7 @@ enum Directive {
     Say(String),
     Tool(String, Value),
     Http(String, String),
+    Shell(String),
     Sleep(Duration),
     Fail(String),
     SteerAccept,
@@ -151,6 +153,7 @@ fn parse(text: &str) -> Vec<Directive> {
                 let (m, u) = arg.split_once(char::is_whitespace).unwrap_or(("GET", arg));
                 out.push(Directive::Http(m.to_owned(), u.trim().to_owned()));
             }
+            "shell" => out.push(Directive::Shell(arg.to_owned())),
             "sleep" => out.push(Directive::Sleep(parse_duration(arg))),
             "fail" => out.push(Directive::Fail(arg.to_owned())),
             "steer-accept" => out.push(Directive::SteerAccept),
@@ -219,6 +222,9 @@ impl HarnessSession for FakeSession {
                 .map(|(_, v)| v.clone())
                 .or_else(|| std::env::var("SSL_CERT_FILE").ok())
                 .unwrap_or_else(|| crate::boot::DEFAULT_CA_PATH.to_owned()),
+            conversation_id: self.opts.conversation_id,
+            cwd: self.opts.working_dir.clone(),
+            env: self.opts.env.clone(),
         };
         self.turn = Some(turn);
         tokio::spawn(async move {
@@ -278,9 +284,46 @@ struct Script {
     send_now: Arc<Notify>,
     proxy_url: String,
     ca_path: String,
+    conversation_id: uuid::Uuid,
+    cwd: PathBuf,
+    env: Vec<(String, String)>,
 }
 
+/// Longest a `[[shell: …]]` command may run.
+const SHELL_TIMEOUT: Duration = Duration::from_secs(90);
+
 impl Script {
+    /// `[[shell: cmd]]`: runs `cmd` as a child of this fake harness, which is registered as the
+    /// harness of the conversation for the duration (FIX-151), so a platform-tool call made by `cmd` is
+    /// "from the harness" exactly as the real adapters' bridge and shell are. The fake adapter is
+    /// reachable only on instances with `hosted.allow_fake_harness` (e2e and development).
+    async fn shell(&self, cmd: &str) -> String {
+        let mut c = crate::spawn::tokio_command("sh", self.env.iter().map(|(k, v)| (k, v)));
+        c.arg("-c")
+            .arg(cmd)
+            .current_dir(&self.cwd)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .kill_on_drop(true);
+        let child = match c.spawn() {
+            Ok(c) => c,
+            Err(e) => return format!("shell: cannot start: {e}"),
+        };
+        let _registration = child.id().and_then(|pid| {
+            crate::proc_ancestry::HarnessRegistry::global().register(pid, self.conversation_id)
+        });
+        match tokio::time::timeout(SHELL_TIMEOUT, child.wait_with_output()).await {
+            Ok(Ok(o)) => format!(
+                "{}{}",
+                String::from_utf8_lossy(&o.stdout),
+                String::from_utf8_lossy(&o.stderr)
+            ),
+            Ok(Err(e)) => format!("shell: {e}"),
+            Err(_) => "shell: timed out".to_owned(),
+        }
+    }
+
     async fn emit(&self, ev: HarnessEvent) -> bool {
         self.tx.send(ev).await.is_ok()
     }
@@ -334,6 +377,20 @@ impl Script {
                     let line = format!("{method} {url}");
                     let r = self.http(&method, &url).await;
                     self.emit(HarnessEvent::Activity { line }).await
+                        && self
+                            .emit(HarnessEvent::TextDelta {
+                                message_id: format!("m{}", msg_n + 1),
+                                delta: r,
+                                reply_to: None,
+                            })
+                            .await
+                }
+                Directive::Shell(cmd) => {
+                    let r = self.shell(&cmd).await;
+                    self.emit(HarnessEvent::Activity {
+                        line: "shell".into(),
+                    })
+                    .await
                         && self
                             .emit(HarnessEvent::TextDelta {
                                 message_id: format!("m{}", msg_n + 1),

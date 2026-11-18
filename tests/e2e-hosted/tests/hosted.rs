@@ -406,6 +406,27 @@ fn tools_sock(container: &str, req: &Value) -> String {
     .1
 }
 
+/// (FIX-151) One tools-socket request made **from the harness's own child**: the fake adapter's
+/// `[[shell: …]]` directive runs the python client as a registered child of the harness, in a turn
+/// of `conv`; the response line is read back from the container. A plain `podman exec` caller
+/// (`tools_sock`) descends from no harness and is refused `session_not_caller`.
+async fn tools_sock_as_harness(st: &Stack, api: &Api, c: &str, conv: &str, req: &Value) -> String {
+    let body = req.to_string();
+    assert!(
+        !body.contains("]]"),
+        "a directive cannot carry `]]`: {body}"
+    );
+    let script = "import socket,sys;s=socket.socket(socket.AF_UNIX);s.settimeout(20);s.connect(\"/run/aurora/tools.sock\");s.sendall((sys.argv[1]+\"\\n\").encode());print(s.makefile().readline())";
+    let q = |s: &str| format!("'{}'", s.replace('\'', "'\\''"));
+    let cmd = format!(
+        "python3 -c {} {} > /tmp/toolsock.out 2>&1",
+        q(script),
+        q(&body)
+    );
+    run_turn(st, api, conv, &format!("[[shell: {cmd}]]")).await;
+    exec_in(c, "cat /tmp/toolsock.out").1
+}
+
 /// TCP connect probe from inside the sandbox: true when connected.
 fn can_connect(c: &str, host: &str, port: u16) -> bool {
     exec_in(c, &format!("timeout 3 bash -c '</dev/tcp/{host}/{port}'")).0 == 0
@@ -597,11 +618,11 @@ async fn s8_security_probes() {
     );
     check(
         "SEC-24 forged session",
-        // Refused either way: since FIX-110 a platform tool call outside a running turn is
-        // refused first (`no_active_turn`); with a turn running, the API fences forged identity
-        // (`not_found`; `api/it/tools.rs::identity_comes_from_authenticated_facts` covers forged
-        // turn/conversation/stale boot/finished turn). Never `"ok":true`.
-        r.contains("\"ok\":false") && (r.contains("not_found") || r.contains("no_active_turn")),
+        // FIX-151 (SEC-121): this `podman exec` process descends from no harness, so the socket
+        // refuses it before anything else (`session_not_caller`), whatever conversation it names.
+        // (A forged identity from a harness's own child is fenced by the API:
+        // `api/it/tools.rs::identity_comes_from_authenticated_facts`.) Never `"ok":true`.
+        r.contains("session_not_caller") && !r.contains("\"ok\":true"),
         r.clone(),
     );
 
@@ -700,15 +721,27 @@ async fn s8b_gateway_and_runner_ops_ports_unreachable_from_sandbox() {
 /// Runs `command` as a background process through the supervisor's `process_start` tool (over the
 /// tools socket, as the agent would) and returns what it wrote to `/workspace/<name>.out` once it
 /// printed the `done` marker. Fails after `secs`.
-async fn process_output(c: &str, conv: &str, name: &str, command: &str, secs: u64) -> String {
+async fn process_output(
+    st: &Stack,
+    api: &Api,
+    c: &str,
+    conv: &str,
+    name: &str,
+    command: &str,
+    secs: u64,
+) -> String {
     let cmd = format!(
         "{{ {command}; }} > /workspace/{name}.out 2>&1; echo done-marker >> /workspace/{name}.out"
     );
-    let r = tools_sock(
+    let r = tools_sock_as_harness(
+        st,
+        api,
         c,
+        conv,
         &json!({"id": 1, "session": conv, "method": "call", "tool": "process_start",
                 "arguments": {"name": name, "command": cmd}}),
-    );
+    )
+    .await;
     assert!(r.contains("\"result\""), "process_start: {r}");
     let mut out = String::new();
     let end = std::time::Instant::now() + Duration::from_secs(secs);
@@ -787,6 +820,8 @@ async fn s8c_process_start_children_have_no_boot_material_in_their_environment()
     // plus its parent's (the shell's parent is the supervisor on some layouts; PID 1 must stay
     // unreadable, as s8 checks).
     let out = process_output(
+        &st,
+        &api,
         c,
         &conv,
         "envprobe",
@@ -813,11 +848,15 @@ async fn s8c_process_start_children_have_no_boot_material_in_their_environment()
     // `/proc/<pid>/environ` another agent-uid process reads. (Not a sweep over every PID: processes
     // started by `podman exec` get the container's configured environment, `AURORA_BOOT` included,
     // by podman's design; only supervisor-spawned processes are the agent-visible ones.)
-    let r = tools_sock(
+    let r = tools_sock_as_harness(
+        &st,
+        &api,
         c,
+        &conv,
         &json!({"id": 2, "session": conv, "method": "call", "tool": "process_start",
                 "arguments": {"name": "sleeper", "command": "exec sleep 301"}}),
-    );
+    )
+    .await;
     assert!(r.contains("\"result\""), "process_start: {r}");
     let cn = c.to_owned();
     let found = eventually(30, move || {
@@ -2002,18 +2041,25 @@ async fn s11_database_lane_psql_service_read_allowed_write_needs_approval() {
     let cs = containers();
     assert_eq!(cs.len(), 1);
     let cn = cs[0].as_str();
-    let psql = |name: &str, sql: &str| {
+    let psql = |name: &'static str, sql: &'static str| {
         let cmd = format!(
             "psql service={service} -At -c \"{sql}\" > /workspace/{name}.out 2>&1; echo rc=$? >> /workspace/{name}.out"
         );
-        let r = tools_sock(
-            cn,
-            &json!({"id": 1, "session": c, "method": "call", "tool": "process_start",
-                    "arguments": {"name": name, "command": cmd}}),
-        );
-        assert!(r.contains("\"result\""), "process_start: {r}");
+        let (st, api, conv) = (&st, &api, c.as_str());
+        async move {
+            let r = tools_sock_as_harness(
+                st,
+                api,
+                cn,
+                conv,
+                &json!({"id": 1, "session": conv, "method": "call", "tool": "process_start",
+                        "arguments": {"name": name, "command": cmd}}),
+            )
+            .await;
+            assert!(r.contains("\"result\""), "process_start: {r}");
+        }
     };
-    psql("read", "select 40 + 2");
+    psql("read", "select 40 + 2").await;
     let read_out = {
         let mut out = String::new();
         for _ in 0..60 {
@@ -2073,7 +2119,8 @@ async fn s11_database_lane_psql_service_read_allowed_write_needs_approval() {
     psql(
         "write",
         "insert into e2e_t values (1, 'top-secret-literal')",
-    );
+    )
+    .await;
     let a = api.wait_pending().await;
     assert_eq!(a["path"], "/write", "{a}");
     let summary = a["summary"].to_string();
@@ -2113,7 +2160,7 @@ async fn s11_database_lane_psql_service_read_allowed_write_needs_approval() {
     assert_eq!(n, 1);
 
     // A schema change has no grant: refused with 42501, nothing reaches the database.
-    psql("ddl", "drop table e2e_t");
+    psql("ddl", "drop table e2e_t").await;
     let mut ddl_out = String::new();
     for _ in 0..60 {
         ddl_out = exec_in(cn, "cat /workspace/ddl.out 2>/dev/null").1;
@@ -2180,6 +2227,8 @@ print("=== end")
 /// Runs `steps` in an interactive login `shell` through the supervisor (as the agent) and returns
 /// the transcript, one string per step (index 0 = the start-up output, index n = step n).
 async fn terminal_steps(
+    st: &Stack,
+    api: &Api,
     c: &str,
     conv: &str,
     name: &str,
@@ -2199,6 +2248,8 @@ async fn terminal_steps(
     );
     assert_eq!(rc, 0, "could not write the PTY driver: {w}");
     let out = process_output(
+        st,
+        api,
         c,
         conv,
         name,
@@ -2248,7 +2299,8 @@ async fn s13_terminal_shells_complete_alias_colour_and_resolve_the_wrappers() {
         "\r",                                              // 12
     ];
     for (shell, tag) in [("/bin/bash", "bash"), ("/usr/bin/zsh", "zsh")] {
-        let parts = terminal_steps(c, &conv, &format!("term-{tag}"), shell, &steps).await;
+        let parts =
+            terminal_steps(&st, &api, c, &conv, &format!("term-{tag}"), shell, &steps).await;
         assert!(
             parts.len() >= 13,
             "{tag}: the driver did not finish: {parts:?}"
@@ -2402,6 +2454,8 @@ default_model = "say"
 
     // The terminal, as a person types it: `rg`, the wrappers, a refused harness, the environment.
     let out = process_output(
+        &st,
+        &api,
         c,
         &conv,
         "termcli",
@@ -2423,6 +2477,8 @@ default_model = "say"
     );
 
     let run = process_output(
+        &st,
+        &api,
         c,
         &conv,
         "termcodex",
