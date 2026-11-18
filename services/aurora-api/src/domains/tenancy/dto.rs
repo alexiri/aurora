@@ -185,6 +185,10 @@ pub struct Workspace {
     /// `GET /v1/workspaces/{ws}` only.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub contacts: Option<crate::http::who_can::Contacts>,
+    /// (P5-UX-11, C-947) Present on a personal workspace in `GET /v1/orgs/{org}/workspaces`: the
+    /// person it was made for.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub personal_of: Option<PersonalOf>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -203,6 +207,7 @@ impl Workspace {
             my_role,
             frozen: None,
             contacts: None,
+            personal_of: None,
             created_at: w.created_at,
             updated_at: w.updated_at,
         }

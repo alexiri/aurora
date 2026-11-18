@@ -24,6 +24,7 @@ export function AccessControl({
   workspaceId,
   canChange,
   startOpen = false,
+  orgName,
 }: {
   account: Account;
   entry: AgentAccess;
@@ -31,6 +32,8 @@ export function AccessControl({
   canChange: boolean;
   /** A `custom_only` app opens the table directly (C-410). */
   startOpen?: boolean;
+  /** The organization that limits the account, for "Limited by <org>". */
+  orgName?: string;
 }) {
   const put = usePutAccess();
   const grants = useGrants(entry.agent.id);
@@ -118,7 +121,7 @@ export function AccessControl({
 
   return (
     <div className="w-full space-y-3">
-      <AccessChoice account={account} agentName={entry.agent.name} value={level} disabled={put.isPending} onChange={(l) => put.mutate({ agentId: entry.agent.id, connectionId: account.ref.id, body: { level: l } })} />
+      <AccessChoice account={account} orgName={orgName} agentName={entry.agent.name} value={level} disabled={put.isPending} onChange={(l) => put.mutate({ agentId: entry.agent.id, connectionId: account.ref.id, body: { level: l } })} />
       {alwaysList}
       {customNote}
       {put.isError ? <ErrorState error={put.error} /> : null}

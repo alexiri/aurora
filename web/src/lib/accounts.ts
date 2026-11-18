@@ -54,6 +54,35 @@ export function isLimited(account: Pick<Account, "levels" | "limit" | "app">): b
   return account.limit !== undefined && account.limit !== null && account.levels.length > 0 && account.limit !== "act";
 }
 
+/**
+ * Where **Connect** on the organization's Apps tab can connect (C-947): the person's own and shared workspaces lead,
+ * other people's personal workspaces are folded away. `me` is the person's user id.
+ */
+export function splitWorkspaces<T extends { personal_of?: { id: string } | null }>(items: T[], me: string | undefined): { mine: T[]; others: T[] } {
+  const others = items.filter((w) => !!w.personal_of && w.personal_of.id !== me);
+  return { mine: items.filter((w) => !others.includes(w)), others };
+}
+
+/** What an agent's access reads as in the lowering confirmation: a choice, "Custom", or nothing left (C-990). */
+function loweredLabel(level: string): string {
+  return level in LEVEL_LABEL ? LEVEL_LABEL[level as Level] : level === "none" ? "No access" : "Custom";
+}
+
+/**
+ * The confirmation before a limit is lowered (C-937, C-990): one sentence per kind of change, "3 agents go from Change
+ * without asking to Read only". An empty list says nothing changes.
+ */
+export function loweringSentences(lowered: ReadonlyArray<{ from: string; to: string }>): string[] {
+  const counts = new Map<string, { n: number; from: string; to: string }>();
+  for (const l of lowered) {
+    const key = `${l.from}>${l.to}`;
+    const c = counts.get(key);
+    if (c) c.n += 1;
+    else counts.set(key, { n: 1, from: l.from, to: l.to });
+  }
+  return [...counts.values()].map((c) => `${c.n} ${c.n === 1 ? "agent goes" : "agents go"} from ${loweredLabel(c.from)} to ${loweredLabel(c.to)}`);
+}
+
 /** The agents that can use the account first-hand are the ones listed; "Not given" are the rest of an agent's view. */
 export function splitGiven(accounts: Account[]): { given: Account[]; notGiven: Account[] } {
   return { given: accounts.filter((a) => a.given !== false), notGiven: accounts.filter((a) => a.given === false) };

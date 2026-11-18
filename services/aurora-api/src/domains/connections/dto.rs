@@ -68,6 +68,9 @@ pub struct Connection {
     /// (FIX-133, D-240) `read` | `write`: a `read` connection allows only the app's read tools
     /// (the gateway blocks write tools and untooled requests through it, whatever the grants say).
     pub access: String,
+    /// (P5-UX-11, C-990) The limit of an organization's account: no agent's access may exceed it;
+    /// `null` for a workspace's account.
+    pub limit: Option<crate::domains::grants::levels::Level>,
     /// The registered instance of an instance-bound app; `null` for `default_host` and other apps.
     pub instance: Option<InstanceRef>,
     pub credentials_expires_at: Option<DateTime<Utc>>,
@@ -149,6 +152,12 @@ impl Connection {
             tenant_host: r.tenant_host,
             oauth_client_id: r.oauth_client_id,
             connect_method: r.connect_method,
+            limit: r.workspace_id.is_none().then(|| {
+                crate::domains::grants::levels::connection_limit(
+                    r.limit_level.as_deref(),
+                    &r.access,
+                )
+            }),
             access: r.access,
             instance,
             credentials_expires_at: r.credentials_expires_at,
@@ -200,6 +209,40 @@ pub struct ListQuery {
     pub cursor: Option<String>,
 }
 
+#[derive(Debug, Deserialize, IntoParams)]
+pub struct LimitPreviewQuery {
+    /// The limit being considered (required; checked after the caller is authorized).
+    pub limit: Option<crate::domains::grants::levels::Level>,
+}
+
+/// An agent a lower limit would change (C-990). `from` and `to` are `read` | `ask` | `act` |
+/// `custom`; `to` is `none` when nothing of the agent's access is left.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct LoweredAgentView {
+    pub agent: LoweredAgentRef,
+    pub workspace: LoweredWorkspaceRef,
+    pub from: String,
+    pub to: String,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct LoweredAgentRef {
+    pub id: Uuid,
+    pub name: String,
+    pub handle: String,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct LoweredWorkspaceRef {
+    pub id: Uuid,
+    pub name: String,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct LimitPreview {
+    pub lowered: Vec<LoweredAgentView>,
+}
+
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PatchConnectionRequest {
@@ -208,6 +251,10 @@ pub struct PatchConnectionRequest {
     pub status: Option<String>,
     /// (FIX-133, D-240) `read` | `write`; whoever can manage the connection may change it.
     pub access: Option<String>,
+    /// (P5-UX-11, C-990, SEC-131) The limit of an organization's account (org owner/admin).
+    /// Lowering it lowers every agent's access above it, in the same transaction. `access` on an
+    /// organization's account maps to a limit (`read` → `read`, `write` → `act`).
+    pub limit: Option<crate::domains::grants::levels::Level>,
     /// (FIX-136, D-241) Replace the scopes the connection has: only for a connection made with a
     /// `fields` method that declares scopes (a pasted token's scopes are declared by the person, an
     /// OAuth connection's are what the provider granted), each one of that method's scopes.

@@ -46,11 +46,14 @@ pub enum Origin {
     /// (P5-UX-16, C-982, SEC-131) Always allow on an approval: replaces the agent's grant;
     /// audited with `details.via = "approval"` and the approval id.
     Approval(Uuid),
+    /// (P5-UX-11, C-990, SEC-131) The limit of an organization's account was lowered: replaces
+    /// the agent's grant with what fits; audited with `details.via = "limit"`.
+    Limit,
 }
 
 impl Origin {
     fn replaces(self) -> bool {
-        matches!(self, Self::Agent | Self::Approval(_))
+        matches!(self, Self::Agent | Self::Approval(_) | Self::Limit)
     }
 }
 
@@ -71,6 +74,7 @@ fn with_via(origin: Origin, mut meta: serde_json::Value) -> serde_json::Value {
             meta["via"] = json!("approval");
             meta["approval_id"] = json!(id);
         }
+        Origin::Limit => meta["via"] = json!("limit"),
         Origin::Agent => {}
     }
     meta
@@ -868,7 +872,7 @@ async fn write_connection_grant(
 ) -> Result<Written<ConnectionGrant>, ApiError> {
     // Everything below runs on the transaction's own connection: a second pool connection taken
     // while this one is pinned could starve the pool under many concurrent writers.
-    let conn = connections::get(&mut **tx, connection_id)
+    let mut conn = connections::get(&mut **tx, connection_id)
         .await?
         .filter(|c| {
             c.org_id == agent.org_id
@@ -876,6 +880,15 @@ async fn write_connection_grant(
                 && c.workspace_id.is_none_or(|w| w == agent.workspace_id)
         })
         .ok_or_else(|| ApiError::not_found("Connection not found."))?;
+    // (P5-UX-11, SEC-131) A grant on an organization's account and a change of its limit exclude
+    // each other: lowering the limit locks the row, this takes it shared and then reads the limit
+    // again, so no grant above a limit that just committed is written.
+    if conn.workspace_id.is_none() {
+        connections::lock_shared(&mut **tx, conn.id).await?;
+        conn = connections::get(&mut **tx, connection_id)
+            .await?
+            .ok_or_else(|| ApiError::not_found("Connection not found."))?;
+    }
     // (P4-GRANTS, D-123, SEC-67) An app whose manifest says `custom_only` is never granted in
     // `full` mode, on any path: this function is the only writer of connection grants, so the
     // agent-side PUT and the credential-side bulk route both stop here.
@@ -965,7 +978,7 @@ async fn write_connection_grant(
     // written, whichever path asked (levels, custom lists, the bulk route, the journey). The
     // starter grants (`by == None`, written as the system) are the platform's own and unchecked.
     if conn.workspace_id.is_none() && by.is_some() {
-        let limit = levels::limit_from_access(&conn.access);
+        let limit = levels::connection_limit(conn.limit_level.as_deref(), &conn.access);
         if levels::exceeds_limit(limit, req.mode == GrantMode::Full, &allow, &ask, &app_tools) {
             return Err(ApiError::unprocessable(
                 "above_account_limit",
@@ -1068,20 +1081,23 @@ async fn write_connection_grant(
     credentials::notify_gateway_invalidate(&mut **tx, "agent", agent.id).await?;
     // (P5-UX-17, SEC-132) The agent's open request for this app is resolved by this real change of
     // access, in this transaction: the conversation is told and, if the asking turn has ended,
-    // one system turn restarts the agent. Fixed platform text only.
-    crate::domains::access_requests::service::on_access_given(
-        tx,
-        state,
-        agent,
-        &conn.app_id,
-        crate::domains::access_requests::service::level_of(
-            req.mode == GrantMode::Full,
-            &allow,
-            &ask,
-            &app_tools,
-        ),
-    )
-    .await?;
+    // one system turn restarts the agent. Fixed platform text only. A lowered limit gives
+    // nothing, so it resolves nothing.
+    if origin != Origin::Limit {
+        crate::domains::access_requests::service::on_access_given(
+            tx,
+            state,
+            agent,
+            &conn.app_id,
+            crate::domains::access_requests::service::level_of(
+                req.mode == GrantMode::Full,
+                &allow,
+                &ask,
+                &app_tools,
+            ),
+        )
+        .await?;
+    }
     let ev = event_by(
         actor,
         "grant.create",
@@ -1157,4 +1173,165 @@ pub async fn revoke_connection(
     );
     audit::commit_critical(tx, &ev).await?;
     Ok(id)
+}
+
+/// One agent whose access a lowered limit changes (C-990): what it is now and what it becomes
+/// (`to` is a level, `custom`, or `none` when nothing of the grant is left).
+#[derive(Debug, Clone)]
+pub struct LoweredAgent {
+    pub agent_id: Uuid,
+    pub agent_name: String,
+    /// Filled by [`limit_preview`].
+    pub agent_handle: String,
+    pub workspace_id: Uuid,
+    pub workspace_name: String,
+    pub from: &'static str,
+    pub to: &'static str,
+    /// `None` = the grant is removed.
+    pub grant: Option<PutConnectionGrant>,
+}
+
+fn choice_label(
+    full: bool,
+    allow: &[String],
+    ask: &[String],
+    tools: &[crate::domains::apps::dto::Tool],
+) -> &'static str {
+    match levels::classify(full, allow, ask, tools).choice {
+        levels::Choice::Level(l) => l.as_str(),
+        levels::Choice::Custom { .. } => "custom",
+    }
+}
+
+/// The agents of `rows` whose saved access exceeds `limit`, with what each becomes (C-990,
+/// SEC-131). Raising a limit lowers nobody: callers only ask for the limit being set.
+fn plan_lowering(
+    rows: Vec<grants::ConnectionGrantViewRow>,
+    limit: levels::Level,
+    tools: &[crate::domains::apps::dto::Tool],
+) -> Vec<LoweredAgent> {
+    rows.into_iter()
+        .filter_map(|g| {
+            let full = g.mode == "full";
+            let (nf, allow, ask) =
+                levels::lowered_grant(limit, full, &g.allow_tools, &g.ask_tools, tools)?;
+            let from = choice_label(full, &g.allow_tools, &g.ask_tools, tools);
+            let (to, grant) = if allow.is_empty() && ask.is_empty() {
+                ("none", None)
+            } else {
+                (
+                    choice_label(nf, &allow, &ask, tools),
+                    Some(PutConnectionGrant {
+                        mode: GrantMode::Custom,
+                        allow_tools: allow,
+                        ask_tools: ask,
+                        ask_timeout_secs: None,
+                    }),
+                )
+            };
+            Some(LoweredAgent {
+                agent_id: g.agent_id,
+                agent_name: g.agent_name,
+                agent_handle: String::new(),
+                workspace_id: g.workspace_id,
+                workspace_name: g.workspace_name,
+                from,
+                to,
+                grant,
+            })
+        })
+        .collect()
+}
+
+async fn app_tools_of(
+    tx_or_pool: &mut sqlx::PgConnection,
+    app_id: &str,
+) -> Result<Vec<crate::domains::apps::dto::Tool>, ApiError> {
+    let snap = crate::domains::plugins::registry::active_typed_on(tx_or_pool).await?;
+    Ok(snap
+        .as_ref()
+        .and_then(|s| s.app(app_id))
+        .map(apps::tools)
+        .unwrap_or_default())
+}
+
+/// `GET /connections/{id}/limit-preview?limit=`: who a lower limit would change (C-990). Reads
+/// only; nothing is written.
+pub async fn limit_preview(
+    state: &AppState,
+    conn: &connections::ConnectionRow,
+    limit: levels::Level,
+) -> Result<Vec<LoweredAgent>, ApiError> {
+    let mut c = state.pool.acquire().await.map_err(DbError::from)?;
+    let tools = app_tools_of(&mut c, &conn.app_id).await?;
+    let rows = grants::list_views_for_connection(&mut *c, conn.id).await?;
+    let mut plan = plan_lowering(rows, limit, &tools);
+    for l in &mut plan {
+        if let Some(a) = agents::get(&mut *c, l.agent_id).await? {
+            l.agent_handle = a.handle;
+        }
+    }
+    Ok(plan)
+}
+
+/// Sets an organization account's limit and lowers every agent's access above it, in the
+/// caller's transaction (C-990, SEC-131). Raising changes no agent. Returns the audit rows of
+/// the grants it changed (`via: "limit"`) for the caller to commit with the limit's own row.
+pub async fn set_limit_in_tx(
+    tx: &mut audit::Tx,
+    state: &AppState,
+    caller: &Caller,
+    conn: &connections::ConnectionRow,
+    limit: levels::Level,
+) -> Result<Vec<AuditEvent>, ApiError> {
+    connections::lock_for_update(&mut **tx, conn.id).await?;
+    connections::set_limit(&mut **tx, conn.id, limit.as_str()).await?;
+    let tools = app_tools_of(tx, &conn.app_id).await?;
+    let rows = grants::list_views_for_connection(&mut **tx, conn.id).await?;
+    let mut events = Vec::new();
+    for l in plan_lowering(rows, limit, &tools) {
+        let agent = agents::get(&mut **tx, l.agent_id)
+            .await?
+            .ok_or_else(|| ApiError::not_found("Agent not found."))?;
+        match l.grant {
+            Some(g) => {
+                let w = write_connection_grant(
+                    tx,
+                    state,
+                    &agent,
+                    conn.id,
+                    g,
+                    Origin::Limit,
+                    AuditActor::from_caller(caller),
+                    Some(caller.user_id),
+                )
+                .await?;
+                events.extend(w.event);
+            }
+            None => {
+                let id = grants::delete_connection_grant(&mut **tx, agent.id, conn.id)
+                    .await?
+                    .ok_or_else(|| ApiError::not_found("Grant not found."))?;
+                derived_rules::delete_for_source(&mut **tx, "grant", id).await?;
+                let ended = approvals::abandon_pending_depending_on(
+                    tx,
+                    approvals::Dependency::Connection {
+                        connection_id: conn.id,
+                        agent_id: Some(agent.id),
+                    },
+                )
+                .await?;
+                resume::notify_ended(tx, &ended, "access_removed").await?;
+                credentials::notify_gateway_invalidate(&mut **tx, "agent", agent.id).await?;
+                events.push(event(
+                    caller,
+                    "grant.delete",
+                    &agent,
+                    json!({"connection_id": conn.id, "agent_handle": agent.handle,
+                           "grant": null, "via": "limit"}),
+                ));
+            }
+        }
+    }
+    Ok(events)
 }

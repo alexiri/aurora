@@ -7,6 +7,7 @@ import { useCallback, useState } from "react";
 import { accountKeys } from "@/lib/api/accounts";
 import { AccountsList } from "@/components/accounts/accounts-list";
 import { ConnectInWorkspaceDialog } from "@/components/apps/org-apps-list";
+import { OrgConnectJourney } from "@/components/apps/connect-journey/org-journey";
 import { OrgGate } from "@/components/org/org-gate";
 import { ConnectJourney } from "@/components/apps/connect-journey/connect-journey";
 import { OAuthClientDialog } from "@/components/apps/oauth-clients-panel";
@@ -53,6 +54,7 @@ function AppSetupView({
   const qc = useQueryClient();
   const [registering, setRegistering] = useState(false);
   const [connecting, setConnecting] = useState(false);
+  const [forOrg, setForOrg] = useState(false);
   const refresh = useCallback(() => {
     void qc.invalidateQueries({ queryKey: ["app-setup"] });
     void qc.invalidateQueries({ queryKey: accountKeys.all });
@@ -170,7 +172,27 @@ function AppSetupView({
         />
       ) : null}
       {connecting && !workspace ? (
-        <ConnectInWorkspaceDialog orgId={orgId} orgSlug={orgSlug} app={s} onClose={() => setConnecting(false)} />
+        <ConnectInWorkspaceDialog
+          orgId={orgId}
+          orgSlug={orgSlug}
+          app={s}
+          canOrg={view === "organization"}
+          onOrg={() => {
+            setConnecting(false);
+            setForOrg(true);
+          }}
+          onClose={() => setConnecting(false)}
+        />
+      ) : null}
+      {forOrg ? (
+        <OrgConnectJourney
+          orgId={orgId}
+          appId={s.app_id}
+          onClose={() => {
+            setForOrg(false);
+            refresh();
+          }}
+        />
       ) : null}
     </div>
   );

@@ -149,8 +149,8 @@ function TargetRow({
         </div>
       ) : null}
       {value.type === "secret" ? (
-        <select aria-label="Secret" className={inputClass} value={value.id} onChange={(e) => onChange({ ...value, id: e.target.value })}>
-          <option value="">Select a secret…</option>
+        <select aria-label="Account" className={inputClass} value={value.id} onChange={(e) => onChange({ ...value, id: e.target.value })}>
+          <option value="">Select an account…</option>
           {data.secrets.map((o) => (
             <option key={o.id} value={o.id}>
               {o.label}

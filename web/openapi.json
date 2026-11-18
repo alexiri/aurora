@@ -16671,6 +16671,113 @@
         ]
       }
     },
+    "/v1/connections/{id}/limit-preview": {
+      "get": {
+        "tags": [
+          "connections"
+        ],
+        "summary": "Who a lower limit would change (C-990): org owners and admins; nothing is written.",
+        "operationId": "previewConnectionLimit",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Connection id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "The limit being considered (required; checked after the caller is authorized).",
+            "required": false,
+            "schema": {
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/Level"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Agents the limit would lower",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LimitPreview"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
     "/v1/connector-availability": {
       "get": {
         "tags": [
@@ -41667,6 +41774,17 @@
             "format": "uuid",
             "description": "A registered self-hosted instance of an instance-bound app (C-243). Absent = the app's\n`default_host`."
           },
+          "limit": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Level",
+                "description": "(P5-UX-11, C-957, C-990) For a new organization account: the limit no agent's access may\nexceed (`read` | `ask` | `act`); `access` follows it. Absent = derived from `access`."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "method_id": {
             "type": "string"
           },
@@ -41888,6 +42006,17 @@
               "null"
             ],
             "format": "date-time"
+          },
+          "limit": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Level",
+                "description": "(P5-UX-11, C-990) The limit of an organization's account: no agent's access may exceed it;\n`null` for a workspace's account."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "metadata": {
             "type": "object",
@@ -48157,6 +48286,20 @@
           }
         }
       },
+      "LimitPreview": {
+        "type": "object",
+        "required": [
+          "lowered"
+        ],
+        "properties": {
+          "lowered": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LoweredAgentView"
+            }
+          }
+        }
+      },
       "LinkMethod": {
         "type": "string",
         "enum": [
@@ -48471,6 +48614,66 @@
             "type": "string"
           },
           "reason": {
+            "type": "string"
+          }
+        }
+      },
+      "LoweredAgentRef": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "handle"
+        ],
+        "properties": {
+          "handle": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "LoweredAgentView": {
+        "type": "object",
+        "description": "An agent a lower limit would change (C-990). `from` and `to` are `read` | `ask` | `act` |\n`custom`; `to` is `none` when nothing of the agent's access is left.",
+        "required": [
+          "agent",
+          "workspace",
+          "from",
+          "to"
+        ],
+        "properties": {
+          "agent": {
+            "$ref": "#/components/schemas/LoweredAgentRef"
+          },
+          "from": {
+            "type": "string"
+          },
+          "to": {
+            "type": "string"
+          },
+          "workspace": {
+            "$ref": "#/components/schemas/LoweredWorkspaceRef"
+          }
+        }
+      },
+      "LoweredWorkspaceRef": {
+        "type": "object",
+        "required": [
+          "id",
+          "name"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
             "type": "string"
           }
         }
@@ -51821,6 +52024,17 @@
                   ],
                   "format": "date-time"
                 },
+                "limit": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Level",
+                      "description": "(P5-UX-11, C-990) The limit of an organization's account: no agent's access may exceed it;\n`null` for a workspace's account."
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
                 "metadata": {
                   "type": "object",
                   "additionalProperties": {
@@ -54531,6 +54745,17 @@
                   "type": "string",
                   "format": "uuid"
                 },
+                "personal_of": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/PersonalOf",
+                      "description": "(P5-UX-11, C-947) Present on a personal workspace in `GET /v1/orgs/{org}/workspaces`: the\nperson it was made for."
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
                 "slug": {
                   "type": "string"
                 },
@@ -54753,6 +54978,17 @@
             "type": [
               "string",
               "null"
+            ]
+          },
+          "limit": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Level",
+                "description": "(P5-UX-11, C-990, SEC-131) The limit of an organization's account (org owner/admin).\nLowering it lowers every agent's access above it, in the same transaction. `access` on an\norganization's account maps to a limit (`read` → `read`, `write` → `act`)."
+              },
+              {
+                "type": "null"
+              }
             ]
           },
           "scopes": {
@@ -64041,6 +64277,17 @@
           "org_id": {
             "type": "string",
             "format": "uuid"
+          },
+          "personal_of": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PersonalOf",
+                "description": "(P5-UX-11, C-947) Present on a personal workspace in `GET /v1/orgs/{org}/workspaces`: the\nperson it was made for."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "slug": {
             "type": "string"
