@@ -37,6 +37,7 @@ pub mod refresh;
 pub mod reqlog;
 pub mod resolve;
 pub mod resolver;
+pub mod seclink;
 pub mod settings;
 pub mod snapshot;
 pub mod status;

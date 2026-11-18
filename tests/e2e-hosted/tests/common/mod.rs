@@ -650,6 +650,34 @@ impl Api {
         (s, h, b)
     }
 
+    /// `POST /v1/admin/plugins` with one package archive as the multipart `package` part.
+    pub async fn upload_plugin(&self, archive: &[u8]) -> (u16, Value) {
+        let boundary = "XBOUNDARYX";
+        let mut body = format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"package\"; filename=\"p.aurora-plugin\"\r\nContent-Type: application/gzip\r\n\r\n"
+        )
+        .into_bytes();
+        body.extend_from_slice(archive);
+        body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+        let resp = self
+            .http
+            .post(format!("{}/v1/admin/plugins", self.base))
+            .header("cookie", &self.cookie)
+            .header("origin", &request_origin())
+            .header(
+                "content-type",
+                format!("multipart/form-data; boundary={boundary}"),
+            )
+            .timeout(Duration::from_secs(40))
+            .body(body)
+            .send()
+            .await
+            .unwrap();
+        let s = resp.status().as_u16();
+        let t = resp.text().await.unwrap();
+        (s, serde_json::from_str(&t).unwrap_or(Value::String(t)))
+    }
+
     /// Raw request with the session cookie (for SSE).
     pub fn raw(&self, p: &str) -> reqwest::RequestBuilder {
         self.http

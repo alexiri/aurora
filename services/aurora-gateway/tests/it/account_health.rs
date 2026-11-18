@@ -59,6 +59,7 @@ async fn start_health(min_interval: Duration) -> Fx {
         None,
         Some(pool),
         Some(Arc::new(AccountHealth::with_min_interval(min_interval))),
+        false,
     )
     .await;
     Fx {
@@ -209,6 +210,7 @@ async fn a_secret_account_records_its_health_in_its_own_row() {
         None,
         Some(pool),
         Some(Arc::new(AccountHealth::with_min_interval(Duration::ZERO))),
+        false,
     )
     .await;
     let row = || async {

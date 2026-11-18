@@ -133,7 +133,21 @@ e2e addition. Not `ingest.rs` / `registry.rs` (P5-GUIDE-1).
 - Two existing `home_render_inputs` tests assumed the inline form on the new wire; they now render the index from
   the wire and the inline form from the wire minus the folder fields (the older-API fallback).
 
-**Not done here:** the kind end-to-end (`fixture-guide` folder under a custom grant, removed on revoke) and the live
+**Follow-up (lane `p5-apps`, worker 36, 2026-11-18):** the end to end ran on the hosted stack (podman, `fake`
+harness; the brief says kind, the folder is a sandbox matter and hosted.sh runs the same supervisor): `s14_agent_guide_folder_is_projected_into_the_sandbox_and_removed_on_revoke`
+in `tests/e2e-hosted/tests/hosted.rs` uploads the checked-in `fixture-guide` signed with a key trusted for the run,
+approves it, connects it, grants Daneel `custom` (`list_rooms` allowed, `book_room` ask), and in the real sandbox checks
+modes (dirs 0555, files 0444), the `[allowed]` / `[approval]` / `[blocked]` marks of `tools.md`, the *Procedure* header
+of the recipe, no credential under `/workspace/.aurora`, the instruction file listing the app with none of its notes,
+the guide file refusing a write, and after the grant is deleted and a second turn, the folder and the index line gone.
+`aurora_home_guide_budget_exceeded_total` is asserted in `home_agent_guides::the_budget_keeps_generated_files_and_drops_reference_files`
+(`counter_value` delta of 1 with the tight budget, 0 with the default). Commands: `AURORA_TEST_PODMAN=1
+AURORA_E2EH_PREFIX=p5apps-e2eh … bash scripts/e2e/hosted.sh s14_` 1 passed (first run failed on my own test's `sort` hiding
+`stat`'s exit status, fixed); `cargo test -p aurora-api --test it -- home_agent_guides` 6 passed. The sync-size
+measurement is **not yet taken**: the machine was at load 12 and P5-GUIDE-4 changes the content that matters, so it is
+taken once with the built-in apps connected (see P5-GUIDE-4's report). Still not done: the live `claude-code` check.
+
+**Not done here (worker 35, superseded by the follow-up above):** the kind end-to-end (`fixture-guide` folder under a custom grant, removed on revoke) and the live
 `claude-code` behavioural check: both need the stack; see the lane's batch-gate report. The
 `aurora_home_guide_budget_exceeded_total` increment is not asserted (no metrics test harness for it): the budget
 behaviour is.

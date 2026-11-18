@@ -391,12 +391,30 @@ fn full_fixture_roundtrips() {
 fn the_shipped_builtin_packages_compile_without_a_host_claim_decision() {
     let dir = format!("{}/../../plugins/builtin", env!("CARGO_MANIFEST_DIR"));
     let mut pkgs = Vec::new();
+    let mut guides = std::collections::BTreeMap::new();
     for e in std::fs::read_dir(&dir).unwrap() {
         let p = e.unwrap().path().join("plugin.yaml");
         if !p.is_file() {
             continue;
         }
         let m = Manifest::parse(&std::fs::read_to_string(&p).unwrap(), "9.9.9").unwrap();
+        // (P5-GUIDE-4) The packages list agent guide files: the snapshot records their digests, so
+        // each listed file must exist next to the manifest (size and digest of the real bytes).
+        let mut digests = aurora_registry::snapshot::GuideDigests::new();
+        for a in &m.apps {
+            for g in a.agent.iter().flat_map(|ag| &ag.guide) {
+                let f = p
+                    .parent()
+                    .unwrap()
+                    .join(format!("agent/{}/{}", a.about.id, g.file));
+                let b = std::fs::read(&f).unwrap_or_else(|e| panic!("{}: {e}", f.display()));
+                digests.insert(
+                    (a.about.id.clone(), g.file.clone()),
+                    (format!("{:064x}", b.len()), b.len() as u64),
+                );
+            }
+        }
+        guides.insert(m.package.id.clone(), digests);
         pkgs.push(ActivePackage {
             digest: format!("d-{}", m.package.id),
             manifest: m,
@@ -404,7 +422,7 @@ fn the_shipped_builtin_packages_compile_without_a_host_claim_decision() {
             hooks_digest: Some("h".into()),
         });
     }
-    let c = compile(&pkgs, &[], &[], 1)
+    let c = aurora_registry::snapshot::compile_with_guides(&pkgs, &[], &[], 1, &guides)
         .unwrap_or_else(|e| panic!("built-ins conflict on a fresh instance: {e:?}"));
     let snap = Snapshot::from_slice(&c.json).unwrap();
     let ids: Vec<&str> = snap.apps.iter().map(|a| a.app_id.as_str()).collect();

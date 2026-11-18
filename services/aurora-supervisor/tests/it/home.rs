@@ -537,6 +537,61 @@ fn databases_in_render_inputs_become_libpq_files_and_disappear_with_the_grant() 
     assert!(!dir.exists());
 }
 
+/// (P5-ICS, D-273, C-843) `links` in the render inputs become `~/.aurora/links.json` (`0600`, the
+/// synthetic address and nothing else) and disappear with the last link.
+#[test]
+fn links_in_render_inputs_become_links_json_and_disappear_with_the_last_link() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let d = TempDir::new();
+    let mut p = HomeProjector::new(HomeConfig {
+        root: d.path().to_path_buf(),
+        skills_dir: Some(".claude/skills".into()),
+        instruction_files: vec!["AGENTS.md".into()],
+        // No database relay: the links file does not depend on it.
+        pg: None,
+    });
+    let (a, b) = (Uuid::now_v7(), Uuid::now_v7());
+    let with = |g: u64, links: Value| -> Vec<HomeSync> {
+        let mut parts = generation(g, &[], &[]);
+        parts[2] = part(
+            g,
+            2,
+            6,
+            "render_inputs",
+            json!([{"agent": {"name": "Ada", "handle": "ada", "workspace": "Acme"}, "links": links}]),
+        );
+        parts
+    };
+    let file = d.path().join(".aurora/links.json");
+    apply_all(
+        &mut p,
+        &with(
+            1,
+            json!([
+                {"name": "Work", "app_id": "ics-calendar", "connection_id": a},
+                {"name": "Work", "app_id": "ics-calendar", "connection_id": b}
+            ]),
+        ),
+    );
+    p.commit(1).unwrap();
+    let v: Value = serde_json::from_str(&fs::read_to_string(&file).unwrap()).unwrap();
+    assert_eq!(
+        v.as_array().unwrap().len(),
+        2,
+        "both entries of a duplicated name: {v}"
+    );
+    assert_eq!(v[0]["url"], format!("https://{a}.link.aurora.internal/"));
+    assert_eq!(v[1]["url"], format!("https://{b}.link.aurora.internal/"));
+    assert_eq!(
+        fs::metadata(&file).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+
+    apply_all(&mut p, &with(2, json!([])));
+    p.commit(2).unwrap();
+    assert!(!file.exists());
+}
+
 // ---- (P5-GUIDE-2, C-643) the app folders
 
 /// A generation with the render inputs, an `apps` part and the manifest naming `paths`.

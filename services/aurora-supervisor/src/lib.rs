@@ -17,6 +17,7 @@ pub mod harvest;
 pub mod home;
 pub mod inbox;
 pub mod instructions;
+pub mod links;
 pub mod logging;
 pub mod mcp_bridge;
 pub mod outbound;
