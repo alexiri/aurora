@@ -77,6 +77,11 @@ pub struct Env {
     pub cwd: PathBuf,
     /// Seconds before the one-line "waiting" notice (a request held for approval).
     pub wait_notice: Duration,
+    /// (P5-GUIDE-7) The supervisor's tools socket, for the `aurora` target.
+    pub tools_socket: PathBuf,
+    /// (P5-GUIDE-7) The conversation this process works for (`AURORA_SESSION`, set only in the
+    /// harness's environment); `None` outside a turn.
+    pub session: Option<String>,
 }
 
 impl Env {
@@ -103,6 +108,10 @@ impl Env {
             protected: files::PROTECTED.iter().map(PathBuf::from).collect(),
             cwd: std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")),
             wait_notice: Duration::from_secs(3),
+            tools_socket: PathBuf::from(crate::tools::DEFAULT_SOCKET),
+            session: std::env::var("AURORA_SESSION")
+                .ok()
+                .filter(|s| !s.is_empty()),
         })
     }
 }

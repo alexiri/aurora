@@ -5,9 +5,9 @@
 //!
 //! It holds no credential and adds no privilege (SEC-118): an app call goes through the proxy
 //! environment it inherits, exactly like `curl`, and the gateway decides. A **target** is a
-//! connected app id or the reserved id `aurora` (platform tools, P5-GUIDE-7: until then it
-//! answers "not available in this version"). The two kinds are separate paths behind the same
-//! verbs ([`TargetKind`]); P5-GUIDE-7 adds the platform one beside [`call::call_app`].
+//! connected app id or the reserved id `aurora` (the platform tools, P5-GUIDE-7, over the tools
+//! socket: [`platform`]). The two kinds are separate paths behind the same verbs
+//! ([`TargetKind`]), [`platform::call`] beside [`call::call_app`].
 //!
 //! Exit codes (C-653): 0 success, 1 upstream HTTP error, 2 usage or validation, 3 an Aurora
 //! gateway refusal, 4 tools-socket transport failure (platform target only).
@@ -15,6 +15,7 @@ pub mod api;
 pub mod call;
 pub mod files;
 pub mod jsonpath;
+pub mod platform;
 pub mod preview;
 pub mod request;
 pub mod show;
@@ -105,9 +106,6 @@ pub fn kind_of(target: &str) -> TargetKind {
     }
 }
 
-const NOT_AVAILABLE: &str =
-    "target `aurora` (platform tools) is not available in this version of aurora-agent";
-
 fn app_doc<'a>(loaded: &'a [api::AppFolder], target: &str) -> Result<&'a api::ApiDoc, Outcome> {
     match loaded.iter().find(|f| f.id == target) {
         None => Err(Outcome::usage(format!(
@@ -140,9 +138,21 @@ fn platform_options(opts: &CallOpts) -> Option<&'static str> {
 /// Executes one verb against the apps folder `apps_dir`.
 pub async fn execute(env: &call::Env, apps_dir: &Path, verb: Verb) -> Outcome {
     match verb {
-        Verb::List { target: None } => Outcome::ok(show::list_apps(&api::load_all(apps_dir))),
+        Verb::List { target: None } => {
+            let mut s = show::list_apps(&api::load_all(apps_dir));
+            // Inside a conversation turn the platform is a target too.
+            if env.session.is_some() {
+                s.push_str(
+                    "aurora — the platform tools (memory, skills, messaging, …): `aurora-agent list aurora`\n",
+                );
+            }
+            Outcome::ok(s)
+        }
         Verb::List { target: Some(t) } => match kind_of(&t) {
-            TargetKind::Platform => Outcome::usage(NOT_AVAILABLE),
+            TargetKind::Platform => match platform::fetch_tools(env).await {
+                Ok(tools) => Outcome::ok(platform::list(&tools)),
+                Err(o) => o,
+            },
             TargetKind::App => {
                 let loaded = api::load_all(apps_dir);
                 match app_doc(&loaded, &t) {
@@ -156,19 +166,34 @@ pub async fn execute(env: &call::Env, apps_dir: &Path, verb: Verb) -> Outcome {
             target,
             limit,
         } => {
-            if target.as_deref() == Some(PLATFORM_TARGET) {
-                return Outcome::usage(NOT_AVAILABLE);
-            }
+            // The platform tools rank beside the apps' operations. Without a session they are
+            // left out of an unscoped search; `--in aurora` says why it cannot answer.
+            let platform_tools = if target.as_deref().is_none_or(|t| t == PLATFORM_TARGET) {
+                match platform::fetch_tools(env).await {
+                    Ok(t) => t,
+                    Err(o) if target.is_some() => return o,
+                    Err(_) => Vec::new(),
+                }
+            } else {
+                Vec::new()
+            };
             let loaded = api::load_all(apps_dir);
-            Outcome::ok(show::search(
+            Outcome::ok(show::search_with(
                 &loaded,
+                &platform_tools,
                 &words,
                 target.as_deref(),
                 limit.clamp(1, 100),
             ))
         }
         Verb::Describe { target, name } => match kind_of(&target) {
-            TargetKind::Platform => Outcome::usage(NOT_AVAILABLE),
+            TargetKind::Platform => match platform::fetch_tools(env).await {
+                Ok(tools) => match platform::describe(&tools, &name) {
+                    Ok(s) => Outcome::ok(s),
+                    Err(o) => o,
+                },
+                Err(o) => o,
+            },
             TargetKind::App => {
                 let loaded = api::load_all(apps_dir);
                 match app_doc(&loaded, &target)
@@ -206,7 +231,7 @@ pub async fn execute(env: &call::Env, apps_dir: &Path, verb: Verb) -> Outcome {
                     Some(o) => Outcome::usage(format!(
                         "{o} does not apply to target `aurora` (it is for apps)"
                     )),
-                    None => Outcome::usage(NOT_AVAILABLE),
+                    None => platform::call(env, &rest, &opts).await,
                 },
                 TargetKind::App => {
                     let (name, args) = if opts.path.is_some() {

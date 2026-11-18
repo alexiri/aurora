@@ -113,7 +113,7 @@ fn bound_lines(s: &str, hint: &str) -> String {
     out
 }
 
-fn score(terms: &[String], weighted: &[(&str, u32)]) -> u32 {
+pub(super) fn score(terms: &[String], weighted: &[(&str, u32)]) -> u32 {
     let mut total = 0;
     for t in terms {
         // A term counts once, at the best field it appears in.
@@ -131,6 +131,19 @@ fn score(terms: &[String], weighted: &[(&str, u32)]) -> u32 {
 /// `search`: ranks operations, catalogue entries and recipes across apps (or one).
 #[must_use]
 pub fn search(apps: &[AppFolder], words: &[String], only: Option<&str>, limit: usize) -> String {
+    search_with(apps, &[], words, only, limit)
+}
+
+/// [`search`] with the platform tools ranked beside the apps' operations (P5-GUIDE-7): they are
+/// in the ranking when `only` is none or `aurora`.
+#[must_use]
+pub fn search_with(
+    apps: &[AppFolder],
+    platform: &[aurora_protocol::tools::ToolDescriptor],
+    words: &[String],
+    only: Option<&str>,
+    limit: usize,
+) -> String {
     let terms: Vec<String> = words
         .iter()
         .flat_map(|w| w.split_whitespace())
@@ -140,6 +153,9 @@ pub fn search(apps: &[AppFolder], words: &[String], only: Option<&str>, limit: u
         return "search: give one or more words\n".to_owned();
     }
     let mut hits: Vec<(u32, String, String, String)> = Vec::new();
+    if only.is_none_or(|o| o == super::PLATFORM_TARGET) {
+        hits.extend(super::platform::search_hits(platform, &terms));
+    }
     for a in apps {
         let Ok(d) = &a.api else { continue };
         if only.is_some_and(|o| o != d.app.id) {

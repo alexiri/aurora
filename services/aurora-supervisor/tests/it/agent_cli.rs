@@ -162,6 +162,8 @@ fn sandbox(tag: &str) -> Sandbox {
         protected: vec![root.join("home/.aurora"), root.join("home/memory")],
         cwd: root.clone(),
         wait_notice: Duration::from_secs(60),
+        tools_socket: root.join("tools.sock"),
+        session: None,
     };
     Sandbox { root, apps, env }
 }
@@ -752,7 +754,7 @@ async fn a_catalogue_entry_needs_an_explicit_path_and_an_unlisted_app_is_a_usage
 }
 
 #[tokio::test]
-async fn target_aurora_is_not_available_and_refuses_app_options_first() {
+async fn target_aurora_needs_a_conversation_and_refuses_app_options_first() {
     let s = sandbox("aurora");
     for v in [
         call("aurora", &["memory_save"]),
@@ -766,7 +768,8 @@ async fn target_aurora_is_not_available_and_refuses_app_options_first() {
     ] {
         let o = agent_cli::execute(&s.env, &s.apps, v).await;
         assert_eq!(o.code, 2);
-        assert!(o.err.contains("not available in this version"), "{}", o.err);
+        // No `AURORA_SESSION`: nothing is sent (the platform tools are for a conversation's turn).
+        assert!(o.err.contains("inside a conversation turn"), "{}", o.err);
     }
     let o = agent_cli::execute(&s.env, &s.apps, set!(call("aurora", &["x"]), all = true)).await;
     assert_eq!(o.code, 2);
