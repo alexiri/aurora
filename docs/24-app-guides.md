@@ -733,6 +733,12 @@ memory (the agent's memory is also files under `memory/`, `12 §Memory harvest`)
 schedules, webhooks, processes, conversations, messaging, agents and apps. Moving a tool into the
 core set is a spec change (`24`, `12 §Phase 0 catalogue`), so the set stays small by review.
 
+**Who may call (FIX-151, D-301, SEC-121).** The socket decides by the caller's process, not by
+the `session` it names (`12 §Path`): `aurora-agent` with the target `aurora` works when it runs from the
+harness's own shell (the conversation is the harness's, `AURORA_SESSION` is only a cross-check) and is refused
+`session_not_caller` from the web terminal, an SSH session, a `process_start` child or another
+conversation's harness. The refusal of a missing session stays as it is.
+
 **What the harness sees.** In mode `on_demand` the bridge's `tools/list` returns the core tools
 only. A call to an on-demand tool by name through MCP (a stale session, a model that guessed) is
 still served: the bridge forwards any name to the registry as today, so nothing breaks; listing

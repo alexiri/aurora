@@ -194,21 +194,20 @@ async fn hold_upstream(api: &Api, up: &MockServer) -> String {
     host
 }
 
-/// One call on the sandbox's tools socket (`session` = conversation id); the raw response line.
-fn tools_call(container: &str, conv: &str, tool: &str, args: &Value) -> String {
-    let script = "import socket,sys\ns=socket.socket(socket.AF_UNIX);s.settimeout(20)\ns.connect('/run/aurora/tools.sock');s.sendall((sys.argv[1]+'\\n').encode());print(s.makefile().readline())";
-    let req = json!({"id": 1, "session": conv, "method": "call", "tool": tool, "arguments": args});
-    podman_rc(&[
-        "exec",
-        "--user",
-        "1000:1000",
-        container,
-        "python3",
-        "-c",
-        script,
-        &req.to_string(),
-    ])
-    .1
+/// A turn text for the fake adapter that makes one call on the sandbox's tools socket (`session` =
+/// conversation id) from the harness's own child (FIX-151: a `podman exec` caller is refused
+/// `session_not_caller`); the raw response line lands in `/tmp/toolsock.out` of the container.
+fn tools_call_directive(conv: &str, tool: &str, args: &Value) -> String {
+    let script = "import socket,sys;s=socket.socket(socket.AF_UNIX);s.settimeout(20);s.connect(\"/run/aurora/tools.sock\");s.sendall((sys.argv[1]+\"\\n\").encode());print(s.makefile().readline())";
+    let req = json!({"id": 1, "session": conv, "method": "call", "tool": tool, "arguments": args})
+        .to_string();
+    assert!(!req.contains("]]"), "a directive cannot carry `]]`: {req}");
+    let q = |s: &str| format!("'{}'", s.replace('\'', "'\\''"));
+    format!(
+        "[[shell: python3 -c {} {} > /tmp/toolsock.out 2>&1]] [[say: asked to send]]",
+        q(script),
+        q(&req)
+    )
 }
 
 fn bot_texts(msgs: &[Value], space: &str) -> Vec<String> {
@@ -589,20 +588,25 @@ async fn s5_send_message_action_approval_card() {
     // The fake harness' `[[tool:]]` directive only emits events, so the agent's tool call goes
     // through the sandbox's real tools socket while a turn is active (fenced on active turns).
     let to = format!("{}:user:U2", w.integ);
-    f.dm("U1", "[[sleep: 25s]] [[say: asked to send]]").await;
+    // (FIX-151) The call must come from the harness's own child: the fake adapter's `[[shell:]]`
+    // directive runs the client as a registered child inside the turn.
+    f.dm(
+        "U1",
+        &tools_call_directive(
+            &w.conv,
+            "send_message",
+            &json!({"to": to, "text": "proactive hello"}),
+        ),
+    )
+    .await;
     let deadline = Instant::now() + Duration::from_secs(90);
     let out = loop {
         if let Some(c) = containers().first() {
-            let r = tools_call(
-                c,
-                &w.conv,
-                "send_message",
-                &json!({"to": to, "text": "proactive hello"}),
-            );
+            let r = exec_in(c, "cat /tmp/toolsock.out 2>/dev/null").1;
             if r.contains("pending_approval") {
                 break r;
             }
-            eprintln!("tools socket not ready yet: {}", r.trim());
+            eprintln!("tools socket answer not there yet: {}", r.trim());
         }
         assert!(Instant::now() < deadline, "no tool call possible");
         tokio::time::sleep(Duration::from_secs(1)).await;

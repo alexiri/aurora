@@ -297,6 +297,7 @@ async fn rig() -> Rig {
     cfg.working_dir = ws.clone();
     cfg.process = ProcessConfig::new(ws.clone());
     cfg.tools.socket = Some(sock.clone());
+    cfg.tools.registry = Some(crate::common::registry_with_this_process_as_harness(CONV));
     let seen = Seen::default();
     let sup = Supervisor::new(
         cfg,

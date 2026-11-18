@@ -15,6 +15,8 @@ pub struct LaunchSpec {
     pub args: Vec<String>,
     pub env: Vec<(String, String)>,
     pub cwd: PathBuf,
+    /// The conversation the child serves: the launcher registers the process for it (FIX-151).
+    pub conversation_id: uuid::Uuid,
 }
 
 /// Version-pinned effort table (`10`: `low`/`medium`/`high`/`max`): `(CLI --effort value,
@@ -289,6 +291,7 @@ pub fn launch_spec(
         args: build_args(opts, resume)?,
         env: build_env(opts),
         cwd: opts.working_dir.clone(),
+        conversation_id: opts.conversation_id,
     })
 }
 

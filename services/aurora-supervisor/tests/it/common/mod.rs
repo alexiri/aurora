@@ -46,6 +46,20 @@ pub fn tls_fixture(names: &[&str]) -> (String, tokio_rustls::TlsAcceptor) {
     )
 }
 
+/// (FIX-151) A harness registry in which **the test process itself** is the harness of
+/// `conversation`: a tools-socket client in the test is then "a descendant of the harness", as the
+/// MCP bridge is in production. The registration lasts as long as the process.
+pub fn registry_with_this_process_as_harness(
+    conversation: &str,
+) -> Arc<aurora_supervisor::proc_ancestry::HarnessRegistry> {
+    let reg = Arc::new(aurora_supervisor::proc_ancestry::HarnessRegistry::default());
+    std::mem::forget(
+        reg.register(std::process::id(), conversation.parse().unwrap())
+            .unwrap(),
+    );
+    reg
+}
+
 /// An upstream that is never dialled (`127.0.0.1:1`) but is valid to construct.
 pub fn dead_upstream() -> GatewayUpstream {
     let (ca, _) = tls_fixture(&["localhost"]);

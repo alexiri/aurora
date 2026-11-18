@@ -21,6 +21,8 @@ pub struct LaunchSpec {
     pub args: Vec<String>,
     pub env: Vec<(String, String)>,
     pub cwd: PathBuf,
+    /// The conversation the child serves: the launcher registers the process for it (FIX-151).
+    pub conversation_id: uuid::Uuid,
     /// Written to the child's stdin, which is then closed (the prompt is never an argument).
     pub stdin: String,
 }
@@ -218,6 +220,7 @@ pub fn launch_spec(
         args: build_args(opts, resume),
         env: build_env(opts, codex_home),
         cwd: opts.working_dir.clone(),
+        conversation_id: opts.conversation_id,
         stdin: prompt.to_owned(),
     }
 }

@@ -70,7 +70,11 @@ fn procs(dir: &std::path::Path) -> (Arc<ProcessManager>, Out) {
     (pm, rx)
 }
 
-fn hub(dir: &std::path::Path, tools: ToolsConfig) -> (Arc<ToolHub>, Out) {
+fn hub(dir: &std::path::Path, mut tools: ToolsConfig) -> (Arc<ToolHub>, Out) {
+    // (FIX-151) The test process is the harness of CONV, so its socket clients are allowed.
+    if tools.registry.is_none() {
+        tools.registry = Some(crate::common::registry_with_this_process_as_harness(CONV));
+    }
     let (pm, _rx0) = procs(dir);
     let (tx, rx) = mpsc::channel(256);
     let hub = ToolHub::new(
@@ -693,4 +697,223 @@ fn skill_exec_bit_selects_0555_or_0444() {
     let mode = |f: &str| fs::metadata(d.path().join(f)).unwrap().permissions().mode() & 0o777;
     assert_eq!(mode(".claude/skills/a/SKILL.md"), 0o444);
     assert_eq!(mode(".claude/skills/a/run.sh"), 0o555);
+}
+
+// ---- FIX-151 (D-301, SEC-121): a call is tied to the harness process that made it ----
+
+const CONV_B: &str = "00000000-0000-0000-0000-0000000000c2";
+
+/// A hub on a fresh socket with `memory_get` in the catalogue and a running turn for both
+/// conversations, whose harness registry starts empty (nobody is a harness yet).
+async fn caller_rig() -> (
+    TempDir,
+    Arc<ToolHub>,
+    Out,
+    PathBuf,
+    Arc<aurora_supervisor::proc_ancestry::HarnessRegistry>,
+) {
+    let d = TempDir::new();
+    catalogue(d.path(), &["memory_get"]);
+    let registry = Arc::new(aurora_supervisor::proc_ancestry::HarnessRegistry::default());
+    let (hub, rx) = hub(
+        d.path(),
+        ToolsConfig {
+            registry: Some(registry.clone()),
+            ..ToolsConfig::default()
+        },
+    );
+    for c in [CONV, CONV_B] {
+        hub.set_turn(Uuid::parse_str(c).unwrap(), Some(Uuid::now_v7()));
+    }
+    let sock = d.path().join("caller.sock");
+    tokio::spawn(hub.clone().serve_owned(sock.clone()));
+    timeout(T, async {
+        while !sock.exists() {
+            tokio::time::sleep(Duration::from_millis(20)).await
+        }
+    })
+    .await
+    .unwrap();
+    (d, hub, rx, sock, registry)
+}
+
+/// One S-09 `call` of `memory_get` for `session` from this (test) process; the raw response.
+async fn call_from_this_process(sock: &std::path::Path, session: &str, method: Method) -> Value {
+    let mut s = tokio::net::UnixStream::connect(sock).await.unwrap();
+    let req = BridgeRequest {
+        id: 3,
+        session: session.into(),
+        method,
+        tool: (method == Method::Call).then(|| "memory_get".into()),
+        arguments: (method == Method::Call).then(|| json!({})),
+    };
+    let mut line = serde_json::to_vec(&req).unwrap();
+    line.push(b'\n');
+    s.write_all(&line).await.unwrap();
+    let mut resp = String::new();
+    timeout(T, BufReader::new(s).read_line(&mut resp))
+        .await
+        .unwrap()
+        .unwrap();
+    serde_json::from_str(&resp).unwrap()
+}
+
+fn assert_refused(v: &Value) {
+    assert_eq!(v["error"]["code"], "session_not_caller", "{v}");
+    // Uniform text: no conversation id, nothing about which conversations exist.
+    let text = v.to_string();
+    assert!(!text.contains(CONV) && !text.contains(CONV_B), "{v}");
+}
+
+/// A real harness stand-in: `sh` registered for `conversation` that runs the real MCP bridge as its
+/// child (as `claude` runs it), speaking MCP on this function's pipes. Returns the text of one
+/// `tools/call memory_get` as the bridge shows it.
+async fn bridge_call_under(
+    sock: &std::path::Path,
+    session: &str,
+    harness_of: Option<(
+        &Arc<aurora_supervisor::proc_ancestry::HarnessRegistry>,
+        &str,
+    )>,
+) -> (
+    String,
+    Option<aurora_supervisor::proc_ancestry::Registration>,
+) {
+    let mut sh = aurora_supervisor::spawn::tokio_command("sh", std::iter::empty::<(&str, &str)>())
+        .arg("-c")
+        // The bridge is a child of the shell (not exec'd), so the call has an ancestry to walk.
+        .arg("\"$0\" mcp-bridge --session \"$1\" --socket \"$2\"; true")
+        .arg(env!("CARGO_BIN_EXE_aurora-supervisor"))
+        .arg(session)
+        .arg(sock)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let registration =
+        harness_of.and_then(|(reg, conv)| reg.register(sh.id().unwrap(), conv.parse().unwrap()));
+    let mut stdin = sh.stdin.take().unwrap();
+    let mut lines = BufReader::new(sh.stdout.take().unwrap()).lines();
+    for m in [
+        json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}),
+        json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"memory_get","arguments":{}}}),
+    ] {
+        stdin.write_all(format!("{m}\n").as_bytes()).await.unwrap();
+    }
+    let reply = timeout(T, async {
+        loop {
+            let l = lines.next_line().await.unwrap().expect("bridge ended");
+            let v: Value = serde_json::from_str(&l).unwrap();
+            if v["id"] == 2 {
+                return v["result"]["content"][0]["text"]
+                    .as_str()
+                    .unwrap()
+                    .to_owned();
+            }
+        }
+    })
+    .await
+    .unwrap();
+    drop(stdin);
+    let _ = timeout(T, sh.wait()).await;
+    (reply, registration)
+}
+
+/// Acceptance 1 and 2 with real processes: the MCP bridge under a registered harness is served for
+/// that harness's conversation, and the same bridge naming another active conversation is refused
+/// without a `tool.call` frame reaching the runner.
+#[tokio::test]
+async fn bridge_of_the_harness_is_served_and_another_conversation_is_refused() {
+    let (_d, hub, mut rx, sock, registry) = caller_rig().await;
+
+    let answer = {
+        let hub = hub.clone();
+        tokio::spawn(async move {
+            let SupervisorToRunner::ToolCall(c) = next_matching(&mut rx, |_| true).await else {
+                panic!()
+            };
+            assert_eq!(c.conversation_id, Uuid::parse_str(CONV).unwrap());
+            hub.on_result(ToolResult::success(
+                c.call_id,
+                vec![ToolContent::Text(TextContent { text: "mem".into() })],
+            ));
+            rx
+        })
+    };
+    let (own, _keep) = bridge_call_under(&sock, CONV, Some((&registry, CONV))).await;
+    assert_eq!(own, "mem", "the harness's own bridge is served");
+    let mut rx = answer.await.unwrap();
+
+    // The same harness's bridge, naming the *other* conversation of the agent.
+    let (other, _keep) = bridge_call_under(&sock, CONV_B, Some((&registry, CONV))).await;
+    assert!(other.starts_with("session_not_caller:"), "{other}");
+    assert!(!other.contains(CONV) && !other.contains(CONV_B), "{other}");
+    assert!(
+        rx.try_recv().is_err(),
+        "a refused call must not reach the runner"
+    );
+    assert_eq!(hub.refused_calls(), 1);
+}
+
+/// Acceptance 3: a process that descends from no harness (a web-terminal shell, a `process_start`
+/// child) is refused for every conversation, with a registered harness running next to it.
+#[tokio::test]
+async fn a_process_outside_every_harness_is_refused_for_every_conversation() {
+    let (_d, hub, mut rx, sock, registry) = caller_rig().await;
+    // A harness exists (a long-lived sibling process), but the caller is not below it.
+    let mut sibling =
+        aurora_supervisor::spawn::tokio_command("sleep", std::iter::empty::<(&str, &str)>())
+            .arg("30")
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
+    let _g = registry
+        .register(sibling.id().unwrap(), CONV.parse().unwrap())
+        .unwrap();
+    for conv in [CONV, CONV_B] {
+        let (text, _) = bridge_call_under(&sock, conv, None).await;
+        assert!(text.starts_with("session_not_caller:"), "{conv}: {text}");
+        // `list` too: the catalogue is not for strangers either.
+        assert_refused(&call_from_this_process(&sock, conv, Method::List).await);
+        assert_refused(&call_from_this_process(&sock, conv, Method::Call).await);
+    }
+    assert!(rx.try_recv().is_err(), "nothing reached the runner");
+    assert_eq!(hub.refused_calls(), 6);
+    let _ = sibling.kill().await;
+}
+
+/// Acceptance 4: the harness exited and its pid went to an unrelated process: the registry entry's
+/// start time differs from the process now holding the pid, so the call is refused.
+#[tokio::test]
+async fn a_recycled_harness_pid_is_refused() {
+    let (_d, _hub, mut rx, sock, registry) = caller_rig().await;
+    let me = std::process::id();
+    let start = aurora_supervisor::proc_ancestry::read_stat(me)
+        .unwrap()
+        .start_time;
+    let g = registry.register_with_start(me, CONV.parse().unwrap(), start + 1);
+    assert_refused(&call_from_this_process(&sock, CONV, Method::Call).await);
+    drop(g);
+    // Control: the same process registered with its real start time is served.
+    let _g = registry.register_with_start(me, CONV.parse().unwrap(), start);
+    let ok = call_from_this_process(&sock, CONV, Method::List).await;
+    assert!(ok["error"].is_null(), "{ok}");
+    assert!(rx.try_recv().is_err());
+}
+
+/// Acceptance 5: the harness still runs but its turn ended: the caller is the harness's, so it is
+/// not `session_not_caller`; the call is refused `no_active_turn` (FIX-110), nothing is relayed.
+#[tokio::test]
+async fn a_call_after_the_turn_ended_is_no_active_turn() {
+    let (_d, hub, mut rx, sock, registry) = caller_rig().await;
+    let _g = registry
+        .register(std::process::id(), CONV.parse().unwrap())
+        .unwrap();
+    hub.set_turn(Uuid::parse_str(CONV).unwrap(), None);
+    let v = call_from_this_process(&sock, CONV, Method::Call).await;
+    let text = v["result"]["error"]["code"].as_str().map(str::to_owned);
+    assert_eq!(text.as_deref(), Some("no_active_turn"), "{v}");
+    assert!(rx.try_recv().is_err());
+    assert_eq!(hub.refused_calls(), 0);
 }

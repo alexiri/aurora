@@ -146,7 +146,13 @@ impl Launcher for ProcessLauncher {
             }
         });
         let (kill_tx, kill_rx) = oneshot::channel::<()>();
+        // (FIX-151) Platform-tool calls from this process's descendants act for this conversation;
+        // the registration ends when the process does.
+        let registration = child.id().and_then(|pid| {
+            crate::proc_ancestry::HarnessRegistry::global().register(pid, spec.conversation_id)
+        });
         tokio::spawn(async move {
+            let _registration = registration;
             tokio::select! {
                 _ = child.wait() => {}
                 _ = kill_rx => { let _ = child.kill().await; }

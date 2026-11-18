@@ -24,6 +24,7 @@ pub mod outbound;
 pub mod pg;
 pub mod pgrelay;
 pub mod ports;
+pub mod proc_ancestry;
 pub mod process;
 pub mod proxy;
 pub mod pty;

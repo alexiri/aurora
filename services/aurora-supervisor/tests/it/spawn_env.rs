@@ -104,6 +104,7 @@ async fn inner_probe() {
                 ("GH_TOKEN".into(), "leak-me".into()),
             ],
             cwd: d.path().to_path_buf(),
+            conversation_id: uuid::Uuid::nil(),
         })
         .await
         .unwrap();

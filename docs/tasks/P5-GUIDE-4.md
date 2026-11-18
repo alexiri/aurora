@@ -150,3 +150,12 @@ not measured; needs an idle machine.
 `snapshot.rs::the_shipped_builtin_packages_compile_without_a_host_claim_decision` (guide digests, `compile_with_guides`),
 `agent_guide_hashes.txt` regenerated (`UPDATE_HASHES=1`): the 11 built-ins left it because they now use guide keys.
 `cargo test -p aurora-registry`: 22 + 120 passed.
+
+**Remainder (worker 37, 2026-11-18): the five short guides.** All five apps exist on master. Added one file each:
+`google-workspace/agent/gmail/api-notes.md`, `.../calendar/api-notes.md`, `linear/agent/linear/graphql-notes.md`,
+`atlassian/agent/confluence/api-notes.md`, `.../confluence-dc/api-notes.md`; versions google-workspace 1.2.0, linear 1.2.0,
+atlassian 1.3.0 (`builtin_versions.rs` follows). Facts come from the package catalogues and fixtures plus the vendors' documented
+APIs as known (no network): for the reviewer, unverified against a fresh fetch: Gmail `format=metadata` / base64url body parts,
+Calendar `sendUpdates` and the 410 on deleted events, Linear `IssueFilter` / `isMe` and the `RATELIMITED` code, Confluence v2
+`_links.next` paging and the 409 on a wrong version number. `cargo test -p aurora-registry` 22 + 120 passed;
+`SKIP_CARGO=1 bash scripts/plugins/check-builtin.sh` all 11 packages ok.

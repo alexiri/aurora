@@ -506,6 +506,20 @@ socket `/run/aurora/tools.sock` → supervisor → `tool.call` frame (stamped wi
 conversation and current turn) → runner (stamps sandbox and boot) →
 `POST /v1/runner/tool-calls` → **tool registry** → result back.
 
+(phase 5, FIX-151, D-301, SEC-121) **Who may call.** The socket is mode 0666 and the sandbox runs one uid, so the
+`session` a request names proves nothing. The supervisor reads the connecting process's pid with `SO_PEERCRED`
+(with its start time, at accept) and, for **every** request (`list` and `call`), walks that process's parent chain in
+`/proc/<pid>/stat` (at most 64 steps, `comm` parsed from the last `)`) until it reaches a pid in the **harness
+registry**. Every adapter's launcher registers the process it starts for a conversation (`proc_ancestry`:
+pid, conversation, `/proc` start time) and the entry goes when that process exits, so a recycled pid never matches. The
+request is served only when that harness's conversation equals the request's `session`; any other outcome (no
+harness above the caller, another conversation's harness, a vanished or recycled pid) answers `session_not_caller`
+with one fixed text that names no conversation, bumps a refusal counter, and logs no arguments. `session` stays on the wire
+as a cross-check; it is never corrected. The turn is still checked as before: a harness that runs while its
+conversation has no turn gets `no_active_turn`. The MCP bridge and `aurora-agent` run from the harness's shell pass; a web-terminal
+or SSH shell, a `process_start` child (a child of the supervisor, not of the harness), another conversation's harness
+and a process that daemonized away from its harness (reparented to the subreaper) are refused.
+
 (phase 5, P5-GUIDE-7, D-297, SEC-119, `24 §10b`) A second client takes the same path from the
 socket on: **`aurora-agent`** with the target `aurora` (`aurora-supervisor agent`, wrapper
 `/opt/aurora/bin/aurora-agent`, `24 §10a`),
