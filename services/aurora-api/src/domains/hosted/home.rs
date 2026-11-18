@@ -24,6 +24,9 @@ pub fn skills_dir(harness_id: Option<&str>) -> &'static str {
         // a subdirectory of its own keeps the read-only projection away from the `.system`
         // skills Codex seeds next to it.
         Some("codex") => ".codex/skills/aurora",
+        // (P5-HARN) Pi, goose and OpenCode all load `$HOME/.agents/skills` without any project
+        // trust or switch (checked against the pinned binaries, `12 §Adapters pi, goose and opencode`).
+        Some("pi" | "goose" | "opencode") => ".agents/skills",
         _ => ".claude/skills",
     }
 }
@@ -761,6 +764,17 @@ pub(crate) fn fit_render_inputs(v: &mut Value, max: usize) -> bool {
 #[cfg(test)]
 mod name_tests {
     use super::*;
+
+    /// (P5-HARN) The projection's skills directory per harness is the one each adapter declares.
+    #[test]
+    fn skills_dir_follows_the_adapters_declaration() {
+        assert_eq!(skills_dir(None), ".claude/skills");
+        assert_eq!(skills_dir(Some("claude-code")), ".claude/skills");
+        assert_eq!(skills_dir(Some("codex")), ".codex/skills/aurora");
+        for h in ["pi", "goose", "opencode"] {
+            assert_eq!(skills_dir(Some(h)), ".agents/skills", "{h}");
+        }
+    }
 
     /// (FIX-115) 500 peers with long names are cut under the bound, with a truncation notice.
     #[test]

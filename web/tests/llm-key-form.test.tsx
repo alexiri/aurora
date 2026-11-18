@@ -261,6 +261,8 @@ describe("LLM key modes (pure helpers)", () => {
     expect(modeLabel("api_key", "bedrock")).toBe("Bedrock API key");
     expect(modeLabel("aws_assume_role", "bedrock")).toBe("Assume a role");
     expect(harnessHint(["claude_code", "codex"])).toBe("Works with Claude Code, Codex");
+    // (P5-HARN, C-1016) The API's ids are the registry's (`claude-code`), and the added harnesses have names.
+    expect(harnessHint(["claude-code", "pi", "goose", "opencode"])).toBe("Works with Claude Code, Pi, goose, OpenCode");
     expect(harnessHint([])).toBe("");
     expect(JSON.parse(trustPolicy("abc")).Statement[0].Condition.StringEquals["sts:ExternalId"]).toBe("abc");
   });

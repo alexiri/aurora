@@ -246,7 +246,7 @@ async fn s1_dm_answer_and_gateway_approval_from_card() {
     let a = w.api.wait_pending().await;
     assert_eq!(a["path"], "/needs-approval");
     assert_eq!(a["conversation_id"].as_str(), Some(w.conv.as_str()));
-    let (token, msg) = f.wait_button(DM, "Approve", 30).await;
+    let (token, msg) = f.wait_button(DM, "Allow once", 30).await;
     assert_eq!(up.received_requests().await.unwrap().len(), 0, "held");
 
     f.click(&token, "U1", DM, &msg).await;
@@ -262,9 +262,9 @@ async fn s1_dm_answer_and_gateway_approval_from_card() {
         .await;
     assert_eq!(s, 200, "{v}");
     assert_eq!(v["items"].as_array().map(Vec::len), Some(1), "{v}");
-    // The card was settled: no live Approve button remains.
+    // The card was settled: no live Allow once button remains.
     let deadline = Instant::now() + Duration::from_secs(20);
-    while f.find_button(DM, "Approve").await.is_some() {
+    while f.find_button(DM, "Allow once").await.is_some() {
         assert!(Instant::now() < deadline, "card never settled");
         tokio::time::sleep(Duration::from_millis(300)).await;
     }

@@ -1283,6 +1283,8 @@ async fn anthropic_key_is_injected_only_on_inference_paths() {
         ("POST", "/v1/skills"),
         ("GET", "/v1/organizations/me"),
         ("GET", "/v1/messages"),
+        // (D-367) `GET /model/info` is a `litellm` default only: another kind refuses it.
+        ("GET", "/model/info"),
     ] {
         let r = request(&env, env.llm, method, path, "", b"{}").await;
         assert_eq!(r.status, 403, "{method} {path}: {}", r.body);
@@ -1307,7 +1309,7 @@ async fn anthropic_key_is_injected_only_on_inference_paths() {
 async fn litellm_key_is_injected_only_on_inference_paths() {
     let env = start(Opts {
         doc: json!({"llm": {"endpoints": {"central": {"allowed": true}}}}),
-        litellm: Some(vec!["/health/*".into(), "/model/info".into()]),
+        litellm: Some(vec!["/health/*".into(), "/model/group/info".into()]),
         secrets: vec![("sk-good", true, None)],
         ..Opts::default()
     })
@@ -1324,7 +1326,7 @@ async fn litellm_key_is_injected_only_on_inference_paths() {
         ("GET", "/v1/models"),
         ("GET", "/v1/models/gpt-x"),
         ("GET", "/health/liveliness"),
-        ("GET", "/model/info"),
+        ("GET", "/model/group/info"),
     ] {
         let r = request(&env, env.llm, method, path, "", b"{\"model\":\"m\"}").await;
         assert_eq!(r.status, 200, "{method} {path}: {}", r.body);
@@ -1346,7 +1348,56 @@ async fn litellm_key_is_injected_only_on_inference_paths() {
         ("GET", "/v1/files"),
         ("POST", "/v1/fine_tuning/jobs"),
         ("GET", "/v1/chat/completions"),
+        ("GET", "/model/group/info/extra"),
+    ] {
+        let r = request(&env, env.llm, method, path, "", b"{}").await;
+        assert_eq!(r.status, 403, "{method} {path}: {}", r.body);
+        assert!(
+            has(&r, "llm_path_not_permitted"),
+            "{method} {path}: {}",
+            r.body
+        );
+        assert!(!r.body.contains("sk-good"), "{}", r.body);
+    }
+    assert_eq!(
+        env.counters.other.load(Ordering::SeqCst),
+        other_before,
+        "nothing reached the endpoint"
+    );
+}
+
+/// (D-367, SEC-65; goose's `litellm` provider asks `GET /model/info` at every start) With **no**
+/// `allowed_paths`, a LiteLLM endpoint forwards `GET /model/info` with the key injected like an
+/// inference path; `POST` to it, any other metadata or management route, and a path below it stay
+/// refused before policy and before the credential is opened.
+#[tokio::test]
+async fn litellm_endpoint_forwards_get_model_info_by_default_and_nothing_else_of_its_metadata() {
+    let env = start(Opts {
+        doc: json!({"llm": {"endpoints": {"central": {"allowed": true}}}}),
+        litellm: Some(vec![]),
+        secrets: vec![("sk-good", true, None)],
+        ..Opts::default()
+    })
+    .await;
+    let r = request(&env, env.llm, "GET", "/model/info", "", b"").await;
+    assert_eq!(r.status, 200, "{}", r.body);
+    assert!(
+        r.body.contains("key=sk-good"),
+        "the key is injected: {}",
+        r.body
+    );
+    // The store goes down: a refused path must not even try to open the credential.
+    env.mem.set_unavailable(true);
+    let other_before = env.counters.other.load(Ordering::SeqCst);
+    for (method, path) in [
+        ("POST", "/model/info"),
+        ("PUT", "/model/info"),
+        ("GET", "/model/group/info"),
         ("GET", "/model/info/extra"),
+        ("POST", "/model/new"),
+        ("POST", "/model/delete"),
+        ("GET", "/key/info"),
+        ("GET", "/v1/model/info"),
     ] {
         let r = request(&env, env.llm, method, path, "", b"{}").await;
         assert_eq!(r.status, 403, "{method} {path}: {}", r.body);
@@ -1465,6 +1516,8 @@ async fn openai_key_pipeline_headers_paths_models_sse_and_classification() {
         ("GET", "/v1/assistants"),
         ("GET", "/v1/organization/admin_api_keys"),
         ("GET", "/v1/chat/completions"),
+        // (D-367) `GET /model/info` is a `litellm` default only: another kind refuses it.
+        ("GET", "/model/info"),
     ] {
         let r = request(&env, env.llm, method, path, "", b"{}").await;
         assert_eq!(r.status, 403, "{method} {path}: {}", r.body);

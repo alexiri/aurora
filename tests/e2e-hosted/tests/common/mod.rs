@@ -73,7 +73,7 @@ pub struct Opts {
     /// Sandbox image for this stack instead of `AURORA_E2EH_IMAGE` (the full image scenario).
     pub image: Option<String>,
     /// Only these harnesses are enabled (`hosted.enabled_harnesses`; the first is also the default
-    /// harness). Default: `claude-code` and `codex`.
+    /// harness). Default: all five (`claude-code`, `codex`, `pi`, `goose`, `opencode`).
     pub only_harness: Option<String>,
 }
 
@@ -261,7 +261,8 @@ hookhost_url = "http://127.0.0.1:9"
 "#,
             harnesses = match &o.only_harness {
                 Some(h) => format!("enabled_harnesses = [\"{h}\"]\ndefault_harness = \"{h}\""),
-                None => "enabled_harnesses = [\"claude-code\", \"codex\"]".to_owned(),
+                None => "enabled_harnesses = [\"claude-code\", \"codex\", \"pi\", \"goose\", \"opencode\"]"
+                    .to_owned(),
             },
             sock = env("AURORA_E2EH_SOCK"),
             net = env("AURORA_E2EH_NETWORK"),

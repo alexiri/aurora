@@ -777,7 +777,7 @@ async fn s3_approval_card_click() {
     let a = w.api.wait_pending().await;
     assert_eq!(a["path"], "/needs-approval");
     assert_eq!(a["conversation_id"].as_str(), Some(w.conv.as_str()));
-    let (post, action) = w.mm.wait_action(&dm, &w.bot.id, "Approve", 60).await;
+    let (post, action) = w.mm.wait_action(&dm, &w.bot.id, "Allow once", 60).await;
     assert_eq!(up.received_requests().await.unwrap().len(), 0, "held");
 
     let s = w.mm.click(&w.alice, &post, &action).await;
@@ -795,9 +795,14 @@ async fn s3_approval_card_click() {
         .await;
     assert_eq!(s, 200, "{v}");
     assert_eq!(v["items"].as_array().map(Vec::len), Some(1), "{v}");
-    // The card was settled in place: no live Approve button remains.
+    // The card was settled in place: no live Allow once button remains.
     let deadline = Instant::now() + Duration::from_secs(20);
-    while w.mm.find_action(&dm, &w.bot.id, "Approve").await.is_some() {
+    while w
+        .mm
+        .find_action(&dm, &w.bot.id, "Allow once")
+        .await
+        .is_some()
+    {
         assert!(Instant::now() < deadline, "card never settled");
         tokio::time::sleep(Duration::from_millis(400)).await;
     }

@@ -71,6 +71,18 @@ impl LlmProvider for LitellmProvider {
     fn injection(&self, _mode: &AuthMode) -> LlmInjection {
         LlmInjection::new(InjectionHeader::Bearer, &["x-api-key"])
     }
+    /// (D-177, SEC-65, D-367) The `litellm` inference set (`inference_path_permitted`), plus the one
+    /// read-only metadata route goose's `litellm` provider calls at every start: `GET <base
+    /// path>/model/info` (the model's context window). That path and method only: every other
+    /// metadata or management route stays refused, and `allowed_paths` still only adds.
+    fn inference_path_permitted(&self, ep: &Endpoint, method: &http::Method, path: &str) -> bool {
+        crate::inference_path_permitted(method, path, &ep.allowed_paths)
+            || (*method == http::Method::GET
+                && crate::paths::allowed_path_match(
+                    path,
+                    &[format!("{}/model/info", ep.base_path())],
+                ))
+    }
     async fn list_models(
         &self,
         ep: &Endpoint,
@@ -179,5 +191,87 @@ impl LlmProvider for LitellmProvider {
     }
     fn origin_from_response(&self, _ep: &Endpoint, _headers: &HeaderMap) -> Option<KeyOrigin> {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use http::Method;
+
+    fn ep(base: &str, allowed: &[&str]) -> Endpoint {
+        Endpoint {
+            id: "central".into(),
+            provider: "litellm".into(),
+            display_name: String::new(),
+            base_url: base.into(),
+            dialects: vec![],
+            default_model: None,
+            models: vec![],
+            allowed_models: vec![],
+            key_origin: None,
+            allowed_paths: allowed.iter().map(|s| (*s).to_owned()).collect(),
+            organization: None,
+            project: None,
+            auth_header: None,
+            models_path: None,
+            region: None,
+            project_id: None,
+            location: None,
+            model_roles: Default::default(),
+            model_info: Default::default(),
+        }
+    }
+
+    fn ok(e: &Endpoint, m: &Method, p: &str) -> bool {
+        LitellmProvider.inference_path_permitted(e, m, p)
+    }
+
+    /// (D-367) `GET /model/info` is part of the `litellm` default set, with no `allowed_paths`;
+    /// that path and method only.
+    #[test]
+    fn get_model_info_is_in_the_default_set_and_only_that_route() {
+        let e = ep("https://llm.example", &[]);
+        assert!(ok(&e, &Method::GET, "/model/info"));
+        assert!(ok(&e, &Method::GET, "/model/info?litellm_model_id=x"));
+        assert!(ok(&e, &Method::GET, "/model/info/"));
+        assert!(!ok(&e, &Method::POST, "/model/info"), "POST is refused");
+        assert!(!ok(&e, &Method::DELETE, "/model/info"));
+        for p in [
+            "/model/info/extra",
+            "/model/group/info",
+            "/model/new",
+            "/model/delete",
+            "/v1/model/info",
+            "/model_group/info",
+            "/key/info",
+            "/model/./info",
+            "/model/%2e%2e/info",
+            "/other/model/info",
+        ] {
+            assert!(!ok(&e, &Method::GET, p), "GET {p}");
+        }
+        // The inference set is unchanged.
+        assert!(ok(&e, &Method::POST, "/v1/chat/completions"));
+        assert!(ok(&e, &Method::GET, "/v1/models"));
+        assert!(!ok(&e, &Method::GET, "/key/generate"));
+    }
+
+    /// A deployment under a route prefix reaches its own `…/model/info` only.
+    #[test]
+    fn under_a_base_path_only_that_prefix_counts() {
+        let e = ep("https://llm.example/litellm/", &[]);
+        assert!(ok(&e, &Method::GET, "/litellm/model/info"));
+        assert!(!ok(&e, &Method::GET, "/model/info"));
+        assert!(!ok(&e, &Method::GET, "/other/model/info"));
+    }
+
+    /// `allowed_paths` still only adds: other metadata routes are admitted when listed.
+    #[test]
+    fn allowed_paths_still_add() {
+        let e = ep("https://llm.example", &["/model/group/info"]);
+        assert!(ok(&e, &Method::GET, "/model/group/info"));
+        assert!(ok(&e, &Method::GET, "/model/info"));
+        assert!(!ok(&e, &Method::GET, "/model/new"));
     }
 }

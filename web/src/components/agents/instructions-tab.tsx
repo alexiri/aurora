@@ -172,6 +172,7 @@ export function InstructionsTab({ agent, wsId }: { agent: Agent; wsId: string })
           harnessId={chosenHarness || undefined}
           harnessName={harnessInfo?.display_name ?? "this harness"}
           roleless={roleless}
+          mapped={harnessInfo?.model_roles ?? null}
           models={endpointModels}
           roles={roles}
           onRoles={setRoles}

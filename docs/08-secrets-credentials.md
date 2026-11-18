@@ -520,7 +520,7 @@ a module of `aurora-llm` plus one registry line.
   - `vertex`: `POST /v1/projects/<project_id>/locations/<location>/publishers/{anthropic|google}/models/<model>:{rawPredict|streamRawPredict|generateContent|streamGenerateContent|countTokens}` and, when declared, `POST …/endpoints/openapi/chat/completions`; the **project and location in the path must equal the endpoint's**, otherwise `llm_path_not_permitted`.
   - `openai_compatible`: derived from the declared dialects relative to the base path (`openai_chat` → `/v1/chat/completions`, `/v1/completions`; `openai_responses` → `/v1/responses` family; `anthropic_messages` → `/v1/messages`, `/v1/messages/count_tokens`; always `/v1/models`, `/v1/embeddings`); `allowed_paths = ["/*"]` is the explicit opt-out for servers with other routes (D-260(b); an earlier `/**` spelling was an error).
   - `anthropic` (phase 5, P4-LLM spec batch, D-260(c)): `POST /v1/messages`, `POST /v1/messages/count_tokens`, `GET /v1/models[/{id}]`. The Files, Batches, Skills and Admin APIs and every other route get no key (403 `llm_path_not_permitted`); the live suite pins that the pinned Claude Code calls nothing else on the host.
-  - `litellm` (**phase 4, live**, D-177, FIX-105): `POST /v1/messages`, `/v1/messages/count_tokens`, `/v1/chat/completions`, `/v1/completions`, `/v1/responses`, `/v1/embeddings` (also under a route prefix, as `model_from_request` reads them) and `GET /v1/models[/{id}]`. The LiteLLM management API (`/key/*`, `/user/*`, `/team/*`, …) and every other route get no key: 403 `llm_path_not_permitted`. For `litellm` and `openai_compatible` the per-endpoint `allowed_paths` **adds** paths to the set (absolute path, or a prefix ending in `/*`, at most 32 entries): an operator who needs `GET /health/liveliness` lists it; `/*` is the explicit opt-out.
+  - `litellm` (**phase 4, live**, D-177, FIX-105): `POST /v1/messages`, `/v1/messages/count_tokens`, `/v1/chat/completions`, `/v1/completions`, `/v1/responses`, `/v1/embeddings` (also under a route prefix, as `model_from_request` reads them), `GET /v1/models[/{id}]` and, **for this kind only** (phase 5, D-367, P5-HARN), `GET <base path>/model/info` (read-only model metadata that goose's `litellm` provider asks at every start; that one path and method, forwarded with the placeholder replaced by the endpoint's key; `POST` to it, every other metadata route such as `/model/group/info` and every other kind stay refused). The LiteLLM management API (`/key/*`, `/user/*`, `/team/*`, …) and every other route get no key: 403 `llm_path_not_permitted`. For `litellm` and `openai_compatible` the per-endpoint `allowed_paths` **adds** paths to the set (absolute path, or a prefix ending in `/*`, at most 32 entries): an operator who needs `GET /health/liveliness` lists it; `/*` is the explicit opt-out.
   (Until P4-LLM lands `anthropic` keeps its phase-0 behaviour: no path restriction.)
   **`allowed_paths` has one meaning** (phase 5, D-260(b)): it **adds** paths to the set (absolute path
   or a `/*`-suffixed subtree, at most 32, matched on the normalized path as `inference_path_permitted`
@@ -544,15 +544,22 @@ selection`): an agent whose granted keys share no dialect with its harness gets 
 for each key in model readiness and `no_model_key` at the turn. The reach this gives (`12 §Provider
 reach per harness` is the per-harness table):
 
-| Provider | Dialects it can serve | `claude-code` | `codex` |
-|----------|----------------------|---------------|---------|
-| `anthropic` | `anthropic_messages` | yes | no |
-| `litellm` | as declared (default all three) | via `anthropic_messages` | via `openai_responses` |
-| `openai` | `openai_chat`, `openai_responses` | no | yes |
-| `azure_openai` | `openai_chat`, `openai_responses` | no | yes |
-| `bedrock` | `anthropic_bedrock` (default); `openai_chat`/`openai_responses` when declared | via `anthropic_bedrock` | only with `openai_responses` declared |
-| `vertex` | `anthropic_vertex` (default); `openai_chat` when declared | via `anthropic_vertex` | no (Codex refuses chat, D-153) |
-| `openai_compatible` | as declared (default `openai_chat`) | only with `anthropic_messages` declared | only with `openai_responses` declared |
+| Provider | Dialects it can serve | `claude-code` | `codex` | `pi` / `opencode` | `goose` |
+|----------|----------------------|---------------|---------|-------------------|---------|
+| `anthropic` | `anthropic_messages` | yes | no | yes | yes |
+| `litellm` | as declared (default all three) | via `anthropic_messages` | via `openai_responses` | via any of the three | via `anthropic_messages` or `openai_chat` |
+| `openai` | `openai_chat`, `openai_responses` | no | yes | yes | via `openai_chat` |
+| `azure_openai` | `openai_chat`, `openai_responses` | no | yes | yes | via `openai_chat` |
+| `bedrock` | `anthropic_bedrock` (default); `openai_chat`/`openai_responses` when declared | via `anthropic_bedrock` | only with `openai_responses` declared | only with an OpenAI dialect declared | only with `openai_chat` declared |
+| `vertex` | `anthropic_vertex` (default); `openai_chat` when declared | via `anthropic_vertex` | no (Codex refuses chat, D-153) | only with `openai_chat` declared | only with `openai_chat` declared |
+| `openai_compatible` | as declared (default `openai_chat`) | only with `anthropic_messages` declared | only with `openai_responses` declared | any declared dialect | `anthropic_messages` or `openai_chat` declared |
+
+(Phase 5, P5-HARN, D-361..D-363) `pi` and `opencode` declare `anthropic_messages`,
+`openai_responses` and `openai_chat`; `goose` declares `anthropic_messages` and `openai_chat`
+(its `openai` provider chooses the Responses API by model name, so `openai_responses` cannot be
+promised). None declares `anthropic_bedrock` or `anthropic_vertex`: their SDKs sign with cloud
+credentials and have no skip-auth switch, so Bedrock and Vertex models reach them through a
+`litellm` endpoint.
 
 A combination the table refuses (Codex on Claude models, Claude Code on an OpenAI-only server) is
 served by putting a **`litellm` endpoint** in front: LiteLLM translates under the operator's control

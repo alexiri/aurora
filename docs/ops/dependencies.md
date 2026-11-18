@@ -11,6 +11,7 @@ This page is the review policy for those PRs.
 | `cargo` | `plugins/builtin/{aws-keys,github,google-workspace}/hooks` (own lockfiles, D-77) | Mon 06:30 | grouped minor + patch |
 | `npm` (pnpm) | `web/` (`pnpm-lock.yaml`) | Tue 06:00 | grouped minor + patch; majors separate |
 | `npm` | `images/sandbox/harness/claude-code` | Tue 06:30 | nothing: the CLI is ignored (below) |
+| `npm` | `images/sandbox/harness/pi` | Tue 06:30 | nothing: the CLI is ignored (below) |
 | `github-actions` | `/` (workflow actions pinned by commit SHA) | Wed 06:00 | grouped minor + patch |
 | `docker` | `images/sandbox`, `images/services`, `deploy/dev/llm-mock`, `deploy/kind` | Wed 06:30 | grouped minor + patch |
 
@@ -30,6 +31,8 @@ backlog stops growing instead of burying CI.
 | `@types/node` (majors only) | The web runtime is Node 22 (web image, CI) with a documented dev floor of 20.9; the types must track the runtime major, not run ahead of it (26.x was proposed). Minor and patch releases still arrive. | By hand, together with the Node runtime (web `engines`, `web.Containerfile`, CI `setup-node`, README). |
 | `jsdom` (majors only) | jsdom 31 needs Node `^22.22.2 \|\| ^24.15.0 \|\| >=26`, above the 20.9 floor in `web/package.json`. | By hand, together with raising the Node floor (engines, README) and a full vitest run. |
 | `@anthropic-ai/claude-code` | The version must equal `PINNED_VERSION` in `services/aurora-supervisor/src/adapters/claude_code/mod.rs` (FIX-103). | By hand, together with the supervisor constant and the claude-code conformance run. |
+| `@earendil-works/pi-coding-agent` | P5-HARN (D-361): the version must equal `PINNED_VERSION` in `services/aurora-supervisor/src/adapters/pi/mod.rs`; Pi needs Node.js ≥ 22.19 (the image's `nodejs`). | By hand, together with the supervisor constant and the pi conformance run. |
+| goose and OpenCode release archives (`GOOSE_VERSION`, `OPENCODE_VERSION` and their SHA-256 build args in `images/sandbox/Containerfile`) | P5-HARN (D-361, D-363(b)): not npm packages, so no Dependabot entry; each version must equal its adapter's `PINNED_VERSION`. OpenCode stays on the v1.19.x line (v2 changes the config schema, permission format and server API). | By hand, together with the adapter constant, both checksums and the adapter's conformance run. |
 | LiteLLM and VidaiMock digests (`ghcr.io/berriai/litellm`, `ghcr.io/vidaiuk/vidaimock`) | I-30: a changed mock changes what the live claude-code acceptance proves. | By hand, with `scripts/e2e/llm.sh` and the hosted e2e. |
 | Mattermost 11.7 (`mattermost/mattermost-preview`) | MM-003: 11.7 is the supported production version, the dev image is pinned to 11.7.15 by digest. | By hand, with `scripts/conformance.sh --mattermost` and `scripts/e2e/mattermost.sh`. |
 
