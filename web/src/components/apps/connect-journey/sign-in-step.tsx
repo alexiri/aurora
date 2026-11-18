@@ -2,7 +2,7 @@
 
 import { useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
-import { useCallback, useState, type FormEvent } from "react";
+import { useCallback, useState, type ComponentProps, type FormEvent } from "react";
 
 import { RecipeFieldsInput } from "@/components/credentials/generic-form";
 import { ValueInput } from "@/components/credentials/value-input";
@@ -41,6 +41,8 @@ import { wsRoutes } from "@/lib/routes";
 import { askSentence, onlySentence, type WhoCanValue } from "@/lib/who-can";
 import { useParams } from "next/navigation";
 
+import { WebhookSignInStep } from "@/components/webhook/webhook-connect-step";
+
 import { DynamicForm } from "../dynamic-form";
 import { InstanceField, OAuthClientField, RequestedScopes, TokenScopes } from "./advanced-fields";
 import { buildJourneyConnect, connectFailure, hostOf, suggestedMethod, tickList, tokenPage } from "./logic";
@@ -73,7 +75,26 @@ function ShowContext({ method, orgId }: { method: ConnectMethod; orgId: string }
  * **Sign in** (`14 §3` step 4): only the suggested method, with one primary action; an **Advanced** disclosure holds the
  * other methods (blocked ones turned off, with the reason), the scopes, the OAuth client and a self-hosted server.
  */
-export function SignInStep({
+export function SignInStep(props: ComponentProps<typeof GenericSignInStep>) {
+  // (P5-WEBHOOK-4, C-913) The Outgoing webhook app's sign-in is its three connect steps.
+  if (props.app.app_id === "webhook")
+    return (
+      <WebhookSignInStep
+        app={props.app}
+        workspaceId={props.workspaceId}
+        orgId={props.orgId}
+        orgMode={props.orgMode}
+        level={props.level}
+        agentIds={props.agentIds}
+        hasWriteTools={props.hasWriteTools}
+        onBack={props.onBack}
+        onResult={props.onResult}
+      />
+    );
+  return <GenericSignInStep {...props} />;
+}
+
+function GenericSignInStep({
   app,
   plan,
   workspaceId,

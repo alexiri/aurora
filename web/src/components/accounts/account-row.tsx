@@ -18,6 +18,7 @@ import type { SecretScope } from "@/lib/api/secrets";
 import { useWhoCan } from "@/lib/api/who-can";
 import { useOrg } from "@/lib/api/queries";
 import { entryText, kindLabel } from "@/lib/accounts";
+import { WebhookCardLine } from "@/components/webhook/webhook-card-line";
 import { LimitControl } from "./limit-control";
 
 import { AccessControl } from "./access-control";
@@ -141,6 +142,10 @@ export function AccountRow({
           />
           {account.status_reason === "instance_deleted" && account.health.state === "disabled" ? <InstanceRemoved orgId={orgId} /> : null}
           {test.isPending ? <p className="text-sm text-muted" role="status">Testing…</p> : null}
+          {/* (P5-WEBHOOK-4, C-913) An Outgoing webhook: its host and limit, Edit and Send test, for those who manage it. */}
+          {account.app?.app_id === "webhook" && account.ref.type === "connection" && account.can.manage ? (
+            <WebhookCardLine connectionId={account.ref.id} name={account.name} />
+          ) : null}
           {shared && account.managed_by ? <WhoCan value={account.managed_by} /> : null}
           {/* (P5-UX-11, C-937) The limit of the organization's account, for the people who manage it. */}
           {scope.kind === "organization" && account.scope === "organization" && account.can.manage ? <LimitControl account={account} orgId={orgId} /> : null}

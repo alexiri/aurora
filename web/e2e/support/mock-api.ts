@@ -497,6 +497,19 @@ export async function mockApi(
         { ...k, key: "gateway.allowed_private", value: ["10.1.0.0/16"], source: "dashboard", default: [], schema: sch("list", { item_kind: "string" }) },
       ], null);
     }
+    // (P5-WEBHOOK-4, C-912) The outgoing_webhooks section on Apps & accounts › Advanced: one Helm-locked ceiling, one dashboard value.
+    if (p === "/v1/admin/settings/outgoing_webhooks") {
+      const sch = (min: number, max: number) => ({ kind: "int", min, max, max_len: null, options: null, item_kind: null });
+      const k = { list: null, id_field: null, entries: null, secret: null };
+      return json({
+        section: "outgoing_webhooks", title: "Outgoing webhooks", description: "How often one outgoing webhook may be called.", generation: 1, updated_at: now,
+        updated_by_label: "root@example.test", extra: null,
+        settings: [
+          { ...k, key: "outgoing_webhooks.per_minute_max", value: 30, source: "helm", locked: true, helm_key: "config.outgoing_webhooks.per_minute_max", default: 30, schema: sch(1, 600) },
+          { ...k, key: "outgoing_webhooks.per_day_max", value: 500, source: "default", locked: false, helm_key: "config.outgoing_webhooks.per_day_max", default: 500, schema: sch(1, 100000) },
+        ],
+      });
+    }
     if (p === "/v1/admin/placement/preview") return json({ name: "bobj", slug: "bobj", used: 0, unresolved: [] });
     if (p === "/v1/admin/placement/choices") {
       return json({ workspaces: [{ id: id(2), slug: "main", name: "Main workspace" }], secrets: [{ id: id(300), name: "org-llm-key", kind: "llm" }], connections: [] });
