@@ -422,7 +422,8 @@ pub struct ModelMeta {
 pub fn harness_model_roles(harness: &str) -> &'static [&'static str] {
     match harness {
         // goose: `subagent_role` -> `GOOSE_SUBAGENT_MODEL` (any of the three roles can be the one).
-        "claude-code" | "goose" => &["large", "medium", "small"],
+        // opencode: `roles.small` -> `small_model`, `subagent_role` -> `agent.general.model`.
+        "claude-code" | "goose" | "opencode" => &["large", "medium", "small"],
         _ => &[],
     }
 }

@@ -15,6 +15,7 @@
 //! | `fail-429`     | `429` rate limit                                                                  |
 //! | `fail-quota`   | `429` with `insufficient_quota` (OpenAI) / a billing-style rate limit (Anthropic) |
 //! | `fail-500`     | `500` server error                                                                |
+//! | `fail-402`     | `402` billing error (a harness that retries every 429 and 5xx, OpenCode, ends at once) |
 //!
 //! Usage is fixed so tests can add it up: input 11, output 4, cache read 3, cache write 2 (the
 //! dialect's own fields; OpenAI dialects have no cache write). Every request is recorded with its
@@ -65,6 +66,8 @@ pub struct HarnessUpstream {
     mcp_tool: String,
     /// The harness's shell tool (`bash` for Pi and OpenCode, `shell` for goose).
     shell_tool: String,
+    /// The harness's subagent tool (`delegate` for goose, `task` for OpenCode).
+    delegate_tool: String,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -87,7 +90,8 @@ fn has_tool_result(body: &Value) -> bool {
         || s.contains("function_call_output")
 }
 
-fn plan(model: &str, body: &Value, mcp_tool: &str, shell_tool: &str) -> Step {
+fn plan(model: &str, body: &Value, tools: [&str; 3]) -> Step {
+    let [mcp_tool, shell_tool, delegate_tool] = tools;
     let done = has_tool_result(body);
     match model {
         "tool" if !done => Step::Tool {
@@ -103,9 +107,16 @@ fn plan(model: &str, body: &Value, mcp_tool: &str, shell_tool: &str) -> Step {
             input: json!({}),
         },
         // A subagent: the harness's delegate tool, then (once its result is back) the text.
+        // The input carries the arguments of every harness's tool (goose `delegate`: `instructions`;
+        // OpenCode `task`: `description`, `prompt`, `subagent_type`).
         "delegate" if !done => Step::Tool {
-            name: "delegate".into(),
-            input: json!({"instructions": "say pong"}),
+            name: delegate_tool.to_owned(),
+            input: json!({
+                "instructions": "say pong",
+                "description": "say pong",
+                "prompt": "say pong",
+                "subagent_type": "general",
+            }),
         },
         "tool" | "steer" | "mcp" | "delegate" => Step::Text("done"),
         _ => Step::Text("pong"),
@@ -118,6 +129,7 @@ fn failure(model: &str, dialect: Dialect) -> Option<Response> {
         "fail-429" => (429, "rate_limit_error"),
         "fail-quota" => (429, "insufficient_quota"),
         "fail-500" => (500, "api_error"),
+        "fail-402" => (402, "billing_error"),
         _ => return None,
     };
     let body = if dialect == Dialect::Messages {
@@ -368,7 +380,11 @@ async fn handle(
     if let Some(r) = failure(model, dialect) {
         return r;
     }
-    let step = plan(model, &json, &me.mcp_tool, &me.shell_tool);
+    let step = plan(
+        model,
+        &json,
+        [&me.mcp_tool, &me.shell_tool, &me.delegate_tool],
+    );
     let all = frames(dialect, model, &step, n);
     let stall = model == "long" && matches!(step, Step::Text(_));
     let stream = futures::stream::unfold((all.into_iter(), stall), |(mut it, stall)| async move {
@@ -402,11 +418,21 @@ impl HarnessUpstream {
 
     /// [`HarnessUpstream::start_with_mcp_tool`] with the harness's shell tool name too.
     pub async fn start_with_tools(mcp_tool: &str, shell_tool: &str) -> Self {
+        Self::start_with_all_tools(mcp_tool, shell_tool, "delegate").await
+    }
+
+    /// [`HarnessUpstream::start_with_tools`] with the harness's subagent tool name too.
+    pub async fn start_with_all_tools(
+        mcp_tool: &str,
+        shell_tool: &str,
+        delegate_tool: &str,
+    ) -> Self {
         let me = Self {
             seen: Arc::default(),
             base: String::new(),
             mcp_tool: mcp_tool.to_owned(),
             shell_tool: shell_tool.to_owned(),
+            delegate_tool: delegate_tool.to_owned(),
         };
         let route = |d: Dialect, p: &'static str, me: &Self| {
             let me = me.clone();

@@ -561,16 +561,22 @@ OpenCode 206 MB) and 2.16 GB with `SANDBOX_HARNESSES=claude-code`.
 **`opencode`** (release binary, checksum verified; **pinned on the v1.19.x line**, D-363, so the v1 CLI
 and config schema of `opencode.ai/v1/docs` apply, not the v2 docs):
 - **Drive** (*verified*): `opencode run --format json -m <provider>/<model> [--session <ses_…>]
-  [--variant <effort>] "<message>"` per turn, **without `--attach`**: the run is in-process, and its MCP
-  child's parent is the `opencode run` process (D-301). **Prompt size rule:** the message is a positional
-  argument, and Linux limits a single argument to `MAX_ARG_STRLEN` (128 KiB), far below the turn's input
-  bound. The prompt therefore goes on stdin or through a file the CLI reads (`--file`/`-f` attaches
-  files); if Part D finds that neither carries the full prompt, **a prompt over the limit fails the turn
-  with a clear `harness_failed` message and is never truncated**. Part D proves it with a prompt above
-  128 KiB.
-  `--auto` exists in 1.19.6 but the `permission` block does the job. SIGTERM mid-turn ends the process
-  without a terminal event; the session stays resumable. The first event carries `sessionID` (the
-  session ref; resume with `--session`).
+  [--variant <effort>]` per turn, **without `--attach`**: the run is in-process, and its MCP
+  child's parent is the `opencode run` process (D-301; the conformance suite checks the ancestry).
+  **Prompt size rule (Part D, *verified*):** the message is **not** an argument (Linux limits a single
+  argument to `MAX_ARG_STRLEN`, 128 KiB, far below the turn's input bound). With no positional message,
+  `opencode run` reads the whole of **stdin**, which the adapter writes and closes; a 400 KB prompt
+  (three times the limit) reaches the model request complete, the last line included, on Messages and Chat
+  (a conformance test, and a unit test that no argument carries the prompt). So there is no oversize
+  failure to map: no prompt is truncated and none is refused for its size. `--auto` exists in 1.19.6 but
+  the `permission` block does the job; `--thinking` is not used (text arrives whole and `thinking_deltas`
+  is false). SIGTERM or SIGKILL mid-turn ends the process without a terminal event; the session stays
+  resumable. **Session ref:** the adapter reports the **conversation's id** as the session ref (its
+  directory is named after it, so a purge by ref removes exactly that state, as for `pi` and `goose`);
+  OpenCode's own `ses_…` id comes from the first event's `sessionID`, is kept by the live session, and
+  after a restart is read again with `opencode db "select id from session where parent_id is null order
+  by time_created desc limit 1"`; if the data is gone (a purge) the turn starts a new session instead of
+  failing. The first event's `sessionID` is the turn's own; events of any other session are ignored.
 - **Events** (*verified*, one JSON object per line, all with `sessionID`): `step_start`; `text` (the whole
   part, `part.text`; **no streaming deltas**, thinking only with `--thinking`); `tool_use` (`part.tool`,
   `part.callID`, `part.state {status, input, output}`, already completed); `step_finish`
@@ -578,16 +584,30 @@ and config schema of `opencode.ai/v1/docs` apply, not the v2 docs):
   `input` excludes cached tokens); `error` (`error.name = "APIError"`, `error.data {message, statusCode,
   isRetryable, responseBody}`) with exit status 1. The run ends when the process exits: exit 0 → `Done`,
   non-zero or an `error` event → `Error`, classified from `statusCode` and `responseBody` through
-  `provider_error.rs`. OpenCode retries 429 and 5xx about six times (about 70 s) before it reports them;
-  Part D looks for a retry setting and aligns it with `claude-code`'s behaviour, and if there is none the
-  delay is written into the provider-error mapping so the dashboard's wait is explained.
-- **Usage**: events carry no model. After the turn the adapter reads the turn's assistant messages from
-  the data directory with `opencode db "<SQL>" --format json` (table `message`, JSON column `data` with
-  `modelID` and `tokens {input, output, cache {read, write}}`, grouped by `modelID`, **subagent sessions
-  included**) and falls back to summing `step_finish` into one default-model entry if the query fails.
-  *Verified*: `opencode db` needs no `sqlite3` binary and no network (it ran in the image with
-  `--network=none`); it runs with the same no-network environment as the turn. Its numbers are a sandbox
-  claim under D-304's trust rule, like every other harness's usage.
+  `provider_error.rs` (the adapter hands the table `status <code> <body>`). The answer is complete at the
+  first `step_finish` whose `reason` is not `tool-calls`; the process normally exits at once, and a process
+  that lingers (a child of the agent's own command holding the output pipe) is stopped after 10 s and the
+  turn is `Done`. **Retries (Part D, *verified*):** OpenCode retries a retryable error (`isRetryable`: 429
+  and 5xx) with a growing delay and reports it after the **sixth request, about 72 s** for a 429 on every
+  request (`fail-429` against the mock); a 401 or a 402 is reported at once. **1.19.6 has no setting for
+  it** (no config key, no variable: the strings of the binary were searched), so it cannot be aligned with
+  `codex` (two retries, about 6 s) or `pi`; instead **the delay is written into the mapping**: the message
+  of a retryable error ends with "(OpenCode retried the request for about 70 seconds before giving up)", so
+  the dashboard's wait is explained. The conformance suite's refusal case uses the mock's `402` billing
+  error (→ `provider_quota`), which OpenCode reports at once; the 429 text is covered by a unit test over a
+  recorded event, because 72 s is longer than the suite's stall bound.
+- **Usage** (*verified*): events carry no model. After a `Done` the adapter runs `opencode db "<SQL>"
+  --format json` (the same no-network environment and directories as the turn): the assistant messages
+  of the turn's session **and every session below it** (a recursive query over `session.parent_id`, so
+  subagents are included) created since the child started (`message.time_created >=` the start in
+  milliseconds), JSON column `data` with `modelID` and `tokens {input, output, cache {read, write}}`,
+  `sum`med and grouped by `modelID`. `input` excludes cached tokens on every dialect; cost is not read.
+  If the query fails or returns no row, the usage is the `step_finish` tokens summed into **one entry for
+  the default model** (D-304: the API folds any model it does not accept into the default's entry anyway).
+  `opencode db` needs no `sqlite3` binary and no network (it ran in the image with `--network=none`).
+  Its numbers are a sandbox claim under D-304's trust rule, like every other harness's usage. The
+  conformance suite checks the four counters on all three dialects and that a delegated subagent's tokens
+  are a second entry under its own model.
 - **Config** (*verified*, v1 schema), `opencode.json` through `OPENCODE_CONFIG`: `autoupdate: false`,
   `share: "disabled"`, `permission: {"*": "allow"}`, `agent.title.disable: true` (otherwise a title request
   goes to the small model on every new session), `instructions: ["/workspace/AGENTS.md"]`, `model`,
@@ -595,31 +615,54 @@ and config schema of `opencode.ai/v1/docs` apply, not the v2 docs):
   used the configured model), one `provider.<id>` per dialect: `npm` `@ai-sdk/anthropic` (`/v1/messages`),
   `@ai-sdk/openai` (`/v1/responses`) or `@ai-sdk/openai-compatible` (`/v1/chat/completions`), all bundled
   in the binary, `options.baseURL` from `ModelChoice`, `options.apiKey: "{env:ANTHROPIC_API_KEY}"` (or
-  `OPENAI_API_KEY`), `models.<id>.limit {context, output}` from `model_meta` and
-  `models.<id>.variants.{low,medium,high,max}` carrying the provider's reasoning options (a `--variant` that
-  the config does not define is silently ignored). `mcp.aurora = {"type": "local", "command": [...],
+  `OPENAI_API_KEY`), `models.<id>.limit {context, output}` from `model_meta` (omitted when the window is
+  unknown) and `models.<id>.variants.{low,medium,high,max}` carrying the provider's reasoning options (a
+  `--variant` that the config does not define is silently ignored, so all four are always rendered).
+  **Effort table (Part D, *verified*: the request carries it):** `@ai-sdk/anthropic` →
+  `thinking {type: "enabled", budgetTokens: 4000 | 10000 | 16000 | 32000}` (the request's
+  `thinking.budget_tokens`); the OpenAI packages → `reasoningEffort` `low`, `medium`, `high` (`max` is
+  `high`, the highest level the API accepts for every model; the request's `reasoning_effort`). An empty or
+  unknown effort passes no `--variant`. `options.baseURL`: the Anthropic package wants the host **with**
+  `/v1` (it appends `/messages`), so the adapter adds `/v1` to the endpoint's base URL; the OpenAI packages
+  take the OpenAI form (`…/v1`). `models` holds the default model and every resolved role's model.
+  `mcp.aurora = {"type": "local", "command": [...],
   "enabled": true, "environment": {}}`; the tools are exposed directly as `aurora_<tool>` next to the
-  built-ins (`bash`, `edit`, `glob`, `grep`, `read`, `skill`, `task`, `todowrite`, `webfetch`, `write`).
+  built-ins (`bash`, `edit`, `glob`, `grep`, `read`, `skill`, `task`, `todowrite`, `webfetch`, `write`);
+  the adapter names the platform tools `mcp__aurora__<tool>` in events, like the other harnesses.
+- **State layout (Part D, as goose's one root):** the conversation's directory
+  `<home>/.aurora/harness/opencode/sessions/<ref>/` holds everything, so a purge by ref removes it whole:
+  `config/` (`XDG_CONFIG_HOME`; `opencode.json` through `OPENCODE_CONFIG`, plus the files below), `data/`
+  (`XDG_DATA_HOME`: `opencode/opencode.db`, `log/`, `snapshot/`), `cache/` and `state/`
+  (`XDG_CACHE_HOME`, `XDG_STATE_HOME`). Before every start the adapter **deletes `config/` whole** (an
+  agent's own `agents/`, `plugin/` or a second `opencode.json` there are gone), renders it again with
+  read-back, checks `data`, `data/opencode`, `cache` and `state` one by one (a link planted at `data` is
+  replaced, never followed) and deletes `data/opencode/auth.json` and `mcp-auth.json`.
 - **No vendor network** (*verified*: with all of these a turn makes only the inference request):
   environment `OPENCODE_DISABLE_MODELS_FETCH=1` (models.opencode.ai), `OPENCODE_DISABLE_DEFAULT_PLUGINS=1`,
   `OPENCODE_DISABLE_LSP_DOWNLOAD=1`, `OPENCODE_DISABLE_AUTOUPDATE=1`, `OPENCODE_DISABLE_PROJECT_CONFIG=1`
   (a workspace `.opencode/` or `opencode.json` cannot replace the rendered configuration; it also stops
   project `AGENTS.md` discovery, hence `instructions` above) and `OPENCODE_DISABLE_CLAUDE_CODE=1`
   (`CLAUDE.md` and `.claude/skills` are not read). **The background `npm install @opencode-ai/plugin`
-  into every config directory** (registry.npmjs.org) is skipped only when the directory is **not writable
-  by the running user** or already holds `node_modules` and a `package-lock.json` listing the dependency.
-  **Uid model:** the supervisor, `opencode` and the agent's own commands all run as uid 1000 (`§Process
-  model`), so the directory is owned by uid 1000 and made mode 0555 by the adapter right before every
-  start (it is re-rendered, so 0755 during the render): OpenCode's own writability check (`access(W_OK)`)
-  then fails and it skips the install. The agent *can* `chmod` it back; that only re-enables the install
-  attempt, and **the backstop is the session proxy, which refuses `registry.npmjs.org`** (the live suite
-  asserts no request to the npm registry reaches the network). Part D also tries the alternative that needs
-  no mode bits (a rendered `package.json`, `package-lock.json` and `node_modules/@opencode-ai/plugin`, which
-  make the installer return early) and uses it if it stops the request. `XDG_CONFIG_HOME` points at that
-  directory. `XDG_DATA_HOME`
-  is the conversation's directory (`opencode.db`, `log/`, `snapshot/`; `auth.json` is deleted before
-  every start); `webfetch` stays (it goes through the proxy like any agent traffic); the optional web search
-  (`OPENCODE_ENABLE_EXA`) is never enabled.
+  into the global configuration directory** (registry.npmjs.org) returns at once when the directory is
+  **not writable by the running user** or already holds `node_modules` and a `package-lock.json` listing the
+  dependency (*both verified in Part D*: with either, a start makes no request to the registry).
+  **Uid model and the choice:** the supervisor, `opencode` and the agent's own commands all run as uid 1000
+  (`§Process model`), so there is **no uid that can write the directory and the agent cannot**: a
+  read-only directory (mode 0555 set right before every start) would only stop the install until the agent
+  `chmod`s it back, and it is a mode bit the render and read-back cannot assert. The adapter therefore
+  renders the second form, which needs no mode bits and no uid: `config/opencode/package.json`,
+  `package-lock.json` (`packages[""].dependencies` = `@opencode-ai/plugin` at the pinned version) and
+  `node_modules/@opencode-ai/plugin/package.json`, written and read back before every start with the rest
+  of the configuration (the whole directory is rebuilt, so a deleted file is back at the next start). An
+  agent that deletes them in a turn only re-enables the install attempt, and **the backstop is the session
+  proxy, which refuses `registry.npmjs.org`**: the conformance suite asserts that no request to the npm
+  registry, models.opencode.ai or any other host reaches the proxy (fail-before check: without the rendered
+  files six `CONNECT registry.npmjs.org:443` per turn reach it). `webfetch` stays (it goes through the proxy
+  like any agent traffic); the optional web search (`OPENCODE_ENABLE_EXA`) is never enabled. Also
+  `XDG_*` and `OPENCODE_CONFIG` point into the root; variables the caller supplies for OpenCode, the
+  providers or the proxy are dropped (`OPENCODE_*` including `OPENCODE_CONFIG_CONTENT`, `XDG_*`,
+  `ANTHROPIC_*`, `OPENAI_*`, `NODE_EXTRA_CA_CERTS`); the CA bundle is passed as `SSL_CERT_FILE` and
+  `NODE_EXTRA_CA_CERTS`.
 - **Capabilities**: `resume`, `tool_events`, `platform_tools`; `thinking_deltas = false` (text arrives
   whole); `steer = false`. `skills_dir = ".agents/skills"` (*verified*, the project's and the home's;
   `OPENCODE_DISABLE_EXTERNAL_SKILLS` stays unset). **Roles**: `roles.small` → `small_model`, and
