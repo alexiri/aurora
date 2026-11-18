@@ -31,6 +31,13 @@ struct Profile {
     fail: Option<(&'static str, &'static str)>,
     tool: Option<&'static str>,
     steerable: Option<&'static str>,
+    /// The harness takes a steer only after it has acknowledged the turn's prompt (Pi): the first
+    /// steer of a run is retried until accepted, within a deadline.
+    steer_needs_ack: bool,
+    /// A scripted run that cannot take a steer exists (the fake's script without `steer-accept`).
+    /// A real harness cannot be made to miss one: a steer sent after the run is refused (covered by
+    /// the between-turns case) and one queued during it joins.
+    missed_steer: bool,
 }
 
 const FAKE: Profile = Profile {
@@ -39,6 +46,8 @@ const FAKE: Profile = Profile {
     fail: Some(("[[fail: provider_quota]]", "provider_quota")),
     tool: Some("[[say: saving]] [[tool: memory_save {\"text\":\"x\"}]]"),
     steerable: Some("[[say: base]] [[steer-accept]]"),
+    steer_needs_ack: false,
+    missed_steer: true,
 };
 
 const LIVE: Profile = Profile {
@@ -47,6 +56,8 @@ const LIVE: Profile = Profile {
     fail: None,
     tool: Some("Use the memory_save platform tool to save the note 'conformance', then say done."),
     steerable: None,
+    steer_needs_ack: false,
+    missed_steer: false,
 };
 
 /// Mock mode: scenario model for a case (`say`, `long`, `tool`, `fail`, `steer`) from
@@ -253,14 +264,24 @@ async fn suite_with(
         let mut s = a.start_session(opts("steer", None)).await.unwrap();
         let rx = s.run_turn(turn(sp)).await.unwrap();
         let id = Uuid::now_v7();
-        let st = s
-            .steer(SteerInput {
-                followup_id: id,
-                text: "more".into(),
-                speaker_label: String::new(),
-            })
-            .await
-            .unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(20);
+        let st = loop {
+            let st = s
+                .steer(SteerInput {
+                    followup_id: id,
+                    text: "more".into(),
+                    speaker_label: String::new(),
+                })
+                .await
+                .unwrap();
+            if st == SteerAck::Accepted
+                || !p.steer_needs_ack
+                || std::time::Instant::now() > deadline
+            {
+                break st;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        };
         assert_eq!(st, SteerAck::Accepted);
         let ev = drain(rx).await;
         assert!(
@@ -270,18 +291,20 @@ async fn suite_with(
         assert_one_terminal(&ev);
 
         // missed steer: no steer-accept in the script, so the harness refuses to take it.
-        let mut s = a.start_session(opts("steer", None)).await.unwrap();
-        let rx = s.run_turn(turn("[[say: x]] [[sleep: 1s]]")).await.unwrap();
-        let st = s
-            .steer(SteerInput {
-                followup_id: Uuid::now_v7(),
-                text: "m".into(),
-                speaker_label: String::new(),
-            })
-            .await
-            .unwrap();
-        assert_eq!(st, SteerAck::Refused);
-        assert_one_terminal(&drain(rx).await);
+        if p.missed_steer {
+            let mut s = a.start_session(opts("steer", None)).await.unwrap();
+            let rx = s.run_turn(turn("[[say: x]] [[sleep: 1s]]")).await.unwrap();
+            let st = s
+                .steer(SteerInput {
+                    followup_id: Uuid::now_v7(),
+                    text: "m".into(),
+                    speaker_label: String::new(),
+                })
+                .await
+                .unwrap();
+            assert_eq!(st, SteerAck::Refused);
+            assert_one_terminal(&drain(rx).await);
+        }
     }
 
     eprintln!("conformance case: correction (+{:?})", t0.elapsed());
@@ -346,6 +369,8 @@ const CODEX: Profile = Profile {
     tool: Some("Run `echo hi` with your shell tool, then say done."),
     // `steer = false`: a follow-up becomes a separate turn, so nothing is steerable.
     steerable: None,
+    steer_needs_ack: false,
+    missed_steer: false,
 };
 
 fn codex_opts(base: &str, case: &str, resume: Option<String>) -> SessionOptions {
@@ -455,4 +480,305 @@ async fn codex_live_conforms_when_enabled() {
         ..CODEX
     };
     suite_with(&CodexAdapter::default(), &profile, &mk).await;
+}
+
+// ---- pi (phase 5, P5-HARN, D-361, D-362, SEC-133): the same cases against the mock Messages,
+// Responses and Chat upstreams of `aurora-testkit`, run with the real pinned CLI. Skipped when the
+// binary is not installed (`AURORA_PI_BIN`, default `/opt/aurora/harness/pi/node_modules/.bin/pi`);
+// the env-gated variant `AURORA_TEST_HARNESS_PI_LIVE=1` runs the same cases through a real gateway
+// and LiteLLM (`PI_LIVE_BASE_URL`, `PI_LIVE_DIALECT`, `AURORA_LIVE_MODEL`).
+
+use aurora_supervisor::adapters::pi::PiAdapter;
+use aurora_supervisor::adapters::pi::launcher::{ProcessLauncher as PiLauncher, pi_bin};
+use aurora_testkit::harness_upstream::HarnessUpstream;
+
+const PI: Profile = Profile {
+    say: "Reply with exactly the word: pong",
+    long_running: "Count slowly from 1 to 500.",
+    fail: Some(("fail please", "provider_quota")),
+    tool: Some("Run `echo hi` with your bash tool, then say done."),
+    // Pi accepts a steer during a run (after it has taken the prompt), and joins it before the
+    // next model call.
+    steerable: Some("Run `sleep 2` with your bash tool, then say done."),
+    steer_needs_ack: true,
+    missed_steer: false,
+};
+
+/// Records every request line sent to the session proxy and refuses it: a turn that reaches any
+/// host other than the (loopback, `NO_PROXY`) endpoint shows up here.
+struct RefusingProxy {
+    url: String,
+    seen: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+}
+
+impl RefusingProxy {
+    async fn start() -> Self {
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", l.local_addr().unwrap());
+        let seen: std::sync::Arc<std::sync::Mutex<Vec<String>>> = Default::default();
+        let log = seen.clone();
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut sock, _)) = l.accept().await else {
+                    return;
+                };
+                let log = log.clone();
+                tokio::spawn(async move {
+                    let mut first = String::new();
+                    let (r, mut w) = sock.split();
+                    let _ = BufReader::new(r).read_line(&mut first).await;
+                    log.lock().unwrap().push(first.trim().to_owned());
+                    let _ = w
+                        .write_all(b"HTTP/1.1 403 Forbidden\r\ncontent-length: 0\r\n\r\n")
+                        .await;
+                });
+            }
+        });
+        Self { url, seen }
+    }
+
+    fn requests(&self) -> Vec<String> {
+        self.seen.lock().unwrap().clone()
+    }
+}
+
+fn pi_model(case: &str) -> &'static str {
+    match case {
+        "long" => "long",
+        "tool" => "tool",
+        "fail" => "fail-quota",
+        "steer" => "steer",
+        "mcp" => "mcp",
+        _ => "say",
+    }
+}
+
+/// Where the mock serves `dialect` (Messages: the host; OpenAI: `…/v1`).
+fn pi_base(base: &str, dialect: &str) -> String {
+    if dialect == "anthropic_messages" {
+        base.to_owned()
+    } else {
+        format!("{base}/v1")
+    }
+}
+
+fn pi_opts(
+    base: &str,
+    proxy: &str,
+    dialect: &str,
+    case: &str,
+    resume: Option<String>,
+) -> SessionOptions {
+    let dir = std::env::temp_dir().join(format!("p5-harn-pi-{}", Uuid::now_v7()));
+    std::fs::create_dir_all(&dir).unwrap();
+    SessionOptions {
+        conversation_id: Uuid::now_v7(),
+        working_dir: dir,
+        resume_ref: resume,
+        model: ModelChoice {
+            provider: "litellm".into(),
+            endpoint_id: "mock".into(),
+            base_url: pi_base(base, dialect),
+            dialect: dialect.into(),
+            model: pi_model(case).into(),
+            effort: "low".into(),
+            client_env: vec![],
+            roles: None,
+            subagent_role: None,
+            model_meta: None,
+        },
+        proxy_url: proxy.to_owned(),
+        mcp_bridge: McpBridgeSpec {
+            command: vec!["/bin/true".into()],
+        },
+        env: vec![("NO_PROXY".into(), "127.0.0.1,localhost".into())],
+    }
+}
+
+fn pi_adapter() -> Option<PiAdapter> {
+    // The test (not the release supervisor) may point at another binary.
+    let bin = std::env::var_os("AURORA_PI_BIN").map_or_else(pi_bin, Into::into);
+    if !bin.exists() {
+        eprintln!(
+            "skipped: {} not installed (set AURORA_PI_BIN)",
+            bin.display()
+        );
+        return None;
+    }
+    Some(PiAdapter::with_launcher(std::sync::Arc::new(PiLauncher {
+        program: bin,
+    })))
+}
+
+const PI_DIALECTS: [(&str, &str); 3] = [
+    ("anthropic_messages", "/v1/messages"),
+    ("openai_responses", "/v1/responses"),
+    ("openai_chat", "/v1/chat/completions"),
+];
+
+#[tokio::test]
+async fn pi_conforms_against_the_mock_upstream_of_every_dialect_it_declares() {
+    let Some(adapter) = pi_adapter() else { return };
+    assert_eq!(
+        adapter.capabilities().dialects,
+        PI_DIALECTS.map(|(d, _)| d.to_owned())
+    );
+    for (dialect, path) in PI_DIALECTS {
+        eprintln!("== pi: {dialect}");
+        let up = HarnessUpstream::start().await;
+        let proxy = RefusingProxy::start().await;
+        let (base, purl) = (up.base().to_owned(), proxy.url.clone());
+        let mk =
+            move |case: &str, resume: Option<String>| pi_opts(&base, &purl, dialect, case, resume);
+        suite_with(&adapter, &PI, &mk).await;
+
+        // SEC-66 / SEC-133 at the process level: every request that reached the upstream carried
+        // the placeholder and nothing else as its credential, on the dialect's inference path only,
+        // and nothing was sent to any other host (the proxy saw no request).
+        let seen = up.requests();
+        assert!(!seen.is_empty());
+        for r in &seen {
+            assert_eq!(r.path, path, "{dialect}: only the inference path");
+            assert_eq!(
+                r.credential().as_deref(),
+                Some("aurora-placeholder"),
+                "{dialect}: {r:?}"
+            );
+        }
+        assert_eq!(
+            proxy.requests(),
+            Vec::<String>::new(),
+            "{dialect}: vendor network"
+        );
+    }
+}
+
+/// `by_model` of a finished turn.
+fn done_usage(ev: &[HarnessEvent]) -> serde_json::Value {
+    match ev.last() {
+        Some(HarnessEvent::Done { usage: Some(u) }) => u.clone(),
+        other => panic!("expected a Done with usage, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn pi_reports_the_four_counters_per_model_and_the_totals_are_their_sum() {
+    let Some(adapter) = pi_adapter() else { return };
+    for (dialect, _) in PI_DIALECTS {
+        let up = HarnessUpstream::start().await;
+        let proxy = RefusingProxy::start().await;
+        let mut s = adapter
+            .start_session(pi_opts(up.base(), &proxy.url, dialect, "tool", None))
+            .await
+            .unwrap();
+        // Two model requests (the tool call, then the answer): the mock's fixed usage twice.
+        let ev = drain(s.run_turn(turn(PI.tool.unwrap())).await.unwrap()).await;
+        let u = done_usage(&ev);
+        let (cache_read, cache_write) = (
+            6,
+            if dialect == "anthropic_messages" {
+                4
+            } else {
+                0
+            },
+        );
+        // The mock's OpenAI usage has `prompt_tokens` 11 including 3 cached: Pi's `input` excludes them.
+        let input = if dialect == "anthropic_messages" {
+            22
+        } else {
+            16
+        };
+        assert_eq!(u["by_model"].as_array().unwrap().len(), 1, "{dialect}: {u}");
+        assert_eq!(u["by_model"][0]["model"], "tool", "{dialect}");
+        for (k, want) in [
+            ("input_tokens", input),
+            ("output_tokens", 8),
+            ("cache_read_tokens", cache_read),
+            ("cache_write_tokens", cache_write),
+        ] {
+            assert_eq!(u[k], want, "{dialect}: {k}: {u}");
+            assert_eq!(u["by_model"][0][k], want, "{dialect}: by_model {k}: {u}");
+        }
+        s.release().await.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn pi_platform_tool_calls_come_from_a_descendant_of_the_pi_process() {
+    let Some(adapter) = pi_adapter() else { return };
+    let up = HarnessUpstream::start_with_mcp_tool("mcp__aurora__ping").await;
+    let proxy = RefusingProxy::start().await;
+    let log = std::env::temp_dir().join(format!("p5-harn-pi-probe-{}.log", Uuid::now_v7()));
+    let probe = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/mcp-probe.js");
+    let mut o = pi_opts(up.base(), &proxy.url, "anthropic_messages", "mcp", None);
+    o.mcp_bridge = McpBridgeSpec {
+        command: vec!["node".into(), probe.into()],
+    };
+    o.env
+        .push(("MCP_PROBE_LOG".into(), log.display().to_string()));
+    let mut s = adapter.start_session(o).await.unwrap();
+    let ev = drain(s.run_turn(turn("call the ping tool")).await.unwrap()).await;
+    assert!(
+        matches!(assert_one_terminal(&ev), HarnessEvent::Done { .. }),
+        "{ev:?}"
+    );
+    // The platform tool is exposed directly, under Pi's MCP name, and the call finished.
+    let call = ev.iter().find_map(|e| match e {
+        HarnessEvent::ToolStarted { call_id, name, .. } if name == "mcp__aurora__ping" => {
+            Some(call_id.clone())
+        }
+        _ => None,
+    });
+    let call = call.unwrap_or_else(|| panic!("no mcp__aurora__ping call: {ev:?}"));
+    assert!(
+        ev.iter().any(|e| matches!(e, HarnessEvent::ToolFinished { call_id, ok: true, .. } if *call_id == call)),
+        "{ev:?}"
+    );
+    // D-301: the bridge ran as a descendant of the Pi process the adapter started (never a shared or
+    // background service): some ancestor of the MCP server is `pi`, and the server's parent is not
+    // the top of the process tree.
+    let probed = std::fs::read_to_string(&log).expect("the MCP server was never called");
+    let first: serde_json::Value = serde_json::from_str(probed.lines().next().unwrap()).unwrap();
+    let chain = first["chain"].as_array().unwrap();
+    assert!(chain.len() >= 2, "{first}");
+    assert!(
+        chain.iter().skip(1).any(|p| {
+            // `pi` (the process title Pi sets), `node …/.bin/pi …` or the package's own entry.
+            let cmd = p["cmd"].as_str().unwrap_or_default();
+            cmd.contains("pi-coding-agent")
+                || cmd
+                    .split_whitespace()
+                    .any(|w| w.rsplit('/').next() == Some("pi"))
+        }),
+        "no ancestor of the MCP server is the pi process: {first}"
+    );
+    assert_eq!(probed.lines().count(), 1, "one call, one probe line");
+    s.release().await.unwrap();
+}
+
+#[tokio::test]
+async fn pi_live_conforms_when_enabled() {
+    if std::env::var("AURORA_TEST_HARNESS_PI_LIVE").as_deref() != Ok("1") {
+        eprintln!(
+            "skipped: set AURORA_TEST_HARNESS_PI_LIVE=1 (+ PI_LIVE_BASE_URL, PI_LIVE_DIALECT) for the live suite"
+        );
+        return;
+    }
+    let base = std::env::var("PI_LIVE_BASE_URL").expect("PI_LIVE_BASE_URL");
+    let dialect = std::env::var("PI_LIVE_DIALECT").unwrap_or_else(|_| "anthropic_messages".into());
+    let model = std::env::var("AURORA_LIVE_MODEL").unwrap_or_else(|_| "claude-sonnet-4-5".into());
+    let mk = move |case: &str, resume: Option<String>| {
+        let mut o = pi_opts("", "http://127.0.0.1:9", &dialect, case, resume);
+        o.model.base_url = base.clone();
+        o.model.model = model.clone();
+        o.env = vec![];
+        o
+    };
+    let profile = Profile {
+        fail: None,
+        steerable: None,
+        ..PI
+    };
+    suite_with(&PiAdapter::default(), &profile, &mk).await;
 }

@@ -4,7 +4,9 @@
 
 pub mod claude_code;
 pub mod codex;
+pub mod pi;
 pub(crate) mod provider_error;
+pub mod render;
 
 use std::sync::Arc;
 
@@ -15,7 +17,7 @@ use crate::harness::{HarnessAdapter, HarnessError};
 pub const UNSUPPORTED: &str = "harness_unsupported";
 
 /// Ids of the compiled-in adapters.
-pub const KNOWN: [&str; 3] = ["claude-code", "codex", "fake"];
+pub const KNOWN: [&str; 4] = ["claude-code", "codex", "pi", "fake"];
 
 fn unsupported(msg: String) -> HarnessError {
     HarnessError::new(UNSUPPORTED, msg)
@@ -57,6 +59,16 @@ pub fn adapter_with(
             }
             Ok(Arc::new(codex::CodexAdapter::with_launcher(Arc::new(l))))
         }
+        "pi" => {
+            let l = pi::launcher::ProcessLauncher::default();
+            if !exists(&l.program) {
+                return Err(unsupported(format!(
+                    "the pi runtime is not in this image ({})",
+                    l.program.display()
+                )));
+            }
+            Ok(Arc::new(pi::PiAdapter::with_launcher(Arc::new(l))))
+        }
         other => Err(unsupported(format!(
             "harness `{other}` is not available in this build"
         ))),
@@ -80,7 +92,7 @@ mod tests {
         for id in ["", "gemini", "CODEX", "claude_code"] {
             assert_eq!(adapter_with(id, |_| true).err().unwrap().code, UNSUPPORTED);
         }
-        for id in ["claude-code", "codex"] {
+        for id in ["claude-code", "codex", "pi"] {
             let e = adapter_with(id, |_| false).err().unwrap();
             assert_eq!(e.code, UNSUPPORTED, "{id}");
         }

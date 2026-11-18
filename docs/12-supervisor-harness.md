@@ -424,13 +424,19 @@ OpenCode 206 MB) and 2.16 GB with `SANDBOX_HARNESSES=claude-code`.
 
 **`pi`** (Node.js, the npm tree pinned by a lockfile):
 - **Drive**: one long-lived `pi --mode rpc` child per live session, with JSONL commands on stdin and events
-  on stdout (16 MiB line bound, like `codex`). `--session-dir` is the conversation's directory and
-  `--session-id` is the session ref. `PI_CODING_AGENT_DIR` is the config directory.
+  on stdout (16 MiB line bound, like `codex`). `--session-id` is the session ref: the resume reference, or
+  the conversation's id for a new session, so `--session-dir` = `<home>/.aurora/harness/pi/sessions/<ref>/`
+  and a purge by session ref removes exactly that directory. `PI_CODING_AGENT_DIR` is the config directory.
+  The configuration is rendered and read back at every start **and before every turn** (an agent can write
+  it while the child lives), with `auth.json` removed each time. The session ref is reported at the
+  first turn's acknowledgement.
 - **Config** (*verified*): `<config>/models.json` = `{"providers": {"<id>": {"baseUrl", "api", "apiKey",
   "models": [{"id", "name", "contextWindow", "maxTokens"}]}}}` with `api` `anthropic-messages`,
   `openai-responses` or `openai-completions` from the dialect; all three work against the mock upstreams.
-  `apiKey` is the **name** of the placeholder variable (`ANTHROPIC_API_KEY` or `OPENAI_API_KEY`), never a
-  literal. For `anthropic-messages` the `baseUrl` is the endpoint host without `/v1` (the SDK appends
+  `apiKey` is a **`$NAME` reference** to the placeholder variable (`"$ANTHROPIC_API_KEY"` or
+  `"$OPENAI_API_KEY"`), never a literal. (*Corrected in Part B:* Part A wrote "the name of the variable",
+  but Pi resolves `apiKey` as a literal, `$NAME` or `!command`, so the bare name was sent as the key
+  itself; the conformance suite's credential check caught it.) For `anthropic-messages` the `baseUrl` is the endpoint host without `/v1` (the SDK appends
   `/v1/messages?beta=true`); for the OpenAI dialects it includes `/v1`. `contextWindow` comes from
   `model_meta`. `<config>/mcp.json` = `{"mcpServers": {"aurora": {"command", "args", "env",
   "exposure": "direct"}}}`: **`exposure: "direct"`** is required (the default `codemode` hides every MCP
@@ -454,14 +460,24 @@ OpenCode 206 MB) and 2.16 GB with `SANDBOX_HARNESSES=claude-code`.
   `isError`) → tool started and finished; `agent_settled {aborted}` is the **terminal** event → exactly one
   `Done`, or `Error` when the last assistant message has `stopReason = "error"` and the preceding
   `agent_end` had `willRetry = false` (`errorMessage` is `"<status> <response body>"`, classified through
-  `provider_error.rs`; Pi retries 429 and 5xx three times, 2 s, 4 s, 8 s, so a refusal arrives after about
-  14 s. Part B looks for a retry setting (Pi's `settings.json` `retry`) and aligns it with `claude-code`'s
-  behaviour; if there is none, the delay is part of the provider-error mapping so the dashboard's wait is
-  explained). `abort` → RPC `abort`, answered by `agent_settled {aborted: true}`; queued steers are dropped.
+  `provider_error.rs` with the status prefixed; the adapter's `<config>/settings.json` sets
+  `retry {enabled: true, maxRetries: 2, baseDelayMs: 2000}`, the same two retries as `codex`
+  (`request_max_retries = 2`), so a refusal arrives after **about 6 s** instead of Pi's default 14 s
+  (*verified*: `auto_retry_start` 1/2 and 2/2, then `agent_settled`; each retry shows as an activity line).
+  `settings.json` also sets `defaultProjectTrust: "never"`, `enableInstallTelemetry: false` and
+  `quietStartup`). `abort` → RPC `abort`, answered by `agent_settled {aborted: true}` within about 30 ms
+  (*verified*), then `{"type":"response","command":"abort"}`; queued steers are dropped. The adapter waits
+  5 s for the settle after an abort and then kills the child; the next turn starts a new one with the same
+  session id and directory (the session is resumed from its file).
   **Steer**: a `prompt` command with `streamingBehavior: "steer"` during a run is answered `queued` and is
   delivered after the in-flight tool result and before the next model call; it joins when a `message_start`
   with `role: "user"` carries its text (the `queue_update` event empties). **Sent while idle it starts a new
-  run (`started`)**, so the adapter refuses a steer between turns itself and never sends it.
+  run (`started`)**, so the adapter refuses a steer between turns itself and never sends it. It also
+  refuses one until Pi has acknowledged the turn's own prompt (`disposition: "started"`; Pi takes a few
+  hundred milliseconds to start, and a steer sent before the acknowledgement would itself start a run).
+  A steer that still races the end of the turn and is answered `started` is refused, the run it started is
+  aborted, and the next turn first waits for that run to settle; the supervisor then sends the text as a
+  turn of its own. The steer's text is `<speaker>: <text>` and the join is matched on it.
   Effort → `--thinking` (`off`, `low`, `medium`, `high`, `max`).
 - **Usage** (*verified*): every assistant `message_end` carries `model` and `usage {input, output,
   cacheRead, cacheWrite, totalTokens, cost}`; `input` already excludes cached tokens. `by_model` sums them
