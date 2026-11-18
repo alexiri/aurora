@@ -1445,6 +1445,84 @@ async fn grants_are_single_use_boot_bound_and_kind_bound() {
     }
 }
 
+/// (FIX-168, SEC-125) The Helm shape: the config only has `terminal.available = true`, so the
+/// setting in force (`terminal.enabled`, defaulting from `available`) is on and a grant redeems;
+/// turning the setting off in Administration closes the redemption at once (409 `not_current`),
+/// without a restart. The boot config's `terminal.enabled` stays false throughout.
+#[tokio::test]
+async fn redemption_follows_the_live_terminal_setting_not_the_boot_config() {
+    // The deployment's config file says only `[terminal] available = true` (what the chart
+    // renders); the merged settings view turns `enabled` on from it.
+    let mut r = rig_with(|_| {}).await;
+    r.h = r.h.with_helm("[terminal]\navailable = true\n");
+    assert!(!r.h.state.config.terminal.enabled);
+    assert!(r.h.state.ops().terminal.enabled);
+    let (agent, sb) = sandbox(&r, "live-agent", "running").await;
+    let boot: Uuid = sqlx::query_scalar("SELECT boot_id FROM sandboxes WHERE id = $1")
+        .bind(sb)
+        .fetch_one(r.h.pool())
+        .await
+        .unwrap();
+    let user: Uuid = sqlx::query_scalar("SELECT id FROM users WHERE email = 'm@x.io'")
+        .fetch_one(r.h.pool())
+        .await
+        .unwrap();
+    let redeem = || async {
+        let g = token::generate(token::TokenPrefix::FilesStream);
+        let hash = hex::encode(token::hash(g.expose()));
+        sqlx::query(
+            "INSERT INTO file_stream_grants (id, agent_id, sandbox_id, boot_id, granted_for, grant_hash, expires_at) \
+             VALUES ($1,$2,$3,$4,$5,$6, now() + interval '30 seconds')",
+        )
+        .bind(Uuid::now_v7())
+        .bind(agent)
+        .bind(sb)
+        .bind(boot)
+        .bind(user)
+        .bind(hash)
+        .execute(r.h.pool())
+        .await
+        .unwrap();
+        let b = bearer(&r.tok);
+        let rid = r.rep.to_string();
+        let (s, _, v) =
+            r.h.send(
+                Method::POST,
+                "/v1/runner/preview-streams/open",
+                &[("authorization", &b), ("x-aurora-replica", &rid)],
+                Some(json!({"grant": g.expose(), "kind": "files"})),
+            )
+            .await;
+        (s.as_u16(), v)
+    };
+    let (s, v) = redeem().await;
+    assert_eq!(s, 200, "available-only config: {v}");
+
+    let admin = r.h.user("admin2@x.io", true).await;
+    let (_, sess) = r.h.good_session(admin).await;
+    let c = cookie(&sess);
+    let (s, _, sec) =
+        r.h.send(
+            Method::GET,
+            "/v1/admin/settings/terminal",
+            &[("cookie", &c), ("origin", ORIGIN)],
+            None,
+        )
+        .await;
+    assert_eq!(s.as_u16(), 200, "{sec}");
+    let (s, _, v) =
+        r.h.send(
+            Method::PUT,
+            "/v1/admin/settings/terminal",
+            &[("cookie", &c), ("origin", ORIGIN)],
+            Some(json!({"generation": sec["generation"], "values": {"terminal.enabled": false}})),
+        )
+        .await;
+    assert_eq!(s.as_u16(), 200, "{v}");
+    let (s, v) = redeem().await;
+    assert_eq!((s, code(&v)), (409, "not_current"), "setting off: {v}");
+}
+
 /// Audit rows carry paths and sizes, never contents; a canary written and read back appears in
 /// no audit row and no request-log row.
 #[tokio::test]
