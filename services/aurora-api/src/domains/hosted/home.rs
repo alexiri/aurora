@@ -648,6 +648,11 @@ pub async fn render(
             app_entries.push(json!({"path": path, "content": content}));
         }
     }
+    // (P5-GUIDE-7, C-654) The catalogue of the agent's available tools, and from it the family
+    // index of the instruction file.
+    let catalogue = crate::domains::tools::catalogue(state, claim.agent_id).await?;
+    render_inputs["platform_tools"] =
+        platform_tools_input(&state.ops().hosted.platform_tools, &catalogue);
     if render_inputs.to_string().len() > PACK_MAX {
         // Pathological fan-out (hundreds of apps/accounts): keep the structure, shed the
         // third-party snippets so the part still fits the wire bound.
@@ -664,8 +669,7 @@ pub async fn render(
     if fit_render_inputs(&mut render_inputs, PACK_MAX) {
         tracing::warn!(agent = %claim.agent_id, "render inputs over the part bound; lists truncated");
     }
-    let tools: Vec<Value> = crate::domains::tools::catalogue(state, claim.agent_id)
-        .await?
+    let tools: Vec<Value> = catalogue
         .iter()
         .filter_map(|t| serde_json::to_value(t).ok())
         .collect();
@@ -746,6 +750,48 @@ pub async fn render(
             part,
         })
         .collect())
+}
+
+/// One line per family for the instruction file (C-654): what the family is for.
+fn family_purpose(family: &str) -> &'static str {
+    match family {
+        "memory" => "notes you keep across conversations",
+        "skills" => "reusable procedures you write and refine",
+        "schedules" => "run a prompt on a cron schedule",
+        "webhooks" => "inspect and change your inbound webhooks",
+        "conversations" => "search and read your past conversations",
+        "messaging" => "find people and send, read and edit messages",
+        "agents" => "other agents in the workspace and the tasks you give or get",
+        "apps" => "the apps connected to you, and asking for more",
+        "calendar" => "invite people to events, update, cancel and list them",
+        _ => "more platform tools",
+    }
+}
+
+/// `render_inputs.platform_tools` (C-654): the mode and, for `on_demand`, the families of the
+/// available tools the harness does not see: `{ name, purpose, tools }` in registry order.
+/// Core tools stay out of the families (the harness lists them itself).
+fn platform_tools_input(mode: &str, catalogue: &[aurora_protocol::tools::ToolDescriptor]) -> Value {
+    use aurora_protocol::tools::Exposure;
+    let mut families: Vec<(String, Vec<String>)> = Vec::new();
+    for t in catalogue {
+        if t.exposure == Some(Exposure::Core) {
+            continue;
+        }
+        let Some(family) = t.family.as_deref() else {
+            continue;
+        };
+        match families.iter_mut().find(|(n, _)| n == family) {
+            Some((_, tools)) => tools.push(t.name.clone()),
+            None => families.push((family.to_owned(), vec![t.name.clone()])),
+        }
+    }
+    json!({
+        "mode": mode,
+        "families": families.into_iter().map(|(name, tools)| json!({
+            "purpose": family_purpose(&name), "name": name, "tools": tools,
+        })).collect::<Vec<_>>(),
+    })
 }
 
 /// (FIX-115) Shrink the `render_inputs` value to at most `max` serialized bytes: while it is too

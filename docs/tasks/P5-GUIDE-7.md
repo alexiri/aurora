@@ -96,3 +96,44 @@ and the adapters' environment code. **Not concurrent** with any lane that edits
   adding an authorization branch on `exposure`, stop.
 - Suggested agent: `rust-developer` (Sonnet); review by `sonnet-integration-reviewer` against
   C-654/C-655 and SEC-119 before merge. Size M–L.
+
+## Completion report
+(lane `p5-apps`, worker 40, 2026-11-18; **partial: part 1 of 3 committed; compiles, not yet tested**)
+
+**Part 1 done (items 1-5 and 7 partly, config):**
+- **Protocol** (`crates/aurora-protocol/src/tools.rs`): `Exposure {Core, OnDemand}` (snake_case, default `OnDemand`), `ToolDescriptor.family?`/`exposure?`
+  (both skipped when none); `schemas/tools_tool_descriptor.json` regenerated.
+- **Registry** (`domains/tools/registry.rs`): `PlatformTool::family()` (required) and `exposure()` (default `OnDemand`); one `descriptor()` helper used by both
+  catalogue functions; `Registry::new` refuses more than `PLATFORM_TOOLS_CORE_MAX` (8, `aurora-core::limits`) core tools counting the supervisor's local `send_file`.
+  Every tool file has its family: memory, skills, conversations (`conversation_*`), messaging (`find_recipient`, `send_*`, `read_conversation`, `list_my_messages`,
+  `edit_my_message`, `delete_my_message`), apps, webhooks, agents (incl. `list_agents`), **schedules**, **calendar** (P5-CALINV's four tools: a family `24 §10b`
+  does not list; its purpose line is in `home.rs::family_purpose`; `WRITE_TOOLS` untouched). `complete_task` is `Core`. Supervisor local descriptors: `send_file` =
+  family `files`, `Core`; `process_*` = family `processes`, `OnDemand`. Test doubles in `tests/it/tools.rs` got `family`.
+- **Config** (C-657): `hosted.platform_tools` in `raw.rs` (default `on_demand`), `validate.rs` (unknown value refuses startup), the `agents` settings section
+  (`settings.rs`, enum, `Loosening::Order`), `fields.rs` (words, choices), `deploy/helm/aurora/movable-keys.txt`. `docs/15` already carried the row.
+  `cargo test -p aurora-protocol -p aurora-config`: all passed.
+- **Render input** (`hosted/home.rs`): `render_inputs.platform_tools = { mode, families:[{name,purpose,tools}] }` from the agent's catalogue (on-demand tools only, registry order).
+- **Supervisor**: `instructions.rs` `PlatformToolsInfo` (+`on_demand(info, agent_cli)`), the *Platform tools* fragment (fixed paragraph, `- family (verbs): purpose`, the local
+  `processes` family appended) before `## Memory`, only when on-demand and `agent_cli`; `home.rs` `bridge_core_only()` (installed render inputs); `supervisor.rs` passes
+  `--core-only` to the bridge command and sets **`AURORA_SESSION=<conversation id>`** in the session `env`; `main.rs`/`mcp_bridge.rs`: `mcp-bridge --core-only`, `tools/list`
+  filtered to `Core` when set, `tools/call` unchanged.
+- `cargo check -p aurora-api -p aurora-supervisor -p aurora-config --all-targets` clean. **No test of this part has run yet.**
+
+**Next steps (a fresh worker):**
+1. **Item 7 verification:** do both adapters hand `SessionOptions.env` to the harness process (claude-code, codex, pi, goose, opencode, fake)? Does `pty.rs`
+   strip `AURORA_*` for the terminal, do SSH and `process_start` environments not carry it? Add tests (supervisor `tests/it`, adapters).
+2. **Item 8, target `aurora`** in `services/aurora-supervisor/src/agent_cli/` (`mod.rs` has the `TargetKind::Platform` arms answering `NOT_AVAILABLE`; add `platform.rs`):
+   socket `list`/`call` on `/run/aurora/tools.sock` with `session = $AURORA_SESSION` (no session → exit 2 "platform tools are available inside a conversation turn"; a
+   `session_not_caller` refusal → exit 2/4 with its message; transport → 4; tool error result → 1), `list aurora`, tools in `search` ranked with apps (`show.rs`), `describe`
+   (schema as a parameter table + example), `call aurora <tool> k=v|k:=json [--body] [--raw]` with coercion by the schema's top-level types, preview/save to
+   `/tmp/aurora-agent/aurora-<tool>-<UTC>.json`; app-only options already refused by `platform_options`. Remove `NOT_AVAILABLE` from `list`/`search` and update
+   `tests/it/agent_cli.rs::target_aurora_is_not_available_…` and the e2e `s43` assertion (`call aurora memory_save` exit 2) to the new behaviour.
+3. **Item 6, session release:** find where a catalogue change releases idle sessions (API generation logic / `home.rs` hash) and compute it over the core descriptors plus the
+   rendered instruction files; test that changing an on-demand tool's description no longer changes it.
+4. **Tests of `18 §App guides on demand` marked P5-GUIDE-7:** registry core set ≤ max, every tool has a family; protocol serde (old peer); bridge list core-only vs all and
+   call by name in both; instruction snapshots for both modes (`insta`); rolling upgrade both ways (new API + old supervisor ignores the fields: JSON with extra fields; old API +
+   new supervisor: no `platform_tools` → `bridge_core_only` false); config refusal; home-sync test of `platform_tools`; **SEC-119/121** e2e: `memory_save` through
+   `aurora-agent call aurora` and through MCP give the same `tool.started`/`tool.finished` events and audit row; FIX-151 binding from a non-harness process → `session_not_caller`.
+5. **Measure** `tools/list` size in both modes and the fragment (chars ÷ 4) and record it; eval comparison pending unless P4-EVAL runs; `docs/tests/security-coverage.md`
+   SEC-119/120 ids; docs `12 §Platform tools`/`24` if wording changed (the `calendar` family).
+6. Then the **batch gate** for GUIDE-6 and -7 (list in the lane spec); remember the full-image hosted scenarios (GUIDE-6 changed the image: one wrapper).

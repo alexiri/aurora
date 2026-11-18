@@ -1,8 +1,36 @@
 {
+  "$defs": {
+    "Exposure": {
+      "description": "(P5-GUIDE-7, C-654) Whether the bridge lists a tool to the harness (`core`) or only the\n`aurora-agent` command finds it (`on_demand`). It changes what is listed, never what is allowed.",
+      "enum": [
+        "core",
+        "on_demand"
+      ],
+      "type": "string"
+    }
+  },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "description": "One entry of the synced tool catalogue as answered by MCP `tools/list`.\nProvisional: `16` does not define the catalogue entry shape.",
   "properties": {
     "description": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "exposure": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Exposure"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "(P5-GUIDE-7, C-654) Absent means [`Exposure::OnDemand`]; an older API sends neither field\nand its supervisor lists every tool."
+    },
+    "family": {
+      "description": "(P5-GUIDE-7, C-654) The tool's family (`memory`, `schedules`, …). Absent from an older API.",
       "type": [
         "string",
         "null"

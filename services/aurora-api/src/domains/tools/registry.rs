@@ -3,7 +3,8 @@ use aurora_core::{ApiError, limits};
 use aurora_db::DbError;
 use aurora_protocol::runner::Code;
 use aurora_protocol::tools::{
-    MAX_TOOL_NAME, TextContent, ToolContent, ToolDescriptor, ToolError as WireError, ToolResult,
+    Exposure, MAX_TOOL_NAME, TextContent, ToolContent, ToolDescriptor, ToolError as WireError,
+    ToolResult,
 };
 use serde_json::Value;
 use sqlx::PgPool;
@@ -85,6 +86,14 @@ fn code_of(c: &str) -> Code {
 #[async_trait::async_trait]
 pub trait PlatformTool: Send + Sync {
     fn name(&self) -> &'static str;
+    /// (P5-GUIDE-7, C-654) The family the tool is indexed under (`24 §10b`). No default, so a new
+    /// tool cannot forget it.
+    fn family(&self) -> &'static str;
+    /// (P5-GUIDE-7, C-654) `Core` tools are listed to the harness by the bridge; the rest are
+    /// found with `aurora-agent`. Decides what is **listed**, never what is allowed.
+    fn exposure(&self) -> Exposure {
+        Exposure::OnDemand
+    }
     fn description(&self, ctx: &ToolContext) -> String;
     /// JSON Schema (`type: object`).
     fn input_schema(&self) -> Value;
@@ -107,6 +116,16 @@ pub trait PlatformTool: Send + Sync {
     }
     async fn call(&self, ctx: &ToolCallContext, args: Value)
     -> Result<Vec<ToolContent>, ToolError>;
+}
+
+fn descriptor(t: &dyn PlatformTool, ctx: &ToolContext) -> ToolDescriptor {
+    ToolDescriptor {
+        name: t.name().to_owned(),
+        description: Some(t.description(ctx)),
+        input_schema: t.input_schema(),
+        family: Some(t.family().to_owned()),
+        exposure: Some(t.exposure()),
+    }
 }
 
 pub struct Registry {
@@ -136,6 +155,19 @@ impl Registry {
             }
             order.push(n);
         }
+        // (P5-GUIDE-7, D-297) The core set stays small by review; one local tool (`send_file`)
+        // is core on the supervisor's side.
+        let core = tools
+            .values()
+            .filter(|t| t.exposure() == Exposure::Core)
+            .count()
+            + 1;
+        if core > limits::PLATFORM_TOOLS_CORE_MAX {
+            return Err(format!(
+                "{core} core platform tools exceed PLATFORM_TOOLS_CORE_MAX ({})",
+                limits::PLATFORM_TOOLS_CORE_MAX
+            ));
+        }
         Ok(Self { tools, order })
     }
 
@@ -145,11 +177,7 @@ impl Registry {
             .iter()
             .filter_map(|n| self.tools.get(n))
             .filter(|t| t.available(ctx))
-            .map(|t| ToolDescriptor {
-                name: t.name().to_owned(),
-                description: Some(t.description(ctx)),
-                input_schema: t.input_schema(),
-            })
+            .map(|t| descriptor(t.as_ref(), ctx))
             .collect()
     }
 
@@ -160,11 +188,7 @@ impl Registry {
         let mut out = Vec::new();
         for t in self.order.iter().filter_map(|n| self.tools.get(n)) {
             if (mailer || !t.needs_mailer()) && t.available(ctx) && t.enabled(ctx).await {
-                out.push(ToolDescriptor {
-                    name: t.name().to_owned(),
-                    description: Some(t.description(ctx)),
-                    input_schema: t.input_schema(),
-                });
+                out.push(descriptor(t.as_ref(), ctx));
             }
         }
         out

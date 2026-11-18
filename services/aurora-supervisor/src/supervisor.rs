@@ -849,6 +849,17 @@ impl Supervisor {
             env.extend(crate::pg::env(&self.cfg.working_dir));
         }
         env.extend(d.model.client_env.iter().cloned());
+        // (P5-GUIDE-7, C-655) The conversation the harness serves: `aurora-agent … aurora` names
+        // it on the tools socket (the socket still decides by the caller's process, FIX-151).
+        // Set only for harness processes: the terminal, SSH and `process_start` environments are
+        // built elsewhere and strip `AURORA_*`.
+        env.push(("AURORA_SESSION".into(), d.conversation_id.to_string()));
+        let core_only = self
+            .home
+            .lock()
+            .map(|h| h.projector.bridge_core_only())
+            .unwrap_or(false);
+        // The tools the harness does not see are found with `aurora-agent` (C-654).
         // The terminal's `claude`/`codex` wrappers reach the LLM with the same model the agent
         // uses (placeholders only, no secret; `crate::harness_env`).
         if let Some(h) = &self.cfg.harness_env
@@ -870,6 +881,9 @@ impl Supervisor {
                     } else {
                         let mut c = self.cfg.mcp_bridge_command.clone();
                         c.extend(["--session".to_owned(), d.conversation_id.to_string()]);
+                        if core_only {
+                            c.push("--core-only".to_owned());
+                        }
                         c
                     },
                 },

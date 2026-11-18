@@ -48,6 +48,7 @@ hosted.default_timezone
 hosted.enabled
 hosted.enabled_harnesses
 hosted.idle_stop_secs
+hosted.platform_tools
 hosted.sandbox_ready_timeout_secs
 hosted.turn_ceiling_secs
 hosted.turn_stall_secs

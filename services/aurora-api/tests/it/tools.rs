@@ -356,6 +356,9 @@ impl PlatformTool for Slow {
     fn name(&self) -> &'static str {
         "slow"
     }
+    fn family(&self) -> &'static str {
+        "test"
+    }
     fn description(&self, _: &ToolContext) -> String {
         "slow".into()
     }
@@ -375,6 +378,9 @@ impl PlatformTool for Slow {
 impl PlatformTool for Echo {
     fn name(&self) -> &'static str {
         "echo"
+    }
+    fn family(&self) -> &'static str {
+        "test"
     }
     fn description(&self, _: &ToolContext) -> String {
         "echo".into()

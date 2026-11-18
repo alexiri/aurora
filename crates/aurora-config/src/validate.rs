@@ -3115,6 +3115,10 @@ fn check_hosted(c: &mut Ctx, h: &HostedSection) {
             "must be one of hosted.enabled_harnesses",
         );
     }
+    // (P5-GUIDE-7, C-657) an unknown value refuses startup.
+    if !matches!(h.platform_tools.as_str(), "on_demand" | "all") {
+        c.err("hosted.platform_tools", "must be `on_demand` or `all`");
+    }
     if h.default_timezone.is_empty() {
         c.err("hosted.default_timezone", "must not be empty");
     }

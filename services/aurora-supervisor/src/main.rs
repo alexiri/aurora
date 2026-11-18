@@ -40,6 +40,10 @@ enum Command {
         session: String,
         #[arg(long, default_value = aurora_supervisor::tools::DEFAULT_SOCKET)]
         socket: PathBuf,
+        /// (P5-GUIDE-7, C-654) `tools/list` returns the core tools only; `tools/call` still
+        /// forwards any name.
+        #[arg(long)]
+        core_only: bool,
     },
     /// `aurora-agent` (P5-GUIDE-6, `24 §10a`): list, search, describe and call the operations of
     /// the connected apps. Installed in the sandbox as `/opt/aurora/bin/aurora-agent`.
@@ -71,10 +75,15 @@ async fn main() -> ExitCode {
                 ExitCode::FAILURE
             }
         },
-        Command::McpBridge { session, socket } => {
+        Command::McpBridge {
+            session,
+            socket,
+            core_only,
+        } => {
             aurora_supervisor::mcp_bridge::run(
                 session,
                 socket,
+                core_only,
                 tokio::io::stdin(),
                 tokio::io::stdout(),
             )

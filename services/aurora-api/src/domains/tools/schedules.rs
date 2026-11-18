@@ -52,10 +52,16 @@ async fn own(ctx: &ToolCallContext, id: Uuid) -> Result<ScheduleRow, ToolError> 
     Ok(r)
 }
 
+/// (P5-GUIDE-7, C-654) The family of every tool of this file.
+const FAMILY: &str = "schedules";
+
 macro_rules! common {
     ($name:expr, $desc:expr, $schema:expr) => {
         fn name(&self) -> &'static str {
             $name
+        }
+        fn family(&self) -> &'static str {
+            FAMILY
         }
         fn description(&self, _: &ToolContext) -> String {
             $desc.into()

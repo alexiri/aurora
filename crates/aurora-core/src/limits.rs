@@ -400,6 +400,9 @@ pub const AGENT_OPERATIONS_FILE_MAX: usize = 512 * KIB;
 pub const AGENT_API_JSON_MAX: usize = 512 * KIB;
 /// `aurora-agent` stdout preview, in bytes.
 pub const AGENT_CLI_PREVIEW_MAX: usize = 2_000;
+/// (P5-GUIDE-7, D-297) Platform tools the MCP bridge lists in `on_demand` mode: the registry's
+/// core tools plus the supervisor's local core tools. A bigger set is a spec change.
+pub const PLATFORM_TOOLS_CORE_MAX: usize = 8;
 /// Pages `aurora-agent call --all` follows by default.
 pub const AGENT_CLI_PAGES_DEFAULT: u32 = 20;
 /// Most pages `--max-pages` may ask for.

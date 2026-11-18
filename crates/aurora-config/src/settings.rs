@@ -676,6 +676,14 @@ fn agents_defs() -> Vec<SettingDef> {
         up(S, "hosted.turn_ceiling_secs", 2_592_000, 6 * 3600),
         up(S, "hosted.turn_stall_secs", 604_800, 10 * 60),
         up(S, "hosted.sandbox_ready_timeout_secs", 86_400, 300),
+        // (P5-GUIDE-7, C-657) read at each home sync: no new generation trigger.
+        SettingDef::new(
+            S,
+            "hosted.platform_tools",
+            SettingType::Enum(vec!["on_demand", "all"]),
+            json!("on_demand"),
+        )
+        .loosening(Loosening::Order(vec!["on_demand", "all"])),
     ]
 }
 

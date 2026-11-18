@@ -484,6 +484,22 @@ impl HomeProjector {
         Ok(())
     }
 
+    /// (P5-GUIDE-7, C-654) The bridge of a new harness session lists only the core tools: the
+    /// installed render inputs say `on_demand` and the sandbox has `aurora-agent`. Anything else
+    /// (no inputs, an older API, mode `all`, no command) lists everything, as before.
+    pub fn bridge_core_only(&self) -> bool {
+        let path = self.cfg.root.join(AURORA_DIR).join("render_inputs.json");
+        let Ok(Some(raw)) = crate::harvest::read_bounded(&path, RENDER_INPUTS_READ_MAX) else {
+            return false;
+        };
+        serde_json::from_slice::<RenderInputs>(&raw).is_ok_and(|i| {
+            crate::instructions::PlatformToolsInfo::on_demand(
+                i.platform_tools.as_ref(),
+                self.cfg.agent_cli,
+            )
+        })
+    }
+
     /// Re-renders instruction files from the installed render inputs (boot and every sync).
     pub fn render_installed(&self) -> Result<(), HomeError> {
         let path = self.cfg.root.join(AURORA_DIR).join("render_inputs.json");

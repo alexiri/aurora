@@ -107,7 +107,7 @@ async fn bridge_supervisor_runner_round_trip() {
     // The harness side: an MCP client over a duplex pipe.
     let (client, server) = tokio::io::duplex(1 << 16);
     let (sr, sw) = tokio::io::split(server);
-    tokio::spawn(mcp_bridge::run(CONV.into(), sock.clone(), sr, sw));
+    tokio::spawn(mcp_bridge::run(CONV.into(), sock.clone(), false, sr, sw));
     let (cr, mut cw) = tokio::io::split(client);
     let mut lines = BufReader::new(cr).lines();
     let rpc = |v: Value| {

@@ -7,6 +7,7 @@ use aurora_core::ApiError;
 use aurora_db::DbError;
 use aurora_db::repo::peer_tasks::{self as repo, PeerTaskRow};
 use aurora_db::repo::{agents, conversations as convs, turns};
+use aurora_protocol::tools::Exposure;
 use aurora_protocol::tools::{JsonContent, ToolContent};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -42,10 +43,16 @@ fn db(e: DbError) -> ToolError {
     fail(e.into())
 }
 
+/// (P5-GUIDE-7, C-654) The family of every tool of this file.
+const FAMILY: &str = "agents";
+
 macro_rules! common {
     ($name:expr, $desc:expr, $schema:expr) => {
         fn name(&self) -> &'static str {
             $name
+        }
+        fn family(&self) -> &'static str {
+            FAMILY
         }
         fn description(&self, _: &ToolContext) -> String {
             $desc.into()
@@ -147,6 +154,10 @@ struct CompleteArgs {
 
 #[async_trait::async_trait]
 impl PlatformTool for CompleteTask {
+    /// Core (C-654): finishing a peer task is not something an agent discovers by search.
+    fn exposure(&self) -> Exposure {
+        Exposure::Core
+    }
     common!(
         "complete_task",
         "Finish the peer task you were asked to do and send your report to the requester. Only \

@@ -118,6 +118,9 @@ impl PlatformTool for ProposeCustomConnection {
     fn name(&self) -> &'static str {
         "propose_custom_connection"
     }
+    fn family(&self) -> &'static str {
+        "apps"
+    }
     fn description(&self, _: &ToolContext) -> String {
         "Ask the person to provide a secret (an API key or token) for a host you need. Never \
          send the value: the person pastes it in the dashboard. You may have at most 5 pending \
@@ -211,6 +214,9 @@ struct RequestArgs {
 impl PlatformTool for RequestAppConnection {
     fn name(&self) -> &'static str {
         "request_app_connection"
+    }
+    fn family(&self) -> &'static str {
+        "apps"
     }
     fn description(&self, _: &ToolContext) -> String {
         "Ask the person to connect an app for this workspace. Give the app id from the app \
