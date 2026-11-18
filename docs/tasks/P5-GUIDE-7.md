@@ -119,6 +119,26 @@ and the adapters' environment code. **Not concurrent** with any lane that edits
   filtered to `Core` when set, `tools/call` unchanged.
 - `cargo check -p aurora-api -p aurora-supervisor -p aurora-config --all-targets` clean. **No test of this part has run yet.**
 
+**Part 2 (lane `p5-apps`, worker 41, 2026-11-18; commits `cf65ebc2`, `89a12060`) — items 7, 8 done:**
+- **Item 7 verified.** `AURORA_SESSION` is in `SessionOptions.env`; each adapter's `build_env` passes `opts.env` through (a unit test per adapter, claude-code, codex, pi, goose, opencode,
+  `the_session_environment_reaches_the_harness_process`); the fake adapter's `[[shell:]]` inherits it. `pty.rs` strips every `AURORA_*` (covered by `pty_env_probe`); SSH and
+  `process_start` children take the supervisor's own environment, which never holds it (it is only in the explicit harness env).
+- **Item 8 done:** `services/aurora-supervisor/src/agent_cli/platform.rs`; `Env` has `tools_socket` + `session` (`AURORA_SESSION`). `list aurora` (by family), `describe aurora <tool>`
+  (parameter table + example), `search` ranks platform tools with apps (`show::search_with`; `--in aurora`), `call aurora <tool> k=v|k:=json [--body @file|-] [--out] [--raw]` coerced
+  by the schema's top-level types; results ≤ 1 500 chars print whole, larger ones are saved under `/tmp/aurora-agent/aurora-<tool>-<UTC>.json` with a preview. Exit codes: no session 2,
+  `session_not_caller`/`no_active_turn` 2, other socket errors and transport 4, a tool error result 1. `list` (no target) adds an `aurora` line only inside a turn.
+  Tests (`tests/it/tools.rs`): list/describe/search/call with coercion against the real hub, tool error exit 1, bad coercion, no session, absent socket (4); **FIX-151 binding for the
+  `aurora` target** (`…from_a_process_outside_the_harness_is_session_not_caller`, all four verbs, nothing reaches the runner). `agent_cli.rs` test renamed
+  `target_aurora_needs_a_conversation_and_refuses_app_options_first`. e2e `s43` now asserts: no session → exit 2, named session from a `podman exec` → `session_not_caller`, and from the
+  harness's child (`[[shell:]]`) `list aurora` + `call aurora memory_save` rc 0 (**not run yet**: needs `hosted.sh`).
+- **Merged master into the lane** (P5-WEBHOOK-4, P5-HARN); one conflict in `supervisor/src/home.rs` (kept both `servers::write` and `render_with(…, agent_cli)`).
+- Gate so far: `cargo check --workspace --all-targets --locked` clean; `cargo nextest run -p aurora-supervisor`: 432 passed; clippy `-p aurora-supervisor -p aurora-e2e-hosted` clean.
+
+**Item 6 finding (needs a decision):** nothing in the code releases idle sessions on a catalogue change. `SessionRelease` is only handled by the supervisor and never sent by the API or runner
+(grep over `services/` and `crates/`); `docs/12 §Platform tools` ("idle sessions are released on a catalogue change only when the core descriptors or the rendered instruction files change")
+and `docs/12:793` describe behaviour that does not exist. Either implement it (supervisor: after `projector.commit`, hash the core descriptors + the rendered instruction files, release idle
+sessions when it differs from the previous sync's) or reword the two paragraphs. Not done here.
+
 **Next steps (a fresh worker):**
 1. **Item 7 verification:** do both adapters hand `SessionOptions.env` to the harness process (claude-code, codex, pi, goose, opencode, fake)? Does `pty.rs`
    strip `AURORA_*` for the terminal, do SSH and `process_start` environments not carry it? Add tests (supervisor `tests/it`, adapters).
