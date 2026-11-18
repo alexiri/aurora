@@ -295,6 +295,11 @@ fn execute(
         return Ok(obs);
     }
 
+    // (P5-ICS) A secret-link request: the synthetic request of the secret-link lane.
+    if let Some(obs) = link_case(l, &host, &path, method.as_str()) {
+        return Ok(obs);
+    }
+
     // A registered instance serves its exact host unless another app's static claim covers it.
     let instance_host = c
         .connection
@@ -623,6 +628,53 @@ fn database_case(
         "app": found.map_or(first.app_id.as_str(), |(a, _)| a),
         "tool": found.map(|(_, t)| t),
         "class": class,
+    }))
+}
+
+/// (P5-ICS, D-273, docs/06 §Secret-link lane) A request to `<connection id>.link.aurora.internal`:
+/// only `GET`/`HEAD` are served (405 otherwise, as the lane answers), decided as the `GET` the
+/// request stands for; the tool is the app's tool for that host and path, exactly as the lane
+/// identifies it. Nothing is injected (the stored URL is the lane's own business). `None` when the
+/// host is not a synthetic link host or the snapshot has no secret-link app.
+fn link_case(l: &Loaded, host: &str, path: &str, method: &str) -> Option<Value> {
+    let id = aurora_registry::manifest::SecretLink::id_label(host)?;
+    uuid::Uuid::parse_str(id).ok()?;
+    let first = l.snapshot.apps.iter().find(|a| a.secret_link.is_some())?;
+    if !matches!(method, "GET" | "HEAD") {
+        return Some(json!({
+            "app": first.app_id, "tool": null,
+            "refused": {
+                "code": "method_not_allowed",
+                "message": "A calendar link can only be read with GET or HEAD."
+            }
+        }));
+    }
+    // The agent's path is ignored by the lane: the request is always `GET /`.
+    let _ = path;
+    let found = l
+        .snapshot
+        .apps
+        .iter()
+        .filter(|a| a.secret_link.is_some())
+        .find_map(|a| {
+            crate::apps::identify_tool_in(
+                a,
+                false,
+                host,
+                443,
+                "/",
+                None,
+                "GET",
+                &[],
+                false,
+                &[],
+                None,
+            )
+            .map(|t| (a.app_id.as_str(), t.id.as_str()))
+        });
+    Some(json!({
+        "app": found.map_or(first.app_id.as_str(), |(a, _)| a),
+        "tool": found.map(|(_, t)| t),
     }))
 }
 

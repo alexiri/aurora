@@ -647,6 +647,14 @@ of any kind is in the sandbox's files or environment**: agent processes never se
 credential (`11 §The boot document`, SEC-01). A `pgpass` or `root.crt` of an earlier version is
 removed on the next sync, and the directory goes with the last database grant.
 
+**Calendar links file** (P5-ICS, D-273, C-843). For each active connection of a secret-link app the agent
+is granted, the `render_inputs` entry carries `links: [{name, app_id, connection_id}]`, and the
+supervisor writes `.aurora/links.json` (`aurora-supervisor::links`, `0600`):
+`[{ "name", "app", "url": "https://<connection_id>.link.aurora.internal/" }]`. The `url` is the
+connection's **synthetic address** that only the gateway resolves to the real link: no secret is in the
+sandbox, and two links with one name both appear, told apart by their address. The file is removed
+when the list is empty. It does not depend on the database relay.
+
 **Database relay** (`aurora-supervisor::pgrelay`, `127.0.0.1:3130`, started while the installed home
 carries databases and stopped when none remain). Per client connection:
 

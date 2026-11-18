@@ -496,6 +496,11 @@ impl HomeProjector {
                 tracing::warn!(error = %e, "libpq service file not written");
             }
         }
+        // (P5-ICS, D-273) The calendar links the agent may read, as synthetic addresses; removed
+        // when there are none. A failure here must not block the sync either.
+        if let Err(e) = crate::links::write(&self.cfg.root, &crate::links::installed_links(&raw)) {
+            tracing::warn!(error = %e, "links.json not written");
+        }
         let text = render(&inputs);
         for name in &self.cfg.instruction_files {
             let Some(rel) = clean_rel(name) else {

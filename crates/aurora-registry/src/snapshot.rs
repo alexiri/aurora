@@ -17,7 +17,7 @@ use crate::claims::{ConflictGroup, claim_key, claims, conflict_groups, static_ho
 use crate::manifest::{
     About, Agent, Approval, BodyFormat, ClientAuth, ClientField, Connect, CredentialDecl, Database,
     Finalize, Grants, Hook, HostRule, INSTANCE_HOST, Inject, Instances, Intercept, Ldap, Library,
-    Manifest, MetadataDecl, Passthrough, RewriteHost, Tenant, Token, Tools, Transform,
+    Manifest, MetadataDecl, Passthrough, RewriteHost, SecretLink, Tenant, Token, Tools, Transform,
     UrlOrTemplate, de_opt, de_vec,
 };
 
@@ -216,6 +216,9 @@ pub struct AppEntry {
     /// (D-251) the gateway LDAP lane; absent in older snapshots.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ldap: Option<Ldap>,
+    /// (P5-ICS, D-273) the secret-link lane; absent in older snapshots (hashes unchanged).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub secret_link: Option<SecretLink>,
     /// (P4-GRANTS, D-123) copied from the manifest; absent in older snapshots = both false.
     #[serde(default)]
     pub grants: Grants,
@@ -489,6 +492,7 @@ pub fn compile_with_guides(
                     .transpose()?,
                 database: a.database.clone(),
                 ldap: a.ldap.clone(),
+                secret_link: a.secret_link.clone(),
                 grants: a.grants,
                 library: a.library.clone(),
             });
