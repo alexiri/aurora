@@ -322,6 +322,13 @@ pub async fn patch_org(
             if let Some(b) = p.previews_enabled {
                 obj.insert("previews_enabled".into(), b.into());
             }
+            // (P5-CALINV, C-844) The org switch of the calendar-invitation tools.
+            if let Some(b) = p.calendar_invitations_enabled {
+                obj.insert(
+                    "calendar_invitations".into(),
+                    serde_json::json!({ "enabled": b }),
+                );
+            }
             for (key, v) in [("max_members", p.max_members), ("max_agents", p.max_agents)] {
                 match v {
                     None => {}

@@ -382,7 +382,7 @@ async fn agent_credential_and_agent_tool_call_are_refused_sec_80() {
 
     // An agent tool call (the W5 plane, authenticated as the runner) can never create or change
     // a share: no platform tool of the catalogue touches preview_shares.
-    let cat = aurora_api::domains::tools::catalogue(r.h.pool(), agent)
+    let cat = aurora_api::domains::tools::catalogue(&r.h.state, agent)
         .await
         .unwrap();
     assert!(

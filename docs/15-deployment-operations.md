@@ -1062,6 +1062,15 @@ Real delivery to a browser through a real push service is a manual release check
 belongs to the browser profile and the Aurora session that created it: shared-computer users should
 sign out, which ends delivery.
 
+## Calendar invitations (phase 5, P5-CALINV, D-274, C-844, SEC-108)
+
+Agents can e-mail the person they work for a calendar invitation (`10 §Calendar invitations`, `12 §Phase 0 catalogue`). It needs nothing but the instance mailer:
+- **The tools appear only when `email.smtp_url` is set** (SET-4: not log-only) **and `email.from` is a usable address**; otherwise they are absent from the catalogue, not failing. Enabling or changing the mailer in Settings takes effect for the next catalogue sync.
+- **`email.from` is the invitation's organizer**, so every Accept, Decline or "tentative" the person clicks is mailed to it (the invitations ask clients not to reply, `RSVP=FALSE`, and most still offer "Don't send a response"). Aurora has no inbound mail and does not read them: **`email.from` should be an address that accepts or discards mail** (a `noreply` that bounces will bounce those replies at the person).
+- **The org switch** `calendar_invitations.enabled` (default on) is set by org `owner`/`admin` through `PATCH /v1/orgs/{org}` (`settings.calendar_invitations_enabled`); there is no dashboard toggle yet. Off removes the tools from the org's agents at the next sync and refuses calls at once.
+- **Limits**: 20 sends per person per agent per hour, 60 per person per day (`calendar_invitation_sends`, pruned after two days); the invitation rows are pruned by the daily retention pass (90 days after the event, 5 years for a series).
+- **Exchange Online and external organizers** (to be recorded by the owner's live check: CERN Outlook and Gmail): where Exchange treats an invitation from an external organizer specially (for example placing it as "tentative" or in a junk rule), the result goes here.
+
 ## Port previews (phase 4, P4-PRV-1, P4-PRV-2, D-144..D-147, SEC-80..SEC-82, SEC-85)
 
 **Optional and off by default.** Port previews (`11 §Port previews`) need infrastructure no other

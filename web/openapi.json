@@ -49868,9 +49868,14 @@
         "type": "object",
         "required": [
           "members_can_create_workspaces",
-          "previews_enabled"
+          "previews_enabled",
+          "calendar_invitations_enabled"
         ],
         "properties": {
+          "calendar_invitations_enabled": {
+            "type": "boolean",
+            "description": "(phase 5, P5-CALINV, D-274, C-844) Calendar-invitation tools for the organization's agents\n(default `true`); stored as `settings.calendar_invitations.enabled`."
+          },
           "max_agents": {
             "type": [
               "integer",
@@ -49897,6 +49902,13 @@
       "OrgSettingsPatch": {
         "type": "object",
         "properties": {
+          "calendar_invitations_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "(phase 5, P5-CALINV, C-844) The calendar-invitation tools for the organization's agents."
+          },
           "max_agents": {
             "type": [
               "integer",

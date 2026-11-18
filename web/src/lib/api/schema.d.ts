@@ -9814,6 +9814,11 @@ export interface components {
         /** @enum {string} */
         OrgRole: "owner" | "admin" | "member";
         OrgSettings: {
+            /**
+             * @description (phase 5, P5-CALINV, D-274, C-844) Calendar-invitation tools for the organization's agents
+             *     (default `true`); stored as `settings.calendar_invitations.enabled`.
+             */
+            calendar_invitations_enabled: boolean;
             /** Format: int64 */
             max_agents?: number | null;
             /** Format: int64 */
@@ -9823,6 +9828,8 @@ export interface components {
             previews_enabled: boolean;
         };
         OrgSettingsPatch: {
+            /** @description (phase 5, P5-CALINV, C-844) The calendar-invitation tools for the organization's agents. */
+            calendar_invitations_enabled?: boolean | null;
             /** Format: int64 */
             max_agents?: number | null;
             /**

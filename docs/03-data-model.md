@@ -1694,6 +1694,38 @@ the workspace is created.
 
 UNIQUE (agent_id, app_id) WHERE status = `open` and kind = `app`; UNIQUE (agent_id, secret_id) WHERE status = `open` and kind = `website`; index (workspace_id, created_at DESC) WHERE status = `open`. Open rows expire after `ACCESS_REQUEST_TTL` (14 days). The gateway role gets nothing on this table.
 
+### `calendar_invitations`
+(phase 5, P5-CALINV, D-274, C-844, SEC-108; migration `20261201000230_calendar_invitations.sql`) One row per calendar invitation an agent e-mailed to the person it works for, so that update, cancel and list can act on it. **The description and the location are never stored**; they exist only in the sent message.
+| Column | Type | Notes |
+|---|---|---|
+| id | uuid pk | the invitation id the tools return; `UID` = `<id>@<instance host>` |
+| org_id | uuid FK→organizations (cascade) | |
+| workspace_id | uuid FK→workspaces (cascade) | |
+| agent_id | uuid FK→agents (cascade) | the sender; update, cancel and list reach only this agent's rows |
+| person_id | uuid FK→users (cascade) | the only recipient, at their verified e-mail |
+| conversation_id | uuid null FK→conversations (set null) | where the agent sent it |
+| uid | text not null | the iCalendar `UID` |
+| sequence | integer not null default 0 | `SEQUENCE`; +1 on every update and cancel |
+| status | text not null | CHECK in (`sent`, `cancelled`) |
+| title | text not null | at most 200 characters |
+| starts_at | timestamptz not null | UTC; an all-day event: its first day at 00:00 UTC |
+| ends_at | timestamptz not null | UTC; an all-day event: its last day (inclusive) at 00:00 UTC |
+| timezone | text not null | IANA name |
+| all_day | boolean not null default false | |
+| repeat | jsonb null | `{ freq, interval, by_day[], count?, until? }` as validated; null for a single event |
+
+Indexes `(agent_id, person_id, created_at DESC)`, `(org_id)`, `(person_id)`, `(updated_at)`. Retention (daily pass, `05 §Background jobs`): a single or cancelled row 90 days after its end or last change (the later), a repeating row 5 years after its last change. The gateway role gets nothing on this table.
+
+### `calendar_invitation_sends`
+(phase 5, P5-CALINV, D-274, SEC-108; same migration) The rate-limit ledger: one row per message sent (invite, update or cancel), so that an updated or cancelled invitation still counts (20 per person per agent per hour, 60 per person per day across agents). A send that fails at the mailer is rolled back with its row. Pruned after two days.
+| Column | Type | Notes |
+|---|---|---|
+| id | uuid pk | |
+| org_id | uuid FK→organizations (cascade) | |
+| agent_id | uuid FK→agents (cascade) | |
+| person_id | uuid FK→users (cascade) | |
+| sent_at | timestamptz not null default now() | indexes `(person_id, sent_at DESC)`, `(agent_id, person_id, sent_at DESC)`, `(org_id)` |
+
 ### `approval_push_claims`
 (phase 5, P4-011B-3, D-138; migration `20261201000223`) One row per (approval, decider, stage) Web Push claim.
 | Column | Type | Notes |

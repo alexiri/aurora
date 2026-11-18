@@ -164,7 +164,7 @@ fn call(b: &Booted, tool: &str, args: Value) -> Value {
 async fn catalogue_lists_available_tools_with_schemas() {
     let r = rig().await;
     let b = r.booted("a1").await;
-    let cat = catalogue(r.h.pool(), b.agent).await.unwrap();
+    let cat = catalogue(&r.h.state, b.agent).await.unwrap();
     let names: Vec<&str> = cat
         .iter()
         .map(|t| t.name.as_str())
