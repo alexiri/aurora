@@ -186,12 +186,34 @@ async fn llm_bedrock_assume_role_denied_forwards_nothing() {
 /// is signed and forwarded.
 #[tokio::test]
 async fn llm_bedrock_oversized_body_is_413_before_the_secret_is_opened() {
+    // In CI this test intermittently got no answer at all to a request below (60 s, no bytes, no
+    // close), which no local run reproduces. The gateway runs on this test's thread: its debug log
+    // goes to the test's captured output, which a failure prints, together with how the read
+    // ended and the request-log rows.
+    let _log = tracing::subscriber::set_default(
+        tracing_subscriber::fmt()
+            .with_test_writer()
+            .with_ansi(false)
+            .with_env_filter("aurora_gateway=debug,aurora_secrets=debug,info")
+            .finish(),
+    );
     let limit = aurora_core::limits::LLM_SIGN_BODY_MAX;
     let env = env_with(BedrockMode::Sigv4, "ext-org-1").await;
+    let diag = |r: &Reply, at: std::time::Instant| {
+        let rows = env.captured.0.lock().unwrap().clone();
+        format!(
+            "{} after {:?}, read ended: {}; request log: {rows:?}",
+            r.body,
+            at.elapsed(),
+            r.ended
+        )
+    };
     env.mem.set_unavailable(true);
     let big = vec![b' '; limit + 1];
+    let at = std::time::Instant::now();
     let r = request(&env, env.llm, "POST", INVOKE, "", &big).await;
-    assert_eq!(r.status, 413, "{}", r.body);
+    let _ = tokio::time::timeout(Duration::from_secs(5), env.log.flush()).await;
+    assert_eq!(r.status, 413, "{}", diag(&r, at));
     assert!(has(&r, "llm_request_too_large"), "{}", r.body);
     assert!(rig(&env).mock.requests().is_empty());
     // Control: a small body does open the secret (and finds the store down).
@@ -200,8 +222,10 @@ async fn llm_bedrock_oversized_body_is_413_before_the_secret_is_opened() {
     assert!(!has(&r, "llm_request_too_large"));
     env.mem.set_unavailable(false);
     let exact = vec![b' '; limit];
+    let at = std::time::Instant::now();
     let r = request(&env, env.llm, "POST", INVOKE, "", &exact).await;
-    assert_eq!(r.status, 200, "{}", r.body);
+    let _ = tokio::time::timeout(Duration::from_secs(5), env.log.flush()).await;
+    assert_eq!(r.status, 200, "{}", diag(&r, at));
     let seen = rig(&env).mock.requests();
     assert_eq!(seen.len(), 1);
     assert_eq!(seen[0].req.body.len(), limit);

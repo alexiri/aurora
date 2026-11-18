@@ -784,6 +784,9 @@ async fn start(o: Opts) -> Env {
 struct Reply {
     status: u16,
     body: String,
+    /// What the read ended with when no status came back: `"timeout (N bytes)"`, `"closed (N
+    /// bytes)"` or the read error. A diagnostic only.
+    ended: String,
 }
 
 fn auth(user: &str) -> String {
@@ -820,7 +823,11 @@ async fn request(
     } else {
         Duration::from_secs(5)
     };
-    let _ = tokio::time::timeout(wait, s.read_to_end(&mut out)).await;
+    let ended = match tokio::time::timeout(wait, s.read_to_end(&mut out)).await {
+        Err(_) => format!("timeout after {wait:?} ({} bytes)", out.len()),
+        Ok(Ok(_)) => format!("closed ({} bytes)", out.len()),
+        Ok(Err(e)) => format!("read error {e} ({} bytes)", out.len()),
+    };
     let text = String::from_utf8_lossy(&out).into_owned();
     let (head, body) = text.split_once("\r\n\r\n").unwrap_or((&text, ""));
     Reply {
@@ -830,6 +837,7 @@ async fn request(
             .and_then(|s| s.parse().ok())
             .unwrap_or(0),
         body: body.to_owned(),
+        ended,
     }
 }
 
