@@ -292,8 +292,8 @@ fn scalar_text(v: &serde_json::Value) -> Option<String> {
 fn ical_values(text: &str, prop: &str) -> Vec<String> {
     let mut lines: Vec<String> = Vec::new();
     for raw in text.lines() {
-        match raw.strip_prefix([' ', '\t']) {
-            Some(more) if !lines.is_empty() => lines.last_mut().unwrap().push_str(more),
+        match (raw.strip_prefix([' ', '\t']), lines.last_mut()) {
+            (Some(more), Some(last)) => last.push_str(more),
             _ => lines.push(raw.to_owned()),
         }
     }

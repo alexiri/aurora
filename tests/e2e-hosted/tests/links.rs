@@ -451,7 +451,7 @@ async fn s15_link_lanes_ics_and_caldav_hold_no_secret_in_the_sandbox() {
     assert!(!out.contains(ICS_PATH_CANARY) && !out.contains(ICS_KEY_CANARY));
 
     // CalDAV: servers.json names the server; the agent talks to it with no password.
-    let servers = file_in(cn, "/workspace/.aurora/servers.json", &format!("{home}")).await;
+    let servers = file_in(cn, "/workspace/.aurora/servers.json", &home).await;
     let servers: Value = serde_json::from_str(&servers).unwrap();
     assert_eq!(
         servers.as_array().unwrap().len(),
