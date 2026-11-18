@@ -367,6 +367,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "aurora-client",
+ "aurora-core",
  "aurora-crypto",
  "aurora-hookhost",
  "aurora-policy",

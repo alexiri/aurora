@@ -1,0 +1,44 @@
+{
+  "openapi": "3.0.3",
+  "info": { "title": "Widgets", "version": "1.0.0" },
+  "servers": [{ "url": "https://api.example.com/v1/" }],
+  "paths": {
+    "/widgets": {
+      "get": {
+        "operationId": "listWidgets",
+        "summary": "List widgets",
+        "tags": ["widgets"],
+        "parameters": [
+          { "name": "limit", "in": "query", "schema": { "type": "integer" }, "description": "Page size, at most 100." }
+        ]
+      },
+      "post": {
+        "operationId": "createWidget",
+        "summary": "Create a widget",
+        "tags": ["widgets"],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["name"],
+                "properties": {
+                  "name": { "type": "string", "description": "Display name." },
+                  "size": { "type": "integer" }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/widgets/{id}": {
+      "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+      "get": { "operationId": "getWidget", "summary": "Read one widget", "tags": ["widgets"] },
+      "delete": { "operationId": "deleteWidget", "summary": "Delete a widget", "tags": ["widgets"] }
+    },
+    "/health": {
+      "get": { "summary": "Service health" }
+    }
+  }
+}

@@ -1,0 +1,17 @@
+# Add under apps[].agent in plugin.yaml (summary is required with a guide):
+guide:
+  - { file: operations.md, title: "Operation index: every operation, grouped by tag" }
+  - { file: ops-other.md, title: "Operations: other" }
+  - { file: ops-widgets.md, title: "Operations: widgets" }
+
+# Catalogue skeleton for apps[]: review overlaps, approvals and `params` classifiers.
+tools:
+  read:
+    items:
+      - { id: get_widget, name: "Read one widget", host: api.example.com, path: "/v1/widgets/*", methods: [GET] }
+      - { id: list_widgets, name: "List widgets", host: api.example.com, path: "/v1/widgets", methods: [GET] }
+      - { id: get_v1_health, name: "Service health", host: api.example.com, path: "/v1/health", methods: [GET] }
+  write:
+    items:
+      - { id: delete_widget, name: "Delete a widget", host: api.example.com, path: "/v1/widgets/*", methods: [DELETE] }
+      - { id: create_widget, name: "Create a widget", host: api.example.com, path: "/v1/widgets", methods: [POST] }
