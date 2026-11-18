@@ -391,6 +391,8 @@ async fn serve(
         .with_insecure_loopback_injection(cfg.gateway.insecure_loopback_injection)
         .with_llm_mint(llm_mint),
     );
+    // (P5-ICS, D-273) A secret link's cached body never outlives its connection.
+    hub.register(handler.link_cache());
     // (phase 4, P4-GSL, D-149) The skill-library fetch route on the internal port: its own guarded
     // client (same destination guard and egress proxy as agent requests), the internal secret.
     let library = Arc::new(aurora_gateway::library_fetch::LibraryFetch {

@@ -382,6 +382,16 @@ impl Proxy {
                 .ldap_answer(prepared, &cfg, hook, response_headers)
                 .await;
         }
+        // (P5-ICS, D-273) A secret-link connection's request is answered by the secret-link lane
+        // (the stored URL, fetched by the gateway), never forwarded.
+        if let Some(link) = prepared.link.take() {
+            let mut resp = crate::seclink::answer(&self.upstream, link).await;
+            for (k, v) in &response_headers {
+                resp.headers_mut().insert(k.clone(), v.clone());
+            }
+            hygiene::strip_hop_by_hop(resp.headers_mut());
+            return resp;
+        }
         // 13. forward
         let kill = t.kill.clone();
         let resp = match self.upstream.send(prepared).await {
