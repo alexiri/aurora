@@ -1,8 +1,12 @@
 # P6-WARMPOOL: Warm starts — the sandbox is ready when the person sends — **proposal, spec batch (Opus) later — phase 6**
 
-> **Status: proposal (2026-11-18).** Nothing here is decided. No D-, C-, SEC- or migration numbers are
-> taken (the spec batch takes them from PROGRESS's next-free note). Open questions are `Q-P6-WARM-n` at
-> the end; the recommendations are the coordinator's.
+> **Status: proposal (2026-11-18).** No C-, SEC- or migration numbers are taken (the spec batch takes
+> them from PROGRESS's next-free note).
+>
+> **Owner answers, 2026-11-18 (D-379):** (Q-P6-WARM-1) warm on the **first keystroke** in the composer;
+> (Q-P6-WARM-2) **on by default**; (Q-P6-WARM-3) **not in phase 5**: Parts 1 and 2 both ship **at the
+> beginning of phase 6**, its first spec batch; (Q-P6-WARM-4) **wait for the measurements**: Part 3 and a
+> true generic pool are decided from Part 1's numbers. No question is open.
 
 ## Goal
 
@@ -48,7 +52,7 @@ reconcile: not proposed now (Q-P6-WARM-4).
 
 ## Proposal
 
-### Part 1 — Measure first (small; can ship before the rest)
+### Part 1 — Measure first (small; ships with Part 2 at the start of phase 6, D-379)
 - When a boot reaches `ready`, the API records a histogram `aurora_sandbox_start_seconds{backend, phase}`
   per phase (from the boot's `start_log` timestamps) and the total, with `first_boot` = this sandbox's
   first start (new home). Also count failures per phase.
@@ -58,7 +62,7 @@ reconcile: not proposed now (Q-P6-WARM-4).
 
 ### Part 2 — Warm on intent (the main change)
 Start the agent's sandbox when a person shows they are about to use it, so the start runs while they type.
-- **Signal** (Q-P6-WARM-1): the first keystroke in the agent's composer (recommended), sent by the dashboard
+- **Signal** (D-379): the first keystroke in the agent's composer, sent by the dashboard
   as `POST /v1/agents/{agent}/sandbox/warm`; repeated at most every 60 s while the person keeps typing or
   the composer has text. Authority `can_use`; always `204` (it says nothing the caller cannot already see).
 - **API:** stamps a wake demand `warm_wake_at` and `warm_active_until = now + WARM_GRACE` (120 s). The
@@ -74,7 +78,7 @@ Start the agent's sandbox when a person shows they are about to use it, so the s
   not stamp `last_engaged_at`).
 - **Dashboard:** no new control. The agent page's status rail already shows "Sandbox starting"
   (`status-rail/status-data.ts`) for a warm sandbox that is not ready yet.
-- **Setting** `hosted.warm_on_intent` (instance, default on — Q-P6-WARM-2).
+- **Setting** `hosted.warm_on_intent` (instance, default on, D-379; an admin can turn it off).
 - **Cost:** a boot for every person who starts typing and then leaves, at most `WARM_AWAKE_CAP` each and
   bounded per agent and person. Warm time is runtime like any boot (`runtime_intervals`) and counts for
   P6-LIMITS as interactive time. Under P6-LIMITS' pressure level `elevated`, warm-ups are the first thing
@@ -95,7 +99,7 @@ is a large share of the time.
 - **Pausing instead of parking** (podman `pause`, cgroup freezer): instant resume, but memory stays held
   and Kubernetes has no equivalent.
 
-## Deliverables of the spec batch (when the owner starts this)
+## Deliverables of the spec batch (the first batch of phase 6, D-379)
 - `11 §Keep-awake` (reason `warm`), `11 §Start` (warm demand rules), `05` (the route, its rate limit),
   `03 §Planned changes` (`warm_wake_at`, `warm_active_until`, `warm_awake_since` on `sandboxes`, and any
   retained start-time table), `15` (constants, `hosted.warm_on_intent`, the metrics), `14` (composer
@@ -103,14 +107,15 @@ is a large share of the time.
   turn takes over), one SEC invariant for the limits above.
 - Briefs: P6-WARM-1 (Part 1, Rust + small web), P6-WARM-2 (Part 2, Rust + web). Part 3 only on evidence.
 
-## Open questions for the owner
+## Questions for the owner (all answered 2026-11-18, D-379)
 - **Q-P6-WARM-1** Which signal starts a warm-up: the first keystroke in the composer, or opening the
   agent's chat? *Recommended: the keystroke. Opening a chat to read history would boot sandboxes nobody
-  uses.*
+  uses.* **Answered: the first keystroke.**
 - **Q-P6-WARM-2** Is warm-on-intent on by default? *Recommended: on, as an instance setting an admin can
-  turn off.*
+  turn off.* **Answered: on by default.**
 - **Q-P6-WARM-3** When? Part 1 (measurement) is small and useful on its own. *Recommended: Part 1 now in
-  phase 5 as a FIX brief; Part 2 with phase 6.*
+  phase 5 as a FIX brief; Part 2 with phase 6.* **Answered: not in phase 5; all of it at the beginning of
+  phase 6.**
 - **Q-P6-WARM-4** Should a true generic pool (homes delivered over the network, the `snapshot`
   durability) be explored later? *Recommended: no, unless Part 1 shows `booting` or `provisioning`
-  dominating after FIX-175 and Part 2.*
+  dominating after FIX-175 and Part 2.* **Answered: wait for the measurements** (Part 3 likewise).
