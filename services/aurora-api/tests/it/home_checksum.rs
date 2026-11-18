@@ -143,6 +143,7 @@ async fn api_rendered_memory_round_trips_the_trailer_and_tampering_is_harvested(
         skills_dir: Some(aurora_api::domains::hosted::home::skills_dir(None).to_owned()),
         instruction_files: vec![],
         pg: None,
+        agent_cli: false,
     });
     let mut outcome = None;
     for part in &parts {
@@ -256,6 +257,7 @@ async fn render_install(h: &Harness, agent: Uuid, generation: i64) -> Scratch {
         skills_dir: Some(aurora_api::domains::hosted::home::skills_dir(None).to_owned()),
         instruction_files: vec![],
         pg: None,
+        agent_cli: false,
     });
     for part in &parts {
         projector.apply_part(part).unwrap();
