@@ -106,6 +106,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
       - name: sccache (GitHub Actions cache backend, VTL-001)
         uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+      - name: sccache probe (plain rustc when the cache backend is down; see ci.yml)
+        run: |
+          if ! env -u CARGO_INCREMENTAL sccache rustc -vV >/dev/null 2>&1; then
+            echo "::warning::sccache cannot start (cache backend unavailable); building without it"
+            echo "AURORA_SCCACHE=0" >> "$GITHUB_ENV"
+          fi
       - name: The runner's own PostgreSQL service must not hold 5432 (the Mattermost image brings its own)
         run: |
           sudo systemctl stop postgresql 2>/dev/null || true
