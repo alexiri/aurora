@@ -423,7 +423,7 @@ async fn approval_needs_an_instance_admin() {
 }
 
 /// The real manifests of a built-in package (FIX-133/FIX-136 version bumps): `indico` 1.1.1 is
-/// active, the shipped 1.2.0 arrives and — no permission widened, no connection broken — becomes
+/// active, the shipped 1.3.0 arrives and — no permission widened, no connection broken — becomes
 /// the active version by itself, the old one superseded. (The project signing key is not
 /// available to tests, so both versions go through the directory source under publisher `acme`;
 /// the activation rules for a package that already has an approved version are the same.)
@@ -445,9 +445,28 @@ async fn the_shipped_indico_version_replaces_the_previous_one_automatically() {
     assert_eq!(v1["status"], "pending_approval", "{v1}");
     let (s, b) = a.act(&v1["id"], "approve").await;
     assert_eq!(s, 200, "{b}");
-    let v2 = a.upload(&shipped).await;
+    // (P5-GUIDE-4) The shipped package lists agent guide files: they travel in the archive.
+    let dir = format!("{root}/../../plugins/builtin/indico/agent/indico");
+    let files: Vec<(String, Vec<u8>)> = [
+        "book-free-room.md",
+        "find-category-events.md",
+        "api-families.md",
+    ]
+    .iter()
+    .map(|f| {
+        (
+            format!("agent/indico/{f}"),
+            std::fs::read(format!("{dir}/{f}")).unwrap(),
+        )
+    })
+    .collect();
+    let refs: Vec<(&str, &[u8])> = files
+        .iter()
+        .map(|(p, b)| (p.as_str(), b.as_slice()))
+        .collect();
+    let v2 = a.upload_with(&shipped, &refs).await;
     assert_eq!(v2["package_id"], "indico", "{v2}");
-    assert_eq!(v2["version"], "1.2.2", "{v2}");
+    assert_eq!(v2["version"], "1.3.0", "{v2}");
     assert_eq!(v2["status"], "active", "activated without approval: {v2}");
     assert_eq!(a.status(&v1["id"]).await["status"], "superseded");
 }

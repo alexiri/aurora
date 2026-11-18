@@ -386,7 +386,17 @@ async fn the_budget_keeps_generated_files_and_drops_reference_files() {
     let a = setup(&h).await;
     let w = world(&h, &a, "full").await;
     let tight = h.state.clone().with_guide_sync_max(10);
+    // The counter is process-wide and only grows: assert the delta of this one sync, and that the
+    // default budget (below) does not move it.
+    let series = "aurora_home_guide_budget_exceeded_total";
+    let _ = metrics_text(); // the recorder must exist before the counter is incremented
+    let before = counter_value(series);
     let p = parts_with(&h, tight, w.agent).await;
+    assert_eq!(
+        counter_value(series) - before,
+        1.0,
+        "one app over budget, one increment"
+    );
     let f = folder(&p);
     let names: Vec<&str> = f.keys().map(String::as_str).collect();
     assert_eq!(
@@ -406,8 +416,10 @@ async fn the_budget_keeps_generated_files_and_drops_reference_files() {
             .filter(|m| m.starts_with(".aurora/apps/"))
             .all(|m| f.contains_key(m))
     );
-    // The default budget sends all five.
+    // The default budget sends all five and does not count.
+    let before = counter_value(series);
     assert_eq!(folder(&parts(&h, w.agent).await).len(), 5);
+    assert_eq!(counter_value(series), before);
 }
 
 /// The admin routes: the detail carries `agent_guides`, the file route serves the bytes by digest

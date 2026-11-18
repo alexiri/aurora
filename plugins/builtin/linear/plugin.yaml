@@ -1,6 +1,6 @@
 package:
   id: linear
-  version: 1.0.5
+  version: 1.1.0
   contract: 1
   min_core: 0.1.0
   publisher: aurora
@@ -83,6 +83,7 @@ apps:
           - { label: Fields, source: body, steps: [ { graphql: field_names } ] }
         link: "https://linear.app/"
     agent:
+      summary: "Linear issues, projects and comments through GraphQL: list and search issues, create and update an issue."
       instructions: |
         Linear is connected. Send GraphQL requests as POST https://api.linear.app/graphql with a JSON
         body {"query": "...", "variables": {...}, "operationName": "..."}. Aurora adds the

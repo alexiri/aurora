@@ -1,6 +1,6 @@
 package:
   id: aws-keys
-  version: 2.0.2
+  version: 2.1.0
   contract: 1
   min_core: 0.1.0
   publisher: aurora
@@ -192,20 +192,13 @@ apps:
           - { label: Action in form, source: body, steps: [ { form: Action } ] }
         link: "https://console.aws.amazon.com/ec2/"
     agent:
+      summary: "AWS in one region with IAM keys or a role: S3 objects, EC2 Describe calls and the caller identity."
       instructions: |
-        AWS is connected for ONE region (the connection's region), either with an IAM access key
-        pair or through an IAM role that Aurora assumes itself. Send requests straight to the
-        regional endpoints; Aurora signs them (Signature Version 4, with short-lived session
-        credentials for a role) and never shows you a key or a token, so do not use `aws
-        configure`, `aws sts assume-role` or an SDK credential chain, and do not call AssumeRole
-        yourself. What you can do is limited by the policy of the keys or the role.
-        S3: use path-style URLs, https://s3.<region>.amazonaws.com/<bucket>/<key>; virtual-hosted
-        bucket URLs are not covered. EC2 uses the Query API on https://ec2.<region>.amazonaws.com/
-        with the Action and Version parameters (for example
-        Action=DescribeInstances&Version=2016-11-15). Send the parameters as a POST body
-        (content-type application/x-www-form-urlencoded), once each and not also in the query:
-        read-only Describe* actions are then allowed without approval, and every other EC2 call
-        (including any GET) is held for approval. STS: only POST Action=GetCallerIdentity to
-        sts.<region>.amazonaws.com works; every other STS action is blocked. A request to a
-        region other than the connection's will be signed for the wrong region and AWS will
-        refuse it.
+        The connection is for ONE region. Send requests straight to the regional endpoints; Aurora
+        signs them (SigV4) and never shows you a key or token, so do not use `aws configure`,
+        `aws sts assume-role` or an SDK credential chain, and do not call AssumeRole yourself.
+        What you can do is limited by the IAM policy of the keys or the role. S3 uses path-style
+        URLs; EC2 sends Action/Version as a POST body (Describe* allowed, everything else held for
+        approval); only STS GetCallerIdentity works. A request to another region is refused by AWS.
+      guide:
+        - { file: requests.md, title: "Endpoints, S3, EC2 and STS requests, errors" }

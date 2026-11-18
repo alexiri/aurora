@@ -1,6 +1,6 @@
 package:
   id: notion
-  version: 1.0.4
+  version: 1.1.0
   contract: 1
   min_core: 0.1.0
   publisher: aurora
@@ -126,15 +126,13 @@ apps:
           - { label: Discussion, source: body, steps: [ { json: /discussion_id } ] }
           - { label: Comment, source: body, steps: [ { json_text: /rich_text } ] }
     agent:
+      summary: "Notion pages, databases, blocks and comments: search, read and create pages, query a database's rows."
       instructions: |
-        Notion is connected. Use the REST API at https://api.notion.com/v1 (for example
-        https://api.notion.com/v1/pages/<page_id>, https://api.notion.com/v1/blocks/<block_id>/children
-        and https://api.notion.com/v1/comments?block_id=<id>). Aurora adds the credentials and the
-        Notion-Version header (2026-03-11); never ask for or write a token or send a version of your
-        own. The connection only sees pages the person shared during sign-in, and what it may do
-        depends on the capabilities of the Notion connection: a 404 object_not_found means the page is
-        not shared with it, a 403 means the capability is missing. Databases hold one or more data
-        sources: GET /v1/databases/<id> lists them, and rows are read and created through the data
-        source (POST /v1/data_sources/<id>/query, and parent.data_source_id when creating a page).
-        Search (POST /v1/search) and data source queries are POST requests and are held for approval.
-        Send JSON bodies so approvals can show what a change does.
+        REST API at https://api.notion.com/v1. Aurora adds the credentials and the Notion-Version
+        header; never ask for or write a token or send a version of your own. The connection only
+        sees pages the person shared during sign-in: 404 object_not_found means the page is not
+        shared with it, 403 means a capability is missing. Rows of a database are read and created
+        through its data source, not the database. Search and queries are POST requests held for
+        approval. Send JSON bodies.
+      guide:
+        - { file: api-notes.md, title: "API notes: requests, data sources, pagination, errors" }

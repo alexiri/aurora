@@ -1,6 +1,6 @@
 package:
   id: indico
-  version: 1.2.2
+  version: 1.3.0
   contract: 1
   min_core: 0.1.0
   publisher: aurora
@@ -248,27 +248,15 @@ apps:
           - { label: Duration, source: body, steps: [ { json: /duration } ] }
           - { label: Type, source: body, steps: [ { json: /event_type } ] }
     agent:
+      summary: "Events, timetables, materials and room booking in Indico: find a free room and book it, events of a category."
       instructions: |
-        Indico is connected. Send requests to <address>, the address shown with the account (the
-        Indico server this connection is registered for); Aurora adds the token. Never ask for one, never add ak, apikey, signature,
-        timestamp or cookieauth, and never send this connection's requests to another host.
-        Official API: /export/categ/<ids>.json (from, to, type, location, room, detail),
-        /export/categ/favorites.json, /export/event/<id>.json (detail=contributions|sessions),
-        /export/event/search/<term>.json, /export/timetable/<id>.json, /export/room/<loc>/<id>.json,
-        /export/roomName/<loc>/<name>.json, /export/reservation/<loc>.json,
-        /export/event/<id>/material/<folder>/<file>.bin, /api/user/ (id, email, names; no login).
-        Free rooms (read:everything): GET /rooms/api/rooms/search?building=<b>&capacity=<n>
-        &start_dt=<YYYY-MM-DDTHH:MM:SS>&end_dt=<...>&repeat_frequency=NEVER, one call per building.
-        Always send repeat_frequency, or busy rooms come back too. It returns ids only: name them
-        with GET /rooms/api/rooms/<id>. Times are the server's local time; with no end time assume
-        one hour and say so.
-        Book (write:legacy_api): POST /api/roomBooking/bookRoom.json, form: roomid, from, to (same
-        day, YYYY-MM-DDTHH:MM), tz, reason, username = the person's Indico login, not the email
-        (ask if unknown). Long names only. It cannot book rooms that need confirmation. With
-        full:everything: POST /rooms/api/booking/create, JSON {room_id, start_dt, end_dt,
-        repeat_frequency:"NEVER", reason, is_prebooking}; leave user out (it books for you).
-        Never guess availability: if a scope is missing, say which one.
-        /rooms/api/, /user/api/favorites/, /user/search/, /search/api/search and /event/create/prepare
-        are internal to Indico: on a 404 or an unexpected shape, say so. Confirm room, time and
-        person before booking; never retry a booking. Indico cannot create events by API: prepare
-        one and give the user the link.
+        Send requests to the Indico address shown with the account; Aurora adds the token. Never ask
+        for one, never add ak, apikey, signature, timestamp or cookieauth, and never send this
+        connection's requests to another host. Times are the server's local time. Confirm room,
+        time and person before booking; never retry a booking. If a scope is missing, say which
+        one; never guess availability. Endpoints under /rooms/api/ are internal to Indico and may
+        change: on a 404 or an unexpected shape, say so.
+      guide:
+        - { file: book-free-room.md, title: "Find a free room and book it", kind: recipe }
+        - { file: find-category-events.md, title: "Find the events of a category in a date range", kind: recipe }
+        - { file: api-families.md, title: "API families, scopes and the booking form" }

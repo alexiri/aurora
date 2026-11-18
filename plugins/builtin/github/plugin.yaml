@@ -1,6 +1,6 @@
 package:
   id: github
-  version: 2.2.3
+  version: 2.3.0
   contract: 1
   min_core: 0.1.0
   publisher: aurora
@@ -313,17 +313,17 @@ apps:
           - { label: Owner, source: path, segment: 1 }
           - { label: Repository, source: path, segment: 2 }
     agent:
+      summary: "Repositories, issues, pull requests, files and search on github.com (REST, GraphQL, git over HTTPS)."
       instructions: |
-        GitHub (github.com) is connected. Use the REST API at https://api.github.com (for example
-        https://api.github.com/repos/<owner>/<repo>/issues), GraphQL at https://api.github.com/graphql
-        and git over HTTPS (clone URLs of the form https://github.com/<owner>/<repo>.git). Aurora adds
-        the credentials; never ask for or write a token. Send JSON request bodies so approvals can show
-        what a change does. A token can only do what its owner allowed: if a request answers 403 or 404
-        for a repository you expect to exist, the connection lacks access to it. A connection made with
-        a GitHub App installation reaches only the repositories the app is installed on and only the
-        permissions it was granted; endpoints that act as a user (such as /user) are not available to
-        it, so list the repositories with GET /installation/repositories. Pull requests are issues too:
-        comment on them through the issue comment endpoint.
+        Use the REST API at https://api.github.com, GraphQL at https://api.github.com/graphql and
+        git over HTTPS (https://github.com/<owner>/<repo>.git). Aurora adds the credentials; never
+        ask for or write a token. Send JSON request bodies so approvals can show what a change
+        does. A 403 or 404 for a repository you expect to exist means the connection lacks access
+        to it. A GitHub App installation has no user: list repositories with
+        GET /installation/repositories. Pull requests are issues too: comment on them through the
+        issue comment endpoint.
+      guide:
+        - { file: api-conventions.md, title: "REST conventions: reach, requests, pagination, errors" }
   - about:
       id: github-ghes
       name: GitHub Enterprise Server
@@ -573,14 +573,14 @@ apps:
           - { label: Owner, source: path, segment: 1 }
           - { label: Repository, source: path, segment: 2 }
     agent:
+      summary: "Repositories, issues, pull requests, files and search on a GitHub Enterprise Server (REST, GraphQL, git over HTTPS)."
       instructions: |
-        GitHub Enterprise Server is connected. Use the REST API at <address>/api/v3 (for example
-        <address>/api/v3/repos/<owner>/<repo>/issues), GraphQL at <address>/api/graphql and
-        git over HTTPS (<address>/<owner>/<repo>.git), where <address> is the address shown with the
-        account. Aurora adds the credentials; never ask for or write a token, and
-        never send a request for this connection to another host. Send JSON request bodies so approvals
-        can show what a change does. A connection made with a GitHub App installation reaches only the
-        repositories the app is installed on and only the permissions it was granted; endpoints that
-        act as a user (such as /api/v3/user) are not available to it, so list the repositories with
-        GET /api/v3/installation/repositories. Pull requests are issues too: comment on them through
-        the issue comment endpoint.
+        Use the REST API at <address>/api/v3, GraphQL at <address>/api/graphql and git over HTTPS
+        (<address>/<owner>/<repo>.git), where <address> is the address shown with the account.
+        Aurora adds the credentials; never ask for or write a token, and never send a request for
+        this connection to another host. Send JSON request bodies so approvals can show what a
+        change does. A GitHub App installation has no user: list repositories with
+        GET /api/v3/installation/repositories. Pull requests are issues too: comment on them
+        through the issue comment endpoint.
+      guide:
+        - { file: api-conventions.md, title: "REST conventions: reach, requests, pagination, errors" }
