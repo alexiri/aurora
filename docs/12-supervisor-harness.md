@@ -545,11 +545,13 @@ OpenCode 206 MB) and 2.16 GB with `SANDBOX_HARNESSES=claude-code`.
   workspace's request log. No decision is left to the owner for it. **A second discovery request remains
   for the `litellm` provider** (`openai_chat`): goose asks `GET /model/info` for the model's context
   window at every start (the `anthropic` provider makes no such call; `GOOSE_CONTEXT_LIMIT` does not stop it
-  for `litellm`). It goes to the endpoint host on a path that is not an inference path, so the gateway
-  refuses it with `403 llm_path_not_permitted` before any credential is injected (SEC-65) and goose falls
-  back to the rendered limit ("Context-limit discovery failed"). It shows as one refused request per turn on
-  `openai_chat` endpoints; an operator who wants none lists `/model/info` in the endpoint's `allowed_paths`.
-  Aurora does not special-case it (owner's call if it should; reported in the completion report).
+  for `litellm`). **(D-367, owner 2026-11-18) The gateway forwards it**: `GET /model/info` is part of the
+  default inference-path set of endpoints of kind `litellm` only (that one path, `GET` only, below the
+  endpoint's base path), forwarded like an inference path with the placeholder replaced by the endpoint's
+  key (`08 §Inference paths`); `POST` to it, any other metadata or management route (`/model/group/info`,
+  `/model/new`, `/key/info`) and any other endpoint kind stay `403 llm_path_not_permitted`. So there is no
+  refused row per turn any more. goose still tolerates a refusal (it falls back to the rendered
+  `GOOSE_CONTEXT_LIMIT`: "Context-limit discovery failed") when an endpoint kind or an old gateway refuses it.
 - **Capabilities**: `resume`, `tool_events`, `platform_tools`; `thinking_deltas = false` (no thinking
   content in the stream); `steer = false`. `skills_dir = ".agents/skills"` (*verified*: found in the home
   and in the project, with `AGENTS.md` read by default and `CLAUDE.md` not). **Roles**: `subagent_role` →

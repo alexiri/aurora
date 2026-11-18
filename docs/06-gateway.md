@@ -709,7 +709,9 @@ minted.
      from the buffer; the response is never read. (phase 5, P4-LLM spec batch,
      D-260(b)/(c)) `anthropic` has a set too (`/v1/messages`, `/v1/messages/count_tokens`,
      `GET /v1/models[/{id}]`), and the endpoint's `allowed_paths` only ever **adds** to a
-     set (never for `bedrock`/`vertex`, whose entries cannot carry it).
+     set (never for `bedrock`/`vertex`, whose entries cannot carry it). (phase 5, D-367) The
+     `litellm` set also holds `GET <base path>/model/info`, forwarded like an inference path;
+     no other kind's set does.
 7. **Policy decision** (`07 §Evaluation`) with the winning credential known →
    `block` (403 `blocked_by_policy`), `default_denied` (403
    `blocked_by_default_policy`), `egress_denied` (403
