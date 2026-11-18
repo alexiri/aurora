@@ -33,6 +33,7 @@ Monograms: rounded tile in `--subtle`/`--line-strong` with the letter in `--prim
 | `postgresql` | Simple Icons 16.37.0 | `postgresql` | `#4169E1` | `c8ccadbd88c9312c2ad3734c4861b31d3485ce179ee91d64793143f83cfa745c` | same as light (3.65:1) |
 | `sentry` | Simple Icons 16.37.0 | `sentry` | `#362D59` | `8ba32902ffbac503784607374f57df5e3cbcf57a99d0adff03e735575500adc6` | white (1.41:1) |
 | `microsoft-365` | monogram "M" | none | n/a | n/a | monogram, dark theme colours |
+| `ics-calendar` | monogram "ICS" on a neutral calendar tile (it spans vendors, D-273) | none | n/a | n/a | monogram, dark theme colours |
 | `aws-keys` | official vendor source (AWS), see below | none | n/a | see below | AWS's own dark-squid-ink tile |
 | `indico` | official vendor source (Indico repository), see below | none | n/a | see below | same file as light |
 
