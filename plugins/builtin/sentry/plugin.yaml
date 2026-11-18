@@ -92,13 +92,9 @@ apps:
     agent:
       summary: "Sentry issues, events and projects: find unresolved issues, read a stack trace, resolve an issue."
       instructions: |
-        Sentry is connected. Use the API at the address shown with the account: https://sentry.io,
-        https://us.sentry.io (US region), https://de.sentry.io (EU region) or a self-hosted server
-        (for example <address>/api/0/organizations/<org>/issues/?query=is:unresolved); paths end
-        with a slash. Aurora adds the token; never ask for or write one, and never send this
-        connection's requests to another host: a token only works on the host of its
-        organization's region. Page through results with the cursor in the Link response header.
-        Listing the organizations a token can see is only served on sentry.io and self-hosted
-        servers; on a region host the organization slug is in the connection's metadata. Send JSON
-        bodies for changes so approvals can show what changes; resolving an issue is PUT with
-        {"status":"resolved"}.
+        Use the API at the address shown with the account (sentry.io, us.sentry.io, de.sentry.io
+        or a self-hosted server); paths end with a slash. Aurora adds the token; never ask for or
+        write one, and never send this connection's requests to another host: a token only works
+        on the host of its organization's region. Send JSON bodies for changes.
+      guide:
+        - { file: api-notes.md, title: "API notes: common requests, organizations, pagination" }
