@@ -24,9 +24,16 @@ async fn view(s: &AppState, r: ConnectorRow, count: i64) -> Result<ConnectorAdmi
         })
         .collect();
     let status = ConnectorStatus::parse(&r.status);
+    let update_pending = r.manifest.as_ref().is_some_and(manifest::update_pending);
     let widening = match (&r.manifest, status) {
         (Some(m), ConnectorStatus::PendingApproval) => manifest::stored_widening(m),
+        (Some(m), _) if update_pending => manifest::stored_widening(m),
         _ => Vec::new(),
+    };
+    let pending_version = if update_pending {
+        r.version.clone()
+    } else {
+        None
     };
     let approved = r.manifest.as_ref().and_then(manifest::approved_value);
     let mv = managed::managed_view(s, &r).await?;
@@ -46,6 +53,8 @@ async fn view(s: &AppState, r: ConnectorRow, count: i64) -> Result<ConnectorAdmi
         approved_manifest_digest: r.approved_manifest_digest,
         approved_manifest: approved,
         widening,
+        update_pending,
+        pending_version,
         replicas,
         integration_count: count,
         approved_at: r.approved_at,
@@ -176,7 +185,10 @@ pub async fn approve(
         return Err(stale());
     }
     match row.status.as_str() {
-        "pending_approval" => {
+        // (D-369) `active` with an update waiting is approved the same way.
+        "pending_approval" | "active"
+            if row.status == "pending_approval" || manifest::update_pending(stored) =>
+        {
             connectors::set_approved(&mut *tx, id, current, &manifest::to_approved(stored), by)
                 .await?;
             if row.managed {
@@ -236,7 +248,8 @@ pub async fn delete(s: &AppState, id: &str, actor: &AuditActor) -> Result<(), Ap
 // ------------------------------------------------------------------ catalogue
 
 fn info(r: &ConnectorRow) -> Option<ConnectorInfo> {
-    let m = r.manifest.as_ref()?;
+    // (D-369) The catalogue offers what the approved manifest declares.
+    let m = r.manifest.as_ref().map(manifest::effective)?;
     let fields_of = |v: Option<&Value>| json!({"fields": v.and_then(|v| v.get("fields")).cloned().unwrap_or_else(|| json!([]))});
     let presence = m.get("presence_setup");
     let presence_setup = match presence.and_then(|p| p.get("dedicated")) {

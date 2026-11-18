@@ -542,9 +542,8 @@ pub async fn patch(
         Some(true) if status == "disabled" => {
             status = if row.version.is_none() {
                 "awaiting_registration"
-            } else if row.manifest_digest.is_some()
-                && row.manifest_digest == row.approved_manifest_digest
-            {
+            } else if row.approved_manifest_digest.is_some() {
+                // (D-369) An approved baseline runs, even while an update waits.
                 "active"
             } else {
                 "pending_approval"

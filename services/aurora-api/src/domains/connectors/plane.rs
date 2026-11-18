@@ -14,6 +14,7 @@ use super::auth::{ConnectorCtx, ConnectorToken};
 use super::manifest;
 use super::{integration_seal_ctx, presence_seal_ctx};
 use crate::app::AppState;
+use crate::audit::{self, AuditActor, AuditEvent, Outcome};
 use crate::http::json::Json;
 use aurora_core::{ApiError, Secret};
 use aurora_db::DbError;
@@ -31,6 +32,7 @@ use axum::extract::State;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use http::{HeaderMap, HeaderValue, StatusCode, header};
+use serde_json::json;
 use sha2::{Digest, Sha256};
 use utoipa_axum::router::OpenApiRouter;
 use uuid::Uuid;
@@ -156,6 +158,15 @@ async fn do_register(
             Some(digest_hex.as_str()),
             Some(m),
         )
+    } else if baseline.is_some() {
+        // (D-369, SEC-134) A widening of an approved baseline: keep serving under the approved
+        // manifest (`manifest::effective`); the announced one waits for an instance admin.
+        (
+            "active",
+            WireStatus::Active,
+            row.approved_manifest_digest.as_deref(),
+            baseline.as_ref(),
+        )
     } else {
         (
             "pending_approval",
@@ -164,6 +175,12 @@ async fn do_register(
             baseline.as_ref(),
         )
     };
+    let update_pending = !accepted && baseline.is_some();
+    // Once per pending digest: not again for a replayed registration of the same manifest.
+    let first_pending = update_pending
+        && !(row.status == "active"
+            && row.manifest_digest.as_deref() == Some(digest_hex.as_str())
+            && row.manifest.as_ref().is_some_and(manifest::update_pending));
     let stored = manifest::to_stored(m, keep_baseline, &widening)
         .map_err(|e| ApiError::internal(e.to_string()))?;
     connectors::set_registration(
@@ -184,6 +201,22 @@ async fn do_register(
     if row.managed && row.status != status {
         // The status is part of the host's assignments (C-456).
         connectors::bump_revision(&mut *tx).await?;
+    }
+    if first_pending {
+        let ev = AuditEvent::new(
+            AuditActor::system(format!("connector:{}", conn.id)),
+            "connector.update_pending",
+            Outcome::Success,
+        )
+        .target("connector", &conn.id)
+        .metadata(json!({
+            "old_version": row.version,
+            "new_version": req.version,
+            "widening": widening,
+        }));
+        audit::insert_tx(&mut tx, &ev)
+            .await
+            .map_err(|e| ApiError::internal(e.to_string()))?;
     }
     tx.commit().await.map_err(DbError::from)?;
     Ok(RegisterResponse {

@@ -535,12 +535,24 @@ async fn s15_link_lanes_ics_and_caldav_hold_no_secret_in_the_sandbox() {
 
     // Nothing secret anywhere an agent (or the operator's log) can see.
     assert_sandbox_holds_none(cn, &[ICS_PATH_CANARY, ICS_KEY_CANARY, PW_CANARY, &basic()]);
-    let rows: Vec<String> = sqlx::query_scalar("SELECT row_to_json(r)::text FROM request_log r")
-        .fetch_all(st.pool())
-        .await
-        .unwrap();
+    // The gateway writes its request log in batches, a moment after the requests: wait until rows
+    // are there and the count has settled (run 44375797985 read an empty table).
+    let end = std::time::Instant::now() + Duration::from_secs(60);
+    let mut rows: Vec<String> = Vec::new();
+    loop {
+        let now: Vec<String> = sqlx::query_scalar("SELECT row_to_json(r)::text FROM request_log r")
+            .fetch_all(st.pool())
+            .await
+            .unwrap();
+        let settled = !now.is_empty() && now.len() == rows.len();
+        rows = now;
+        if settled || std::time::Instant::now() > end {
+            break;
+        }
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
     let all = rows.join("\n");
-    assert!(!rows.is_empty());
+    assert!(!rows.is_empty(), "no request-log rows after 60 s");
     for n in [ICS_PATH_CANARY, ICS_KEY_CANARY, PW_CANARY, basic().as_str()] {
         assert!(!all.contains(n), "{n} is in the request log");
     }

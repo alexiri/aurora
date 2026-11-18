@@ -50,10 +50,20 @@ Replicas balance by claiming at most `ceil(integrations / live replicas)`.
 - The service calls `register` with its **manifest** and a detached signature.
   The core verifies the signature against the built-in project key or a trusted
   publisher key (`09 §2`, signing over the sha256 of the canonical JSON of the
-  manifest). First registration, or any widening (new capability, new setup
-  field, new public callback), puts the connector in `pending_approval`;
-  integrations are not served until an instance admin approves. Unchanged or
-  narrowed manifests are accepted automatically.
+  manifest). A **first registration** (no approved baseline) puts the connector
+  in `pending_approval`; integrations are not served until an instance admin
+  approves. A **widening** of an approved baseline (new capability, new setup
+  field, new public callback) does not change the status (D-369, SEC-134): the
+  connector stays `active` and keeps running **under the approved manifest**,
+  and the announced one waits as a **pending update** (`manifest_digest ≠
+  approved_manifest_digest`; the `register` response says `active`). Until an
+  instance admin approves, the core grants, routes and assigns only what the
+  approved manifest declares: one accessor (`manifest::effective`) serves every
+  reader (capabilities, limits, setup validation, host assignments, the org-side
+  setup state); the admin review screens show the announced manifest. A later
+  registration that matches the approved digest again clears the pending update.
+  Instance admins are told (D-370, `14 §Administration › Overview`, `07 §E-mail`).
+  Unchanged or narrowed manifests are accepted automatically.
 - The core cannot verify which binary runs; operators SHOULD enforce image
   signatures with their deployment tooling (e.g. cosign + admission policy).
 
@@ -146,8 +156,9 @@ protocol's replica and integration ownership (§4) already handles several repli
    `stale_manifest`. No token is returned or shown.
 
 The connector is `awaiting_registration` until a host registers it, then `active`. A later host
-version with a widened manifest puts it in `pending_approval` exactly as §3 (the dashboard shows
-the manifest diff). Disabling sets `disabled` (hosts stop it, integrations are not served);
+version with a widened manifest keeps it `active` under the approved manifest, with the update
+pending, exactly as §3 (the dashboard shows the manifest diff; a connector first registered stays
+`pending_approval`). Disabling sets `disabled` (hosts stop it, integrations are not served);
 enabling restores the previous status. Deleting refuses with 409 `connector_in_use` while
 integrations exist (§3) and otherwise discards the stored secrets.
 
