@@ -29,6 +29,26 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use uuid::Uuid;
 
+/// (D-275) Whether the connection's metadata `hosts_field` array of its `own_server` app holds
+/// `origin` (case-insensitively), the gateway resolver's match.
+fn pins_origin(
+    snap: &aurora_registry::snapshot::Snapshot,
+    c: &gateway::AppConnectionRow,
+    origin: &str,
+) -> bool {
+    let Some(o) = snap.app(&c.app_id).and_then(|a| a.own_server.as_ref()) else {
+        return false;
+    };
+    c.metadata
+        .get(&o.hosts_field)
+        .and_then(|v| v.as_array())
+        .is_some_and(|a| {
+            a.iter()
+                .filter_map(|h| h.as_str())
+                .any(|h| h.eq_ignore_ascii_case(origin))
+        })
+}
+
 /// Same assembly as the gateway resolver: hand rules by priority, then derived rules.
 pub fn to_scope_policy(rows: ScopePolicyRows) -> Result<ScopePolicy, ApiError> {
     let bad = |what: &str, e: serde_json::Error| {
@@ -376,10 +396,50 @@ pub async fn run(
         let reg_read: identify::RegRead<gateway::InstanceHostRow> =
             |i| (i.app_id.as_str(), i.base_path.as_deref());
         req_app = identify::identify_request(snap, &instances, reg_read, &host, port, &path);
+        // (D-275, SEC-109) As the gateway's resolver: no static claim or instance covers the
+        // origin, so an `own_server` app whose connection pinned exactly this `host:port` is the
+        // app; two apps pinning one origin serve nothing (fail closed).
+        let origin = identify::origin_of(&host, port);
+        if req_app.is_none() && entries.is_empty() && instances.is_empty() {
+            let own_ids: Vec<String> = snap
+                .apps
+                .iter()
+                .filter(|a| a.own_server.is_some())
+                .map(|a| a.app_id.clone())
+                .collect();
+            if !own_ids.is_empty() {
+                let pinning: HashSet<String> =
+                    gateway::app_connections(&state.pool, org, ws, &own_ids)
+                        .await?
+                        .into_iter()
+                        .filter(|c| c.status != "disabled" && pins_origin(snap, c, &origin))
+                        .map(|c| c.app_id)
+                        .collect();
+                if pinning.len() == 1
+                    && let Some(matched) = pinning
+                        .iter()
+                        .next()
+                        .and_then(|a| identify::identify_own_server_app(snap, a))
+                {
+                    req_app = Some(identify::RequestApp {
+                        matched,
+                        instance: None,
+                        selected: None,
+                        app_path: path.clone(),
+                    });
+                }
+            }
+        }
+        let own_pinned = req_app
+            .as_ref()
+            .is_some_and(|r| r.matched.app.own_server.is_some());
         if let Some(r) = &req_app {
             let m = &r.matched;
             let mut app_ids: Vec<String> = entries.iter().map(|e| e.app_id.clone()).collect();
             app_ids.extend(instances.iter().map(|i| i.app_id.clone()));
+            if own_pinned {
+                app_ids.push(m.entry.app_id.clone());
+            }
             app_ids.sort();
             app_ids.dedup();
             let (restricted, available) = gateway::app_availability(&state.pool, org, ws).await?;
@@ -389,6 +449,7 @@ pub async fn run(
                 if row.app_id != m.entry.app_id
                     || (restricted && !available.contains(&row.app_id))
                     || row.status == "disabled"
+                    || (own_pinned && !pins_origin(snap, &row, &origin))
                 {
                     continue;
                 }
@@ -411,7 +472,13 @@ pub async fn run(
                 |c: &gateway::AppConnectionRow| (c.instance_id, c.tenant_host.as_deref()),
             );
             // (FIX-104, D-180, SEC-04) A host claim is injected only over TLS to the claimed port.
-            if identify::claim_transport_ok(identify::claim_port(&m.entry.host), https, port) {
+            // A person-pinned origin is injected over TLS to its own port only (D-275, SEC-04).
+            let claim_port = if own_pinned {
+                Some(port)
+            } else {
+                identify::claim_port(&m.entry.host)
+            };
+            if identify::claim_transport_ok(claim_port, https, port) {
                 // (FIX-084, SEC-67) An app absent from the snapshot is `custom_only` and
                 // `block_untooled`.
                 let restrictions = m.app.grants;

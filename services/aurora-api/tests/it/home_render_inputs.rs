@@ -75,6 +75,20 @@ apps:
       read:
         items:
           - { id: read_calendar, name: Read, host: "*.link.aurora.internal", path: /, methods: [GET] }
+  - about: { id: dav, name: Dav, description: D, category: productivity }
+    credentials: [ { name: username }, { name: password, secret: true } ]
+    metadata: [ { name: url }, { name: hosts } ]
+    connect:
+      - id: pw
+        kind: fields
+        fields:
+          - { name: url, label: U, type: text, store: metadata, required: true }
+          - { name: password, label: P, type: secret, required: true }
+    own_server: { url_field: url, hosts_field: hosts, inject: [ { basic: { user: "{credentials.username}", password: "{credentials.password}" } } ] }
+    tools:
+      read:
+        items:
+          - { id: propfind, name: Find, description: D, host: "{connection}", path: "/**", methods: [PROPFIND] }
 "#;
 
 struct W {
@@ -285,6 +299,54 @@ async fn render_inputs_carry_apps_channels_peers_and_schedules() {
     assert!(!text.contains("secret other"));
     assert!(text.contains("- chat: Acme HQ (dedicated, @ada_bot)"));
     assert!(text.contains("- @bob: Bob (your side: ask; their side: allow)"));
+}
+
+/// (P5-CALDAV, D-275, C-845) `servers`: one entry per active, granted connection of an
+/// `own_server` app that stored a calendar home: name, app, id and the home `url` — the metadata
+/// only, never a credential. An ungranted or disabled one, one with no `url`, and any other app
+/// never appear.
+#[tokio::test]
+async fn render_inputs_list_the_granted_own_server_connections_with_their_url() {
+    let w = world().await;
+    let (a, ungranted, disabled, nourl, other) = (
+        Uuid::now_v7(),
+        Uuid::now_v7(),
+        Uuid::now_v7(),
+        Uuid::now_v7(),
+        Uuid::now_v7(),
+    );
+    let meta = json!({"url": "https://dav.example.test/dav/calendars/alice/", "hosts": ["dav.example.test:443"]});
+    for (id, status, app, label, m) in [
+        (
+            a,
+            "active",
+            "dav",
+            "alice at dav.example.test",
+            meta.clone(),
+        ),
+        (ungranted, "active", "dav", "Not mine", meta.clone()),
+        (disabled, "disabled", "dav", "Off", meta.clone()),
+        (nourl, "active", "dav", "No url", json!({})),
+        (other, "active", "acme_app", "Acme", meta.clone()),
+    ] {
+        sqlx::query("INSERT INTO app_connections (id, org_id, workspace_id, app_id, package_id, app_version, label, status, credentials_ref, metadata) VALUES ($1,$2,$3,$4,'acme','1.0.0',$5,$6,'x',$7)")
+            .bind(id).bind(w.org).bind(w.ws).bind(app).bind(label).bind(status).bind(m)
+            .execute(w.h.pool()).await.unwrap();
+    }
+    for id in [a, disabled, nourl, other] {
+        w.sql("INSERT INTO grants (id, workspace_id, agent_id, connection_id, mode) VALUES ($1,$2,$3,$4,'full')", &[Uuid::now_v7(), w.ws, w.agent, id]).await;
+    }
+    let ri = w.render_inputs().await;
+    assert_eq!(
+        ri["servers"],
+        json!([{
+            "name": "alice at dav.example.test",
+            "app_id": "dav",
+            "connection_id": a,
+            "url": "https://dav.example.test/dav/calendars/alice/",
+        }]),
+        "{ri}"
+    );
 }
 
 /// (P5-ICS, D-273, C-843) `links`: one entry per active, granted connection of a secret-link app,

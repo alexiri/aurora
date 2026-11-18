@@ -32,6 +32,7 @@ use uuid::Uuid;
 
 // (P5-ICS, D-273) The secret-link apps' connect check: validate, fetch once, check the prefix.
 mod link;
+mod own_server;
 
 pub enum ConnectErr {
     Api(ApiError),
@@ -1072,6 +1073,9 @@ pub async fn start(
             // (P5-ICS, D-273, C-843) A secret-link app's URL is validated, fetched once and
             // stored as the credential (its host as metadata); no probe runs for it.
             link::check(&ctx, &mut g).await?;
+            // (P5-CALDAV, D-275, C-845) An own-server app's address is discovered (principal →
+            // calendar home) and pinned, with the origins used, before anything is stored.
+            own_server::check(&ctx, &mut g).await?;
             // (FIX-136, D-241) The scopes the pasted token has: declared by the person, else
             // prefilled by the method's read probes. Stored as the connection's `scopes`; the
             // gateway trusts them only to refuse a tool the token cannot serve.

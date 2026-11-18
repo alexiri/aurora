@@ -585,7 +585,7 @@ Sources: `path` (`segment` index, 1-based over `/`-split path), `query`
 (`steps`). Steps are core **decoders**: `json` (pointer), `form` (field name),
 `graphql` (`operation_name` | `field_names`), `base64url`, `base64`,
 `mime_header` (name; every header of that name, joined), `mime_text` (first text/plain part,
-clamped). (FIX-118, D-188) `json` accepts `*` as a path segment (every element of an array,
+clamped), `ical` (property name: the values of that property of an iCalendar body's events, P5-CALDAV). (FIX-118, D-188) `json` accepts `*` as a path segment (every element of an array,
 scalar leaves joined with `, `: `/message/toRecipients/*/emailAddress/address`), `json_count`
 (pointer: the number of elements of that array, `0` when absent), `json_text` (pointer: every
 `text`/`content` string below it, joined with spaces — Atlassian document format, Notion rich
@@ -795,6 +795,46 @@ to the real host of every hop (SEC-107). Fixtures send
 `refused: method_not_allowed` (`aurora-gateway check-snapshot`). The section is copied into the
 snapshot's `apps[].secret_link` (absent for other apps, so existing snapshot hashes do not change).
 The reference package is `ics-calendar` (`plugins/builtin/ics-calendar`).
+
+**`own_server`** (phase 5, P5-CALDAV, D-275, C-845, SEC-109). An app whose **connection**, not the
+package, names the server (a person's own CalDAV server):
+
+```yaml
+own_server:
+  url_field: url          # declared metadata field: the discovered calendar home
+  hosts_field: hosts      # declared metadata field: the exact host:port origins discovery used (≤ 4)
+  inject: [ { basic: { user: "{credentials.username}", password: "{credentials.password}" } } ]
+```
+The app has no `hosts[]` entry (and no `instances`, `database`, `ldap`, `secret_link` or `token`),
+its tools use the host `"{connection}"` (any origin the connection pinned) with `path: "/**"`, and
+`inject` stages are `basic`, `bearer` or `header` only (no `rewrite_host`, no `tenant`). Linter
+codes: `own_server_exclusive`, `own_server_field`, `own_server_inject`, `own_server_tool`,
+`connection_placeholder_misuse` (`{connection}` without the section). WebDAV methods (`PROPFIND`,
+`REPORT`, `MKCALENDAR`, `PROPPATCH`, `MOVE`, `COPY`, `OPTIONS`) are ordinary tool methods;
+`check-builtin.sh` exempts an `own_server` app's read tools from the GET-only rule (as for databases)
+and requires the host `{connection}`. Connect (`kind: fields`, `username` and `password` credentials,
+`url` metadata) runs discovery (`/.well-known/caldav` ≤ 3 redirects → `current-user-principal` →
+`calendar-home-set`) through the destination guard, refuses a claimed host with `server_host_claimed`
+before sending anything and stores `url` and `hosts` (`06 §Person-pinned servers`). The section is
+copied into the snapshot's `apps[].own_server`, and the snapshot gains `own_server_hosts` (one
+synthetic `{connection}` host entry per such app, carrying the `inject` stages; it never takes part in
+host lookup); both are absent when no app has the section, so existing snapshot hashes do not change.
+Fixtures give the connection's `metadata.hosts` and send the request to a pinned origin. The reference
+package is `caldav` (`plugins/builtin/caldav`).
+
+*Open item (P5-CALDAV): `send_scheduling_message` has no "Ask by default".* The manifest has no
+per-tool default (a grant is a level: read / ask / act, or a custom list), so the tool is an ordinary
+write tool of the package: a connection with write access at the Ask level asks for it, one at the
+Act level (or a custom grant that allows it) lets the agent post to the server's scheduling outbox,
+which emails the attendees, without asking. A workspace that wants approval for it whatever the
+level gives the agent a **custom grant** on that connection with `send_scheduling_message` in
+`ask_tools`. A per-tool default would be a new manifest key; it is not built.
+
+**`ical` decoder** (an approval summary step, `§5`): `{ ical: SUMMARY }` yields every value of that
+property of the `VEVENT`s in an iCalendar body, joined with `, `. A `DTSTART`/`DTEND`/`DUE` carries its
+`TZID` (or `UTC` for a `Z` time) and an `ATTENDEE`/`ORGANIZER` its common name before the address, so an
+approval for a `PUT` shows title, time, repeat (`RRULE`), location and **every attendee**: a server
+with automatic scheduling emails them as soon as the event is saved.
 
 ## 4. Template substitution
 

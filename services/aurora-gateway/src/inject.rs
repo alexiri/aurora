@@ -117,6 +117,31 @@ pub(crate) fn url_needles<'a>(
     out
 }
 
+/// (D-275, SEC-109) The forms of a person-pinned server's secrets that an answer must never hold:
+/// each secret raw and percent-encoded, base64 of the secret alone and (with a `user`) of
+/// `user:secret`, which is what the `Authorization: Basic` value carries. The username itself is not
+/// a needle: DAV answers name the account legitimately (principal URLs, `current-user-principal`).
+pub(crate) fn secret_needles<'a>(
+    secrets: impl IntoIterator<Item = &'a str>,
+    user: Option<&str>,
+) -> Vec<Vec<u8>> {
+    let mut out: Vec<Vec<u8>> = Vec::new();
+    let mut push = |n: Vec<u8>| {
+        if n.len() >= ECHO_MIN && !out.contains(&n) {
+            out.push(n);
+        }
+    };
+    for s in secrets.into_iter().filter(|s| s.len() >= ECHO_MIN) {
+        push(s.as_bytes().to_vec());
+        push(utf8_percent_encode(s, ENC).to_string().into_bytes());
+        push(STANDARD.encode(s).into_bytes());
+        if let Some(u) = user {
+            push(STANDARD.encode(format!("{u}:{s}")).into_bytes());
+        }
+    }
+    out
+}
+
 /// Whether `hay` contains any of `needles`.
 pub(crate) fn echoes(needles: &[Vec<u8>], hay: &[u8]) -> bool {
     needles
@@ -333,6 +358,22 @@ mod tests {
     use aurora_policy::facts::{Level, SecretKind};
     use aurora_secrets::SecretRef;
     use uuid::Uuid;
+
+    #[test]
+    fn secret_needles_cover_every_form_of_the_password_and_not_the_username() {
+        let n = secret_needles(["p@ss w0rd/x"], Some("alice"));
+        let has = |h: &str| echoes(&n, h.as_bytes());
+        assert!(has("a p@ss w0rd/x b"));
+        assert!(has("p%40ss%20w0rd%2Fx"));
+        assert!(has(&STANDARD.encode("alice:p@ss w0rd/x")));
+        assert!(has(&format!(
+            "Authorization: Basic {}",
+            STANDARD.encode("alice:p@ss w0rd/x")
+        )));
+        assert!(has(&STANDARD.encode("p@ss w0rd/x")));
+        assert!(!has("/dav/principals/users/alice/"));
+        assert!(secret_needles(["abc"], Some("alice")).is_empty());
+    }
 
     fn cand(r: InjectionRecipe) -> SecretCand {
         SecretCand {

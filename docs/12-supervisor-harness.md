@@ -892,6 +892,14 @@ connection's **synthetic address** that only the gateway resolves to the real li
 sandbox, and two links with one name both appear, told apart by their address. The file is removed
 when the list is empty. It does not depend on the database relay.
 
+**Servers file** (P5-CALDAV, D-275, C-845). For each active connection of an `own_server` app the agent
+is granted, the `render_inputs` entry carries `servers: [{name, app_id, connection_id, url}]` (generic:
+a later own-server app reuses it), and the supervisor writes `.aurora/servers.json`
+(`aurora-supervisor::servers`, `0600`): `[{ "name", "app", "url" }]`, `url` being the calendar home
+discovered at connect. The address is visible to the agent on purpose; no credential is in the sandbox
+or the sync. Only plain `https` addresses without userinfo are written; the file is removed when the
+list is empty.
+
 **Database relay** (`aurora-supervisor::pgrelay`, `127.0.0.1:3130`, started while the installed home
 carries databases and stopped when none remain). Per client connection:
 
