@@ -34,7 +34,7 @@ use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::AsyncReadExt;
 use tokio::net::TcpListener;
 use uuid::Uuid;
 
@@ -476,7 +476,7 @@ pub(crate) async fn send_ex(
         "{method} http://{up}{path_and_query} HTTP/1.1\r\nHost: {up}\r\nProxy-Authorization: Basic {auth}\r\n{framing}\r\nConnection: close\r\n\r\n{payload}",
         up = env.up
     );
-    s.write_all(req.as_bytes()).await.unwrap();
+    crate::common::write_flushed(&mut s, req.as_bytes()).await;
     let mut out = Vec::new();
     let _ = tokio::time::timeout(Duration::from_secs(15), s.read_to_end(&mut out)).await;
     let text = String::from_utf8_lossy(&out).into_owned();

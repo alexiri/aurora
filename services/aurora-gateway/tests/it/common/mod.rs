@@ -69,3 +69,33 @@ pub async fn connect_with(
         .connect(ServerName::try_from(name.to_owned()).unwrap(), tcp)
         .await
 }
+
+/// (FIX-177) Like [`connect`], with the client socket's send buffer set to `bytes`: a tight
+/// buffer, as on a CI runner, makes the last write of a large body find the socket full.
+pub async fn connect_sndbuf(proxy: SocketAddr, bytes: u32) -> TlsStream<TcpStream> {
+    let ca = trust().lock().unwrap().get(&proxy).cloned().unwrap();
+    let sock = tokio::net::TcpSocket::new_v4().unwrap();
+    sock.set_send_buffer_size(bytes).unwrap();
+    let tcp = sock.connect(proxy).await.unwrap();
+    TlsConnector::from(client_config(&ca, &[b"http/1.1"]))
+        .connect(ServerName::try_from("127.0.0.1".to_owned()).unwrap(), tcp)
+        .await
+        .unwrap()
+}
+
+/// (FIX-177) Writes `bytes` to a TLS client stream **and flushes it**. tokio-rustls's
+/// `write_all` can return while the last TLS records are still queued in the session (the socket
+/// was full), and reading never sends them: a request written without a flush can stop short of
+/// its `Content-Length`, and the gateway then rightly waits for the rest of the body while the
+/// client waits for the answer. Returns whether records were still queued before the flush (a
+/// diagnostic: the regression test needs to see that case).
+pub async fn write_flushed<IO>(s: &mut TlsStream<IO>, bytes: &[u8]) -> bool
+where
+    IO: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
+    use tokio::io::AsyncWriteExt;
+    s.write_all(bytes).await.unwrap();
+    let queued = s.get_ref().1.wants_write();
+    s.flush().await.unwrap();
+    queued
+}
