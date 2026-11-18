@@ -300,6 +300,10 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
   not fit into a trailing **More ▾** menu, the selected tab is always shown).
 - **Field**: label, hint and error text linked by `aria-describedby`;
   `aria-invalid` sets the error border.
+- (phase 5, FIX-173, D-375) **SecretInput**: a value that is written but never read back. It is
+  hidden while typing and has a Show / Hide button named after its field, which reveals only what
+  was typed. It hides again when the dialog closes, when the form clears the value, or when the
+  field is disabled. Every secret field uses it, and a test fails on any other password input.
 - **Avatar**: initial on a tinted tile when there is no image.
 - **EmptyState**, **ErrorState**, **Loading**.
 - **Focus**: `:focus-visible` shows a 2 px `accent` ring with a 3 px
@@ -1837,7 +1841,8 @@ Approvals, Retention & storage, Skills, Directory sync, Previews, Terminal, Limi
   appears in the save confirmation; `http_needs_private_host` and `endpoint_host_claimed` land on
   the base URL field.
 - **Secrets** are write-only fields: "Set" / "Not set" with **Replace…** and **Remove**; the value
-  is never shown, and the page never receives it.
+  is never shown, and the page never receives it. A value being typed in Replace… can be checked
+  with Show (`SecretInput`, D-375); a stored value never can.
 - **Org pages**: "enforced by instance" hints (governance, BYO, retention) name the setting; for an
   instance admin they link to it (`/admin/settings/<section>#<key>`), for everyone else they read
   "Set by the instance administrator".
@@ -1916,7 +1921,7 @@ and for managed ones the hosts reporting it. The primary action is **Add connect
    callbacks, integration setup fields), publisher and signature state.
 3. **Settings**: a form generated from `instance_setup` with the shared form-field components
    (the ones the Apps connect window uses): text/url/number inputs with their defaults as
-   placeholders, `secret` as password inputs, `generated_secret` as a read-only "Generated
+   placeholders, `secret` as `SecretInput` (D-375), `generated_secret` as a read-only "Generated
    automatically" line. Validation errors from the API map to their fields.
 4. **Add**: one request (C-451). A 409 `stale_manifest` reloads the type and returns to step 2.
 
