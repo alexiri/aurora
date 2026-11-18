@@ -62,6 +62,7 @@ mod grants_custom_only;
 mod groups;
 mod groups_idp;
 mod harness_selection;
+mod home_agent_guides;
 mod home_checksum;
 mod home_render_inputs;
 mod hosted;

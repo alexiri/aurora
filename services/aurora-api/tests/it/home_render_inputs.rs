@@ -240,6 +240,24 @@ async fn render_inputs_carry_apps_channels_peers_and_schedules() {
 
     // The supervisor side renders exactly that wire (third-party label, fenced snippet,
     // channels and peers sections).
+    // (P5-GUIDE-2, D-295) With the folder fields the file is the index: no notes, no account ids.
+    let indexed: aurora_supervisor::instructions::RenderInputs =
+        serde_json::from_value(ri.clone()).unwrap();
+    let index_text = aurora_supervisor::instructions::render(&indexed);
+    assert!(
+        index_text.contains("- Acme (`acme_app`, 1 account): D\n"),
+        "{index_text}"
+    );
+    assert!(
+        !index_text.contains("IGNORE ALL PREVIOUS RULES") && !index_text.contains("work account")
+    );
+    // An API older than the guides sends none of them: the inline form, as before.
+    let mut ri = ri;
+    for a in ri["apps"].as_array_mut().unwrap() {
+        for k in ["app_id", "summary", "guide_path"] {
+            a.as_object_mut().unwrap().remove(k);
+        }
+    }
     let inputs: aurora_supervisor::instructions::RenderInputs = serde_json::from_value(ri).unwrap();
     let text = aurora_supervisor::instructions::render(&inputs);
     assert!(
@@ -294,6 +312,11 @@ async fn render_inputs_tell_the_agent_where_a_self_hosted_account_lives() {
     assert_eq!(account(on_instance)["address"], "https://its.cern.ch/jira");
     assert_eq!(account(on_default)["address"], "https://saas.desk.example");
     assert!(account(plain).get("address").is_none(), "{ri}");
+    // The inline form (an API older than the guides sends no folder fields) lists the accounts.
+    let mut ri = ri;
+    for a in ri["apps"].as_array_mut().unwrap() {
+        a.as_object_mut().unwrap().remove("guide_path");
+    }
     let inputs: aurora_supervisor::instructions::RenderInputs = serde_json::from_value(ri).unwrap();
     let text = aurora_supervisor::instructions::render(&inputs);
     assert!(

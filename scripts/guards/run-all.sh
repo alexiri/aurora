@@ -70,6 +70,10 @@ bash scripts/guards/helm-values-docs.sh
 echo "== settings-chart (SET-1, D-237(c): the default render contains no movable instance-setting key)"
 bash scripts/guards/settings-chart.sh
 
+echo "== agent-guide-advisory (SEC-91: the gateway, policy and hook host never read the agent guide)"
+bash scripts/guards/agent-guide-advisory.sh --self-test
+bash scripts/guards/agent-guide-advisory.sh
+
 echo "== quick-gate syntax (VEL-002; shellcheck when installed, else bash -n)"
 if command -v shellcheck >/dev/null 2>&1; then
   shellcheck scripts/dev/quick-gate.sh

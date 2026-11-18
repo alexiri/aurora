@@ -46,6 +46,7 @@ Paths are relative to the repo root; `api` = `services/aurora-api/tests`, `sup` 
 |---|---|
 | Parts packing at worst-case encodings (controls x6, CJK x3), every entry once, part indices/count, manifest | **New** `api/it/skills.rs::home_sync_parts_pack_within_the_wire_max_at_worst_case_encodings` |
 | Crash mid-generation | `sup/it/home.rs::multi_part_generation_is_applied_only_at_commit`, `interrupted_generation_keeps_previous_state_and_is_replaced`, `replayed_part_is_idempotent_and_missing_manifest_is_not_acked` |
+| Agent guide folders (`apps` part, C-643): folders match the render inputs, manifest, budget, grant/revoke/disconnect/unavailable/new version | `api/it/home_agent_guides.rs`, `sup/it/home.rs::app_folders_are_installed_read_only_refused_when_malformed_and_pruned`, `a_sync_that_changes_only_the_folders_keeps_the_instruction_files`, `unknown_part_kinds_and_render_input_fields_are_skipped` |
 | Manifest pruning | `sup/it/home.rs::prune_removes_only_managed_paths`, `unmodified_projection_pruned_and_unmanaged_paths_refused` |
 | Memory harvest round-trip with checksum verification | `sup/it/home.rs::harvest_detects_edits_and_ignores_unchanged` (sealed checksum), `api/it/memory.rs::harvest_memory_writes` (revision semantics), `run/it/channel.rs::memory_write_and_file_upload_round_trip` (relay; corrupt checksum refused), `sup/it/home.rs::outbound_file_is_split_with_correct_sha256` |
 

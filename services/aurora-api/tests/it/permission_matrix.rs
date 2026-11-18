@@ -527,6 +527,12 @@ const ROWS: &[Row] = &[
     r("GET", "/v1/admin/plugins", G::Inst, false),
     r("POST", "/v1/admin/plugins", G::Inst, false),
     r("GET", "/v1/admin/plugins/{id}", G::Inst, false),
+    r(
+        "GET",
+        "/v1/admin/plugins/{id}/agent-guides/{app_id}/{file}",
+        G::Inst,
+        false,
+    ),
     r("DELETE", "/v1/admin/plugins/{id}", G::Inst, false),
     r("POST", "/v1/admin/plugins/{id}/approve", G::Inst, false),
     r("POST", "/v1/admin/plugins/{id}/disable", G::Inst, false),

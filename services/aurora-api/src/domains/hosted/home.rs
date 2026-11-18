@@ -177,16 +177,171 @@ async fn models_input(
     v
 }
 
-/// `render_inputs` entry: shapes of `aurora-supervisor`'s `instructions::RenderInputs`.
+/// (P5-GUIDE-2, `24 §7`) Guide file bytes by digest, from an in-process cache: content-addressed,
+/// so it is never invalidated; bounded, least recently used evicted.
+const GUIDE_CACHE_MAX: usize = 64 * 1024 * 1024;
+
+#[derive(Default)]
+struct GuideCache {
+    map: std::collections::HashMap<String, (std::sync::Arc<Vec<u8>>, u64)>,
+    bytes: usize,
+    tick: u64,
+}
+
+static GUIDE_CACHE: std::sync::LazyLock<std::sync::Mutex<GuideCache>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(GuideCache::default()));
+
+fn cache_get(digest: &str) -> Option<std::sync::Arc<Vec<u8>>> {
+    let mut c = GUIDE_CACHE.lock().ok()?;
+    c.tick += 1;
+    let tick = c.tick;
+    let e = c.map.get_mut(digest)?;
+    e.1 = tick;
+    Some(e.0.clone())
+}
+
+fn cache_put(digest: &str, bytes: std::sync::Arc<Vec<u8>>) {
+    let Ok(mut c) = GUIDE_CACHE.lock() else {
+        return;
+    };
+    if bytes.len() > GUIDE_CACHE_MAX || c.map.contains_key(digest) {
+        return;
+    }
+    while c.bytes + bytes.len() > GUIDE_CACHE_MAX {
+        let Some(oldest) = c
+            .map
+            .iter()
+            .min_by_key(|(_, (_, t))| *t)
+            .map(|(k, _)| k.clone())
+        else {
+            break;
+        };
+        if let Some((b, _)) = c.map.remove(&oldest) {
+            c.bytes -= b.len();
+        }
+    }
+    c.tick += 1;
+    let tick = c.tick;
+    c.bytes += bytes.len();
+    c.map.insert(digest.to_owned(), (bytes, tick));
+}
+
+/// Bytes of a guide file by digest (never by kind, `get_guide_blob`).
+async fn guide_bytes(
+    conn: &mut PgConnection,
+    digest: &str,
+) -> Result<Option<std::sync::Arc<Vec<u8>>>, DbError> {
+    if let Some(b) = cache_get(digest) {
+        return Ok(Some(b));
+    }
+    let Some(bytes) = aurora_db::repo::plugins::get_guide_blob(&mut *conn, digest).await? else {
+        return Ok(None);
+    };
+    let bytes = std::sync::Arc::new(bytes);
+    cache_put(digest, bytes.clone());
+    Ok(Some(bytes))
+}
+
+/// The folder of one app in the agent's home (`24 §2`): the files Aurora writes and the package's
+/// guide files, as `(file name, content)`.
+struct AppFolder {
+    app_id: String,
+    generated: Vec<(String, String)>,
+    reference: Vec<(String, String)>,
+    /// `guide.md` with the "reference files left out" form, for when the budget is exhausted.
+    guide_without_reference: String,
+}
+
+/// Renders the folder of one app for one agent from the grant rows of its connections.
+async fn app_folder(
+    conn: &mut PgConnection,
+    snap: &aurora_registry::snapshot::Snapshot,
+    app: &aurora_registry::snapshot::AppEntry,
+    conns: &[&hosted::HomeAppConn],
+    databases: &[Value],
+) -> Result<AppFolder, ApiError> {
+    use aurora_registry::agent_guide::{self, GrantAccess, GuideAccount};
+    let accounts: Vec<GuideAccount> = conns
+        .iter()
+        .map(|c| {
+            let host = c
+                .instance_host
+                .clone()
+                .or_else(|| c.tenant_host.clone())
+                .or_else(|| app.instances.as_ref().and_then(|i| i.default_host.clone()));
+            GuideAccount {
+                id: c.connection_id.to_string(),
+                label: c.label.clone(),
+                host,
+                service: databases
+                    .iter()
+                    .find(|d| d["connection_id"] == json!(c.connection_id))
+                    .and_then(|d| d["service"].as_str().map(str::to_owned)),
+                access: if c.grant_mode == "full" {
+                    GrantAccess::Full
+                } else {
+                    GrantAccess::Custom {
+                        allow: c.allow_tools.iter().cloned().collect(),
+                        ask: c.ask_tools.iter().cloned().collect(),
+                    }
+                },
+            }
+        })
+        .collect();
+    let lost: Vec<&aurora_registry::snapshot::HostEntry> = snap
+        .hosts
+        .iter()
+        .chain(&snap.instance_hosts)
+        .filter(|h| {
+            h.app_id == app.app_id && h.claim_status == aurora_registry::snapshot::ClaimStatus::Lost
+        })
+        .collect();
+    let version = snap
+        .packages
+        .iter()
+        .find(|p| p.package_id == app.package_id)
+        .map(|p| p.version.as_str())
+        .unwrap_or_default();
+    let with = agent_guide::render(app, &lost, &accounts, version, true);
+    let without = agent_guide::render(app, &lost, &accounts, version, false);
+    let mut reference = Vec::new();
+    for g in app.agent.iter().flat_map(|a| a.guide.iter()) {
+        let Some(bytes) = guide_bytes(conn, &g.sha256).await? else {
+            tracing::warn!(app = %app.app_id, file = %g.file, "guide file blob missing; not projected");
+            continue;
+        };
+        let Ok(text) = std::str::from_utf8(&bytes) else {
+            tracing::warn!(app = %app.app_id, file = %g.file, "guide file is not UTF-8; not projected");
+            continue;
+        };
+        reference.push((
+            g.file.clone(),
+            agent_guide::project_file(&app.about.name, version, g, text),
+        ));
+    }
+    Ok(AppFolder {
+        app_id: app.app_id.clone(),
+        generated: vec![
+            ("guide.md".into(), with.guide_md),
+            ("tools.md".into(), with.tools_md),
+        ],
+        reference,
+        guide_without_reference: without.guide_md,
+    })
+}
+
+/// `render_inputs` entry: shapes of `aurora-supervisor`'s `instructions::RenderInputs`, and the
+/// app folders of the same apps.
 async fn render_inputs(
     state: &AppState,
     conn: &mut PgConnection,
     agent: uuid::Uuid,
     inputs: &hosted::HomeInputs,
-) -> Result<Value, ApiError> {
+) -> Result<(Value, Vec<AppFolder>), ApiError> {
     // Apps with an effective grant: one entry per app, accounts = the granted connections.
     let snap = crate::domains::plugins::registry::active_typed(state).await?;
     let mut apps: Vec<Value> = Vec::new();
+    let mut folders: Vec<AppFolder> = Vec::new();
     let mut databases: Vec<Value> = Vec::new();
     if let Some(snap) = snap {
         let av = crate::domains::apps::service::availability_of(
@@ -267,14 +422,23 @@ async fn render_inputs(
                 .as_ref()
                 .map(|g| clamp(g.instructions.trim(), limits::AGENT_SNIPPET_MAX))
                 .filter(|t| !t.is_empty());
+            // (P5-GUIDE-2, C-644) The four fields above are unchanged, so a supervisor that
+            // predates the guides renders as before; the three below drive the index.
             apps.push(json!({
                 "name": app.about.name,
                 "accounts": accounts,
                 "docs_links": docs_links,
                 "snippet": snippet,
+                "app_id": app.app_id,
+                "summary": agent_summary(app),
+                "guide_path": format!("{}/{}/guide.md", APPS_ROOT, app.app_id),
             }));
+            let of_app: Vec<&hosted::HomeAppConn> =
+                conns.iter().filter(|x| x.app_id == c.app_id).collect();
+            folders.push(app_folder(conn, &snap, app, &of_app, &databases).await?);
         }
     }
+    folders.sort_by(|a, b| a.app_id.cmp(&b.app_id));
     let channels: Vec<Value> = hosted::home_presences(conn, agent)
         .await?
         .into_iter()
@@ -309,17 +473,38 @@ async fn render_inputs(
         })
         .collect();
     let models = models_input(state, conn, agent, inputs).await;
-    Ok(json!({
-        "agent": {"name": inputs.name, "handle": inputs.handle, "workspace": inputs.workspace_name},
-        "brief": if inputs.brief.trim().is_empty() { Value::Null } else { json!(inputs.brief) },
-        "models": models,
-        "apps": apps, "databases": databases, "channels": channels, "peers": peers,
-        "memory_language": inputs.memory_language,
-        "schedules": schedules,
-        "purges": purges,
-        "timezone": inputs.timezone,
-        "approval_parking": state.ops().approvals.park.enabled,
-    }))
+    Ok((
+        json!({
+            "agent": {"name": inputs.name, "handle": inputs.handle, "workspace": inputs.workspace_name},
+            "brief": if inputs.brief.trim().is_empty() { Value::Null } else { json!(inputs.brief) },
+            "models": models,
+            "apps": apps, "databases": databases, "channels": channels, "peers": peers,
+            "memory_language": inputs.memory_language,
+            "schedules": schedules,
+            "purges": purges,
+            "timezone": inputs.timezone,
+            "approval_parking": state.ops().approvals.park.enabled,
+        }),
+        folders,
+    ))
+}
+
+/// Home-relative root of the app folders (C-643).
+const APPS_ROOT: &str = ".aurora/apps";
+
+/// The one line the instruction file shows for an app: `agent.summary`, else `about.description`,
+/// clamped to one line (`24 §3.1`). Null when the app has neither.
+fn agent_summary(app: &aurora_registry::snapshot::AppEntry) -> Value {
+    let raw = app
+        .agent
+        .as_ref()
+        .and_then(|a| a.summary.as_deref())
+        .filter(|s| !s.trim().is_empty())
+        .or(Some(app.about.description.as_str()).filter(|s| !s.trim().is_empty()));
+    match raw {
+        Some(s) => json!(aurora_core::sanitize::inline(s, limits::AGENT_SUMMARY_MAX)),
+        None => Value::Null,
+    }
 }
 
 /// All `home.sync` parts of generation `claim.generation`, in order.
@@ -364,7 +549,38 @@ pub async fn render(
     manifest.push(json!({"path": "memory/index.md"}));
     memory_entries.push(json!({"path": "memory/index.md", "content": memory_index(&mems)}));
 
-    let mut render_inputs = render_inputs(state, conn, claim.agent_id, &inputs).await?;
+    let (mut render_inputs, folders) = render_inputs(state, conn, claim.agent_id, &inputs).await?;
+
+    // (P5-GUIDE-2, C-643) The `apps` part: per app `guide.md`, `tools.md` and the package's guide
+    // files. The reference files of one sync total at most the budget; apps are taken in `app_id`
+    // order and the first one that does not fit, and every later one, get the generated files only.
+    let mut app_entries: Vec<Value> = Vec::new();
+    let mut reference_used = 0usize;
+    let mut over_budget = false;
+    for f in folders {
+        let need: usize = f.reference.iter().map(|(_, c)| c.len()).sum();
+        if !over_budget && reference_used + need > state.guide_sync_max {
+            over_budget = true;
+            tracing::warn!(agent = %claim.agent_id, app = %f.app_id,
+                "agent guide reference files over the sync budget; generated files only from this app on");
+            metrics::counter!("aurora_home_guide_budget_exceeded_total").increment(1);
+        }
+        if !over_budget {
+            reference_used += need;
+        }
+        let mut files = f.generated;
+        if over_budget && let Some(g) = files.iter_mut().find(|(n, _)| n == "guide.md") {
+            g.1 = f.guide_without_reference.clone();
+        }
+        if !over_budget {
+            files.extend(f.reference);
+        }
+        for (name, content) in files {
+            let path = format!("{APPS_ROOT}/{}/{name}", f.app_id);
+            manifest.push(json!({"path": path}));
+            app_entries.push(json!({"path": path, "content": content}));
+        }
+    }
     if render_inputs.to_string().len() > PACK_MAX {
         // Pathological fan-out (hundreds of apps/accounts): keep the structure, shed the
         // third-party snippets so the part still fits the wire bound.
@@ -439,6 +655,7 @@ pub async fn render(
         entries: vec![render_inputs],
     });
     pack(HomeSyncKind::Tools, tools, &mut parts);
+    pack(HomeSyncKind::Apps, app_entries, &mut parts);
     // Always present when the instance runs previews (even with no shares, org-off, frozen or
     // not — FIX-042): the single entry replaces the supervisor's in-memory list as a whole, so a
     // pause/delete/off switch reaches it on the next sync. When the instance is off the part
