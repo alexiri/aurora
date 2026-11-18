@@ -121,7 +121,9 @@ async fn apply_always(
     let conn = connections::get(&mut **tx, connection_id)
         .await?
         .ok_or_else(|| always_not_available("The account is gone."))?;
-    if conn.workspace_id.is_none() && levels::limit_from_access(&conn.access) != Level::Act {
+    if conn.workspace_id.is_none()
+        && levels::connection_limit(conn.limit_level.as_deref(), &conn.access) != Level::Act
+    {
         return Err(always_not_available(
             "This account's limit does not allow changes without asking.",
         ));

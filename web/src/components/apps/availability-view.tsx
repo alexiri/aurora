@@ -88,6 +88,7 @@ export function AvailabilityEditor({
       <OrgAppsList
         orgId={orgId}
         orgSlug={orgSlug}
+        canOrg={canEdit}
         apps={apps}
         switches={
           restricted

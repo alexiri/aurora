@@ -35,6 +35,9 @@ pub struct Flow {
     /// against current state when the callback applies it.
     #[serde(default)]
     pub grant: Option<super::dto::ConnectGrant>,
+    /// (P5-UX-11, C-990) The limit of a new organization account, carried through the sign-in.
+    #[serde(default)]
+    pub limit: Option<String>,
     pub pkce_verifier: Option<String>,
     pub reconnect: Option<Uuid>,
     pub continuation: Option<String>,

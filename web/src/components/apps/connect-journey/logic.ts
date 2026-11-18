@@ -125,12 +125,47 @@ export interface SubmitInput {
   accessLevel?: string;
   /** A pasted token's scopes the person ticked by hand (FIX-136), as in the old form. */
   scopes?: string[] | null;
+  /** (P5-UX-11, C-936) The organization mode: the account is for the whole organization and `level` is its limit. */
+  org?: { orgId: string };
+}
+
+/** The steps of the organization's journey (C-936): no Agent step; the Access step sets the account's limit. */
+export type OrgStepId = "app" | "account" | "access" | "signin" | "done";
+
+export const ORG_STEP_LABEL: Record<OrgStepId, string> = { app: "App", account: "Account", access: "Limit", signin: "Sign in", done: "Done" };
+
+export function orgStepsOf(s: { appGiven: boolean; hasExisting: boolean; useExisting: boolean; hasChoice: boolean }): OrgStepId[] {
+  const out: OrgStepId[] = [];
+  if (!s.appGiven) out.push("app");
+  if (s.hasExisting) out.push("account");
+  if (!(s.hasExisting && s.useExisting) && s.hasChoice) out.push("access");
+  if (!(s.hasExisting && s.useExisting)) out.push("signin");
+  out.push("done");
+  return out;
+}
+
+/** The Done sentence of the organization's journey (`14 §3`). */
+export function orgDoneSentence(app: string, org: string): string {
+  return `${app} is connected for ${org}. No agent can use it yet.`;
 }
 
 /** `POST /v1/apps/{app}/connect` (C-957): the method, the fields, the scopes of the chosen level and the grant. */
 export function buildJourneyConnect(i: SubmitInput): ConnectRequest {
   const fields = buildConnectFields(i.method.fields, i.fields);
   const scopes = i.scopes ?? (i.method.scopes.length > 0 ? scopesFor(i.method, i.level, i.scopesOverride) : []);
+  if (i.org) {
+    return {
+      scope: "organization",
+      org_id: i.org.orgId,
+      method_id: i.method.id,
+      ...(Object.keys(fields).length ? { fields } : {}),
+      ...(i.clientId ? { oauth_client_id: i.clientId } : {}),
+      ...(i.instanceId ? { instance_id: i.instanceId } : {}),
+      ...(i.accessLevel ? { access_level: i.accessLevel } : {}),
+      ...(scopes.length > 0 ? { scopes } : {}),
+      ...(i.hasWriteTools ? { limit: i.level ?? "read" } : {}),
+    };
+  }
   return {
     scope: "workspace",
     workspace_id: i.workspaceId,

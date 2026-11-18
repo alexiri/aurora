@@ -191,7 +191,7 @@ function StoreDialog({
       open
       onOpenChange={(o) => !o && onClose()}
       title={existing ? `Edit ${existing.id}` : "Add a Vault store"}
-      description="A HashiCorp Vault KV v2 mount. Credentials are sealed and never shown again."
+      description="A HashiCorp Vault KV v2 mount. Stored values are sealed and never shown again."
       submitLabel="Save store"
       busy={put.isPending}
       submitDisabled={needsSecret || !d.id.trim() || !d.address.trim()}

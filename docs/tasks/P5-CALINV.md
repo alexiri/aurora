@@ -122,5 +122,16 @@ Not the gateway, the sandbox image or web, except an optional settings toggle.
 ## Numbers
 D-274, C-844, SEC-108, migration `20261201000230`.
 
+## Completion report
+**Status 2026-11-17 (lane `p5-agent`, worker 27): NOT STARTED — handoff notes only** (the lane's context ran short after FIX-165 and FIX-162). Findings from reading master (`e307e7aa` on `alexiri/p5-agent`), so the next worker does not redo them:
+- **Spec is already merged:** C-844 (`docs/API_CONTRACTS.md` ~1338), D-274, SEC-108 exist. Migration `20261201000230` is still unused (master has 231…250; 230 is a gap), as the brief says.
+- **No iCalendar crate** is in the workspace deps or the cargo registry cache; `chrono-tz` 0.10 and `lettre` 0.11 are. "A library, never string concatenation" therefore means either adding one (a `Cargo.lock` change: ask the coordinator) or a small typed in-house writer (properties as name + params + value, escaping and 75-octet folding in one place, `VTIMEZONE` from `chrono-tz` transitions). The unit tests in the brief apply either way.
+- **Mailer** (`domains/auth/mail.rs`): `Mail { to, subject, body, link }` is plain text only; `SmtpMailer::send` builds one plain body. Needs an optional calendar part (method + ics) and a multipart/mixed message (plain, `text/calendar; method=…`, `invite.ics` attachment); `MemoryMailer` already captures whole `Mail`s for the IT. "Mailer configured, not log-only" is the live `smtp` flag in `domains/settings/live.rs` (SET-4), not `config.email`.
+- **Tools** (`domains/tools/`): `PlatformTool::available(&ToolContext)` is sync and `ToolContext` has only the pool, so the smtp flag cannot be read there; the async `enabled()` also takes `ToolContext`. Either add the flag to `ToolContext` or check it in `enabled()` through a state handle. `ToolError` has only `invalid_arguments | tool_unavailable | tool_failed`: C-844's codes (`no_person`, `no_verified_email`, `rate_limited`, `mail_unavailable`, `not_found`) go as a message prefix unless the enum is widened. Register in `builtin.rs`.
+- **Eval read-only (C-868):** add `calendar_invite`, `calendar_invite_update`, `calendar_invite_cancel` to `WRITE_TOOLS` in `tools/registry.rs` (list is a read).
+- **The person:** `turns::get(..).speaker_user_id` (as `tools/schedules.rs:124`). A schedule-fired turn has `speaker_user_id: None` (`schedules/fire.rs:106`) but its message door is `{"kind":"schedule","ref":<schedule id>}`: resolve the schedule's creator from that. Webhook and peer-agent turns → `no_person`. Verified email: check the users repo for the verified flag.
+- **Org switch:** org settings are the JSONB `orgs.settings` read by `OrgSettings::from_json` (`tenancy/dto.rs`: `previews_enabled` is the pattern); C-912/P5-WEBHOOK-2 say webhooks' org switches are "stored and edited like `calendar_invitations.enabled`", so design it to be reused. The web org settings page was not checked against P5-IA.
+- **Rate limits:** 20 per person per agent per hour and 60 per person per day: count `calendar_invitations` rows by `updated_at`/`created_at` or add a counter; cancelled sends count too (every send), so a row per send is not enough: count audit events or keep a small ledger.
+
 ## Suggested agent/model and reason
 `rust-developer` (Sonnet). Calendar generation, mail and API tools; small, but the escaping and recipient rules are security-relevant.

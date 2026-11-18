@@ -889,7 +889,7 @@ pub struct PushVapidSection {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct SshSection {
-    /// Master switch (default off, independent of `terminal.enabled`): off means every SSH
+    /// Master switch (default off; requires `terminal.enabled`, D-358): off means every SSH
     /// route answers 404 `ssh_disabled`. Startup refuses `true` without a parsable
     /// `AURORA_SSH_CA_KEY`.
     pub enabled: bool,

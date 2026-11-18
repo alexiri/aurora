@@ -129,6 +129,21 @@ pub async fn is_personal<'e, E: PgExecutor<'e>>(exec: E, workspace: Uuid) -> Res
     .unwrap_or(false))
 }
 
+/// (P5-UX-11, C-947) `(workspace, owner user, owner's name)` for those of `ids` that are someone's
+/// personal workspace.
+pub async fn personal_owners_of<'e, E: PgExecutor<'e>>(
+    exec: E,
+    ids: &[Uuid],
+) -> Result<Vec<(Uuid, Uuid, String)>, DbError> {
+    Ok(sqlx::query_as(
+        "SELECT w.id, u.id, u.display_name FROM workspaces w \
+         JOIN users u ON u.id = w.personal_owner_user_id WHERE w.id = ANY($1)",
+    )
+    .bind(ids)
+    .fetch_all(exec)
+    .await?)
+}
+
 /// The user a workspace is the personal workspace of, if any.
 pub async fn personal_owner_of<'e, E: PgExecutor<'e>>(
     exec: E,

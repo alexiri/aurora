@@ -23,6 +23,9 @@ pub struct ConnectRequest {
     /// (the gateway enforces it). Absent = `write` for a new connection; a reconnect keeps the
     /// connection's current value.
     pub access: Option<String>,
+    /// (P5-UX-11, C-957, C-990) For a new organization account: the limit no agent's access may
+    /// exceed (`read` | `ask` | `act`); `access` follows it. Absent = derived from `access`.
+    pub limit: Option<Level>,
     /// (FIX-136, D-241) For a `fields` method that declares scopes: the scopes the pasted token
     /// has ("Which scopes did you give this token?"). Absent = prefilled by the method's read
     /// probes. Each must be one of the method's scopes.

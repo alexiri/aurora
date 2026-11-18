@@ -1076,6 +1076,9 @@ const ROWS: &[Row] = &[
     r("PATCH", "/v1/connections/{id}", G::WsOwn, false),
     r("DELETE", "/v1/connections/{id}", G::WsOwn, false),
     r("GET", "/v1/connections/{id}/grants", G::WsOwn, false),
+    // (P5-UX-11, C-990) who a lower limit would change: workspace `can_own`, or org owner/admin
+    // for an organization's account (a workspace's account has no limit: 400).
+    r("GET", "/v1/connections/{id}/limit-preview", G::WsOwn, false),
     // (FIX-020) credential-side bulk grants: the credential is addressed by its own id (the
     // per-agent `can_own` is proven in grants_bulk.rs); org scope is covered by the org block.
     r("POST", "/v1/connections/{id}/grants", G::WsOwn, false),

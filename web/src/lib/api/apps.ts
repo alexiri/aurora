@@ -224,12 +224,26 @@ export function useConnections(scope: CredScope & { kind: "workspace" | "organiz
 export function usePatchConnection(scope: CredScope & { kind: "workspace" | "organization" }) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, ...body }: { id: string; status?: "active" | "disabled"; label?: string; access?: "read" | "write"; scopes?: string[] }) =>
+    mutationFn: ({ id, ...body }: { id: string; status?: "active" | "disabled"; label?: string; access?: "read" | "write"; limit?: "read" | "ask" | "act"; scopes?: string[] }) =>
       unwrap(api.PATCH("/v1/connections/{id}", { params: { path: { id } }, body })),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: appKeys.connections(scope) });
       void qc.invalidateQueries({ queryKey: ["apps"] });
     },
+  });
+}
+
+export type LimitPreview = components["schemas"]["LimitPreview"];
+
+/** (C-990) Who a lower limit would change: the confirmation before lowering shows it. Asked only when `limit` is given. */
+export function useLimitPreview(connectionId: string, limit: "read" | "ask" | "act" | null) {
+  return useQuery({
+    queryKey: ["connections", connectionId, "limit-preview", limit],
+    queryFn: () => unwrap(api.GET("/v1/connections/{id}/limit-preview", { params: { path: { id: connectionId }, query: { limit: limit! } } })),
+    enabled: limit !== null,
+    retry: false,
+    staleTime: 0,
+    gcTime: 0,
   });
 }
 

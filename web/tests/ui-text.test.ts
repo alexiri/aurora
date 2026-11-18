@@ -115,19 +115,13 @@ describe("UI text rules (C-974)", () => {
    * test fails when a listed file no longer has a hit, so the brief that cleans a file removes its entry. It must be
    * empty when wave 3 is done.
    */
-  const VOCABULARY_EXEMPT: Record<string, string> = {
-    "src/components/admin/placement-view.tsx": "P5-UX-6 (People › New users), P5-IA-4",
-    "src/components/admin/secret-stores-view.tsx": "P5-IA-4 (Platform › Secret stores)",
-    "src/components/policy/rule-editor.tsx": "P5-IA-2",
-  };
+  const VOCABULARY_EXEMPT: Record<string, string> = {};
 
   /**
    * Files a brief of wave 2 or 3 rewrites that also still hold a spec reference or a raw id (they leave with the same
    * list entry: the brief that rewrites the file removes it).
    */
-  const OTHER_EXEMPT: Record<string, string> = {
-    "src/components/admin/setup-view.tsx": "P5-UX-6 (the Overview rebuild)",
-  };
+  const OTHER_EXEMPT: Record<string, string> = {};
 
   it("does not use a retired word of the vocabulary table as a name, label or button", () => {
     const byFile = new Map<string, Hit[]>();

@@ -1,6 +1,7 @@
 use super::dto::*;
 use crate::app::AppState;
 use crate::domains::approvals::resume;
+use crate::domains::grants::levels;
 use crate::domains::plugins::registry;
 use crate::http::auth::{Caller, require_own};
 use crate::http::pagination::{Page, Pagination};
@@ -186,6 +187,57 @@ pub async fn patch(
             ));
         }
     };
+    // (P5-UX-11, C-990, SEC-131) An organization's account has a limit, not an access of its own:
+    // `access` from an API caller maps to a limit, and a limit change lowers the agents above it.
+    let current_limit = levels::connection_limit(row.limit_level.as_deref(), &row.access);
+    let new_limit: Option<levels::Level> = if row.workspace_id.is_some() {
+        if req.limit.is_some() {
+            return Err(ApiError::invalid_request(
+                "Invalid limit.",
+                vec![FieldError::new(
+                    "/limit",
+                    "only an organization's account has a limit",
+                )],
+            ));
+        }
+        None
+    } else {
+        match (req.limit, req.access.as_deref()) {
+            (Some(_), Some(_)) => {
+                return Err(ApiError::invalid_request(
+                    "Invalid limit.",
+                    vec![FieldError::new(
+                        "/access",
+                        "follows the limit; send one of them",
+                    )],
+                ));
+            }
+            (Some(l), None) => Some(l),
+            (None, Some(a)) => Some(levels::limit_from_access(a)),
+            (None, None) => None,
+        }
+        .filter(|l| *l != current_limit)
+    };
+    if new_limit == Some(levels::Level::Act) {
+        let snap = registry::active_typed(state).await?;
+        if snap
+            .as_ref()
+            .and_then(|s| s.app(&row.app_id))
+            .is_none_or(|a| a.grants.custom_only)
+        {
+            return Err(ApiError::unprocessable(
+                "full_grant_forbidden",
+                "This app only allows custom access: choose Read only or Ask before changes.",
+            )
+            .with_details(serde_json::json!({"app_id": row.app_id})));
+        }
+    }
+    // The limit writes `access` itself; the plain `access` update is for a workspace's account.
+    let access = if row.workspace_id.is_none() {
+        None
+    } else {
+        access
+    };
     let scopes: Option<&[String]> = match &req.scopes {
         None => None,
         Some(s) => {
@@ -226,6 +278,12 @@ pub async fn patch(
     };
     let mut tx = crate::audit::begin(state).await?;
     repo::update(&mut *tx, row.id, label, status, access, scopes).await?;
+    let lowered_events = match new_limit {
+        Some(l) => {
+            crate::domains::grants::service::set_limit_in_tx(&mut tx, state, caller, row, l).await?
+        }
+        None => Vec::new(),
+    };
     if status == Some("disabled") {
         // (FIX-084) A held request that would use this credential must not be released.
         let ended = approvals::abandon_pending_depending_on(
@@ -247,9 +305,14 @@ pub async fn patch(
         action,
         &updated,
         serde_json::json!({"from_status": row.status, "from_access": row.access, "to_access": access,
-            "scopes_edited": scopes.is_some()}),
+            "scopes_edited": scopes.is_some(),
+            "from_limit": new_limit.map(|_| current_limit.as_str()),
+            "to_limit": new_limit.map(levels::Level::as_str),
+            "agents_lowered": lowered_events.len()}),
     );
-    crate::audit::commit_critical(tx, &ev).await?;
+    let mut events = vec![ev];
+    events.extend(lowered_events);
+    crate::audit::commit_critical_many(tx, &events).await?;
     Ok(updated)
 }
 

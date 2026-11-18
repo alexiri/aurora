@@ -5,6 +5,7 @@ import { useCallback, useState, type ReactNode } from "react";
 
 import { ConnectDialog } from "@/components/apps/connect-dialog";
 import { ConnectJourney } from "@/components/apps/connect-journey/connect-journey";
+import { OrgConnectJourney } from "@/components/apps/connect-journey/org-journey";
 import { useUrlDialog } from "@/components/apps/use-url-dialog";
 import { Notice } from "@/components/ui/notice";
 import { appKeys, useConnectChannel } from "@/lib/api/apps";
@@ -66,7 +67,9 @@ export function AccountsList({
   if (accounts.isPending) return <Loading />;
   if (accounts.isError) return <ErrorState error={accounts.error} onRetry={() => accounts.refetch()} />;
   const items = accounts.data.items.filter((a) => (!kind || a.kind === kind) && (!appId || a.app?.app_id === appId));
-  const canReconnect = (a: Account) => canOwn && scope.kind === "workspace" && a.ref.type === "connection" && a.scope === "workspace";
+  // A workspace owner reconnects the workspace's own accounts; an organization owner or admin the organization's (C-937).
+  const canReconnect = (a: Account) =>
+    canOwn && a.ref.type === "connection" && (scope.kind === "workspace" ? a.scope === "workspace" : a.scope === "organization");
   const row = (a: Account) => (
     <AccountRow
       key={a.ref.id}
@@ -100,9 +103,7 @@ export function AccountsList({
         <Button size="sm">Add</Button>
       </MenuTrigger>
       <MenuContent>
-        {scope.kind === "workspace" ? (
-          <MenuItem onSelect={() => setConnecting("")}>Connect an app or website</MenuItem>
-        ) : null}
+        <MenuItem onSelect={() => setConnecting("")}>Connect an app or website</MenuItem>
         <MenuItem onSelect={() => setAddingKey(true)}>Add an AI key</MenuItem>
       </MenuContent>
     </Menu>
@@ -165,6 +166,13 @@ export function AccountsList({
           <EmptyState
             title="No accounts for the whole organization yet"
             when="An account connected here can be given to agents in any workspace."
+            action={
+              canOwn ? (
+                <Button size="sm" onClick={() => setConnecting("")}>
+                  Connect an app or website
+                </Button>
+              ) : undefined
+            }
             ask={{ whoCan: who, canAct: canOwn }}
           />
         )
@@ -198,11 +206,22 @@ export function AccountsList({
           }}
         />
       ) : null}
-      {target && reconnectOk && target.app && scope.kind === "workspace" ? (
+      {connecting !== null && canOwn && scope.kind === "organization" ? (
+        <OrgConnectJourney
+          orgId={scope.id}
+          appId={connecting || null}
+          onClose={() => {
+            setConnecting(null);
+            refresh();
+          }}
+        />
+      ) : null}
+      {target && reconnectOk && target.app ? (
         <ConnectDialog
           appId={target.app.app_id}
           name={target.app.name}
-          workspaceId={scope.id}
+          workspaceId={scope.kind === "workspace" ? scope.id : ""}
+          orgScope={scope.kind === "organization"}
           orgId={orgId}
           reconnect={target.ref.id}
           onClose={() => {

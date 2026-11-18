@@ -111,8 +111,8 @@ impl Level {
     }
 }
 
-/// The limit of an organization's account, until P5-UX-11 stores it: derived from the
-/// connection's `access` (`read` → read, `write` → act).
+/// What the limit would be for a connection `access` (`read` → read, `write` → act): the value
+/// the migration filled `limit_level` with, and what an API caller's `access` maps to (C-990).
 #[must_use]
 pub fn limit_from_access(access: &str) -> Level {
     if access == "read" {
@@ -120,6 +120,72 @@ pub fn limit_from_access(access: &str) -> Level {
     } else {
         Level::Act
     }
+}
+
+impl Level {
+    #[must_use]
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "read" => Some(Self::Read),
+            "ask" => Some(Self::Ask),
+            "act" => Some(Self::Act),
+            _ => None,
+        }
+    }
+}
+
+/// (P5-UX-11, C-990) The stored limit of an organization's account. A row without one (never
+/// after the migration) reads as what its `access` gives.
+#[must_use]
+pub fn connection_limit(limit_level: Option<&str>, access: &str) -> Level {
+    limit_level
+        .and_then(Level::parse)
+        .unwrap_or_else(|| limit_from_access(access))
+}
+
+/// The `access` the gateway enforces for a limit: `read` for `read`, `write` otherwise.
+#[must_use]
+pub fn access_for_limit(limit: Level) -> &'static str {
+    if limit == Level::Read {
+        "read"
+    } else {
+        "write"
+    }
+}
+
+/// What a saved grant becomes under a lowered `limit` (C-990, SEC-131), or `None` when it
+/// already fits. A level above the limit becomes the limit; under `ask`, changes allowed without
+/// asking become asked; under `read`, change tools are removed. Returns `(full, allow, ask)`.
+#[must_use]
+pub fn lowered_grant(
+    limit: Level,
+    full: bool,
+    allow: &[String],
+    ask: &[String],
+    tools: &[Tool],
+) -> Option<(bool, Vec<String>, Vec<String>)> {
+    if !exceeds_limit(limit, full, allow, ask, tools) {
+        return None;
+    }
+    if full {
+        let g = expand(limit, tools);
+        return Some((false, g.allow_tools, g.ask_tools));
+    }
+    let is_write = |id: &String| tools.iter().any(|t| &t.id == id && !is_read(t));
+    let (mut a, mut k) = (Vec::new(), Vec::new());
+    for id in allow {
+        match (limit, is_write(id)) {
+            (Level::Read, true) => {}
+            (Level::Ask, true) => k.push(id.clone()),
+            _ => a.push(id.clone()),
+        }
+    }
+    for id in ask {
+        if !(limit == Level::Read && is_write(id)) && !k.contains(id) {
+            k.push(id.clone());
+        }
+    }
+    Some((false, a, k))
 }
 
 /// The choices that exist for an app: none when it has no tool that changes anything, no `act`
@@ -410,6 +476,40 @@ mod tests {
         assert!(!exceeds_limit(Level::Act, true, &[], &[], &t));
         assert_eq!(limit_from_access("read"), Level::Read);
         assert_eq!(limit_from_access("write"), Level::Act);
+    }
+
+    #[test]
+    fn a_lowered_limit_keeps_what_fits_and_cuts_the_rest() {
+        let t = two_writes();
+        let (a, k) = (ids(&["list", "create"]), ids(&["comment"]));
+        // Within the limit: untouched.
+        assert_eq!(lowered_grant(Level::Act, false, &a, &k, &t), None);
+        assert_eq!(
+            lowered_grant(Level::Ask, false, &ids(&["list"]), &ids(&["create"]), &t),
+            None
+        );
+        // Under `ask`, an allowed change is asked; the rest stays.
+        assert_eq!(
+            lowered_grant(Level::Ask, false, &a, &k, &t),
+            Some((false, ids(&["list"]), ids(&["create", "comment"])))
+        );
+        // Under `read`, changes are removed, allowed or asked.
+        assert_eq!(
+            lowered_grant(Level::Read, false, &a, &k, &t),
+            Some((false, ids(&["list"]), ids(&[])))
+        );
+        // A full grant becomes the limit's level.
+        assert_eq!(
+            lowered_grant(Level::Ask, true, &[], &[], &t),
+            Some((false, ids(&["list"]), ids(&["create", "comment"])))
+        );
+        assert_eq!(
+            lowered_grant(Level::Read, true, &[], &[], &t),
+            Some((false, ids(&["list"]), ids(&[])))
+        );
+        assert_eq!(connection_limit(Some("ask"), "write"), Level::Ask);
+        assert_eq!(connection_limit(None, "read"), Level::Read);
+        assert_eq!(access_for_limit(Level::Ask), "write");
     }
 
     #[test]

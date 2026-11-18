@@ -164,7 +164,11 @@ impl AppState {
             domains::secrets::gov::instance_from_config(&config.governance, &llm),
         ));
         let llm_http = aurora_secrets::tls::with_extra_roots(
-            reqwest::Client::builder().timeout(aurora_core::limits::LLM_ORIGIN_CHECK_TIMEOUT),
+            // (FIX-165) No redirects: provider keys travel in `x-api-key`/`api-key`, which reqwest
+            // does not strip on a cross-host 3xx. A 3xx is a non-success answer to every caller.
+            reqwest::Client::builder()
+                .timeout(aurora_core::limits::LLM_ORIGIN_CHECK_TIMEOUT)
+                .redirect(reqwest::redirect::Policy::none()),
             config.tls.extra_ca_bundle.as_deref(),
         )?
         .build()

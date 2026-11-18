@@ -78,6 +78,7 @@ mod model_roles;
 mod oidc;
 mod oidc_roles;
 mod onboarding;
+mod org_limit;
 mod peer_tasks;
 mod peers_rig;
 mod pending_access;

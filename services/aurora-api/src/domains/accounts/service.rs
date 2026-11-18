@@ -302,7 +302,7 @@ fn connection_row(
     let custom_only = entry.is_some_and(|a| a.grants.custom_only);
     let org_account = c.workspace_id.is_none();
     let limit = (org_account && tools.iter().any(|t| t.group != "read"))
-        .then(|| levels::limit_from_access(&c.access));
+        .then(|| levels::connection_limit(c.limit_level.as_deref(), &c.access));
     let health = health::health(
         Some(c.status.as_str()),
         c.last_check_result.as_deref(),
