@@ -528,8 +528,9 @@ the whole body: a match is 502 `upstream_echoed_credential`.
 bounded by `SECRET_LINK_CACHE_MAX_BYTES` (64 MiB, least recently used evicted; a body over the bound is
 not cached). **Admission runs first, every time**: the lookup comes after grant, policy, approval and
 Read only, so a body cached for one caller never reaches one that could not fetch it. The upstream's
-`no-store` is overridden (the cache is private to the connection's admitted callers). A hit is a
-request-log row with `error_code = cache_hit`; an `If-None-Match` equal to the gateway's `ETag` gets
+`no-store` is overridden (the cache is private to the connection's admitted callers). A hit is an
+ordinary 200 request-log row with no `upstream_status` (no upstream call; `error_code` stays null,
+because every reader treats a non-null `error_code` as a failure); an `If-None-Match` equal to the gateway's `ETag` gets
 `304` with no upstream call. The cache is registered with the invalidation hub and dropped on a
 change of the connection (reconnect, disable, delete), of its workspace or organization, and on a
 full resync. Never on disk, never shared between replicas (each fetches once).

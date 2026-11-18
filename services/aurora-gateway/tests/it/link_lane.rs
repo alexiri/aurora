@@ -180,7 +180,17 @@ impl Lane {
 
 /// One stored link per entry of `paths` (path and query on the fake server).
 async fn lane(paths: &[String]) -> Lane {
+    lane_in(paths, None).await
+}
+
+/// [`lane`] whose grants all `require_approval`, with a real hold store on `pool`.
+async fn lane_with_approval(paths: &[String], pool: aurora_db::PgPool) -> Lane {
+    lane_in(paths, Some(pool)).await
+}
+
+async fn lane_in(paths: &[String], approval_pool: Option<aurora_db::PgPool>) -> Lane {
     let (port, ca_pem, seen) = server().await;
+    let approval = approval_pool.is_some();
     let ids: Arc<Mutex<Vec<Uuid>>> = Arc::default();
     let ids2 = ids.clone();
     let urls: Vec<String> = paths
@@ -197,7 +207,13 @@ async fn lane(paths: &[String]) -> Lane {
         .map(|(a, b)| (a.as_str(), b.as_str()))
         .collect();
     let n = paths.len();
-    let (env, src, _) = start_with_ca(
+    let w = World {
+        org: Uuid::now_v7(),
+        ws: Uuid::now_v7(),
+        agent: Uuid::now_v7(),
+    };
+    let (env, src, _) = start_in(
+        w,
         link_snapshot(),
         &cred_refs,
         move |w| {
@@ -205,13 +221,26 @@ async fn lane(paths: &[String]) -> Lane {
             for i in 0..n {
                 let mut c = conn(w, "ics-calendar", &format!("c{i}"), None);
                 c.metadata = json!({"host": "localhost"});
-                r.ws.rules.push(allow_conn(&c, None));
+                c.label = format!("Team calendar {i}");
+                r.ws.rules.push(if approval {
+                    rule(
+                        "grant",
+                        "allow",
+                        json!([{"type": "connection", "id": c.id, "tools": null}]),
+                        true,
+                    )
+                } else {
+                    allow_conn(&c, None)
+                });
                 ids2.lock().unwrap().push(c.id);
                 r.conns.push(c);
             }
             r
         },
         Some(ca_pem),
+        approval_pool,
+        None,
+        approval,
     )
     .await;
     let ids = ids.lock().unwrap().clone();
@@ -393,7 +422,9 @@ async fn the_cache_answers_after_admission_and_never_outlives_the_connection() {
     let rows = l.rows().await;
     assert_eq!(rows.len(), 2);
     assert_eq!(rows[0].error_code, None);
-    assert_eq!(rows[1].error_code.as_deref(), Some("cache_hit"));
+    assert_eq!(rows[0].upstream_status, Some(200));
+    assert_eq!(rows[1].error_code, None);
+    assert_eq!(rows[1].upstream_status, None);
     assert_eq!(rows[1].status, 200);
     // If-None-Match with the gateway's ETag: 304, still no upstream call.
     let nm = l.get(0, "/", &format!("If-None-Match: {etag}\r\n")).await;
@@ -570,5 +601,125 @@ async fn the_canaries_appear_in_no_response_error_or_log_row() {
     for r in &rows {
         assert_eq!(r.path, "/");
         clean("log row", &format!("{r:?}"));
+    }
+}
+
+/// The id, workspace and summary of the one pending approval of connection `conn`.
+async fn pending_for(pool: &sqlx::PgPool, conn: Uuid) -> (Uuid, Uuid, Value) {
+    for _ in 0..100 {
+        if let Some(row) = sqlx::query_as::<_, (Uuid, Uuid, Value)>(
+            "SELECT id, workspace_id, summary FROM approvals WHERE connection_id=$1 AND status='pending'",
+        )
+        .bind(conn)
+        .fetch_optional(pool)
+        .await
+        .unwrap()
+        {
+            return row;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    panic!("no pending approval");
+}
+
+/// Applies a decision the way the API does: first decision wins, then NOTIFY.
+async fn decide(pool: &sqlx::PgPool, id: Uuid, status: &str, ws: Uuid) {
+    sqlx::query(
+        "UPDATE approvals SET status=$2, decided_at=now() WHERE id=$1 AND status='pending'",
+    )
+    .bind(id)
+    .bind(status)
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query("SELECT pg_notify('aurora_approval', $1)")
+        .bind(json!({"id": id, "workspace_id": ws, "event": "decided"}).to_string())
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn an_approval_hold_names_the_connection_and_host_never_the_url_and_fetches_only_once_approved()
+ {
+    let db = aurora_testkit::TestDb::new().await;
+    let pool = db.pool().clone();
+    let l = Arc::new(lane_with_approval(&[pq()], pool.clone()).await);
+
+    // Approve: held first (nothing fetched), then exactly one fetch.
+    let l2 = l.clone();
+    let t = tokio::spawn(async move { l2.get(0, "/", "").await });
+    let (id, ws, summary) = pending_for(&pool, l.ids[0]).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert!(!t.is_finished(), "the request stays held while pending");
+    assert_eq!(l.upstream_count(), 0, "nothing is fetched while held");
+    // The summary shows the connection's name and the real host, never the URL.
+    let text = summary.to_string();
+    assert!(text.contains("Team calendar 0"), "{text}");
+    assert!(text.contains("localhost"), "{text}");
+    clean("approval summary", &text);
+    let (host, path): (String, String) =
+        sqlx::query_as("SELECT host, path FROM approvals WHERE id=$1")
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!((host.as_str(), path.as_str()), (l.host(0).as_str(), "/"));
+    // (The held row records the app, the tool and the account.)
+    let (app, tool): (Option<String>, Option<String>) =
+        sqlx::query_as("SELECT app_id, tool_id FROM approvals WHERE id=$1")
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(app.as_deref(), Some("ics-calendar"));
+    assert_eq!(tool.as_deref(), Some("read_calendar"));
+    decide(&pool, id, "approved", ws).await;
+    let r = t.await.unwrap();
+    assert_eq!(r.status, 200, "{} {}", r.head, r.body);
+    assert_eq!(r.body, ICS);
+    clean("approved response", &format!("{} {}", r.head, r.body));
+    assert_eq!(l.upstream_count(), 1, "one fetch after the approval");
+
+    // Approved, but the grant is withdrawn while held: the second pass re-reads it and refuses.
+    let l2 = l.clone();
+    let t = tokio::spawn(async move { l2.get(0, "/", "").await });
+    let (id2, ws2, _) = pending_for(&pool, l.ids[0]).await;
+    assert_ne!(id, id2);
+    l.src.0.lock().unwrap().ws.rules.clear();
+    l.env.resolve_cache.flush_all();
+    decide(&pool, id2, "approved", ws2).await;
+    let r = t.await.unwrap();
+    assert_eq!(
+        (r.status, r.code().as_str()),
+        (403, "access_restricted"),
+        "{} {}",
+        r.head,
+        r.body
+    );
+    assert_eq!(
+        l.upstream_count(),
+        1,
+        "a withdrawn grant is not fetched after approval"
+    );
+}
+
+#[tokio::test]
+async fn a_denied_link_approval_fetches_nothing_and_leaks_nothing() {
+    let db = aurora_testkit::TestDb::new().await;
+    let pool = db.pool().clone();
+    let l = Arc::new(lane_with_approval(&[pq()], pool.clone()).await);
+    let l2 = l.clone();
+    let t = tokio::spawn(async move { l2.get(0, "/", "").await });
+    let (id, ws, _) = pending_for(&pool, l.ids[0]).await;
+    decide(&pool, id, "denied", ws).await;
+    let r = t.await.unwrap();
+    assert_eq!(r.status, 403, "{} {}", r.head, r.body);
+    assert_eq!(r.code(), "manual_approval_denied");
+    assert!(r.body.contains(&id.to_string()), "{}", r.body);
+    clean("denied response", &format!("{} {}", r.head, r.body));
+    assert_eq!(l.upstream_count(), 0, "nothing is fetched after a denial");
+    for row in l.rows().await {
+        clean("log row", &format!("{row:?}"));
     }
 }

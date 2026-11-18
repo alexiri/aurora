@@ -44,7 +44,7 @@ pub trait Hops: Send + Sync {
 
 /// The request-log row of one secret-link request, written exactly once.
 pub trait Report: Send + Sync {
-    /// `code` is `cache_hit` for a cached answer and the error code of a refusal.
+    /// `code` is the error code of a refusal, `None` for every answer (a cached one has no `upstream`).
     fn finish(self: Box<Self>, status: u16, upstream: Option<u16>, code: Option<&str>);
 }
 
@@ -386,7 +386,9 @@ pub async fn answer(up: &Upstream, f: LinkFetch) -> Response<Body> {
             guidance::response(&e)
         }
         Ok(s) => {
-            let code = s.hit.then_some("cache_hit");
+            // A hit is an ordinary 200 row (the activity views and the status rail read any
+            // non-null `error_code` as a failure); the only trace is that no upstream call was made.
+            let upstream = (!s.hit).then_some(200);
             let matches = if_none_match.as_deref().is_some_and(|inm| {
                 inm.split(',')
                     .map(str::trim)
@@ -415,7 +417,7 @@ pub async fn answer(up: &Upstream, f: LinkFetch) -> Response<Body> {
             }
             resp.headers_mut()
                 .insert(header::AGE, HeaderValue::from(s.age));
-            report.finish(resp.status().as_u16(), Some(200), code);
+            report.finish(resp.status().as_u16(), upstream, None);
             resp
         }
     }

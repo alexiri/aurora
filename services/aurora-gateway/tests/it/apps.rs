@@ -316,7 +316,7 @@ async fn start_with_ca(
         ws: Uuid::now_v7(),
         agent: Uuid::now_v7(),
     };
-    start_in(w, snap, creds, mk, extra_ca_pem, None, None).await
+    start_in(w, snap, creds, mk, extra_ca_pem, None, None, false).await
 }
 
 /// [`start_with_ca`] in a given world, with the churn-column pool (`touch_pool`) of a real database
@@ -329,6 +329,8 @@ async fn start_in(
     extra_ca_pem: Option<String>,
     touch_pool: Option<aurora_db::PgPool>,
     account_health: Option<Arc<aurora_gateway::account_health::AccountHealth>>,
+    // With a `touch_pool`: also give the handler a hold store on that database (approval holds).
+    with_holds: bool,
 ) -> (Env, Arc<Src>, Arc<SnapshotStore>) {
     let mem = Arc::new(MemoryStore::new("mem"));
     for (p, c) in creds {
@@ -368,12 +370,30 @@ async fn start_in(
     let plaintext = Arc::new(PlaintextCache::new(Arc::new(SecretVault::new(reg))));
     let rows = Arc::new(Mutex::new(Vec::new()));
     let log = RequestLog::new(Arc::new(Capture(rows.clone())));
+    let holds = if let (true, Some(pool)) = (with_holds, touch_pool.as_ref()) {
+        let (shutdown, rx) = tokio::sync::watch::channel(false);
+        std::mem::forget(shutdown);
+        let hub = aurora_gateway::invalidation::Hub::new();
+        tokio::spawn(hub.clone().run(pool.clone(), rx.clone()));
+        while !hub.is_connected() {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        Some(Arc::new(aurora_gateway::hold::Holds::new(
+            pool.clone(),
+            hub,
+            Uuid::now_v7(),
+            Duration::from_secs(30),
+            Some(rx),
+        )))
+    } else {
+        None
+    };
     let mut handler = PolicyHandler::new(PolicyHandlerParts {
         resolver,
         plaintext,
         log: log.clone(),
         external_url: "https://aurora.test/".into(),
-        holds: None,
+        holds,
         touch_pool,
     })
     .with_insecure_loopback_injection(true);

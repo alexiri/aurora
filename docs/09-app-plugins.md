@@ -788,7 +788,9 @@ The app has no `hosts[]` entry (and no `database`, `ldap`, `instances` or `token
 `secret_link_prefix`, `secret_link_exclusive`, `secret_link_host_reserved` (no `hosts[]` entry may
 claim the suffix); `tool_host_uncovered` for the host without the section. The connect flow is
 `kind: fields` with a `name` (stored as metadata; it becomes the label) and the secret URL. Connect
-validates and fetches the URL once (`C-843`) and stores its host as metadata `host`. Fixtures send
+validates and fetches the URL once (`C-843`) and stores its host as metadata `host`. Connect applies
+the destination guard only; the gateway applies the org's and workspace's egress policy on every read,
+to the real host of every hop (SEC-107). Fixtures send
 `GET https://<uuid>.link.aurora.internal/` (any path) and expect the tool; any other method is
 `refused: method_not_allowed` (`aurora-gateway check-snapshot`). The section is copied into the
 snapshot's `apps[].secret_link` (absent for other apps, so existing snapshot hashes do not change).
