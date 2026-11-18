@@ -1222,6 +1222,9 @@ pub struct HomeAppConn {
     pub ask_tools: Vec<String>,
     /// The tenant host a tenant-bound connection stores.
     pub tenant_host: Option<String>,
+    /// (P5-CALDAV, D-275) The non-secret metadata `url` (an `own_server` connection's discovered
+    /// calendar home); other apps ignore it.
+    pub server_url: Option<String>,
 }
 
 /// Active connections the agent holds a grant on, stable order.
@@ -1232,7 +1235,7 @@ pub async fn home_app_connections(
     Ok(sqlx::query_as(
         "SELECT c.id AS connection_id, c.app_id, c.label, ai.host AS instance_host,
                 ai.base_path AS instance_base_path, g.mode AS grant_mode,
-                g.allow_tools, g.ask_tools, c.tenant_host
+                g.allow_tools, g.ask_tools, c.tenant_host, c.metadata->>'url' AS server_url
          FROM grants g JOIN app_connections c ON c.id = g.connection_id
          LEFT JOIN app_instances ai ON ai.id = c.instance_id
          WHERE g.agent_id = $1 AND c.status = 'active'

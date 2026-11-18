@@ -501,6 +501,13 @@ impl HomeProjector {
         if let Err(e) = crate::links::write(&self.cfg.root, &crate::links::installed_links(&raw)) {
             tracing::warn!(error = %e, "links.json not written");
         }
+        // (P5-CALDAV, D-275) The servers of the person-pinned apps (addresses only); removed when
+        // there are none.
+        if let Err(e) =
+            crate::servers::write(&self.cfg.root, &crate::servers::installed_servers(&raw))
+        {
+            tracing::warn!(error = %e, "servers.json not written");
+        }
         let text = render(&inputs);
         for name in &self.cfg.instruction_files {
             let Some(rel) = clean_rel(name) else {
