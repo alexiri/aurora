@@ -284,13 +284,21 @@ async fn the_reevaluation_job_marks_secrets_and_clears_overrides_once() {
             .unwrap()
         }
     };
-    assert_eq!(audits(&w.h).await, 1);
-    // A rerun finds nothing to change: idempotent, and it writes nothing.
+    // A rerun finds nothing to change: idempotent, and it writes nothing. The background job can
+    // still hold its lock for its last writes after the override is cleared (run 44367188880):
+    // wait for the lock, then count the audit rows (the job's one, none from the rerun).
     let inst = w.h.state.gov_instance();
-    let out = aurora_api::domains::governance::reeval::run(w.h.pool(), &inst)
-        .await
-        .unwrap()
-        .expect("lock free");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let out = loop {
+        if let Some(out) = aurora_api::domains::governance::reeval::run(w.h.pool(), &inst)
+            .await
+            .unwrap()
+        {
+            break out;
+        }
+        assert!(Instant::now() < deadline, "the job's lock was not released");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    };
     assert_eq!(
         (
             out.orgs_changed,
