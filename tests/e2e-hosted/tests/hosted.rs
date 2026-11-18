@@ -2484,3 +2484,158 @@ default_model = "say"
     );
     st.finish().await;
 }
+
+/// (P5-GUIDE-2, C-643, D-295, SEC-117) A hosted agent granted `fixture-guide` under a custom grant
+/// has `.aurora/apps/guide-demo/` projected into its real sandbox (generated files and the
+/// package's own, read-only), the instruction file lists the app as one index line with none of the
+/// package's notes, and revoking the grant removes the folder at the next sync.
+#[tokio::test]
+async fn s14_agent_guide_folder_is_projected_into_the_sandbox_and_removed_on_revoke() {
+    if !enabled() {
+        return;
+    }
+    let (st, owner) = fx(Opts::default()).await;
+    let email = "owner@e2e.test";
+    sqlx::query(
+        "UPDATE users SET is_instance_admin = true, email_verified_at = now() WHERE email = $1",
+    )
+    .bind(email)
+    .execute(st.pool())
+    .await
+    .unwrap();
+    let admin = owner.relogin(email).await;
+
+    // The checked-in fixture package, signed with a key the instance is told to trust.
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../plugins/fixtures/fixture-guide");
+    let read = |p: &str| std::fs::read(dir.join(p)).unwrap_or_else(|e| panic!("{p}: {e}"));
+    let mut b = aurora_registry::builder::PackageBuilder::new(
+        &String::from_utf8(read("plugin.yaml")).unwrap(),
+    );
+    for f in ["book-free-room.md", "api.md", "codes.tsv"] {
+        b.set_file(
+            &format!("agent/guide-demo/{f}"),
+            &read(&format!("agent/guide-demo/{f}")),
+        );
+    }
+    let key = aurora_crypto::generate_signing_key().unwrap();
+    let key_id = aurora_registry::builder::PackageBuilder::key_id(&key);
+    b.sign(&key, &key_id);
+    let (s, v) = admin
+        .post(
+            "/v1/admin/trusted-keys",
+            json!({"publisher": "fixtures", "name": "e2e-guide", "public_key": key_id}),
+        )
+        .await;
+    assert_eq!(s, 201, "trusted key: {v}");
+    let (s, pkg) = admin.upload_plugin(&b.build().unwrap()).await;
+    assert_eq!(s, 201, "upload: {pkg}");
+    assert_eq!(pkg["status"], "pending_approval", "{pkg}");
+    let (s, a) = admin
+        .post(
+            &format!("/v1/admin/plugins/{}/approve", pkg["id"].as_str().unwrap()),
+            json!({}),
+        )
+        .await;
+    assert_eq!(s, 200, "approve: {a}");
+
+    // A connection of the app and a custom grant to Daneel.
+    let (s, c) = admin
+        .post(
+            "/v1/apps/guide-demo/connect",
+            json!({"scope": "workspace", "workspace_id": admin.ws, "method_id": "api_key",
+                   "fields": {"api_token": "tok-guide-e2e"}}),
+        )
+        .await;
+    assert_eq!(s, 200, "connect: {c}");
+    let conn = c["connection"]["id"].as_str().unwrap().to_owned();
+    let grant = format!("/v1/agents/{}/grants/connections/{conn}", admin.daneel);
+    let (s, g) = admin
+        .put(
+            &grant,
+            json!({"mode": "custom", "allow_tools": ["list_rooms"], "ask_tools": ["book_room"]}),
+        )
+        .await;
+    assert_eq!(s, 200, "grant: {g}");
+
+    // The sandbox boots with the folder (a turn makes sure the sync was applied).
+    let conv = admin.direct().await;
+    run_turn(&st, &admin, &conv, "[[say: warm]]").await;
+    let cs = containers();
+    assert_eq!(cs.len(), 1, "{cs:?}");
+    let c = cs[0].as_str();
+    let root = "/workspace/.aurora/apps/guide-demo";
+    let ls = || {
+        exec_in(
+            c,
+            // Exit status 0 only while the folder exists (`sort` would hide stat's status).
+            &format!("test -d {root} && stat -c '%a %n' {root} {root}/* | sort -k2"),
+        )
+    };
+    let present = eventually(60, || ls().0 == 0).await;
+    let (_, listing) = ls();
+    assert!(present, "no folder: {listing}\n{}", st.log_tails());
+    // Directories 0555, files 0444 (C-643), the generated files and the package's own.
+    for want in [
+        "555 /workspace/.aurora/apps/guide-demo",
+        "444 /workspace/.aurora/apps/guide-demo/guide.md",
+        "444 /workspace/.aurora/apps/guide-demo/tools.md",
+        "444 /workspace/.aurora/apps/guide-demo/book-free-room.md",
+        "444 /workspace/.aurora/apps/guide-demo/api.md",
+        "444 /workspace/.aurora/apps/guide-demo/codes.tsv",
+    ] {
+        assert!(
+            listing.lines().any(|l| l == want),
+            "missing `{want}` in:\n{listing}"
+        );
+    }
+    // The custom grant is in the generated files: the allowed tool and the ask tool, by id.
+    let (_, tools) = exec_in(c, &format!("cat {root}/tools.md"));
+    let access = |id: &str, mark: &str| {
+        tools
+            .lines()
+            .any(|l| l.contains(&format!("`{id}`")) && l.ends_with(mark))
+    };
+    assert!(access("list_rooms", "[allowed]"), "{tools}");
+    assert!(access("book_room", "[approval]"), "{tools}");
+    assert!(access("get_room", "[blocked]"), "{tools}");
+    // The recipe carries the third-party procedure header; the credential is nowhere.
+    let (_, recipe) = exec_in(c, &format!("head -3 {root}/book-free-room.md"));
+    assert!(recipe.to_lowercase().contains("procedure"), "{recipe}");
+    let (_, leak) = exec_in(
+        c,
+        "grep -rIl 'tok-guide-e2e' /workspace/.aurora 2>/dev/null | wc -l",
+    );
+    assert_eq!(leak.trim(), "0", "the credential reached the home");
+    // The instruction file: one index line for the app, none of the package's notes.
+    let (_, instr) = exec_in(c, "cat /workspace/AGENTS.md");
+    assert!(
+        instr.contains("guide-demo") && instr.contains(".aurora/apps/"),
+        "{instr}"
+    );
+    assert!(
+        !instr.contains("Rooms are addressed by numeric id"),
+        "notes inlined: {instr}"
+    );
+    // Nothing writable: the agent cannot edit a guide file.
+    let (rc, _) = exec_in(c, &format!("echo x >> {root}/guide.md"));
+    assert_ne!(rc, 0, "a guide file is writable");
+
+    // Revoke: the folder goes at the next sync.
+    let (s, _) = admin.delete(&grant).await;
+    assert_eq!(s, 204);
+    run_turn(&st, &admin, &conv, "[[say: again]]").await;
+    let gone = eventually(60, || ls().0 != 0).await;
+    let (_, after) = ls();
+    assert!(
+        gone,
+        "the folder survived the revoke: {after}\n{}",
+        st.log_tails()
+    );
+    let (_, instr) = exec_in(c, "cat /workspace/AGENTS.md");
+    assert!(
+        !instr.contains("guide-demo"),
+        "the app is still in the instruction file: {instr}"
+    );
+    st.finish().await;
+}
