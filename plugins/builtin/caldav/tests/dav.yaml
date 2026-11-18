@@ -1,0 +1,127 @@
+# CalDAV (own_server, D-275, SEC-109): the connection pins the server's origins (`hosts`); a request to
+# exactly a pinned `host:port` over https gets `Authorization: Basic`, anything else none. Every tool
+# has a positive case and a `negative <tool>:` case. All credentials are fake.
+- name: "discover_calendars: Basic is injected on the pinned origin"
+  connection: &c { credentials: { username: alice, password: pw-fixture-1 }, metadata: { url: "https://dav.example.test/dav/calendars/alice/", hosts: ["dav.example.test:443"] } }
+  request: { method: PROPFIND, url: "https://dav.example.test/dav/calendars/alice/", headers: { depth: "1" } }
+  expect:
+    app: caldav
+    tool: discover_calendars
+    upstream: { url: "https://dav.example.test/dav/calendars/alice/", headers: { authorization: "Basic YWxpY2U6cHctZml4dHVyZS0x" } }
+- name: "negative discover_calendars: PATCH selects no tool"
+  connection: *c
+  request: { method: PATCH, url: "https://dav.example.test/dav/calendars/alice/" }
+  expect: { app: caldav }
+- name: "a second pinned origin (an account moved to a partition host) is served too"
+  connection: { credentials: { username: alice, password: pw-fixture-1 }, metadata: { url: "https://dav.example.test/dav/", hosts: ["dav.example.test:443", "p42-dav.example.test:443"] } }
+  request: { method: PROPFIND, url: "https://p42-dav.example.test/p42/calendars/alice/" }
+  expect: { app: caldav, tool: discover_calendars, upstream: { headers: { authorization: "Basic YWxpY2U6cHctZml4dHVyZS0x" } } }
+- name: "negative discover_calendars: a host the connection did not pin is not served"
+  connection: *c
+  request: { method: PROPFIND, url: "https://other.example.test/dav/calendars/alice/" }
+  expect: { unmatched: true }
+- name: "negative discover_calendars: the same host on another port is not served"
+  connection: *c
+  request: { method: PROPFIND, url: "https://dav.example.test:8443/dav/calendars/alice/" }
+  expect: { unmatched: true }
+- name: "negative discover_calendars: the same host over http is not the pinned origin (443)"
+  connection: *c
+  request: { method: PROPFIND, url: "http://dav.example.test/dav/calendars/alice/" }
+  expect: { unmatched: true }
+- name: "a stored http origin never gets a credential (TLS only)"
+  connection: { credentials: { username: alice, password: pw-fixture-1 }, metadata: { url: "https://dav.example.test/dav/", hosts: ["dav.example.test:80"] } }
+  request: { method: PROPFIND, url: "http://dav.example.test/dav/calendars/alice/" }
+  expect: { refused: uncredentialed_transport }
+- name: "query_events"
+  connection: *c
+  request: { method: REPORT, url: "https://dav.example.test/dav/calendars/alice/work/", headers: { depth: "1" } }
+  expect: { app: caldav, tool: query_events }
+- name: "negative query_events: LOCK selects no tool"
+  connection: *c
+  request: { method: LOCK, url: "https://dav.example.test/dav/calendars/alice/work/" }
+  expect: { app: caldav }
+- name: "get_event"
+  connection: *c
+  request: { method: GET, url: "https://dav.example.test/dav/calendars/alice/work/e1.ics" }
+  expect: { app: caldav, tool: get_event }
+- name: "negative get_event: LOCK selects no tool"
+  connection: *c
+  request: { method: LOCK, url: "https://dav.example.test/dav/calendars/alice/work/e1.ics" }
+  expect: { app: caldav }
+- name: "options"
+  connection: *c
+  request: { method: OPTIONS, url: "https://dav.example.test/dav/" }
+  expect: { app: caldav, tool: options }
+- name: "negative options: TRACE selects no tool"
+  connection: *c
+  request: { method: TRACE, url: "https://dav.example.test/dav/" }
+  expect: { app: caldav }
+- name: "put_event: the summary shows title, time, repeat, location, organizer and every attendee"
+  connection: *c
+  request:
+    method: PUT
+    url: "https://dav.example.test/dav/calendars/alice/work/e1.ics"
+    headers: { content-type: text/calendar, if-none-match: "*" }
+    body: "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:e1\r\nSUMMARY:Design review\r\nDTSTART;TZID=Europe/Zurich:20261201T140000\r\nDTEND;TZID=Europe/Zurich:20261201T150000\r\nRRULE:FREQ=WEEKLY;COUNT=4\r\nLOCATION:Room 12\r\nORGANIZER:mailto:alice@example.test\r\nATTENDEE;CN=Bob:mailto:bob@example.test\r\nATTENDEE:mailto:eve@example.org\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+  expect:
+    tool: put_event
+    summary:
+      title: "create or change a calendar event"
+      fields:
+        Title: "Design review"
+        Starts: "20261201T140000 (Europe/Zurich)"
+        Ends: "20261201T150000 (Europe/Zurich)"
+        Repeats: "FREQ=WEEKLY;COUNT=4"
+        Location: "Room 12"
+        Organizer: "alice@example.test"
+        Attendees: "Bob <bob@example.test>, eve@example.org"
+- name: "negative put_event: PROPPATCH selects another tool, never put_event"
+  connection: *c
+  request: { method: PROPPATCH, url: "https://dav.example.test/dav/calendars/alice/work/e1.ics" }
+  expect: { app: caldav, tool: change_calendar }
+- name: "delete_event"
+  connection: *c
+  request: { method: DELETE, url: "https://dav.example.test/dav/calendars/alice/work/e1.ics", headers: { if-match: '"etag-1"' } }
+  expect: { tool: delete_event, summary: { title: "delete a calendar event or object", fields: { Version: '"etag-1"' } } }
+- name: "negative delete_event: LOCK selects no tool"
+  connection: *c
+  request: { method: LOCK, url: "https://dav.example.test/dav/calendars/alice/work/e1.ics" }
+  expect: { app: caldav }
+- name: "create_calendar"
+  connection: *c
+  request: { method: MKCALENDAR, url: "https://dav.example.test/dav/calendars/alice/new/" }
+  expect: { tool: create_calendar, summary: { title: "create a calendar" } }
+- name: "negative create_calendar: MKCOL selects no tool"
+  connection: *c
+  request: { method: MKCOL, url: "https://dav.example.test/dav/calendars/alice/new/" }
+  expect: { app: caldav }
+- name: "change_calendar"
+  connection: *c
+  request: { method: PROPPATCH, url: "https://dav.example.test/dav/calendars/alice/work/" }
+  expect: { tool: change_calendar, summary: { title: "change a calendar's properties" } }
+- name: "negative change_calendar: LOCK selects no tool"
+  connection: *c
+  request: { method: LOCK, url: "https://dav.example.test/dav/calendars/alice/work/" }
+  expect: { app: caldav }
+- name: "move_event"
+  connection: *c
+  request: { method: MOVE, url: "https://dav.example.test/dav/calendars/alice/work/e1.ics", headers: { destination: "https://dav.example.test/dav/calendars/alice/home/e1.ics" } }
+  expect: { tool: move_event, summary: { title: "move or copy a calendar event", fields: { To: "https://dav.example.test/dav/calendars/alice/home/e1.ics" } } }
+- name: "negative move_event: LOCK selects no tool"
+  connection: *c
+  request: { method: LOCK, url: "https://dav.example.test/dav/calendars/alice/work/e1.ics" }
+  expect: { app: caldav }
+- name: "send_scheduling_message: the summary lists every attendee"
+  connection: *c
+  request:
+    method: POST
+    url: "https://dav.example.test/dav/calendars/alice/outbox/"
+    headers: { content-type: text/calendar }
+    body: "BEGIN:VCALENDAR\r\nMETHOD:REQUEST\r\nBEGIN:VEVENT\r\nSUMMARY:Standup\r\nDTSTART:20261201T090000Z\r\nATTENDEE:mailto:bob@example.test\r\nATTENDEE:mailto:eve@example.org\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+  expect:
+    tool: send_scheduling_message
+    summary: { title: "send a scheduling message to attendees", fields: { Title: "Standup", Starts: "20261201T090000Z (UTC)", Attendees: "bob@example.test, eve@example.org" } }
+- name: "negative send_scheduling_message: LOCK selects no tool"
+  connection: *c
+  request: { method: LOCK, url: "https://dav.example.test/dav/calendars/alice/outbox/" }
+  expect: { app: caldav }

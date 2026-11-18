@@ -58,6 +58,25 @@ pub fn identify_instance_app<'a>(
     })
 }
 
+/// (D-275, SEC-109) The app of an `own_server` connection that pinned the request's origin (the
+/// caller decided that; no host claim is involved): the section's synthetic entry.
+pub fn identify_own_server_app<'a>(snap: &'a Snapshot, app_id: &str) -> Option<AppMatch<'a>> {
+    let app = snap.app(app_id)?;
+    app.own_server.as_ref()?;
+    let entry = snap.own_server_entry(app_id)?;
+    Some(AppMatch {
+        entry,
+        app,
+        instance: false,
+    })
+}
+
+/// The origin (`host:port`) the request's connection must have pinned: lowercase host, explicit
+/// port.
+pub fn origin_of(host: &str, port: u16) -> String {
+    format!("{}:{port}", host.to_ascii_lowercase())
+}
+
 /// How to read a registered app instance (whose host equals the request host, already filtered
 /// by the caller): its app id and base path.
 pub type RegRead<R> = fn(&R) -> (&str, Option<&str>);

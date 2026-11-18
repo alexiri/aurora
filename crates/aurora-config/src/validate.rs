@@ -972,10 +972,7 @@ impl RawConfig {
         }
         for id in &r.image_harnesses {
             if !KNOWN_HARNESSES.contains(&id.as_str()) {
-                c.err(
-                    "runner.image_harnesses",
-                    format!("unknown harness {id:?}; known: claude-code, codex, fake"),
-                );
+                c.err("runner.image_harnesses", unknown_harness(id));
             }
         }
         for (i, n) in r.k8s.image_pull_secrets.iter().enumerate() {
@@ -1298,7 +1295,16 @@ struct Ctx {
 }
 
 /// Harness ids of the compile-time supervisor registry (`12 §Harness selection`).
-pub const KNOWN_HARNESSES: [&str; 3] = ["claude-code", "codex", "fake"];
+/// (phase 5, P5-HARN, C-1011) `pi`, `goose` and `opencode` join `claude-code` and `codex`.
+pub const KNOWN_HARNESSES: [&str; 6] = ["claude-code", "codex", "pi", "goose", "opencode", "fake"];
+
+/// The "unknown harness" message, listing every known id.
+fn unknown_harness(id: &str) -> String {
+    format!(
+        "unknown harness {id:?}; known: {}",
+        KNOWN_HARNESSES.join(", ")
+    )
+}
 
 /// Longest brief an agent may carry (`10 §Default agent`).
 const MAX_BRIEF_CHARS: usize = 20_000;
@@ -3092,10 +3098,7 @@ fn check_hosted(c: &mut Ctx, h: &HostedSection) {
     }
     for id in &h.enabled_harnesses {
         if !KNOWN_HARNESSES.contains(&id.as_str()) {
-            c.err(
-                "hosted.enabled_harnesses",
-                format!("unknown harness {id:?}; known: claude-code, codex, fake"),
-            );
+            c.err("hosted.enabled_harnesses", unknown_harness(id));
         } else if id == "fake" && !h.allow_fake_harness {
             c.err(
                 "hosted.enabled_harnesses",

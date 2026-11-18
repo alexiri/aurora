@@ -24,6 +24,9 @@ pub fn skills_dir(harness_id: Option<&str>) -> &'static str {
         // a subdirectory of its own keeps the read-only projection away from the `.system`
         // skills Codex seeds next to it.
         Some("codex") => ".codex/skills/aurora",
+        // (P5-HARN) Pi, goose and OpenCode all load `$HOME/.agents/skills` without any project
+        // trust or switch (checked against the pinned binaries, `12 §Adapters pi, goose and opencode`).
+        Some("pi" | "goose" | "opencode") => ".agents/skills",
         _ => ".claude/skills",
     }
 }
@@ -346,6 +349,7 @@ async fn render_inputs(
     // (P5-ICS, D-273, C-843) One entry per active connection of a secret-link app the agent holds a
     // grant on (the set of `apps[].accounts`): its name and id only, never the link.
     let mut links: Vec<Value> = Vec::new();
+    let mut servers: Vec<Value> = Vec::new();
     if let Some(snap) = snap {
         let av = crate::domains::apps::service::availability_of(
             state,
@@ -387,6 +391,24 @@ async fn render_inputs(
                     "app_id": c.app_id,
                     "connection_id": c.connection_id,
                 })
+            })
+            .collect();
+        // (P5-CALDAV, D-275, C-845) The same for apps with an `own_server` section: the person's
+        // server (the discovered calendar home) is the agent's to know; the credential is not.
+        servers = conns
+            .iter()
+            .filter(|c| {
+                snap.apps
+                    .iter()
+                    .any(|a| a.app_id == c.app_id && a.own_server.is_some())
+            })
+            .filter_map(|c| {
+                Some(json!({
+                    "name": aurora_core::sanitize::label(&c.label),
+                    "app_id": c.app_id,
+                    "connection_id": c.connection_id,
+                    "url": c.server_url.clone()?,
+                }))
             })
             .collect();
         let mut seen: Vec<&str> = Vec::new();
@@ -496,7 +518,7 @@ async fn render_inputs(
             "agent": {"name": inputs.name, "handle": inputs.handle, "workspace": inputs.workspace_name},
             "brief": if inputs.brief.trim().is_empty() { Value::Null } else { json!(inputs.brief) },
             "models": models,
-            "apps": apps, "databases": databases, "links": links, "channels": channels,
+            "apps": apps, "databases": databases, "links": links, "servers": servers, "channels": channels,
             "peers": peers,
             "memory_language": inputs.memory_language,
             "schedules": schedules,
@@ -761,6 +783,17 @@ pub(crate) fn fit_render_inputs(v: &mut Value, max: usize) -> bool {
 #[cfg(test)]
 mod name_tests {
     use super::*;
+
+    /// (P5-HARN) The projection's skills directory per harness is the one each adapter declares.
+    #[test]
+    fn skills_dir_follows_the_adapters_declaration() {
+        assert_eq!(skills_dir(None), ".claude/skills");
+        assert_eq!(skills_dir(Some("claude-code")), ".claude/skills");
+        assert_eq!(skills_dir(Some("codex")), ".codex/skills/aurora");
+        for h in ["pi", "goose", "opencode"] {
+            assert_eq!(skills_dir(Some(h)), ".agents/skills", "{h}");
+        }
+    }
 
     /// (FIX-115) 500 peers with long names are cut under the bound, with a truncation notice.
     #[test]

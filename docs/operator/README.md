@@ -44,7 +44,7 @@ public origin, so the full URL is `https://<your-host>/v1/admin/runners`.
 | [outage-and-alerts.md](outage-and-alerts.md) | Gateway behaviour during a Postgres outage (phase 3, RFE-014): `readyz` states (`?strict=true`), what is served from cache and for how long, refusal codes, recovery, the alert rules and a recovery check |
 | [audit-log.md](audit-log.md) | The instance audit log (FIX-125): Administration › Data › Audit, scopes, filters, the route |
 | [freeze.md](freeze.md) | The emergency freeze of an agent, workspace or organization |
-| [harnesses.md](harnesses.md) | Harnesses (phase 4, P4-HAR): enabling the Codex harness (`hosted.enabled_harnesses`, `runner.image_harnesses`, the sandbox image build argument `SANDBOX_HARNESSES`), switching an agent's harness, failure codes |
+| [harnesses.md](harnesses.md) | Harnesses (phase 4, P4-HAR; phase 5, P5-HARN): the five harnesses with their dialects, providers, roles and image sizes, enabling them (`hosted.enabled_harnesses`, `runner.image_harnesses`, the sandbox image build argument `SANDBOX_HARNESSES`), switching an agent's harness, the terminal commands, failure codes |
 | [skill-libraries.md](skill-libraries.md) | Git skill libraries (phase 4, P4-GSL): connecting a repository, `skills.library.*`, `api.gateway_internal_url`, what is read and stored, the review of proposed updates, metrics and audit |
 | [../23-helm-values.md](../23-helm-values.md) | Every Helm chart value in one table: type, allowed values, default, explanation and links to the detail pages (the chart key index over the pages above) |
 

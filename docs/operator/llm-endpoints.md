@@ -164,18 +164,21 @@ Unknown keys are rejected (`deny_unknown_fields`), so a misspelled key stops sta
 
 Aurora injects a `litellm` endpoint's key only on the **inference routes**: `POST /v1/messages`,
 `/v1/messages/count_tokens`, `/v1/chat/completions`, `/v1/completions`, `/v1/responses`,
-`/v1/embeddings` (also under a route prefix) and `GET /v1/models[/{id}]`. A request to any other
+`/v1/embeddings` (also under a route prefix), `GET /v1/models[/{id}]` and `GET /model/info` (below the
+endpoint's base path; read-only model metadata that the goose harness asks at every start, so it is
+on by default for `litellm` endpoints only, and for that one path and method). A request to any other
 path of the endpoint, for example LiteLLM's management API (`/key/generate`, `/user/new`,
-`/team/*`) or the files, images and fine-tuning routes, is refused with **403
+`/team/*`, `/model/new`) or the files, images and fine-tuning routes, is refused with **403
 `llm_path_not_permitted`** before policy runs and before the key is opened, so an agent cannot use
-the sanctioned key to mint other keys or reach storage. If your clients need another route, list it:
+the sanctioned key to mint other keys or reach storage. If your clients need another route, list it
+(`allowed_paths` only ever adds to the set):
 
 ```toml
 [[llm.endpoints]]
 id = "central"
 provider = "litellm"
 base_url = "https://litellm.internal"
-allowed_paths = ["/health/liveliness", "/model/info"]
+allowed_paths = ["/health/liveliness", "/model/group/info"]
 ```
 
 Even so, **give Aurora a LiteLLM virtual key without management rights** (no `models` wildcard

@@ -17,8 +17,8 @@ use crate::claims::{ConflictGroup, claim_key, claims, conflict_groups, static_ho
 use crate::manifest::{
     About, Agent, Approval, BodyFormat, ClientAuth, ClientField, Connect, CredentialDecl, Database,
     Finalize, Grants, Hook, HostRule, INSTANCE_HOST, Inject, Instances, Intercept, Ldap, Library,
-    Manifest, MetadataDecl, Passthrough, RewriteHost, SecretLink, Tenant, Token, Tools, Transform,
-    UrlOrTemplate, de_opt, de_vec,
+    Manifest, MetadataDecl, OwnServer, Passthrough, RewriteHost, SecretLink, Tenant, Token, Tools,
+    Transform, UrlOrTemplate, de_opt, de_vec,
 };
 
 pub const FORMAT: u32 = 1;
@@ -219,6 +219,9 @@ pub struct AppEntry {
     /// (P5-ICS, D-273) the secret-link lane; absent in older snapshots (hashes unchanged).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub secret_link: Option<SecretLink>,
+    /// (P5-CALDAV, D-275) person-pinned servers; absent in older snapshots (hashes unchanged).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub own_server: Option<OwnServer>,
     /// (P4-GRANTS, D-123) copied from the manifest; absent in older snapshots = both false.
     #[serde(default)]
     pub grants: Grants,
@@ -260,10 +263,21 @@ pub struct Snapshot {
     /// the static host index: they apply only to a registered app instance's exact host.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub instance_hosts: Vec<HostEntry>,
+    /// (D-275) One synthetic entry (`host = {connection}`) per `own_server` app, carrying the
+    /// section's inject stages. It never takes part in host lookup: only a connection that pinned
+    /// the request's origin makes the gateway match it. Absent when no app has the section (the
+    /// snapshot hash of existing snapshots is unchanged).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub own_server_hosts: Vec<HostEntry>,
     pub reserved_hosts: Vec<String>,
 }
 
 impl Snapshot {
+    /// The synthetic entry of an `own_server` app.
+    pub fn own_server_entry(&self, app_id: &str) -> Option<&HostEntry> {
+        self.own_server_hosts.iter().find(|e| e.app_id == app_id)
+    }
+
     /// The `{instance}` entries of an app (longest path prefix first).
     pub fn instance_entries(&self, app_id: &str) -> impl Iterator<Item = &HostEntry> {
         self.instance_hosts
@@ -435,6 +449,7 @@ pub fn compile_with_guides(
         apps: Vec::new(),
         hosts: Vec::new(),
         instance_hosts: Vec::new(),
+        own_server_hosts: Vec::new(),
         reserved_hosts: reserved_hosts
             .iter()
             .map(|h| h.to_ascii_lowercase())
@@ -493,9 +508,25 @@ pub fn compile_with_guides(
                 database: a.database.clone(),
                 ldap: a.ldap.clone(),
                 secret_link: a.secret_link.clone(),
+                own_server: a.own_server.clone(),
                 grants: a.grants,
                 library: a.library.clone(),
             });
+            if let Some(o) = &a.own_server {
+                snap.own_server_hosts.push(HostEntry {
+                    host: crate::manifest::CONNECTION_HOST.to_owned(),
+                    path_prefix: None,
+                    app_id: app_id.clone(),
+                    claim_status: ClaimStatus::Active,
+                    tenant: None,
+                    rewrite_host: None,
+                    inject: o.inject.clone(),
+                    finalize: None,
+                    transform: None,
+                    intercept: None,
+                    passthrough: Vec::new(),
+                });
+            }
             for r in &a.hosts {
                 if r.matcher.host == INSTANCE_HOST {
                     snap.instance_hosts
@@ -529,6 +560,8 @@ pub fn compile_with_guides(
 
     snap.instance_hosts
         .sort_by(|a, b| (&a.path_prefix, &a.app_id).cmp(&(&b.path_prefix, &b.app_id)));
+    snap.own_server_hosts
+        .sort_by(|a, b| a.app_id.cmp(&b.app_id));
 
     let v = serde_json::to_value(&snap).map_err(|e| CompileError::Serialize(e.to_string()))?;
     let json = canonical_bytes(&v);

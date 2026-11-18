@@ -113,6 +113,10 @@ mod account_test;
 #[path = "link_connect.rs"]
 mod link_connect;
 
+// (P5-CALDAV, D-275) The own-server app's connect (discovery).
+#[path = "caldav_connect.rs"]
+mod caldav_connect;
+
 struct W {
     h: Harness,
     org: Uuid,

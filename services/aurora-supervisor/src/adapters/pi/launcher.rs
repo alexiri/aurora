@@ -1,0 +1,108 @@
+//! Child-process plumbing for the Pi adapter: [`Launcher`] abstracts "start `pi --mode rpc`" so the
+//! session logic is testable with scripted streams.
+
+use std::path::PathBuf;
+use std::process::Stdio;
+
+use async_trait::async_trait;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::sync::{mpsc, oneshot};
+
+use super::config::LaunchSpec;
+use crate::harness::HarnessError;
+
+pub use crate::adapters::codex::launcher::{MAX_LINE_BYTES, OVERLONG_LINE, forward_lines};
+
+/// Default install location (`images/sandbox/Containerfile`): the npm tree pinned by
+/// `images/sandbox/harness/pi/package-lock.json`.
+pub const DEFAULT_BIN: &str = "/opt/aurora/harness/pi/node_modules/.bin/pi";
+
+/// The binary the adapter runs: always the image location. Tests build `ProcessLauncher { program }`
+/// themselves; the release supervisor reads no override from the environment (FIX-095).
+pub fn pi_bin() -> PathBuf {
+    DEFAULT_BIN.into()
+}
+
+/// A running child: RPC command lines in, event lines out, and a kill switch.
+pub struct ChildIo {
+    pub stdin: mpsc::Sender<String>,
+    /// Closed when the child's stdout ends.
+    pub lines: mpsc::Receiver<String>,
+    pub kill: Box<dyn FnOnce() + Send>,
+}
+
+#[async_trait]
+pub trait Launcher: Send + Sync {
+    async fn launch(&self, spec: LaunchSpec) -> Result<ChildIo, HarnessError>;
+}
+
+/// Spawns the real CLI through [`crate::spawn`] (allow-listed environment plus the session env).
+#[derive(Debug, Clone)]
+pub struct ProcessLauncher {
+    pub program: PathBuf,
+}
+
+impl Default for ProcessLauncher {
+    fn default() -> Self {
+        Self { program: pi_bin() }
+    }
+}
+
+#[async_trait]
+impl Launcher for ProcessLauncher {
+    async fn launch(&self, spec: LaunchSpec) -> Result<ChildIo, HarnessError> {
+        let mut cmd =
+            crate::spawn::tokio_command(&self.program, spec.env.iter().map(|(k, v)| (k, v)));
+        cmd.args(&spec.args)
+            .current_dir(&spec.cwd)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true);
+        let mut child = cmd.spawn().map_err(|e| {
+            HarnessError::new(
+                "harness_failed",
+                format!("cannot start {}: {e}", self.program.display()),
+            )
+        })?;
+        let (Some(mut stdin), Some(stdout), Some(stderr)) =
+            (child.stdin.take(), child.stdout.take(), child.stderr.take())
+        else {
+            return Err(HarnessError::new(
+                "harness_failed",
+                "child pipes unavailable",
+            ));
+        };
+        let (in_tx, mut in_rx) = mpsc::channel::<String>(16);
+        tokio::spawn(async move {
+            while let Some(mut l) = in_rx.recv().await {
+                l.push('\n');
+                if stdin.write_all(l.as_bytes()).await.is_err() || stdin.flush().await.is_err() {
+                    break;
+                }
+            }
+        });
+        let (out_tx, out_rx) = mpsc::channel::<String>(256);
+        tokio::spawn(forward_lines(stdout, MAX_LINE_BYTES, out_tx));
+        tokio::spawn(async move {
+            let mut r = BufReader::new(stderr).lines();
+            while let Ok(Some(l)) = r.next_line().await {
+                tracing::debug!(target: "pi", "stderr: {l}");
+            }
+        });
+        let (kill_tx, kill_rx) = oneshot::channel::<()>();
+        tokio::spawn(async move {
+            tokio::select! {
+                _ = child.wait() => {}
+                _ = kill_rx => { let _ = child.kill().await; }
+            }
+        });
+        Ok(ChildIo {
+            stdin: in_tx,
+            lines: out_rx,
+            kill: Box::new(move || {
+                let _ = kill_tx.send(());
+            }),
+        })
+    }
+}

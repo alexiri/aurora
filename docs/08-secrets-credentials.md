@@ -520,7 +520,7 @@ a module of `aurora-llm` plus one registry line.
   - `vertex`: `POST /v1/projects/<project_id>/locations/<location>/publishers/{anthropic|google}/models/<model>:{rawPredict|streamRawPredict|generateContent|streamGenerateContent|countTokens}` and, when declared, `POST …/endpoints/openapi/chat/completions`; the **project and location in the path must equal the endpoint's**, otherwise `llm_path_not_permitted`.
   - `openai_compatible`: derived from the declared dialects relative to the base path (`openai_chat` → `/v1/chat/completions`, `/v1/completions`; `openai_responses` → `/v1/responses` family; `anthropic_messages` → `/v1/messages`, `/v1/messages/count_tokens`; always `/v1/models`, `/v1/embeddings`); `allowed_paths = ["/*"]` is the explicit opt-out for servers with other routes (D-260(b); an earlier `/**` spelling was an error).
   - `anthropic` (phase 5, P4-LLM spec batch, D-260(c)): `POST /v1/messages`, `POST /v1/messages/count_tokens`, `GET /v1/models[/{id}]`. The Files, Batches, Skills and Admin APIs and every other route get no key (403 `llm_path_not_permitted`); the live suite pins that the pinned Claude Code calls nothing else on the host.
-  - `litellm` (**phase 4, live**, D-177, FIX-105): `POST /v1/messages`, `/v1/messages/count_tokens`, `/v1/chat/completions`, `/v1/completions`, `/v1/responses`, `/v1/embeddings` (also under a route prefix, as `model_from_request` reads them) and `GET /v1/models[/{id}]`. The LiteLLM management API (`/key/*`, `/user/*`, `/team/*`, …) and every other route get no key: 403 `llm_path_not_permitted`. For `litellm` and `openai_compatible` the per-endpoint `allowed_paths` **adds** paths to the set (absolute path, or a prefix ending in `/*`, at most 32 entries): an operator who needs `GET /health/liveliness` lists it; `/*` is the explicit opt-out.
+  - `litellm` (**phase 4, live**, D-177, FIX-105): `POST /v1/messages`, `/v1/messages/count_tokens`, `/v1/chat/completions`, `/v1/completions`, `/v1/responses`, `/v1/embeddings` (also under a route prefix, as `model_from_request` reads them), `GET /v1/models[/{id}]` and, **for this kind only** (phase 5, D-367, P5-HARN), `GET <base path>/model/info` (read-only model metadata that goose's `litellm` provider asks at every start; that one path and method, forwarded with the placeholder replaced by the endpoint's key; `POST` to it, every other metadata route such as `/model/group/info` and every other kind stay refused). The LiteLLM management API (`/key/*`, `/user/*`, `/team/*`, …) and every other route get no key: 403 `llm_path_not_permitted`. For `litellm` and `openai_compatible` the per-endpoint `allowed_paths` **adds** paths to the set (absolute path, or a prefix ending in `/*`, at most 32 entries): an operator who needs `GET /health/liveliness` lists it; `/*` is the explicit opt-out.
   (Until P4-LLM lands `anthropic` keeps its phase-0 behaviour: no path restriction.)
   **`allowed_paths` has one meaning** (phase 5, D-260(b)): it **adds** paths to the set (absolute path
   or a `/*`-suffixed subtree, at most 32, matched on the normalized path as `inference_path_permitted`
@@ -544,15 +544,22 @@ selection`): an agent whose granted keys share no dialect with its harness gets 
 for each key in model readiness and `no_model_key` at the turn. The reach this gives (`12 §Provider
 reach per harness` is the per-harness table):
 
-| Provider | Dialects it can serve | `claude-code` | `codex` |
-|----------|----------------------|---------------|---------|
-| `anthropic` | `anthropic_messages` | yes | no |
-| `litellm` | as declared (default all three) | via `anthropic_messages` | via `openai_responses` |
-| `openai` | `openai_chat`, `openai_responses` | no | yes |
-| `azure_openai` | `openai_chat`, `openai_responses` | no | yes |
-| `bedrock` | `anthropic_bedrock` (default); `openai_chat`/`openai_responses` when declared | via `anthropic_bedrock` | only with `openai_responses` declared |
-| `vertex` | `anthropic_vertex` (default); `openai_chat` when declared | via `anthropic_vertex` | no (Codex refuses chat, D-153) |
-| `openai_compatible` | as declared (default `openai_chat`) | only with `anthropic_messages` declared | only with `openai_responses` declared |
+| Provider | Dialects it can serve | `claude-code` | `codex` | `pi` / `opencode` | `goose` |
+|----------|----------------------|---------------|---------|-------------------|---------|
+| `anthropic` | `anthropic_messages` | yes | no | yes | yes |
+| `litellm` | as declared (default all three) | via `anthropic_messages` | via `openai_responses` | via any of the three | via `anthropic_messages` or `openai_chat` |
+| `openai` | `openai_chat`, `openai_responses` | no | yes | yes | via `openai_chat` |
+| `azure_openai` | `openai_chat`, `openai_responses` | no | yes | yes | via `openai_chat` |
+| `bedrock` | `anthropic_bedrock` (default); `openai_chat`/`openai_responses` when declared | via `anthropic_bedrock` | only with `openai_responses` declared | only with an OpenAI dialect declared | only with `openai_chat` declared |
+| `vertex` | `anthropic_vertex` (default); `openai_chat` when declared | via `anthropic_vertex` | no (Codex refuses chat, D-153) | only with `openai_chat` declared | only with `openai_chat` declared |
+| `openai_compatible` | as declared (default `openai_chat`) | only with `anthropic_messages` declared | only with `openai_responses` declared | any declared dialect | `anthropic_messages` or `openai_chat` declared |
+
+(Phase 5, P5-HARN, D-361..D-363) `pi` and `opencode` declare `anthropic_messages`,
+`openai_responses` and `openai_chat`; `goose` declares `anthropic_messages` and `openai_chat`
+(its `openai` provider chooses the Responses API by model name, so `openai_responses` cannot be
+promised). None declares `anthropic_bedrock` or `anthropic_vertex`: their SDKs sign with cloud
+credentials and have no skip-auth switch, so Bedrock and Vertex models reach them through a
+`litellm` endpoint.
 
 A combination the table refuses (Codex on Claude models, Claude Code on an OpenAI-only server) is
 served by putting a **`litellm` endpoint** in front: LiteLLM translates under the operator's control
@@ -694,9 +701,30 @@ one. Like all credentials, LLM secrets are used only when granted.
   provider default, no allow-list, no static `models` — the normal case for a
   LiteLLM endpoint configured with only `base_url`) → the turn fails with
   `no_model_key`'s sibling **`no_default_model`** and the dashboard links to the
-  agent's model setting (Instructions). The live model listing is **never**
-  used to pick a model automatically: its order is not meaningful and it mixes
-  chat, embedding and image models.
+  agent's model setting (Instructions). D-136 said the live model listing is never used to
+  pick a model automatically. (phase 5, FIX-170, D-372) That is withdrawn for `litellm`, and
+  the default selection now follows this order:
+  - **Served check.** On a `litellm` endpoint, a model the key's live listing
+    (`GET /v1/models`, the key's own namespace) does not contain is never chosen as the
+    default. The endpoint `default_model` is used only when the listing contains it, or when
+    the listing could not be read. Otherwise readiness warns `default_model_not_served` and
+    the chain goes on. One endpoint may serve keys from several LiteLLM namespaces whose model
+    names differ.
+  - **Automatic pick (`source = "key_listing"`, `litellm` only).** Next, the **first** model
+    of the key's listing **in LiteLLM's order** (the operator's order), that is allowed and is
+    a chat model. A model counts as a chat model unless `GET <base>/model/info` gives it a
+    non-chat `model_info.mode` (embedding, image, audio, rerank, …). Only the public
+    `model_name` is a candidate, never `litellm_params.model`.
+  - The allow-list's first entry and the static `models` apply only when the listing could
+    not be read. `no_default_model` remains for "nothing resolves": the listing failed with no
+    static fallback, or the key serves no allowed chat model. The server message says which.
+  - The listing is the key's, and it is the key the gateway injects for this agent on that
+    endpoint (`06` step 6). It is cached per key (`MODEL_CACHE_TTL`). No database transaction
+    is held across the call.
+  - An override, or a role, that the key's known listing does not contain is still used
+    (never re-pointed), with the readiness warning `override_not_served` / `role_not_served`.
+  - Other providers are unchanged: their listings carry no mode, and their order is not the
+    operator's.
 
 #### Model readiness (phase 4, FIX-019, D-136)
 
@@ -718,8 +746,11 @@ first failing check in this order is its `reason`:
 
 A key with no failing check is `usable`. `default` is what the next turn would
 use without an override (`{ endpoint_id, model_id }`), or `null` when no model
-resolves (`no_default_model`). An endpoint whose provider lists models live and
-that has no `default_model` logs a **warning at start** (`15`); it still starts.
+resolves (`no_default_model`). (phase 5, FIX-170, D-372) It also carries `warnings`:
+`default_model_not_served` and `override_not_served` (§Model selection). A `litellm` endpoint
+without `default_model` is no longer a warning anywhere (start, Setup, settings preview): its
+agents use the first chat model each key serves. Any other endpoint whose provider lists models
+live and that has no `default_model` logs a **warning at start** (`15`); it still starts.
 (phase 5, P4-LLM spec batch) That covers `openai`, `bedrock` and `openai_compatible` as
 well; `azure_openai` and `vertex` require `default_model` (static lists), so
 `no_default_model` cannot arise on them. Since SET-3 the same warning is a preview warning of
@@ -731,7 +762,8 @@ Admin › LLM endpoints.
 - (phase 5, P5-MODELS, D-303, C-878) Readiness also reports the role resolution of the default
   selection. For each role it gives the model, its source, and a **warning**: `role_unset` (the role is
   unset on an endpoint whose provider is not `anthropic`) or `role_not_allowed` (the endpoint's role is
-  not allowed for this org). It also gives `roles_dropped`, and `subagent_warning = subagent_role_unset`
+  not allowed for this org), or (FIX-170, D-372) `role_not_served` (a `litellm` key's known listing does
+  not contain the role's model; it is still used). It also gives `roles_dropped`, and `subagent_warning = subagent_role_unset`
   when the subagent default names a role that resolves to nothing on a non-`anthropic` endpoint.
   Warnings never fail a turn.
 

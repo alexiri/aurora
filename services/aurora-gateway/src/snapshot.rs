@@ -101,6 +101,14 @@ fn validate(s: &Snapshot) -> Result<(), String> {
             }
         }
     }
+    // (D-275) `{connection}` entries belong to apps that declare `own_server`.
+    for h in &s.own_server_hosts {
+        if h.host != aurora_registry::manifest::CONNECTION_HOST
+            || s.app(&h.app_id).is_none_or(|a| a.own_server.is_none())
+        {
+            return Err(format!("invalid own-server host entry of `{}`", h.app_id));
+        }
+    }
     // `{instance}` entries belong to apps that declare `instances` (D-74).
     for h in &s.instance_hosts {
         if h.host != INSTANCE_HOST || s.app(&h.app_id).is_none_or(|a| a.instances.is_none()) {
