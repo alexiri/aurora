@@ -1,0 +1,122 @@
+package:
+  id: caldav
+  version: 1.0.0
+  contract: 1
+  min_core: 0.1.0
+  publisher: aurora
+  name: CalDAV calendar
+  description: "Read and write any CalDAV calendar with your own app password: iCloud, Fastmail, Nextcloud, mailbox.org, Posteo, Zimbra, SOGo, Radicale, Baikal, Synology"
+  homepage: https://datatracker.ietf.org/doc/html/rfc4791
+apps:
+  - about:
+      id: caldav
+      name: CalDAV calendar
+      description: Let agents read and change a calendar on a CalDAV server you choose. You give the server address, your username and an app password; the Aurora gateway adds the password to the agent's requests, so the agent never sees it. Works with iCloud, Fastmail, Nextcloud, mailbox.org, Posteo and any other CalDAV server, with no OAuth app.
+      category: productivity
+      api_docs: https://datatracker.ietf.org/doc/html/rfc4791
+      connect_note:
+        text: "Use an app-specific password, not your main password. The server address is visible to the agent (it needs it to talk to the server); the password never is. Adding attendees to an event can make your server email them. Google and Microsoft 365 calendars are not covered here: the setup guide says what to use instead."
+      label_hint: "A name for this account, for example \"Fastmail calendar\" (optional)"
+    credentials:
+      - { name: username }
+      - { name: password, secret: true }
+    metadata:
+      # The calendar home Aurora discovered, and the exact host:port origins discovery used (D-275).
+      - { name: url }
+      - { name: hosts }
+      - { name: name }
+    connect:
+      - id: app_password
+        kind: fields
+        label: Server and app password
+        description: "The server's address, your username and an app-specific password. Aurora checks them against the server and stores the password encrypted; it is never shown again."
+        fields:
+          - name: name
+            label: Name
+            type: text
+            store: metadata
+            required: false
+            placeholder: "Fastmail calendar"
+          - name: url
+            label: Server address
+            type: text
+            store: metadata
+            required: true
+            placeholder: "https://caldav.fastmail.com"
+          - name: username
+            label: Username
+            type: text
+            store: credentials
+            required: true
+            placeholder: "you@example.com"
+          - name: password
+            label: App-specific password
+            type: secret
+            store: credentials
+            required: true
+    own_server:
+      url_field: url
+      hosts_field: hosts
+      inject:
+        - basic: { user: "{credentials.username}", password: "{credentials.password}" }
+    tools:
+      read:
+        items:
+          - { id: discover_calendars, name: List calendars, description: "Finds the account's calendars and their properties (PROPFIND).", host: "{connection}", path: "/**", methods: [PROPFIND] }
+          - { id: query_events, name: Find events, description: "Events in a time range, with server-side recurrence expansion where the server supports it (REPORT).", host: "{connection}", path: "/**", methods: [REPORT] }
+          - { id: get_event, name: Read an event, description: "Downloads one event (iCalendar) with its ETag.", host: "{connection}", path: "/**", methods: [GET, HEAD] }
+          - { id: options, name: Server capabilities, description: "Asks what the server supports (OPTIONS).", host: "{connection}", path: "/**", methods: [OPTIONS] }
+      write:
+        items:
+          - { id: put_event, name: Create or change an event, description: "Creates (If-None-Match: *) or changes (If-Match: ETag) one event. A server with automatic scheduling emails the attendees.", host: "{connection}", path: "/**", methods: [PUT] }
+          - { id: delete_event, name: Delete an event, description: "Deletes one event or calendar object.", host: "{connection}", path: "/**", methods: [DELETE] }
+          - { id: create_calendar, name: Create a calendar, description: "Makes a new calendar collection (MKCALENDAR).", host: "{connection}", path: "/**", methods: [MKCALENDAR] }
+          - { id: change_calendar, name: Change a calendar's properties, description: "Renames a calendar or changes its settings (PROPPATCH).", host: "{connection}", path: "/**", methods: [PROPPATCH] }
+          - { id: move_event, name: Move or copy an event, description: "Moves or copies an event to another calendar (MOVE, COPY).", host: "{connection}", path: "/**", methods: [MOVE, COPY] }
+          - { id: send_scheduling_message, name: Send a scheduling message, description: "Posts to the server's scheduling outbox: it emails the attendees.", host: "{connection}", path: "/**", methods: [POST] }
+    approvals:
+      put_event:
+        title: create or change a calendar event
+        fields:
+          - { label: Title, source: body, steps: [ { ical: SUMMARY } ] }
+          - { label: Starts, source: body, steps: [ { ical: DTSTART } ] }
+          - { label: Ends, source: body, steps: [ { ical: DTEND } ] }
+          - { label: Repeats, source: body, steps: [ { ical: RRULE } ] }
+          - { label: Location, source: body, steps: [ { ical: LOCATION } ] }
+          - { label: Organizer, source: body, steps: [ { ical: ORGANIZER } ] }
+          - { label: Attendees, source: body, steps: [ { ical: ATTENDEE } ] }
+      delete_event:
+        title: delete a calendar event or object
+        fields:
+          - { label: Version, source: header, name: If-Match }
+      create_calendar:
+        title: create a calendar
+        fields: []
+      change_calendar:
+        title: change a calendar's properties
+        fields: []
+      move_event:
+        title: move or copy a calendar event
+        fields:
+          - { label: To, source: header, name: Destination }
+      send_scheduling_message:
+        title: send a scheduling message to attendees
+        fields:
+          - { label: Title, source: body, steps: [ { ical: SUMMARY } ] }
+          - { label: Starts, source: body, steps: [ { ical: DTSTART } ] }
+          - { label: Attendees, source: body, steps: [ { ical: ATTENDEE } ] }
+    agent:
+      instructions: |
+        Your calendar accounts are the `app: caldav` entries of `~/.aurora/servers.json`
+        (`name`, `app`, `url` = the calendar home). Use the Python caldav library through the
+        normal proxy; no password goes in code (the gateway adds it; any placeholder user works):
+        `uv run --no-project --with caldav==1.6.0 --with recurring-ical-events==3.8.2 python -`,
+        `client = caldav.DAVClient(url=<url>, username="x", password="x")`.
+        List: `client.principal().calendars()`. Events in a range:
+        `cal.search(start=a, end=b, event=True, expand=True)` (expand repeating events on the
+        server; if the server cannot, expand with `recurring_ical_events.of(cal).between(a, b)`).
+        Create with `If-None-Match: *` (`cal.save_event(...)` does); change with the event's ETag in
+        `If-Match`; on 412 re-read the event and retry. Delete with `event.delete()`. Adding
+        attendees makes the server email them: ask the person first. A 401 means the password
+        stopped working or the account moved to another server: ask the person to reconnect.
+        Convert times to the person's time zone (they said it, or ask).
