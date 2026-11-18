@@ -186,6 +186,9 @@ pub struct App {
     /// (phase 5, P5-ICS, D-273) the secret-link lane: the credential is the destination.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub secret_link: Option<SecretLink>,
+    /// (phase 5, P5-CALDAV, D-275) person-pinned servers: the connection, not the package, names the host.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub own_server: Option<OwnServer>,
     #[serde(default)]
     pub grants: Grants,
     /// (phase 4, P4-GSL, D-148, D-149) "this app is a git host that can serve a skill library":
@@ -1140,6 +1143,27 @@ pub struct SecretLink {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expect_prefix: Option<String>,
 }
+
+/// (phase 5, P5-CALDAV, D-275, C-845, SEC-109) "the person points their own credential at a server
+/// they choose" (`docs/09 §3.4 own_server`). The app has no `hosts[]` entry: the connection stores
+/// the server's origins (`hosts_field`, metadata: `host:port` strings) and the discovered `url`
+/// (`url_field`); the credential is injected only on those exact origins, over TLS.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OwnServer {
+    /// Metadata field holding the server's calendar-home URL (shown to the agent).
+    pub url_field: String,
+    /// Metadata field holding the pinned origins (`host:port`, at most [`OWN_SERVER_HOSTS_MAX`]).
+    pub hosts_field: String,
+    /// Inject stages (only `basic`, `bearer`, `header`).
+    #[serde(deserialize_with = "de_vec")]
+    pub inject: Vec<Inject>,
+}
+
+/// The whole-host placeholder of a tool of an `own_server` app: any origin the connection pinned.
+pub const CONNECTION_HOST: &str = "{connection}";
+/// Most origins one own-server connection may pin.
+pub const OWN_SERVER_HOSTS_MAX: usize = 4;
 
 /// The synthetic host suffix of the secret-link lane: `<connection_id>.link.aurora.internal`.
 pub const SECRET_LINK_HOST_SUFFIX: &str = ".link.aurora.internal";

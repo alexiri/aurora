@@ -17,8 +17,8 @@ use crate::claims::{ConflictGroup, claim_key, claims, conflict_groups, static_ho
 use crate::manifest::{
     About, Agent, Approval, BodyFormat, ClientAuth, ClientField, Connect, CredentialDecl, Database,
     Finalize, Grants, Hook, HostRule, INSTANCE_HOST, Inject, Instances, Intercept, Ldap, Library,
-    Manifest, MetadataDecl, Passthrough, RewriteHost, SecretLink, Tenant, Token, Tools, Transform,
-    UrlOrTemplate, de_opt, de_vec,
+    Manifest, MetadataDecl, OwnServer, Passthrough, RewriteHost, SecretLink, Tenant, Token, Tools,
+    Transform, UrlOrTemplate, de_opt, de_vec,
 };
 
 pub const FORMAT: u32 = 1;
@@ -219,6 +219,9 @@ pub struct AppEntry {
     /// (P5-ICS, D-273) the secret-link lane; absent in older snapshots (hashes unchanged).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub secret_link: Option<SecretLink>,
+    /// (P5-CALDAV, D-275) person-pinned servers; absent in older snapshots (hashes unchanged).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub own_server: Option<OwnServer>,
     /// (P4-GRANTS, D-123) copied from the manifest; absent in older snapshots = both false.
     #[serde(default)]
     pub grants: Grants,
@@ -493,6 +496,7 @@ pub fn compile_with_guides(
                 database: a.database.clone(),
                 ldap: a.ldap.clone(),
                 secret_link: a.secret_link.clone(),
+                own_server: a.own_server.clone(),
                 grants: a.grants,
                 library: a.library.clone(),
             });
