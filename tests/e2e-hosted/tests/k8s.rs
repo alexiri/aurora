@@ -1268,6 +1268,34 @@ async fn k7_cern_addons_source_to_phonebook_search_and_route() {
         t.contains("http 200") && t.contains("checksum"),
         "route: {t}"
     );
+    // (FIX-166) The package's per-path `query` injections (cern-maps 0.1.3 and later) must not make
+    // the gateway re-frame the request: maps.cern.ch's ArcGIS server (IIS) answers 500 to a GET whose
+    // empty body is sent chunked or as an open h2 stream, while /api tolerates it. Geocode, a place
+    // query and a route with LV95 stops all answer 200 through the gateway.
+    let t = run(
+        "[[http: GET https://maps.cern.ch/arcgis/rest/services/Batiments/GeocodeServer/findAddressCandidates?SingleLine=31]]"
+            .into(),
+    )
+    .await;
+    assert!(
+        t.contains("http 200") && t.contains("candidates"),
+        "geocode: {t}"
+    );
+    let t = run(
+        "[[http: GET https://maps.cern.ch/arcgis/rest/services/Hosted/LOC_MAPCERN/FeatureServer/0/query?where=OBJECTID%3D1]]"
+            .into(),
+    )
+    .await;
+    assert!(t.contains("http 200"), "get_place: {t}");
+    let t = run(
+        "[[http: GET https://maps.cern.ch/arcgis/rest/services/Routing/NetworkAnalysis/NAServer/Route/solve?stops=2492494.68,1121087.37;2493300,1121110&travelMode=3]]"
+            .into(),
+    )
+    .await;
+    assert!(
+        t.contains("http 200") && t.contains("checksum"),
+        "route (LV95 stops, injected outSR): {t}"
+    );
     // A path the package does not catalogue stays blocked.
     let t =
         run("[[http: GET https://maps.cern.ch/arcgis/rest/admin/services?f=json]]".into()).await;
