@@ -480,6 +480,34 @@ false }`. Only requested attributes on the app's list are returned, spelled as t
 them; values that are not UTF-8 or longer than 4 KiB are dropped, ≤ 100 values per attribute;
 more than `max_entries` entries are cut and `truncated` is true.
 
+## Person-pinned servers (phase 5, P5-CALDAV, D-275)
+
+Spec: `90 D-275`; manifest `09 §3.4 own_server`; contract `C-845`; invariant SEC-109. Code:
+`services/aurora-gateway/src/resolve.rs` (the resolver), `decide.rs` (the TLS rule),
+`crates/aurora-registry/src/identify.rs` (`identify_own_server_app`, `origin_of`) and, for connect,
+`services/aurora-api/src/domains/connect/service/own_server.rs`.
+
+**Resolution.** A request's origin (`host:port`) is looked up as before: a static package claim, a
+registered instance, a governed LLM endpoint or a reserved host that covers it wins, and then no
+person-pinned connection is considered. Otherwise the resolver takes the connections, in scope, of
+the snapshot's `own_server` apps whose stored `hosts` metadata contains exactly that origin
+(case-insensitive). Those are the candidates: grants, read-only, `x-aurora-connection-id` and 409
+`multiple_connections` apply as for any app. Two different apps pinning one origin fail closed (no
+credential, a warning). A connection that did not pin the origin (another host, another port, the
+same host over `http`) is never a candidate, so the request is uncredentialed.
+
+**Injection.** The snapshot's synthetic `own_server_hosts` entry supplies the `inject` stages and the
+tools' `{connection}` host matches any origin of the app. The credential leaves **only over TLS to the
+pinned port** (SEC-04/FIX-104's rule, with the request's own port as the claimed one; the loopback
+exemption exists only under the test flag). A host that a static claim covers *after* connect (a
+package update) is no longer injectable: the static claim wins at once.
+
+**Connect** never sends the credential to an origin before checking it: the entered URL and every
+redirect, principal and calendar-home origin must be `https`, pass the destination guard (private
+ranges only under `gateway.allowed_private`) and be held by no static claim, registered instance,
+governed LLM endpoint or Aurora address (`server_host_claimed`); Google (`caldav_needs_oauth`) and
+Microsoft (`caldav_unsupported`) hosts are refused first. At most four origins are stored.
+
 ## Secret-link lane (phase 5, P5-ICS, D-273)
 
 Spec: `90 D-273`; manifest `09 §3.4 secret_link`; contract `C-843`; invariant SEC-107. Code:

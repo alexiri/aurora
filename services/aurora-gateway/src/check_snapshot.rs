@@ -335,6 +335,18 @@ fn execute(
     let found = on_instance
         .and_then(|app| crate::apps::identify_instance_app(l, app, &inst_path))
         .or_else(|| identify_app(l, &host, port, &path));
+    // (D-275, SEC-109) No static claim or instance serves the origin and it is not a reserved
+    // host: an `own_server` app whose fixture connection pinned exactly this `host:port`.
+    let pinned = if found.is_none() && !l.is_reserved(&host, port) {
+        own_server_pin(l, &c.connection.metadata, &host, port)
+    } else {
+        None
+    };
+    let found = found.or_else(|| {
+        pinned
+            .as_deref()
+            .and_then(|a| aurora_registry::identify::identify_own_server_app(&l.snapshot, a))
+    });
     let Some(m) = found else {
         return Ok(json!({ "app": null, "tool": null }));
     };
@@ -424,7 +436,12 @@ fn execute(
     // (FIX-104, D-180) The transport rule the gateway applies: a claimed host's credential leaves
     // only over TLS to the claimed port; anything else is an uncredentialed request.
     if !crate::mechanisms::route::claim_transport_ok(
-        crate::mechanisms::route::claim_port(&m.entry.host),
+        // An own-server origin was matched by host and port: TLS to that very port.
+        if pinned.is_some() {
+            Some(port)
+        } else {
+            crate::mechanisms::route::claim_port(&m.entry.host)
+        },
         scheme == Scheme::Https,
         port,
     ) {
@@ -629,6 +646,22 @@ fn database_case(
         "tool": found.map(|(_, t)| t),
         "class": class,
     }))
+}
+
+/// (D-275, SEC-109) The `own_server` app whose fixture connection pinned exactly `host:port` (its
+/// metadata `hosts_field` array holds the origin, case-insensitively), as the resolver decides it.
+fn own_server_pin(l: &Loaded, metadata: &Value, host: &str, port: u16) -> Option<String> {
+    let origin = aurora_registry::identify::origin_of(host, port);
+    l.snapshot.apps.iter().find_map(|a| {
+        let o = a.own_server.as_ref()?;
+        metadata
+            .get(&o.hosts_field)?
+            .as_array()?
+            .iter()
+            .filter_map(Value::as_str)
+            .any(|h| h.eq_ignore_ascii_case(&origin))
+            .then(|| a.app_id.clone())
+    })
 }
 
 /// (P5-ICS, D-273, docs/06 §Secret-link lane) A request to `<connection id>.link.aurora.internal`:

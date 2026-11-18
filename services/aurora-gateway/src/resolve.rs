@@ -87,6 +87,10 @@ pub struct ResolvedHost {
     pub instances: Vec<InstanceHostRow>,
     /// App ids whose active host entries cover this host (open-lane `app` targets).
     pub host_apps: Vec<String>,
+    /// (D-275, SEC-109) The `own_server` app whose connections in scope pinned exactly this origin
+    /// (`conns` then holds only those connections). `None` whenever a static claim, a registered
+    /// instance, a governed LLM host or a reserved host covers the request: nothing is injected.
+    pub own_server_app: Option<String>,
     /// The workspace's published open-lane posture (RFE-003).
     pub ws_open_lane: aurora_llm::governance::OpenLanePosture,
 }
@@ -774,6 +778,87 @@ impl Resolver {
                 }
             }
         }
+        // (D-275, SEC-109) A person-pinned server: only where no static claim, no registered
+        // instance and no governed/reserved host covers the origin (SEC-59: nothing lands on a
+        // host another app or instance owns), and only for a connection whose stored `hosts`
+        // contain exactly this `host:port`. Anything else gets no connection, so no credential.
+        let mut own_server_app: Option<String> = None;
+        if let Some(l) = registry
+            .as_ref()
+            .filter(|l| !is_llm_host && !l.is_reserved(&k.host, k.port))
+            .filter(|_| !known_app_host)
+        {
+            let own_apps: Vec<(&str, &str)> = l
+                .snapshot
+                .apps
+                .iter()
+                .filter_map(|a| {
+                    a.own_server
+                        .as_ref()
+                        .map(|o| (a.app_id.as_str(), o.hosts_field.as_str()))
+                })
+                .collect();
+            if !own_apps.is_empty() {
+                let ids: Vec<String> = own_apps.iter().map(|(a, _)| (*a).to_owned()).collect();
+                let origin = aurora_registry::identify::origin_of(&k.host, k.port);
+                let rows = self
+                    .source
+                    .connections(k.org, k.ws, &ids)
+                    .await
+                    .map_err(fail)?;
+                let (restricted, available) = self
+                    .source
+                    .app_availability(k.org, k.ws)
+                    .await
+                    .map_err(fail)?;
+                for r in rows {
+                    let Some((_, field)) = own_apps.iter().find(|(a, _)| *a == r.app_id) else {
+                        continue;
+                    };
+                    let pinned = r
+                        .metadata
+                        .get(*field)
+                        .and_then(|v| v.as_array())
+                        .is_some_and(|a| {
+                            a.iter()
+                                .filter_map(|h| h.as_str())
+                                .any(|h| h.eq_ignore_ascii_case(&origin))
+                        });
+                    if !pinned {
+                        continue;
+                    }
+                    if restricted && !available.contains(&r.app_id) {
+                        unavailable_apps.insert(r.app_id.clone());
+                        continue;
+                    }
+                    if r.status == "disabled" {
+                        disabled_apps.insert(r.app_id);
+                        continue;
+                    }
+                    // Two different own-server apps pinning the same origin: fail closed.
+                    match &own_server_app {
+                        Some(a) if *a != r.app_id => {
+                            tracing::warn!(%origin, "own-server origin pinned by two apps");
+                            own_server_app = None;
+                            conns.clear();
+                            host_apps.clear();
+                            break;
+                        }
+                        _ => own_server_app = Some(r.app_id.clone()),
+                    }
+                    match ConnCand::from_row(r, k.org) {
+                        Ok(c) => {
+                            let app = l.snapshot.app(&c.app_id);
+                            conns.push(Arc::new(c.with_app_restrictions(app)));
+                        }
+                        Err(e) => tracing::warn!(error = %e, "skipping unusable connection"),
+                    }
+                }
+                if let Some(a) = &own_server_app {
+                    host_apps = vec![a.clone()];
+                }
+            }
+        }
         // An unparsable stored posture fails closed.
         let ws_open_lane =
             aurora_llm::governance::OpenLanePosture::parse(&ws_rows.open_lane_posture)
@@ -797,6 +882,7 @@ impl Resolver {
             known_app_host,
             instances,
             host_apps,
+            own_server_app,
             ws_open_lane,
         })
     }

@@ -62,6 +62,19 @@ jobs:
       - &sccache
         name: sccache (GitHub Actions cache backend, VTL-001)
         uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+      # sccache refuses to start when the Actions cache backend fails its startup read (503 "Egress is
+      # over the account limit", run 44341565403), and every rustc call through scripts/dev/rustc-wrapper.sh
+      # then fails. Make cargo's first call (`rustc -vV`) once here, which starts the server; if it fails,
+      # build without sccache (AURORA_SCCACHE=0 makes the wrapper a pass-through). Not `--start-server`
+      # (exit 2 when a server already runs) nor `--show-stats` (exit 0 even when none can start).
+      # CARGO_INCREMENTAL is dropped as the wrapper drops it.
+      - &sccache-probe
+        name: sccache probe (plain rustc when the cache backend is down)
+        run: |
+          if ! env -u CARGO_INCREMENTAL sccache rustc -vV >/dev/null 2>&1; then
+            echo "::warning::sccache cannot start (cache backend unavailable); building without it"
+            echo "AURORA_SCCACHE=0" >> "$GITHUB_ENV"
+          fi
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with: { shared-key: rust-lint }
       - &sqlx-cache
@@ -110,6 +123,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with: { targets: wasm32-wasip2 }
       - *sccache
+      - *sccache-probe
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with: { shared-key: rust-test, cache-on-failure: true }
       - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
@@ -180,6 +194,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
       - *sccache
+      - *sccache-probe
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with: { shared-key: rust-test, save-if: "false" }
       - *sqlx-cache
@@ -213,6 +228,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
       - *sccache
+      - *sccache-probe
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with: { shared-key: rust-test, save-if: "false" }
       - *sqlx-cache
@@ -265,6 +281,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
       - *sccache
+      - *sccache-probe
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with: { shared-key: rust-test, save-if: "false" }
       - name: Podman preflight (rootless, userns, netavark)
@@ -370,6 +387,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
       - *sccache
+      - *sccache-probe
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with: { shared-key: rust-test, save-if: "false" }
       - *sqlx-cache

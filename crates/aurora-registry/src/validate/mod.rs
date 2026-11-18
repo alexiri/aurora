@@ -22,10 +22,10 @@ use regex::Regex;
 
 use crate::Violation;
 use crate::manifest::{
-    Access, App, Connect, FieldType, Finalize, FormField, Hook, HostRule, INSTANCE_HOST, Inject,
-    LDAP_MAX_ATTRIBUTES, LDAP_MAX_ENTRIES, Ldap, Manifest, Probe, ProbeMethod,
-    SECRET_LINK_HOST_SUFFIX, SECRET_LINK_PREFIX_MAX, SECRET_LINK_TOOL_HOST, SecretLink, Source,
-    Store, TokenKind, Transform, UrlOrTemplate,
+    Access, App, CONNECTION_HOST, Connect, FieldType, Finalize, FormField, Hook, HostRule,
+    INSTANCE_HOST, Inject, LDAP_MAX_ATTRIBUTES, LDAP_MAX_ENTRIES, Ldap, Manifest, OwnServer, Probe,
+    ProbeMethod, SECRET_LINK_HOST_SUFFIX, SECRET_LINK_PREFIX_MAX, SECRET_LINK_TOOL_HOST,
+    SecretLink, Source, Store, TokenKind, Transform, UrlOrTemplate,
 };
 use crate::template::{CONTEXT_VARS, Declared, Place, Template};
 
@@ -115,7 +115,7 @@ fn instance_url_ok(raw: &str) -> bool {
 
 /// A host string that carries braces must be exactly `{instance}`.
 fn host_braces_ok(h: &str) -> bool {
-    h == INSTANCE_HOST || !h.contains(['{', '}'])
+    h == INSTANCE_HOST || h == CONNECTION_HOST || !h.contains(['{', '}'])
 }
 
 fn zone_ok(z: &str) -> bool {
@@ -701,12 +701,22 @@ fn app_rules(cx: &mut Ctx<'_>, clients: &BTreeSet<&str>, used: &mut BTreeSet<Hoo
                         "`{instance}` is only valid as a whole host in an app that declares `instances`",
                     );
                 }
-                match HostPattern::parse(&it.host) {
-                    Err(e) => cx.v("host_pattern_invalid", &format!("{p}/host"), e.to_string()),
-                    Ok(hp) => {
-                        // (P2-DBL-2) The tools of a database app are matched on the synthetic
-                        // host of the database lane (docs/06), which no host entry can claim.
-                        let covered = (app.database.is_some() && hp.as_str() == DATABASE_TOOL_HOST)
+                if it.host == CONNECTION_HOST {
+                    // (P5-CALDAV) any origin the connection pinned; valid only with `own_server`.
+                    if app.own_server.is_none() {
+                        cx.v(
+                            "connection_placeholder_misuse",
+                            &format!("{p}/host"),
+                            "`{connection}` is only valid in an app that declares `own_server`",
+                        );
+                    }
+                } else {
+                    match HostPattern::parse(&it.host) {
+                        Err(e) => cx.v("host_pattern_invalid", &format!("{p}/host"), e.to_string()),
+                        Ok(hp) => {
+                            // (P2-DBL-2) The tools of a database app are matched on the synthetic
+                            // host of the database lane (docs/06), which no host entry can claim.
+                            let covered = (app.database.is_some() && hp.as_str() == DATABASE_TOOL_HOST)
                             // (P5-ICS) ... and the tools of a secret-link app on the link lane's.
                             || (app.secret_link.is_some() && hp.as_str() == SECRET_LINK_TOOL_HOST)
                             || app.hosts.iter().any(|h| {
@@ -716,12 +726,13 @@ fn app_rules(cx: &mut Ctx<'_>, clients: &BTreeSet<&str>, used: &mut BTreeSet<Hoo
                                             && c.matches(hp.as_str(), 443))
                                 })
                             });
-                        if !covered {
-                            cx.v(
-                                "tool_host_uncovered",
-                                &format!("{p}/host"),
-                                format!("host `{}` is not covered by hosts[].match", it.host),
-                            );
+                            if !covered {
+                                cx.v(
+                                    "tool_host_uncovered",
+                                    &format!("{p}/host"),
+                                    format!("host `{}` is not covered by hosts[].match", it.host),
+                                );
+                            }
                         }
                     }
                 }
@@ -747,6 +758,7 @@ fn app_rules(cx: &mut Ctx<'_>, clients: &BTreeSet<&str>, used: &mut BTreeSet<Hoo
         .hosts
         .iter()
         .flat_map(|h| h.inject.iter())
+        .chain(app.own_server.iter().flat_map(|o| o.inject.iter()))
         .filter_map(|i| match i {
             Inject::Header { name, .. } | Inject::RemoveHeader(name) => {
                 Some(name.to_ascii_lowercase())
@@ -861,6 +873,9 @@ fn app_rules(cx: &mut Ctx<'_>, clients: &BTreeSet<&str>, used: &mut BTreeSet<Hoo
     if let Some(s) = &app.secret_link {
         secret_link_rules(app, s, cx);
     }
+    if let Some(o) = &app.own_server {
+        own_server_rules(app, o, cx);
+    }
     // No host entry can claim the link lane's synthetic hosts, section or not.
     for (i, h) in app.hosts.iter().enumerate() {
         if h.matcher
@@ -873,6 +888,82 @@ fn app_rules(cx: &mut Ctx<'_>, clients: &BTreeSet<&str>, used: &mut BTreeSet<Hoo
                 &format!("/hosts/{i}/match/host"),
                 "`*.link.aurora.internal` is the secret-link lane's host; no host entry may claim it",
             );
+        }
+    }
+}
+
+/// (P5-CALDAV, D-275, C-845, SEC-109) The shape of an own-server app (`docs/09 §3.4 own_server`):
+/// the server is the connection's, so the package declares no host; the credential is injected by
+/// the section's stages only (`basic`, `bearer`, `header`) and every tool is addressed to the
+/// connection's pinned origins (`{connection}`).
+fn own_server_rules(app: &App, o: &OwnServer, cx: &mut Ctx<'_>) {
+    if !app.hosts.is_empty()
+        || app.instances.is_some()
+        || app.database.is_some()
+        || app.ldap.is_some()
+        || app.secret_link.is_some()
+        || app.token.is_some()
+    {
+        cx.v(
+            "own_server_exclusive",
+            "/own_server",
+            "an own-server app declares no hosts[] and is not also instance-bound, a database, LDAP, secret-link or token app",
+        );
+    }
+    for (name, field) in [("url_field", &o.url_field), ("hosts_field", &o.hosts_field)] {
+        if !app.metadata.iter().any(|m| &m.name == field) {
+            cx.v(
+                "own_server_field",
+                &format!("/own_server/{name}"),
+                format!("`{field}` is not a declared metadata field"),
+            );
+        }
+    }
+    if o.inject.is_empty() {
+        cx.v(
+            "own_server_inject",
+            "/own_server/inject",
+            "at least one inject stage is required",
+        );
+    }
+    for (i, inj) in o.inject.iter().enumerate() {
+        let ip = format!("/own_server/inject/{i}");
+        let ts: Vec<&Template> = match inj {
+            Inject::Bearer(t) => vec![t],
+            Inject::Basic { user, password } => vec![user, password],
+            Inject::Header { name, value } => {
+                if FORBIDDEN_HEADERS.contains(&name.to_ascii_lowercase().as_str())
+                    && !name.eq_ignore_ascii_case("authorization")
+                {
+                    cx.v("own_server_inject", &ip, "this header may not be injected");
+                }
+                vec![value]
+            }
+            _ => {
+                cx.v(
+                    "own_server_inject",
+                    &ip,
+                    "an own-server app injects only `basic`, `bearer` or `header`",
+                );
+                vec![]
+            }
+        };
+        for t in ts {
+            cx.tmpl(t, Place::Inject, &ip, &[]);
+        }
+    }
+    if let Some(t) = &app.tools {
+        for (gname, g) in [("read", &t.read), ("write", &t.write)] {
+            let Some(g) = g else { continue };
+            for (j, it) in g.items.iter().enumerate() {
+                if it.host != CONNECTION_HOST {
+                    cx.v(
+                        "own_server_tool",
+                        &format!("/tools/{gname}/items/{j}/host"),
+                        "an own-server tool's host is `{connection}`",
+                    );
+                }
+            }
         }
     }
 }

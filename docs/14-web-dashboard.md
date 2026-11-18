@@ -300,6 +300,10 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
   not fit into a trailing **More ▾** menu, the selected tab is always shown).
 - **Field**: label, hint and error text linked by `aria-describedby`;
   `aria-invalid` sets the error border.
+- (phase 5, FIX-173, D-375) **SecretInput**: a value that is written but never read back. It is
+  hidden while typing and has a Show / Hide button named after its field, which reveals only what
+  was typed. It hides again when the dialog closes, when the form clears the value, or when the
+  field is disabled. Every secret field uses it, and a test fails on any other password input.
 - **Avatar**: initial on a tinted tile when there is no image.
 - **EmptyState**, **ErrorState**, **Loading**.
 - **Focus**: `:focus-visible` shows a 2 px `accent` ring with a 3 px
@@ -719,7 +723,12 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
     keys** tab (`?tab=llm`), plus "Agent access" for workspace owners;
     (phase 4, FIX-021, D-136) `no_default_model`: "This agent has an LLM key
     but no model is chosen." with "Choose a model" → the agent's Instructions
-    tab; the `no_model_key` message names the failing reasons from the turn
+    tab ((phase 5, FIX-170, D-372) the failing agent's page built with the route helper, never the
+    current path, landing on the Default model field; the copy names the cause the server gives:
+    the key's model list could not be read, or the key serves no allowed chat model. Since FIX-170 a
+    `litellm` agent without a model uses the first chat model its key serves, so this is rare; the
+    Default model field shows "Automatic: <model> (the first model your key serves)" then); the
+    `no_model_key` message names the failing reasons from the turn
     error). (FIX-029, D-160, C-615) Every start-failure error block (the
     C-585 codes) also carries **Retry now** → `POST
     /v1/agents/{agent}/sandbox/retry`, then re-posts the failed turn's text as
@@ -1832,7 +1841,8 @@ Approvals, Retention & storage, Skills, Directory sync, Previews, Terminal, Limi
   appears in the save confirmation; `http_needs_private_host` and `endpoint_host_claimed` land on
   the base URL field.
 - **Secrets** are write-only fields: "Set" / "Not set" with **Replace…** and **Remove**; the value
-  is never shown, and the page never receives it.
+  is never shown, and the page never receives it. A value being typed in Replace… can be checked
+  with Show (`SecretInput`, D-375); a stored value never can.
 - **Org pages**: "enforced by instance" hints (governance, BYO, retention) name the setting; for an
   instance admin they link to it (`/admin/settings/<section>#<key>`), for everyone else they read
   "Set by the instance administrator".
@@ -1911,7 +1921,7 @@ and for managed ones the hosts reporting it. The primary action is **Add connect
    callbacks, integration setup fields), publisher and signature state.
 3. **Settings**: a form generated from `instance_setup` with the shared form-field components
    (the ones the Apps connect window uses): text/url/number inputs with their defaults as
-   placeholders, `secret` as password inputs, `generated_secret` as a read-only "Generated
+   placeholders, `secret` as `SecretInput` (D-375), `generated_secret` as a read-only "Generated
    automatically" line. Validation errors from the API map to their fields.
 4. **Add**: one request (C-451). A 409 `stale_manifest` reloads the type and returns to step 2.
 
@@ -2381,6 +2391,45 @@ most frequent thing a person does in Aurora. It must be quick to read and quick 
   "Shared by <org>". They can give them to their agents, within the limit, and cannot change them.
 - When **Connect** asks where to connect, it lists **For the whole organization** first, then the
   person's own and shared workspaces, then other people's personal workspaces under a collapsed group.
+
+### 12. Outgoing webhook: connect steps, editor, card and Send test (P5-WEBHOOK-4, D-320, C-909, C-912, C-913)
+
+- **The connect steps are the journey's Sign in step for the app `webhook`.** There are three, with
+  "Step n of 3" above them; Back keeps what was typed:
+  1. **Name and address.** The address is a password-type field with a Show button. It is never shown again
+     after saving. Nothing is sent to it at connect.
+  2. **What the receiver expects.** One page, top to bottom:
+     - **Preset:** a list (None, then each preset). When the address's host is in a preset's
+       `suggest_for_hosts`, a notice offers "Use the <name> preset"; nothing is chosen for the person.
+     - **Start from an example** (folded): paste JSON, **Show the example**, then each value is a row with
+       an **Agent fills in** button (focusable; Enter or Space toggles). The name comes from the key, made
+       valid and unique; the type is inferred; description, Required and limits are editable. Choosing it again
+       (**Make fixed**) restores the constant. **Use this template** replaces the template and the values.
+     - **The template:** content type, the shared code field, and the values as one card each (name, kind,
+       description, Required, limits, allowed values, a schema for any JSON; Move up, Move down, Remove).
+     - **Preview:** sample values from each value's `example`, editable; the body is shown as text with secret
+       values as `«secret:name»`.
+  3. **Extras:** description with a counter, secret values (name and password field), headers, signing (Off,
+     Make one, Paste one), method, and limits.
+- **Errors sit on the control.** `webhook_config_invalid.fields[].path` is shown at the template, the value,
+  the header, the limit or the secret value it names (`slots.2.name`, `headers.0.value`, `rate.per_minute`);
+  a path with no control is listed at the top of step 2. `invalid_slot` marks the sample value. The refused
+  address goes back to step 1.
+- **The signing secret is shown once**, with Copy and "This will not be shown again", and is held only in the
+  dialog's state until the person confirms.
+- **The card** (an Accounts row, for people who manage it) adds the host (never the address), the effective limit
+  with its source ("30 a minute, 500 a day (your organization's limit)"), **Edit** and **Send test**.
+- **Edit** is steps 2 and 3 on the stored configuration. Secret values show their names with **Replace** and
+  **Delete**; signing has Keep, Make a new one, Paste one and Off. A limit is checked against the ceiling when
+  that is what applies. Changing the address is Reconnect.
+- **Send test** has a values form from the slots, **Dry run** and **Send**. Send asks "This really calls the
+  webhook". The answer shows the status, delivery id, content type and the body as text (4 KiB, with a note when
+  cut), never as HTML.
+- **The shared code field** (`ui/code-field`) is the Files viewer's editor as a labelled control: the
+  dashboard's tokens in both themes, text only, Esc then Tab leaves it.
+- **Settings:** the organization's switch and the two limits are a card on the organization's Apps tab (owners
+  change them). The instance's `outgoing_webhooks` section is on Apps & accounts › Advanced, through the generic
+  section form.
 
 ### Rules for every screen in this section
 

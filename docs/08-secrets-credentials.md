@@ -701,9 +701,30 @@ one. Like all credentials, LLM secrets are used only when granted.
   provider default, no allow-list, no static `models` — the normal case for a
   LiteLLM endpoint configured with only `base_url`) → the turn fails with
   `no_model_key`'s sibling **`no_default_model`** and the dashboard links to the
-  agent's model setting (Instructions). The live model listing is **never**
-  used to pick a model automatically: its order is not meaningful and it mixes
-  chat, embedding and image models.
+  agent's model setting (Instructions). D-136 said the live model listing is never used to
+  pick a model automatically. (phase 5, FIX-170, D-372) That is withdrawn for `litellm`, and
+  the default selection now follows this order:
+  - **Served check.** On a `litellm` endpoint, a model the key's live listing
+    (`GET /v1/models`, the key's own namespace) does not contain is never chosen as the
+    default. The endpoint `default_model` is used only when the listing contains it, or when
+    the listing could not be read. Otherwise readiness warns `default_model_not_served` and
+    the chain goes on. One endpoint may serve keys from several LiteLLM namespaces whose model
+    names differ.
+  - **Automatic pick (`source = "key_listing"`, `litellm` only).** Next, the **first** model
+    of the key's listing **in LiteLLM's order** (the operator's order), that is allowed and is
+    a chat model. A model counts as a chat model unless `GET <base>/model/info` gives it a
+    non-chat `model_info.mode` (embedding, image, audio, rerank, …). Only the public
+    `model_name` is a candidate, never `litellm_params.model`.
+  - The allow-list's first entry and the static `models` apply only when the listing could
+    not be read. `no_default_model` remains for "nothing resolves": the listing failed with no
+    static fallback, or the key serves no allowed chat model. The server message says which.
+  - The listing is the key's, and it is the key the gateway injects for this agent on that
+    endpoint (`06` step 6). It is cached per key (`MODEL_CACHE_TTL`). No database transaction
+    is held across the call.
+  - An override, or a role, that the key's known listing does not contain is still used
+    (never re-pointed), with the readiness warning `override_not_served` / `role_not_served`.
+  - Other providers are unchanged: their listings carry no mode, and their order is not the
+    operator's.
 
 #### Model readiness (phase 4, FIX-019, D-136)
 
@@ -725,8 +746,11 @@ first failing check in this order is its `reason`:
 
 A key with no failing check is `usable`. `default` is what the next turn would
 use without an override (`{ endpoint_id, model_id }`), or `null` when no model
-resolves (`no_default_model`). An endpoint whose provider lists models live and
-that has no `default_model` logs a **warning at start** (`15`); it still starts.
+resolves (`no_default_model`). (phase 5, FIX-170, D-372) It also carries `warnings`:
+`default_model_not_served` and `override_not_served` (§Model selection). A `litellm` endpoint
+without `default_model` is no longer a warning anywhere (start, Setup, settings preview): its
+agents use the first chat model each key serves. Any other endpoint whose provider lists models
+live and that has no `default_model` logs a **warning at start** (`15`); it still starts.
 (phase 5, P4-LLM spec batch) That covers `openai`, `bedrock` and `openai_compatible` as
 well; `azure_openai` and `vertex` require `default_model` (static lists), so
 `no_default_model` cannot arise on them. Since SET-3 the same warning is a preview warning of
@@ -738,7 +762,8 @@ Admin › LLM endpoints.
 - (phase 5, P5-MODELS, D-303, C-878) Readiness also reports the role resolution of the default
   selection. For each role it gives the model, its source, and a **warning**: `role_unset` (the role is
   unset on an endpoint whose provider is not `anthropic`) or `role_not_allowed` (the endpoint's role is
-  not allowed for this org). It also gives `roles_dropped`, and `subagent_warning = subagent_role_unset`
+  not allowed for this org), or (FIX-170, D-372) `role_not_served` (a `litellm` key's known listing does
+  not contain the role's model; it is still used). It also gives `roles_dropped`, and `subagent_warning = subagent_role_unset`
   when the subagent default names a role that resolves to nothing on a non-`anthropic` endpoint.
   Warnings never fail a turn.
 

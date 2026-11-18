@@ -27,6 +27,7 @@ import { Section } from "@/components/ui/section";
 import { useScimSettings } from "@/lib/api/scim";
 import type { Org } from "@/lib/api/queries";
 import { UsageView } from "@/components/usage/usage-view";
+import { OutgoingWebhooksOrgSettings } from "@/components/webhook/org-webhook-settings";
 import { type TABS } from "@/lib/routes";
 
 type Tabs<K extends keyof typeof TABS> = (typeof TABS)[K][number];
@@ -91,6 +92,8 @@ export function OrgAppsPage() {
                     {/* (C-924) Above the tab's content, not inside the list. */}
                     <OrgSignInGaps orgId={org.id} orgSlug={slug} />
                     <AvailabilityView orgId={org.id} orgSlug={slug} canEdit />
+                    {/* (P5-WEBHOOK-4, C-913) The organization's switch and limits for Outgoing webhooks. */}
+                    <OutgoingWebhooksOrgSettings org={org} />
                   </div>
                 </EmbeddedPage>
               ),
