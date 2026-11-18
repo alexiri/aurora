@@ -119,13 +119,17 @@ impl W {
     async fn runner(&self, name: &str, harnesses: &[&str]) {
         let caps = json!({ "backend": "podman", "max_sandboxes": 7, "harnesses": harnesses,
             "defaults": { "cpu_millis": 2000, "memory_mib": 4096, "pids": 512, "home_gib": 5 } });
+        // The token hash is unique: one per runner name.
+        let mut token_hash = [0u8; 32];
+        let n = name.len().min(32);
+        token_hash[..n].copy_from_slice(&name.as_bytes()[..n]);
         sqlx::query(
             "INSERT INTO runners (id, name, token_hash, installation_fingerprint, capabilities) \
              VALUES ($1, $2, $3, $4, $5)",
         )
         .bind(Uuid::now_v7())
         .bind(name)
-        .bind(&[0u8; 32][..])
+        .bind(&token_hash[..])
         .bind(format!("fp-{name}"))
         .bind(caps)
         .execute(self.h.pool())
@@ -218,6 +222,23 @@ async fn a_written_value_is_read_by_the_next_use_without_a_restart() {
         v.to_string()
             .contains("skills.library.refresh_interval_secs"),
         "{v}"
+    );
+}
+
+#[tokio::test]
+async fn the_agents_page_lists_the_harnesses_runners_offer_and_null_with_no_runner() {
+    let w = world().await;
+    // (C-1028) Nothing is judged without a runner, so there is nothing to list.
+    let sec = w.section("agents").await;
+    assert_eq!(sec["extra"]["offered_harnesses"], json!(null), "{sec}");
+    // The union of what the registered runners report, sorted.
+    w.runner("a", &["codex", "claude-code"]).await;
+    w.runner("b", &["goose", "codex"]).await;
+    let sec = w.section("agents").await;
+    assert_eq!(
+        sec["extra"]["offered_harnesses"],
+        json!(["claude-code", "codex", "goose"]),
+        "{sec}"
     );
 }
 

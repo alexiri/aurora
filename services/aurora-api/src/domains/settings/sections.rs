@@ -27,7 +27,14 @@ pub async fn extra(
         // (C-778) Where organizations stand against the instance ceiling.
         "governance" => Some(json!({ "orgs_url": "/v1/admin/settings/governance/orgs" })),
         // (C-782) The runners' sandbox sizes, `max_sandboxes` and harnesses, read-only (D-235(a)).
-        "agents" => Some(json!({ "runners": runners(state).await? })),
+        // (C-1028) `offered_harnesses`: the union `harness_not_available` judges by, `null` with no runner.
+        "agents" => {
+            let offered = super::service::runner_harnesses(state).await?;
+            Some(json!({
+                "runners": runners(state).await?,
+                "offered_harnesses": if offered.is_empty() { Value::Null } else { json!(offered) },
+            }))
+        }
         // (C-782, D-237(d)) Whether the deployment provides the wiring; the switch cannot be
         // turned on without it.
         "terminal" => Some(json!({ "available": state.ops().terminal.available })),
