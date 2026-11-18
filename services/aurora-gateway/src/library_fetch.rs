@@ -481,6 +481,7 @@ async fn fetch(f: &LibraryFetch, req: &FetchRequest) -> Response {
             response_headers: http::HeaderMap::new(),
             retry: None,
             ldap: None,
+            link: None,
         };
         let sent = tokio::time::timeout(FETCH_TIMEOUT, async {
             let resp = f.upstream.send(prepared).await?;

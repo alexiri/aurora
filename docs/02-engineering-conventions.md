@@ -274,6 +274,7 @@ overridden by the named configuration key (`15`).
 | `ATTACH_OUT_DAILY_PER_CONVERSATION` | 200 MiB | — | 10 |
 | `ATTACH_CAPTION_MAX` | 500 chars | — | 10 |
 | `ATTACH_PENDING_TTL` | 24 h | — | 10 |
+| `SECRET_LINK_RESPONSE_MAX` / `SECRET_LINK_CACHE_TTL` / `SECRET_LINK_CACHE_MAX_BYTES` / `SECRET_LINK_REDIRECTS_MAX` | (phase 5, P5-ICS, D-273, C-843) 20 MiB body read from a secret link (larger → 502 `link_response_too_large`, never cached) / 300 s a complete `200` body is answered from the gateway's memory / 64 MiB of cached bodies per replica (least recently used evicted) / 3 redirect hops followed (`https` only, guard and egress policy per hop) | — | 06, 09 |
 | `LLM_SIGN_BODY_MAX` | (phase 5 (D-138, moved from phase 4), P4-LLM) 8 MiB request body buffered to SigV4-sign a Bedrock request (larger → 413 `llm_request_too_large`) | — | 06, 08 |
 | `LLM_TOKEN_MINT_TIMEOUT` / `LLM_TOKEN_SKEW` | (phase 5 (D-138, moved from phase 4), P4-LLM) 10 s per OAuth2 token mint (Vertex) / tokens cached until 300 s before expiry, at most 55 min; (P4-LLM spec batch, D-261) the same for Entra tokens and STS sessions (an STS session never past its `Expiration`) | — | 08 |
 | `LLM_TOKEN_MINT_FAILURE_HOLD` | (phase 5, P4-LLM spec batch, D-261) 5 s: after a failed mint the gateway answers 502 `credential_unavailable` for the same `(secret_id, value_version, mode, region)` without calling the token endpoint again | — | 06, 08 |

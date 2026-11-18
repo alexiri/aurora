@@ -68,6 +68,10 @@ pub struct PreparedRequest {
     /// (D-251) Set for a request on an LDAP app's synthetic host: the approved `ldap` block the
     /// request is translated with instead of being forwarded.
     pub ldap: Option<aurora_registry::manifest::Ldap>,
+    /// (P5-ICS, D-273, C-843) Set for an admitted request on a secret-link connection's synthetic
+    /// host: answered by the secret-link lane (`seclink`), never forwarded as received. It carries
+    /// its own request-log report, so `hook` is `None` for it.
+    pub link: Option<crate::seclink::LinkFetch>,
 }
 
 /// Rebuilds a request with fresh credentials after the upstream answered with a
@@ -120,6 +124,7 @@ impl PipelineRequest {
             response_headers: HeaderMap::new(),
             retry: None,
             ldap: None,
+            link: None,
         }
     }
 }
