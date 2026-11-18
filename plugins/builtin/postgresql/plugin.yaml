@@ -1,6 +1,6 @@
 package:
   id: postgresql
-  version: 1.1.2
+  version: 1.2.0
   contract: 1
   min_core: 0.1.0
   publisher: aurora
@@ -97,16 +97,12 @@ apps:
           - { id: admin, description: "Runs administration commands: VACUUM, ANALYZE, SET, LISTEN, DO, CALL and unlisted functions.", name: "Administer (VACUUM, ANALYZE, SET, LISTEN, DO, CALL, unlisted functions)", host: "*.db.aurora.internal", path: /admin, methods: [POST] }
     database: { engine: postgres }
     agent:
+      summary: "Run SQL on a PostgreSQL database with psql: read freely, changes wait for approval."
       instructions: |
-        Each PostgreSQL connection granted to you is a libpq service. Use
-        `psql service=<name> -c 'select 1'` (the name is listed under the account above), or
-        any PostgreSQL driver with the service file the environment already points at
-        (`PGSERVICEFILE`). Do not look for or ask for a database password: there is none for you;
-        the connection goes through the Aurora gateway, which holds the real login and checks
-        every statement.
-        Reads (SELECT, SHOW, EXPLAIN) are allowed by default. INSERT/UPDATE/DELETE, schema changes
-        (CREATE, ALTER, DROP) and administration (VACUUM, SET of server settings, DO, CALL, most
-        functions) are held for a person's approval, and a refused statement answers with SQLSTATE
-        42501 and the reason. Some statements are never permitted: ALTER SYSTEM, SET ROLE, COPY to
-        a program or file, large-object file functions, dblink and file-reading functions. Send
-        one statement at a time and keep each under 1 MiB.
+        Each connection granted to you is a libpq service: `psql service=<name> -c 'select 1'` (the
+        name is listed with the account). Do not look for or ask for a database password: there is
+        none for you; the Aurora gateway holds the login and checks every statement. Reads are
+        allowed; writes, schema changes and administration are held for a person's approval
+        (refusals answer SQLSTATE 42501 with the reason). Send one statement at a time, under 1 MiB.
+      guide:
+        - { file: using-psql.md, title: "Using psql: the four classes, never-permitted statements, habits" }

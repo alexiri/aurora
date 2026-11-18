@@ -1,6 +1,6 @@
 package:
   id: google-workspace
-  version: 1.0.4
+  version: 1.1.0
   contract: 1
   min_core: 0.1.0
   publisher: aurora
@@ -129,6 +129,7 @@ apps:
           - { label: Add label, source: body, steps: [ { json: /addLabelIds/0 } ] }
           - { label: Remove label, source: body, steps: [ { json: /removeLabelIds/0 } ] }
     agent:
+      summary: "Gmail: search and read mail, send messages and manage labels."
       instructions: |
         Gmail is connected through the Gmail API (https://gmail.googleapis.com/gmail/v1). Aurora adds the
         credentials; never ask for or write a token. Use the user id "me". Search with
@@ -239,6 +240,7 @@ apps:
           - { label: Event, source: path, segment: 6 }
         link: "https://calendar.google.com/calendar/"
     agent:
+      summary: "Google Calendar: read events and free/busy, create and change events."
       instructions: |
         Google Calendar is connected through the Calendar API v3 (https://www.googleapis.com/calendar/v3).
         Aurora adds the credentials; never ask for or write a token. The calendar id "primary" is the
@@ -380,6 +382,7 @@ apps:
           - { label: Domain, source: body, steps: [ { json: /domain } ] }
         link: "https://drive.google.com/drive/"
     agent:
+      summary: "Google Drive: find, download, export, upload and organize files in Drive."
       instructions: |
         Google Drive is connected through the Drive API v3 (https://www.googleapis.com/drive/v3; uploads go to
         https://www.googleapis.com/upload/drive/v3). Aurora adds the credentials; never ask for or write a

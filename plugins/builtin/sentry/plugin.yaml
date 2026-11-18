@@ -1,6 +1,6 @@
 package:
   id: sentry
-  version: 2.0.2
+  version: 2.1.0
   contract: 1
   min_core: 0.1.0
   publisher: aurora
@@ -90,6 +90,7 @@ apps:
           - { label: Assigned to, source: body, steps: [ { json: /assignedTo } ] }
         link: "https://{request.host}/organizations/{path.4}/issues/{path.6}/"
     agent:
+      summary: "Sentry issues, events and projects: find unresolved issues, read a stack trace, resolve an issue."
       instructions: |
         Sentry is connected. Use the API at the address shown with the account: https://sentry.io,
         https://us.sentry.io (US region), https://de.sentry.io (EU region) or a self-hosted server
