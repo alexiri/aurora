@@ -427,6 +427,12 @@ impl HarnessUpstream {
         shell_tool: &str,
         delegate_tool: &str,
     ) -> Self {
+        Self::start_on("127.0.0.1", mcp_tool, shell_tool, delegate_tool).await
+    }
+
+    /// [`HarnessUpstream::start_with_all_tools`] listening on `ip` (the hosted e2e uses `127.0.0.2`,
+    /// outside the sandbox's `NO_PROXY`, so the model call goes through the gateway).
+    pub async fn start_on(ip: &str, mcp_tool: &str, shell_tool: &str, delegate_tool: &str) -> Self {
         let me = Self {
             seen: Arc::default(),
             base: String::new(),
@@ -480,7 +486,9 @@ impl HarnessUpstream {
                     }
                 }
             });
-        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let l = tokio::net::TcpListener::bind(format!("{ip}:0"))
+            .await
+            .unwrap();
         let base = format!("http://{}", l.local_addr().unwrap());
         tokio::spawn(async move {
             let _ = axum::serve(l, app).await;
