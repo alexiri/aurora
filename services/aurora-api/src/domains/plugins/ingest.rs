@@ -460,6 +460,18 @@ async fn ingest_inner(
             plugins::put_blob(&mut *tx, &hex(&Sha256::digest(wasm)), "hooks_wasm", wasm).await?;
         }
         plugins::put_blob(&mut *tx, &digest, "archive", bytes).await?;
+        // (P5-GUIDE-1, C-642) One blob per agent guide file, keyed by the digest of its bytes.
+        for (path, content) in &pkg.files {
+            if path.starts_with(aurora_registry::package::AGENT_DIR) {
+                plugins::put_blob(
+                    &mut *tx,
+                    &hex(&Sha256::digest(content)),
+                    "agent_guide",
+                    content,
+                )
+                .await?;
+            }
+        }
     }
     let mut superseded: Option<AuditEvent> = None;
     if auto && let Ok(m) = &parsed {

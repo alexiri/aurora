@@ -2,6 +2,7 @@
 //! offline; validation, compilation and fixture runs reuse the registry and gateway code.
 
 mod cmds;
+mod guide;
 mod hooktest;
 mod pack;
 
@@ -84,6 +85,23 @@ pub enum PluginCmd {
         #[arg(long)]
         out: PathBuf,
     },
+    /// Render what an agent would find in `.aurora/apps/<app_id>/` for a sample account:
+    /// `guide.md`, `tools.md`, the recipes and the reference files (docs/24 §10).
+    Guide {
+        /// Package archive or source directory.
+        #[arg(default_value = ".")]
+        package: PathBuf,
+        /// One app of the package (default: every app).
+        #[arg(long)]
+        app: Option<String>,
+        /// The sample account's grant: `custom` marks read tools allowed and write tools needing
+        /// approval.
+        #[arg(long, default_value = "custom", value_parser = ["full", "custom"])]
+        access: String,
+        /// Write `<out>/<app_id>/<file>` instead of printing to stdout.
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
     /// Render the setup guide and permissions table.
     Docs {
         package: PathBuf,
@@ -125,6 +143,12 @@ pub fn run(cmd: PluginCmd) -> Result<i32> {
         ),
         PluginCmd::Sign { package, key, out } => cmds::sign(&package, &key, out),
         PluginCmd::Keygen { out } => cmds::keygen(&out),
+        PluginCmd::Guide {
+            package,
+            app,
+            access,
+            out,
+        } => guide::guide(&package, app.as_deref(), &access, out.as_deref()),
         PluginCmd::Docs { package, format } => cmds::docs(&package, &format),
     }
 }

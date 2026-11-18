@@ -1,5 +1,6 @@
 //! Validation rules (09 §6): in-manifest rules ([`manifest`]) and full package
 //! rules ([`package`]). `hooks.wasm` world-shape checks: [`hooks_component`].
+pub mod agent_guide_rules;
 mod hooks_component;
 mod library_rules;
 mod package_rules;
@@ -799,6 +800,9 @@ fn app_rules(cx: &mut Ctx<'_>, clients: &BTreeSet<&str>, used: &mut BTreeSet<Hoo
     }
     // agent
     if let Some(ag) = &app.agent {
+        // (P5-GUIDE-1) the guide keys; the base path is the app's, without the `/agent` part.
+        let base = cx.base.clone();
+        agent_guide_rules::manifest_rules(ag, &base, &mut cx.out);
         if ag.instructions.chars().count() > AGENT_SNIPPET_MAX {
             cx.v(
                 "agent_instructions_too_long",

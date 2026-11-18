@@ -84,6 +84,7 @@ mod pending_access;
 mod permission_matrix;
 mod placement;
 mod plugins;
+mod plugins_agent_guide;
 mod plugins_lifecycle;
 mod plugins_supersede;
 mod plugins_trust;

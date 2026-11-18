@@ -7,6 +7,7 @@
 use std::fmt::Write as _;
 
 use aurora_core::limits::AGENT_SNIPPET_MAX;
+use aurora_core::sanitize::{fenced, inline};
 use serde::{Deserialize, Serialize};
 
 const NAME_MAX: usize = 120;
@@ -143,43 +144,6 @@ fn models_fragment(m: &ModelsInfo) -> String {
     }
     o.push_str("\n\n");
     o
-}
-
-/// One line of untrusted text: control characters become spaces, runs collapse, length clamped.
-fn inline(s: &str, max: usize) -> String {
-    let cleaned: String = s
-        .chars()
-        .map(|c| if c.is_control() { ' ' } else { c })
-        .collect();
-    let mut out = String::new();
-    for w in cleaned.split_whitespace() {
-        if !out.is_empty() {
-            out.push(' ');
-        }
-        out.push_str(w);
-    }
-    out.chars().take(max).collect()
-}
-
-/// Untrusted block text inside a code fence longer than any backtick run it contains.
-fn fenced(s: &str, max: usize) -> String {
-    let body: String = s
-        .chars()
-        .filter(|c| *c == '\n' || *c == '\t' || !c.is_control())
-        .take(max)
-        .collect();
-    let mut run = 0usize;
-    let mut longest = 0usize;
-    for c in body.chars() {
-        if c == '`' {
-            run += 1;
-            longest = longest.max(run);
-        } else {
-            run = 0;
-        }
-    }
-    let fence = "`".repeat((longest + 1).max(3));
-    format!("{fence}text\n{}\n{fence}\n", body.trim_end())
 }
 
 /// Display name of a memory language (`simple` = no stemming, i.e. no particular language).

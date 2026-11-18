@@ -195,6 +195,46 @@ pub fn label(s: &str) -> String {
     one_line(s, 80)
 }
 
+/// (P5-GUIDE-1, moved from the supervisor's instruction renderer) One line of untrusted text for
+/// platform-voiced files: control characters become spaces, runs collapse, hard clamp to `max`
+/// characters (no ellipsis).
+pub fn inline(s: &str, max: usize) -> String {
+    let cleaned: String = s
+        .chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect();
+    let mut out = String::new();
+    for w in cleaned.split_whitespace() {
+        if !out.is_empty() {
+            out.push(' ');
+        }
+        out.push_str(w);
+    }
+    out.chars().take(max).collect()
+}
+
+/// (P5-GUIDE-1, moved from the supervisor) Untrusted block text inside a code fence longer than
+/// any backtick run it contains; control characters other than LF and TAB are dropped.
+pub fn fenced(s: &str, max: usize) -> String {
+    let body: String = s
+        .chars()
+        .filter(|c| *c == '\n' || *c == '\t' || !c.is_control())
+        .take(max)
+        .collect();
+    let mut run = 0usize;
+    let mut longest = 0usize;
+    for c in body.chars() {
+        if c == '`' {
+            run += 1;
+            longest = longest.max(run);
+        } else {
+            run = 0;
+        }
+    }
+    let fence = "`".repeat((longest + 1).max(3));
+    format!("{fence}text\n{}\n{fence}\n", body.trim_end())
+}
+
 /// [`block`] (clamped to `max` chars *before* escaping, so the result may be
 /// longer) followed by markdown/HTML escaping so a renderer shows it as text.
 ///

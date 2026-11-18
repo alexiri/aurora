@@ -87,6 +87,38 @@ host in the egress list), so a fixture cannot pass with output the host would re
 | docs | `aurora plugin docs` renders (md and html) twice with identical output and contains the permissions table. Rendered output is regenerated, not committed. |
 | secrets | `scripts/guards/no-live-tokens.sh` (part of `scripts/guards/run-all.sh`) fails on anything token-shaped under `plugins/builtin/**/tests`. |
 
+## Agent guides (P5-GUIDE-1, `docs/24 §3` and `§10`)
+
+What an agent is told about an app costs context only when it uses the app. Four kinds of text, each
+with its own job:
+
+- **`agent.summary`**: one line of at most 160 characters, what the app is for, **naming the tasks
+  it serves** ("Events, timetables, room search and booking"). It is the only plugin text in the
+  instruction file, so it is what makes an agent pick the app. Required when `guide` is present.
+- **`agent.instructions`** (the essentials): what must be known *before the first request* (which
+  account rules apply, what never to retry, what the gateway adds for the agent), at most about
+  600 characters. Endpoint lists and parameter tables do not belong here.
+- **A recipe** (`kind: recipe`, a `.md` file): one task a person asks for, with a title phrased as the
+  task ("Find a free room and book it"), as numbered steps with the exact requests (or
+  `aurora-agent` calls), the pitfalls, and how to confirm the result. Recipes are text: they run
+  nothing and grant nothing.
+- **A reference file** (everything else, one topic per file, `.md|.txt|.json|.yaml|.tsv|.csv`): the
+  first screen of each file says what is in it, so an agent can stop reading early.
+
+Files live in `agent/<app_id>/<file>`, are listed in `agent.guide` (listed ⇔ present), are UTF-8
+text with LF line ends (no CR, NUL, other control characters or byte-order mark), at most 64 KiB
+each, 24 files and 256 KiB per app. `guide.md`, `tools.md` and `api.json` are reserved: Aurora
+writes them. Fill the tool `description`s too: `tools.md` prints each one after the tool's name.
+Run `aurora plugin guide <dir> --app <id>` to see the result; `aurora plugin validate` runs the
+rules.
+
+Fixture notes: `plugins/fixtures/fixture-guide` is a valid package with a summary, essentials, a
+recipe, a reference file and a data file; `fixture-invalid-agent-guide-*` are the rejected shapes
+(`expected-invalid.txt`). Two of them (`not-text`, `too-large`) have their file written by
+`scripts/fixtures/mkfixture.py` (a CR, 64 KiB + 1) because they cannot be checked in as text.
+`services/aurora-cli/tests/golden/guide/` is the checked-in output of `aurora plugin guide` on
+`fixture-guide`.
+
 ## Guide placeholders and approval titles (P5-UX-13, D-334, C-940)
 
 `GET /v1/apps/{app}/guide?workspace_id=|org_id=` fills these `{{aurora.…}}` placeholders for the person

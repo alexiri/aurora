@@ -106,11 +106,8 @@ TERMINALS_PER_AGENT no-row
 TERMINALS_PER_USER no-row
 TERMINAL_WAKE_WAIT no-row
 # P5-GUIDE (spec batch, 2026-11-15) — P5-GUIDE-1 adds the AGENT_SUMMARY/AGENT_GUIDE_*:
-AGENT_SUMMARY_MAX doc-only
-AGENT_GUIDE_FILES_MAX doc-only
-AGENT_GUIDE_FILE_MAX doc-only
-AGENT_GUIDE_APP_MAX doc-only
-AGENT_GUIDE_SYNC_MAX doc-only
+# (the sync budget is read by P5-GUIDE-2, which removes this line)
+AGENT_GUIDE_SYNC_MAX unread
 # P5-GUIDE-6 adds the operations and aurora-agent limits:
 AGENT_OPERATIONS_MAX doc-only
 AGENT_OPERATIONS_FILE_MAX doc-only
