@@ -1946,11 +1946,20 @@ impl PolicyHandler {
             self.touch(conn.id);
             let fb = self.fallback(&rv, app_match.as_ref(), &ungranted, &host);
             let passthrough = pass_challenge(app_match.as_ref());
-            // (D-275) A person-pinned server's stages place nothing in the URL (`basic`, `bearer`,
-            // `header` only), and its answers name the account (CalDAV hrefs carry the username the
-            // agent's own URL already holds): nothing there is an echo of an injected value.
+            // (D-275, SEC-109) A person-pinned server's stages place nothing in the URL (`basic`,
+            // `bearer`, `header` only), and its answers name the account (CalDAV hrefs carry the
+            // username): the non-secret fields are no needles, but every secret field (raw,
+            // percent-encoded, base64, and base64 of `user:secret`) is: a server reflecting the
+            // `Authorization` header or the password is withheld.
             let echo = if own_server {
-                Vec::new()
+                inject::secret_needles(
+                    m.app
+                        .credentials
+                        .iter()
+                        .filter(|c| c.secret)
+                        .filter_map(|c| exec.credential(&c.name)),
+                    exec.credential("username"),
+                )
             } else {
                 inject::url_needles(
                     exec.string_values().map(str::as_bytes),

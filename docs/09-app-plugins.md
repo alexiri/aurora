@@ -822,6 +822,14 @@ host lookup); both are absent when no app has the section, so existing snapshot 
 Fixtures give the connection's `metadata.hosts` and send the request to a pinned origin. The reference
 package is `caldav` (`plugins/builtin/caldav`).
 
+*Open item (P5-CALDAV): `send_scheduling_message` has no "Ask by default".* The manifest has no
+per-tool default (a grant is a level: read / ask / act, or a custom list), so the tool is an ordinary
+write tool of the package: a connection with write access at the Ask level asks for it, one at the
+Act level (or a custom grant that allows it) lets the agent post to the server's scheduling outbox,
+which emails the attendees, without asking. A workspace that wants approval for it whatever the
+level gives the agent a **custom grant** on that connection with `send_scheduling_message` in
+`ask_tools`. A per-tool default would be a new manifest key; it is not built.
+
 **`ical` decoder** (an approval summary step, `§5`): `{ ical: SUMMARY }` yields every value of that
 property of the `VEVENT`s in an iCalendar body, joined with `, `. A `DTSTART`/`DTEND`/`DUE` carries its
 `TZID` (or `UTC` for a `Z` time) and an `ATTENDEE`/`ORGANIZER` its common name before the address, so an

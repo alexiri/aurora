@@ -65,7 +65,30 @@ fn basic(user: &str) -> String {
     )
 }
 
+/// The upstream echoes the whole request; the gateway withholds an answer holding the password or
+/// the Basic value, so the test asks for it hex-encoded (`x-echo-hex`) and decodes it here.
 async fn call(env: &Env, method: &str, host: &str, path: &str, extra: &str) -> Reply {
+    let mut r = call_plain(
+        env,
+        method,
+        host,
+        path,
+        &format!("x-echo-hex: 1\r\n{extra}"),
+    )
+    .await;
+    if r.body.len() % 2 == 0 && !r.body.is_empty() && r.body.bytes().all(|b| b.is_ascii_hexdigit())
+    {
+        let bytes: Vec<u8> = (0..r.body.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&r.body[i..i + 2], 16).unwrap())
+            .collect();
+        r.body = String::from_utf8_lossy(&bytes).into_owned();
+    }
+    r
+}
+
+/// As [`call`], but the upstream echoes in the clear (what a server reflecting the request does).
+async fn call_plain(env: &Env, method: &str, host: &str, path: &str, extra: &str) -> Reply {
     let mut s = crate::common::connect(env.proxy).await;
     let auth = base64::engine::general_purpose::STANDARD.encode(format!("agent:{TOKEN}"));
     let req = format!(
@@ -154,18 +177,36 @@ async fn an_answer_naming_the_account_is_not_an_echo() {
         grant(&pinned(w, "c1", &[origin.to_owned()]))
     })
     .await;
-    // The harness upstream echoes the request, path included.
-    let r = call(
+    // The upstream echoes the path (the username is in it) but no header, in the clear.
+    let r = call_plain(
         &env,
         "PROPFIND",
         "localhost",
         "/dav/calendars/alice/work/",
-        "",
+        "x-echo-no-headers: 1\r\n",
     )
     .await;
     assert_eq!(r.status, 200, "{} {}", r.head, r.body);
+    uncredentialed(&r);
     assert!(r.body.contains("/dav/calendars/alice/work/"), "{}", r.body);
     assert!(!r.body.contains("upstream_echoed_credential"), "{}", r.body);
+}
+
+/// (SEC-109, D-275) A server reflecting the `Authorization` header (the base64 of `user:password`)
+/// is withheld: 502 `upstream_echoed_credential`, and neither the password nor the Basic value is
+/// in anything the agent gets.
+#[tokio::test]
+async fn a_server_reflecting_the_authorization_header_is_withheld() {
+    let (env, _) = start_pinned(own_snapshot(vec![], vec![]), |w, origin| {
+        grant(&pinned(w, "c1", &[origin.to_owned()]))
+    })
+    .await;
+    let r = call_plain(&env, "PROPFIND", "localhost", "/dav/calendars/alice/", "").await;
+    assert_eq!(r.status, 502, "{} {}", r.head, r.body);
+    assert!(r.body.contains("upstream_echoed_credential"), "{}", r.body);
+    uncredentialed(&r);
+    let b64 = base64::engine::general_purpose::STANDARD.encode(format!("alice:{PASSWORD_CANARY}"));
+    assert!(!format!("{}\n{}", r.head, r.body).contains(&b64));
 }
 
 #[tokio::test]

@@ -208,8 +208,12 @@ async fn upstream(req: Request<Incoming>) -> Result<Response<Full<Bytes>>, Infal
             .and_then(|h| h.to_str().ok())
             .unwrap_or("")
     );
-    for (k, v) in &parts.headers {
-        out.push_str(&format!("{}: {}\n", k, v.to_str().unwrap_or("?")));
+    // (`x-echo-no-headers`: an upstream that names the path but never reflects a header, as a
+    // well-behaved DAV server does.)
+    if !parts.headers.contains_key("x-echo-no-headers") {
+        for (k, v) in &parts.headers {
+            out.push_str(&format!("{}: {}\n", k, v.to_str().unwrap_or("?")));
+        }
     }
     out.push_str(&format!("body={}\n", String::from_utf8_lossy(&body)));
     // (FIX-104) The gateway withholds a response that echoes a value it put in the URL; a test

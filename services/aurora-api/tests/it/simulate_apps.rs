@@ -327,3 +327,90 @@ async fn simulate_without_an_app_is_unchanged() {
     assert_eq!(v["winning_credential"], Value::Null, "{v}");
     let _ = w.org;
 }
+
+/// (P5-CALDAV, D-275, SEC-109) A person-pinned server: the simulator identifies the `own_server`
+/// app and its connection exactly as the gateway does: only the pinned `host:port`, over https, is
+/// credentialed; another port, plain http, another host, a disabled connection get none.
+#[tokio::test]
+async fn simulate_an_own_server_origin_matches_the_gateway() {
+    let h = Harness::new().await;
+    let a = setup(&h).await;
+    let manifest = include_str!("../../../../plugins/builtin/caldav/plugin.yaml")
+        .replace("publisher: aurora", "publisher: acme");
+    let v = a
+        .upload_with(
+            &manifest,
+            &[(
+                "tests/dav.yaml",
+                include_bytes!("../../../../plugins/builtin/caldav/tests/dav.yaml"),
+            )],
+        )
+        .await;
+    let v = if v["status"] == "pending_approval" {
+        a.act(&v["id"], "approve").await.1
+    } else {
+        v
+    };
+    assert_eq!(v["status"], "active", "{v}");
+    let w = world(&h).await;
+    let conn = Uuid::now_v7();
+    sqlx::query("INSERT INTO app_connections (id, org_id, workspace_id, app_id, package_id, app_version, label, status, credentials_ref, access, metadata) VALUES ($1,$2,NULL,'caldav','caldav','1.0.0','alice at dav','active','x','write', $3)")
+        .bind(conn).bind(w.org)
+        .bind(json!({"url": "https://dav.example.test/dav/", "hosts": ["dav.example.test:443"]}))
+        .execute(h.pool()).await.unwrap();
+    let (s, v) = w
+        .call(
+            Method::PUT,
+            &format!("/v1/agents/{}/grants/connections/{conn}", w.agent),
+            Some(json!({
+                "mode": "custom",
+                "allow_tools": ["discover_calendars", "query_events"],
+                "ask_tools": ["put_event"],
+            })),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+
+    let v = w
+        .sim(
+            "PROPFIND",
+            "https://dav.example.test/dav/calendars/alice/",
+            None,
+        )
+        .await;
+    assert_eq!(v["verdict"], "allow", "{v}");
+    assert_eq!(v["app"]["app_id"], "caldav", "{v}");
+    assert_eq!(v["app"]["tool_id"], "discover_calendars", "{v}");
+    assert_eq!(v["winning_credential"]["id"], conn.to_string(), "{v}");
+    assert_eq!(v["winning_credential"]["kind"], "connection", "{v}");
+    let v = w
+        .sim(
+            "PUT",
+            "https://DAV.example.test/dav/calendars/alice/e.ics",
+            Some("BEGIN:VCALENDAR"),
+        )
+        .await;
+    assert_eq!(v["verdict"], "needs_approval", "{v}");
+    assert_eq!(v["app"]["tool_id"], "put_event", "{v}");
+
+    // Nothing is credentialed anywhere else.
+    for url in [
+        "https://dav.example.test:8443/dav/",
+        "http://dav.example.test/dav/",
+        "https://other.example.test/dav/",
+    ] {
+        let v = w.sim("PROPFIND", url, None).await;
+        assert_eq!(v["winning_credential"], Value::Null, "{url}: {v}");
+        assert_eq!(v["candidates"].as_array().unwrap().len(), 0, "{url}: {v}");
+    }
+    // A disabled connection is no candidate either.
+    sqlx::query("UPDATE app_connections SET status = 'disabled' WHERE id = $1")
+        .bind(conn)
+        .execute(h.pool())
+        .await
+        .unwrap();
+    let v = w
+        .sim("PROPFIND", "https://dav.example.test/dav/", None)
+        .await;
+    assert_eq!(v["winning_credential"], Value::Null, "{v}");
+}
