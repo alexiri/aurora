@@ -154,12 +154,12 @@ fn models(claude: bool, model: &str) -> TerminalModels {
     if claude {
         TerminalModels {
             claude_code: t,
-            codex: None,
+            ..Default::default()
         }
     } else {
         TerminalModels {
-            claude_code: None,
             codex: t,
+            ..Default::default()
         }
     }
 }

@@ -72,11 +72,10 @@ impl HarnessEnv {
     /// file (the caller does this before the shell is spawned).
     pub fn apply_terminal(&self, models: &TerminalModels) -> std::io::Result<()> {
         let mut m = self.models.lock().unwrap_or_else(|e| e.into_inner());
-        if models.claude_code.is_some() {
-            m.claude_code = models.claude_code.clone();
-        }
-        if models.codex.is_some() {
-            m.codex = models.codex.clone();
+        for h in TerminalModels::HARNESSES {
+            if let Some(entry) = models.get(h) {
+                m.set(h, Some(entry.clone()));
+            }
         }
         write(&self.cfg.path, &render(&self.cfg, &m))
     }
@@ -88,10 +87,8 @@ impl HarnessEnv {
             unavailable: None,
         });
         let mut m = self.models.lock().unwrap_or_else(|e| e.into_inner());
-        match harness {
-            "claude-code" => m.claude_code = entry,
-            "codex" => m.codex = entry,
-            _ => return Ok(()),
+        if !m.set(harness, entry) {
+            return Ok(());
         }
         write(&self.cfg.path, &render(&self.cfg, &m))
     }
@@ -214,13 +211,19 @@ pub fn write(path: &Path, content: &str) -> std::io::Result<()> {
     std::fs::rename(&tmp, path)
 }
 
+/// Names of the per-harness state directories under `.aurora/terminal` (`/workspace/.aurora/terminal/<id>`).
+pub const TERMINAL_STATE_DIRS: [&str; 5] = ["claude", "codex", "pi", "goose", "opencode"];
+
 /// The wrappers' own state directories (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`) under the home's
 /// `.aurora/terminal`, owned by the agent user so the CLIs can write there although `.aurora`
 /// itself belongs to the supervisor. A terminal harness never reads or changes the agent
 /// harness's own state (FIX-095). Best effort: a failure is the caller's warning.
 pub fn ensure_state_dirs(home: &Path, uid: u32, gid: u32) -> std::io::Result<()> {
     let base = home.join(".aurora/terminal");
-    for d in [base.clone(), base.join("claude"), base.join("codex")] {
+    // One directory per terminal harness (`claude`, `codex`, `pi`, `goose`, `opencode`; C-1015).
+    let dirs =
+        std::iter::once(base.clone()).chain(TERMINAL_STATE_DIRS.iter().map(|d| base.join(d)));
+    for d in dirs {
         std::fs::create_dir_all(&d)?;
         std::fs::set_permissions(&d, std::fs::Permissions::from_mode(0o755))?;
         // Not root (tests): the directories are already ours.
@@ -263,17 +266,17 @@ mod tests {
                 choice: Some(c),
                 unavailable: None,
             }),
-            codex: None,
+            ..Default::default()
         }
     }
 
     fn codex(c: ModelChoice) -> TerminalModels {
         TerminalModels {
-            claude_code: None,
             codex: Some(TerminalModel {
                 choice: Some(c),
                 unavailable: None,
             }),
+            ..Default::default()
         }
     }
 
@@ -411,6 +414,7 @@ mod tests {
         let both = TerminalModels {
             claude_code: claude(choice("litellm", "anthropic_messages")).claude_code,
             codex: codex(choice("litellm", "openai_responses")).codex,
+            ..Default::default()
         };
         let t = render(&cfg(), &both);
         assert!(t.contains("\nANTHROPIC_MODEL="), "{t}");
@@ -426,6 +430,7 @@ mod tests {
             &TerminalModels {
                 claude_code: unavailable(TerminalModelUnavailable::NoKey),
                 codex: unavailable(TerminalModelUnavailable::NoModel),
+                ..Default::default()
             },
         );
         assert!(
@@ -455,6 +460,7 @@ mod tests {
         env.apply_terminal(&TerminalModels {
             claude_code: unavailable(TerminalModelUnavailable::NoKey),
             codex: codex(choice("litellm", "openai_responses")).codex,
+            ..Default::default()
         })
         .unwrap();
         let mut turn = choice("litellm", "anthropic_messages");
@@ -466,8 +472,8 @@ mod tests {
         assert!(t.contains("AURORA_CODEX_MODEL="), "codex kept: {t}");
         // A terminal open that only names codex keeps claude's section.
         env.apply_terminal(&TerminalModels {
-            claude_code: None,
             codex: unavailable(TerminalModelUnavailable::NoKey),
+            ..Default::default()
         })
         .unwrap();
         let t = std::fs::read_to_string(dir.join("harness.env")).unwrap();

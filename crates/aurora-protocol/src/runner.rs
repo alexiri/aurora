@@ -71,8 +71,12 @@ open_vocab! {
     pub enum HomeDurability { Resident = "resident", Snapshot = "snapshot" }
 }
 open_vocab! {
-    // (phase 4, P4-HAR, D-122) `codex` is the pinned OpenAI Codex CLI.
-    pub enum HarnessId { ClaudeCode = "claude-code", Codex = "codex", Fake = "fake" }
+    // (phase 4, P4-HAR, D-122) `codex` is the pinned OpenAI Codex CLI. (phase 5, P5-HARN, D-361)
+    // `pi`, `goose` and `opencode` are the other three.
+    pub enum HarnessId {
+        ClaudeCode = "claude-code", Codex = "codex", Pi = "pi", Goose = "goose",
+        Opencode = "opencode", Fake = "fake",
+    }
 }
 open_vocab! {
     pub enum DesiredState { Running = "running", Stopped = "stopped", Deleted = "deleted" }
@@ -657,6 +661,57 @@ pub struct TerminalModels {
     pub claude_code: Option<TerminalModel>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub codex: Option<TerminalModel>,
+    /// (phase 5, P5-HARN, C-1015) The three added harnesses; absent from an older API.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pi: Option<TerminalModel>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub goose: Option<TerminalModel>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opencode: Option<TerminalModel>,
+}
+
+impl TerminalModels {
+    /// The harness ids that can have an entry, in one place (no per-harness branches elsewhere).
+    pub const HARNESSES: [&'static str; 5] = ["claude-code", "codex", "pi", "goose", "opencode"];
+
+    fn slot(&mut self, harness: &str) -> Option<&mut Option<TerminalModel>> {
+        match harness {
+            "claude-code" => Some(&mut self.claude_code),
+            "codex" => Some(&mut self.codex),
+            "pi" => Some(&mut self.pi),
+            "goose" => Some(&mut self.goose),
+            "opencode" => Some(&mut self.opencode),
+            _ => None,
+        }
+    }
+
+    /// The entry of `harness` (`None` for an id that is no terminal harness).
+    pub fn get(&self, harness: &str) -> Option<&TerminalModel> {
+        match harness {
+            "claude-code" => self.claude_code.as_ref(),
+            "codex" => self.codex.as_ref(),
+            "pi" => self.pi.as_ref(),
+            "goose" => self.goose.as_ref(),
+            "opencode" => self.opencode.as_ref(),
+            _ => None,
+        }
+    }
+
+    /// Sets the entry of `harness`; `false` for an id that is no terminal harness.
+    pub fn set(&mut self, harness: &str, entry: Option<TerminalModel>) -> bool {
+        match self.slot(harness) {
+            Some(s) => {
+                *s = entry;
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Whether no harness has an entry.
+    pub fn is_empty(&self) -> bool {
+        Self::HARNESSES.iter().all(|h| self.get(h).is_none())
+    }
 }
 
 /// Exactly one of `choice` / `unavailable` is present.
@@ -1578,7 +1633,18 @@ mod terminal_models_tests {
                 choice: None,
                 unavailable: Some(TerminalModelUnavailable::NoKey),
             }),
+            pi: Some(TerminalModel {
+                choice: Some(choice()),
+                unavailable: None,
+            }),
+            goose: None,
+            opencode: Some(TerminalModel {
+                choice: None,
+                unavailable: Some(TerminalModelUnavailable::NoModel),
+            }),
         };
+        assert!(!m.is_empty());
+        assert!(m.get("pi").is_some() && m.get("goose").is_none() && m.get("fake").is_none());
         let o = PtyOpen {
             pty_id: 1,
             window: 10,

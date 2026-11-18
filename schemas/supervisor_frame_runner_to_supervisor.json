@@ -833,6 +833,37 @@
               "type": "null"
             }
           ]
+        },
+        "goose": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TerminalModel"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "opencode": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TerminalModel"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "pi": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TerminalModel"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "(phase 5, P5-HARN, C-1015) The three added harnesses; absent from an older API."
         }
       },
       "type": "object"
