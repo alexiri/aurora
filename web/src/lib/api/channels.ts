@@ -2,7 +2,9 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { api, ApiError } from "./client";
+import { api } from "./client";
+import { retryUnlessClientError } from "./errors";
+import { useInvalidatingMutation } from "./mutations";
 import type { components } from "./schema";
 import { unwrap } from "./unwrap";
 
@@ -17,10 +19,6 @@ export type DmDefault = S["DmDefault"];
 export type ReachGrant = S["ReachGrant"];
 export type Listen = S["Listen"];
 export type MySpace = S["MySpace"];
-
-const retry = (count: number, err: unknown) =>
-  !(err instanceof ApiError && err.status !== undefined && err.status >= 400 && err.status < 500) &&
-  count < 1;
 
 export const channelKeys = {
   integrations: (org: string) => ["orgs", org, "channel-integrations"] as const,
@@ -44,17 +42,13 @@ export function useIntegrations(orgId: string | undefined) {
         }),
       ),
     enabled: !!orgId,
-    retry,
+    retry: retryUnlessClientError,
   });
 }
 
 export function useCreateIntegration(orgId: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (body: S["CreateIntegrationRequest"]) =>
-      unwrap(api.POST("/v1/orgs/{org}/channel-integrations", { params: { path: { org: orgId } }, body })),
-    onSuccess: () => qc.invalidateQueries({ queryKey: channelKeys.integrations(orgId) }),
-  });
+  return useInvalidatingMutation((body: S["CreateIntegrationRequest"]) =>
+    unwrap(api.POST("/v1/orgs/{org}/channel-integrations", { params: { path: { org: orgId } }, body })), channelKeys.integrations(orgId));
 }
 
 /** Check credentials and list the choices a field takes from the platform (C-711); stores nothing. */
@@ -94,23 +88,19 @@ export function useIntegrationUserLinks(integration: string, enabled: boolean) {
         }),
       ),
     enabled,
-    retry,
+    retry: retryUnlessClientError,
   });
 }
 
 export function useDeleteUserLink(integration: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) => unwrap(api.DELETE("/v1/user-links/{id}", { params: { path: { id } } })),
-    onSuccess: () => qc.invalidateQueries({ queryKey: channelKeys.userLinks(integration) }),
-  });
+  return useInvalidatingMutation((id: string) => unwrap(api.DELETE("/v1/user-links/{id}", { params: { path: { id } } })), channelKeys.userLinks(integration));
 }
 
 export function usePresences(agent: string) {
   return useQuery({
     queryKey: channelKeys.presences(agent),
     queryFn: () => unwrap(api.GET("/v1/agents/{agent}/presences", { params: { path: { agent } } })),
-    retry,
+    retry: retryUnlessClientError,
   });
 }
 
@@ -118,17 +108,13 @@ export function usePresenceOptions(agent: string) {
   return useQuery({
     queryKey: channelKeys.presenceOptions(agent),
     queryFn: () => unwrap(api.GET("/v1/agents/{agent}/presence-options", { params: { path: { agent } } })),
-    retry,
+    retry: retryUnlessClientError,
   });
 }
 
 export function useAttachPresence(agent: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (body: S["AttachPresenceRequest"]) =>
-      unwrap(api.POST("/v1/agents/{agent}/presences", { params: { path: { agent } }, body })),
-    onSuccess: () => Promise.all([qc.invalidateQueries({ queryKey: channelKeys.presences(agent) }), qc.invalidateQueries({ queryKey: channelKeys.presenceOptions(agent) })]),
-  });
+  return useInvalidatingMutation((body: S["AttachPresenceRequest"]) =>
+    unwrap(api.POST("/v1/agents/{agent}/presences", { params: { path: { agent } }, body })), channelKeys.presences(agent), channelKeys.presenceOptions(agent));
 }
 
 export function useReattachPresence(agent: string) {
@@ -158,7 +144,7 @@ export function useSpaceBindings(agent: string, enabled = true) {
     queryKey: channelKeys.bindings(agent),
     queryFn: () => unwrap(api.GET("/v1/agents/{agent}/space-bindings", { params: { path: { agent } } })),
     enabled,
-    retry,
+    retry: retryUnlessClientError,
   });
 }
 
@@ -173,7 +159,7 @@ export function useMySpaces(integration: string, enabled: boolean) {
         }),
       ),
     enabled,
-    retry,
+    retry: retryUnlessClientError,
     // A person invites the bot in Mattermost and comes back: always ask the platform again.
     staleTime: 0,
     gcTime: 0,
@@ -182,29 +168,17 @@ export function useMySpaces(integration: string, enabled: boolean) {
 
 /** Bind the agent to a space from the dashboard (C-713). */
 export function useCreateSpaceBinding(agent: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (body: S["CreateBindingRequest"]) =>
-      unwrap(api.POST("/v1/agents/{agent}/space-bindings", { params: { path: { agent } }, body })),
-    onSuccess: () => qc.invalidateQueries({ queryKey: channelKeys.bindings(agent) }),
-  });
+  return useInvalidatingMutation((body: S["CreateBindingRequest"]) =>
+    unwrap(api.POST("/v1/agents/{agent}/space-bindings", { params: { path: { agent } }, body })), channelKeys.bindings(agent));
 }
 
 export function usePatchSpaceBinding(agent: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ id, body }: { id: string; body: S["PatchBindingRequest"] }) =>
-      unwrap(api.PATCH("/v1/space-bindings/{id}", { params: { path: { id } }, body })),
-    onSuccess: () => qc.invalidateQueries({ queryKey: channelKeys.bindings(agent) }),
-  });
+  return useInvalidatingMutation(({ id, body }: { id: string; body: S["PatchBindingRequest"] }) =>
+    unwrap(api.PATCH("/v1/space-bindings/{id}", { params: { path: { id } }, body })), channelKeys.bindings(agent));
 }
 
 export function useDeleteSpaceBinding(agent: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) => unwrap(api.DELETE("/v1/space-bindings/{id}", { params: { path: { id } } })),
-    onSuccess: () => qc.invalidateQueries({ queryKey: channelKeys.bindings(agent) }),
-  });
+  return useInvalidatingMutation((id: string) => unwrap(api.DELETE("/v1/space-bindings/{id}", { params: { path: { id } } })), channelKeys.bindings(agent));
 }
 
 export function useReach(agent: string) {
@@ -212,7 +186,7 @@ export function useReach(agent: string) {
     queryKey: channelKeys.reach(agent),
     queryFn: () =>
       unwrap(api.GET("/v1/agents/{agent}/reach", { params: { path: { agent }, query: { limit: 100 } } })),
-    retry,
+    retry: retryUnlessClientError,
   });
 }
 
@@ -230,7 +204,7 @@ export function useMyChannelLinks() {
   return useQuery({
     queryKey: channelKeys.myLinks,
     queryFn: () => unwrap(api.GET("/v1/me/channel-links")),
-    retry,
+    retry: retryUnlessClientError,
   });
 }
 
@@ -271,14 +245,10 @@ export function useDmDefaults() {
   return useQuery({
     queryKey: channelKeys.dmDefaults,
     queryFn: () => unwrap(api.GET("/v1/me/dm-defaults")),
-    retry,
+    retry: retryUnlessClientError,
   });
 }
 
 export function useSetDmDefault() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (body: S["SetDmDefaultRequest"]) => unwrap(api.PUT("/v1/me/dm-defaults", { body })),
-    onSuccess: () => qc.invalidateQueries({ queryKey: channelKeys.dmDefaults }),
-  });
+  return useInvalidatingMutation((body: S["SetDmDefaultRequest"]) => unwrap(api.PUT("/v1/me/dm-defaults", { body })), channelKeys.dmDefaults);
 }

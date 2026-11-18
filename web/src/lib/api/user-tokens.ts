@@ -6,6 +6,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { ApiError, api } from "./client";
+import { retryUnlessClientError } from "./errors";
+import { useInvalidatingMutation } from "./mutations";
 import type { components } from "./schema";
 import { unwrap } from "./unwrap";
 
@@ -21,25 +23,18 @@ export const userTokenKeys = {
 /** Poll while the page is open: an agent may propose a post at any moment. */
 export const OWN_SEND_POLL_MS = 10_000;
 
-const retry = (count: number, err: unknown) =>
-  !(err instanceof ApiError && err.status !== undefined && err.status >= 400 && err.status < 500) && count < 1;
-
 /** The caller's own tokens (never the value). */
 export function useUserTokens() {
   return useQuery({
     queryKey: userTokenKeys.list,
     queryFn: async () => (await unwrap(api.GET("/v1/me/user-tokens"))).tokens,
-    retry,
+    retry: retryUnlessClientError,
   });
 }
 
 /** Adds a token: sealed and verified against your own chat account before it is stored. */
 export function useAddUserToken() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (body: S["CreateUserTokenRequest"]) => unwrap(api.POST("/v1/me/user-tokens", { body })),
-    onSuccess: () => qc.invalidateQueries({ queryKey: userTokenKeys.list }),
-  });
+  return useInvalidatingMutation((body: S["CreateUserTokenRequest"]) => unwrap(api.POST("/v1/me/user-tokens", { body })), userTokenKeys.list);
 }
 
 /** Revokes a token: agents stop posting as you and pending posts are cancelled. */
@@ -76,7 +71,7 @@ export function useOwnSendApprovals(status?: string) {
     queryFn: async () =>
       (await unwrap(api.GET("/v1/me/user-token-approvals", { params: { query: { status } } }))).items,
     refetchInterval: OWN_SEND_POLL_MS,
-    retry,
+    retry: retryUnlessClientError,
   });
 }
 

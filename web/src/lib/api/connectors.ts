@@ -2,7 +2,9 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { api, ApiError } from "./client";
+import { api } from "./client";
+import { retryUnlessClientError } from "./errors";
+import { useInvalidatingMutation } from "./mutations";
 import type { components } from "./schema";
 import { unwrap } from "./unwrap";
 
@@ -10,10 +12,6 @@ type S = components["schemas"];
 export type ConnectorAdmin = S["ConnectorAdmin"];
 export type ConnectorInfo = S["ConnectorInfo"];
 export type FormField = S["FormField"];
-
-const retry = (count: number, err: unknown) =>
-  !(err instanceof ApiError && err.status !== undefined && err.status >= 400 && err.status < 500) &&
-  count < 1;
 
 export type ConnectorType = S["ConnectorType"];
 export type ConnectorTypeList = S["ConnectorTypeList"];
@@ -59,7 +57,7 @@ export function useConnectorAvailability() {
   return useQuery({
     queryKey: connectorKeys.availability,
     queryFn: () => unwrap(api.GET("/v1/connector-availability")),
-    retry,
+    retry: retryUnlessClientError,
   });
 }
 
@@ -79,7 +77,7 @@ export function useConnectorTypes() {
   return useQuery({
     queryKey: connectorKeys.types,
     queryFn: () => unwrap(api.GET("/v1/admin/connector-types")),
-    retry,
+    retry: retryUnlessClientError,
   });
 }
 
@@ -133,7 +131,7 @@ export function useConnectors() {
   return useQuery({
     queryKey: connectorKeys.info,
     queryFn: () => unwrap(api.GET("/v1/connectors")),
-    retry,
+    retry: retryUnlessClientError,
   });
 }
 
@@ -146,7 +144,7 @@ export function useHostTokens() {
   return useQuery({
     queryKey: hostTokenKeys,
     queryFn: () => unwrap(api.GET("/v1/admin/connector-host-tokens")),
-    retry,
+    retry: retryUnlessClientError,
   });
 }
 
@@ -162,19 +160,15 @@ export function useIssueHostToken() {
 }
 
 export function useRevokeHostToken() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) =>
-      unwrap(api.DELETE("/v1/admin/connector-host-tokens/{id}", { params: { path: { id } } })),
-    onSuccess: () => qc.invalidateQueries({ queryKey: hostTokenKeys }),
-  });
+  return useInvalidatingMutation((id: string) =>
+    unwrap(api.DELETE("/v1/admin/connector-host-tokens/{id}", { params: { path: { id } } })), hostTokenKeys);
 }
 
 export function useAdminConnectors() {
   return useQuery({
     queryKey: connectorKeys.admin,
     queryFn: () => unwrap(api.GET("/v1/admin/connectors")),
-    retry,
+    retry: retryUnlessClientError,
   });
 }
 

@@ -1,8 +1,10 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 
 import { api, ApiError } from "./client";
+import { retryUnlessClientError } from "./errors";
+import { useInvalidatingMutation } from "./mutations";
 import { fetchAllPages } from "./paging";
 import type { components } from "./schema";
 import { unwrap } from "./unwrap";
@@ -27,15 +29,12 @@ export const govKeys = {
   blocked: (org: string) => ["governance", org, "blocked"] as const,
 };
 
-const retry = (count: number, err: unknown) =>
-  !(err instanceof ApiError && err.status !== undefined && err.status >= 400 && err.status < 500) && count < 1;
-
 export function useGovernanceDoc(orgId: string, enabled: boolean) {
   return useQuery({
     queryKey: govKeys.doc(orgId),
     enabled,
     queryFn: () => unwrap(api.GET("/v1/orgs/{org}/governance", { params: { path: { org: orgId } } })),
-    retry,
+    retry: retryUnlessClientError,
   });
 }
 
@@ -43,7 +42,7 @@ export function useEffectiveGovernance(orgId: string) {
   return useQuery({
     queryKey: govKeys.effective(orgId),
     queryFn: () => unwrap(api.GET("/v1/orgs/{org}/governance/effective", { params: { path: { org: orgId } } })),
-    retry,
+    retry: retryUnlessClientError,
   });
 }
 
@@ -52,22 +51,18 @@ export function useInstanceGovernance(enabled: boolean) {
     queryKey: govKeys.instance,
     enabled,
     queryFn: () => unwrap(api.GET("/v1/governance/instance")),
-    retry,
+    retry: retryUnlessClientError,
   });
 }
 
 export function usePutGovernance(orgId: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (body: { document: GovDocument; revision: number }) =>
-      unwrap(
-        api.PUT("/v1/orgs/{org}/governance", {
-          params: { path: { org: orgId } },
-          body: { document: body.document, revision: body.revision },
-        }),
-      ),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["governance", orgId] }),
-  });
+  return useInvalidatingMutation((body: { document: GovDocument; revision: number }) =>
+    unwrap(
+      api.PUT("/v1/orgs/{org}/governance", {
+        params: { path: { org: orgId } },
+        body: { document: body.document, revision: body.revision },
+      }),
+    ), ["governance", orgId]);
 }
 
 export interface BlockedHost {

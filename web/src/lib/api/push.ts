@@ -5,6 +5,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { ApiError, api } from "./client";
+import { retryUnlessClientError } from "./errors";
+import { useInvalidatingMutation } from "./mutations";
 import type { components } from "./schema";
 import { unwrap } from "./unwrap";
 
@@ -18,9 +20,6 @@ export const pushKeys = {
   list: ["me", "push-subscriptions"] as const,
 };
 
-const retry = (count: number, err: unknown) =>
-  !(err instanceof ApiError && err.status !== undefined && err.status >= 400 && err.status < 500) && count < 1;
-
 /** `GET /v1/push/config`; a 404 (`push_unavailable`) reads as "not available". */
 export async function fetchPushConfig(): Promise<PushConfig> {
   try {
@@ -32,7 +31,7 @@ export async function fetchPushConfig(): Promise<PushConfig> {
 }
 
 export function usePushConfig() {
-  return useQuery({ queryKey: pushKeys.config, queryFn: fetchPushConfig, retry, staleTime: 60_000 });
+  return useQuery({ queryKey: pushKeys.config, queryFn: fetchPushConfig, retry: retryUnlessClientError, staleTime: 60_000 });
 }
 
 export async function fetchPushSubscriptions(): Promise<PushSubscriptionRow[]> {
@@ -40,7 +39,7 @@ export async function fetchPushSubscriptions(): Promise<PushSubscriptionRow[]> {
 }
 
 export function usePushSubscriptions(enabled: boolean) {
-  return useQuery({ queryKey: pushKeys.list, queryFn: fetchPushSubscriptions, retry, enabled });
+  return useQuery({ queryKey: pushKeys.list, queryFn: fetchPushSubscriptions, retry: retryUnlessClientError, enabled });
 }
 
 export function createPushSubscription(body: S["CreatePushSubscription"]): Promise<PushSubscriptionRow> {
@@ -52,12 +51,8 @@ export async function deletePushSubscription(id: string): Promise<void> {
 }
 
 export function useUpdatePushSubscription() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ id, ...body }: { id: string } & S["UpdatePushSubscription"]) =>
-      unwrap(api.PATCH("/v1/me/push-subscriptions/{id}", { params: { path: { id } }, body })),
-    onSuccess: () => qc.invalidateQueries({ queryKey: pushKeys.list }),
-  });
+  return useInvalidatingMutation(({ id, ...body }: { id: string } & S["UpdatePushSubscription"]) =>
+    unwrap(api.PATCH("/v1/me/push-subscriptions/{id}", { params: { path: { id } }, body })), pushKeys.list);
 }
 
 export function useTestPushSubscription() {

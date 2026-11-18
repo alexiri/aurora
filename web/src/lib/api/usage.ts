@@ -2,7 +2,8 @@
 
 import { useQuery } from "@tanstack/react-query";
 
-import { api, ApiError } from "./client";
+import { api } from "./client";
+import { retryUnlessClientError } from "./errors";
 import type { components } from "./schema";
 import { unwrap } from "./unwrap";
 
@@ -12,10 +13,6 @@ export type InstanceUsage = S["InstanceUsage"];
 export type OrgUsage = S["OrgUsage"];
 export type UsageCounters = S["UsageCounters"];
 export type UsageModel = S["UsageModel"];
-
-/** A 4xx (a bad range, no access) is the answer, not something to retry. */
-const retry = (count: number, err: unknown) =>
-  !(err instanceof ApiError && err.status !== undefined && err.status >= 400 && err.status < 500) && count < 1;
 
 export const usageKeys = {
   workspace: (ws: string, from: string, to: string, agent: string) => ["usage", "workspace", ws, from, to, agent] as const,
@@ -34,7 +31,7 @@ export function useWorkspaceUsage(wsId: string | undefined, from: string, to: st
         }),
       ),
     enabled: !!wsId && enabled,
-    retry,
+    retry: retryUnlessClientError,
   });
 }
 
@@ -49,7 +46,7 @@ export function useOrgUsage(orgId: string | undefined, from: string, to: string,
         }),
       ),
     enabled: !!orgId && enabled,
-    retry,
+    retry: retryUnlessClientError,
   });
 }
 
@@ -60,6 +57,6 @@ export function useInstanceUsage(from: string, to: string, org: string, enabled 
     queryFn: () =>
       unwrap(api.GET("/v1/admin/usage", { params: { query: { from, to, org_id: org || undefined } } })),
     enabled,
-    retry,
+    retry: retryUnlessClientError,
   });
 }

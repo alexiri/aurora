@@ -3,6 +3,8 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api, ApiError } from "./client";
+import { retryUnlessClientError } from "./errors";
+import { useInvalidatingMutation } from "./mutations";
 import { fetchAllPages, PAGE_LIMIT } from "./paging";
 import type { components } from "./schema";
 import { unwrap } from "./unwrap";
@@ -13,10 +15,6 @@ export type MemberStatus = components["schemas"]["MemberStatus"];
 export type Invitation = components["schemas"]["Invitation"];
 export type PatchOrgRequest = components["schemas"]["PatchOrgRequest"];
 export type CreateInvitationRequest = components["schemas"]["CreateInvitationRequest"];
-
-const retry = (count: number, err: unknown) =>
-  !(err instanceof ApiError && err.status !== undefined && err.status >= 400 && err.status < 500) &&
-  count < 1;
 
 export const orgKeys = {
   members: (org: string) => ["orgs", org, "members", "all"] as const,
@@ -66,22 +64,18 @@ export function useAllMembers(orgId: string) {
         }),
       ),
     getNextPageParam: (last) => last.next_cursor ?? undefined,
-    retry,
+    retry: retryUnlessClientError,
   });
 }
 
 export function usePatchMember(orgId: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (v: { user: string; body: components["schemas"]["PatchMemberRequest"] }) =>
-      unwrap(
-        api.PATCH("/v1/orgs/{org}/members/{user}", {
-          params: { path: { org: orgId, user: v.user } },
-          body: v.body,
-        }),
-      ),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["orgs", orgId, "members"] }),
-  });
+  return useInvalidatingMutation((v: { user: string; body: components["schemas"]["PatchMemberRequest"] }) =>
+    unwrap(
+      api.PATCH("/v1/orgs/{org}/members/{user}", {
+        params: { path: { org: orgId, user: v.user } },
+        body: v.body,
+      }),
+    ), ["orgs", orgId, "members"]);
 }
 
 export function useRemoveMember(orgId: string) {
@@ -112,26 +106,18 @@ export function useInvitations(orgId: string) {
           }),
         ),
       ),
-    retry,
+    retry: retryUnlessClientError,
   });
 }
 
 export function useCreateInvitation(orgId: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (body: CreateInvitationRequest) =>
-      unwrap(api.POST("/v1/orgs/{org}/invitations", { params: { path: { org: orgId } }, body })),
-    onSuccess: () => qc.invalidateQueries({ queryKey: orgKeys.invitations(orgId) }),
-  });
+  return useInvalidatingMutation((body: CreateInvitationRequest) =>
+    unwrap(api.POST("/v1/orgs/{org}/invitations", { params: { path: { org: orgId } }, body })), orgKeys.invitations(orgId));
 }
 
 export function useCancelInvitation(orgId: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) =>
-      unwrap(api.DELETE("/v1/invitations/{id}", { params: { path: { id } } })),
-    onSuccess: () => qc.invalidateQueries({ queryKey: orgKeys.invitations(orgId) }),
-  });
+  return useInvalidatingMutation((id: string) =>
+    unwrap(api.DELETE("/v1/invitations/{id}", { params: { path: { id } } })), orgKeys.invitations(orgId));
 }
 
 export function useOrgKeys(orgId: string) {
@@ -145,7 +131,7 @@ export function useOrgKeys(orgId: string) {
           }),
         ),
       ),
-    retry,
+    retry: retryUnlessClientError,
   });
 }
 
@@ -179,7 +165,7 @@ export function useOrgAudit(orgId: string, action: string, critical = false) {
         }),
       ),
     getNextPageParam: (last) => last.next_cursor ?? undefined,
-    retry,
+    retry: retryUnlessClientError,
   });
 }
 

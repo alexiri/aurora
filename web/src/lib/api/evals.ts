@@ -3,6 +3,7 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "./client";
+import { useInvalidatingMutation } from "./mutations";
 import type { components } from "./schema";
 import { unwrap } from "./unwrap";
 
@@ -48,30 +49,18 @@ export function useEvalQuestions(agent: string) {
 }
 
 export function useCreateEvalQuestion(agent: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (body: CreateEvalQuestion) =>
-      unwrap(api.POST("/v1/agents/{agent}/eval-questions", { params: { path: { agent } }, body })),
-    onSuccess: () => qc.invalidateQueries({ queryKey: evalKeys.all(agent) }),
-  });
+  return useInvalidatingMutation((body: CreateEvalQuestion) =>
+    unwrap(api.POST("/v1/agents/{agent}/eval-questions", { params: { path: { agent } }, body })), evalKeys.all(agent));
 }
 
 export function usePatchEvalQuestion(agent: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ id, body }: { id: string; body: PatchEvalQuestion }) =>
-      unwrap(api.PATCH("/v1/eval-questions/{id}", { params: { path: { id } }, body })),
-    onSuccess: () => qc.invalidateQueries({ queryKey: evalKeys.all(agent) }),
-  });
+  return useInvalidatingMutation(({ id, body }: { id: string; body: PatchEvalQuestion }) =>
+    unwrap(api.PATCH("/v1/eval-questions/{id}", { params: { path: { id } }, body })), evalKeys.all(agent));
 }
 
 export function useDeleteEvalQuestion(agent: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) =>
-      unwrap(api.DELETE("/v1/eval-questions/{id}", { params: { path: { id } } })),
-    onSuccess: () => qc.invalidateQueries({ queryKey: evalKeys.all(agent) }),
-  });
+  return useInvalidatingMutation((id: string) =>
+    unwrap(api.DELETE("/v1/eval-questions/{id}", { params: { path: { id } } })), evalKeys.all(agent));
 }
 
 export function useEvalSettings(agent: string) {
@@ -156,29 +145,17 @@ export function useEvalSchedules(agent: string) {
 }
 
 export function useCreateEvalSchedule(agent: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (body: CreateEvalSchedule) =>
-      unwrap(api.POST("/v1/agents/{agent}/eval-schedules", { params: { path: { agent } }, body })),
-    onSuccess: () => qc.invalidateQueries({ queryKey: evalKeys.schedules(agent) }),
-  });
+  return useInvalidatingMutation((body: CreateEvalSchedule) =>
+    unwrap(api.POST("/v1/agents/{agent}/eval-schedules", { params: { path: { agent } }, body })), evalKeys.schedules(agent));
 }
 
 export function usePatchEvalSchedule(agent: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ id, body }: { id: string; body: PatchEvalSchedule }) =>
-      unwrap(api.PATCH("/v1/eval-schedules/{id}", { params: { path: { id } }, body })),
-    onSuccess: () => qc.invalidateQueries({ queryKey: evalKeys.schedules(agent) }),
-  });
+  return useInvalidatingMutation(({ id, body }: { id: string; body: PatchEvalSchedule }) =>
+    unwrap(api.PATCH("/v1/eval-schedules/{id}", { params: { path: { id } }, body })), evalKeys.schedules(agent));
 }
 
 export function useDeleteEvalSchedule(agent: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) => unwrap(api.DELETE("/v1/eval-schedules/{id}", { params: { path: { id } } })),
-    onSuccess: () => qc.invalidateQueries({ queryKey: evalKeys.schedules(agent) }),
-  });
+  return useInvalidatingMutation((id: string) => unwrap(api.DELETE("/v1/eval-schedules/{id}", { params: { path: { id } } })), evalKeys.schedules(agent));
 }
 
 export function useEvalFingerprint(agent: string, enabled = true) {
