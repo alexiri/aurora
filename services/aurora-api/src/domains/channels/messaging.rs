@@ -141,7 +141,7 @@ pub async fn load_platform(
     };
     let manifest = connectors::get(&mut *conn, &integ.connector_id)
         .await?
-        .and_then(|c| c.manifest);
+        .and_then(|c| crate::domains::connectors::effective_manifest(&c));
     Ok(Platform {
         ctx: Ctx::new(integ, manifest),
         presence,

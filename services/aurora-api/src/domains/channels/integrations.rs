@@ -351,8 +351,9 @@ pub async fn create(
             return Err(e);
         }
     };
-    let new_config = config_with_capabilities(config, connector.manifest.as_ref(), &res);
-    if let Err(e) = check_autolink(&new_config, connector.manifest.as_ref()) {
+    let effective = crate::domains::connectors::effective_manifest_ref(&connector);
+    let new_config = config_with_capabilities(config, effective, &res);
+    if let Err(e) = check_autolink(&new_config, effective) {
         remove_failed(s, &row).await;
         return Err(e);
     }
@@ -458,8 +459,9 @@ pub async fn patch(
                 "These credentials belong to a different workspace.",
             ));
         }
-        let config = config_with_capabilities(config, connector.manifest.as_ref(), &res);
-        check_autolink(&config, connector.manifest.as_ref())?;
+        let effective = crate::domains::connectors::effective_manifest_ref(&connector);
+        let config = config_with_capabilities(config, effective, &res);
+        check_autolink(&config, effective)?;
         let shared = shared_bot_json(&res);
         let sealed = match &new_creds {
             Some(v) => Some(seal_json(s, row.id, row.org_id, v).await?),
