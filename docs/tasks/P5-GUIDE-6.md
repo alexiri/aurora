@@ -126,3 +126,33 @@ flag and sentences), `images/sandbox/bin/aurora-agent`,
 - Suggested agent: `rust-developer` (Sonnet). Size L (registry, API, supervisor, image, CLI,
   packages). The package content (step 10) can be split to a `haiku-worker` once the format is
   merged.
+
+## Completion report
+(lane `p5-apps`, worker 38, 2026-11-18; **partial: part 1 of 6 done, commit 7135a8f4**)
+
+**Done (scope items 1, 2, 3, 12 partly):**
+- Limits: the seven constants in `crates/aurora-core/src/limits.rs`.
+- Format and linter: `agent.operations` in `manifest/model.rs`; `crates/aurora-registry/src/operations.rs` (closed model,
+  `parse`, `count`); `validate/agent_operations_rules.rs` (all `agent_operations_*` codes of C-651; forbidden-header rule reads
+  the app's `hosts[]` inject stages (`header`, `remove_header`) plus the fixed list; hosts = exact `hosts[]` and `{instance}` for an
+  instance-bound app; JSON paths through the `library` `JsonPath`); `agent_guide_rules.rs` (operations name, summary required,
+  `agent_operations_listed`, the file counts as listed, own size limit and linter, `agent_guide_missing_file`);
+  `RESERVED_APP_ID` → `app_id_reserved` in `validate::manifest`. No built-in or fixture package uses the id `aurora` (grep).
+- Snapshot: `AgentEntry.operations: Option<OperationsRef{file,sha256,size,count}>` (absent from the serialized fragment without an
+  operations file: a package without one is byte-identical). `GuideDigests` stays a map; the operations file is one more
+  `(app, file)` entry and the count lives under the non-file key `(app, "operations.count")` (`OPERATIONS_COUNT_KEY`).
+- Storage: the existing ingest loop already stores every `agent/**` file as an `agent_guide` blob; the file route
+  (`service::guide_file`) now serves the operations file; `PluginAgentGuide.operations` and `changed.operations` are filled
+  (`service.rs`, DTO fields already existed). `has_guide` checks in `registry.rs`/`service.rs` include operations.
+- Tests (`crates/aurora-registry/tests/it/agent_operations.rs`, 7): valid shapes, one case per violation code, header rule from
+  `hosts[]`, too many/too large, listed/named/present, reserved app id, snapshot fragment and compatibility. Gates run:
+  `cargo fmt --all --check`, `cargo clippy -p aurora-registry -p aurora-core -p aurora-api --all-targets --all-features -- -D warnings`
+  clean, `cargo test -p aurora-registry` all targets (22 lib + 135 it, 0 failed). Not yet run for this part: the api it suite,
+  OpenAPI drift (no DTO shape changed; the `operations` fields pre-existed), guards.
+
+**Not done (in this order):**
+4. Renderer `api.json` in `agent_guide.rs` (C-652; the gateway's matcher is `identify::identify_tool_in(app, instance, host, port, path, query, method, body_prefix, truncated, headers, connect_method)` in the same crate; `{param}` → a placeholder segment; `Rendered` gains `api_json`; `guide.md` line).
+5. Home sync `api.json` entries (`hosted/home.rs`).
+6./7. `aurora-agent` in the supervisor (`agent_cli/`, `main.rs` subcommand; the supervisor does **not** depend on `aurora-registry`, so it needs its own small `api.json` reader) and the `agent_cli` flag in `instructions.rs`.
+8. Image wrapper — **ask the coordinator first** (`images/sandbox/` is being edited by P5-HARN Part E).
+9. Import output C-656; 10. indico/gitlab operations files and `fixture-guide` etc. fixtures; 11. `aurora plugin guide` writes `api.json`.
