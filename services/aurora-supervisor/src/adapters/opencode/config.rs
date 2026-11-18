@@ -252,6 +252,8 @@ pub struct LaunchSpec {
     pub args: Vec<String>,
     pub env: Vec<(String, String)>,
     pub cwd: PathBuf,
+    /// The conversation the child serves: the launcher registers the process for it (FIX-151).
+    pub conversation_id: uuid::Uuid,
     /// Written to the child's stdin, which is then closed (the prompt is never an argument:
     /// `MAX_ARG_STRLEN` is 128 KiB, far below a turn's input).
     pub stdin: String,
@@ -356,6 +358,7 @@ pub fn launch_spec(
         args: build_args(opts, session),
         env: build_env(opts, root),
         cwd: opts.working_dir.clone(),
+        conversation_id: opts.conversation_id,
         stdin: prompt.to_owned(),
     }
 }
@@ -403,6 +406,7 @@ pub fn db_spec(opts: &SessionOptions, root: &Path, sql: &str) -> LaunchSpec {
         args: db_args(sql),
         env: build_env(opts, root),
         cwd: opts.working_dir.clone(),
+        conversation_id: opts.conversation_id,
         stdin: String::new(),
     }
 }

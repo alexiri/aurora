@@ -105,6 +105,13 @@ impl StreamMapper {
 
     pub fn map_line(&mut self, line: &str) -> Mapped {
         let mut out = Mapped::default();
+        if line == super::launcher::OVERLONG_LINE {
+            out.terminal = Some(HarnessEvent::Error {
+                code: "harness_failed".into(),
+                message: "claude produced an output line over the size limit".into(),
+            });
+            return out;
+        }
         let Ok(v) = serde_json::from_str::<Value>(line) else {
             return out;
         };

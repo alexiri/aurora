@@ -30,6 +30,8 @@ pub struct LaunchSpec {
     pub args: Vec<String>,
     pub env: Vec<(String, String)>,
     pub cwd: PathBuf,
+    /// The conversation the child serves: the launcher registers the process for it (FIX-151).
+    pub conversation_id: uuid::Uuid,
 }
 
 /// `models.json`'s `api` value and the placeholder variable for an Aurora dialect.
@@ -249,6 +251,7 @@ pub fn launch_spec(
         args: build_args(opts, sessions, session_ref),
         env: build_env(opts, config_dir),
         cwd: opts.working_dir.clone(),
+        conversation_id: opts.conversation_id,
     }
 }
 
