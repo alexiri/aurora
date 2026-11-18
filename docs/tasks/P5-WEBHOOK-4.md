@@ -96,6 +96,48 @@ All files are under `web/`. The API is P5-WEBHOOK-2's: build against the regener
 ## Numbers
 D-320, C-913 (with C-909, C-912). No migration.
 
+## Completion report (lane p5-platform, 2026-11-18)
+
+Web only. Commits `P5-WEBHOOK-4:` part 1 (connect steps), part 2 (card, Edit, Send test), part 3 (org switch, admin
+section), then Playwright and `docs/14 §12`.
+- **Types** are in one module, `web/src/lib/api/webhook.ts`, written from C-909/C-912/C-913 (P5-WEBHOOK-2 is not merged).
+  When -2 regenerates `schema.d.ts`, replace its types by the generated ones and its `call()` by `api.GET/PUT/POST`.
+  **Assumption to check against -2:** the org settings keys are `outgoing_webhooks_enabled`,
+  `outgoing_webhooks_per_minute_max` and `outgoing_webhooks_per_day_max` on `PATCH /v1/orgs/{org}` (by analogy with
+  `calendar_invitations_enabled`); and the `webhook_config_invalid` paths are JSON pointers (`/slots/2/name`; other
+  spellings are normalised).
+- **Shared:** new `ui/code-field.tsx` (the Files viewer's CodeMirror editor as a labelled control, Esc then Tab leaves it).
+  `SignInStep` dispatches to the webhook steps for `app_id === "webhook"`; `AccountRow` shows the card line.
+  Org switch: Apps tab of the organization. Admin: the `outgoing_webhooks` section under Apps & accounts › Advanced
+  through SET-5's generic form (the route table already mapped it). Fix-167's files were not touched.
+- **Not done / open:** "Read only" is not repeated on the card (the row already shows each agent's level). The ceiling is
+  checked in the browser only when it is what applies (the view's `effective_rate.source` is not `connection`); the
+  server's `rate_above_ceiling` covers the rest. The dev-stack specs are written and skipped (`webhook-stack.spec.ts`,
+  `AURORA_E2E_WEBHOOK_STACK=1`): **not run — needs P5-WEBHOOK-2**. `e2e/support/mock-api.ts` got one additive mock
+  (`/v1/admin/settings/outgoing_webhooks`).
+- **Gate results:** `pnpm typecheck` ok; `pnpm lint` 0 errors (6 old warnings); vitest 2403/2404 in the full run — the one
+  failure (`connect-journey` grant_failed, an 11 s timeout under load ~45) passes alone (22/22); the three webhook
+  vitest files 63/63; `pnpm build` ok; guards all passed; Playwright mocked full run (1,302 tests, 3 workers): the
+  webhook spec 16/16 in both themes at 1280 and 390 px with axe; first full run had 12 failures — 4 `app-setup` and the
+  org webhook specs were my button/notice text ("Save changes", "Settings saved.") colliding with another spec's
+  substring locators, fixed by renaming to "Update outgoing webhooks" / "Outgoing webhook settings updated." and rerun
+  green; `ia-navigation` ×2 and `web-push` passed on rerun; `app-setup:78` and `welcome-summary:88` fail at random
+  variants with 5 s timeouts under load (a different variant each run; not touched by this lane) and pass in other
+  runs. Production project 11/11.
+- **Canary:** vitest and Playwright check that after Save the address, the secret values and the signing secret are
+  not in the DOM, and that a preview request carries secret names only.
+- **Gated for today's server (2026-11-18, before P5-WEBHOOK-2 merges):** `OutgoingWebhooksOrgSettings` renders only when
+  the organization's settings carry `outgoing_webhooks_enabled` (the server returns it, with the limits, once -2 lands);
+  the admin `outgoing_webhooks` section is rendered by `OutgoingWebhooksAdminSection`
+  (`components/webhook/admin-webhook-section.tsx`) only when `GET /v1/admin/settings` lists that section (an unknown
+  slug would give `SettingsSectionView` a not-found error state, and while the index loads or fails nothing shows).
+  The connect steps and the card line only appear for app `webhook`; no package of that id exists in the repository
+  (P5-WEBHOOK-1's), so on today's server they never render. New `tests/webhook-gating.test.tsx` (5 tests: absent on
+  today's shapes, present on the -2 shapes, the section is never requested while unlisted); the Playwright helper
+  answers the -2 shapes. Re-run: typecheck ok; lint 0 errors; vitest webhook files 32/32; `pnpm build` ok; Playwright
+  `webhook.spec` 16/16 (both themes, 1280 and 390 px); `stage4-axe` and `ia-navigation` passed in the 358-test run (354
+  passed, the 4 failures were the webhook org/admin test before I fixed my mock; rerun green).
+
 ## Suggested agent/model and reason
 `nextjs-developer` (Sonnet). An interactive editor with a tree picker, live preview and careful secret
 handling across several dialog steps.

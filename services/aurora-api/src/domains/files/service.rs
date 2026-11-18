@@ -167,7 +167,9 @@ impl<T> R<T> for Result<T, Fail> {
 /// (401), `can_use` (404), hosted (422 `byo`), not frozen (423). Used per request and by the
 /// 10 s re-check of an in-flight transfer.
 pub async fn admit(s: &AppState, c: &Caller, agent: Uuid) -> Result<AgentRow, ApiError> {
-    if !s.config.terminal.enabled {
+    // (FIX-168, SEC-125) The setting in force (it defaults from `terminal.available`, SET-5), read
+    // live like the terminal does: never the boot snapshot.
+    if !s.ops().terminal.enabled {
         return Err(crate::domains::terminal::service::terminal_disabled());
     }
     if !c.is_session() {
@@ -455,7 +457,7 @@ pub(crate) async fn open(
     let row = grants_repo::consume_file_grant(&s.pool, &hash)
         .await?
         .ok_or_else(grant_invalid)?;
-    if !s.config.terminal.enabled {
+    if !s.ops().terminal.enabled {
         return Err(not_current());
     }
     let cur: Option<(Option<Uuid>, Option<Uuid>)> = sqlx::query_as(

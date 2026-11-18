@@ -361,7 +361,44 @@ async fn the_terminal_and_scim_switches_apply_live() {
     assert_eq!(s.as_u16(), 401, "{v}");
     let (s, _, v) = get("/scim/v2/Users".into()).await;
     assert_eq!(s.as_u16(), 401, "{v}");
+    // (FIX-168) Files follow the same switch: with only `available` in the config (the Helm
+    // shape) a signed-in person is past it (the agent does not exist: 404 `not_found`, not 404
+    // `terminal_disabled`).
+    let files = format!("/v1/agents/{agent}/files?path=/workspace");
+    let ck = cookie(&w.admin);
+    let get_files = |uri: String| {
+        let h = &w.h;
+        let ck = ck.clone();
+        async move {
+            h.send(Method::GET, &uri, &[("cookie", ck.as_str())], None)
+                .await
+        }
+    };
+    let (s, _, v) = get_files(files.clone()).await;
+    assert_ne!(
+        v["error"]["code"].as_str(),
+        Some("terminal_disabled"),
+        "files on by default from `available`: {s} {v}"
+    );
 
+    let (s, v) = w
+        .put("terminal", json!({ "terminal.enabled": false }))
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let (s, _, v) = get_files(files.clone()).await;
+    assert_eq!(
+        (s.as_u16(), v["error"]["code"].as_str()),
+        (404, Some("terminal_disabled")),
+        "files closed live, no restart: {v}"
+    );
+    let (s, v) = w.put("terminal", json!({ "terminal.enabled": true })).await;
+    assert_eq!(s, 200, "{v}");
+    let (_, _, v) = get_files(files.clone()).await;
+    assert_ne!(
+        v["error"]["code"].as_str(),
+        Some("terminal_disabled"),
+        "files back on: {v}"
+    );
     let (s, v) = w
         .put("terminal", json!({ "terminal.enabled": false }))
         .await;
