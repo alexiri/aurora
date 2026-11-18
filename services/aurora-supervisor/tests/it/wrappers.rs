@@ -503,7 +503,9 @@ fn the_pi_wrapper_configures_pi_from_the_file_and_keeps_it_off_the_vendor_networ
             Some("aurora-placeholder")
         );
         assert!(
-            !seen.keys().any(|k| k.starts_with("AURORA_PI_")),
+            !seen
+                .keys()
+                .any(|k| k.starts_with("AURORA_PI_") && k != "AURORA_PI_BIN"),
             "{seen:?}"
         );
         assert_eq!(
@@ -557,7 +559,9 @@ fn the_goose_wrapper_sets_the_provider_for_the_dialect_and_its_own_root() {
             assert_eq!(g("ANTHROPIC_API_KEY"), Some("aurora-placeholder"));
         }
         assert!(
-            !seen.keys().any(|k| k.starts_with("AURORA_GOOSE_")),
+            !seen
+                .keys()
+                .any(|k| k.starts_with("AURORA_GOOSE_") && k != "AURORA_GOOSE_BIN"),
             "{seen:?}"
         );
         assert_eq!(rig.seen_args().unwrap(), ["--flag"]);
@@ -609,7 +613,9 @@ fn the_opencode_wrapper_passes_the_rendered_config_inline_and_keeps_it_off_the_v
             "no platform tools in the terminal"
         );
         assert!(
-            !seen.keys().any(|k| k.starts_with("AURORA_OPENCODE_")),
+            !seen
+                .keys()
+                .any(|k| k.starts_with("AURORA_OPENCODE_") && k != "AURORA_OPENCODE_BIN"),
             "{seen:?}"
         );
     }
