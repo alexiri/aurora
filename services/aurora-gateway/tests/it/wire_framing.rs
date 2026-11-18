@@ -516,3 +516,137 @@ async fn small_post_keeps_content_length_on_injected_entry() {
         }
     }
 }
+
+// ---- Part C (D-368): the wire log ----------------------------------------------------------
+
+#[derive(Clone, Default)]
+struct LogBuf(Arc<Mutex<Vec<u8>>>);
+
+impl std::io::Write for LogBuf {
+    fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(b);
+        Ok(b.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for LogBuf {
+    type Writer = LogBuf;
+    fn make_writer(&'a self) -> LogBuf {
+        self.clone()
+    }
+}
+
+/// (SEC-01, D-368) A seeded secret injected as a bearer, a header, a query parameter and a path
+/// segment appears nowhere in the gateway's log (all levels of `aurora_gateway`), raw or
+/// percent-encoded; the framing of the request does.
+#[tokio::test]
+async fn wire_log_shows_framing_and_never_a_value() {
+    const SECRET: &str = "a b/&Zx7-wire-secret";
+    let buf = LogBuf::default();
+    let sub = tracing_subscriber::fmt()
+        .with_writer(buf.clone())
+        .with_ansi(false)
+        .with_env_filter("aurora_gateway=trace")
+        .finish();
+    let _guard = tracing::subscriber::set_default(sub);
+
+    let inject = json!([
+        {"bearer": "{credentials.tok}"},
+        {"header": {"name": "X-Key", "value": "k-{credentials.tok}"}},
+        {"query": {"name": "api_key", "value": "{credentials.tok}"}},
+        {"path_template": {"prefix": "/bot", "value": "{credentials.tok}"}},
+    ]);
+    let creds = format!(r#"{{"tok":"{SECRET}"}}"#);
+    let (env, ..) = start(one_app(inject), &[("c1", &creds)], |w| {
+        granted(conn(w, "demo", "c1", None))(w)
+    })
+    .await;
+    // The upstream echoes the request back, so the gateway withholds this answer (FIX-104).
+    let r = get(
+        &env,
+        "/x?q=1&api_key=agentsent",
+        "Cookie: session=cookie-secret\r\n",
+    )
+    .await;
+    assert_eq!(r.code(), "upstream_echoed_credential", "{}", r.body);
+    // A POST whose body has no known length: `Transfer-Encoding: chunked`.
+    let mut s = crate::common::connect(env.proxy).await;
+    let auth = base64::engine::general_purpose::STANDARD.encode(format!("agent:{TOKEN}"));
+    let raw = format!(
+        "POST http://{up}/y HTTP/1.1\r\nHost: {up}\r\nProxy-Authorization: Basic {auth}\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n5\r\nhello\r\n0\r\n\r\n",
+        up = env.up
+    );
+    s.write_all(raw.as_bytes()).await.unwrap();
+    let mut out = Vec::new();
+    let _ = tokio::time::timeout(Duration::from_secs(5), s.read_to_end(&mut out)).await;
+
+    let log = String::from_utf8(buf.0.lock().unwrap().clone()).unwrap();
+    let wire: Vec<&str> = log
+        .lines()
+        .filter(|l| l.contains("aurora_gateway::wire"))
+        .collect();
+    for secret in [
+        SECRET.to_owned(),
+        "a%20b%2F%26Zx7-wire-secret".to_owned(),
+        "a+b".to_owned(),
+        "Zx7-wire-secret".to_owned(),
+        "cookie-secret".to_owned(),
+        "agentsent".to_owned(),
+        "hello".to_owned(),
+        base64::engine::general_purpose::STANDARD.encode(SECRET),
+    ] {
+        assert!(
+            !log.contains(&secret),
+            "{secret:?} leaked into the log:\n{log}"
+        );
+    }
+    // Three events per request, each with the framing and no value.
+    for ev in ["received", "forwarded", "response"] {
+        let n = wire
+            .iter()
+            .filter(|l| l.contains(&format!("event=\"{ev}\"")))
+            .count();
+        assert_eq!(n, 2, "two requests, one {ev} event each:\n{log}");
+    }
+    let first_forwarded = wire
+        .iter()
+        .find(|l| l.contains("event=\"forwarded\""))
+        .unwrap();
+    for field in [
+        "is_end_stream=true",
+        "size_hint_lower=0",
+        "api_key(<injected>)",
+        "authorization: <injected>",
+        "x-key: <injected>",
+        "decision=",
+        "app=demo",
+    ] {
+        assert!(
+            first_forwarded.contains(field),
+            "{field}: {first_forwarded}"
+        );
+    }
+    let chunked_received = wire
+        .iter()
+        .filter(|l| l.contains("event=\"received\""))
+        .nth(1)
+        .unwrap();
+    for field in [
+        "is_end_stream=false",
+        "size_hint_upper=none",
+        "transfer_encoding=chunked",
+    ] {
+        assert!(
+            chunked_received.contains(field),
+            "{field}: {chunked_received}"
+        );
+    }
+    assert!(
+        wire.iter()
+            .any(|l| l.contains("event=\"response\"") && l.contains("replaced_by=\"echo_check\"")),
+        "{log}"
+    );
+}

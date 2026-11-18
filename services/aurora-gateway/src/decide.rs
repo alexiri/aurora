@@ -230,6 +230,19 @@ impl PostHook for Hook {
         self.echo.clone()
     }
 
+    fn wire_context(&self) -> crate::wire::Decided {
+        crate::wire::Decided {
+            decision: self.ctx.decision.to_owned(),
+            app_id: self.ctx.app_id.clone().unwrap_or_default(),
+            tool_id: self.ctx.tool_id.clone().unwrap_or_default(),
+            connection_id: self
+                .ctx
+                .connection_id
+                .map(|c| c.to_string())
+                .unwrap_or_default(),
+        }
+    }
+
     fn ldap_refusal(&self) -> Option<ApiError> {
         let name = |id: &str| match &self.app {
             Some((aid, n, _)) if aid == id => n.clone(),
