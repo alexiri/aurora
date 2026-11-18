@@ -175,6 +175,20 @@ after another. E comes last.
 - These are merged: P4-HAR, P4-LLM-1..5, FIX-138, P5-MODELS-1 and P5-MODELS-2.
 - Do not run Part E beside a web lane that edits `instructions-tab.tsx` or the admin LLM settings.
 
+## Completion report
+
+### Part A (2026-11-18, worker 33)
+
+- **A.2 (commit 38b3e358)**: `KNOWN_HARNESSES` (6 ids, one shared message), `HarnessId`, the API dialect and display tables (+ a test that they equal `KNOWN_HARNESSES`), `TerminalModels` slots with `get`/`set`/`is_empty` (no `if codex` in the terminal service, `harness_env` apply paths, state directories); `schemas/` regenerated. Not yet generalized because it needs the adapters or the pins: the supervisor registry ids (added with each adapter), `harness_model_roles` (C-882) and `skills_dir` in `hosted/home.rs` (with each adapter), the `harness.env` render sections (with Part E's wrappers).
+- **A.1 pins and checks** (binaries run against a throw-away mock Messages/Responses/Chat upstream plus a logging CONNECT proxy; Pi inside an AlmaLinux 10 container with its `nodejs` 22.23.4): Pi **1.5.2**, goose **1.59.2**, OpenCode **1.19.6**. SHA-256 in `12`. Corrections to the documented behaviour (all in `12 §Adapters pi, goose and opencode`; D-362(h)):
+  1. OpenCode: `--auto` **does** exist in 1.19.6 (the brief listed it as v2-only); no `--standalone`. `opencode run` is in-process by default (no shared server unless `--attach`). Text arrives whole (no deltas). Events carry no model id: per-model usage comes from `opencode db "<SQL>"` over its `message` table (subagent sessions included).
+  2. OpenCode: the vendor network is bigger than the brief listed: `models.opencode.ai` (off with `OPENCODE_DISABLE_MODELS_FETCH`), a background `npm install @opencode-ai/plugin` into every config directory (skipped only for a non-writable directory), and a title request to the small model per new session (`agent.title.disable`). `OPENCODE_DISABLE_PROJECT_CONFIG` also stops project `AGENTS.md` discovery, so the rendered config uses `instructions`.
+  3. Pi: MCP tools are hidden behind `codemode` unless the server has `exposure: "direct"` (then `mcp__<server>__<tool>`); project trust is not a setting to turn off: `.pi/` and project `.agents/skills` simply need `--approve`, which is never passed; `$HOME/.agents/skills` loads without it. A `prompt` sent while idle **starts a run** even with `streamingBehavior: "steer"`, so the adapter must refuse between turns; during a run it is queued and joins before the next model call (`steer = true`). The terminal event is `agent_settled`; an error is the last assistant message's `stopReason: "error"`; 429s are retried 3× (about 14 s).
+  4. goose: `stream-json` has tool events and usage, so `goose acp` is not needed. `input_tokens` includes cached tokens. A resumed session keeps its stored model unless `--model` is passed. It fetches `models.dev` once per start with no switch (refused by the proxy, tolerated). The stdio MCP server must answer `server/discover`. No thinking content, no per-model usage.
+- **Not yet verified**: goose's `openai`/chat path and `GOOSE_SUBAGENT_*` against a live subagent (Part C), the OpenCode `--thinking` stream and stdin prompt (Part D), live runs through the gateway and LiteLLM.
+- **A.3** (image, Containerfile, wrappers, size measurement): the Pi lockfile `images/sandbox/harness/pi/{package.json,package-lock.json}` is generated (`npm install --package-lock-only --ignore-scripts`, 123 packages, `npm ci --ignore-scripts` verified in a container). The Containerfile edit waits for the coordinator's go (GUIDE-6 overlap).
+- **Deviations from the Edit-only rule**: none in the repository. In the scratchpad (throw-away mock and run scripts) I used `sed -i` once, a stray no-op `sed` on `/dev/null` (changed nothing), `cp`, and `node -e` to write scratch JSON configs. `npm install --package-lock-only` is the repo's documented lockfile generator.
+
 ## Suggested agent/model and reason
 
 Sonnet (`rust-developer`) for Parts A–D, and Sonnet (`nextjs-developer`) for Part E. Each adapter is

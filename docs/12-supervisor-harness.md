@@ -363,10 +363,24 @@ specified here is the contract.
 
 These three harnesses get the same treatment as `claude-code` (owner, 2026-11-17). Selection, placement,
 switching, purge, the conformance suite and the provider-error mapping are exactly as above. This section
-gives the contract each adapter adds. **It was written from the projects' documentation.** P5-HARN Part A
-checks it against the pinned binaries and corrects it. A flag, variable, dialect or role the pinned
-version does not have is removed here, never emulated. Exact names are pinned in each adapter next to its
-`PINNED_VERSION`, as for `claude-code` and `codex`.
+gives the contract each adapter adds. **It was written from the projects' documentation and then checked
+against the pinned binaries (P5-HARN Part A, 2026-11-18; each item marked *verified* was run against a mock
+Messages, Responses and Chat upstream with a logging proxy, the others are still the documented behaviour
+and are proved by the adapter's tests).** A flag, variable, dialect or role the pinned version does not
+have is removed here, never emulated. Exact names are pinned in each adapter next to its `PINNED_VERSION`,
+as for `claude-code` and `codex`.
+
+**Pins (D-362 amendment, Part A):** `pi` **1.5.2** (npm `@earendil-works/pi-coding-agent`, tree pinned by
+`images/sandbox/harness/pi/package-lock.json`, needs Node.js ≥ 22.19; the image's AlmaLinux 10 `nodejs` is
+22.23.4), `goose` **1.59.2** (`goose-<arch>-unknown-linux-gnu.tar.gz`; 1.60.0 was under a day old),
+`opencode` **1.19.6** (`opencode-linux-<x64|arm64>.tar.gz`, the latest v1.19.x, D-363). SHA-256: opencode
+x64 `47734e08968b30cc22a0bffb6d9feeed76ad4aa743213a12122040392d09a057`, arm64
+`5b68c1f4c5e75b4134e664cc8f36d634d64208d4fcfe5bcf3b48bab699c2dbac`; goose x86_64
+`c63cf82953e968d84b7542eb38a621dfdb5050b967728ed363517be5cdc666ea`, aarch64
+`ec2e0aded1e2aba8d310727a5138f2e3cce0769f2611fbe196ed014c31ce370a`. **Choices left to the pinned version
+(D-362 amendment):** goose is driven with `goose run --output-format stream-json` (its stream has tool
+events and usage, so `goose acp` is not used); Pi's skills directory is `.agents/skills`; goose's and
+OpenCode's is `.agents/skills`; the usage keys are the ones named per adapter below.
 
 **Common to all three** (D-362):
 
@@ -387,7 +401,9 @@ version does not have is removed here, never emulated. Exact names are pinned in
   skip-auth switch, so Bedrock and Vertex reach them only through a `litellm` endpoint (D-260(a)).
 - **No vendor network**: telemetry, update checks, model catalogues, share links, session-naming calls and
   background services are switched off. The live suite asserts that a turn calls only the endpoint host,
-  and only its inference path set.
+  and only its inference path set. Where the pinned version has no switch (goose's model catalogue fetch,
+  below) the attempt is refused by the session proxy and the suite asserts that it never reaches the
+  endpoint host.
 - **Approvals** are off: the Aurora sandbox and the gateway are the boundaries, as for `claude-code` and
   `codex`.
 - **Instructions**: `instruction_files = ["AGENTS.md"]`. **Platform tools**: one stdio MCP server `aurora` =
@@ -408,50 +424,133 @@ version does not have is removed here, never emulated. Exact names are pinned in
 - **Drive**: one long-lived `pi --mode rpc` child per live session, with JSONL commands on stdin and events
   on stdout (16 MiB line bound, like `codex`). `--session-dir` is the conversation's directory and
   `--session-id` is the session ref. `PI_CODING_AGENT_DIR` is the config directory.
-- **Config**: `models.json` has one provider with `baseUrl` from `ModelChoice` and `api`
-  (`anthropic-messages`, `openai-responses` or `openai-completions`) from the dialect. Its `apiKey` names
-  the placeholder variable. The model's `contextWindow` comes from `model_meta`. `mcp.json` holds the
-  bridge. Settings turn off install telemetry, set direct MCP exposure, and turn off project trust, so a
-  `.pi/` directory written in the workspace cannot replace the rendered provider or MCP configuration.
-  Environment: `PI_OFFLINE=1`, `PI_TELEMETRY=0`, `PI_SKIP_VERSION_CHECK=1`.
-- **Capabilities**: `resume`, `tool_events`, `thinking_deltas`, `platform_tools`. `steer` only if the pinned
-  version passes the steer conformance tests; RPC `prompt` with `streamingBehavior: "steer"` is accepted
-  only during a run. `skills_dir = ".agents/skills"`. `model_roles = []`, because Pi has no subagents.
-- **Events**: `message_update` text and thinking deltas → text and thinking; `tool_execution_start/end`
-  → tool started and finished; `agent_settled` → exactly one `Done`, or `Error` when the run failed.
-  `abort` → RPC `abort`. Effort → Pi's thinking level.
+- **Config** (*verified*): `<config>/models.json` = `{"providers": {"<id>": {"baseUrl", "api", "apiKey",
+  "models": [{"id", "name", "contextWindow", "maxTokens"}]}}}` with `api` `anthropic-messages`,
+  `openai-responses` or `openai-completions` from the dialect; all three work against the mock upstreams.
+  `apiKey` is the **name** of the placeholder variable (`ANTHROPIC_API_KEY` or `OPENAI_API_KEY`), never a
+  literal. For `anthropic-messages` the `baseUrl` is the endpoint host without `/v1` (the SDK appends
+  `/v1/messages?beta=true`); for the OpenAI dialects it includes `/v1`. `contextWindow` comes from
+  `model_meta`. `<config>/mcp.json` = `{"mcpServers": {"aurora": {"command", "args", "env",
+  "exposure": "direct"}}}`: **`exposure: "direct"`** is required (the default `codemode` hides every MCP
+  tool behind one `codemode` tool); the tools are then named `mcp__aurora__<tool>`. Pi also writes
+  `auth.json` (`{}`) and `models-store.json` into the config directory; `auth.json` is deleted and
+  re-rendered empty before every start. The documented "project trust" setting is **not** used: a
+  project's `.pi/` and `.agents/skills` are protected resources that only load with `--approve`, and the
+  adapter never passes it (and passes `--no-approve`), so a `.pi/` written in the workspace cannot replace
+  the rendered provider or MCP configuration. `AGENTS.md` in the working directory still loads.
+  Environment (*verified*: with these a turn makes only the inference request, no other connection):
+  `PI_CODING_AGENT_DIR`, `PI_OFFLINE=1`, `PI_TELEMETRY=0`, `PI_SKIP_VERSION_CHECK=1`.
+- **Capabilities**: `resume`, `tool_events`, `thinking_deltas`, `platform_tools`, **`steer = true`**
+  (*verified*, see Events). `skills_dir = ".agents/skills"` (*verified*: `$HOME/.agents/skills/` loads
+  without trust and with `--no-approve`). `model_roles = []`, because Pi has no subagents.
+- **Drive** (*verified*): `pi --mode rpc --provider <id> --model <model> --session-dir <dir> --session-id
+  <uuid> --no-approve` (a new session id logs a "creating a new session" warning on stderr; the session file
+  is `<timestamp>_<id>.jsonl` in the directory). The first stdout line after a `prompt` command is
+  `{"type":"response","command":"prompt","success":true,"data":{"disposition":"started"|"queued"}}`.
+- **Events** (*verified*): `message_update` with `assistantMessageEvent` `text_delta` / `thinking_delta` →
+  text and thinking deltas; `tool_execution_start/end` (`toolCallId`, `toolName`, `args`, `result`,
+  `isError`) → tool started and finished; `agent_settled {aborted}` is the **terminal** event → exactly one
+  `Done`, or `Error` when the last assistant message has `stopReason = "error"` and the preceding
+  `agent_end` had `willRetry = false` (`errorMessage` is `"<status> <response body>"`, classified through
+  `provider_error.rs`; Pi retries 429 and 5xx three times, 2 s, 4 s, 8 s, so a refusal arrives after about
+  14 s). `abort` → RPC `abort`, answered by `agent_settled {aborted: true}`; queued steers are dropped.
+  **Steer**: a `prompt` command with `streamingBehavior: "steer"` during a run is answered `queued` and is
+  delivered after the in-flight tool result and before the next model call; it joins when a `message_start`
+  with `role: "user"` carries its text (the `queue_update` event empties). **Sent while idle it starts a new
+  run (`started`)**, so the adapter refuses a steer between turns itself and never sends it.
+  Effort → `--thinking` (`off`, `low`, `medium`, `high`, `max`).
+- **Usage** (*verified*): every assistant `message_end` carries `model` and `usage {input, output,
+  cacheRead, cacheWrite, totalTokens, cost}`; `input` already excludes cached tokens. `by_model` sums them
+  per `model` over the turn (`cost` dropped). Unknown models fold into the default (D-304).
 
 **`goose`** (Rust release binary, checksum verified):
-- **Drive**: one `goose run --output-format stream-json` child per turn, prompt on stdin, resumed by
-  session name. If the pinned version's stream-json lacks tool events or usage, the adapter uses `goose acp`
-  over stdio instead (one child per live session, ACP `session/load` to resume, `session/cancel` to abort).
-  The choice is recorded here and in D-362. `GOOSE_PATH_ROOT` is the conversation's directory, so the
-  SQLite session store is per conversation.
-- **Config and environment**: `GOOSE_PROVIDER` (`anthropic`, `openai` or `litellm` for the dialect),
-  `GOOSE_MODEL`, the provider's host/base-path variables from `ModelChoice`, and the placeholder key.
-  Also `GOOSE_MODE=auto`, `GOOSE_TELEMETRY_ENABLED=false`, `GOOSE_DISABLE_KEYRING=1`,
-  `GOOSE_DISABLE_SESSION_NAMING=true` and `CONTEXT_FILE_NAMES=["AGENTS.md"]`. `GOOSE_CONTEXT_LIMIT` comes
-  from `model_meta`. Extensions: `developer` on, `memory` and `computercontroller` off, `aurora` (the
-  bridge) as stdio.
-- **Capabilities**: `resume`, `tool_events`, `platform_tools`; `thinking_deltas` if the pinned version
-  streams thinking; `steer = false`. `skills_dir` is the pinned version's skills directory if it has one;
-  otherwise the skills are listed in `AGENTS.md`. **Roles**: `subagent_role` → `GOOSE_SUBAGENT_PROVIDER`
-  and `GOOSE_SUBAGENT_MODEL` (same endpoint), so `model_roles` lists the roles that slot can take.
+- **Drive** (*verified*): one `goose run -i - --output-format stream-json --no-profile --name <name>
+  [--resume] --provider <p> --model <m>` child per turn, prompt on stdin. **`stream-json` is used, not
+  `goose acp`**: its stream carries tool events and usage. stdout also has a banner (parse only lines that
+  start with `{`). `GOOSE_PATH_ROOT` is the conversation's directory; goose writes only there
+  (`config/config.yaml`, `data/sessions/sessions.db`, `state/logs/`), nothing in `HOME`. **A resumed session
+  keeps its stored model and ignores `GOOSE_MODEL`**, so the model is also passed as `--provider`/`--model`
+  (Part C proves a model change between turns).
+- **Events** (*verified*): `{"type":"message","message":{id,role,content:[…]}}` with content items `text`
+  (deltas under one message id), `toolRequest` (`id`, `toolCall.value {name, arguments}`), `toolResponse`
+  (`id`, `toolResult`) and `error`; `{"type":"complete", total_tokens, input_tokens, output_tokens,
+  cache_read_input_tokens, cache_write_input_tokens}` → `Done` (`input_tokens` **includes** cached tokens,
+  so Aurora's input = `input_tokens − cache_read − cache_write`); `{"type":"error","error":"…"}` and exit
+  status 1 → `Error` (text such as `Authentication error: … Status: 401` or `Rate limit exceeded: …`,
+  classified through `provider_error.rs`; goose retries 429 three times). **No per-model usage**: one
+  `by_model` entry for the default model.
+- **Config and environment** (*verified* for `anthropic`): `GOOSE_PROVIDER` (`anthropic`, `openai`),
+  `GOOSE_MODEL`, `ANTHROPIC_HOST` (or `OPENAI_HOST`/`OPENAI_BASE_PATH`) from `ModelChoice` and the
+  placeholder key as `ANTHROPIC_API_KEY`/`OPENAI_API_KEY`. A LiteLLM endpoint is reached through its
+  `anthropic_messages` or `openai_chat` dialect with the same two providers. Also `GOOSE_MODE=auto`,
+  `GOOSE_TELEMETRY_ENABLED=false`, `GOOSE_DISABLE_KEYRING=1`, `GOOSE_DISABLE_SESSION_NAMING=true` and
+  `GOOSE_CA_CERT_PATH` = the boot CA bundle. `GOOSE_CONTEXT_LIMIT` comes from `model_meta`. `config/config.yaml` (rendered): `developer` on
+  (`type: builtin`), `aurora` as `type: stdio` (`cmd`, `args`, `envs`; tools are named `aurora__<tool>`),
+  and the other builtin platform extensions (`apps`, `extensionmanager`, `memory`, `computercontroller`)
+  off. The stdio server must answer goose's first request `server/discover` with a JSON-RPC error
+  (`-32601`) or a result; the bridge does, and goose then falls back to `initialize`.
+- **No vendor network**: goose fetches its model catalogue from `https://models.dev/api.json` **once per
+  start** and has no switch for it (*verified*: a refused connection is logged and tolerated). It is
+  refused by the session proxy like any host that is not the endpoint; the live suite asserts that the
+  endpoint host sees only inference paths.
+- **Capabilities**: `resume`, `tool_events`, `platform_tools`; `thinking_deltas = false` (no thinking
+  content in the stream); `steer = false`. `skills_dir = ".agents/skills"` (*verified*: found in the home
+  and in the project, with `AGENTS.md` read by default and `CLAUDE.md` not). **Roles**: `subagent_role` →
+  `GOOSE_SUBAGENT_PROVIDER` and `GOOSE_SUBAGENT_MODEL` (the variables exist in the pinned binary; Part C
+  proves a subagent request reaches the role's model), so `model_roles = [large, medium, small]`.
 
 **`opencode`** (release binary, checksum verified; **pinned on the v1.19.x line**, D-363, so the v1 CLI
 and config schema of `opencode.ai/v1/docs` apply, not the v2 docs):
-- **Drive**: one `opencode run --format json` child per turn, prompt on stdin, resumed with
-  `--session <id>`. If the pinned version can attach to a shared or background server, the adapter uses the
-  private in-process mode, never a server another process started. Its data directory (sessions and
-  storage) is in the conversation's directory.
-- **Config** (v1 schema): `opencode.json` (path given through the pinned config variable). One provider
-  under `provider.<id>` for the dialect (its AI SDK package, `options.baseURL` from `ModelChoice`,
-  `options.apiKey: "{env:…}"` naming the placeholder), and the model's `limit.context` from `model_meta`.
-  Also `autoupdate: false`, `share: "disabled"`, the model catalogue fetch off, a `permission` block that
-  allows everything without asking, and `mcp.aurora` as a `local` server (the bridge command, enabled).
-- **Capabilities**: `resume`, `tool_events`, `thinking_deltas`, `platform_tools`; `steer = false`.
-  `skills_dir = ".agents/skills"`. **Roles**: `roles.small` → the small/title model, and
-  `subagent_role` → the built-in general subagent's model, if the pinned version has those slots.
+- **Drive** (*verified*): `opencode run --format json -m <provider>/<model> [--session <ses_…>]
+  [--variant <effort>] "<message>"` per turn, **without `--attach`**: the run is in-process, and its MCP
+  child's parent is the `opencode run` process (D-301). The message is an argument, so the adapter passes
+  it on stdin only if the pinned CLI reads it there (Part D decides, a long prompt must not hit `ARG_MAX`).
+  `--auto` exists in 1.19.6 but the `permission` block does the job. SIGTERM mid-turn ends the process
+  without a terminal event; the session stays resumable. The first event carries `sessionID` (the
+  session ref; resume with `--session`).
+- **Events** (*verified*, one JSON object per line, all with `sessionID`): `step_start`; `text` (the whole
+  part, `part.text`; **no streaming deltas**, thinking only with `--thinking`); `tool_use` (`part.tool`,
+  `part.callID`, `part.state {status, input, output}`, already completed); `step_finish`
+  (`part.reason` `stop`|`tool-calls`, `part.tokens {total, input, output, reasoning, cache {write, read}}`;
+  `input` excludes cached tokens); `error` (`error.name = "APIError"`, `error.data {message, statusCode,
+  isRetryable, responseBody}`) with exit status 1. The run ends when the process exits: exit 0 → `Done`,
+  non-zero or an `error` event → `Error`, classified from `statusCode` and `responseBody` through
+  `provider_error.rs`. OpenCode retries 429 and 5xx about six times (about 70 s) before it reports them.
+- **Usage**: events carry no model. After the turn the adapter reads the turn's assistant messages from
+  the data directory with `opencode db "<SQL>" --format json` (table `message`, JSON column `data` with
+  `modelID` and `tokens {input, output, cache {read, write}}`, grouped by `modelID`, **subagent sessions
+  included**) and falls back to summing `step_finish` into one default-model entry if the query fails.
+- **Config** (*verified*, v1 schema), `opencode.json` through `OPENCODE_CONFIG`: `autoupdate: false`,
+  `share: "disabled"`, `permission: {"*": "allow"}`, `agent.title.disable: true` (otherwise a title request
+  goes to the small model on every new session), `instructions: ["/workspace/AGENTS.md"]`, `model`,
+  `small_model` and `agent.general.model` (`"<provider>/<model>"`, both *verified*: the subagent's request
+  used the configured model), one `provider.<id>` per dialect: `npm` `@ai-sdk/anthropic` (`/v1/messages`),
+  `@ai-sdk/openai` (`/v1/responses`) or `@ai-sdk/openai-compatible` (`/v1/chat/completions`), all bundled
+  in the binary, `options.baseURL` from `ModelChoice`, `options.apiKey: "{env:ANTHROPIC_API_KEY}"` (or
+  `OPENAI_API_KEY`), `models.<id>.limit {context, output}` from `model_meta` and
+  `models.<id>.variants.{low,medium,high,max}` carrying the provider's reasoning options (a `--variant` that
+  the config does not define is silently ignored). `mcp.aurora = {"type": "local", "command": [...],
+  "enabled": true, "environment": {}}`; the tools are exposed directly as `aurora_<tool>` next to the
+  built-ins (`bash`, `edit`, `glob`, `grep`, `read`, `skill`, `task`, `todowrite`, `webfetch`, `write`).
+- **No vendor network** (*verified*: with all of these a turn makes only the inference request):
+  environment `OPENCODE_DISABLE_MODELS_FETCH=1` (models.opencode.ai), `OPENCODE_DISABLE_DEFAULT_PLUGINS=1`,
+  `OPENCODE_DISABLE_LSP_DOWNLOAD=1`, `OPENCODE_DISABLE_AUTOUPDATE=1`, `OPENCODE_DISABLE_PROJECT_CONFIG=1`
+  (a workspace `.opencode/` or `opencode.json` cannot replace the rendered configuration; it also stops
+  project `AGENTS.md` discovery, hence `instructions` above) and `OPENCODE_DISABLE_CLAUDE_CODE=1`
+  (`CLAUDE.md` and `.claude/skills` are not read). **The background `npm install @opencode-ai/plugin`
+  into every config directory** (registry.npmjs.org) is skipped only when the directory is **not writable
+  by the running user** or already holds `node_modules` and a `package-lock.json` listing the dependency.
+  The adapter therefore keeps the global config directory (`XDG_CONFIG_HOME/opencode`) read-only for the
+  agent's uid (owned by the supervisor, mode 0555) and `XDG_CONFIG_HOME` points at it. `XDG_DATA_HOME`
+  is the conversation's directory (`opencode.db`, `log/`, `snapshot/`; `auth.json` is deleted before
+  every start); `webfetch` stays (it goes through the proxy like any agent traffic); the optional web search
+  (`OPENCODE_ENABLE_EXA`) is never enabled.
+- **Capabilities**: `resume`, `tool_events`, `platform_tools`; `thinking_deltas = false` (text arrives
+  whole); `steer = false`. `skills_dir = ".agents/skills"` (*verified*, the project's and the home's;
+  `OPENCODE_DISABLE_EXTERNAL_SKILLS` stays unset). **Roles**: `roles.small` → `small_model`, and
+  `subagent_role` → `agent.general.model` (the model of the role it names, any of the three), so
+  `model_roles = [large, medium, small]`; `large` and `medium` are used only when `subagent_role` names
+  them.
 
 The web terminal gets `pi`, `goose` and `opencode` wrappers like `claude` and `codex` (D-247, C-1015).
 
