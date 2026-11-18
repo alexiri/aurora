@@ -780,7 +780,11 @@ minted.
 13. **Forward.** Pooled hyper client per (scheme, host, port, TLS config);
     upstream TLS verifies against system roots plus `tls.extra_ca_bundle`
     (organization-internal CAs) (+ per-connection CA when a manifest allows
-    it, phase 2). Bodies stream both ways (SSE-safe). Wait for
+    it, phase 2). Bodies stream both ways (SSE-safe). (FIX-166, D-368) A request body
+    the gateway read to its end (for a rule condition, a hold or park, an LLM check) keeps its framing: empty
+    stays empty (h2 `END_STREAM` on HEADERS, no h1 `Transfer-Encoding`), a whole body goes with an exact size
+    (`Content-Length`); only a body that did not end is a stream of unknown length. (An ArcGIS server answers
+    500 to a GET whose empty body is chunked or an open h2 stream.) Wait for
     response headers at most `UPSTREAM_HEADER_TIMEOUT` → 504
     `upstream_timeout` (never retried). Gateway-internal headers are never
     sent upstream. (FIX-052, D-166, C-633) The relayed request never carries a
@@ -1194,6 +1198,20 @@ apply only to what the trait changes:
 - Metrics (Prometheus; phase 3, RFE-014 adds the state and degraded-mode series listed under *Operation during a Postgres outage*): requests by lane/decision/status, upstream latency
   histogram, holds pending, cache hit ratios, refresh/mint outcomes, snapshot
   hash info gauge.
+- **Wire log** (FIX-166, D-368). The tracing target `aurora_gateway::wire`, at `debug`, is silent at the
+  default `info`; `telemetry.log_level: "info,aurora_gateway::wire=debug"` turns it on (the value is an
+  `EnvFilter` directive; `RUST_LOG` overrides). Per forwarded request it logs three events, each with the
+  `request_id`: `received` (lane, HTTP version, method, authority, path, query parameter **names** with value
+  lengths, header names, the body's framing: `is_end_stream`, `size_hint` lower/upper, `Content-Length`,
+  `Transfer-Encoding`), `forwarded` (the same after injection, rewrite and any body re-wrap, plus the upstream
+  authority, the app, tool and connection ids and the decision; what the gateway added or changed is marked
+  `<injected>`) and `response` (upstream status, negotiated protocol, response header names, framing, latency,
+  and whether the gateway replaced the answer: guidance, FIX-104 echo check, stale retry, upstream error). It
+  never logs a credential or injected value, a body byte, a raw query value or a header value, except a fixed
+  allow-list of framing and identification headers (`content-length`, `transfer-encoding`, `content-type`,
+  `content-encoding`, `accept`, `accept-encoding`, `user-agent`, `te`, `connection`, `expect`, `upgrade`,
+  `host`, `server`, `via`); every other header is `name: <N bytes>`, a rewritten path `<injected, N bytes>`.
+  No key, metric or route is added.
 - `gateway_instances` heartbeat every 15 s (used to abandon orphaned holds).
 
 ## Graceful shutdown

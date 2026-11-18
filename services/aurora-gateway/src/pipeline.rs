@@ -91,6 +91,10 @@ pub trait PostHook: Send + 'static {
     fn echo_needles(&self) -> Vec<Vec<u8>> {
         Vec::new()
     }
+    /// (FIX-166, D-368) Ids and the decision for the wire log's `forwarded` event; never values.
+    fn wire_context(&self) -> crate::wire::Decided {
+        crate::wire::Decided::default()
+    }
     /// Upstream answered. Return `Some` to replace the response (status is the
     /// caller's to preserve).
     fn on_response(

@@ -14,9 +14,7 @@ use arc_swap::ArcSwap;
 use aurora_db::repo::gateway::{self as repo, GrantRow, ParkLimits, ParkOutcome};
 use aurora_policy::park::{self, Inputs};
 use bytes::{Bytes, BytesMut};
-use futures::StreamExt;
-use http_body_util::{BodyExt, StreamBody};
-use hyper::body::Frame;
+use http_body_util::BodyExt;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::Instant;
@@ -274,22 +272,9 @@ pub async fn buffer_whole(body: &mut Body, max: usize, within: Duration) -> Buff
     }
     let all = buf.freeze();
     let whole = (ended && all.len() <= max).then(|| all.clone());
-    let head = futures::stream::once({
-        let all = all.clone();
-        async move { Ok::<_, BoxError>(Frame::data(all)) }
-    });
-    let tail: futures::stream::BoxStream<'static, Result<Frame<Bytes>, BoxError>> = if ended {
-        futures::stream::empty().boxed()
-    } else if let Some(e) = failed {
-        futures::stream::once(async move { Err(e) }).boxed()
-    } else {
-        futures::stream::unfold(
-            taken,
-            |mut b| async move { b.frame().await.map(|f| (f, b)) },
-        )
-        .boxed()
-    };
-    *body = StreamBody::new(head.chain(tail)).boxed_unsync();
+    // (FIX-166) A body read to its end keeps its framing: empty stays empty, a whole body is
+    // `Content-Length`-sized.
+    *body = crate::decide::replay_body(all, ended, failed, taken);
     Buffered { whole }
 }
 

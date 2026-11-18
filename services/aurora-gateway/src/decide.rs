@@ -230,6 +230,19 @@ impl PostHook for Hook {
         self.echo.clone()
     }
 
+    fn wire_context(&self) -> crate::wire::Decided {
+        crate::wire::Decided {
+            decision: self.ctx.decision.to_owned(),
+            app_id: self.ctx.app_id.clone().unwrap_or_default(),
+            tool_id: self.ctx.tool_id.clone().unwrap_or_default(),
+            connection_id: self
+                .ctx
+                .connection_id
+                .map(|c| c.to_string())
+                .unwrap_or_default(),
+        }
+    }
+
     fn ldap_refusal(&self) -> Option<ApiError> {
         let name = |id: &str| match &self.app {
             Some((aid, n, _)) if aid == id => n.clone(),
@@ -506,21 +519,33 @@ pub(crate) async fn buffer_prefix(mut body: Body, limit: usize) -> (Bytes, bool,
     }
     let all = buf.freeze();
     let prefix = all.slice(..all.len().min(limit));
-    let head = futures::stream::once({
-        let all = all.clone();
-        async move { Ok::<_, BoxError>(Frame::data(all)) }
-    });
-    let tail: futures::stream::BoxStream<'static, Result<Frame<Bytes>, BoxError>> = if ended {
-        futures::stream::empty().boxed()
-    } else if let Some(e) = failed {
-        futures::stream::once(async move { Err(e) }).boxed()
-    } else {
-        futures::stream::unfold(body, |mut b| async move { b.frame().await.map(|f| (f, b)) })
-            .boxed()
-    };
-    let replay = StreamBody::new(head.chain(tail)).boxed_unsync();
     let truncated = !ended || all.len() > limit;
+    let replay = replay_body(all, ended, failed, body);
     (prefix, truncated, replay)
+}
+
+/// (FIX-166, D-368) The body that replays `read` (everything taken from `rest` so far) followed by
+/// the rest. A body that **ended** keeps the framing it arrived with: empty stays empty (an h2
+/// request stays END_STREAM on HEADERS, an h1 one gets no `Transfer-Encoding`), a whole body has an
+/// exact size (`Content-Length`). Only a body that did not end (cut off by the limit, or failed)
+/// is a stream of unknown length.
+pub(crate) fn replay_body(read: Bytes, ended: bool, failed: Option<BoxError>, rest: Body) -> Body {
+    if ended {
+        return if read.is_empty() {
+            crate::empty_body()
+        } else {
+            crate::full_body(read)
+        };
+    }
+    let head = futures::stream::once(async move { Ok::<_, BoxError>(Frame::data(read)) });
+    let tail: futures::stream::BoxStream<'static, Result<Frame<Bytes>, BoxError>> =
+        if let Some(e) = failed {
+            futures::stream::once(async move { Err(e) }).boxed()
+        } else {
+            futures::stream::unfold(rest, |mut b| async move { b.frame().await.map(|f| (f, b)) })
+                .boxed()
+        };
+    StreamBody::new(head.chain(tail)).boxed_unsync()
 }
 
 impl PolicyHandler {
@@ -3125,5 +3150,83 @@ impl Retry for StaleRetry {
             ldap: None,
             link: None,
         })
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod framing_tests {
+    //! (FIX-166, D-368) A body read to its end keeps its framing.
+    use super::*;
+    use hyper::body::Body as _;
+
+    fn chunked(parts: &[&'static [u8]]) -> Body {
+        let frames: Vec<Result<Frame<Bytes>, BoxError>> = parts
+            .iter()
+            .map(|p| Ok(Frame::data(Bytes::from_static(p))))
+            .collect();
+        StreamBody::new(futures::stream::iter(frames)).boxed_unsync()
+    }
+
+    #[tokio::test]
+    async fn ended_empty_body_stays_empty() {
+        let (p, truncated, b) = buffer_prefix(crate::empty_body(), 16).await;
+        assert!(p.is_empty() && !truncated);
+        assert!(b.is_end_stream());
+        assert_eq!(b.size_hint().exact(), Some(0));
+        // A stream that ends without data is the same.
+        let (_, _, b) = buffer_prefix(chunked(&[]), 16).await;
+        assert!(b.is_end_stream());
+    }
+
+    #[tokio::test]
+    async fn ended_body_with_bytes_has_an_exact_size() {
+        let (p, truncated, b) = buffer_prefix(chunked(&[b"he", b"llo"]), 16).await;
+        assert_eq!((&p[..], truncated), (&b"hello"[..], false));
+        assert!(!b.is_end_stream());
+        assert_eq!(b.size_hint().exact(), Some(5));
+        assert_eq!(&b.collect().await.unwrap().to_bytes()[..], b"hello");
+    }
+
+    #[tokio::test]
+    async fn a_body_cut_by_the_limit_is_still_a_stream_that_replays_everything() {
+        let (p, truncated, b) = buffer_prefix(chunked(&[b"he", b"llo", b"!!"]), 4).await;
+        assert!(truncated);
+        assert_eq!(&p[..], b"hell");
+        assert_eq!(b.size_hint().exact(), None);
+        assert_eq!(&b.collect().await.unwrap().to_bytes()[..], b"hello!!");
+    }
+
+    #[tokio::test]
+    async fn a_failed_body_replays_what_was_read_then_the_error() {
+        let frames: Vec<Result<Frame<Bytes>, BoxError>> = vec![
+            Ok(Frame::data(Bytes::from_static(b"ab"))),
+            Err("boom".into()),
+        ];
+        let body = StreamBody::new(futures::stream::iter(frames)).boxed_unsync();
+        let (_, truncated, b) = buffer_prefix(body, 16).await;
+        assert!(truncated);
+        assert_eq!(b.size_hint().exact(), None);
+        assert!(b.collect().await.is_err());
+    }
+
+    #[tokio::test]
+    async fn buffer_whole_keeps_framing_of_an_ended_body() {
+        let within = Duration::from_secs(5);
+        let mut b = crate::empty_body();
+        let got = crate::park::buffer_whole(&mut b, 1024, within).await;
+        assert_eq!(got.whole.as_deref(), Some(&b""[..]));
+        assert!(b.is_end_stream());
+
+        let mut b = chunked(&[b"he", b"llo"]);
+        let got = crate::park::buffer_whole(&mut b, 1024, within).await;
+        assert_eq!(got.whole.as_deref(), Some(&b"hello"[..]));
+        assert_eq!(b.size_hint().exact(), Some(5));
+
+        // Over the cap: not whole, still replayed intact as a stream.
+        let mut b = chunked(&[b"he", b"llo"]);
+        let got = crate::park::buffer_whole(&mut b, 3, within).await;
+        assert!(got.whole.is_none());
+        assert_eq!(&b.collect().await.unwrap().to_bytes()[..], b"hello");
     }
 }

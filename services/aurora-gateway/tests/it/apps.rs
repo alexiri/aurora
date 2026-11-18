@@ -49,6 +49,10 @@ mod account_health;
 #[path = "own_server.rs"]
 mod own_server;
 
+// (FIX-166, D-368) Request-body framing on the upstream hop, seen by a frame-level oracle.
+#[path = "wire_framing.rs"]
+mod wire_framing;
+
 #[derive(Clone, Copy)]
 struct World {
     org: Uuid,

@@ -197,16 +197,18 @@ async fn audit_count(r: &Rig, action: &str) -> i64 {
         .unwrap()
 }
 
-/// Best-effort audit rows land asynchronously: poll (bounded) until at least one exists.
-async fn wait_audit_rows(r: &Rig, action: &str) -> i64 {
+/// Best-effort audit rows land asynchronously, each on its own: poll (bounded) until at least
+/// `want` exist, and return the count then (fewer if the deadline passed).
+async fn wait_audit_rows(r: &Rig, action: &str, want: i64) -> i64 {
+    let mut n = 0;
     for _ in 0..200 {
-        let n = audit_count(r, action).await;
-        if n > 0 {
+        n = audit_count(r, action).await;
+        if n >= want {
             return n;
         }
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }
-    panic!("no audit row {action}");
+    n
 }
 
 async fn session_state(r: &Rig, id: Uuid) -> (String, Option<String>) {
@@ -379,7 +381,7 @@ async fn ssh_sessions_open_succeeds_with_one_audit_row() {
             .await
             .unwrap();
     assert!(last.is_some());
-    assert_eq!(wait_audit_rows(&s.r, "agent.ssh.open").await, 1);
+    assert_eq!(wait_audit_rows(&s.r, "agent.ssh.open", 1).await, 1);
     let meta: Value =
         sqlx::query_scalar("SELECT metadata FROM audit_log WHERE action = 'agent.ssh.open'")
             .fetch_one(s.r.h.pool())
@@ -726,7 +728,7 @@ async fn ssh_sessions_heartbeat_revokes_per_cause_and_closes_once() {
     // writes nothing more.
     let v = heartbeat(&s.r, s.rep, &[kept]).await;
     assert_eq!(v["revoked"][0]["reason"], "key_deleted");
-    assert_eq!(wait_audit_rows(&s.r, "agent.ssh.close").await, 2);
+    assert_eq!(wait_audit_rows(&s.r, "agent.ssh.close", 2).await, 2);
     assert_eq!(audit_count(&s.r, "agent.ssh.close").await, 2);
 }
 
@@ -845,7 +847,7 @@ async fn ssh_sessions_sweep_closes_lease_expired_rows_once() {
             .unwrap(),
         0
     );
-    assert_eq!(wait_audit_rows(&s.r, "agent.ssh.close").await, 1);
+    assert_eq!(wait_audit_rows(&s.r, "agent.ssh.close", 1).await, 1);
 }
 
 // ---- C-793 --------------------------------------------------------------------------------
@@ -947,7 +949,7 @@ async fn ssh_sessions_lists_and_disconnect_authority() {
     );
     let v = heartbeat(&s.r, s.rep, &[id]).await;
     assert_eq!(v["revoked"][0]["reason"], "owner_disconnect", "{v}");
-    assert_eq!(wait_audit_rows(&s.r, "ssh_session.disconnect").await, 1);
+    assert_eq!(wait_audit_rows(&s.r, "ssh_session.disconnect", 1).await, 1);
     // The person disconnects their own: user reason.
     let id2 = open_ok(&s).await;
     let (st, v) =

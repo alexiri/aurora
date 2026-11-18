@@ -226,6 +226,26 @@ impl W {
             .expect("turn finished");
     }
 
+    /// Wait (with a deadline) until the judge task has written question `pos`'s result. The judge
+    /// runs on its own task: state changed before this returns can still be seen by that question.
+    async fn scored(&self, id: &str, pos: i32) {
+        for _ in 0..400 {
+            let f: Option<bool> = sqlx::query_scalar(
+                "SELECT finished_at IS NOT NULL FROM eval_results WHERE run_id = $1::uuid AND position = $2",
+            )
+            .bind(id)
+            .bind(pos)
+            .fetch_optional(self.r.h.pool())
+            .await
+            .unwrap();
+            if f == Some(true) {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        panic!("question {pos} was not scored in time");
+    }
+
     /// Answer every question in turn, waiting (with a deadline) for each judge task to write its
     /// result, then end the run (the request-log wait is skipped by backdating the results).
     async fn drive(&self, id: &str, answers: &[(&str, Option<&str>)]) {
@@ -233,24 +253,7 @@ impl W {
             self.tick().await;
             self.answer(text, *tool).await;
             self.tick().await;
-            let pos = i32::try_from(i + 1).unwrap();
-            let mut done = false;
-            for _ in 0..400 {
-                let f: Option<bool> = sqlx::query_scalar(
-                    "SELECT finished_at IS NOT NULL FROM eval_results WHERE run_id = $1::uuid AND position = $2",
-                )
-                .bind(id)
-                .bind(pos)
-                .fetch_optional(self.r.h.pool())
-                .await
-                .unwrap();
-                if f == Some(true) {
-                    done = true;
-                    break;
-                }
-                tokio::time::sleep(Duration::from_millis(25)).await;
-            }
-            assert!(done, "question {pos} was not scored in time");
+            self.scored(id, i32::try_from(i + 1).unwrap()).await;
         }
         sqlx::query(
             "UPDATE eval_results SET finished_at = finished_at - interval '1 minute' WHERE run_id = $1::uuid",
@@ -452,15 +455,12 @@ async fn a_judge_that_cannot_be_used_is_an_error_and_no_request_is_sent() {
     }
     let id = w.start().await;
     // Question 1 is judged normally; then each way the key can stop being usable, one question each.
+    // Each question's judge task must have written its result before the key changes again, or it
+    // would judge with the next question's key state.
     w.tick().await;
     w.answer("a1", None).await;
     w.tick().await;
-    for _ in 0..400 {
-        if w.outcomes(&id).await[0].0 != "not_scored" {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(25)).await;
-    }
+    w.scored(&id, 1).await;
     // 2: the grant is revoked after the settings were saved.
     sqlx::query("DELETE FROM grants WHERE secret_id = $1")
         .bind(key)
@@ -470,7 +470,7 @@ async fn a_judge_that_cannot_be_used_is_an_error_and_no_request_is_sent() {
     w.tick().await;
     w.answer("a2", None).await;
     w.tick().await;
-    w.tick().await;
+    w.scored(&id, 2).await;
     // 3: granted again but the key is no longer active.
     sqlx::query("INSERT INTO grants (id, workspace_id, agent_id, secret_id) VALUES ($1,$2,$3,$4)")
         .bind(Uuid::now_v7())
@@ -488,7 +488,7 @@ async fn a_judge_that_cannot_be_used_is_an_error_and_no_request_is_sent() {
     w.tick().await;
     w.answer("a3", None).await;
     w.tick().await;
-    w.tick().await;
+    w.scored(&id, 3).await;
     // 4: active again but governance no longer admits its scope (a workspace-scoped key).
     sqlx::query("UPDATE secrets SET status = 'active', workspace_id = $2 WHERE id = $1")
         .bind(key)
@@ -499,13 +499,7 @@ async fn a_judge_that_cannot_be_used_is_an_error_and_no_request_is_sent() {
     w.tick().await;
     w.answer("a4", None).await;
     w.tick().await;
-    w.tick().await;
-    for _ in 0..400 {
-        if w.outcomes(&id).await.iter().all(|o| o.0 != "not_scored") {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(25)).await;
-    }
+    w.scored(&id, 4).await;
     is(
         &w.outcomes(&id).await,
         &[

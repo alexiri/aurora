@@ -812,7 +812,15 @@ async fn request(
     s.write_all(head.as_bytes()).await.unwrap();
     s.write_all(body).await.unwrap();
     let mut out = Vec::new();
-    let _ = tokio::time::timeout(Duration::from_secs(5), s.read_to_end(&mut out)).await;
+    // A multi-MiB body (the SigV4 signing limit is 8 MiB) is buffered, hashed and signed by a debug
+    // build: on a loaded CI runner that alone can take longer than 5 s. The read ends when the
+    // gateway closes, so the longer deadline costs nothing when it answers.
+    let wait = if body.len() > 1 << 20 {
+        Duration::from_secs(60)
+    } else {
+        Duration::from_secs(5)
+    };
+    let _ = tokio::time::timeout(wait, s.read_to_end(&mut out)).await;
     let text = String::from_utf8_lossy(&out).into_owned();
     let (head, body) = text.split_once("\r\n\r\n").unwrap_or((&text, ""));
     Reply {
