@@ -388,6 +388,41 @@ async fn the_terminal_and_scim_switches_apply_live() {
     assert_eq!(s.as_u16(), 401);
 }
 
+/// FIX-162 (D-358): with SSH on, the terminal switch cannot be turned off; the refusal names the
+/// key; with SSH off (the other tests above) it can.
+#[tokio::test]
+async fn the_terminal_cannot_be_turned_off_while_ssh_is_on() {
+    let h = Harness::with_config(|c| {
+        c.ssh.enabled = true;
+        c.ssh_ca_key = Some(aurora_config::Redacted::new(
+            "ed25519:BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=".to_owned(),
+        ));
+    })
+        .await
+        .with_source(config_source_custom(
+            "[terminal]\navailable = true\n\n[[auth.oidc_providers]]\nid = \"helm\"\ndisplay_name = \"Helm SSO\"\nissuer = \"https://idp.example.com\"\nclient_id = \"c\"\nclient_secret_env = \"HELM_SECRET\"\n",
+            &[("HELM_SECRET", "s")],
+        ));
+    let a = h.user("root@x.io", true).await;
+    let (_, admin) = h.good_session(a).await;
+    let w = W { h, admin };
+    let (s, v) = w
+        .put("terminal", json!({ "terminal.enabled": false }))
+        .await;
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (422, Some("settings_invalid")),
+        "{v}"
+    );
+    assert_eq!(
+        v["error"]["details"]["fields"][0]["path"],
+        "/terminal.enabled"
+    );
+    assert!(w.h.state.ops().terminal.enabled, "unchanged");
+    let (s, v) = w.put("terminal", json!({ "terminal.enabled": true })).await;
+    assert_eq!(s, 200, "{v}");
+}
+
 /// `ratelimit.api.multiplier` moves the 429 threshold without a restart (the harness scales every
 /// bucket by 100 until the first write), and a class the configuration overrides is locked alone.
 #[tokio::test]

@@ -633,3 +633,74 @@ async fn platform_llm_times_out_and_refuses_before_any_request() {
     assert_eq!(r.err(), Some(Failure::NotGranted));
     assert_eq!(w.posts(&w.judge).await.len(), before);
 }
+
+/// FIX-165: the LLM client does not follow redirects, so a provider answering 3xx cannot move the
+/// key to another host: neither on key verification nor on the judge's completion call.
+#[tokio::test]
+async fn a_redirecting_provider_never_gets_the_key_to_another_host() {
+    let w = world().await;
+    let key = w.judge_key("judge1").await;
+    // From here on the judge endpoint redirects everything to the other server.
+    w.judge.reset().await;
+    w.other.reset().await;
+    let to = |p: &str| {
+        ResponseTemplate::new(307).insert_header("location", format!("{}{p}", w.other.uri()))
+    };
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(to("/v1/messages"))
+        .mount(&w.judge)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/v1/models"))
+        .respond_with(to("/v1/models"))
+        .mount(&w.judge)
+        .await;
+    // The judge call: an upstream failure, nothing reaches the other server.
+    let agent = aurora_db::repo::agents::get(w.r.h.pool(), w.agent)
+        .await
+        .unwrap()
+        .unwrap();
+    let r = platform::complete(
+        &w.r.h.state,
+        Purpose::EvalJudge,
+        &agent,
+        key,
+        Request {
+            model: "judge-1".into(),
+            system: "s",
+            user: "u".into(),
+            max_tokens: 512,
+            timeout: Duration::from_secs(5),
+        },
+    )
+    .await;
+    assert_eq!(r.err(), Some(Failure::Unavailable));
+    assert_eq!(w.posts(&w.judge).await.len(), 1);
+    // Key verification: a new key on the redirecting endpoint is not verified (no origin rule:
+    // saved `pending`), and nothing is asked of the other server.
+    let (s, v) = w
+        .call(
+            &w.admin,
+            Method::POST,
+            &format!("/v1/orgs/{}/secrets", w.r.org),
+            Some(json!({"name": "k-redirected", "kind": "llm",
+                        "llm": {"endpoint_id": "judge1"}, "value": KEY})),
+        )
+        .await;
+    assert_eq!(s, 201, "{v}");
+    assert_eq!(v["origin"]["status"], "pending", "{v}");
+    assert!(
+        !w.judge.received_requests().await.unwrap().is_empty(),
+        "the redirecting endpoint was asked"
+    );
+    let seen = w.other.received_requests().await.unwrap();
+    assert!(
+        seen.is_empty(),
+        "the redirect target received {} request(s): {:?}",
+        seen.len(),
+        seen.iter()
+            .map(|r| r.url.path().to_owned())
+            .collect::<Vec<_>>()
+    );
+}
