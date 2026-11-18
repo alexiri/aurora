@@ -43,6 +43,7 @@ pub mod snapshot;
 pub mod status;
 pub mod summarize_client;
 pub mod upstream;
+pub mod wire;
 
 use bytes::Bytes;
 use http_body_util::{BodyExt, Empty, Full, combinators::UnsyncBoxBody};

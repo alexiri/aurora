@@ -13,6 +13,7 @@ use crate::hygiene::{self, PathError};
 use crate::pipeline::{Outcome, PipelineRequest, RequestHandler, Scheme};
 use crate::proxy_tls::ProxyTls;
 use crate::upstream::{EgressProxy, Upstream};
+use crate::wire::Wire;
 use crate::{Body, BoxError, empty_body, guidance};
 use aurora_core::ApiError;
 use http::{HeaderMap, Request, Response};
@@ -317,11 +318,25 @@ impl Proxy {
     }
 
     /// Pipeline steps 1-3, handler, forwarding (step 13).
-    async fn process_request(&self, t: &Target, mut req: Request<Incoming>) -> Response<Body> {
+    async fn process_request(&self, t: &Target, req: Request<Incoming>) -> Response<Body> {
+        let mut wire = Wire::off();
+        let resp = self.process_request_inner(t, req, &mut wire).await;
+        // (FIX-166, D-368) The wire log's third event, once the answer to the agent is known.
+        wire.response(resp.status());
+        resp
+    }
+
+    async fn process_request_inner(
+        &self,
+        t: &Target,
+        mut req: Request<Incoming>,
+        wire: &mut Wire,
+    ) -> Response<Body> {
         let upgrade_fut =
             hygiene::requested_upgrade(req.headers()).map(|_| hyper::upgrade::on(&mut req));
         let (parts, body) = req.into_parts();
         let mut headers = parts.headers;
+        let wire_headers = crate::wire::enabled().then(|| headers.clone());
         let upgrade = hygiene::requested_upgrade(&headers);
         // 1. header hygiene
         let aurora_headers = hygiene::strip_request_headers(&mut headers);
@@ -342,6 +357,19 @@ impl Proxy {
             }
         };
         let body: Body = body.map_err(|e| -> BoxError { Box::new(e) }).boxed_unsync();
+        if let Some(h) = &wire_headers {
+            *wire = Wire::received(
+                if t.lane == Lane::Mitm { "mitm" } else { "open" },
+                parts.version,
+                &parts.method,
+                &t.host,
+                t.port,
+                &path,
+                parts.uri.query(),
+                h,
+                &body,
+            );
+        }
         let method_name = parts.method.as_str().to_owned();
         let http1 = parts.version <= http::Version::HTTP_11;
         let mut closed_by = t.closed_by.clone();
@@ -394,15 +422,30 @@ impl Proxy {
         }
         // 13. forward
         let kill = t.kill.clone();
+        let decided = hook.as_ref().map(|h| h.wire_context()).unwrap_or_default();
+        wire.forwarded(
+            prepared.scheme.as_str(),
+            &prepared.host,
+            prepared.port,
+            &prepared.method,
+            &prepared.path,
+            prepared.query.as_deref(),
+            &prepared.headers,
+            &prepared.body,
+            &decided,
+        );
+        wire.started();
         let resp = match self.upstream.send(prepared).await {
             Ok(r) => r,
             Err(e) => {
+                wire.replaced("upstream_error");
                 if let Some(h) = hook {
                     h.on_error(&e);
                 }
                 return guidance::response(&e);
             }
         };
+        wire.upstream_answered(&resp);
         // 14. stale token: refresh and resend a body-less request once.
         if let Some(r) = retry
             && r.stale_codes()
@@ -430,15 +473,19 @@ impl Proxy {
                         .is_none_or(|n| text.contains(n.as_str()))
             });
             if stale && let Some(next) = r.rebuild().await {
+                wire.started();
                 match self.upstream.send(next).await {
                     Ok(r2) => {
                         // The first response is dropped unread.
                         drop(replay);
+                        wire.upstream_answered(&r2);
+                        wire.replaced("stale_retry");
                         return self
-                            .finish(r2, hook, response_headers, upgrade_fut, kill)
+                            .finish(r2, hook, response_headers, upgrade_fut, kill, wire)
                             .await;
                     }
                     Err(e) => {
+                        wire.replaced("upstream_error");
                         if let Some(h) = hook {
                             h.on_error(&e);
                         }
@@ -451,6 +498,7 @@ impl Proxy {
                 match echo_check(&h.echo_needles(), resp).await {
                     Ok(r) => resp = r,
                     Err(e) => {
+                        wire.replaced("echo_check");
                         if let Some(h) = hook {
                             h.on_error(&e);
                         }
@@ -461,6 +509,7 @@ impl Proxy {
             if let Some(h) = hook
                 && let Some(replacement) = h.on_response(resp.status(), resp.headers())
             {
+                wire.replaced("guidance");
                 return replacement;
             }
             for (k, v) in &response_headers {
@@ -469,7 +518,7 @@ impl Proxy {
             hygiene::strip_hop_by_hop(resp.headers_mut());
             return resp;
         }
-        self.finish(resp, hook, response_headers, upgrade_fut, kill)
+        self.finish(resp, hook, response_headers, upgrade_fut, kill, wire)
             .await
     }
 
@@ -513,12 +562,14 @@ impl Proxy {
         response_headers: http::HeaderMap,
         upgrade_fut: Option<hyper::upgrade::OnUpgrade>,
         kill: Option<watch::Receiver<bool>>,
+        wire: &mut Wire,
     ) -> Response<Body> {
         // (FIX-086) A `101` to a request that asked for no (honoured) upgrade is a protocol error:
         // never bridged. The response is dropped, which closes that upstream connection; the agent
         // gets 502 and the exchange is logged once through the hook.
         if resp.status() == http::StatusCode::SWITCHING_PROTOCOLS && upgrade_fut.is_none() {
             tracing::warn!("upstream answered 101 to a request that asked for no upgrade");
+            wire.replaced("unsolicited_101");
             let e = guidance::bad_gateway();
             if let Some(h) = hook {
                 h.on_error(&e);
@@ -533,6 +584,7 @@ impl Proxy {
             let mut checked = match echo_check(&needles, Response::from_parts(parts, body)).await {
                 Ok(r) => r,
                 Err(e) => {
+                    wire.replaced("echo_check");
                     if let Some(h) = hook {
                         h.on_error(&e);
                     }
@@ -542,6 +594,7 @@ impl Proxy {
             if let Some(h) = hook
                 && let Some(replacement) = h.on_response(checked.status(), checked.headers())
             {
+                wire.replaced("guidance");
                 return replacement;
             }
             for (k, v) in &response_headers {
@@ -553,6 +606,7 @@ impl Proxy {
         if let Some(h) = hook
             && let Some(replacement) = h.on_response(resp.status(), resp.headers())
         {
+            wire.replaced("guidance");
             return replacement;
         }
         for (k, v) in &response_headers {

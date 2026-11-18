@@ -1280,6 +1280,227 @@ default_model = "say"
     st.finish().await;
 }
 
+/// (P5-HARN, C-1010..C-1016, SEC-01, SEC-66, SEC-133) A hosted agent on `harness` answers through the gateway
+/// LLM lane against the mock upstream of `dialect`: a turn, a shell tool call and a resumed turn; the seeded
+/// key reaches only the upstream (injected by the gateway), the sandbox booted that harness and nothing else, and
+/// the key is found nowhere in the sandbox (environment, files, rendered config, transcripts).
+async fn added_harness_holds_no_credential(
+    harness: &str,
+    dialect: &str,
+    path: &str,
+    shell_tool: &str,
+    state_dir: &str,
+) {
+    if !enabled() {
+        return;
+    }
+    let Ok(image) = std::env::var("AURORA_E2EH_FULL_IMAGE_TAG") else {
+        eprintln!(
+            "SKIPPED: AURORA_E2EH_FULL_IMAGE_TAG is not set; run AURORA_E2EH_FULL_IMAGE=1 scripts/e2e/hosted.sh"
+        );
+        return;
+    };
+    let seed = format!("sk-e2e-{harness}-SEEDED-7c1d9a40");
+    // 127.0.0.2: the sandbox's NO_PROXY covers 127.0.0.1 and localhost, so the model call must go
+    // through the proxy to the gateway (which may dial exactly this address).
+    let up = aurora_testkit::harness_upstream::HarnessUpstream::start_on(
+        "127.0.0.2",
+        "aurora_ping",
+        shell_tool,
+        "task",
+    )
+    .await;
+    let base = up.base().to_owned();
+    let toml = format!(
+        r#"
+[llm]
+enabled_providers = ["litellm"]
+provider_preference = ["litellm"]
+
+[[llm.endpoints]]
+id = "mock-{harness}"
+provider = "litellm"
+display_name = "Mock upstream"
+base_url = "{base}"
+dialects = ["{dialect}"]
+default_model = "say"
+"#
+    );
+    Stack::wipe();
+    let st = Stack::start_with(
+        Opts {
+            image: Some(image),
+            ..Opts::default()
+        },
+        &toml,
+    )
+    .await;
+    let api = st.signup("owner@e2e.test").await;
+    sqlx::query(
+        "UPDATE agents SET harness = $2, model_provider = 'litellm', \
+         model_endpoint_id = $3, model_id = 'say' WHERE id = $1::uuid",
+    )
+    .bind(&api.daneel)
+    .bind(harness)
+    .bind(format!("mock-{harness}"))
+    .execute(st.pool())
+    .await
+    .unwrap();
+    let (s, v) = api
+        .post(
+            &format!("/v1/workspaces/{}/secrets", api.ws),
+            json!({"name": format!("{harness}-mock-key"), "kind": "llm",
+                   "llm": {"endpoint_id": format!("mock-{harness}"), "auth_mode": "api_key"},
+                   "value": seed}),
+        )
+        .await;
+    assert_eq!(s, 201, "llm key: {v}\n{}", st.log_tails());
+    api.grant(&api.daneel, v["id"].as_str().unwrap()).await;
+
+    let conv = api.direct().await;
+    let v = api.say(&conv, "Reply with exactly the word: pong").await;
+    let (status, err) = st
+        .wait_turn(&turn_id(&v), &["done", "failed", "aborted"], 180)
+        .await;
+    if status != "done" {
+        let msgs: Vec<(String, Option<String>)> =
+            sqlx::query_as("SELECT status, error_message FROM turns")
+                .fetch_all(st.pool())
+                .await
+                .unwrap_or_default();
+        let logs: String = containers()
+            .iter()
+            .map(|c| format!("--- {c} ---\n{}", podman_rc(&["logs", "--tail", "60", c]).1))
+            .collect();
+        panic!(
+            "{harness} turn {status} {err:?}: {msgs:?}\n{logs}\n{}",
+            st.log_tails()
+        );
+    }
+    let t1 = transcript_text(&api.events(&conv).await);
+    assert!(t1.contains("pong"), "answer missing: {t1}");
+
+    // The sandbox booted the agent's harness and nothing else, with its state in its own directory.
+    let cs = containers();
+    assert_eq!(cs.len(), 1, "{cs:?}");
+    let c = cs[0].as_str();
+    assert_eq!(boot_doc(c)["harness"]["id"], harness);
+    let (_, home) = exec_in(c, &format!("ls -R {state_dir} 2>&1 | head -40"));
+    assert!(!home.contains("No such file"), "{state_dir}: {home}");
+    assert!(
+        !home.contains("auth.json") && !home.contains("secrets.yaml"),
+        "no credential store: {home}"
+    );
+
+    // A shell tool call, then a resumed turn that carries the first answer.
+    sqlx::query("UPDATE agents SET model_id = 'tool' WHERE id = $1::uuid")
+        .bind(&api.daneel)
+        .execute(st.pool())
+        .await
+        .unwrap();
+    let v = api
+        .say(&conv, "Run `echo hi` with your shell tool, then say done.")
+        .await;
+    let (status, err) = st
+        .wait_turn(&turn_id(&v), &["done", "failed", "aborted"], 180)
+        .await;
+    assert_eq!(
+        status,
+        "done",
+        "{harness} tool turn {status} {err:?}\n{}",
+        st.log_tails()
+    );
+    let t2 = transcript_text(&api.events(&conv).await);
+    assert!(t2.contains("done"), "tool turn: {t2}");
+    let seen = up.requests();
+    assert!(
+        seen.iter()
+            .skip(1)
+            .any(|r| r.body.to_string().contains("pong")),
+        "the resumed turn did not carry the earlier conversation: {} requests",
+        seen.len()
+    );
+
+    // The model calls went through the gateway: its request log attributes them to this conversation.
+    let end = std::time::Instant::now() + Duration::from_secs(60);
+    let rows = loop {
+        #[allow(clippy::type_complexity)]
+        let rows: Vec<(String, Option<String>, Option<String>, i32)> = sqlx::query_as(
+            "SELECT path, conversation_id::text, secret_id::text, status FROM request_log \
+             WHERE host LIKE '127.0.0.2%' AND path LIKE $1",
+        )
+        .bind(format!("{path}%"))
+        .fetch_all(st.pool())
+        .await
+        .unwrap();
+        if rows.len() >= 2 || std::time::Instant::now() > end {
+            break rows;
+        }
+        tokio::time::sleep(Duration::from_millis(300)).await;
+    };
+    assert!(
+        rows.iter()
+            .any(|(_, c, s, status)| c.as_deref() == Some(conv.as_str())
+                && s.is_some()
+                && *status == 200),
+        "no attributed 200 {path} row in the gateway request log: {rows:?}\n{}",
+        st.log_tails()
+    );
+
+    // SEC-01 / SEC-66 / SEC-133: only the gateway held the key. Every request the upstream saw (the
+    // inference path and, for goose on LiteLLM, the `GET /model/info` the gateway forwards, D-367)
+    // carried it; nothing else of the sandbox did.
+    assert!(!seen.is_empty());
+    for r in &seen {
+        assert_eq!(
+            r.credential().as_deref(),
+            Some(seed.as_str()),
+            "the gateway did not inject the key: {r:?}"
+        );
+        // (`GET /v1/models` is the API verifying the stored key when it is granted, not the harness.)
+        assert!(
+            r.path == path || r.path == "/model/info" || r.path == "/v1/models",
+            "a request outside the inference path reached the endpoint: {r:?}"
+        );
+        assert!(!r.body.to_string().contains(&seed));
+    }
+    assert_sandbox_holds_none(c, &[seed.as_str()]);
+    assert!(!t1.contains(&seed) && !t2.contains(&seed));
+    st.finish().await;
+}
+
+// (Pi has no probe here: it is Node.js with undici's `EnvHttpProxyAgent`, which tunnels with CONNECT
+// even to an `http://` origin, and the gateway terminates CONNECT as TLS, so it cannot reach this
+// suite's plain-HTTP mock upstream. It works against https endpoints like Claude Code does; a probe
+// needs a TLS mock upstream. Reported in the P5-HARN completion report.)
+
+/// (P5-HARN, SEC-133, D-367) goose on LiteLLM's Chat dialect (it asks `GET /model/info`, which the gateway
+/// forwards with the key).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn s41_goose_agent_answers_through_the_gateway_and_the_sandbox_holds_no_credential() {
+    added_harness_holds_no_credential(
+        "goose",
+        "openai_chat",
+        "/v1/chat/completions",
+        "shell",
+        "/workspace/.aurora/harness/goose",
+    )
+    .await;
+}
+
+/// (P5-HARN, SEC-133) OpenCode on the Responses dialect.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn s42_opencode_agent_answers_through_the_gateway_and_the_sandbox_holds_no_credential() {
+    added_harness_holds_no_credential(
+        "opencode",
+        "openai_responses",
+        "/v1/responses",
+        "bash",
+        "/workspace/.aurora/harness/opencode",
+    )
+    .await;
+}
+
 /// (P4-LLM-5, SEC-01, SEC-64, SEC-97) The sandbox holds none of `needles`: not in the container's configured
 /// environment, not in any file under the places a harness writes, not in any process environment.
 fn assert_sandbox_holds_none(c: &str, needles: &[&str]) {

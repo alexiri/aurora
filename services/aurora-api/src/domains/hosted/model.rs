@@ -18,6 +18,15 @@ pub fn harness_dialects(harness: &str) -> &'static [Dialect] {
         // The pinned Codex CLI (0.167.0) dropped `wire_api = "chat"`: a version that drops a
         // dialect removes it here (`12 §Harness selection`, D-153).
         "codex" => &[Dialect::OpenaiResponses],
+        // (phase 5, P5-HARN, D-362(c)) Declared by the adapters; Part A of the brief checks each
+        // list against the pinned binary. None declares Bedrock or Vertex: their SDKs sign with
+        // cloud credentials, so `litellm` serves those.
+        "pi" | "opencode" => &[
+            Dialect::AnthropicMessages,
+            Dialect::OpenaiResponses,
+            Dialect::OpenaiChat,
+        ],
+        "goose" => &[Dialect::AnthropicMessages, Dialect::OpenaiChat],
         // (D-260(a)) Claude Code reaches Anthropic, and Bedrock and Vertex through their own dialects.
         _ => &[
             Dialect::AnthropicMessages,
@@ -60,13 +69,34 @@ mod dialect_tests {
         }
         assert_eq!(harness_dialects("codex"), &[Dialect::OpenaiResponses]);
     }
+
+    #[test]
+    fn new_harnesses_serve_chat_only_endpoints_and_the_registry_matches_config() {
+        use Dialect::{AnthropicMessages as A, OpenaiChat as C, OpenaiResponses as R};
+        // `openai_chat`-only endpoints are usable by an enabled harness for the first time.
+        for h in ["pi", "goose", "opencode"] {
+            assert_eq!(first_shared(h, &[C]), Some(C), "{h}");
+            assert_eq!(first_shared(h, &[A, C, R]), Some(A), "{h}");
+        }
+        assert_eq!(first_shared("goose", &[R]), None);
+        assert_eq!(first_shared("pi", &[R]), Some(R));
+        let ids: Vec<&str> = HARNESSES.iter().map(|(i, _)| *i).collect();
+        let mut known: Vec<&str> = aurora_config::KNOWN_HARNESSES.to_vec();
+        known.sort_unstable();
+        let mut mine = ids.clone();
+        mine.sort_unstable();
+        assert_eq!(mine, known);
+    }
 }
 
 /// Registry of the harnesses this build knows, `(id, display name)`; `hosted.enabled_harnesses`
 /// selects among them (`fake` only with `hosted.allow_fake_harness`).
-pub const HARNESSES: [(&str, &str); 3] = [
+pub const HARNESSES: [(&str, &str); 6] = [
     ("claude-code", "Claude Code"),
     ("codex", "OpenAI Codex"),
+    ("pi", "Pi"),
+    ("goose", "goose"),
+    ("opencode", "OpenCode"),
     ("fake", "Scripted test harness"),
 ];
 

@@ -1,0 +1,9 @@
+{
+  "name": "aurora-sandbox-pi",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The pinned Pi coding agent of the sandbox image (P5-HARN, D-361). The version must match PINNED_VERSION in services/aurora-supervisor/src/adapters/pi/mod.rs; the lockfile pins the whole tree and the image installs it with `npm ci --ignore-scripts`. Pi needs Node.js 22.19 or newer (the image's nodejs).",
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "1.5.2"
+  }
+}
