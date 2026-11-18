@@ -78,8 +78,13 @@ fn compose(app: &str, stdout: &str) -> String {
     let mut guide = Vec::new();
     let mut tools = Vec::new();
     let mut section = "";
+    let mut operations = String::new();
     for l in stdout.lines() {
         if l.starts_with('#') {
+            continue;
+        }
+        if l.starts_with("operations: ") {
+            operations = format!("\n      {l}");
             continue;
         }
         if l == "guide:" {
@@ -97,8 +102,9 @@ fn compose(app: &str, stdout: &str) -> String {
     }
     format!(
         "package: {{ id: {app}, version: 0.1.0, contract: 1, min_core: 0.1.0, publisher: example, name: {app} }}\n\
-apps:\n  - about: {{ id: {app}, name: {app} }}\n    credentials: [ {{ name: api_token, secret: true }} ]\n    connect:\n      - id: api_key\n        kind: fields\n        fields: [ {{ name: api_token, label: API token, type: secret, required: true }} ]\n    hosts:\n      - match: {{ host: api.example.com }}\n        inject:\n          - bearer: \"{{credentials.api_token}}\"\n{}\n    agent:\n      summary: \"Imported.\"\n      instructions: \"Imported.\"\n{}\n",
+apps:\n  - about: {{ id: {app}, name: {app} }}\n    credentials: [ {{ name: api_token, secret: true }} ]\n    connect:\n      - id: api_key\n        kind: fields\n        fields: [ {{ name: api_token, label: API token, type: secret, required: true }} ]\n    hosts:\n      - match: {{ host: api.example.com }}\n        inject:\n          - bearer: \"{{credentials.api_token}}\"\n{}\n    agent:\n      summary: \"Imported.\"\n      instructions: \"Imported.\"{}\n{}\n",
         tools.join("\n"),
+        operations,
         guide.join("\n")
     )
 }
@@ -228,9 +234,23 @@ fn a_large_document_drops_detail_reports_it_and_stays_within_every_limit() {
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
     let a = read(&d.join("p1"), "large", &o);
     assert!(a.stderr.contains("import-openapi: dropped"), "{}", a.stderr);
-    assert!(a.files.len() <= 24, "{}", a.files.len());
-    assert!(a.files.values().all(|c| c.len() <= 64 * 1024));
-    assert!(a.files.values().map(String::len).sum::<usize>() <= 256 * 1024);
+    // (C-656) The operations file has its own limit and is not a guide file.
+    let ops = a.files.get("operations.json").expect("operations.json");
+    assert!(ops.len() <= 512 * 1024, "{}", ops.len());
+    assert!(
+        a.stderr.contains("operations.json: dropped"),
+        "{}",
+        a.stderr
+    );
+    let guide_files: Vec<&String> = a
+        .files
+        .iter()
+        .filter(|(n, _)| *n != "operations.json")
+        .map(|(_, c)| c)
+        .collect();
+    assert!(guide_files.len() <= 24, "{}", guide_files.len());
+    assert!(guide_files.iter().all(|c| c.len() <= 64 * 1024));
+    assert!(guide_files.iter().map(|c| c.len()).sum::<usize>() <= 256 * 1024);
     // Every operation is still in the index.
     let index: String = a
         .files
