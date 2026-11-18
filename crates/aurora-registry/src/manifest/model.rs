@@ -1044,6 +1044,10 @@ pub enum Decoder {
     /// (FIX-118) Every `text`/`content` string below the JSON value at this pointer, joined with
     /// spaces (nested document and rich-text block formats).
     JsonText(String),
+    /// (P5-CALDAV, D-275) Every value of this property (`SUMMARY`, `DTSTART`, `ATTENDEE`, …) of the
+    /// iCalendar body's events, joined with `, `; a `TZID` is appended to a date-time and an
+    /// attendee's name leads its address.
+    Ical(String),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

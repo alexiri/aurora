@@ -243,6 +243,11 @@ fn step(d: &Decoder, v: &Val) -> Option<Val> {
             }
             Some(Val::Text(parts.join(", ")))
         }
+        Decoder::Ical(prop) => {
+            let text = std::str::from_utf8(v.bytes()).ok()?;
+            let out = ical_values(text, prop);
+            (!out.is_empty()).then(|| Val::Text(out.join(", ")))
+        }
         Decoder::MimeAttachments(_) => {
             let msg = MessageParser::default().parse(v.bytes())?;
             Some(Val::Text(msg.attachments().len().to_string()))
@@ -279,6 +284,90 @@ fn scalar_text(v: &serde_json::Value) -> Option<String> {
         x @ (serde_json::Value::Number(_) | serde_json::Value::Bool(_)) => Some(x.to_string()),
         _ => None,
     }
+}
+
+/// (P5-CALDAV) The values of property `prop` of the `VEVENT`s in an iCalendar body: lines unfolded,
+/// text unescaped, each clamped; a date-time carries its `TZID` (or `UTC` for a `Z` time) and an
+/// attendee its common name before the address, so an approval shows when and who exactly.
+fn ical_values(text: &str, prop: &str) -> Vec<String> {
+    let mut lines: Vec<String> = Vec::new();
+    for raw in text.lines() {
+        match raw.strip_prefix([' ', '\t']) {
+            Some(more) if !lines.is_empty() => lines.last_mut().unwrap().push_str(more),
+            _ => lines.push(raw.to_owned()),
+        }
+    }
+    let want = prop.to_ascii_uppercase();
+    let mut in_event = false;
+    let mut out = Vec::new();
+    for line in &lines {
+        let upper = line.to_ascii_uppercase();
+        if upper == "BEGIN:VEVENT" {
+            in_event = true;
+            continue;
+        }
+        if upper == "END:VEVENT" {
+            in_event = false;
+            continue;
+        }
+        if !in_event {
+            continue;
+        }
+        // The first `:` outside a quoted parameter value splits the name and parameters from the value.
+        let mut quoted = false;
+        let Some(split) = line.char_indices().find_map(|(i, c)| {
+            if c == '"' {
+                quoted = !quoted;
+            }
+            (c == ':' && !quoted).then_some(i)
+        }) else {
+            continue;
+        };
+        let (head, value) = (&line[..split], &line[split + 1..]);
+        let mut parts = head.split(';');
+        if !parts.next().is_some_and(|n| n.eq_ignore_ascii_case(&want)) {
+            continue;
+        }
+        let param = |name: &str| {
+            parts.clone().find_map(|p| {
+                let (k, v) = p.split_once('=')?;
+                k.eq_ignore_ascii_case(name)
+                    .then(|| v.trim_matches('"').to_owned())
+            })
+        };
+        let value = value
+            .replace("\\n", " ")
+            .replace("\\N", " ")
+            .replace("\\,", ",")
+            .replace("\\;", ";")
+            .replace("\\\\", "\\");
+        let mut shown = match want.as_str() {
+            "ATTENDEE" | "ORGANIZER" => {
+                let addr = value
+                    .strip_prefix("mailto:")
+                    .or_else(|| value.strip_prefix("MAILTO:"))
+                    .unwrap_or(&value)
+                    .to_owned();
+                match param("CN") {
+                    Some(cn) if !cn.is_empty() => format!("{cn} <{addr}>"),
+                    _ => addr,
+                }
+            }
+            "DTSTART" | "DTEND" | "DUE" => match (param("TZID"), value.ends_with('Z')) {
+                (Some(tz), _) => format!("{value} ({tz})"),
+                (None, true) => format!("{value} (UTC)"),
+                (None, false) => value,
+            },
+            _ => value,
+        };
+        if shown.chars().count() > 200 {
+            shown = shown.chars().take(200).collect::<String>() + "…";
+        }
+        if !shown.is_empty() {
+            out.push(shown);
+        }
+    }
+    out
 }
 
 /// Every string stored under a `text` or `content` key below `v` (nested document and rich-text
@@ -513,6 +602,29 @@ mod tests {
         assert_eq!(val(&s, "Cc").as_deref(), Some("cc@example.com"));
         assert_eq!(val(&s, "Bcc").as_deref(), Some("spy@evil.example"));
         assert_eq!(val(&s, "Attachments").as_deref(), Some("1"));
+    }
+
+    #[test]
+    fn ical_decoder_shows_title_time_repeat_and_every_attendee() {
+        let st =
+            |p: &str| -> Vec<Decoder> { serde_json::from_value(json!([{ "ical": p }])).unwrap() };
+        let body = b"BEGIN:VCALENDAR\r\nBEGIN:VTIMEZONE\r\nTZID:Europe/Zurich\r\nEND:VTIMEZONE\r\nBEGIN:VEVENT\r\nSUMMARY:Budget\\, Q3 review\r\nDTSTART;TZID=Europe/Zurich:20261201T140000\r\nDTEND:20261201T150000Z\r\nRRULE:FREQ=WEEKLY;COUNT=4\r\nLOCATION:Room\r\n 12\r\nATTENDEE;CN=\"Ann: Lee\";RSVP=TRUE:mailto:ann@example.com\r\nATTENDEE:mailto:spy@evil.example\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+        let run = |p: &str| run_steps(&st(p), body);
+        assert_eq!(run("SUMMARY").as_deref(), Some("Budget, Q3 review"));
+        assert_eq!(
+            run("DTSTART").as_deref(),
+            Some("20261201T140000 (Europe/Zurich)")
+        );
+        assert_eq!(run("DTEND").as_deref(), Some("20261201T150000Z (UTC)"));
+        assert_eq!(run("RRULE").as_deref(), Some("FREQ=WEEKLY;COUNT=4"));
+        assert_eq!(run("LOCATION").as_deref(), Some("Room12"));
+        assert_eq!(
+            run("ATTENDEE").as_deref(),
+            Some("Ann: Lee <ann@example.com>, spy@evil.example")
+        );
+        // Nothing of a VTIMEZONE is an event property; a missing property is no value.
+        assert_eq!(run("TZID"), None);
+        assert_eq!(run("DESCRIPTION"), None);
     }
 
     #[test]
