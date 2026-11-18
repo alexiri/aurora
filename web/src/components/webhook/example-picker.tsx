@@ -62,15 +62,18 @@ function Node({
           <button
             type="button"
             aria-pressed={!!picked}
-            aria-label={`${picked ? "Make fixed" : "The agent fills in"} ${label || "the whole body"}`}
+            aria-label={`${picked ? "Make fixed" : "Agent fills in"} ${label || "the whole body"}`}
             onClick={() => onToggle(path, label)}
             className={cn(
               "min-h-9 rounded-control border px-2.5 text-xs font-medium focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent",
               picked ? "border-accent bg-accent-soft text-accent-ink" : "border-line-strong bg-surface text-ink hover:bg-subtle",
             )}
           >
-            {picked ? `Agent fills in: ${picked.name}` : "Agent fills in"}
+            {picked ? "Make fixed" : "Agent fills in"}
           </button>
+        ) : null}
+        {picked ? (
+          <span className="font-mono text-xs text-accent-ink">{`→ {{${picked.name}}}`}</span>
         ) : covered ? (
           <span className="text-xs text-muted">Part of {picks[covered]?.name}</span>
         ) : null}

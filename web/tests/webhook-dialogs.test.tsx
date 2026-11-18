@@ -259,7 +259,7 @@ describe("connect steps", () => {
     fireEvent.click(screen.getByText("Start from an example"));
     fireEvent.change(screen.getByLabelText("The example body"), { target: { value: '{"username": "Aurora", "text": "Hello"}' } });
     fireEvent.click(screen.getByRole("button", { name: "Show the example" }));
-    const pick = await screen.findByRole("button", { name: "The agent fills in text" });
+    const pick = await screen.findByRole("button", { name: "Agent fills in text" });
     expect(pick).toHaveAttribute("aria-pressed", "false");
     fireEvent.click(pick);
     expect(screen.getByRole("button", { name: "Make fixed text" })).toHaveAttribute("aria-pressed", "true");

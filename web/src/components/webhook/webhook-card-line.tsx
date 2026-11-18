@@ -33,8 +33,9 @@ export function WebhookCardLine({ connectionId, name }: { connectionId: string; 
           Send test
         </Button>
       </div>
-      {editing ? <WebhookEditDialog connectionId={connectionId} name={name} open onOpenChange={setEditing} /> : null}
-      {testing ? <SendTestDialog connectionId={connectionId} name={name} open onOpenChange={setTesting} /> : null}
+      {/* Always mounted: the dialog's content unmounts itself on close (its state, and any one-time secret, go with it). */}
+      <WebhookEditDialog connectionId={connectionId} name={name} open={editing} onOpenChange={setEditing} />
+      <SendTestDialog connectionId={connectionId} name={name} open={testing} onOpenChange={setTesting} />
     </div>
   );
 }

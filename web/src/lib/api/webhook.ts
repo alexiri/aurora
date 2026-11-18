@@ -142,6 +142,8 @@ export function useWebhookView(connectionId: string | undefined, enabled = true)
     retry: false,
     // An open editor is never replaced by a background refetch.
     refetchOnWindowFocus: false,
+    // A dialog always starts from what the server holds now, whatever the card cached.
+    refetchOnMount: "always",
   });
 }
 

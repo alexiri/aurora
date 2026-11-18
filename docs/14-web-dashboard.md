@@ -2382,6 +2382,45 @@ most frequent thing a person does in Aurora. It must be quick to read and quick 
 - When **Connect** asks where to connect, it lists **For the whole organization** first, then the
   person's own and shared workspaces, then other people's personal workspaces under a collapsed group.
 
+### 12. Outgoing webhook: connect steps, editor, card and Send test (P5-WEBHOOK-4, D-320, C-909, C-912, C-913)
+
+- **The connect steps are the journey's Sign in step for the app `webhook`.** There are three, with
+  "Step n of 3" above them; Back keeps what was typed:
+  1. **Name and address.** The address is a password-type field with a Show button. It is never shown again
+     after saving. Nothing is sent to it at connect.
+  2. **What the receiver expects.** One page, top to bottom:
+     - **Preset:** a list (None, then each preset). When the address's host is in a preset's
+       `suggest_for_hosts`, a notice offers "Use the <name> preset"; nothing is chosen for the person.
+     - **Start from an example** (folded): paste JSON, **Show the example**, then each value is a row with
+       an **Agent fills in** button (focusable; Enter or Space toggles). The name comes from the key, made
+       valid and unique; the type is inferred; description, Required and limits are editable. Choosing it again
+       (**Make fixed**) restores the constant. **Use this template** replaces the template and the values.
+     - **The template:** content type, the shared code field, and the values as one card each (name, kind,
+       description, Required, limits, allowed values, a schema for any JSON; Move up, Move down, Remove).
+     - **Preview:** sample values from each value's `example`, editable; the body is shown as text with secret
+       values as `«secret:name»`.
+  3. **Extras:** description with a counter, secret values (name and password field), headers, signing (Off,
+     Make one, Paste one), method, and limits.
+- **Errors sit on the control.** `webhook_config_invalid.fields[].path` is shown at the template, the value,
+  the header, the limit or the secret value it names (`slots.2.name`, `headers.0.value`, `rate.per_minute`);
+  a path with no control is listed at the top of step 2. `invalid_slot` marks the sample value. The refused
+  address goes back to step 1.
+- **The signing secret is shown once**, with Copy and "This will not be shown again", and is held only in the
+  dialog's state until the person confirms.
+- **The card** (an Accounts row, for people who manage it) adds the host (never the address), the effective limit
+  with its source ("30 a minute, 500 a day (your organization's limit)"), **Edit** and **Send test**.
+- **Edit** is steps 2 and 3 on the stored configuration. Secret values show their names with **Replace** and
+  **Delete**; signing has Keep, Make a new one, Paste one and Off. A limit is checked against the ceiling when
+  that is what applies. Changing the address is Reconnect.
+- **Send test** has a values form from the slots, **Dry run** and **Send**. Send asks "This really calls the
+  webhook". The answer shows the status, delivery id, content type and the body as text (4 KiB, with a note when
+  cut), never as HTML.
+- **The shared code field** (`ui/code-field`) is the Files viewer's editor as a labelled control: the
+  dashboard's tokens in both themes, text only, Esc then Tab leaves it.
+- **Settings:** the organization's switch and the two limits are a card on the organization's Apps tab (owners
+  change them). The instance's `outgoing_webhooks` section is on Apps & accounts › Advanced, through the generic
+  section form.
+
 ### Rules for every screen in this section
 
 - §Visual design applies: tokens, shared primitives, both themes, no horizontal scroll at 390 px, axe-clean.

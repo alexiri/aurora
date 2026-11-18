@@ -144,10 +144,10 @@ function SlotCard({
         onChange(next);
       }} error={firstMessage(issues, `${p}.schema`)} /> : null}
       <div className="flex flex-wrap gap-2">
-        <Button type="button" variant="outline" size="sm" disabled={index === 0} onClick={() => onMove(-1)} aria-label={`Move ${slot.name || "value"} up`}>
+        <Button type="button" variant="outline" size="sm" disabled={index === 0} onClick={() => onMove(-1)} aria-label={`Move up ${slot.name || "value"}`}>
           Move up
         </Button>
-        <Button type="button" variant="outline" size="sm" disabled={index === count - 1} onClick={() => onMove(1)} aria-label={`Move ${slot.name || "value"} down`}>
+        <Button type="button" variant="outline" size="sm" disabled={index === count - 1} onClick={() => onMove(1)} aria-label={`Move down ${slot.name || "value"}`}>
           Move down
         </Button>
         <Button type="button" variant="danger" size="sm" onClick={onRemove} aria-label={`Remove ${slot.name || "value"}`}>

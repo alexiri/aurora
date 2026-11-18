@@ -75,7 +75,7 @@ function EditForm({ view, connectionId, name, onClose }: { view: WebhookView; co
     try {
       const res = await put.mutateAsync({ ...configForSave(config, x, signingOn), secret_values: secretValuesForPut(x), signing_secret: signingForEdit(x) });
       setExtras((cur) => ({ ...cur, signingValue: "", secrets: cur.secrets.map((r) => ({ ...r, value: "" })) }));
-      if (res.signing_secret) setShown(res.signing_secret);
+      if (typeof res.signing_secret === "string" && res.signing_secret) setShown(res.signing_secret);
       else onClose();
     } catch (err) {
       const cfg = configIssues(err);
