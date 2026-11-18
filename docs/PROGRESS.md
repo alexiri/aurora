@@ -220,7 +220,7 @@ Proposed order (Q-P6-LIM-8): the limits framework (P6-LIM-1) together with the s
 
 ## Number allocation
 
-**Next free: FIX-166, D-367, C-1021, SEC-134, migration `20261201000253`** (`000244` is P5-IA-1's, `000245`/`000246` P5-MODELS-1/2's, `000247` P5-USAGE-1's, `000248` P5-UX-14's, `000249` P5-UX-5's, `000250` P5-UX-17's, `000251` P5-UX-11's, `000252` P5-GUIDE-1's; C-1020 FIX-164's; FIX-160 and D-355 are the bulk dependency update). Edit this line in place when you take a number (check `git log -3`, `ls docs/tasks`, and this line right before committing; several sessions write briefs). Task briefs are `docs/tasks/<ID>.md`, named after the task id (`P<phase>-<NAME>` for phase features, `FIX-nnn` for fixes).
+**Next free: FIX-166, D-368, C-1021, SEC-134, migration `20261201000253`** (`000244` is P5-IA-1's, `000245`/`000246` P5-MODELS-1/2's, `000247` P5-USAGE-1's, `000248` P5-UX-14's, `000249` P5-UX-5's, `000250` P5-UX-17's, `000251` P5-UX-11's, `000252` P5-GUIDE-1's; C-1020 FIX-164's; D-367 P5-HARN (goose `/model/info`); FIX-160 and D-355 are the bulk dependency update). Edit this line in place when you take a number (check `git log -3`, `ls docs/tasks`, and this line right before committing; several sessions write briefs). Task briefs are `docs/tasks/<ID>.md`, named after the task id (`P<phase>-<NAME>` for phase features, `FIX-nnn` for fixes).
 
 Live reservations (numbers inside a block that a lane has already used are recorded in its commits; unused blocks are released when the lane or task closes):
 
