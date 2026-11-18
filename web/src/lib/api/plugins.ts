@@ -44,6 +44,30 @@ export function usePlugin(id: string) {
   });
 }
 
+export type PluginAgentGuide = components["schemas"]["PluginAgentGuide"];
+
+/**
+ * (P5-GUIDE-3, C-648) One agent guide file as text. Fetched only while `enabled` (a file is selected): the
+ * content is written by the publisher, so it is never parsed or rendered as anything but text.
+ */
+export function useAgentGuideFile(id: string, appId: string, file: string | null) {
+  return useQuery({
+    queryKey: [...pluginKeys.one(id), "agent-guide", appId, file] as const,
+    queryFn: async (): Promise<string> => {
+      const { data, response } = await api.GET("/v1/admin/plugins/{id}/agent-guides/{app_id}/{file}", {
+        params: { path: { id, app_id: appId, file: file! } },
+        parseAs: "text",
+      });
+      if (response.status === 404) throw new ApiError("not_found", "This file is no longer available.", null, 404);
+      if (!response.ok) throw new ApiError("unknown", "Could not load the file.", null, response.status);
+      return typeof data === "string" ? data : "";
+    },
+    enabled: file !== null,
+    retry: false,
+    staleTime: Infinity,
+  });
+}
+
 export function useUploadPlugin() {
   const qc = useQueryClient();
   return useMutation({
