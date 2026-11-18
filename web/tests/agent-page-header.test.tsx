@@ -32,8 +32,6 @@ function mockFetch(routes: Record<string, Handler>) {
   return fn;
 }
 afterEach(() => {
-  cleanup();
-  vi.unstubAllGlobals();
   window.history.replaceState(null, "", "/");
   router.replace.mockClear();
 });

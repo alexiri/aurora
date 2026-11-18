@@ -63,14 +63,12 @@ beforeEach(() => {
   window.history.replaceState(null, "", "/o/acme/w/main/credentials");
 });
 afterEach(() => {
-  cleanup();
   search = "";
   replace.mockReset();
   openSpy.mockReset();
   FakeChannel.open.clear();
   FakeChannel.sent = [];
   vi.useRealTimers();
-  vi.unstubAllGlobals();
 });
 
 describe("every dialog has a close icon", () => {

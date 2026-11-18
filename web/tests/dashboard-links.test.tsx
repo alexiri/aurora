@@ -1,7 +1,7 @@
 // (FIX-153, C-891, C-894) The gateway's dashboard links are real routes; the agent page accepts an id; the org Apps
 // page lists apps with Connect…; the org Connections empty state points at it.
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -45,8 +45,6 @@ const wrap = (ui: React.ReactElement) => {
   return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
 };
 afterEach(() => {
-  cleanup();
-  vi.unstubAllGlobals();
   window.history.replaceState(null, "", "/");
   router.replace.mockClear();
   router.push.mockClear();

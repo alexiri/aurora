@@ -1,13 +1,12 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import type { ReactNode } from "react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 
 import { UsersTable } from "@/components/account/admin-users-view";
 import { KeysTab } from "@/components/settings/keys-tab";
 import { AccessTab } from "@/components/settings/access-tab";
 import { OneTimeKeyDialog } from "@/components/account/one-time-key-dialog";
 import type { AdminUser } from "@/lib/api/account";
+import { wrap } from "./support/render";
 
 const json = (status: number, body: unknown) =>
   new Response(body === null ? null : JSON.stringify(body), {
@@ -26,16 +25,6 @@ function mockFetch(routes: Record<string, () => Response>) {
     }),
   );
 }
-
-function wrap(ui: ReactNode) {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
-}
-
-afterEach(() => {
-  cleanup();
-  vi.unstubAllGlobals();
-});
 
 describe("OneTimeKeyDialog", () => {
   it("shows the key and does not retain it after close", () => {

@@ -71,8 +71,6 @@ beforeEach(() => {
   filesTiming.retryDelayMs = 5;
 });
 afterEach(() => {
-  cleanup();
-  vi.unstubAllGlobals();
   filesTiming.retryDelayMs = 2000;
 });
 

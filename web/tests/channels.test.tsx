@@ -1,6 +1,6 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { wrap } from "./support/render";
 
 let search = "token=aui_secret";
 vi.mock("next/navigation", () => ({
@@ -38,16 +38,8 @@ function mockFetch(routes: Record<string, Handler>) {
   );
   return calls;
 }
-function wrap(ui: React.ReactNode) {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
-}
 beforeEach(() => {
   search = "token=aui_secret";
-});
-afterEach(() => {
-  cleanup();
-  vi.unstubAllGlobals();
 });
 
 const T = "2026-01-01T00:00:00Z";

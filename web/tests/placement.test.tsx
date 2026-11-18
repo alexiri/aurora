@@ -1,9 +1,9 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 
 import { PlacementView } from "@/components/admin/placement-view";
 import { ERROR_MESSAGES } from "@/lib/api/errors";
+import { wrap } from "./support/render";
 
 const json = (status: number, body: unknown) =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -31,11 +31,6 @@ const unsaved = {
   updated_at: null,
   updated_by: null,
 };
-
-function wrap(ui: React.ReactNode) {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
-}
 
 /** Routes the placement API by path; records every PUT body. */
 function stubApi(initial: unknown = unsaved) {
@@ -70,11 +65,6 @@ function stubApi(initial: unknown = unsaved) {
   );
   return puts;
 }
-
-afterEach(() => {
-  cleanup();
-  vi.unstubAllGlobals();
-});
 
 describe("Admin › Sign-up & placement (P4-ONB-1, D-140)", () => {
   it("warns while per-user organizations are active and lists the ones from before", async () => {

@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 
 vi.mock("next/navigation", () => ({
   usePathname: () => "/admin/settings/email",
@@ -28,10 +28,6 @@ function mockFetch(routes: Record<string, Handler>) {
     }),
   );
 }
-afterEach(() => {
-  cleanup();
-  vi.unstubAllGlobals();
-});
 
 const schema = (kind: string) => ({ kind, min: null, max: null, max_len: null, options: null, item_kind: null });
 const base = { locked: false, helm_key: "config.email.x", list: null, id_field: null, entries: null, default: null };

@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, renderHook, screen, waitFor } from "@testing-library/react";
+import { render, renderHook, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -57,8 +57,6 @@ const rows = (page: 1 | 2, extra: (id: string) => Record<string, unknown>, prefi
 });
 
 afterEach(() => {
-  cleanup();
-  vi.unstubAllGlobals();
   window.history.replaceState(null, "", "/");
 });
 

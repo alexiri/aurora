@@ -1,11 +1,11 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, screen } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 
 import { AdminStorageView } from "@/components/account/admin-storage-view";
 import { OrgStorageView } from "@/components/org/storage-view";
 import { uploadErrorMessage } from "@/lib/api/attachments";
 import { ApiError } from "@/lib/api/client";
+import { wrap } from "./support/render";
 
 const json = (status: number, body: unknown) =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -21,16 +21,6 @@ function mockFetch(routes: Record<string, unknown>) {
     }),
   );
 }
-
-function wrap(ui: React.ReactNode) {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
-}
-
-afterEach(() => {
-  cleanup();
-  vi.unstubAllGlobals();
-});
 
 const MIB = 1024 * 1024;
 

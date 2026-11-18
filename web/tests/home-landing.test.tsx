@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const replace = vi.fn();
@@ -49,9 +49,7 @@ function mount() {
 }
 
 afterEach(() => {
-  cleanup();
   replace.mockReset();
-  vi.unstubAllGlobals();
 });
 
 describe("the root page of an administrator with no organization (P5-UX-1)", () => {

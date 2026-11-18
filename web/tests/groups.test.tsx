@@ -1,12 +1,11 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import type { ReactNode } from "react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 
 import { GroupDetail } from "@/components/groups/group-detail";
 import { GroupsView } from "@/components/groups/groups-view";
 import { RuleEditorDialog } from "@/components/policy/rule-editor";
 import { AccessTab } from "@/components/settings/access-tab";
+import { wrap } from "./support/render";
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn(), replace: vi.fn() }) }));
 
@@ -47,11 +46,6 @@ const member: { user: { id: string; email: string; display_name: string }; statu
   added_at: now,
 };
 
-function wrap(ui: ReactNode) {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
-}
-
 /** Routes by `METHOD path`; records every call as `METHOD path?query body`. */
 function stub(routes: Record<string, (body: unknown) => Response>) {
   const calls: string[] = [];
@@ -67,11 +61,6 @@ function stub(routes: Record<string, (body: unknown) => Response>) {
   );
   return calls;
 }
-
-afterEach(() => {
-  cleanup();
-  vi.unstubAllGlobals();
-});
 
 describe("Groups list", () => {
   it("shows name, source badge, member count and org role", async () => {

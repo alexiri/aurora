@@ -1,12 +1,12 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 
 import { ChatPane } from "@/components/agents/chat-tab";
 import { TranscriptView } from "@/components/chat/transcript-view";
 import { ActionApprovalCard, ApprovalsView } from "@/components/approvals/approvals-view";
 import type { TranscriptEvent } from "@/lib/api/conversations";
 import { applyEvents, emptyTranscript } from "@/lib/chat/transcript";
+import { wrap } from "./support/render";
 
 vi.mock("@/lib/chat/use-transcript", () => ({
   useTranscript: () => ({ state: { events: [], deltas: {}, activity: {}, lastSeq: 0 }, loading: false, error: null, live: true }),
@@ -26,14 +26,6 @@ function mockFetch(routes: Record<string, Handler>) {
   vi.stubGlobal("fetch", fn);
   return fn;
 }
-function wrap(ui: React.ReactNode) {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
-}
-afterEach(() => {
-  cleanup();
-  vi.unstubAllGlobals();
-});
 
 const ev = (seq: number, type: string, payload: Record<string, unknown>): TranscriptEvent => ({
   seq, type, ts: "2026-01-01T00:00:00Z", payload,

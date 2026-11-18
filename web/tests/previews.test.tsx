@@ -1,9 +1,8 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import type { ReactNode } from "react";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { PreviewsTab, ShareDialog } from "@/components/agents/previews-tab";
+import { wrap } from "./support/render";
 
 // P4-PRV-1 dashboard tests (docs/18 §Port previews): the tab renders the shares table, the add
 // dialog maps server errors to field messages, and a paused share offers Resume. The tab itself
@@ -29,16 +28,6 @@ function mockFetch(routes: Record<string, (req: Request, url: URL) => Response>)
   vi.stubGlobal("fetch", fn);
   return fn;
 }
-
-function wrap(ui: ReactNode) {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
-}
-
-afterEach(() => {
-  cleanup();
-  vi.unstubAllGlobals();
-});
 
 const share = {
   id: "00000000-0000-4000-8000-000000000001",

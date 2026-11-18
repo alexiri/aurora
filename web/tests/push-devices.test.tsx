@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { PushDevices } from "@/components/account/push-devices";
 import { bytesToBase64Url, hasPushMarker, PUSH_MARKER_KEY, removeThisDevicePush, resyncPush, setPushMarker } from "@/lib/web-push";
@@ -132,10 +132,6 @@ function wrap() {
 }
 
 beforeEach(() => window.localStorage.clear());
-afterEach(() => {
-  cleanup();
-  vi.unstubAllGlobals();
-});
 
 describe("Web Push card", () => {
   it("renders nothing while push is not available, and never registers a worker", async () => {

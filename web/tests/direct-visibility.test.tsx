@@ -1,8 +1,8 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, screen } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 
 import { ChatPane, ChatTab } from "@/components/agents/chat-tab";
+import { wrap } from "./support/render";
 
 vi.mock("@/lib/chat/use-transcript", () => ({
   useTranscript: () => ({ state: { events: [], deltas: {}, activity: {}, lastSeq: 0 }, loading: false, error: null, live: true }),
@@ -28,14 +28,6 @@ function mock(list: unknown[]) {
     }),
   );
 }
-function wrap(ui: React.ReactNode) {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
-}
-afterEach(() => {
-  cleanup();
-  vi.unstubAllGlobals();
-});
 
 describe("direct conversation visibility (RFE-009)", () => {
   it("shows the privacy banner on the member's own direct chat and no owner group", async () => {

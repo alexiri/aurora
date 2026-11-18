@@ -1,16 +1,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen, within } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { render, screen, within } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 
 import { ActivityView } from "@/components/approvals/activity-view";
 import { TurnUsage, UNVERIFIED_TEXT } from "@/components/chat/turn-usage";
 
 // P5-MODELS-3 (C-879, C-880): the request log's model column, and a turn's tokens per model.
-
-afterEach(() => {
-  cleanup();
-  vi.unstubAllGlobals();
-});
 
 const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
 const entry = (id: string, over: Record<string, unknown>) => ({

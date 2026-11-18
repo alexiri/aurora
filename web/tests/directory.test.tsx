@@ -1,10 +1,10 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import type { ReactNode } from "react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 
 import { OrgDirectoryView } from "@/components/org/directory-view";
 import { MemberRow } from "@/components/org/members-view";
+import { wrap } from "./support/render";
 
 let search = "";
 vi.mock("next/navigation", () => ({
@@ -63,11 +63,6 @@ const status = {
   ],
 };
 
-function wrap(ui: ReactNode) {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
-}
-
 /** Routes by `METHOD path`; records every call as `METHOD path body`. */
 function stub(routes: Record<string, (body: unknown) => Response>) {
   const calls: string[] = [];
@@ -88,11 +83,6 @@ function stub(routes: Record<string, (body: unknown) => Response>) {
   );
   return calls;
 }
-
-afterEach(() => {
-  cleanup();
-  vi.unstubAllGlobals();
-});
 
 describe("Directory sync page", () => {
   it("hides everything when the instance switch is off", async () => {

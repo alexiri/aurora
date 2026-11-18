@@ -1,7 +1,6 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import type { ReactNode } from "react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { wrap } from "./support/render";
 
 let search = "";
 const replace = vi.fn();
@@ -31,11 +30,6 @@ const instance = {
   oidc_providers: [{ id: "g", display_name: "Google" }],
 };
 
-function wrap(ui: ReactNode) {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
-}
-
 function mockFetch(routes: Record<string, (init?: RequestInit) => Response>) {
   vi.stubGlobal(
     "fetch",
@@ -53,10 +47,6 @@ function mockFetch(routes: Record<string, (init?: RequestInit) => Response>) {
 beforeEach(() => {
   search = "";
   replace.mockReset();
-});
-afterEach(() => {
-  cleanup();
-  vi.unstubAllGlobals();
 });
 
 describe("safeNext", () => {

@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 
 vi.mock("next/navigation", () => ({
   usePathname: () => "/o/acme/w/main/agents/ada",
@@ -13,11 +13,6 @@ import { AccountHealth } from "@/components/accounts/account-health";
 import { AccountsBanner, AgentAttentionChip } from "@/components/accounts/attention";
 import { NeedsYou } from "@/components/overview/needs-you";
 import { attentionCount, healthClause, healthLine, needsAttention, savedButText, testOutcomeText } from "@/lib/account-health";
-
-afterEach(() => {
-  cleanup();
-  vi.unstubAllGlobals();
-});
 
 type Health = { state: string; detail?: string | null; checked_at?: string | null; last_used_at?: string | null };
 const acct = (health: Health, o: Record<string, unknown> = {}) => ({

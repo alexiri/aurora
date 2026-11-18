@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider, useMutation } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("next/navigation", () => ({
   useParams: () => ({ org: "acme", ws: "ops", handle: "scout" }),
@@ -41,10 +41,6 @@ function wrap(ui: React.ReactNode, qc = new QueryClient({ defaultOptions: { quer
   return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
 }
 beforeEach(() => {
-  vi.unstubAllGlobals();
-});
-afterEach(() => {
-  cleanup();
   vi.unstubAllGlobals();
 });
 

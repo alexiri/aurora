@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -22,7 +22,6 @@ vi.mock("next/link", () => ({
 }));
 
 afterEach(() => {
-  cleanup();
   localStorage.clear();
   document.cookie = "aurora_theme=; Max-Age=0; Path=/";
   document.documentElement.removeAttribute("data-theme");

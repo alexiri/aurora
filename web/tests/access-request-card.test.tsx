@@ -2,7 +2,7 @@
 // banner above the workspace's Accounts list.
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { RequestsBanner } from "@/components/accounts/requests-banner";
 import { AccessRequestCard } from "@/components/chat/access-request-card";
@@ -42,11 +42,6 @@ function stub(role: "owner" | "member", calls: string[] = [], items: unknown[] =
 }
 
 const wrap = (ui: React.ReactElement) => render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>{ui}</QueryClientProvider>);
-
-afterEach(() => {
-  cleanup();
-  vi.unstubAllGlobals();
-});
 
 describe("the access request card", () => {
   it("says what the agent needs, marks the reason as its words, and opens the journey for that agent and app", async () => {

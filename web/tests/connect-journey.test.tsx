@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ConnectJourney } from "@/components/apps/connect-journey/connect-journey";
@@ -232,10 +232,8 @@ beforeEach(() => {
   vi.stubGlobal("open", openSpy);
 });
 afterEach(() => {
-  cleanup();
   openSpy.mockReset();
   FakeChannel.open.clear();
-  vi.unstubAllGlobals();
 });
 
 describe("the journey for a fixed agent and a given app", () => {

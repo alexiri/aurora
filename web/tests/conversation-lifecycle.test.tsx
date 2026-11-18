@@ -1,10 +1,9 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import type { ReactNode } from "react";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ChatPane, ChatTab } from "@/components/agents/chat-tab";
 import { applyEvent, emptyTranscript } from "@/lib/chat/transcript";
+import { wrap } from "./support/render";
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ replace: vi.fn() }) }));
 
@@ -42,13 +41,7 @@ function mock(routes: Record<string, () => Response>) {
   );
   return calls;
 }
-function wrap(ui: ReactNode) {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
-}
 afterEach(() => {
-  cleanup();
-  vi.unstubAllGlobals();
   events.list = [];
 });
 

@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { useState } from "react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { ChatActionsContext, excerptOf, type ReplyTarget } from "@/components/chat/chat-actions";
 import { Composer } from "@/components/chat/composer";
@@ -19,11 +19,6 @@ const json = (status: number, body: unknown) =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 const state = { events: [], deltas: {}, activity: {}, purged: {}, lastSeq: 0 } as unknown as TranscriptState;
 const target: ReplyTarget = { seq: 7, author: "Daneel", excerpt: "Shall we ship it?" };
-
-afterEach(() => {
-  cleanup();
-  vi.unstubAllGlobals();
-});
 
 describe("permalinks", () => {
   it("builds ?c=&m= on the current page and drops other parameters", () => {

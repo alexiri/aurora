@@ -1,10 +1,10 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AgentsList } from "@/components/agents-list";
 import { InstructionsTab } from "@/components/agents/instructions-tab";
 import type { Agent } from "@/lib/api/queries";
+import { wrap } from "./support/render";
 
 vi.mock("next/link", () => ({ default: ({ children }: { children: React.ReactNode }) => <a>{children}</a> }));
 
@@ -43,18 +43,9 @@ function mockFetch(routes: Record<string, () => Response>) {
   );
 }
 
-function wrap(ui: React.ReactNode) {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
-}
-
 beforeEach(() => {
   calls.length = 0;
   vi.stubGlobal("URL", Object.assign(URL, { createObjectURL: () => "blob:preview", revokeObjectURL: () => {} }));
-});
-afterEach(() => {
-  cleanup();
-  vi.unstubAllGlobals();
 });
 
 const png = (size = 10) => new File([new Uint8Array(size)], "a.png", { type: "image/png" });

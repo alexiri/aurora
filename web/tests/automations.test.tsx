@@ -1,11 +1,10 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import type { ReactNode } from "react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { OwnerLabel, ReassignPanel } from "@/components/automations/owner-controls";
 import { MembersView } from "@/components/org/members-view";
 import { SchedulesTab } from "@/components/schedules/schedules-tab";
+import { wrap } from "./support/render";
 
 const json = (status: number, body: unknown) =>
   new Response(body === null ? null : JSON.stringify(body), {
@@ -29,16 +28,6 @@ function mockFetch(routes: Record<string, () => Response>) {
   vi.stubGlobal("fetch", fn);
   return calls;
 }
-
-function wrap(ui: ReactNode) {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
-}
-
-afterEach(() => {
-  cleanup();
-  vi.unstubAllGlobals();
-});
 
 const sched = (over: Record<string, unknown> = {}) => ({
   id: "s1",

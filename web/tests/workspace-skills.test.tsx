@@ -1,10 +1,10 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 
 import { EffectiveSkillsView, SkillsEditor } from "@/components/skills/skills-view";
 import { WorkspaceSkills } from "@/components/skills/workspace-skills";
 import type { Skill } from "@/lib/api/skills";
+import { wrap } from "./support/render";
 
 vi.mock("next/navigation", () => ({
   useParams: () => ({ org: "acme", ws: "main" }),
@@ -24,14 +24,6 @@ function mockFetch(routes: Record<string, Handler>) {
   vi.stubGlobal("fetch", fn);
   return fn;
 }
-function wrap(ui: React.ReactNode) {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
-}
-afterEach(() => {
-  cleanup();
-  vi.unstubAllGlobals();
-});
 
 const T = "2026-01-01T00:00:00Z";
 function skill(over: Partial<Skill> & Pick<Skill, "id" | "name" | "tier">): Skill {

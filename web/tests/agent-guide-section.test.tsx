@@ -1,11 +1,10 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import type { ReactNode } from "react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 
 import { AgentGuideSection } from "@/components/admin/agent-guide-section";
 import { PluginReview } from "@/components/admin/plugin-detail-view";
 import type { PluginAgentGuide, PluginPackage } from "@/lib/api/plugins";
+import { wrap } from "./support/render";
 
 /** (P5-GUIDE-3, C-648) The agent guide section: structure, change marks, inert text, fetch on selection. */
 
@@ -31,16 +30,6 @@ function mockFetch(handler: (c: Call) => Response) {
 
 const text = (status: number, body: string) =>
   new Response(body, { status, headers: { "content-type": "text/plain; charset=utf-8" } });
-
-function wrap(ui: ReactNode) {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
-}
-
-afterEach(() => {
-  cleanup();
-  vi.unstubAllGlobals();
-});
 
 const full: PluginAgentGuide = {
   app_id: "git",

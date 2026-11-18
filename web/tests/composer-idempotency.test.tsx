@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 
 import { Composer } from "@/components/chat/composer";
 import type { TranscriptState } from "@/lib/chat/transcript";
@@ -39,11 +39,6 @@ function mount() {
   );
   return screen.getByLabelText("Message") as HTMLTextAreaElement;
 }
-
-afterEach(() => {
-  cleanup();
-  vi.unstubAllGlobals();
-});
 
 describe("composer Idempotency-Key", () => {
   it("a retried submit reuses the key; the next message gets a new one", async () => {

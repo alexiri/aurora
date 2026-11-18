@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { Composer, pastedName } from "@/components/chat/composer";
@@ -62,8 +62,6 @@ beforeEach(() => {
   mock();
 });
 afterEach(() => {
-  cleanup();
-  vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
 

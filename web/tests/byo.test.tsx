@@ -1,6 +1,5 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 
 import { ByoSettings } from "@/components/agents/byo-settings";
 import { WorkspaceByoRow } from "@/components/agents/workspace-byo";
@@ -19,6 +18,7 @@ import {
   type EffectiveGovernance,
 } from "@/lib/api/governance";
 import { allAgentsText, appliesToAllAgents, type RuleInput } from "@/lib/api/policy";
+import { wrap } from "./support/render";
 
 const ORG = { id: "o1", slug: "acme", name: "Acme", my_role: "owner" } as unknown as Org;
 
@@ -35,14 +35,6 @@ function mockFetch(routes: Record<string, Handler>) {
   vi.stubGlobal("fetch", fn);
   return fn;
 }
-function wrap(ui: React.ReactNode) {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
-}
-afterEach(() => {
-  cleanup();
-  vi.unstubAllGlobals();
-});
 
 const eff = (byo?: Partial<EffectiveGovernance["byo"]>): EffectiveGovernance => ({
   llm: { posture: { value: "open", source: "org" }, endpoints: [] },

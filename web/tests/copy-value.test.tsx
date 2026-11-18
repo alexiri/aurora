@@ -1,15 +1,10 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 
 import { CopyValue } from "@/components/ui/copy-value";
 
 // P5-UX-13 (C-942): the shared CopyValue primitive: label, value, Copy; "Copied" on success, a plain sentence when the
 // browser refuses; a long value wraps inside the row instead of scrolling the page.
-
-afterEach(() => {
-  cleanup();
-  vi.unstubAllGlobals();
-});
 
 function clipboard(writeText: (t: string) => Promise<void> | undefined) {
   vi.stubGlobal("navigator", { clipboard: { writeText } });

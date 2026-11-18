@@ -1,6 +1,6 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { wrap } from "./support/render";
 
 vi.mock("next/navigation", () => ({ useSearchParams: () => new URLSearchParams(), useParams: () => ({ org: "acme", ws: "ops" }) }));
 
@@ -33,14 +33,6 @@ function mockFetch(routes: Record<string, Handler>) {
   vi.stubGlobal("fetch", fn);
   return fn;
 }
-function wrap(ui: React.ReactNode) {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
-}
-afterEach(() => {
-  cleanup();
-  vi.unstubAllGlobals();
-});
 
 const gen = (over: Partial<PolicyGeneration> = {}): PolicyGeneration => ({
   id: "g1", number: 1, status: "draft", default_action: "none", uncredentialed_default: "none",

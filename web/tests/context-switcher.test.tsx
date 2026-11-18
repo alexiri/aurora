@@ -1,9 +1,8 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import type { ReactNode } from "react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 
 import { AppShell } from "@/components/app-shell";
+import { wrap } from "./support/render";
 
 // FIX-027: the sidebar has two stacked selectors — Organization, then (only with an active
 // organization) Workspace. "All organizations" (instance admins) is the one path to the admin
@@ -55,11 +54,6 @@ function mockFetch(isAdmin: boolean) {
   );
 }
 
-function wrap(ui: ReactNode) {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
-}
-
 function world(pathname: string, params: Record<string, string | undefined>, isAdmin = true) {
   nav.pathname = pathname;
   nav.params = params;
@@ -76,11 +70,6 @@ async function open(testId: string) {
 
 const item = (name: string) => screen.findByRole("menuitem", { name });
 const semibold = (el: HTMLElement) => expect(el.className).toContain("font-semibold");
-
-afterEach(() => {
-  cleanup();
-  vi.unstubAllGlobals();
-});
 
 describe("organization selector", () => {
   it("lists the user's organizations with the active one highlighted, on a workspace page", async () => {

@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen, within } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { render, screen, within } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 
 vi.mock("next/navigation", () => ({
   usePathname: () => "/admin/people",
@@ -78,11 +78,6 @@ function mock(me: Record<string, unknown>) {
     }),
   );
 }
-
-afterEach(() => {
-  cleanup();
-  vi.unstubAllGlobals();
-});
 
 describe("Administration › People › Sign-in (P5-IA-4, C-968)", () => {
   it("is one page with three headed parts: providers, roles from the provider, directory sync", async () => {

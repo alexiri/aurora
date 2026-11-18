@@ -1,7 +1,5 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import type { ReactNode } from "react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useState } from "react";
 
@@ -21,6 +19,7 @@ import {
   type Tool,
 } from "@/lib/grant-editor";
 import { ApiError } from "@/lib/api/client";
+import { wrap } from "./support/render";
 
 const json = (status: number, body: unknown) =>
   new Response(body === null ? null : JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -47,15 +46,6 @@ beforeEach(() => {
     }),
   );
 });
-afterEach(() => {
-  cleanup();
-  vi.unstubAllGlobals();
-});
-
-function wrap(ui: ReactNode) {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
-}
 
 // ---- data: real built-in packages (plugins/builtin/github, indico) and their tool ids ----------------------------------
 const now = "2026-01-01T00:00:00Z";
@@ -173,7 +163,6 @@ async function openEditor(name: string) {
 const radio = (group: string, label: string) => within(screen.getByRole("radiogroup", { name: group })).getByRole("radio", { name: label }) as HTMLInputElement;
 const choose = (group: string, label: string) => fireEvent.click(radio(group, label));
 
-
 describe("editor", () => {
   it("offers only the tools that apply to the connection's connect method (FIX-123, D-214)", async () => {
     const restricted = [
@@ -220,7 +209,6 @@ describe("editor", () => {
     expect(count(`GET /v1/agents/${AGENT}/effective`)).toBeGreaterThanOrEqual(before.eff);
     expect(before.ready).toBe(0);
   });
-
 
   it("saves Full access as { mode: full }", async () => {
     setup();
@@ -364,7 +352,6 @@ describe("editor", () => {
     expect(field.getAttribute("aria-invalid")).toBe("true");
   });
 });
-
 
 describe("pure rules", () => {
   it("builds bodies, states and timeouts", () => {

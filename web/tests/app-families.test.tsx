@@ -1,12 +1,12 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { readFileSync } from "node:fs";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { AppName } from "@/components/apps/app-name";
 import { AppsTab } from "@/components/apps/apps-tab";
 import { ConnectDialog } from "@/components/apps/connect-dialog";
 import { appDisplayName, productKey, productName } from "@/lib/api/app-name";
+import { wrap } from "./support/render";
 
 // FIX-135 (D-242, C-744): one catalogue entry per product. Apps of a family are one tile, the connect window asks where the
 // product runs, and every list names an app "<family> · <variant>".
@@ -19,16 +19,6 @@ vi.mock("next/navigation", () => ({
 
 const json = (status: number, body: unknown) =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
-
-function wrap(ui: React.ReactNode) {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
-}
-
-afterEach(() => {
-  cleanup();
-  vi.unstubAllGlobals();
-});
 
 const fam = (variant_label: string, instance_bound: boolean) => ({ id: "github", name: "GitHub", variant_label, instance_bound });
 const summary = (app_id: string, name: string, family: ReturnType<typeof fam> | null, n: number) => ({

@@ -1,7 +1,6 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import type { ReactNode } from "react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { wrap } from "./support/render";
 
 vi.mock("next/navigation", () => ({
   useParams: () => ({ org: "acme", ws: "ops" }),
@@ -46,15 +45,6 @@ beforeEach(() => {
     }),
   );
 });
-afterEach(() => {
-  cleanup();
-  vi.unstubAllGlobals();
-});
-
-function wrap(ui: ReactNode) {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
-}
 
 const sec = (over: Record<string, unknown> = {}) => ({
   id: "s1", scope: "workspace", kind: "generic", name: "gh", status: "active", host_pattern: "api.github.com", path_pattern: null,

@@ -1,5 +1,4 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, cleanup, fireEvent, render, renderHook, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, renderHook, screen, waitFor, within } from "@testing-library/react";
 import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -14,6 +13,7 @@ import {
 import { decisionBadge, hasProblem, mergeNeeds, sandboxLook, type AgentStatus } from "@/components/agents/status-rail/status-data";
 import type { ActionApproval } from "@/lib/api/action-approvals";
 import type { Approval } from "@/lib/api/approvals";
+import { wrap } from "./support/render";
 
 // D-201: the status rail: parts, indicators with accessible names, persistence (storage may throw), approver gating,
 // the Needs-you pop-over, the overlay mode.
@@ -77,10 +77,6 @@ function mock(routes: Record<string, () => Response> = {}) {
   );
   return calls;
 }
-function wrap(ui: React.ReactNode) {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
-}
 /** A rail with its own expanded state, as the chat panel holds it. */
 function Harness({ ctx, start = false, overlay = false, onChange }: { ctx: RailContext; start?: boolean; overlay?: boolean; onChange?: (e: boolean) => void }) {
   const [expanded, setExpanded] = useState(start);
@@ -99,8 +95,6 @@ function Harness({ ctx, start = false, overlay = false, onChange }: { ctx: RailC
 
 beforeEach(() => window.localStorage.clear());
 afterEach(() => {
-  cleanup();
-  vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
 

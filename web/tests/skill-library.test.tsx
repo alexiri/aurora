@@ -1,11 +1,11 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 
 import { SkillLibrariesPage } from "@/components/skills/libraries-page";
 import { SkillsEditor } from "@/components/skills/skills-view";
 import { diffLines } from "@/lib/api/skill-libraries";
 import type { Skill } from "@/lib/api/skills";
+import { wrap } from "./support/render";
 
 // P4-GSL (D-148; docs/14 Skill libraries, Add from library, update review; docs/18 Dashboard): the
 // libraries page and connect dialog, Add from library, library badges and read-only skills, detach and
@@ -29,14 +29,6 @@ function mockFetch(routes: Record<string, Handler>) {
   vi.stubGlobal("fetch", fn);
   return fn;
 }
-function wrap(ui: React.ReactNode) {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
-}
-afterEach(() => {
-  cleanup();
-  vi.unstubAllGlobals();
-});
 
 const T = "2026-01-01T00:00:00Z";
 const SHA_A = "0123456789abcdef0123456789abcdef01234567";

@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 
 import { PeersTab } from "@/components/peers/peers-tab";
 import { SchedulesTab } from "@/components/schedules/schedules-tab";
@@ -25,10 +25,6 @@ function wrap(ui: React.ReactNode) {
   qcRef = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(<QueryClientProvider client={qcRef}>{ui}</QueryClientProvider>);
 }
-afterEach(() => {
-  cleanup();
-  vi.unstubAllGlobals();
-});
 
 const sched = {
   id: "s1", agent_id: "a1", consecutive_failures: 0, created_at: "2026-01-01T00:00:00Z", cron: "0 9 * * *", enabled: true,

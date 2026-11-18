@@ -1,6 +1,6 @@
 // (P5-UX-9, C-932, C-933, C-946) The per-app setup page in its two views, and the links from the lists to it.
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const params = vi.hoisted(() => ({ value: {} as Record<string, string> }));
@@ -38,8 +38,6 @@ const wrap = (ui: React.ReactElement) => {
   return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
 };
 afterEach(() => {
-  cleanup();
-  vi.unstubAllGlobals();
   params.value = {};
 });
 

@@ -1,13 +1,13 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import type { ReactNode } from "react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ProfileView } from "@/components/account/profile-view";
 import { accountRoutes } from "@/lib/routes";
 import { SshKeysView } from "@/components/account/ssh-keys-view";
 import { SshPage } from "@/components/agents/ssh-page";
 import { availableSections, isPageAvailable, resolvePage } from "@/components/agents/sections";
+import { wrap } from "./support/render";
 
 // P4-SSH-1 dashboard tests (docs/18 §SSH access, docs/14 §Account and §Agent page): the keys view (list, add with inline
 // errors, rename, delete confirm, hidden without features.ssh) and the agent's SSH page (certificate download, the empty
@@ -35,11 +35,6 @@ function mockFetch(routes: Record<string, Handler>) {
   });
   vi.stubGlobal("fetch", fn);
   return fn;
-}
-
-function wrap(ui: ReactNode) {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
 }
 
 const instance = (ssh: boolean) => ({
@@ -72,11 +67,6 @@ const facts = (over: Record<string, unknown> = {}) => ({
 
 beforeEach(() => {
   vi.stubGlobal("URL", Object.assign(URL, { createObjectURL: vi.fn(() => "blob:cert"), revokeObjectURL: vi.fn() }));
-});
-
-afterEach(() => {
-  cleanup();
-  vi.unstubAllGlobals();
 });
 
 describe("SshKeysView", () => {
