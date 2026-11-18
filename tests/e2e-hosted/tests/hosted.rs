@@ -2937,8 +2937,9 @@ async fn s14_agent_guide_folder_is_projected_into_the_sandbox_and_removed_on_rev
 /// with the gateway's refusal (the same status and code as a hand-written `curl`), an operation
 /// that needs approval is held until a human decides (deny: exit 3), an allowed one reaches the
 /// gateway's forwarding step (the mock cannot answer for a package host, so the page-joining of
-/// `--all` is covered by the supervisor's own suite), and the reserved `aurora` target exits 2
-/// until P5-GUIDE-7.
+/// `--all` is covered by the supervisor's own suite). The `aurora` target (P5-GUIDE-7) works from
+/// the harness's own child and is refused from anywhere else (no session: exit 2; a named
+/// session from a `podman exec` process: `session_not_caller`, exit 2).
 #[tokio::test]
 async fn s43_aurora_agent_calls_are_decided_by_the_gateway_like_raw_requests() {
     if !enabled() {
@@ -3030,10 +3031,35 @@ async fn s43_aurora_agent_calls_are_decided_by_the_gateway_like_raw_requests() {
         "the allowed call reached forwarding (exit {rc}): {out}"
     );
 
-    // The platform target is reserved until P5-GUIDE-7.
+    // The platform target (P5-GUIDE-7): a `podman exec` process has no `AURORA_SESSION` (it is set
+    // only in the harness's environment), so nothing is sent: exit 2.
     let (rc, out) = exec_in(&c, "aurora-agent call aurora memory_save 2>&1");
     assert_eq!(rc, 2, "{out}");
-    assert!(out.contains("not available in this version"), "{out}");
+    assert!(out.contains("inside a conversation turn"), "{out}");
+    // Even with the session named, a process that is not below the harness is refused by the
+    // tools socket (FIX-151, SEC-121): `session_not_caller`, exit 2.
+    let (rc, out) = exec_in(
+        &c,
+        &format!(
+            "AURORA_SESSION={conv} aurora-agent call aurora memory_save key=e2e-outside content=x 2>&1"
+        ),
+    );
+    assert_eq!(rc, 2, "{out}");
+    assert!(out.contains("session_not_caller"), "{out}");
+    // From the harness's own child (the fake adapter's `[[shell:]]`) the same command works: it
+    // lists the platform tools and saves a memory through the same socket the MCP bridge uses.
+    run_turn(
+        &st,
+        &admin,
+        &conv,
+        "[[shell: { aurora-agent list aurora; aurora-agent call aurora memory_save key=e2e-parity content=hello; echo rc=$?; } > /tmp/aa-platform.out 2>&1]]",
+    )
+    .await;
+    let (_, out) = exec_in(&c, "cat /tmp/aa-platform.out");
+    assert!(
+        out.contains("memory_save [memory]") && out.contains("rc=0"),
+        "{out}"
+    );
     // SEC-120: nothing it writes lands under the managed roots.
     let (rc, out) = exec_in(
         &c,

@@ -232,6 +232,15 @@ mod tests {
 
     use super::*;
 
+    /// (P5-GUIDE-7) The session's own variables (`AURORA_SESSION`) reach the harness process.
+    #[test]
+    fn the_session_environment_reaches_the_harness_process() {
+        let mut o = opts("openai_responses", "medium");
+        o.env.push(("AURORA_SESSION".into(), "conv-1".into()));
+        let env = build_env(&o, Path::new("/tmp/codex"));
+        assert!(env.contains(&("AURORA_SESSION".to_owned(), "conv-1".to_owned())));
+    }
+
     pub(crate) fn opts(dialect: &str, effort: &str) -> SessionOptions {
         SessionOptions {
             conversation_id: Uuid::nil(),

@@ -411,7 +411,6 @@ pub async fn call(env: &Env, rest: &[String], opts: &CallOpts) -> Outcome {
             }
         }
     }
-    let mut o = o;
     if o.chars().count() > AGENT_CLI_PREVIEW_MAX {
         o = bound(&o);
     }
