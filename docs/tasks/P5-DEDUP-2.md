@@ -273,3 +273,19 @@ non-blank lines. Making the dashboard smaller but different is a failure.
 - `alexiri/p5-apps` (77 files), `alexiri/fix-167` (24), `alexiri/p5-agent` and `alexiri/p5-dedup-1` (0): no `web/` files at this time. Queued briefs not yet visible in a diff: P5-GUIDE-7 (`domains/tools/`), FIX-170, FIX-169 terminal wrappers, P5-WEBHOOK-1/2. Re-run the diffs before each batch.
 
 **Suggested Part B batches** (one cluster family per commit; two disjoint workers at most): 1 W1 + W2 (test plumbing); 2 W3; 3 E1 + E2; 4 L1 + L2; 5 L3 + L4; 6 D1; 7 P1; 8 P2; 9 P3 + P4; 10 P5; then P6–P11, T1–T4, E3; then tier C with reviews (S1, S2, S4; S3 on the owner's word).
+
+### Part B progress (lane `p5-dedup-2`, 2026-11-18)
+Owner answers 2026-11-18, folded into the plan: delete `usePutSettings`, `usePreviewSettings`, `useViewerRoles`, `chat/turn-usage.tsx` (with D1); `ConnectDialog` loses its unreachable non-reconnect branches and tests are rewritten (a commit `P5-DEDUP-2: S3 …`, only `connect-dialog.tsx` and its tests; `sign-in-step.tsx` stays off limits).
+
+| Batch | Commit | Net lines | Notes |
+|---|---|---|---|
+| 1 W1+W2 | `425408a1` | -732 | `afterEach(cleanup, unstubAllGlobals)` in `tests/setup.ts` (113 files), `wrap()` in `tests/support/render.tsx` (64 files). vitest 145 files / 2341 tests, unchanged. |
+| 2 W3 | `ce0d4a42` | -292 | `json` (96 files), `err` (5), `Handler`+`mockFetch` (12 identical copies) in `tests/support/api.ts`. `json` is the null-aware form; files whose `json` sent `"null"` for a literal null body keep their own. |
+| 3 E1 | `d686ba3b` | -114 | `serious(page)` in `e2e/support/axe.ts` (17 identical specs; `files.ts` re-exports). E2 not done: the `SHOTS` directories differ per spec. Mocked Playwright on the 17 specs: 275 passed, 5 timeouts at load ~45 that passed alone. |
+| 4 L1+L2 | `c44ccd40` | -205 | `useInvalidatingMutation` (`lib/api/mutations.ts`, 50 hooks in 19 files), `retryUnlessClientError` (`errors.ts`, 15 files). Skipped `webhook(s).ts`. |
+
+Total so far (`git diff --shortstat master...HEAD -- web/`): 161 files, +646 −1,989 = **-1,343 lines** (tests -1,138, src -205). No visible change, no test case removed or changed. Bulk mechanical rewrites were done by reviewed node scripts (stated in each commit).
+
+Gate notes: the host load was 45–90 (six lanes). Full vitest runs then lost tests to 20 s timeouts and "failed to start forks worker"; every file that failed passed when run alone (byo, chat-v2, evals-page, files-viewer, composer-p5, context-switcher, grant-form, markdown, addon-sources, agent-next-steps, agent-page-header, auth-views, secret-stores). `scripts/guards/run-all.sh` blocked in `dep-graph.sh` (`cargo tree` at 0 % CPU, waiting on a cargo lock held elsewhere), so it was not completed for batch 4; the guards that do not need cargo pass. **Conflict to expect:** `alexiri/p5-platform` now changes `web/src/lib/api/account.ts`, which batch 4 also touched (the `retry` predicate and about 6 mutation hooks).
+
+Next: 5 L3+L4 → 6 D1 (with the owner's deletions) → 7 P1 → 8 P2 → 9 P3+P4 → 10 P5 (with the clipboard fix and its vitest) → P6–P11, T1–T4, E3; S3 as its own commit; tier C last.
