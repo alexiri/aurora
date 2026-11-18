@@ -1185,10 +1185,22 @@ impl PolicyHandler {
                 &path,
             )
         });
+        // (D-275, SEC-109) No static claim or instance serves the request: a person-pinned server
+        // (the resolver kept only connections that pinned exactly this origin).
+        let own_server = req_app.is_none();
         let (app_match, app_path): (Option<apps::AppMatch<'_>>, String) = match req_app {
             Some(r) => (Some(r.matched), r.app_path),
-            None => (None, path.clone()),
+            None => (
+                registry
+                    .as_ref()
+                    .zip(rv.own_server_app.as_deref())
+                    .and_then(|(l, a)| {
+                        aurora_registry::identify::identify_own_server_app(&l.snapshot, a)
+                    }),
+                path.clone(),
+            ),
         };
+        let own_server = own_server && app_match.is_some();
         // A named connection of a registration on this host, used outside every registered base
         // path: refused like a connection on the wrong host (421 with `expected_base_url`), when
         // the agent may use it at all.
@@ -1247,9 +1259,14 @@ impl PolicyHandler {
         // uncredentialed one to that destination, decided by policy as such.
         let https = scheme == crate::pipeline::Scheme::Https;
         if !(self.insecure_loopback_injection && mechanisms::route::is_loopback_host(&host)) {
-            let app_claim_port = app_match
-                .as_ref()
-                .and_then(|m| mechanisms::route::claim_port(&m.entry.host));
+            // An own-server origin was matched by host and port: TLS to that very port.
+            let app_claim_port = if own_server {
+                Some(port)
+            } else {
+                app_match
+                    .as_ref()
+                    .and_then(|m| mechanisms::route::claim_port(&m.entry.host))
+            };
             let llm = self.resolver.llm();
             cands.retain(|c| match c {
                 Cand::App(_) => mechanisms::route::claim_transport_ok(app_claim_port, https, port),
@@ -1929,11 +1946,27 @@ impl PolicyHandler {
             self.touch(conn.id);
             let fb = self.fallback(&rv, app_match.as_ref(), &ungranted, &host);
             let passthrough = pass_challenge(app_match.as_ref());
-            let echo = inject::url_needles(
-                exec.string_values().map(str::as_bytes),
-                &new_path,
-                query.as_deref(),
-            );
+            // (D-275, SEC-109) A person-pinned server's stages place nothing in the URL (`basic`,
+            // `bearer`, `header` only), and its answers name the account (CalDAV hrefs carry the
+            // username): the non-secret fields are no needles, but every secret field (raw,
+            // percent-encoded, base64, and base64 of `user:secret`) is: a server reflecting the
+            // `Authorization` header or the password is withheld.
+            let echo = if own_server {
+                inject::secret_needles(
+                    m.app
+                        .credentials
+                        .iter()
+                        .filter(|c| c.secret)
+                        .filter_map(|c| exec.credential(&c.name)),
+                    exec.credential("username"),
+                )
+            } else {
+                inject::url_needles(
+                    exec.string_values().map(str::as_bytes),
+                    &new_path,
+                    query.as_deref(),
+                )
+            };
             let hook = self.hook(
                 &rv,
                 ctx,

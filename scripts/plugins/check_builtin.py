@@ -266,6 +266,13 @@ def check_app(app, paired, err):
                 # approval summary is built by the gateway from the statement, not by a template.
                 if t["methods"] != ["POST"] or not str(t.get("host", "")).endswith(".db.aurora.internal"):
                     err(f"app {aid}: database tool {tid} must be POST on *.db.aurora.internal")
+            elif app.get("own_server"):
+                # (P5-CALDAV, D-275) An own-server app's reads are WebDAV (`PROPFIND`/`REPORT`),
+                # as C-233(c) exempts databases: the tool's host must be the connection's own.
+                if t.get("host") != "{connection}":
+                    err(f"app {aid}: own_server tool {tid} must use the host {{connection}}")
+                if group == "write" and tid not in approvals:
+                    err(f"app {aid}: write tool {tid} has no approvals template (clamped summary)")
             elif group == "read":
                 # (P4-GRANTS, Q8, D-124) A `params` classifier (fail closed: the tool matches only
                 # when the parameter proves the read) may carry a body method, e.g. AWS Describe*.

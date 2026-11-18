@@ -592,6 +592,51 @@ fn links_in_render_inputs_become_links_json_and_disappear_with_the_last_link() {
     assert!(!file.exists());
 }
 
+/// (P5-CALDAV, D-275, C-845) `servers` in the render inputs become `~/.aurora/servers.json`
+/// (`0600`, name, app and address only) and disappear with the last server.
+#[test]
+fn servers_in_render_inputs_become_servers_json_and_disappear_with_the_last_server() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let d = TempDir::new();
+    let mut p = projector(d.path());
+    let a = Uuid::now_v7();
+    let with = |g: u64, servers: Value| -> Vec<HomeSync> {
+        let mut parts = generation(g, &[], &[]);
+        parts[2] = part(
+            g,
+            2,
+            6,
+            "render_inputs",
+            json!([{"agent": {"name": "Ada", "handle": "ada", "workspace": "Acme"}, "servers": servers}]),
+        );
+        parts
+    };
+    let file = d.path().join(".aurora/servers.json");
+    apply_all(
+        &mut p,
+        &with(
+            1,
+            json!([{"name": "alice at dav.example.test", "app_id": "caldav", "connection_id": a,
+                    "url": "https://dav.example.test/dav/calendars/alice/"}]),
+        ),
+    );
+    p.commit(1).unwrap();
+    let v: Value = serde_json::from_str(&fs::read_to_string(&file).unwrap()).unwrap();
+    assert_eq!(
+        v,
+        json!([{"name": "alice at dav.example.test", "app": "caldav",
+                "url": "https://dav.example.test/dav/calendars/alice/"}])
+    );
+    assert_eq!(
+        fs::metadata(&file).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+
+    apply_all(&mut p, &with(2, json!([])));
+    p.commit(2).unwrap();
+    assert!(!file.exists());
+}
+
 // ---- (P5-GUIDE-2, C-643) the app folders
 
 /// A generation with the render inputs, an `apps` part and the manifest naming `paths`.

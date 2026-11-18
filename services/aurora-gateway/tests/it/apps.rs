@@ -45,6 +45,9 @@ mod link_lane;
 
 #[path = "account_health.rs"]
 mod account_health;
+// (P5-CALDAV, D-275) The person-pinned server's injection tests share this file's harness.
+#[path = "own_server.rs"]
+mod own_server;
 
 // (FIX-166, D-368) Request-body framing on the upstream hop, seen by a frame-level oracle.
 #[path = "wire_framing.rs"]
@@ -205,8 +208,12 @@ async fn upstream(req: Request<Incoming>) -> Result<Response<Full<Bytes>>, Infal
             .and_then(|h| h.to_str().ok())
             .unwrap_or("")
     );
-    for (k, v) in &parts.headers {
-        out.push_str(&format!("{}: {}\n", k, v.to_str().unwrap_or("?")));
+    // (`x-echo-no-headers`: an upstream that names the path but never reflects a header, as a
+    // well-behaved DAV server does.)
+    if !parts.headers.contains_key("x-echo-no-headers") {
+        for (k, v) in &parts.headers {
+            out.push_str(&format!("{}: {}\n", k, v.to_str().unwrap_or("?")));
+        }
     }
     out.push_str(&format!("body={}\n", String::from_utf8_lossy(&body)));
     // (FIX-104) The gateway withholds a response that echoes a value it put in the URL; a test

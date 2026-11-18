@@ -29,6 +29,7 @@ pub mod process;
 pub mod proxy;
 pub mod pty;
 pub mod pty_exec;
+pub mod servers;
 pub mod spawn;
 pub mod streams;
 pub mod supervisor;

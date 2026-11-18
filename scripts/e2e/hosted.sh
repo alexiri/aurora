@@ -93,7 +93,7 @@ fi
 if [ -n "${AURORA_E2EH_ONLY:-}" ]; then
   TARGETS=(--test "$AURORA_E2EH_ONLY")
 else
-  TARGETS=(--test hosted --test approvals_park)
+  TARGETS=(--test hosted --test approvals_park --test links)
   [ "${AURORA_TEST_KIND:-}" = "1" ] && TARGETS+=(--test k8s)
   [ "${AURORA_TEST_LLM:-}" = "1" ] && TARGETS+=(--test llm)
 fi
