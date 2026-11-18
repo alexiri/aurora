@@ -1,6 +1,6 @@
 package:
   id: indico
-  version: 1.3.0
+  version: 1.4.0
   contract: 1
   min_core: 0.1.0
   publisher: aurora
@@ -256,6 +256,7 @@ apps:
         time and person before booking; never retry a booking. If a scope is missing, say which
         one; never guess availability. Endpoints under /rooms/api/ are internal to Indico and may
         change: on a 404 or an unexpected shape, say so.
+      operations: operations.json
       guide:
         - { file: book-free-room.md, title: "Find a free room and book it", kind: recipe }
         - { file: find-category-events.md, title: "Find the events of a category in a date range", kind: recipe }

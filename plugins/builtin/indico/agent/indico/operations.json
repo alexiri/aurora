@@ -1,0 +1,126 @@
+{
+  "format": "aurora.operations/1",
+  "operations": [
+    {
+      "id": "get_current_user",
+      "method": "GET",
+      "path": "/api/user/",
+      "summary": "The Indico account Aurora is connected as",
+      "tags": ["account"],
+      "tool": "get_current_user"
+    },
+    {
+      "id": "search_rooms",
+      "method": "GET",
+      "path": "/rooms/api/rooms/search",
+      "summary": "Rooms free in a building for a time slot (ids only)",
+      "tags": ["rooms"],
+      "params": [
+        { "name": "building", "in": "query", "required": true, "type": "string", "description": "Building number, e.g. 40" },
+        { "name": "capacity", "in": "query", "type": "integer", "description": "Minimum number of people" },
+        { "name": "start_dt", "in": "query", "required": true, "type": "string", "description": "YYYY-MM-DDTHH:MM:SS, server local time" },
+        { "name": "end_dt", "in": "query", "required": true, "type": "string", "description": "YYYY-MM-DDTHH:MM:SS, same day as start_dt" },
+        { "name": "repeat_frequency", "in": "query", "required": true, "type": "string", "enum": ["NEVER", "DAY", "WEEK", "MONTH"], "default": "NEVER", "description": "Always NEVER, or busy rooms come back too" }
+      ],
+      "items": "$",
+      "tool": "search_rooms"
+    },
+    {
+      "id": "get_room_details",
+      "method": "GET",
+      "path": "/rooms/api/rooms/{id}",
+      "summary": "Name, building, floor and capacity of one room",
+      "tags": ["rooms"],
+      "params": [
+        { "name": "id", "in": "path", "required": true, "type": "integer", "description": "Room id from search_rooms" }
+      ],
+      "tool": "get_room_details"
+    },
+    {
+      "id": "list_room_locations",
+      "method": "GET",
+      "path": "/rooms/api/locations",
+      "summary": "The places where rooms can be booked",
+      "tags": ["rooms"],
+      "items": "$",
+      "tool": "list_room_locations"
+    },
+    {
+      "id": "list_all_rooms",
+      "method": "GET",
+      "path": "/rooms/api/rooms/",
+      "summary": "All rooms with their details (large)",
+      "tags": ["rooms"],
+      "items": "$",
+      "tool": "list_all_rooms"
+    },
+    {
+      "id": "list_my_upcoming_bookings",
+      "method": "GET",
+      "path": "/rooms/api/bookings/mine",
+      "summary": "Your next room bookings",
+      "tags": ["bookings"],
+      "tool": "list_my_upcoming_bookings"
+    },
+    {
+      "id": "get_booking",
+      "method": "GET",
+      "path": "/rooms/api/bookings/{id}",
+      "summary": "One room booking",
+      "tags": ["bookings"],
+      "params": [
+        { "name": "id", "in": "path", "required": true, "type": "integer", "description": "Booking id" }
+      ],
+      "tool": "get_booking"
+    },
+    {
+      "id": "book_room",
+      "method": "POST",
+      "path": "/api/roomBooking/bookRoom.json",
+      "summary": "Book a room for one time slot (official API; needs the person's Indico login)",
+      "tags": ["bookings"],
+      "body": {
+        "content_type": "application/x-www-form-urlencoded",
+        "fields": [
+          { "name": "roomid", "required": true, "type": "integer", "description": "Room id from search_rooms" },
+          { "name": "from", "required": true, "type": "string", "description": "YYYY-MM-DDTHH:MM" },
+          { "name": "to", "required": true, "type": "string", "description": "YYYY-MM-DDTHH:MM, same day as from" },
+          { "name": "tz", "required": true, "type": "string", "description": "Time zone, e.g. Europe/Zurich" },
+          { "name": "reason", "required": true, "type": "string", "description": "Why the room is needed" },
+          { "name": "username", "required": true, "type": "string", "description": "The person's Indico login, not the e-mail" }
+        ]
+      },
+      "tool": "book_room"
+    },
+    {
+      "id": "create_booking",
+      "method": "POST",
+      "path": "/rooms/api/booking/create",
+      "summary": "Book a room with all options, including recurring bookings",
+      "tags": ["bookings"],
+      "body": {
+        "content_type": "application/json",
+        "fields": [
+          { "name": "room_id", "required": true, "type": "integer" },
+          { "name": "start_dt", "required": true, "type": "string", "description": "YYYY-MM-DDTHH:MM:SS" },
+          { "name": "end_dt", "required": true, "type": "string", "description": "YYYY-MM-DDTHH:MM:SS" },
+          { "name": "repeat_frequency", "required": true, "type": "string", "enum": ["NEVER", "DAY", "WEEK", "MONTH"], "default": "NEVER" },
+          { "name": "reason", "required": true, "type": "string" },
+          { "name": "is_prebooking", "type": "boolean", "default": false }
+        ]
+      },
+      "tool": "create_booking"
+    },
+    {
+      "id": "cancel_booking",
+      "method": "POST",
+      "path": "/rooms/api/bookings/{id}/cancel",
+      "summary": "Cancel a room booking",
+      "tags": ["bookings"],
+      "params": [
+        { "name": "id", "in": "path", "required": true, "type": "integer", "description": "Booking id" }
+      ],
+      "tool": "cancel_booking"
+    }
+  ]
+}

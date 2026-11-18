@@ -1,0 +1,212 @@
+{
+  "format": "aurora.operations/1",
+  "operations": [
+    {
+      "id": "get_current_user",
+      "method": "GET",
+      "path": "/api/v4/user",
+      "summary": "The GitLab account Aurora is connected as",
+      "tags": ["account"],
+      "tool": "get_current_user"
+    },
+    {
+      "id": "list_projects",
+      "method": "GET",
+      "path": "/api/v4/projects",
+      "summary": "Projects you can see",
+      "tags": ["projects"],
+      "params": [
+        { "name": "search", "in": "query", "type": "string", "description": "Part of the project name" },
+        { "name": "membership", "in": "query", "type": "boolean", "description": "Only projects you are a member of" },
+        { "name": "per_page", "in": "query", "type": "integer", "description": "Page size, at most 100" },
+        { "name": "page", "in": "query", "type": "integer", "description": "Page number, from 1" }
+      ],
+      "pagination": { "style": "link_header" },
+      "items": "$",
+      "tool": "list_projects"
+    },
+    {
+      "id": "get_project",
+      "method": "GET",
+      "path": "/api/v4/projects/{project}",
+      "summary": "One project",
+      "tags": ["projects"],
+      "params": [
+        { "name": "project", "in": "path", "required": true, "type": "string", "description": "Numeric id, or the full path with slashes written as %2F" }
+      ],
+      "tool": "get_project"
+    },
+    {
+      "id": "list_issues",
+      "method": "GET",
+      "path": "/api/v4/projects/{project}/issues",
+      "summary": "Issues of a project",
+      "tags": ["issues"],
+      "params": [
+        { "name": "project", "in": "path", "required": true, "type": "string", "description": "Numeric id or full path (slashes as %2F)" },
+        { "name": "state", "in": "query", "type": "string", "enum": ["opened", "closed", "all"], "description": "Issue state" },
+        { "name": "labels", "in": "query", "type": "string", "description": "Comma-separated label names" },
+        { "name": "search", "in": "query", "type": "string", "description": "Words in the title or description" },
+        { "name": "per_page", "in": "query", "type": "integer", "description": "Page size, at most 100" }
+      ],
+      "pagination": { "style": "link_header" },
+      "items": "$",
+      "tool": "list_issues"
+    },
+    {
+      "id": "get_issue",
+      "method": "GET",
+      "path": "/api/v4/projects/{project}/issues/{iid}",
+      "summary": "One issue",
+      "tags": ["issues"],
+      "params": [
+        { "name": "project", "in": "path", "required": true, "type": "string", "description": "Numeric id or full path (slashes as %2F)" },
+        { "name": "iid", "in": "path", "required": true, "type": "integer", "description": "Issue number inside the project" }
+      ],
+      "tool": "get_issue"
+    },
+    {
+      "id": "create_issue",
+      "method": "POST",
+      "path": "/api/v4/projects/{project}/issues",
+      "summary": "Open an issue",
+      "tags": ["issues"],
+      "params": [
+        { "name": "project", "in": "path", "required": true, "type": "string", "description": "Numeric id or full path (slashes as %2F)" }
+      ],
+      "body": {
+        "content_type": "application/json",
+        "fields": [
+          { "name": "title", "required": true, "type": "string" },
+          { "name": "description", "type": "string" },
+          { "name": "labels", "type": "string", "description": "Comma-separated label names" }
+        ]
+      },
+      "tool": "create_issue"
+    },
+    {
+      "id": "list_merge_requests",
+      "method": "GET",
+      "path": "/api/v4/projects/{project}/merge_requests",
+      "summary": "Merge requests of a project",
+      "tags": ["merge_requests"],
+      "params": [
+        { "name": "project", "in": "path", "required": true, "type": "string", "description": "Numeric id or full path (slashes as %2F)" },
+        { "name": "state", "in": "query", "type": "string", "enum": ["opened", "closed", "merged", "all"] },
+        { "name": "per_page", "in": "query", "type": "integer", "description": "Page size, at most 100" }
+      ],
+      "pagination": { "style": "link_header" },
+      "items": "$",
+      "tool": "list_merge_requests"
+    },
+    {
+      "id": "get_merge_request",
+      "method": "GET",
+      "path": "/api/v4/projects/{project}/merge_requests/{iid}",
+      "summary": "One merge request",
+      "tags": ["merge_requests"],
+      "params": [
+        { "name": "project", "in": "path", "required": true, "type": "string", "description": "Numeric id or full path (slashes as %2F)" },
+        { "name": "iid", "in": "path", "required": true, "type": "integer", "description": "Merge request number inside the project" }
+      ],
+      "tool": "get_merge_request"
+    },
+    {
+      "id": "get_merge_request_diffs",
+      "method": "GET",
+      "path": "/api/v4/projects/{project}/merge_requests/{iid}/diffs",
+      "summary": "The changes of a merge request",
+      "tags": ["merge_requests"],
+      "params": [
+        { "name": "project", "in": "path", "required": true, "type": "string", "description": "Numeric id or full path (slashes as %2F)" },
+        { "name": "iid", "in": "path", "required": true, "type": "integer", "description": "Merge request number" }
+      ],
+      "pagination": { "style": "link_header" },
+      "items": "$",
+      "tool": "get_merge_request_diffs"
+    },
+    {
+      "id": "list_pipelines",
+      "method": "GET",
+      "path": "/api/v4/projects/{project}/pipelines",
+      "summary": "Pipelines of a project, newest first",
+      "tags": ["pipelines"],
+      "params": [
+        { "name": "project", "in": "path", "required": true, "type": "string", "description": "Numeric id or full path (slashes as %2F)" },
+        { "name": "ref", "in": "query", "type": "string", "description": "Branch or tag; without it every branch and merge request" },
+        { "name": "status", "in": "query", "type": "string", "enum": ["running", "pending", "success", "failed", "canceled", "skipped"] },
+        { "name": "per_page", "in": "query", "type": "integer", "description": "Page size, at most 100" }
+      ],
+      "pagination": { "style": "link_header" },
+      "items": "$",
+      "tool": "list_pipelines"
+    },
+    {
+      "id": "get_pipeline",
+      "method": "GET",
+      "path": "/api/v4/projects/{project}/pipelines/{pipeline}",
+      "summary": "One pipeline with its status, ref and web_url",
+      "tags": ["pipelines"],
+      "params": [
+        { "name": "project", "in": "path", "required": true, "type": "string", "description": "Numeric id or full path (slashes as %2F)" },
+        { "name": "pipeline", "in": "path", "required": true, "type": "integer", "description": "Pipeline id" }
+      ],
+      "tool": "get_pipeline"
+    },
+    {
+      "id": "list_pipeline_jobs",
+      "method": "GET",
+      "path": "/api/v4/projects/{project}/pipelines/{pipeline}/jobs",
+      "summary": "Jobs of a pipeline",
+      "tags": ["pipelines"],
+      "params": [
+        { "name": "project", "in": "path", "required": true, "type": "string", "description": "Numeric id or full path (slashes as %2F)" },
+        { "name": "pipeline", "in": "path", "required": true, "type": "integer", "description": "Pipeline id" },
+        { "name": "scope[]", "in": "query", "type": "array", "description": "Job states, e.g. failed" }
+      ],
+      "pagination": { "style": "link_header" },
+      "items": "$",
+      "tool": "list_pipeline_jobs"
+    },
+    {
+      "id": "get_job_log",
+      "method": "GET",
+      "path": "/api/v4/projects/{project}/jobs/{job}/trace",
+      "summary": "The log of a job (can be very large: it is saved to a file)",
+      "tags": ["pipelines"],
+      "params": [
+        { "name": "project", "in": "path", "required": true, "type": "string", "description": "Numeric id or full path (slashes as %2F)" },
+        { "name": "job", "in": "path", "required": true, "type": "integer", "description": "Job id" }
+      ],
+      "tool": "get_job_log"
+    },
+    {
+      "id": "retry_pipeline",
+      "method": "POST",
+      "path": "/api/v4/projects/{project}/pipelines/{pipeline}/retry",
+      "summary": "Run the failed jobs of a pipeline again",
+      "tags": ["pipelines"],
+      "params": [
+        { "name": "project", "in": "path", "required": true, "type": "string", "description": "Numeric id or full path (slashes as %2F)" },
+        { "name": "pipeline", "in": "path", "required": true, "type": "integer", "description": "Pipeline id" }
+      ],
+      "tool": "retry_pipeline"
+    },
+    {
+      "id": "list_repository_tree",
+      "method": "GET",
+      "path": "/api/v4/projects/{project}/repository/tree",
+      "summary": "Files and folders of a repository",
+      "tags": ["repository"],
+      "params": [
+        { "name": "project", "in": "path", "required": true, "type": "string", "description": "Numeric id or full path (slashes as %2F)" },
+        { "name": "path", "in": "query", "type": "string", "description": "Folder inside the repository" },
+        { "name": "ref", "in": "query", "type": "string", "description": "Branch, tag or commit" },
+        { "name": "recursive", "in": "query", "type": "boolean" }
+      ],
+      "pagination": { "style": "link_header" },
+      "items": "$",
+      "tool": "list_repository_tree"
+    }
+  ]
+}
