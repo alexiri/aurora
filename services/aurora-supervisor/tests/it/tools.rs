@@ -784,7 +784,12 @@ async fn bridge_call_under(
         .arg("-c")
         // The bridge is a child of the shell (not exec'd), so the call has an ancestry to walk.
         .arg("\"$0\" mcp-bridge --session \"$1\" --socket \"$2\"; true")
-        .arg(env!("CARGO_BIN_EXE_aurora-supervisor"))
+        // nextest's runtime path first: CI shards run an extracted archive, where the
+        // compile-time path (the build runner's `target/`) does not exist.
+        .arg(
+            std::env::var_os("NEXTEST_BIN_EXE_aurora-supervisor")
+                .unwrap_or_else(|| env!("CARGO_BIN_EXE_aurora-supervisor").into()),
+        )
         .arg(session)
         .arg(sock)
         .stdin(std::process::Stdio::piped())
