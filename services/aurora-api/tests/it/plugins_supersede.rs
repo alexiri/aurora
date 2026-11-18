@@ -637,8 +637,16 @@ async fn one_sentry_app_takes_over_the_region_and_self_hosted_connections() {
     sqlx::query("INSERT INTO grants (id, workspace_id, agent_id, connection_id, mode, allow_tools, ask_tools) VALUES ($1,$2,$3,$4,'custom','{get_issue,list_issues}','{update_issue}')")
         .bind(Uuid::now_v7()).bind(ws).bind(agent).bind(c_us).execute(p).await.unwrap();
 
-    let v2 = a.upload(&shipped).await;
-    assert_eq!(v2["version"], "2.0.2", "{v2}");
+    // (P5-GUIDE-4) The shipped package lists an agent guide file: it travels in the archive.
+    let notes = std::fs::read(format!(
+        "{}/../../plugins/builtin/sentry/agent/sentry/api-notes.md",
+        env!("CARGO_MANIFEST_DIR")
+    ))
+    .unwrap();
+    let v2 = a
+        .upload_with(&shipped, &[("agent/sentry/api-notes.md", notes.as_slice())])
+        .await;
+    assert_eq!(v2["version"], "2.1.0", "{v2}");
     if v2["status"] == "pending_approval" {
         let (st, b) = a.act(&v2["id"], "approve").await;
         assert_eq!(st, 200, "{b}");
@@ -681,7 +689,7 @@ async fn one_sentry_app_takes_over_the_region_and_self_hosted_connections() {
         (
             "sentry".to_owned(),
             "sentry".to_owned(),
-            "2.0.2".to_owned(),
+            "2.1.0".to_owned(),
             Some("token".to_owned()),
             "active".to_owned(),
             inst,
@@ -745,14 +753,14 @@ async fn one_sentry_app_takes_over_the_region_and_self_hosted_connections() {
 
     // Rerunning the step is a no-op (the presets are refreshed, not duplicated).
     let stored: Value = sqlx::query_scalar(
-        "SELECT manifest FROM plugin_packages WHERE package_id = 'sentry' AND version = '2.0.2'",
+        "SELECT manifest FROM plugin_packages WHERE package_id = 'sentry' AND version = '2.1.0'",
     )
     .fetch_one(p)
     .await
     .unwrap();
     let manifest: Manifest = serde_json::from_value(stored).unwrap();
     let mut tx = p.begin().await.unwrap();
-    let again = supersede::apply(&mut tx, &manifest, "2.0.2").await.unwrap();
+    let again = supersede::apply(&mut tx, &manifest, "2.1.0").await.unwrap();
     tx.commit().await.unwrap();
     assert!(again.is_empty(), "{again:?}");
     assert_eq!(again.presets, 2);
