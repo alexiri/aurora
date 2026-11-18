@@ -69,11 +69,11 @@ ENV PATH=/workspace/.local/bin:/opt/aurora/bin:/usr/local/bin:/usr/bin:/bin
 COPY images/sandbox/etc/profile.d/aurora.sh /etc/profile.d/aurora.sh
 COPY images/sandbox/etc/zshenv /etc/zshenv
 COPY images/sandbox/etc/zshrc /etc/zshrc
-# (FIX-138 item 1b) `claude` and `codex` for the web terminal: wrappers on PATH that source
+# (FIX-138 item 1b, P5-HARN C-1015) `claude`, `codex`, `pi`, `goose` and `opencode` for the web terminal: wrappers on PATH that parse
 # /run/aurora/harness.env (written by the supervisor, no secret), keep their own state under
 # /workspace/.aurora/terminal and exec the pinned binaries; a harness missing from the image or not
 # enabled on the instance prints "not enabled on this instance".
-COPY --chmod=0755 images/sandbox/bin/claude images/sandbox/bin/codex /opt/aurora/bin/
+COPY --chmod=0755 images/sandbox/bin/claude images/sandbox/bin/codex images/sandbox/bin/pi images/sandbox/bin/goose images/sandbox/bin/opencode /opt/aurora/bin/
 WORKDIR /workspace
 
 # ---- base: developer tool set (rebuilt rarely)

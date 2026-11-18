@@ -98,6 +98,22 @@ pub fn render_models(opts: &SessionOptions) -> Result<String, HarnessError> {
     Ok(pretty(&v))
 }
 
+/// The web terminal's `pi` (C-1015): `models.json` for the agent's model, as one compact JSON
+/// line that the wrapper writes into its own config directory (Pi has no inline config).
+pub fn terminal_models(m: &aurora_protocol::runner::ModelChoice) -> Result<String, HarnessError> {
+    let opts = SessionOptions {
+        conversation_id: uuid::Uuid::nil(),
+        working_dir: "/workspace".into(),
+        resume_ref: None,
+        model: m.clone(),
+        proxy_url: String::new(),
+        mcp_bridge: McpBridgeSpec::default(),
+        env: vec![],
+    };
+    let v: Value = serde_json::from_str(&render_models(&opts)?).unwrap_or(Value::Null);
+    Ok(v.to_string())
+}
+
 /// `<config>/mcp.json`: the platform tools through the bridge, **exposed directly** (Pi's default
 /// `codemode` would hide every tool behind one tool and the on-demand index with it, D-297).
 pub fn render_mcp(spec: &McpBridgeSpec) -> Result<String, HarnessError> {

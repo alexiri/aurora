@@ -67,7 +67,11 @@ fn strip_v1(url: &str) -> String {
 
 /// The endpoint host in goose's form (no `/v1`: the provider appends its path).
 pub fn host(opts: &SessionOptions) -> String {
-    let m = &opts.model;
+    terminal_host(&opts.model)
+}
+
+/// [`host`] for a model choice (the web terminal's `goose` wrapper, C-1015).
+pub fn terminal_host(m: &aurora_protocol::runner::ModelChoice) -> String {
     if m.dialect == "anthropic_messages" {
         strip_v1(&m.base_url)
     } else {

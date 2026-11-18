@@ -1,6 +1,6 @@
-//! `/run/aurora/harness.env`: what the web terminal's `claude` and `codex` wrappers need to
-//! reach the LLM **through the gateway** exactly as an agent turn does (FIX-138 item 1b,
-//! `docs/12 §Terminal`).
+//! `/run/aurora/harness.env`: what the web terminal's `claude`, `codex`, `pi`, `goose` and
+//! `opencode` wrappers need to reach the LLM **through the gateway** exactly as an agent turn
+//! does (FIX-138 item 1b, P5-HARN C-1015, `docs/12 §Terminal`).
 //!
 //! The wrappers in `/opt/aurora/bin` **parse** the file as data (blank lines, `# …` and
 //! `NAME='VALUE'` only, [`q`]'s escaping; any other line makes them refuse to start, FIX-155) — they
@@ -126,7 +126,7 @@ pub fn unavailable_sentence(harness_name: &str, why: TerminalModelUnavailable) -
 pub fn render(cfg: &HarnessEnvConfig, models: &TerminalModels) -> String {
     let mut out = String::from(
         "# Written by aurora-supervisor. No secret: the gateway adds the agent's real LLM key.\n\
-         # Parsed (never sourced) by /opt/aurora/bin/claude and /opt/aurora/bin/codex (docs/12 §Terminal).\n",
+         # Parsed (never sourced) by the wrappers in /opt/aurora/bin (docs/12 §Terminal).\n",
     );
     let mut set = |k: &str, v: &str| out.push_str(&format!("{k}={}\n", q(v)));
     set("HARNESSES_ENABLED", &cfg.enabled.join(" "));
@@ -197,7 +197,66 @@ pub fn render(cfg: &HarnessEnvConfig, models: &TerminalModels) -> String {
         ),
         _ => {}
     }
+    // (phase 5, P5-HARN, C-1015) pi, goose and opencode: the wrappers configure the CLI from these
+    // (the adapters' own renderers produce the values, so a terminal and a turn agree).
+    for (id, display) in [("pi", "Pi"), ("goose", "goose"), ("opencode", "OpenCode")] {
+        let var = |s: &str| format!("AURORA_{}_{s}", id.to_ascii_uppercase());
+        match models.get(id) {
+            Some(TerminalModel {
+                choice: Some(m), ..
+            }) => match terminal_values(id, m) {
+                Ok(values) => {
+                    for (k, v) in values {
+                        set(&var(k), &v);
+                    }
+                }
+                // SEC-122 (the id or role fails the re-check) or a dialect the harness cannot speak.
+                Err(_) => set(
+                    &var("UNAVAILABLE"),
+                    &format!("this agent's model endpoint cannot be used with {display}"),
+                ),
+            },
+            Some(TerminalModel {
+                unavailable: Some(why),
+                ..
+            }) => set(&var("UNAVAILABLE"), &unavailable_sentence(display, *why)),
+            _ => {}
+        }
+    }
     out
+}
+
+/// What the wrapper of `harness` needs, as `AURORA_<HARNESS>_<KEY>` values: the model and where
+/// it is served, with the CLI's own configuration where it has no inline form.
+fn terminal_values(
+    harness: &str,
+    m: &ModelChoice,
+) -> Result<Vec<(&'static str, String)>, crate::harness::HarnessError> {
+    use crate::adapters::{goose, opencode, pi};
+    crate::adapters::claude_code::config::check_model(m)?;
+    Ok(match harness {
+        "pi" => vec![
+            ("MODEL", m.model.clone()),
+            ("MODELS_JSON", pi::config::terminal_models(m)?),
+            ("KEY_VAR", pi::config::api_of(&m.dialect)?.1.to_owned()),
+        ],
+        "goose" => {
+            let (provider, _) = goose::config::provider_of(&m.dialect)?;
+            vec![
+                ("MODEL", m.model.clone()),
+                ("PROVIDER", provider.to_owned()),
+                ("HOST", goose::config::terminal_host(m)),
+            ]
+        }
+        _ => vec![
+            ("MODEL", opencode::config::model_ref(&m.model)),
+            ("CONFIG", opencode::config::terminal_config(m)?),
+            (
+                "KEY_VAR",
+                opencode::config::provider_of(&m.dialect)?.1.to_owned(),
+            ),
+        ],
+    })
 }
 
 /// Writes the file atomically with mode 0644 (world-readable: it holds nothing secret).

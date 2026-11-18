@@ -26,6 +26,18 @@ use aurora_supervisor::spawn::command;
 
 const CLAUDE: &str = include_str!("../../../../images/sandbox/bin/claude");
 const CODEX: &str = include_str!("../../../../images/sandbox/bin/codex");
+const PI: &str = include_str!("../../../../images/sandbox/bin/pi");
+const GOOSE: &str = include_str!("../../../../images/sandbox/bin/goose");
+const OPENCODE: &str = include_str!("../../../../images/sandbox/bin/opencode");
+
+/// Every terminal wrapper (C-1015): the wrapper's file name and its harness id.
+const ALL: [(&str, &str); 5] = [
+    ("claude", "claude-code"),
+    ("codex", "codex"),
+    ("pi", "pi"),
+    ("goose", "goose"),
+    ("opencode", "opencode"),
+];
 
 struct Rig {
     dir: TempDir,
@@ -49,6 +61,21 @@ impl Rig {
                 CLAUDE,
                 "bin=/opt/aurora/harness/claude-code/node_modules/.bin/claude",
                 "/workspace/.aurora/terminal/claude",
+            ),
+            "pi" => (
+                PI,
+                "bin=/opt/aurora/harness/pi/node_modules/.bin/pi",
+                "/workspace/.aurora/terminal/pi",
+            ),
+            "goose" => (
+                GOOSE,
+                "bin=/opt/aurora/harness/goose/goose",
+                "/workspace/.aurora/terminal/goose",
+            ),
+            "opencode" => (
+                OPENCODE,
+                "bin=/opt/aurora/harness/opencode/opencode",
+                "/workspace/.aurora/terminal/opencode",
             ),
             _ => (
                 CODEX,
@@ -292,12 +319,11 @@ fn a_golden_harness_env_exports_what_sourcing_it_did() {
     }
 }
 
-const GOOD: &str =
-    "# Written by aurora-supervisor.\nHARNESSES_ENABLED='claude-code codex'\nFOO='bar'\n";
+const GOOD: &str = "# Written by aurora-supervisor.\nHARNESSES_ENABLED='claude-code codex pi goose opencode'\nFOO='bar'\n";
 
 #[test]
 fn a_file_with_a_shell_line_makes_the_wrapper_refuse_and_the_line_never_runs() {
-    for which in ["claude", "codex"] {
+    for (which, _) in ALL {
         for (label, extra) in [
             ("command line", "touch MARKER"),
             ("command substitution", "X=$(touch MARKER)"),
@@ -330,7 +356,7 @@ fn a_file_with_a_shell_line_makes_the_wrapper_refuse_and_the_line_never_runs() {
 
 #[test]
 fn grammar_breaks_make_the_wrapper_refuse_to_start() {
-    for which in ["claude", "codex"] {
+    for (which, _) in ALL {
         for (label, line) in [
             ("unquoted value", "X=abc"),
             ("double quotes", "X=\"abc\""),
@@ -359,7 +385,7 @@ fn grammar_breaks_make_the_wrapper_refuse_to_start() {
 
 #[test]
 fn quoting_that_the_writer_produces_parses_exactly() {
-    for which in ["claude", "codex"] {
+    for (which, _) in ALL {
         let rig = Rig::new(which);
         rig.write_env(&format!(
             "{GOOD}EMPTY=''\nQ='it'\\''s'\nTWO='a'\\'''\\''b'\nSPACES='  x  y  '\nGLOB='*'\n_UNDER9='ok'\n"
@@ -378,7 +404,7 @@ fn quoting_that_the_writer_produces_parses_exactly() {
 
 #[test]
 fn a_hostile_mkdir_on_path_does_not_run_and_the_state_dir_is_still_made() {
-    for which in ["claude", "codex"] {
+    for (which, _) in ALL {
         let rig = Rig::new(which);
         rig.write_env(GOOD);
         let hostile = rig.dir.path().join("hostile");
@@ -398,7 +424,7 @@ fn a_hostile_mkdir_on_path_does_not_run_and_the_state_dir_is_still_made() {
 
 #[test]
 fn the_unchanged_refusals_still_hold() {
-    for (which, harness) in [("claude", "claude-code"), ("codex", "codex")] {
+    for (which, harness) in ALL {
         // A missing file.
         let rig = Rig::new(which);
         let out = rig.run();
@@ -408,16 +434,205 @@ fn the_unchanged_refusals_still_hold() {
         rig.write_env("HARNESSES_ENABLED='other'\n");
         assert_eq!(rig.run().status.code(), Some(127), "{which}");
         // An agent with no model for it: the fixed sentence, exit 1.
-        let key = if which == "claude" {
-            "AURORA_CLAUDE_UNAVAILABLE"
-        } else {
-            "AURORA_CODEX_UNAVAILABLE"
-        };
+        let key = format!("AURORA_{}_UNAVAILABLE", which.to_ascii_uppercase());
         rig.write_env(&format!(
             "HARNESSES_ENABLED='{harness}'\n{key}='no model is chosen'\n"
         ));
         let out = rig.run();
         assert_eq!(out.status.code(), Some(1), "{which}");
         assert!(String::from_utf8_lossy(&out.stderr).contains("no model is chosen"));
+    }
+}
+
+/// What the supervisor writes for the agent's model on `harness` (the real writer).
+fn terminal_file(harness: &str, model: &str, dialect: &str) -> String {
+    let cfg = HarnessEnvConfig {
+        path: PathBuf::from("/run/aurora/harness.env"),
+        enabled: ALL.iter().map(|(_, h)| (*h).to_owned()).collect(),
+        proxy_url: "http://127.0.0.1:3128".into(),
+        ca_path: "/run/aurora/ca.pem".into(),
+    };
+    let mut c = choice(model);
+    c.dialect = dialect.into();
+    let mut m = TerminalModels::default();
+    m.set(
+        harness,
+        Some(TerminalModel {
+            choice: Some(c),
+            unavailable: None,
+        }),
+    );
+    render(&cfg, &m)
+}
+
+/// (P5-HARN, C-1015) `pi`: the wrapper writes the rendered `models.json` into its own state directory,
+/// points `PI_CODING_AGENT_DIR` there, names the placeholder through the key variable, turns the vendor
+/// network off, and hands Pi the provider and the model; no `AURORA_PI_*` reaches Pi.
+#[test]
+fn the_pi_wrapper_configures_pi_from_the_file_and_keeps_it_off_the_vendor_network() {
+    for (dialect, api, key) in [
+        (
+            "anthropic_messages",
+            "anthropic-messages",
+            "ANTHROPIC_API_KEY",
+        ),
+        ("openai_chat", "openai-completions", "OPENAI_API_KEY"),
+    ] {
+        let rig = Rig::new("pi");
+        rig.write_env(&terminal_file("pi", GOLDEN_MODEL, dialect));
+        let out = rig.run();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let seen = rig.seen_env().unwrap();
+        assert_eq!(
+            seen.get("PI_CODING_AGENT_DIR").map(String::as_str),
+            Some(rig.state.to_str().unwrap())
+        );
+        for (k, v) in [
+            ("PI_OFFLINE", "1"),
+            ("PI_TELEMETRY", "0"),
+            ("PI_SKIP_VERSION_CHECK", "1"),
+        ] {
+            assert_eq!(seen.get(k).map(String::as_str), Some(v), "{k}");
+        }
+        assert_eq!(
+            seen.get(key).map(String::as_str),
+            Some("aurora-placeholder")
+        );
+        assert!(
+            !seen.keys().any(|k| k.starts_with("AURORA_PI_")),
+            "{seen:?}"
+        );
+        assert_eq!(
+            rig.seen_args().unwrap(),
+            ["--provider", "aurora", "--model", GOLDEN_MODEL, "--flag"]
+        );
+        let models: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(rig.state.join("models.json")).unwrap())
+                .unwrap();
+        let p = &models["providers"]["aurora"];
+        assert_eq!(p["api"], api);
+        assert_eq!(
+            p["apiKey"],
+            format!("${key}"),
+            "a reference, never a literal"
+        );
+        assert_eq!(p["models"][0]["id"], GOLDEN_MODEL);
+        assert!(!models.to_string().contains("sk-"));
+    }
+}
+
+/// `goose`: configured by environment, its own root, the right provider for the dialect.
+#[test]
+fn the_goose_wrapper_sets_the_provider_for_the_dialect_and_its_own_root() {
+    for (dialect, provider, host_var) in [
+        ("anthropic_messages", "anthropic", "ANTHROPIC_HOST"),
+        ("openai_chat", "litellm", "LITELLM_HOST"),
+    ] {
+        let rig = Rig::new("goose");
+        rig.write_env(&terminal_file("goose", GOLDEN_MODEL, dialect));
+        let out = rig.run();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let seen = rig.seen_env().unwrap();
+        let g = |k: &str| seen.get(k).map(String::as_str);
+        assert_eq!(g("GOOSE_PATH_ROOT"), Some(rig.state.to_str().unwrap()));
+        assert_eq!(g("GOOSE_PROVIDER"), Some(provider));
+        assert_eq!(g("GOOSE_MODEL"), Some(GOLDEN_MODEL));
+        assert_eq!(g(host_var), Some("http://llm.example"));
+        assert_eq!(g("GOOSE_TELEMETRY_ENABLED"), Some("false"));
+        assert_eq!(g("GOOSE_DISABLE_KEYRING"), Some("1"));
+        assert_eq!(g("GOOSE_DISABLE_SESSION_NAMING"), Some("true"));
+        assert_eq!(g("GOOSE_CA_CERT_PATH"), Some("/run/aurora/ca.pem"));
+        if provider == "litellm" {
+            assert_eq!(g("LITELLM_BASE_PATH"), Some("v1/chat/completions"));
+            assert_eq!(g("LITELLM_API_KEY"), Some("aurora-placeholder"));
+        } else {
+            assert_eq!(g("ANTHROPIC_API_KEY"), Some("aurora-placeholder"));
+        }
+        assert!(
+            !seen.keys().any(|k| k.starts_with("AURORA_GOOSE_")),
+            "{seen:?}"
+        );
+        assert_eq!(rig.seen_args().unwrap(), ["--flag"]);
+    }
+}
+
+/// `opencode`: the rendered config inline, its own XDG directories, the vendor switches.
+#[test]
+fn the_opencode_wrapper_passes_the_rendered_config_inline_and_keeps_it_off_the_vendor_network() {
+    for (dialect, key) in [
+        ("anthropic_messages", "ANTHROPIC_API_KEY"),
+        ("openai_responses", "OPENAI_API_KEY"),
+    ] {
+        let rig = Rig::new("opencode");
+        rig.write_env(&terminal_file("opencode", GOLDEN_MODEL, dialect));
+        let out = rig.run();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let seen = rig.seen_env().unwrap();
+        let g = |k: &str| seen.get(k).map(String::as_str);
+        let state = rig.state.to_str().unwrap();
+        assert_eq!(g("XDG_DATA_HOME"), Some(format!("{state}/data").as_str()));
+        assert_eq!(
+            g("XDG_CONFIG_HOME"),
+            Some(format!("{state}/config").as_str())
+        );
+        for k in [
+            "OPENCODE_DISABLE_MODELS_FETCH",
+            "OPENCODE_DISABLE_DEFAULT_PLUGINS",
+            "OPENCODE_DISABLE_LSP_DOWNLOAD",
+            "OPENCODE_DISABLE_AUTOUPDATE",
+        ] {
+            assert_eq!(g(k), Some("1"), "{k}");
+        }
+        assert_eq!(g(key), Some("aurora-placeholder"));
+        let cfg: serde_json::Value =
+            serde_json::from_str(g("OPENCODE_CONFIG_CONTENT").expect("inline config")).unwrap();
+        assert_eq!(cfg["model"], format!("aurora/{GOLDEN_MODEL}"));
+        assert_eq!(cfg["autoupdate"], false);
+        assert_eq!(
+            cfg["provider"]["aurora"]["options"]["apiKey"],
+            format!("{{env:{key}}}")
+        );
+        assert!(
+            cfg.get("mcp").is_none(),
+            "no platform tools in the terminal"
+        );
+        assert!(
+            !seen.keys().any(|k| k.starts_with("AURORA_OPENCODE_")),
+            "{seen:?}"
+        );
+    }
+}
+
+/// A dialect the harness cannot speak (goose has no Responses path) or an id that fails the re-check
+/// becomes the fixed refusal, never a half-configured CLI.
+#[test]
+fn a_model_a_harness_cannot_use_is_a_refusal_and_not_a_configuration() {
+    for (which, dialect, model) in [
+        ("goose", "openai_responses", "m"),
+        ("pi", "anthropic_bedrock", "m"),
+        ("opencode", "anthropic_vertex", "m"),
+        ("pi", "anthropic_messages", "m$(id)"),
+    ] {
+        let rig = Rig::new(which);
+        let file = terminal_file(which, model, dialect);
+        assert!(file.contains("_UNAVAILABLE='"), "{which}: {file}");
+        assert!(!file.contains("$(id)"), "{file}");
+        rig.write_env(&file);
+        let out = rig.run();
+        assert_eq!(out.status.code(), Some(1), "{which}");
+        assert!(String::from_utf8_lossy(&out.stderr).contains("cannot be used with"));
+        assert!(rig.seen_env().is_none(), "{which}: the CLI ran");
     }
 }

@@ -1007,7 +1007,21 @@ file is logged and does not fail the sync. The sandbox image ships the `psql` cl
   (`CLAUDE_CONFIG_DIR=/workspace/.aurora/terminal/claude`, `CODEX_HOME=/workspace/.aurora/terminal/codex`,
   created by the supervisor and owned by the agent user) so an interactive session never reads or
   changes the agent harness's configuration, sessions or memory (FIX-095), and `exec`s the binary.
-  The terminal session does not read the agent's instructions or skills. **Attribution:** the
+  **(P5-HARN, C-1015)** `pi`, `goose` and `opencode` are wrappers of the same kind, with sections
+  of their own: `AURORA_<HARNESS>_MODEL` plus what the CLI needs, rendered by the adapter's own
+  config code so a terminal and a turn agree: **Pi** gets `AURORA_PI_MODELS_JSON` (the `models.json`
+  that the wrapper writes into `PI_CODING_AGENT_DIR=/workspace/.aurora/terminal/pi`) and
+  `AURORA_PI_KEY_VAR`, with `PI_OFFLINE`, `PI_TELEMETRY=0`, `PI_SKIP_VERSION_CHECK` set; **goose**
+  gets `AURORA_GOOSE_PROVIDER` (`anthropic` or `litellm`) and `AURORA_GOOSE_HOST`, which the wrapper
+  turns into goose's own variables, with `GOOSE_PATH_ROOT=/workspace/.aurora/terminal/goose`,
+  telemetry, keyring and session naming off; **OpenCode** gets `AURORA_OPENCODE_CONFIG` (the rendered
+  `opencode.json` without the platform tools, passed as `OPENCODE_CONFIG_CONTENT`), with its XDG
+  directories under `/workspace/.aurora/terminal/opencode` and the vendor switches of `§Adapters`
+  set. A model the harness cannot use (an id or role that fails the supervisor's re-check, or a
+  dialect it does not speak, for example goose on a Responses-only endpoint) becomes
+  `AURORA_<HARNESS>_UNAVAILABLE` ("this agent's model endpoint cannot be used with …"), never a
+  half-configured CLI. The wrappers name the placeholder only through the variable the CLI's config
+  refers to. The terminal session does not read the agent's instructions or skills. **Attribution:** the
   traffic goes through the same machine proxy and boot-token credential as a turn's model calls, so
   the gateway attributes it to the **agent** (lane `mitm`, no turn or conversation), counts it
   against the same budgets and rate limits and shows it in the request log (`07`) like any other

@@ -133,11 +133,37 @@ fn pretty(v: &Value) -> String {
 /// the dialect with every model of the session (the default and the resolved roles), the small model
 /// and the subagent model.
 pub fn render_config(opts: &SessionOptions) -> Result<String, HarnessError> {
-    let (npm, key_var) = provider_of(&opts.model.dialect)?;
     let (cmd, args) =
         opts.mcp_bridge.command.split_first().ok_or_else(|| {
             HarnessError::new("harness_failed", "no mcp-bridge command configured")
         })?;
+    let mut command = vec![json!(cmd)];
+    command.extend(args.iter().map(|a| json!(a)));
+    let mut v = config_value(opts)?;
+    v["mcp"] = json!({MCP_SERVER: {
+        "type": "local", "command": command, "enabled": true, "environment": {},
+    }});
+    Ok(pretty(&v))
+}
+
+/// The web terminal's `opencode` (C-1015): the same provider, models and switches without the
+/// platform tools, as one compact JSON line the wrapper passes in `OPENCODE_CONFIG_CONTENT`.
+pub fn terminal_config(m: &aurora_protocol::runner::ModelChoice) -> Result<String, HarnessError> {
+    let opts = SessionOptions {
+        conversation_id: uuid::Uuid::nil(),
+        working_dir: "/workspace".into(),
+        resume_ref: None,
+        model: m.clone(),
+        proxy_url: String::new(),
+        mcp_bridge: crate::harness::McpBridgeSpec::default(),
+        env: vec![],
+    };
+    Ok(config_value(&opts)?.to_string())
+}
+
+/// Everything of `opencode.json` but the MCP server.
+fn config_value(opts: &SessionOptions) -> Result<Value, HarnessError> {
+    let (npm, key_var) = provider_of(&opts.model.dialect)?;
     let m = &opts.model;
     let mut ids: Vec<&str> = vec![&m.model];
     for role in ["large", "medium", "small"] {
@@ -165,9 +191,7 @@ pub fn render_config(opts: &SessionOptions) -> Result<String, HarnessError> {
     if let Some(sub) = subagent_model(opts) {
         agent["general"] = json!({"model": model_ref(sub)});
     }
-    let mut command = vec![json!(cmd)];
-    command.extend(args.iter().map(|a| json!(a)));
-    let v = json!({
+    Ok(json!({
         "$schema": "https://opencode.ai/config.json",
         "autoupdate": false,
         "share": "disabled",
@@ -184,11 +208,7 @@ pub fn render_config(opts: &SessionOptions) -> Result<String, HarnessError> {
             "options": {"baseURL": base_url(opts), "apiKey": format!("{{env:{key_var}}}")},
             "models": models,
         }},
-        "mcp": {MCP_SERVER: {
-            "type": "local", "command": command, "enabled": true, "environment": {},
-        }},
-    });
-    Ok(pretty(&v))
+    }))
 }
 
 /// The files that make OpenCode's background `npm install @opencode-ai/plugin` return at once

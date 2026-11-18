@@ -1,0 +1,110 @@
+#!/bin/sh
+# `pi` in the web terminal (P5-HARN, C-1015, docs/12 §Terminal); see `claude` and `codex` beside it.
+# Pi takes its provider from `models.json` in its config directory, so the wrapper writes the file the
+# supervisor rendered (AURORA_PI_MODELS_JSON: the same values `pi::config` writes for a turn) into
+# its own state directory /workspace/.aurora/terminal/pi (never the agent harness's), keeps Pi off the
+# vendor network and runs it through the machine proxy. Like `claude`, it reads /run/aurora/harness.env
+# as data, never as shell (FIX-155), and runs its helpers by absolute path.
+bin=/opt/aurora/harness/pi/node_modules/.bin/pi
+envfile=/run/aurora/harness.env
+readonly bin envfile
+refuse() {
+    echo "pi: not enabled on this instance" >&2
+    exit 127
+}
+[ -x "$bin" ] || refuse
+if [ ! -r "$envfile" ]; then
+    echo "pi: the sandbox's gateway settings ($envfile) are missing" >&2
+    exit 1
+fi
+bad() {
+    echo "pi: $envfile is not in the expected format" >&2
+    exit 1
+}
+# Read the file once, then parse that copy twice (check, then export), so a file with any bad line
+# applies nothing. Accepted lines: blank, `# ...`, and NAME='VALUE' (NAME matches
+# [A-Za-z_][A-Za-z0-9_]*; VALUE is one single-quoted word, an embedded quote written as the four
+# characters '\'' ; nothing after the closing quote).
+_w_all=
+while IFS= read -r _w_line || [ -n "$_w_line" ]; do
+    _w_all="$_w_all$_w_line
+"
+done <"$envfile"
+_w_sq="'"
+_w_esc="\\$_w_sq$_w_sq"
+load_env() {
+    while IFS= read -r _w_line; do
+        case $_w_line in
+        "" | "#"*) continue ;;
+        *=*) ;;
+        *) bad ;;
+        esac
+        _w_name=${_w_line%%=*}
+        case $_w_name in
+        "" | [0-9]* | *[!A-Za-z0-9_]*) bad ;;
+        esac
+        _w_rest=${_w_line#*=}
+        case $_w_rest in
+        "$_w_sq"*) _w_rest=${_w_rest#"$_w_sq"} ;;
+        *) bad ;;
+        esac
+        _w_val=
+        while :; do
+            case $_w_rest in
+            *"$_w_sq"*) ;;
+            *) bad ;;
+            esac
+            _w_val=$_w_val${_w_rest%%"$_w_sq"*}
+            _w_rest=${_w_rest#*"$_w_sq"}
+            case $_w_rest in
+            "") break ;;
+            "$_w_esc"*)
+                _w_val=$_w_val$_w_sq
+                _w_rest=${_w_rest#"$_w_esc"}
+                ;;
+            *) bad ;;
+            esac
+        done
+        if [ "$1" = apply ]; then
+            export "$_w_name=$_w_val"
+        fi
+    done <<EOF
+$_w_all
+EOF
+}
+load_env check
+load_env apply
+case " ${HARNESSES_ENABLED:-} " in
+*" pi "*) ;;
+*) refuse ;;
+esac
+# No usable model for this agent (C-750 (4)): say why instead of calling a host with no credential.
+if [ -n "${AURORA_PI_UNAVAILABLE:-}" ]; then
+    echo "pi: $AURORA_PI_UNAVAILABLE" >&2
+    exit 1
+fi
+PI_CODING_AGENT_DIR=/workspace/.aurora/terminal/pi
+export PI_CODING_AGENT_DIR
+/usr/bin/mkdir -p "$PI_CODING_AGENT_DIR" 2>/dev/null
+model="${AURORA_PI_MODEL:-}"
+models_json="${AURORA_PI_MODELS_JSON:-}"
+key_var="${AURORA_PI_KEY_VAR:-}"
+# Pi uses none of the other harnesses' variables.
+unset HARNESSES_ENABLED AURORA_PI_MODEL AURORA_PI_MODELS_JSON AURORA_PI_KEY_VAR AURORA_PI_UNAVAILABLE \
+    AURORA_CLAUDE_UNAVAILABLE AURORA_CODEX_UNAVAILABLE AURORA_CODEX_MODEL AURORA_CODEX_BASE_URL \
+    ANTHROPIC_MODEL ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN ANTHROPIC_API_KEY
+# No update check, no telemetry (docs/12: with these a turn makes only the inference request).
+PI_OFFLINE=1
+PI_TELEMETRY=0
+PI_SKIP_VERSION_CHECK=1
+export PI_OFFLINE PI_TELEMETRY PI_SKIP_VERSION_CHECK
+if [ -n "$model" ] && [ -n "$models_json" ]; then
+    # `models.json` names the placeholder through `$NAME`, resolved from this environment.
+    case $key_var in
+    ANTHROPIC_API_KEY) ANTHROPIC_API_KEY=aurora-placeholder && export ANTHROPIC_API_KEY ;;
+    *) OPENAI_API_KEY=aurora-placeholder && export OPENAI_API_KEY ;;
+    esac
+    printf '%s\n' "$models_json" >"$PI_CODING_AGENT_DIR/models.json" 2>/dev/null
+    exec "$bin" --provider aurora --model "$model" "$@"
+fi
+exec "$bin" "$@"
