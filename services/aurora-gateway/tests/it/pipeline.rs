@@ -1060,7 +1060,7 @@ async fn post_status(env: &Env, payload: &str) -> u16 {
         auth(),
         payload.len()
     );
-    s.write_all(req.as_bytes()).await.unwrap();
+    crate::common::write_flushed(&mut s, req.as_bytes()).await;
     let mut out = Vec::new();
     let _ = tokio::time::timeout(Duration::from_secs(5), s.read_to_end(&mut out)).await;
     String::from_utf8_lossy(&out)
@@ -1083,7 +1083,7 @@ async fn send_as(env: &Env, token: &str, method: &str, path: &str, payload: &str
         env.up,
         payload.len()
     );
-    s.write_all(req.as_bytes()).await.unwrap();
+    crate::common::write_flushed(&mut s, req.as_bytes()).await;
     let mut out = Vec::new();
     let _ = tokio::time::timeout(Duration::from_secs(5), s.read_to_end(&mut out)).await;
     let text = String::from_utf8_lossy(&out).into_owned();

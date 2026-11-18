@@ -187,9 +187,10 @@ async fn llm_bedrock_assume_role_denied_forwards_nothing() {
 #[tokio::test]
 async fn llm_bedrock_oversized_body_is_413_before_the_secret_is_opened() {
     // In CI this test intermittently got no answer at all to a request below (60 s, no bytes, no
-    // close), which no local run reproduces. The gateway runs on this test's thread: its debug log
-    // goes to the test's captured output, which a failure prints, together with how the read
-    // ended and the request-log rows.
+    // close): the request helper did not flush, so the end of the body could stay in the client's
+    // TLS session (FIX-177; see the next test). The gateway runs on this test's thread: its debug
+    // log goes to the test's captured output, which a failure prints, together with how the read
+    // ended, whether the body's end had been queued, and the request-log rows.
     let _log = tracing::subscriber::set_default(
         tracing_subscriber::fmt()
             .with_test_writer()
@@ -202,10 +203,11 @@ async fn llm_bedrock_oversized_body_is_413_before_the_secret_is_opened() {
     let diag = |r: &Reply, at: std::time::Instant| {
         let rows = env.captured.0.lock().unwrap().clone();
         format!(
-            "{} after {:?}, read ended: {}; request log: {rows:?}",
+            "{} after {:?}, read ended: {}, body end queued in TLS: {}; request log: {rows:?}",
             r.body,
             at.elapsed(),
-            r.ended
+            r.ended,
+            r.queued
         )
     };
     env.mem.set_unavailable(true);
@@ -281,7 +283,7 @@ async fn llm_bedrock_event_stream_is_unaltered_and_streamed() {
         t = env.llm
     );
     s.write_all(head.as_bytes()).await.unwrap();
-    s.write_all(BODY).await.unwrap();
+    crate::common::write_flushed(&mut s, BODY).await;
     let mut got = Vec::new();
     let mut buf = vec![0u8; 4096];
     let body_start = |got: &[u8]| got.windows(4).position(|w| w == b"\r\n\r\n").map(|i| i + 4);
@@ -349,5 +351,43 @@ async fn request_log_records_the_llm_model_of_a_bedrock_path() {
     assert!(
         m.starts_with("us.anthropic.claude-3-haiku-20240307-v1"),
         "{m}"
+    );
+}
+
+/// (FIX-177) A body the gateway must read whole (SigV4 signing) is answered when it is sent on a client socket
+/// with a tight send buffer, as on a CI runner. There the body's last write finds the socket full and the end
+/// of the body stays queued in the client's TLS session until a flush; the request helper used to read
+/// without flushing, so the gateway waited for the rest of the `Content-Length` while the client waited for
+/// the answer (the CI hang of the 413 test above). The test keeps sending until it has seen that case.
+#[tokio::test]
+async fn llm_bedrock_large_body_from_a_full_client_socket_is_answered() {
+    let env = env_with(BedrockMode::Sigv4, "ext-org-1").await;
+    let body = vec![b' '; 256 * 1024];
+    let mut queued = 0;
+    for attempt in 0..40 {
+        let s = crate::common::connect_sndbuf(env.proxy, 4096).await;
+        let r = request_on(s, env.llm, "POST", INVOKE, "", &body).await;
+        assert_eq!(
+            r.status, 200,
+            "attempt {attempt} (end of the body queued in TLS: {}): {}, read ended: {}",
+            r.queued, r.body, r.ended
+        );
+        if r.queued {
+            queued += 1;
+            if queued == 3 {
+                break;
+            }
+        }
+    }
+    assert!(
+        queued > 0,
+        "no attempt found the client socket full: nothing was exercised"
+    );
+    assert!(
+        rig(&env)
+            .mock
+            .requests()
+            .iter()
+            .all(|s| s.req.body.len() == body.len())
     );
 }

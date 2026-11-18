@@ -321,7 +321,7 @@ async fn post_to(env: &Env, host: &str, method: &str, path: &str, body: &str) ->
         "{method} {path} HTTP/1.1\r\nHost: {host}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
         body.len()
     );
-    t.write_all(req.as_bytes()).await.unwrap();
+    crate::common::write_flushed(&mut t, req.as_bytes()).await;
     let mut out = Vec::new();
     let _ = tokio::time::timeout(Duration::from_secs(10), t.read_to_end(&mut out)).await;
     let text = String::from_utf8_lossy(&out).into_owned();
