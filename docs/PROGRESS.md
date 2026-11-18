@@ -21,9 +21,9 @@ One row per task id, counted from the task tables (closed phases: from their his
 | 2 | 52 | 51 | 1 (FIX-017: the owner's real-cluster install) | 0 | 0 | 0 | `docs/history/phase-1-2.md` (closed 2026-11-09, AUDIT-002) |
 | 3 | 15 | 15 | 0 | 0 | 0 | 0 | `docs/history/phase-3.md` (closed 2026-11-10, AUDIT-003) |
 | 4 | 124 | 123 | 0 | 0 | 0 | 1 (FIX-131 closed without a build, D-195) | `docs/history/phase-4.md` (closed 2026-11-14, AUDIT-004) |
-| 5 | 125 | 108 | 4 (P5-HARN, P5-GUIDE-1, P5-GUIDE-2, P5-CALINV) | 9 (incl. P5-HARN, D-361; P5-WEBHOOK-1..4, D-320; the twenty P5-UX, P5-IA and FIX-159 briefs, merged 2026-11-16) | 0 (every phase-5 item has a brief) | 4 (OPS-022 cancelled, D-318; FIX-049 moved to phase 4; P5-SLACK moved to phase 6, D-285; P4-S3 moved to phase 6, D-318) | §Phase 5 tasks (TEST-021 and FIX-057, done, are counted here but their rows are in `docs/history/phase-0.md`'s task graph) |
+| 5 | 125 | 108 | 5 (P5-HARN, P5-GUIDE-1, P5-GUIDE-2, P5-GUIDE-5, P5-CALINV) | 8 (incl. P5-HARN, D-361; P5-WEBHOOK-1..4, D-320; the twenty P5-UX, P5-IA and FIX-159 briefs, merged 2026-11-16) | 0 (every phase-5 item has a brief) | 4 (OPS-022 cancelled, D-318; FIX-049 moved to phase 4; P5-SLACK moved to phase 6, D-285; P4-S3 moved to phase 6, D-318) | §Phase 5 tasks (TEST-021 and FIX-057, done, are counted here but their rows are in `docs/history/phase-0.md`'s task graph) |
 | 6 (proposed) | 4 | 0 | 0 | 1 (P4-S3: specified and briefed, moved from phase 5, D-318) | 3 (P6-ORGTREE, P6-LIMITS: proposals awaiting the owner; P6-SLACK, moved from phase 5, D-285) | 0 | §Phase 6 tasks (proposed) |
-| **All** | **447** | **419** | **5** | **10** | **3** | **10** | (column sums; P5-SLACK/P6-SLACK and P4-S3 are counted in both phases) |
+| **All** | **447** | **419** | **6** | **9** | **3** | **10** | (column sums; P5-SLACK/P6-SLACK and P4-S3 are counted in both phases) |
 
 ## Environment
 
@@ -174,7 +174,7 @@ Lane order, waves and number blocks: `docs/tasks/PHASE5-PLAN.md`. Lanes `p5-apps
 | P5-GUIDE-2 | Agent guides: home sync `apps` part, `.aurora/apps/` projection, always-index instruction file, admin API, advisory guard | D-171, D-295, C-643..C-645, C-648, SEC-117, SEC-91 | L | Rust | P5-GUIDE-1 | `P5-GUIDE-2.md` | in-progress (lane p5-apps; committed 6ce7c0ec, per-task gate green; batch gate with GUIDE-1..5) |
 | P5-GUIDE-3 | Dashboard Agent guide section (plugin page and review; recipes marked; plain-text viewer) | C-648, SEC-117 | S–M | Next.js | P5-GUIDE-2 (C-648) | `P5-GUIDE-3.md` | ready (spec merged 2026-11-15; wave 3: queued in lane p5-apps) |
 | P5-GUIDE-4 | Built-in packages adopt summaries, essentials, guide files and recipes (Indico free-room booking first) | D-295 | M | package | P5-GUIDE-1 | `P5-GUIDE-4.md` | ready (spec merged 2026-11-15; wave 3: queued in lane p5-apps) |
-| P5-GUIDE-5 | `aurora plugin import-openapi` (reference files, catalogue skeleton) | D-172, C-650 | M | Rust (CLI) | P5-GUIDE-1 | `P5-GUIDE-5.md` | ready (spec merged 2026-11-15; wave 3: queued in lane p5-apps) |
+| P5-GUIDE-5 | `aurora plugin import-openapi` (reference files, catalogue skeleton) | D-172, C-650 | M | Rust (CLI) | P5-GUIDE-1 | `P5-GUIDE-5.md` | in-progress (lane p5-apps; committed (import-openapi), per-task gate green; batch gate with GUIDE-1..5) |
 | P5-GUIDE-6 | `aurora-agent`: operations file, `api.json`, one in-sandbox command (app targets; reserved app id `aurora`), image wrapper, import writes `operations.json` | D-296, C-651..C-653, C-656, SEC-118, SEC-120 | L | Rust + package | P5-GUIDE-2, P5-GUIDE-5 | `P5-GUIDE-6.md` | ready (spec merged 2026-11-15; wave 3: queued in lane p5-apps) |
 | P5-GUIDE-7 | Platform tools on demand: exposure/family, bridge lists core only, family index, target `aurora` of `aurora-agent`, `AURORA_SESSION`, `hosted.platform_tools` | D-297, C-654, C-655, C-657, SEC-119, SEC-120 | M–L | Rust | P5-GUIDE-6; not beside lanes editing `domains/tools/` | `P5-GUIDE-7.md` | ready (spec merged 2026-11-15; wave 3: queued in lane p5-apps) |
 
