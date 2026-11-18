@@ -82,12 +82,15 @@ export function SignInStep({
   agentIds,
   fixedInstanceId,
   hasWriteTools,
+  orgMode,
   onBack,
   onResult,
 }: {
   app: AppDetail;
   plan: ConnectPlan;
   workspaceId: string;
+  /** (P5-UX-11) The organization's journey: the account is for the whole organization and `level` is its limit. */
+  orgMode?: boolean;
   orgId: string;
   level: Level | null;
   agentIds: string[];
@@ -113,7 +116,7 @@ export function SignInStep({
   const instanceBound = !!app.instances;
   const instances = useAppInstances(instanceBound && !fixedInstanceId ? { kind: "organization", id: orgId } : undefined);
   const choices = (instances.data?.items ?? []).filter((i) => i.app_id === app.app_id && i.status === "active");
-  const clients = useOAuthClients({ kind: "workspace", id: workspaceId });
+  const clients = useOAuthClients(orgMode ? { kind: "organization", id: orgId } : { kind: "workspace", id: workspaceId });
   const matching = (clients.data?.items ?? []).filter(
     (c) =>
       c.enabled &&
@@ -179,6 +182,7 @@ export function SignInStep({
           agentIds,
           level,
           hasWriteTools,
+          org: orgMode ? { orgId } : undefined,
           scopesOverride: method.kind === "fields" ? null : scopes,
           scopes: tokenScopes ?? null,
           instanceId: instanceBound && instanceId ? instanceId : undefined,

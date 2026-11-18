@@ -310,7 +310,7 @@ describe("instance setup wizard (D-141)", () => {
     expect(screen.getByText("Set a default model so agents need not choose one by one.")).toBeInTheDocument();
     // Runners: the failure in words with the fix.
     expect(screen.getByText("No runner is registered, so no agent can start.")).toBeInTheDocument();
-    expect(screen.getByText(/docs\/operator\/runners\.md/)).toBeInTheDocument();
+    expect(screen.getByText(/The operator guide on runners explains how\./)).toBeInTheDocument();
     await waitFor(() => expect(screen.getByRole("link", { name: "Open your workspace" })).toHaveAttribute("href", "/o/users/w/default"));
   });
 

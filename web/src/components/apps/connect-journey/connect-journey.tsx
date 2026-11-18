@@ -18,7 +18,7 @@ import { accountKeys, useAccounts, usePutAccess, useTestAccount, type Account, t
 import { appDisplayName } from "@/lib/api/app-name";
 import { useApp, useConnectPlan, type AppDetail } from "@/lib/api/apps";
 import { errorMessage } from "@/lib/api/errors";
-import { useAgents } from "@/lib/api/queries";
+import { useAgents, useOrg as useOrgById } from "@/lib/api/queries";
 import { wsRoutes } from "@/lib/routes";
 import { cn } from "@/lib/utils";
 import { useQueryClient } from "@tanstack/react-query";
@@ -113,6 +113,7 @@ export function ConnectJourney({
   const { org, ws } = useParams<{ org: string; ws: string }>();
   const qc = useQueryClient();
   const agents = useAgents(workspaceId);
+  const orgRecord = useOrgById(orgId);
   const [choice, setChoice] = useState<AppChoice | null>(appId ? { kind: "app", appId } : null);
   const [stepState, setStepState] = useState<StepId>("app");
   // After the app is chosen the next step waits for what decides it (the app, the accounts, the agents).
@@ -374,6 +375,7 @@ export function ConnectJourney({
         <AccessChoice
           account={{ levels, limit: target?.limit, app: target?.app, managed_by: target?.managed_by }}
           agentName={who}
+          orgName={orgRecord.data?.name}
           value={effective}
           onChange={setLevel}
           legend={`What may ${who} do in ${appName}?`}

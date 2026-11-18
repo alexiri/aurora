@@ -51,13 +51,13 @@ const TITLES: Record<string, { title: string; lead: string }> = {
 
 /** What to do about a check that is not ready, in words. */
 const FIX: Record<string, string> = {
-  no_provider: "Add an OIDC provider so people can sign in. See docs/operator/sign-in.md.",
-  no_role_mappings: "Map a role from your sign-in token to instance admin. See docs/operator/sign-in.md.",
-  no_endpoints: "Add an LLM endpoint under Admin › Settings › LLM endpoints. See docs/operator/llm-endpoints.md.",
+  no_provider: "Add an OIDC provider so people can sign in. The operator guide on sign-in explains how.",
+  no_role_mappings: "Map a role from your sign-in token to instance admin. The operator guide on sign-in explains how.",
+  no_endpoints: "Add an LLM endpoint under Admin › Settings › LLM endpoints. The operator guide on LLM endpoints explains how.",
   endpoint_unreachable: "Check the endpoint's address and that the API can reach it. Test connection is on the endpoint's page.",
   no_default_model: "Set a default model so agents need not choose one by one.",
-  no_runner: "Install a runner and register it. See docs/operator/runners.md.",
-  runner_offline: "Check that the runner is running and can reach the API. See docs/operator/runners.md.",
+  no_runner: "Install a runner and register it. The operator guide on runners explains how.",
+  runner_offline: "Check that the runner is running and can reach the API. The operator guide on runners explains how.",
   no_gateway: "Start the gateway. Without it agents cannot reach the internet or the LLM.",
   plugins_pending: "Review them under Apps & accounts › Apps.",
   email_not_configured: "Set an SMTP server under Platform › Email.",

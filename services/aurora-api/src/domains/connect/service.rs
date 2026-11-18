@@ -370,6 +370,8 @@ struct Ctx<'a> {
     /// (FIX-133, D-240) `read` | `write` requested for the connection (validated); `None` = `write`
     /// for a new connection, unchanged for a reconnect.
     access: Option<String>,
+    /// (P5-UX-11, C-990) The limit of a new organization account.
+    limit: Option<String>,
     /// (P5-UX-2, C-957) The access to write with the connection.
     grant: Option<Intent>,
 }
@@ -506,6 +508,7 @@ impl Ctx<'_> {
             instance_id: self.instance.as_ref().map(|i| i.id),
             access_level: level,
             access: self.access.clone(),
+            limit: self.limit.clone(),
             grant: self.grant.as_ref().map(|g| g.grant.clone()),
             pkce_verifier: None,
             reconnect: self.reconnect.as_ref().map(|r| r.id),
@@ -639,6 +642,7 @@ impl Ctx<'_> {
             credential_keys: &keys,
             connect_method: Some(method_id),
             access: self.access.as_deref(),
+            limit_level: self.limit.as_deref(),
         };
         let (old, applied) = match self.write(caller, &n).await {
             Ok(o) => o,
@@ -1014,6 +1018,37 @@ pub async fn start(
             })
         }
     };
+    // (P5-UX-11, C-990) A new organization account carries its limit; `access` follows it. A
+    // workspace's account has no limit, and a reconnect keeps the one the account has.
+    let limit = match req.limit {
+        None => None,
+        Some(l) => {
+            if t.ws.is_some() || reconnect.is_some() {
+                return Err(invalid(
+                    "/limit",
+                    "only a new organization account has a limit; change it on the account",
+                ));
+            }
+            if l == Level::Act && app.grants.custom_only {
+                return Err(ConnectErr::Api(
+                    ApiError::unprocessable(
+                        "full_grant_forbidden",
+                        "This app only allows custom access: choose Read only or Ask before changes.",
+                    )
+                    .with_details(json!({"app_id": app_id})),
+                ));
+            }
+            let derived = levels::access_for_limit(l);
+            if access.as_deref().is_some_and(|a| a != derived) {
+                return Err(invalid(
+                    "/access",
+                    "follows limit; leave it out when a limit is given",
+                ));
+            }
+            access = Some(derived.to_owned());
+            Some(l.as_str().to_owned())
+        }
+    };
     let ctx = Ctx {
         state,
         snap: &snap,
@@ -1024,6 +1059,7 @@ pub async fn start(
         reconnect,
         instance,
         access,
+        limit,
         grant,
     };
     match method {
@@ -1186,6 +1222,7 @@ pub async fn ensure_credential_free_in_tx(
         reconnect: None,
         instance: None,
         access: None,
+        limit: None,
         grant: None,
     };
     let label = app
@@ -1229,6 +1266,7 @@ pub async fn ensure_credential_free_in_tx(
         credential_keys: &[],
         connect_method: Some(method.id()),
         access: None,
+        limit_level: None,
     };
     let extra = json!({"via": "agent_grant", "agent_id": agent_id});
     let ev = match ctx.write_in_tx(tx, caller, &n, Some(extra)).await {
@@ -1510,6 +1548,7 @@ async fn run_callback(
         reconnect,
         instance,
         access: flow.access.clone(),
+        limit: flow.limit.clone(),
         // (SEC-130) The access carried through the sign-in is applied now, softly: the grant
         // service authorizes every agent again, and a failure keeps the account.
         grant: flow.grant.clone().map(|grant| Intent { grant, soft: true }),

@@ -16,6 +16,60 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(list_ws_connections))
         .routes(routes!(list_org_connections))
         .routes(routes!(get_connection, patch_connection, delete_connection))
+        .routes(routes!(limit_preview))
+}
+
+/// Who a lower limit would change (C-990): org owners and admins; nothing is written.
+#[utoipa::path(
+    get, path = "/connections/{id}/limit-preview", operation_id = "previewConnectionLimit", tag = "connections",
+    params(("id" = Uuid, Path, description = "Connection id"), LimitPreviewQuery),
+    responses((status = 200, description = "Agents the limit would lower", body = LimitPreview),
+              (status = 400, description = "Invalid", body = ErrorEnvelope),
+              (status = 403, description = "Forbidden", body = ErrorEnvelope),
+              (status = 404, description = "Not found", body = ErrorEnvelope)),
+    security(("session" = []), ("api_key" = []))
+)]
+async fn limit_preview(
+    caller: Caller,
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    Query(q): Query<LimitPreviewQuery>,
+) -> Result<Json<LimitPreview>, ApiError> {
+    let (row, access) = service::visible(&caller, &state, id).await?;
+    access.require_write()?;
+    if row.workspace_id.is_some() {
+        return Err(ApiError::invalid_request(
+            "Invalid limit.",
+            vec![aurora_core::FieldError::new(
+                "/limit",
+                "only an organization's account has a limit",
+            )],
+        ));
+    }
+    let Some(limit) = q.limit else {
+        return Err(ApiError::invalid_request(
+            "Invalid limit.",
+            vec![aurora_core::FieldError::new("/limit", "required")],
+        ));
+    };
+    let lowered = crate::domains::grants::service::limit_preview(&state, &row, limit)
+        .await?
+        .into_iter()
+        .map(|l| LoweredAgentView {
+            agent: LoweredAgentRef {
+                id: l.agent_id,
+                name: l.agent_name,
+                handle: l.agent_handle,
+            },
+            workspace: LoweredWorkspaceRef {
+                id: l.workspace_id,
+                name: l.workspace_name,
+            },
+            from: l.from.to_owned(),
+            to: l.to.to_owned(),
+        })
+        .collect();
+    Ok(Json(LimitPreview { lowered }))
 }
 
 /// List workspace-scoped connections (`can_own`; I-27).

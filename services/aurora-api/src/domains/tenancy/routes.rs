@@ -435,8 +435,16 @@ async fn list_workspaces(
     );
     let ids: Vec<Uuid> = page.items.iter().map(|w| w.id).collect();
     let frozen = crate::domains::freeze::service::workspace_frozen(&s, &ids).await?;
+    let owners = aurora_db::repo::placement::personal_owners_of(&s.pool, &ids).await?;
     for w in &mut page.items {
         w.frozen = frozen.get(&w.id).cloned();
+        w.personal_of = owners
+            .iter()
+            .find(|(ws, _, _)| *ws == w.id)
+            .map(|(_, id, name)| PersonalOf {
+                id: *id,
+                name: name.clone(),
+            });
     }
     Ok(Json(page))
 }
