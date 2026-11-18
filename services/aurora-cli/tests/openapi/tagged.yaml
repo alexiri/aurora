@@ -1,0 +1,67 @@
+openapi: 3.1.0
+info: { title: Tagged, version: "2" }
+servers:
+  - url: https://tagged.example.com
+components:
+  parameters:
+    PageParam:
+      name: page
+      in: query
+      description: Page number, starting at 1.
+      schema: { type: [integer, "null"] }
+    ItemId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string }
+  schemas:
+    Base:
+      type: object
+      required: [title]
+      properties:
+        title: { type: string, description: The title. }
+    Item:
+      allOf:
+        - $ref: "#/components/schemas/Base"
+        - type: object
+          properties:
+            tags: { type: array, items: { type: string } }
+  requestBodies:
+    ItemBody:
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Item" }
+paths:
+  /a/{id}:
+    parameters:
+      - $ref: "#/components/parameters/ItemId"
+    get:
+      operationId: getA
+      summary: Read an item
+      tags: [Items]
+    put:
+      operationId: updateA
+      summary: Replace an item
+      tags: [Items]
+      requestBody: { $ref: "#/components/requestBodies/ItemBody" }
+  /a/search:
+    get:
+      operationId: searchA
+      summary: Search items
+      tags: [Items]
+      parameters:
+        - $ref: "#/components/parameters/PageParam"
+        - { name: q, in: query, required: true, schema: { type: string } }
+  /a:
+    post:
+      operationId: createA
+      summary: Create an item
+      tags: [Items]
+      requestBody: { $ref: "#/components/requestBodies/ItemBody" }
+  /reports/daily:
+    get:
+      summary: Daily report
+      tags: [Reports, Items]
+  /status:
+    get:
+      summary: Service status

@@ -1215,6 +1215,13 @@ pub struct HomeAppConn {
     pub instance_host: Option<String>,
     /// (FIX-145, D-231) The registered instance's base path.
     pub instance_base_path: Option<String>,
+    /// (P5-GUIDE-2, D-171(d)) The grant row the agent guide's access lines are read from:
+    /// `full` or `custom`, and the custom lists.
+    pub grant_mode: String,
+    pub allow_tools: Vec<String>,
+    pub ask_tools: Vec<String>,
+    /// The tenant host a tenant-bound connection stores.
+    pub tenant_host: Option<String>,
 }
 
 /// Active connections the agent holds a grant on, stable order.
@@ -1224,7 +1231,8 @@ pub async fn home_app_connections(
 ) -> Result<Vec<HomeAppConn>, DbError> {
     Ok(sqlx::query_as(
         "SELECT c.id AS connection_id, c.app_id, c.label, ai.host AS instance_host,
-                ai.base_path AS instance_base_path
+                ai.base_path AS instance_base_path, g.mode AS grant_mode,
+                g.allow_tools, g.ask_tools, c.tenant_host
          FROM grants g JOIN app_connections c ON c.id = g.connection_id
          LEFT JOIN app_instances ai ON ai.id = c.instance_id
          WHERE g.agent_id = $1 AND c.status = 'active'

@@ -373,6 +373,16 @@ pub const PACKAGE_MANIFEST_MAX: usize = 256 * KIB;
 pub const PACKAGE_ICON_MAX: usize = 256 * KIB;
 pub const PACKAGE_SETUP_GUIDE_MAX: usize = 64 * KIB;
 pub const AGENT_SNIPPET_MAX: usize = 2_000;
+/// (phase 5, P5-GUIDE-1, `docs/24 §8`) `agent.summary`, one line.
+pub const AGENT_SUMMARY_MAX: usize = 160;
+/// Guide files per app.
+pub const AGENT_GUIDE_FILES_MAX: usize = 24;
+/// One guide file (UTF-8 bytes).
+pub const AGENT_GUIDE_FILE_MAX: usize = 64 * KIB;
+/// All guide files of one app.
+pub const AGENT_GUIDE_APP_MAX: usize = 256 * KIB;
+/// Reference files and recipes projected into one agent's home (P5-GUIDE-2).
+pub const AGENT_GUIDE_SYNC_MAX: usize = 2 * 1024 * KIB;
 pub const AVATAR_MAX: usize = 512 * KIB;
 pub const SSE_KEEPALIVE: Duration = Duration::from_secs(15);
 pub const LONG_POLL_MAX: Duration = Duration::from_secs(30);

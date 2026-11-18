@@ -49,6 +49,7 @@ pub fn package(
     token_endpoints(&m, ctx, &mut out);
     egress(&m, ctx, &mut out);
     hooks_wasm(&m, pkg, &mut out);
+    super::agent_guide_rules::archive_rules(&m, pkg, &mut out);
     for (i, a) in m.apps.iter().enumerate() {
         if let Some(owner) = ctx.active_app_ids.get(&a.about.id)
             && *owner != m.package.id

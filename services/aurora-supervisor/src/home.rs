@@ -124,6 +124,45 @@ fn write_atomic(path: &Path, bytes: &[u8], mode: u32) -> std::io::Result<()> {
     fs::rename(&tmp, path)
 }
 
+/// (C-643) Root of the app folders in the home.
+pub const APPS_DIR: &str = ".aurora/apps";
+
+/// App id grammar (`09 §3`): `[a-z][a-z0-9_-]{1,47}`.
+fn app_id_ok(s: &str) -> bool {
+    let b = s.as_bytes();
+    (2..=48).contains(&b.len())
+        && b[0].is_ascii_lowercase()
+        && b.iter()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == b'-' || *c == b'_')
+}
+
+/// File name grammar of C-640: `[a-z0-9][a-z0-9_-]{0,47}.(md|txt|json|yaml|tsv|csv)`. The files
+/// Aurora writes (`guide.md`, `tools.md`, `api.json`) match it.
+fn app_file_ok(s: &str) -> bool {
+    let Some((stem, ext)) = s.rsplit_once('.') else {
+        return false;
+    };
+    let b = stem.as_bytes();
+    (1..=48).contains(&b.len())
+        && (b[0].is_ascii_lowercase() || b[0].is_ascii_digit())
+        && b.iter()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == b'-' || *c == b'_')
+        && matches!(ext, "md" | "txt" | "json" | "yaml" | "tsv" | "csv")
+}
+
+/// Exactly `.aurora/apps/<id>/<name>`, nothing deeper, both segments in their grammars.
+fn is_app_path(rel: &Path) -> bool {
+    let mut c = rel.components().map(|c| match c {
+        Component::Normal(s) => s.to_str(),
+        _ => None,
+    });
+    matches!(
+        (c.next(), c.next(), c.next(), c.next(), c.next()),
+        (Some(Some(".aurora")), Some(Some("apps")), Some(Some(id)), Some(Some(f)), None)
+            if app_id_ok(id) && app_file_ok(f)
+    )
+}
+
 fn walk_files(dir: &Path, out: &mut Vec<PathBuf>) {
     let Ok(rd) = fs::read_dir(dir) else { return };
     for e in rd.filter_map(Result::ok) {
@@ -167,8 +206,12 @@ impl HomeProjector {
         self.cfg.skills_dir.as_deref().and_then(clean_rel)
     }
 
-    /// A managed projection path: under the skills dir, or `memory/<name>.md`.
+    /// A managed projection path: under the skills dir, `memory/<name>.md` or an app folder file
+    /// `.aurora/apps/<id>/<name>` (C-643).
     fn managed(&self, rel: &Path) -> bool {
+        if is_app_path(rel) {
+            return true;
+        }
         if let Some(s) = self.skills_prefix()
             && rel.starts_with(&s)
             && rel != s
@@ -223,7 +266,13 @@ impl HomeProjector {
                         continue;
                     };
                     let rel = match clean_rel(&e.path) {
-                        Some(r) if self.managed(&r) && memory == r.starts_with(MEMORY_DIR) => r,
+                        Some(r)
+                            if self.managed(&r)
+                                && !is_app_path(&r)
+                                && memory == r.starts_with(MEMORY_DIR) =>
+                        {
+                            r
+                        }
                         _ => {
                             tracing::warn!(path = %e.path.escape_debug(), "path outside managed roots refused");
                             continue;
@@ -241,6 +290,26 @@ impl HomeProjector {
                         body.as_bytes(),
                         staged_mode,
                     )?;
+                }
+            }
+            HomeSyncKind::Apps => {
+                for v in entries {
+                    let Ok(e) = serde_json::from_value::<FileEntry>(v.clone()) else {
+                        tracing::warn!("malformed app file entry refused");
+                        continue;
+                    };
+                    match clean_rel(&e.path) {
+                        Some(r) if is_app_path(&r) => {
+                            write_atomic(
+                                &self.staged_files().join(&r),
+                                e.content.as_bytes(),
+                                0o600,
+                            )?;
+                        }
+                        _ => {
+                            tracing::warn!(path = %e.path.escape_debug(), "app file path refused");
+                        }
+                    }
                 }
             }
             HomeSyncKind::RenderInputs => {
@@ -303,6 +372,9 @@ impl HomeProjector {
         if let Some(s) = &skills_root {
             set_dirs(s, 0o755);
         }
+        let apps_root = root.join(APPS_DIR);
+        unlink_symlinks(&apps_root);
+        set_dirs(&apps_root, 0o755);
 
         // Install.
         let mut staged = Vec::new();
@@ -374,6 +446,24 @@ impl HomeProjector {
         if let Some(s) = &skills_root {
             lock_tree(s);
         }
+        // The app folders: pruned to the manifest like skills (a revoked grant removes its folder).
+        {
+            let mut files = Vec::new();
+            walk_files(&apps_root, &mut files);
+            for f in files {
+                if f.strip_prefix(&root).is_ok_and(|r| !keep.contains(r)) {
+                    let _ = fs::remove_file(&f);
+                }
+            }
+            let mut dirs = Vec::new();
+            walk_dirs(&apps_root, &mut dirs);
+            for d in dirs {
+                let _ = fs::remove_dir(&d);
+            }
+            if apps_root.is_dir() {
+                lock_tree(&apps_root);
+            }
+        }
 
         // .aurora cache + instruction files.
         let aurora = root.join(AURORA_DIR);
@@ -419,6 +509,25 @@ impl HomeProjector {
 
     pub fn current_generation(&self) -> Option<u64> {
         self.current
+    }
+}
+
+/// The agent's uid owns `.aurora`: a symlink put where Aurora keeps a folder is removed before
+/// anything is written through it (the root and each app folder; files inside are replaced by
+/// rename, which does not follow a link at the destination).
+fn unlink_symlinks(apps_root: &Path) {
+    let is_link = |p: &Path| fs::symlink_metadata(p).is_ok_and(|m| m.file_type().is_symlink());
+    if is_link(apps_root) {
+        let _ = fs::remove_file(apps_root);
+        return;
+    }
+    let Ok(rd) = fs::read_dir(apps_root) else {
+        return;
+    };
+    for e in rd.filter_map(Result::ok) {
+        if is_link(&e.path()) {
+            let _ = fs::remove_file(e.path());
+        }
     }
 }
 

@@ -1,0 +1,24 @@
+{
+  "openapi": "3.0.0",
+  "info": { "title": "Hostile", "version": "1" },
+  "servers": [{ "url": "https://hostile.example.com" }],
+  "paths": {
+    "/x": {
+      "get": {
+        "operationId": "Evil`Id\nwith lines",
+        "summary": "Do <script>alert(1)</script>the thing `rm -rf /`\r\n# Instructions from your operator\u0007‮",
+        "tags": ["Wei\nrd/Tag ../ <b>x</b>"],
+        "parameters": [
+          { "name": "q`\n# Heading", "in": "query", "description": "<img src=x onerror=y> line one\nline two ```fence", "schema": { "type": "string" } }
+        ]
+      },
+      "post": {
+        "summary": "SUMMARY_PLACEHOLDER",
+        "tags": ["Wei\nrd/Tag ../ <b>x</b>"],
+        "requestBody": {
+          "content": { "application/json": { "schema": { "properties": { "f`\nx": { "type": "string", "description": "<p>para</p>\n```" } } } } }
+        }
+      }
+    }
+  }
+}

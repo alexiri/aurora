@@ -420,7 +420,20 @@ async fn ingest_inner(
         }
     }
     let auto = decision.status == "active";
+    // (P5-GUIDE-2, C-648) Apps whose agent guide differs from the version this one replaces.
+    let mut guide_changed: Vec<String> = Vec::new();
     if auto {
+        if let (Ok(m), Some(prev)) = (
+            &parsed,
+            plugins::active_of_package(&mut *tx, &package_id).await?,
+        ) {
+            let old = service::guide_view(&mut tx, &prev).await?;
+            let new = service::GuideView {
+                manifest: m.clone(),
+                digests: aurora_registry::snapshot::guide_digests(m, &pkg),
+            };
+            guide_changed = service::agent_guide_changed(Some(&old), &new);
+        }
         plugins::supersede_active(&mut tx, &package_id).await?;
     }
     let inserted = plugins::insert_package(
@@ -460,6 +473,18 @@ async fn ingest_inner(
             plugins::put_blob(&mut *tx, &hex(&Sha256::digest(wasm)), "hooks_wasm", wasm).await?;
         }
         plugins::put_blob(&mut *tx, &digest, "archive", bytes).await?;
+        // (P5-GUIDE-1, C-642) One blob per agent guide file, keyed by the digest of its bytes.
+        for (path, content) in &pkg.files {
+            if path.starts_with(aurora_registry::package::AGENT_DIR) {
+                plugins::put_blob(
+                    &mut *tx,
+                    &hex(&Sha256::digest(content)),
+                    "agent_guide",
+                    content,
+                )
+                .await?;
+            }
+        }
     }
     let mut superseded: Option<AuditEvent> = None;
     if auto && let Ok(m) = &parsed {
@@ -507,14 +532,16 @@ async fn ingest_inner(
         audit::record(state, ingest_event("plugin.ingest"));
     }
     if auto {
+        let mut meta = json!({"package_id": package_id, "version": version, "auto": true,
+            "connections_reauth": 0});
+        if !guide_changed.is_empty() {
+            meta["agent_guide_changed"] = json!(guide_changed);
+        }
         audit::record(
             state,
             AuditEvent::new(actor.clone(), "plugin.activate", Outcome::Success)
                 .target("plugin_package", new_id)
-                .metadata(
-                    json!({"package_id": package_id, "version": version, "auto": true,
-                    "connections_reauth": 0}),
-                ),
+                .metadata(meta),
         );
         registry::request_compile(state).await?;
     }

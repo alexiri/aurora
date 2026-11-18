@@ -27,3 +27,6 @@ serde_json = { workspace = true }
 serde_yaml = { workspace = true }
 thiserror = { workspace = true }
 wasmparser = { workspace = true }
+
+[dev-dependencies]
+insta = { workspace = true }

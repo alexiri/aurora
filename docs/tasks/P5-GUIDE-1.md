@@ -127,3 +127,58 @@ code in `domains/plugins` is merged: rebase on master before starting.
   for free.
 - Suggested agent: `rust-developer` (Sonnet). Size L. Escalate to the main session if the
   snapshot type split forces a change in what the gateway deserializes.
+
+## Completion report (lane `p5-apps`, worker 34, 2026-11-18)
+
+**Adapted to master** (brief of 2026-11-15; master has FIX-160, P5-UX-2/13, P4-UTOK/NARR/EVAL):
+- `plugin.yaml` source tree: `agent/**` is picked up by `pack.rs::source_files` (the builder only
+  knew the fixed files); `Package::read` accepts `agent/<app>/<file>` and the directories
+  `agent`, `agent/<app>`.
+- The snapshot type split: `snapshot::AgentEntry`/`GuideFile`/`GuideKind` (strict), the manifest
+  keeps `Agent` + `GuideEntry` (accepts `sha256`/`size` only so the linter can name them). The
+  gateway deserializes `Snapshot` from this crate, so it needed no change. `compile` keeps its
+  signature (16 call sites in tests and the gateway fixtures); `compile_with_guides` takes the
+  per-package `GuideDigests` computed by `snapshot::guide_digests` from the stored archive (API
+  compile path reads the archive when the package declares hooks **or** a guide; the CLI `compile`
+  and `test` use it too).
+- `GrantAccess`/`GuideAccount`/`Rendered`/`render`/`reference_header` as the brief; `reference_header`
+  and a new `project_file` take the entry `kind` (Reference/Procedure). `render` ignores
+  `package_version` for now (the projected files carry it); `api_json` joins `Rendered` in GUIDE-6.
+- Helpers moved: `inline` and `fenced` are now `aurora_core::sanitize::{inline, fenced}` (the
+  supervisor's exact functions, so its snapshot is unchanged); `aurora_core::sanitize::one_line` is
+  a different sanitizer (strips format characters, adds an ellipsis) and was not substituted.
+- `aurora plugin guide` takes a positional package (archive or source dir, default `.`) and writes
+  `<out>/<app_id>/<file>`; stdout form prints `==> <app_id>/<file> <==`. A source directory needs
+  its icon (fixtures get theirs from `mkfixture.py`).
+- Added the P5-UX-13 tool `description`s to `fixture-guide` (warning-free); `tool_description_missing`
+  stays a warning on the invalid fixtures, as on the existing ones.
+- Limits guard: `AGENT_SUMMARY_MAX`, `_GUIDE_FILES_MAX`, `_FILE_MAX`, `_APP_MAX` left
+  `limits-gaps.allow`; `AGENT_GUIDE_SYNC_MAX unread` stays until P5-GUIDE-2 reads it.
+- Not built here (later tasks): `app_id_reserved`, `agent.operations`, `api.json`.
+
+**Evidence.** Compatibility test first: `crates/aurora-registry/tests/it/agent_guide.rs`
+(`snapshots_of_packages_without_a_guide_keep_their_hash`, golden `agent_guide_hashes.txt`, 65
+snapshot hashes of every built-in and fixture package without guide keys recorded **before** the
+snapshot change; unchanged after). Linter matrix: `agent_guide_lint.rs` (one case per code, incl.
+`agent_recipe_not_markdown`, `agent_guide_kind`). Renderer: `agent_guide_render.rs`, 7 `insta`
+snapshots (full, custom, two accounts, lost claim, account hosts, no tools, classifiers, budget),
+the hostile-text corpus and the SEC-91 property (all 27 allow/ask combinations × full/custom ×
+lost claim × `block_untooled`, plus a removed tool id in the row). API: `plugins_agent_guide.rs`
+(two blobs, none for `invalid`, by-digest read of a blob that exists under another kind,
+snapshot digests after approve). CLI: golden `services/aurora-cli/tests/golden/guide/` and
+`aurora plugin new` validates. Fixtures: `fixture-guide` + 9 `fixture-invalid-agent-guide-*`
+(`scripts/fixtures/build.sh`: passed=67 failed=0; each invalid one rejected with its own code, the
+only other finding is the `tool_description_missing` warning). The fail-before check is by
+construction for the linter and renderer tests (the code did not exist); the digest-by-kind test
+was written against `get_blob(.., "agent_guide")`, which returns `None`, to show why the new
+function exists.
+
+**Gate level: per task.** `cargo fmt --all`; `cargo clippy -p aurora-core -p aurora-registry
+-p aurora-db -p aurora-cli -p aurora-supervisor -p aurora-api --all-targets --all-features -- -D
+warnings` clean; `cargo test -p aurora-registry -p aurora-cli -p aurora-supervisor --lib --test it
+--test plugin` all green (registry it 120, cli plugin 5, supervisor lib 107 / it 131);
+`cargo test -p aurora-api --test it -- plugins connect::` 64 passed; guards rc 0;
+`extract-schema.py --check` ok. Not run (batch gate): full api suite, gateway tests, e2e scripts.
+Deviations: `Cargo.lock` gained `insta` as a dev-dependency of `aurora-registry`; three one-line
+doc/test edits used python/sed instead of Edit (main.rs mod line, a README path); golden
+directories and `insta` snapshots were written by their tools.

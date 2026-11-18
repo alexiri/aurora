@@ -65,3 +65,31 @@ lane edits the list for its Source column and badges).
 
 - Change files only with the Edit/Write tools. No `Co-Authored-By` lines in commits.
 - Suggested agent: `nextjs-developer` (Sonnet). Size S–M.
+
+## Completion report (lane `p5-apps`, worker 35, 2026-11-18)
+
+**Adapted to master:** after P5-IA the package page is `web/src/app/admin/apps/packages/[id]/page.tsx` →
+`PluginDetailView` → `PluginReview` (the review is the page; there is no separate component). The section is a
+`Collapsible` (`id="guide"`, "What agents can read") under an "Agent guide" heading, between Permissions and the
+action buttons; `packageHasGuide` adds `guide` to the sections that must be expanded before Approve is enabled
+(`required`), so it is one more section to read, not a second confirmation. A package with no guide text has no
+section. The section also shows on the page of an active or disabled package (same component).
+- New: `web/src/components/admin/agent-guide-section.tsx`, the shared primitive `web/src/components/ui/text-viewer.tsx`
+  (labelled, focusable, height-capped `<pre>`; text only), `useAgentGuideFile` in `web/src/lib/api/plugins.ts`
+  (`parseAs: "text"`, enabled only for a selected file). `PluginAgentGuide` is optional in the generated type (the
+  list and the lifecycle responses carry `[]`; see the P5-GUIDE-2 report).
+- Recipes are their own group above Reference files; the operations row appears when `operations` is not null (always
+  null until P5-GUIDE-6); removed files are listed apart (they have no row in `files`).
+
+**Evidence.** `web/tests/agent-guide-section.test.tsx` (7 tests): everything / nothing / no summary, every change mark,
+hostile text (`<script>`, `<img onerror>`, a Markdown link, a `javascript:` URL) inert (no element created, no link,
+`window.__pwned` unset), the file fetched on selection only (zero requests before), 404 shows the error state, the empty
+note, approval gated on the section. `web/e2e/agent-guide.spec.ts` (mocked API, 5 tests): the package page in light and
+dark at 1280 and 390 px with a 64 160-byte file of 400-character lines scrolling inside its viewer, no horizontal page
+scroll, axe (serious/critical) clean, hostile file inert; the review gated. The real-stack Playwright run against
+`fixture-guide` is not done here (needs the stack): the mocked spec covers the same screens.
+
+**Gate level: per task.** `pnpm typecheck` clean; `pnpm lint` 0 errors (6 warnings, none in these files);
+`vitest run tests/agent-guide-section.test.tsx tests/plugins-admin.test.tsx tests/arbitrary-values.test.ts
+tests/design-guards.test.ts` 24 passed; `playwright test e2e/agent-guide.spec.ts --project mocked` 5 passed
+(`AURORA_E2E_WEB_PORT=4181 …`). Full vitest, build and the whole Playwright suite: batch gate.

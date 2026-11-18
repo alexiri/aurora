@@ -108,6 +108,76 @@ fn test_runs_fixtures_through_gateway() {
     assert_eq!(v["fixtures"]["failed"], 1);
 }
 
+/// (P5-GUIDE-1, C-649) `aurora plugin guide` on `fixture-guide` equals the checked-in golden
+/// directory (`tests/golden/guide/<app_id>/…`); `new` scaffolds a package that validates.
+#[test]
+fn guide_renders_the_fixture_package_to_the_golden_directory() {
+    let d = tmp();
+    let fixture =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../plugins/fixtures/fixture-guide");
+    let src = d.join("fg");
+    copy_dir(&fixture, &src);
+    // The fixture sources get their icon at staging time (scripts/fixtures/mkfixture.py).
+    std::fs::create_dir_all(src.join("assets")).unwrap();
+    std::fs::write(
+        src.join("assets/icon.png"),
+        aurora_registry::builder::png_stub(64, 64),
+    )
+    .unwrap();
+    let out = d.join("out");
+    ok(&aurora(&[
+        "plugin",
+        "guide",
+        s(&src),
+        "--app",
+        "guide-demo",
+        "--access",
+        "custom",
+        "--out",
+        s(&out),
+    ]));
+    let golden = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/guide/guide-demo");
+    let mut names: Vec<_> = std::fs::read_dir(&golden)
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
+    names.sort();
+    let mut got: Vec<_> = std::fs::read_dir(out.join("guide-demo"))
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
+    got.sort();
+    assert_eq!(names, got);
+    for n in names {
+        assert_eq!(
+            std::fs::read_to_string(golden.join(&n)).unwrap(),
+            std::fs::read_to_string(out.join("guide-demo").join(&n)).unwrap(),
+            "{n:?} differs from the golden file"
+        );
+    }
+    // The full-access preview differs where it should.
+    let full = ok(&aurora(&[
+        "plugin",
+        "guide",
+        s(&src),
+        "--app",
+        "guide-demo",
+        "--access",
+        "full",
+    ]));
+    assert!(full.contains("full access"));
+    assert!(full.contains("==> guide-demo/tools.md <=="));
+    // A scaffold validates with its agent guide.
+    ok(&aurora(&["plugin", "new", "scaf", "--dir", s(&d)]));
+    let v = ok(&aurora(&[
+        "plugin",
+        "validate",
+        s(&d.join("scaf")),
+        "--allow-unsigned",
+    ]));
+    assert!(v.contains("\"ok\": true"), "{v}");
+}
+
 #[test]
 fn build_requires_hooks_wasm_when_hooks_declared() {
     let d = tmp();

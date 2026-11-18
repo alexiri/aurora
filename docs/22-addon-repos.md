@@ -92,6 +92,19 @@ aurora plugin sign indigo_sso-1.0.0.aurora-plugin --key cern-release.key
 sha256sum indigo_sso-1.0.0.aurora-plugin             # → the manifest's sha256
 ```
 
+**The agent guide** (`24 §3`, P5-GUIDE-1). An addon's `plugin.yaml` should tell the agents that
+use it what the app is for: `agent.summary` (one line naming the tasks the app serves; the
+only plugin text in an agent's instructions) and `agent.instructions` (the essentials, what
+must be known before the first request) are the two to fill in; `agent.guide[]` lists reference
+files and recipes shipped in `agent/<app_id>/` (the format, limits and the linter rules are
+`24 §3` and `§8`; this document does not restate them). `aurora plugin guide <dir>` renders
+exactly what an agent will find in its home for the app, so the author reviews it before
+publishing:
+
+```bash
+aurora plugin guide indigo_sso --app indigo_sso --access custom --out preview/   # guide.md, tools.md, recipes, references
+```
+
 `cern-release.key.pub` is the manifest's `signing_key` (base64). What a package must
 satisfy to be ingested from a repository — beyond everything `09` already requires:
 

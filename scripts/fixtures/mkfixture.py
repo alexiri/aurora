@@ -45,6 +45,12 @@ def stage(src, dst, wasm=None):
         open(guide, "wb").write(b"# Setup\n\n\xff\xfe not UTF-8\n")
     elif not os.path.exists(guide):
         open(guide, "w").write("# Setup\n\nTest fixture package.\n")
+    # P5-GUIDE-1: guide files that cannot be checked in as text (a CR, a size over the limit).
+    if mode in ("agent-not-text", "agent-too-large"):
+        d = os.path.join(dst, "agent", "invalid-app")
+        os.makedirs(d, exist_ok=True)
+        body = b"# API\r\nCRLF is not allowed\r\n" if mode == "agent-not-text" else b"x" * (64 * 1024 + 1)
+        open(os.path.join(d, "api.md"), "wb").write(body)
     if wasm:
         shutil.copy(wasm, os.path.join(dst, "hooks.wasm"))
     # FIX-101: synthetic hooks.wasm for the hooks_wasm_* rules (the package declares `hooks:` so the build

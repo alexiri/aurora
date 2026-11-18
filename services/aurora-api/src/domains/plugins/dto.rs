@@ -146,6 +146,58 @@ pub struct PluginPackage {
     pub approved_by: Option<PluginUserRef>,
     pub approved_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
+    /// (P5-GUIDE-2, C-648) What agents that use each app can read: one entry per app, in manifest
+    /// order. Filled on `GET /v1/admin/plugins/{id}` (it reads the stored archive for the digests);
+    /// empty in lists and in the responses of the lifecycle routes.
+    #[serde(default)]
+    pub agent_guides: Vec<PluginAgentGuide>,
+}
+
+/// (P5-GUIDE-2, C-648) The agent guide of one app of a package (`docs/24 §9`).
+#[derive(Serialize, ToSchema)]
+pub struct PluginAgentGuide {
+    pub app_id: String,
+    pub summary: Option<String>,
+    /// The essentials (`agent.instructions`); third-party text, shown as plain text only.
+    pub instructions: String,
+    pub files: Vec<PluginGuideFile>,
+    /// The operations file (P5-GUIDE-6); `null` until then.
+    pub operations: Option<PluginGuideOperations>,
+    /// Against the active version of the same package; `null` when there is none or this is it.
+    pub changed: Option<PluginGuideChanged>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct PluginGuideFile {
+    pub file: String,
+    pub title: String,
+    /// `reference` | `recipe`.
+    pub kind: String,
+    pub size: u64,
+    pub sha256: String,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct PluginGuideOperations {
+    pub file: String,
+    pub size: u64,
+    pub sha256: String,
+    pub count: u32,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct PluginGuideChanged {
+    pub summary: bool,
+    pub instructions: bool,
+    pub operations: bool,
+    pub files: Vec<PluginGuideFileChange>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct PluginGuideFileChange {
+    pub file: String,
+    /// `added` | `changed` | `removed`.
+    pub change: String,
 }
 
 fn widening(w: &Widening) -> PluginWidening {
@@ -236,6 +288,7 @@ impl PluginPackage {
             status_reason: r.status_reason,
             approved_at: r.approved_at,
             created_at: r.created_at,
+            agent_guides: Vec::new(),
         }
     }
 }

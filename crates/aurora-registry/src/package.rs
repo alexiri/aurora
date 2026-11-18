@@ -75,10 +75,20 @@ fn allowed_path(p: &str) -> bool {
     ) {
         return true;
     }
+    // (P5-GUIDE-1, C-640) `agent/<app_id>/<file>`: exactly that depth; the name grammars and the
+    // listed-iff-present rule are the linter's (`validate::agent_guide_rules`).
+    if let Some(rest) = p.strip_prefix(AGENT_DIR) {
+        return rest
+            .split_once('/')
+            .is_some_and(|(app, file)| !app.is_empty() && !file.is_empty() && !file.contains('/'));
+    }
     p.strip_prefix("tests/")
         .and_then(|n| n.strip_suffix(".yaml"))
         .is_some_and(|stem| !stem.is_empty() && !stem.contains('/'))
 }
+
+/// Archive directory of the agent guide files (`agent/<app_id>/<file>`).
+pub const AGENT_DIR: &str = "agent/";
 
 /// Returns a violation when the path is unsafe (absolute, traversal, ...).
 fn path_safety(p: &str) -> Option<Violation> {
@@ -139,7 +149,10 @@ impl Package {
             let ty = entry.header().entry_type();
             if ty.is_dir() {
                 let d = name.trim_end_matches('/');
-                if !matches!(d, "assets" | "docs" | "tests") {
+                let agent_dir = d == "agent"
+                    || d.strip_prefix(AGENT_DIR)
+                        .is_some_and(|app| !app.is_empty() && !app.contains('/'));
+                if !matches!(d, "assets" | "docs" | "tests") && !agent_dir {
                     out.push(v("path_unknown", &name, "path not allowed in a package"));
                 }
                 continue;

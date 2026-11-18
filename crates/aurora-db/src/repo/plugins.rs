@@ -430,6 +430,21 @@ pub async fn get_blob<'e, E: PgExecutor<'e>>(
     )
 }
 
+/// (P5-GUIDE-1, C-642) Bytes of an agent guide file, **by digest only**: `plugin_blobs` is keyed by
+/// digest alone, so a guide file whose bytes equal a blob of another kind is stored under that
+/// kind, and the same bytes are the same content whatever the row's kind says.
+pub async fn get_guide_blob<'e, E: PgExecutor<'e>>(
+    exec: E,
+    digest: &str,
+) -> Result<Option<Vec<u8>>, DbError> {
+    Ok(
+        sqlx::query_scalar("SELECT content FROM plugin_blobs WHERE digest = $1")
+            .bind(digest)
+            .fetch_optional(exec)
+            .await?,
+    )
+}
+
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct DecisionRow {
     pub claim_key: String,

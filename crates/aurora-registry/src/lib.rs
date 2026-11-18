@@ -2,6 +2,7 @@
 //! (docs/09-app-plugins.md §3–§6).
 #![forbid(unsafe_code)]
 
+pub mod agent_guide;
 pub mod builder;
 pub mod claims;
 pub mod credential_free;

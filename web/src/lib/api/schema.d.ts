@@ -650,6 +650,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/admin/plugins/{id}/agent-guides/{app_id}/{file}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * One agent guide file of a package: what agents that use the app can read (instance
+         *     administrators). Third-party text, served as a plain-text download, never rendered.
+         */
+        get: operations["adminGetPluginAgentGuideFile"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/admin/plugins/{id}/approve": {
         parameters: {
             query?: never;
@@ -10807,6 +10827,12 @@ export interface components {
         };
         Page_PluginPackage: {
             items: {
+                /**
+                 * @description (P5-GUIDE-2, C-648) What agents that use each app can read: one entry per app, in manifest
+                 *     order. Filled on `GET /v1/admin/plugins/{id}` (it reads the stored archive for the digests);
+                 *     empty in lists and in the responses of the lifecycle routes.
+                 */
+                agent_guides?: components["schemas"]["PluginAgentGuide"][];
                 /** Format: date-time */
                 approved_at?: string | null;
                 approved_by?: components["schemas"]["PluginUserRef"] | null;
@@ -11588,6 +11614,16 @@ export interface components {
             /** @description Free-text reason (at most 64 characters), stored as `status_reason`. */
             reason?: string | null;
         };
+        /** @description (P5-GUIDE-2, C-648) The agent guide of one app of a package (`docs/24 §9`). */
+        PluginAgentGuide: {
+            app_id: string;
+            changed?: components["schemas"]["PluginGuideChanged"] | null;
+            files: components["schemas"]["PluginGuideFile"][];
+            /** @description The essentials (`agent.instructions`); third-party text, shown as plain text only. */
+            instructions: string;
+            operations?: components["schemas"]["PluginGuideOperations"] | null;
+            summary?: string | null;
+        };
         PluginAppRef: {
             app_id: string;
             /**
@@ -11604,6 +11640,34 @@ export interface components {
         PluginApproval: components["schemas"]["PluginPackage"] & {
             /** Format: int64 */
             connections_reauth: number;
+        };
+        PluginGuideChanged: {
+            files: components["schemas"]["PluginGuideFileChange"][];
+            instructions: boolean;
+            operations: boolean;
+            summary: boolean;
+        };
+        PluginGuideFile: {
+            file: string;
+            /** @description `reference` | `recipe`. */
+            kind: string;
+            sha256: string;
+            /** Format: int64 */
+            size: number;
+            title: string;
+        };
+        PluginGuideFileChange: {
+            /** @description `added` | `changed` | `removed`. */
+            change: string;
+            file: string;
+        };
+        PluginGuideOperations: {
+            /** Format: int32 */
+            count: number;
+            file: string;
+            sha256: string;
+            /** Format: int64 */
+            size: number;
         };
         PluginHostClaim: {
             app_id: string;
@@ -11660,6 +11724,12 @@ export interface components {
             needing_reauth: number;
         };
         PluginPackage: {
+            /**
+             * @description (P5-GUIDE-2, C-648) What agents that use each app can read: one entry per app, in manifest
+             *     order. Filled on `GET /v1/admin/plugins/{id}` (it reads the stored archive for the digests);
+             *     empty in lists and in the responses of the lifecycle routes.
+             */
+            agent_guides?: components["schemas"]["PluginAgentGuide"][];
             /** Format: date-time */
             approved_at?: string | null;
             approved_by?: components["schemas"]["PluginUserRef"] | null;
@@ -17026,6 +17096,66 @@ export interface operations {
                 };
             };
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminGetPluginAgentGuideFile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Package row id */
+                id: string;
+                /** @description App id of the package */
+                app_id: string;
+                /** @description File name listed in the app's guide */
+                file: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/plain": string;
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

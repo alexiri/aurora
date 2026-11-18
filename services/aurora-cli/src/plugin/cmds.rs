@@ -1,7 +1,9 @@
 use super::pack;
 use anyhow::{Context, Result, anyhow, bail};
 use aurora_policy::HostPattern;
-use aurora_registry::snapshot::{ActivePackage, compile as compile_snapshot};
+use aurora_registry::snapshot::{
+    ActivePackage, compile_with_guides as compile_snapshot, guide_digests,
+};
 use aurora_registry::validate::{ValidationContext, package as validate_package};
 use aurora_registry::{Package, TrustStore, TrustedKey, Violation};
 use base64::Engine;
@@ -12,7 +14,7 @@ use std::path::{Path, PathBuf};
 
 pub const CORE_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Snapshot contract this CLI compiles against (matches the gateway).
-const CONTRACT: u32 = 1;
+pub(super) const CONTRACT: u32 = 1;
 
 pub fn new(id: &str, dir: &Path, publisher: &str) -> Result<i32> {
     let ok = !id.is_empty()
@@ -49,6 +51,14 @@ pub fn new(id: &str, dir: &Path, publisher: &str) -> Result<i32> {
         "docs/setup.md",
         format!(
             "# {id}\n\nCreate an API token in the service settings and paste it when connecting.\n"
+        )
+        .as_bytes(),
+    )?;
+    std::fs::create_dir_all(root.join("agent").join(id))?;
+    w(
+        &format!("agent/{id}/api.md"),
+        format!(
+            "# {id} API\n\nThis file says what is in it on its first screen.\n\n## Endpoints\n\n- `GET /v1/items`: list items.\n- `POST /v1/items/<id>/close`: close an item.\n"
         )
         .as_bytes(),
     )?;
@@ -181,7 +191,7 @@ pub fn validate(
     Ok(i32::from(!v.is_empty()))
 }
 
-fn active(pkg: &Package, core: &str) -> Result<ActivePackage> {
+pub(super) fn active(pkg: &Package, core: &str) -> Result<ActivePackage> {
     let manifest = pkg.manifest(core).map_err(|v| {
         anyhow!(
             "manifest invalid: {}",
@@ -204,7 +214,12 @@ fn hex(b: &[u8]) -> String {
 }
 
 fn compiled(pkg: &Package, core: &str) -> Result<aurora_registry::snapshot::CompiledSnapshot> {
-    compile_snapshot(&[active(pkg, core)?], &[], &[], CONTRACT).map_err(|e| anyhow!("compile: {e}"))
+    let a = active(pkg, core)?;
+    let guides = std::collections::BTreeMap::from([(
+        a.manifest.package.id.clone(),
+        guide_digests(&a.manifest, pkg),
+    )]);
+    compile_snapshot(&[a], &[], &[], CONTRACT, &guides).map_err(|e| anyhow!("compile: {e}"))
 }
 
 pub fn compile(path: &Path) -> Result<i32> {
@@ -316,6 +331,27 @@ pub fn docs(path: &Path, format: &str) -> Result<i32> {
             a.about.id,
             or_none(&hosts)
         ));
+    }
+    // (P5-GUIDE-1, docs/24 §10) The agent guide of each app: summary, essentials, file list.
+    for a in &m.apps {
+        let Some(ag) = &a.agent else { continue };
+        if ag.summary.is_none() && ag.guide.is_empty() && ag.instructions.trim().is_empty() {
+            continue;
+        }
+        md.push_str(&format!("\n\n## Agent guide: `{}`\n\n", a.about.id));
+        if let Some(s) = &ag.summary {
+            md.push_str(&format!("Summary: {s}\n\n"));
+        }
+        if !ag.instructions.trim().is_empty() {
+            md.push_str(&format!(
+                "Essentials (shown to the agent as third-party text):\n\n```text\n{}\n```\n\n",
+                ag.instructions.trim_end()
+            ));
+        }
+        for g in &ag.guide {
+            let kind = if g.is_recipe() { "recipe" } else { "reference" };
+            md.push_str(&format!("- `{}` ({kind}): {}\n", g.file, g.title));
+        }
     }
     if format == "html" {
         let mut html = String::new();
