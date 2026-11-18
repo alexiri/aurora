@@ -126,6 +126,17 @@ section), then Playwright and `docs/14 §12`.
   runs. Production project 11/11.
 - **Canary:** vitest and Playwright check that after Save the address, the secret values and the signing secret are
   not in the DOM, and that a preview request carries secret names only.
+- **Gated for today's server (2026-11-18, before P5-WEBHOOK-2 merges):** `OutgoingWebhooksOrgSettings` renders only when
+  the organization's settings carry `outgoing_webhooks_enabled` (the server returns it, with the limits, once -2 lands);
+  the admin `outgoing_webhooks` section is rendered by `OutgoingWebhooksAdminSection`
+  (`components/webhook/admin-webhook-section.tsx`) only when `GET /v1/admin/settings` lists that section (an unknown
+  slug would give `SettingsSectionView` a not-found error state, and while the index loads or fails nothing shows).
+  The connect steps and the card line only appear for app `webhook`; no package of that id exists in the repository
+  (P5-WEBHOOK-1's), so on today's server they never render. New `tests/webhook-gating.test.tsx` (5 tests: absent on
+  today's shapes, present on the -2 shapes, the section is never requested while unlisted); the Playwright helper
+  answers the -2 shapes. Re-run: typecheck ok; lint 0 errors; vitest webhook files 32/32; `pnpm build` ok; Playwright
+  `webhook.spec` 16/16 (both themes, 1280 and 390 px); `stage4-axe` and `ia-navigation` passed in the 358-test run (354
+  passed, the 4 failures were the webhook org/admin test before I fixed my mock; rerun green).
 
 ## Suggested agent/model and reason
 `nextjs-developer` (Sonnet). An interactive editor with a tree picker, live preview and careful secret

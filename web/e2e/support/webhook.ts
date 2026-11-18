@@ -1,6 +1,6 @@
 import { expect, type Page } from "@playwright/test";
 
-import { agent, extraAccounts, id, mockApi, now, ws } from "./mock-api";
+import { agent, extraAccounts, id, mockApi, now, org, ws } from "./mock-api";
 import { titled, type Scheme } from "./open";
 
 // P5-WEBHOOK-4: the Outgoing webhook app against the mocked API. P5-WEBHOOK-2 (the API) is not merged: the routes of C-909 and
@@ -91,6 +91,16 @@ export async function openWebhook(page: Page, path: string, scheme: Scheme, opts
       return body?.dry_run
         ? json({ method: "POST", content_type: "application/json", headers: [], body: '{"text":"Deploy 42 failed"}' })
         : json({ status: 200, content_type: "text/plain", body: "ok", truncated: false, delivery_id: "7d2c1d9e-0000-4000-8000-000000000001" });
+    }
+    // The shapes P5-WEBHOOK-2 returns: the organization carries the outgoing-webhook keys and the settings index lists the section.
+    if (/^\/v1\/orgs\/[^/]+$/.test(p) && m === "GET") {
+      return json({ ...org, settings: { ...org.settings, outgoing_webhooks_enabled: true, outgoing_webhooks_per_minute_max: null, outgoing_webhooks_per_day_max: null } });
+    }
+    if (p === "/v1/admin/settings" && m === "GET") {
+      return json({
+        sections: [{ section: "outgoing_webhooks", title: "Outgoing webhooks", description: "How often one outgoing webhook may be called.", generation: 1, updated_at: now, updated_by_label: null, keys_total: 2, keys_locked: 1, keys_dashboard: 0, fields: [] }],
+        locked: [],
+      });
     }
     if (p === `/v1/orgs/${id(1)}` && m === "PATCH") {
       sent.push({ method: m, path: p, body });

@@ -20,6 +20,17 @@ import { parseRate } from "@/lib/webhook/logic";
  * (`above_instance_ceiling`); empty uses the instance's.
  */
 export function OutgoingWebhooksOrgSettings({ org }: { org: Org }) {
+  // Gated: until P5-WEBHOOK-2 lands the server neither returns nor accepts these keys, so nothing renders for an organization
+  // whose settings lack them (they appear, with their defaults, once the API supports the app).
+  return hasOutgoingWebhookSettings(org) ? <OrgWebhookForm org={org} /> : null;
+}
+
+/** True when the organization's settings, as the server returns them, carry the outgoing-webhook keys. */
+export function hasOutgoingWebhookSettings(org: Org): boolean {
+  return "outgoing_webhooks_enabled" in (org.settings as object);
+}
+
+function OrgWebhookForm({ org }: { org: Org }) {
   const patch = usePatchOrg(org.id);
   const s = org.settings as Org["settings"] & OrgWebhookSettings;
   const [enabled, setEnabled] = useState(s.outgoing_webhooks_enabled ?? true);

@@ -77,7 +77,7 @@ describe("the card line", () => {
 });
 
 const org = (settings: Record<string, unknown>, my_role: "owner" | "admin" = "owner"): Org =>
-  ({ id: "o1", slug: "acme", name: "Acme", my_role, settings: { members_can_create_workspaces: true, previews_enabled: false, calendar_invitations_enabled: true, ...settings } }) as unknown as Org;
+  ({ id: "o1", slug: "acme", name: "Acme", my_role, settings: { members_can_create_workspaces: true, previews_enabled: false, calendar_invitations_enabled: true, outgoing_webhooks_enabled: true, ...settings } }) as unknown as Org;
 
 describe("the organization's switch and limits", () => {
   it("saves the switch and the two limits, an empty limit as null", async () => {
