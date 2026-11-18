@@ -253,6 +253,8 @@ struct AppFolder {
     reference: Vec<(String, String)>,
     /// `guide.md` with the "reference files left out" form, for when the budget is exhausted.
     guide_without_reference: String,
+    /// `api.json` without the recipe list, for an app left without its reference files.
+    api_without_reference: Option<String>,
 }
 
 /// Renders the folder of one app for one agent from the grant rows of its connections.
@@ -305,8 +307,45 @@ async fn app_folder(
         .find(|p| p.package_id == app.package_id)
         .map(|p| p.version.as_str())
         .unwrap_or_default();
-    let with = agent_guide::render(app, &lost, &accounts, version, true);
-    let without = agent_guide::render(app, &lost, &accounts, version, false);
+    // (P5-GUIDE-6) The operations file feeds `api.json`; it is never projected itself. A missing
+    // or unparsable blob leaves `api.json` to the catalogue entries.
+    let mut operations = None;
+    if let Some(r) = app.agent.as_ref().and_then(|a| a.operations.as_ref()) {
+        match guide_bytes(conn, &r.sha256).await? {
+            Some(bytes) => match aurora_registry::operations::parse(&bytes) {
+                Ok(f) => operations = Some(f),
+                Err(e) => {
+                    tracing::warn!(app = %app.app_id, error = %e.message(), "operations file does not parse; api.json without it");
+                }
+            },
+            None => {
+                tracing::warn!(app = %app.app_id, "operations file blob missing; api.json without it");
+            }
+        }
+    }
+    let with = agent_guide::render_with_operations(
+        app,
+        &lost,
+        &accounts,
+        version,
+        true,
+        operations.as_ref(),
+    );
+    let without = agent_guide::render_with_operations(
+        app,
+        &lost,
+        &accounts,
+        version,
+        false,
+        operations.as_ref(),
+    );
+    let mut generated = vec![
+        ("guide.md".to_owned(), with.guide_md),
+        ("tools.md".to_owned(), with.tools_md),
+    ];
+    if let Some(api) = with.api_json {
+        generated.push(("api.json".to_owned(), api));
+    }
     let mut reference = Vec::new();
     for g in app.agent.iter().flat_map(|a| a.guide.iter()) {
         let Some(bytes) = guide_bytes(conn, &g.sha256).await? else {
@@ -324,12 +363,10 @@ async fn app_folder(
     }
     Ok(AppFolder {
         app_id: app.app_id.clone(),
-        generated: vec![
-            ("guide.md".into(), with.guide_md),
-            ("tools.md".into(), with.tools_md),
-        ],
+        generated,
         reference,
         guide_without_reference: without.guide_md,
+        api_without_reference: without.api_json,
     })
 }
 
@@ -593,6 +630,14 @@ pub async fn render(
         let mut files = f.generated;
         if over_budget && let Some(g) = files.iter_mut().find(|(n, _)| n == "guide.md") {
             g.1 = f.guide_without_reference.clone();
+        }
+        if over_budget
+            && let (Some(a), Some(api)) = (
+                files.iter_mut().find(|(n, _)| n == "api.json"),
+                f.api_without_reference.clone(),
+            )
+        {
+            a.1 = api;
         }
         if !over_budget {
             files.extend(f.reference);

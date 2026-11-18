@@ -1,0 +1,142 @@
+---
+source: crates/aurora-registry/tests/it/agent_api_json.rs
+expression: "api(Some(OPS), &a)"
+---
+{
+  "accounts": [
+    {
+      "base_url": "https://api.example.test",
+      "connection_id": "c_1",
+      "grant": "full",
+      "label": "Label c_1",
+      "letter": "A"
+    },
+    {
+      "base_url": "https://api.example.test",
+      "connection_id": "c_2",
+      "grant": "custom",
+      "label": "Label c_2",
+      "letter": "B"
+    }
+  ],
+  "app": {
+    "id": "demo-app",
+    "name": "Demo app",
+    "version": "1.2.3"
+  },
+  "format": "aurora.app-api/1",
+  "operations": [
+    {
+      "access": {
+        "A": "allowed",
+        "B": "allowed"
+      },
+      "body": null,
+      "host": null,
+      "id": "list_things",
+      "items": "$.data",
+      "method": "GET",
+      "pagination": {
+        "param": "page",
+        "start": 1,
+        "style": "page_param"
+      },
+      "params": [
+        {
+          "description": "Filter",
+          "in": "query",
+          "name": "q",
+          "type": "string"
+        }
+      ],
+      "path": "/v1/things",
+      "source": "package",
+      "summary": "All things",
+      "tags": [
+        "things"
+      ],
+      "tool": "list_things"
+    },
+    {
+      "access": {
+        "A": "allowed",
+        "B": "blocked"
+      },
+      "body": null,
+      "host": null,
+      "id": "fetch_thing",
+      "items": null,
+      "method": "GET",
+      "pagination": null,
+      "params": [
+        {
+          "in": "path",
+          "name": "id",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "path": "/v1/things/{id}",
+      "source": "package",
+      "summary": "One thing",
+      "tags": [
+        "things"
+      ],
+      "tool": "get_thing"
+    },
+    {
+      "access": {
+        "A": "allowed",
+        "B": "blocked"
+      },
+      "body": {
+        "content_type": "application/json",
+        "fields": [
+          {
+            "name": "x",
+            "type": "string"
+          }
+        ]
+      },
+      "host": null,
+      "id": "poke",
+      "items": null,
+      "method": "POST",
+      "pagination": null,
+      "params": [],
+      "path": "/v1/poke",
+      "source": "package",
+      "summary": "Not in the catalogue",
+      "tags": [],
+      "tool": null
+    },
+    {
+      "access": {
+        "A": "allowed",
+        "B": "approval"
+      },
+      "body": null,
+      "host": "api.example.test",
+      "id": "make_thing",
+      "items": null,
+      "method": "POST",
+      "pagination": null,
+      "params": [],
+      "path": "/v1/things",
+      "source": "catalogue",
+      "summary": "Make a thing",
+      "tags": [],
+      "tool": "make_thing"
+    }
+  ],
+  "recipes": [
+    {
+      "file": "make-and-check.md",
+      "title": "Make a thing and check it"
+    }
+  ],
+  "untooled": {
+    "A": "allowed",
+    "B": "blocked"
+  }
+}
