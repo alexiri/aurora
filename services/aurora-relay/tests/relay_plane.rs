@@ -217,9 +217,13 @@ async fn validate_retries_with_backoff_inside_one_cycle() {
         .unwrap()
         .insert(aurora_relay::api::session_hash("auv_one"));
     until_closed(&mut ws, Duration::from_secs(10)).await;
+    // The last three calls are the two refusals and the answer that closed the stream (with the
+    // stream gone there is nothing left to validate). Earlier ones belong to a cycle that ran
+    // before the refusals were armed and are not part of the retry.
     let calls = r.script.validate_calls.lock().unwrap().clone();
     assert!(calls.len() >= 3, "two refusals and the answer: {calls:?}");
-    let spread = calls[2].duration_since(calls[0]);
+    let last = &calls[calls.len() - 3..];
+    let spread = last[2].duration_since(last[0]);
     assert!(
         spread < cycle,
         "the three attempts came {spread:?} apart: not retried inside one cycle"
