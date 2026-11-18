@@ -7461,6 +7461,8 @@ export interface components {
             /** @description The announced manifest (opaque JSON), `null` until the first registration. */
             manifest?: Record<string, never> | null;
             manifest_digest?: string | null;
+            /** @description (C-1021) The announced version while an update is pending; `null` otherwise. */
+            pending_version?: string | null;
             /** @description Live (not retired, recently seen) replicas. */
             replicas: components["schemas"]["ReplicaInfo"][];
             /** @description Managed only: one entry per `secret` / `generated_secret` field; `{}` otherwise. */
@@ -7472,8 +7474,16 @@ export interface components {
             status: components["schemas"]["ConnectorStatus"];
             /** @description Managed only: the built-in type. */
             type_id?: string | null;
+            /**
+             * @description (C-1021, D-369) A widened manifest waits for approval while the connector keeps running
+             *     under the approved one.
+             */
+            update_pending: boolean;
             version?: string | null;
-            /** @description Human-readable reasons approval is required (empty unless `pending_approval`). */
+            /**
+             * @description Human-readable reasons approval is required (empty unless `pending_approval` or an update
+             *     is pending).
+             */
             widening: string[];
         };
         ConnectorAdminList: {

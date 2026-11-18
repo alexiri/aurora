@@ -42308,6 +42308,7 @@
           "display_name",
           "status",
           "widening",
+          "update_pending",
           "replicas",
           "integration_count",
           "created_at",
@@ -42382,6 +42383,13 @@
               "null"
             ]
           },
+          "pending_version": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "(C-1021) The announced version while an update is pending; `null` otherwise."
+          },
           "replicas": {
             "type": "array",
             "items": {
@@ -42416,6 +42424,10 @@
             ],
             "description": "Managed only: the built-in type."
           },
+          "update_pending": {
+            "type": "boolean",
+            "description": "(C-1021, D-369) A widened manifest waits for approval while the connector keeps running\nunder the approved one."
+          },
           "version": {
             "type": [
               "string",
@@ -42427,7 +42439,7 @@
             "items": {
               "type": "string"
             },
-            "description": "Human-readable reasons approval is required (empty unless `pending_approval`)."
+            "description": "Human-readable reasons approval is required (empty unless `pending_approval` or an update\nis pending)."
           }
         }
       },
