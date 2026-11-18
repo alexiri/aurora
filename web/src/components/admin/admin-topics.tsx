@@ -90,6 +90,8 @@ export function AdminAppsPage() {
                   <section id="host-conflicts">
                     <HostClaimsView />
                   </section>
+                  {/* (P5-WEBHOOK-4, C-913) The `outgoing_webhooks` settings section, through SET-5's generic section form. */}
+                  <section id="outgoing-webhooks">{section("outgoing_webhooks")}</section>
                 </div>
               </EmbeddedPage>
             ),
