@@ -142,3 +142,72 @@ fn the_fields_must_be_declared_metadata_and_the_template_must_name_a_credential(
     let s = "    own_server: { url_field: url, hosts_field: hosts, inject: [ { bearer: \"{credentials.missing}\" } ] }";
     assert!(!run(&manifest(s, "", &tools("{connection}", "GET"))).is_empty());
 }
+
+#[test]
+fn the_snapshot_carries_one_synthetic_entry_that_never_claims_a_host() {
+    use aurora_registry::identify::{
+        claim_transport_ok, identify_own_server_app, identify_tool_in,
+    };
+    use aurora_registry::snapshot::{ActivePackage, Snapshot, compile};
+    let y = manifest(SECTION, "", &tools("{connection}", "PROPFIND"));
+    let c = compile(
+        &[ActivePackage {
+            manifest: Manifest::parse(&y, "0.1.0").unwrap(),
+            digest: "d".into(),
+            publisher: "aurora".into(),
+            hooks_digest: None,
+        }],
+        &[],
+        &[],
+        1,
+    )
+    .unwrap();
+    let snap = Snapshot::from_slice(&c.json).unwrap();
+    // No static host claim, one `{connection}` entry with the section's inject stages.
+    assert!(snap.hosts.is_empty());
+    assert_eq!(snap.own_server_hosts.len(), 1);
+    assert_eq!(snap.own_server_hosts[0].host, "{connection}");
+    assert_eq!(snap.own_server_hosts[0].inject.len(), 1);
+    assert!(
+        aurora_registry::index::HostIndex::new(&snap)
+            .lookup_port("{connection}", 443, "/")
+            .is_none()
+    );
+    let m = identify_own_server_app(&snap, "dav").unwrap();
+    assert_eq!(m.entry.app_id, "dav");
+    // Its tool serves whatever origin the caller matched, by method.
+    let t = identify_tool_in(
+        m.app,
+        false,
+        "dav.example",
+        8443,
+        "/cal/",
+        None,
+        "PROPFIND",
+        b"",
+        false,
+        &[],
+        None,
+    );
+    assert_eq!(t.map(|t| t.id.as_str()), Some("t"));
+    assert!(
+        identify_tool_in(
+            m.app,
+            false,
+            "dav.example",
+            8443,
+            "/cal/",
+            None,
+            "DELETE",
+            b"",
+            false,
+            &[],
+            None
+        )
+        .is_none()
+    );
+    // The transport rule the gateway applies to the matched origin: TLS to that very port.
+    assert!(claim_transport_ok(Some(8443), true, 8443));
+    assert!(!claim_transport_ok(Some(8443), false, 8443));
+    assert!(!claim_transport_ok(Some(8443), true, 443));
+}

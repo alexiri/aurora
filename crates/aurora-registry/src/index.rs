@@ -23,7 +23,11 @@ pub fn tool_serves_host(
     port: u16,
     instance: bool,
 ) -> bool {
-    if t.host == INSTANCE_HOST {
+    if t.host == crate::manifest::CONNECTION_HOST {
+        // (D-275) Any origin the connection pinned: the caller only matches an own-server app
+        // for a request whose origin a connection of it pinned (the resolver decides that).
+        app.own_server.is_some()
+    } else if t.host == INSTANCE_HOST {
         instance
             || app.instances.as_ref().is_some_and(|i| {
                 i.default_host

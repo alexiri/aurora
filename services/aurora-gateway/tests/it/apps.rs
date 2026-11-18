@@ -45,6 +45,9 @@ mod link_lane;
 
 #[path = "account_health.rs"]
 mod account_health;
+// (P5-CALDAV, D-275) The person-pinned server's injection tests share this file's harness.
+#[path = "own_server.rs"]
+mod own_server;
 
 #[derive(Clone, Copy)]
 struct World {
