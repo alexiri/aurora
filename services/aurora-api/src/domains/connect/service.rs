@@ -30,6 +30,9 @@ use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, HashMap};
 use uuid::Uuid;
 
+// (P5-ICS, D-273) The secret-link apps' connect check: validate, fetch once, check the prefix.
+mod link;
+
 pub enum ConnectErr {
     Api(ApiError),
     Probe(probe::ProbeFail),
@@ -1066,6 +1069,9 @@ pub async fn start(
         Connect::Fields(f) => {
             let p = fields::parse(&f.fields, &req.fields)?;
             let mut g = from_fields(p);
+            // (P5-ICS, D-273, C-843) A secret-link app's URL is validated, fetched once and
+            // stored as the credential (its host as metadata); no probe runs for it.
+            link::check(&ctx, &mut g).await?;
             // (FIX-136, D-241) The scopes the pasted token has: declared by the person, else
             // prefilled by the method's read probes. Stored as the connection's `scopes`; the
             // gateway trusts them only to refuse a tool the token cannot serve.

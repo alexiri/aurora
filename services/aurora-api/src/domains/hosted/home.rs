@@ -343,6 +343,9 @@ async fn render_inputs(
     let mut apps: Vec<Value> = Vec::new();
     let mut folders: Vec<AppFolder> = Vec::new();
     let mut databases: Vec<Value> = Vec::new();
+    // (P5-ICS, D-273, C-843) One entry per active connection of a secret-link app the agent holds a
+    // grant on (the set of `apps[].accounts`): its name and id only, never the link.
+    let mut links: Vec<Value> = Vec::new();
     if let Some(snap) = snap {
         let av = crate::domains::apps::service::availability_of(
             state,
@@ -371,6 +374,21 @@ async fn render_inputs(
         .into_iter()
         .map(|(id, service)| json!({"service": service, "connection_id": id}))
         .collect();
+        links = conns
+            .iter()
+            .filter(|c| {
+                snap.apps
+                    .iter()
+                    .any(|a| a.app_id == c.app_id && a.secret_link.is_some())
+            })
+            .map(|c| {
+                json!({
+                    "name": aurora_core::sanitize::label(&c.label),
+                    "app_id": c.app_id,
+                    "connection_id": c.connection_id,
+                })
+            })
+            .collect();
         let mut seen: Vec<&str> = Vec::new();
         for c in &conns {
             if seen.contains(&c.app_id.as_str()) {
@@ -478,7 +496,8 @@ async fn render_inputs(
             "agent": {"name": inputs.name, "handle": inputs.handle, "workspace": inputs.workspace_name},
             "brief": if inputs.brief.trim().is_empty() { Value::Null } else { json!(inputs.brief) },
             "models": models,
-            "apps": apps, "databases": databases, "channels": channels, "peers": peers,
+            "apps": apps, "databases": databases, "links": links, "channels": channels,
+            "peers": peers,
             "memory_language": inputs.memory_language,
             "schedules": schedules,
             "purges": purges,

@@ -22,8 +22,9 @@ use regex::Regex;
 use crate::Violation;
 use crate::manifest::{
     Access, App, Connect, FieldType, Finalize, FormField, Hook, HostRule, INSTANCE_HOST, Inject,
-    LDAP_MAX_ATTRIBUTES, LDAP_MAX_ENTRIES, Ldap, Manifest, Probe, ProbeMethod, Source, Store,
-    TokenKind, Transform, UrlOrTemplate,
+    LDAP_MAX_ATTRIBUTES, LDAP_MAX_ENTRIES, Ldap, Manifest, Probe, ProbeMethod,
+    SECRET_LINK_HOST_SUFFIX, SECRET_LINK_PREFIX_MAX, SECRET_LINK_TOOL_HOST, SecretLink, Source,
+    Store, TokenKind, Transform, UrlOrTemplate,
 };
 use crate::template::{CONTEXT_VARS, Declared, Place, Template};
 
@@ -698,6 +699,8 @@ fn app_rules(cx: &mut Ctx<'_>, clients: &BTreeSet<&str>, used: &mut BTreeSet<Hoo
                         // (P2-DBL-2) The tools of a database app are matched on the synthetic
                         // host of the database lane (docs/06), which no host entry can claim.
                         let covered = (app.database.is_some() && hp.as_str() == DATABASE_TOOL_HOST)
+                            // (P5-ICS) ... and the tools of a secret-link app on the link lane's.
+                            || (app.secret_link.is_some() && hp.as_str() == SECRET_LINK_TOOL_HOST)
                             || app.hosts.iter().any(|h| {
                                 HostPattern::parse(&h.matcher.host).is_ok_and(|c| {
                                     c.as_str() == hp.as_str()
@@ -846,6 +849,98 @@ fn app_rules(cx: &mut Ctx<'_>, clients: &BTreeSet<&str>, used: &mut BTreeSet<Hoo
     }
     if let Some(l) = &app.ldap {
         ldap_rules(app, l, cx);
+    }
+    if let Some(s) = &app.secret_link {
+        secret_link_rules(app, s, cx);
+    }
+    // No host entry can claim the link lane's synthetic hosts, section or not.
+    for (i, h) in app.hosts.iter().enumerate() {
+        if h.matcher
+            .host
+            .to_ascii_lowercase()
+            .ends_with(SECRET_LINK_HOST_SUFFIX)
+        {
+            cx.v(
+                "secret_link_host_reserved",
+                &format!("/hosts/{i}/match/host"),
+                "`*.link.aurora.internal` is the secret-link lane's host; no host entry may claim it",
+            );
+        }
+    }
+}
+
+/// (P5-ICS, D-273, C-843) The shape of a secret-link app (`docs/09 §3.4 secret_link`): the URL is
+/// a declared secret credential, the app claims no host, and every tool is a `GET` of `/` on the
+/// lane's synthetic host (the gateway, not the agent, decides what is fetched).
+fn secret_link_rules(app: &App, s: &SecretLink, cx: &mut Ctx<'_>) {
+    match app.credentials.iter().find(|c| c.name == s.credential) {
+        Some(c) if c.secret && !c.optional => {}
+        _ => cx.v(
+            "secret_link_credential",
+            "/secret_link/credential",
+            "the credential must be declared with `secret: true` and not be optional",
+        ),
+    }
+    if let Some(p) = &s.expect_prefix
+        && (p.is_empty()
+            || p.chars().count() > SECRET_LINK_PREFIX_MAX
+            || p.chars().any(char::is_control))
+    {
+        cx.v(
+            "secret_link_prefix",
+            "/secret_link/expect_prefix",
+            format!(
+                "expect_prefix is 1..{SECRET_LINK_PREFIX_MAX} characters without control characters"
+            ),
+        );
+    }
+    if !app.hosts.is_empty() {
+        cx.v(
+            "secret_link_hosts",
+            "/hosts",
+            "a secret-link app declares no hosts[]: the person's URL is the destination",
+        );
+    }
+    if app.database.is_some()
+        || app.ldap.is_some()
+        || app.instances.is_some()
+        || app.token.is_some()
+    {
+        cx.v(
+            "secret_link_exclusive",
+            "/secret_link",
+            "a secret-link app is not also a database, LDAP, instance-bound or token app",
+        );
+    }
+    if let Some(t) = &app.tools {
+        for (gname, g) in [("read", &t.read), ("write", &t.write)] {
+            let Some(g) = g else { continue };
+            if g.wildcard.is_some() {
+                cx.v(
+                    "secret_link_tool",
+                    &format!("/tools/{gname}/wildcard"),
+                    "a secret-link app has no wildcard tool",
+                );
+            }
+            for (j, it) in g.items.iter().enumerate() {
+                let p = format!("/tools/{gname}/items/{j}");
+                let get_only = !it.methods.is_empty() && it.methods.iter().all(|m| m == "GET");
+                if !get_only || gname == "write" {
+                    cx.v(
+                        "secret_link_tool",
+                        &format!("{p}/methods"),
+                        "a secret-link tool is a read tool and its only method is GET",
+                    );
+                }
+                if !it.host.eq_ignore_ascii_case(SECRET_LINK_TOOL_HOST) || it.path != "/" {
+                    cx.v(
+                        "secret_link_tool",
+                        &format!("{p}/host"),
+                        "a secret-link tool is `GET` of `/` on `*.link.aurora.internal`",
+                    );
+                }
+            }
+        }
     }
 }
 /// (D-251) The shape of an LDAP app (`docs/09 §3 ldap`): a plain public server name, LDAPS, a

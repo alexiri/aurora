@@ -183,6 +183,9 @@ pub struct App {
     /// (phase 5, D-251) the gateway LDAP lane.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ldap: Option<Ldap>,
+    /// (phase 5, P5-ICS, D-273) the secret-link lane: the credential is the destination.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub secret_link: Option<SecretLink>,
     #[serde(default)]
     pub grants: Grants,
     /// (phase 4, P4-GSL, D-148, D-149) "this app is a git host that can serve a skill library":
@@ -1123,6 +1126,42 @@ pub struct Ldap {
     /// Most entries one search returns (default 50, at most 500).
     #[serde(default = "default_ldap_max_entries")]
     pub max_entries: u32,
+}
+
+/// (phase 5, P5-ICS, D-273, C-843, SEC-107) "this app's credential is a URL the person typed, and the
+/// gateway fetches exactly that URL" (`docs/09 §3.4 secret_link`). The app has no `hosts[]` entry;
+/// its tools are `GET` on [`SECRET_LINK_TOOL_HOST`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SecretLink {
+    /// Name of the declared `secret: true` credential that holds the URL.
+    pub credential: String,
+    /// What the body must start with at connect (≤ 64 characters), e.g. `BEGIN:VCALENDAR`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expect_prefix: Option<String>,
+}
+
+/// The synthetic host suffix of the secret-link lane: `<connection_id>.link.aurora.internal`.
+pub const SECRET_LINK_HOST_SUFFIX: &str = ".link.aurora.internal";
+/// The tool host pattern of a secret-link app.
+pub const SECRET_LINK_TOOL_HOST: &str = "*.link.aurora.internal";
+/// Longest `expect_prefix`.
+pub const SECRET_LINK_PREFIX_MAX: usize = 64;
+
+impl SecretLink {
+    /// The synthetic request host of one connection.
+    #[must_use]
+    pub fn host_of(connection_id: impl std::fmt::Display) -> String {
+        format!("{connection_id}{SECRET_LINK_HOST_SUFFIX}")
+    }
+
+    /// The label before the suffix of a synthetic host (the caller parses it as a connection id).
+    #[must_use]
+    pub fn id_label(host: &str) -> Option<&str> {
+        let n = host.len().checked_sub(SECRET_LINK_HOST_SUFFIX.len())?;
+        (host.is_char_boundary(n) && host[n..].eq_ignore_ascii_case(SECRET_LINK_HOST_SUFFIX))
+            .then(|| &host[..n])
+    }
 }
 
 pub const LDAP_HOST_SUFFIX: &str = ".ldap.aurora.internal";

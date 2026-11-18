@@ -480,6 +480,65 @@ false }`. Only requested attributes on the app's list are returned, spelled as t
 them; values that are not UTF-8 or longer than 4 KiB are dropped, ≤ 100 values per attribute;
 more than `max_entries` entries are cut and `truncated` is true.
 
+## Secret-link lane (phase 5, P5-ICS, D-273)
+
+Spec: `90 D-273`; manifest `09 §3.4 secret_link`; contract `C-843`; invariant SEC-107. Code:
+`services/aurora-gateway/src/decide/link.rs` (admission), `src/seclink.rs` (fetch, cache) and the
+hook in `proxy/mod.rs` (`PreparedRequest.link`). The pattern is the database lane's (`§Database lane`,
+D-80) for one HTTP `GET`: the **URL is both the credential and the destination**, and the agent never
+sees it.
+
+**Not an app host.** A secret-link app has no `hosts[]` entry. An agent requests
+`https://<connection_id>.link.aurora.internal/` (CONNECT through the proxy, the gateway's MITM leaf
+for that name, as for `*.db`), and `handle_with` takes the request off the normal path: the
+connection id comes from the host label, the connection is resolved by id, and the same engine,
+approvals, rate limits, Read only (FIX-133) and request log as any tool request decide the
+synthetic `GET /` (the tool is the manifest's `read_calendar`; a `HEAD` is decided as the `GET` it
+stands for). Order: no connection, not a secret-link connection or not granted to this agent → 403
+`access_restricted` (one answer, no enumeration); disabled or needing reconnect → 403; method other
+than `GET`/`HEAD` → 405 `method_not_allowed`; then policy, approval hold (the summary names the
+connection and the real **host**, never the URL) and the rate limit. Only after admission is the
+stored credential decrypted. Any request on a `*.link.aurora.internal` host that does not leave the
+decision path with the lane's own mark is refused 403 `link_no_connection`: nothing on that host is
+ever forwarded as received.
+
+**Fetch.** The agent controls no part of the request: its path and query are ignored (and not
+logged), and of its headers only `Accept` goes upstream (never `Cookie`, `Authorization`, `Range`,
+conditional or proxy headers). The gateway sends `GET` to the stored URL exactly (`https` only) through
+`Upstream::send`, so the **destination guard** applies to every dial (private ranges only under
+`gateway.allowed_private`; cloud metadata, link-local and Aurora's own addresses never), and the
+**org and workspace egress policy** is evaluated on the real host of every hop as for an
+uncredentialed request (`seclink::Hops`; a verdict other than allow refuses the hop: a hold is
+impossible mid-fetch, and the open-lane posture is not consulted). At most `SECRET_LINK_REDIRECTS_MAX`
+(3) redirects are followed, `https` only; a `3xx` and its `Location` never reach the agent.
+
+**Answer.** The body is read up to `SECRET_LINK_RESPONSE_MAX` (20 MiB; larger → 502
+`link_response_too_large`, nothing cached) within 30 s. Only `Content-Type` is passed on, with a gateway
+`ETag` (a hash of the body) and `Age`; `Set-Cookie`, `Location` and the upstream's cache headers are
+dropped. Upstream 404/410 → 404 `link_not_found`; a guard or policy refusal, or a redirect to `http`
+or a private address → 403 `link_destination_refused`; another status → 502 `link_upstream_error`;
+a timeout → 504; no answer → 502 `link_unreachable`; more than three redirects → 502
+`link_too_many_redirects`. The FIX-104 echo check uses the stored URL and its path-with-query (raw and
+percent-encoded; never single segments, a calendar id legitimately fills a body) over the headers and
+the whole body: a match is 502 `upstream_echoed_credential`.
+
+**Cache** (D-273(g)). A complete `200` body is kept in the serving replica's memory for
+`SECRET_LINK_CACHE_TTL` (300 s), keyed by `(connection id, credential version)` (a reconnect bumps
+`credentials_version`, so the old body is never served; older versions of a connection are replaced),
+bounded by `SECRET_LINK_CACHE_MAX_BYTES` (64 MiB, least recently used evicted; a body over the bound is
+not cached). **Admission runs first, every time**: the lookup comes after grant, policy, approval and
+Read only, so a body cached for one caller never reaches one that could not fetch it. The upstream's
+`no-store` is overridden (the cache is private to the connection's admitted callers). A hit is an
+ordinary 200 request-log row with no `upstream_status` (no upstream call; `error_code` stays null,
+because every reader treats a non-null `error_code` as a failure); an `If-None-Match` equal to the gateway's `ETag` gets
+`304` with no upstream call. The cache is registered with the invalidation hub and dropped on a
+change of the connection (reconnect, disable, delete), of its workspace or organization, and on a
+full resync. Never on disk, never shared between replicas (each fetches once).
+
+**Logs and traces.** The request-log row, the approval summary, the span and every error carry the
+synthetic host, the connection id, the app and tool, and at most the real host: the real path and
+query appear nowhere.
+
 ## MITM lane: connect-time resolution
 
 On `CONNECT host:port` the gateway builds a **ResolvedHost** for
