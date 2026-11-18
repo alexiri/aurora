@@ -584,7 +584,8 @@ the runner's existing :4108 listener (`kind: "terminal"`, C-617); the sandbox it
 People who can use the terminal can also browse, upload, download, rename, delete and edit the files
 under the sandbox's `/workspace` from the dashboard (**Files** page of the Computer section, `14`),
 without a shell. It is the terminal's privilege with another interface: the same availability
-(`terminal.enabled`, hosted, `can_use`, session only, no access while frozen; D-316(b)(d)) and the
+(`terminal.enabled` — the setting in force, defaulting from `terminal.available` and read live, so
+switching it off closes Files at once; FIX-168 —, hosted, `can_use`, session only, no access while frozen; D-316(b)(d)) and the
 same identity in the sandbox (the agent uid). Routes and errors: API_CONTRACTS C-898..C-903; wire:
 `16 §W21`.
 
