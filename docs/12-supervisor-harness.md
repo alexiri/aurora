@@ -257,9 +257,9 @@ does not enable a second harness.
   |---------|-------------------|-------|
   | `claude-code` | `anthropic_messages`, `anthropic_bedrock`, `anthropic_vertex` | `08 §Phase 4 providers` |
   | `codex` | `openai_responses` | `openai_chat` only while the pinned version supports the chat wire API; a version that drops it removes it here. The pinned 0.167.0 refuses `wire_api = "chat"`, so it is not declared (D-153) |
-  | `pi` | `anthropic_messages`, `openai_responses`, `openai_chat` | phase 5, P5-HARN (D-362); P5-HARN Part A checks it against the pinned version |
-  | `goose` | `anthropic_messages`, `openai_chat` (+ `openai_responses` if the pinned version sends to it) | phase 5, P5-HARN |
-  | `opencode` | `anthropic_messages`, `openai_responses`, `openai_chat` | phase 5, P5-HARN |
+  | `pi` | `anthropic_messages`, `openai_responses`, `openai_chat` | phase 5, P5-HARN (D-362); all three verified against Pi 1.5.2 by its conformance suite |
+  | `goose` | `anthropic_messages`, `openai_chat` | phase 5, P5-HARN; **not** `openai_responses`: goose 1.59.2's `openai` provider picks the Responses API by model name, so the path cannot be promised (`§Adapters pi, goose and opencode`) |
+  | `opencode` | `anthropic_messages`, `openai_responses`, `openai_chat` | phase 5, P5-HARN (D-363, v1.19.6); all three verified by its conformance suite |
   | `fake` | none (needs no model key) | tests |
 
 - **Dialect choice.** For an agent, a usable key's endpoint serves the harness when the
@@ -274,7 +274,11 @@ does not enable a second harness.
   `claude-code` reaches `anthropic`, `bedrock` (`anthropic_bedrock`), `vertex`
   (`anthropic_vertex`), and `litellm`/`openai_compatible` endpoints declaring
   `anthropic_messages`; `codex` reaches `openai`, `azure_openai`, and `litellm`/
-  `openai_compatible`/`bedrock` endpoints declaring `openai_responses`. Any other pairing
+  `openai_compatible`/`bedrock` endpoints declaring `openai_responses`; (P5-HARN) `pi` and
+  `opencode` reach `anthropic`, `openai`, `azure_openai` and any `litellm`/`openai_compatible`
+  endpoint declaring one of their three dialects, and `goose` reaches `anthropic` and endpoints
+  declaring `anthropic_messages` or `openai_chat` (none of the three reaches Bedrock or Vertex
+  except through `litellm`). Any other pairing
   goes through a `litellm` endpoint (LiteLLM translates) or is refused as
   `no_shared_dialect`. The **auth mode never reaches the harness**: the supervisor gets
   the same `client_env` for every auth mode of a provider (placeholders and "skip auth"

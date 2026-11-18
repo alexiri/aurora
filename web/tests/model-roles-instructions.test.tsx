@@ -136,6 +136,32 @@ describe("Instructions: model roles (P5-MODELS-3)", () => {
     expect(screen.queryByLabelText("Subagents use")).toBeNull();
   });
 
+  it("lists every harness by its display name and says 'Not used by <name>' for each role it does not map (C-1016)", async () => {
+    const items = [
+      { id: "claude-code", display_name: "Claude Code", available: true, dialects: [], model_roles: ["large", "medium", "small"] },
+      { id: "codex", display_name: "Codex", available: true, dialects: [], model_roles: [] },
+      { id: "pi", display_name: "Pi", available: true, dialects: [], model_roles: [] },
+      { id: "goose", display_name: "goose", available: true, dialects: [], model_roles: ["large", "medium", "small"] },
+      { id: "opencode", display_name: "OpenCode", available: true, dialects: [], model_roles: ["small"] },
+    ];
+    mockFetch({ ...base(), "GET /v1/harnesses": () => json(200, { default: "claude-code", items }) });
+    wrap(<InstructionsTab agent={agent({ harness: "opencode" })} wsId="w1" />);
+    await waitFor(() => expect(screen.getByLabelText("Harness").tagName).toBe("SELECT"));
+    const picker = screen.getByLabelText("Harness");
+    expect(within(picker).getAllByRole("option").map((o) => o.textContent)).toEqual(["Claude Code", "Codex", "Pi", "goose", "OpenCode"]);
+    // OpenCode (as configured here) maps `small` only: the other two roles say so and cannot be set.
+    const large = (await screen.findByLabelText("Large")) as HTMLSelectElement;
+    await waitFor(() => expect(large).toBeDisabled());
+    expect(screen.getAllByText("Not used by OpenCode.")).toHaveLength(2);
+    expect(screen.getByLabelText("Small")).not.toBeDisabled();
+    const subagent = screen.getByLabelText("Subagents use");
+    expect(within(subagent).getAllByRole("option").map((o) => o.textContent)).toEqual(["Same as the default", "Small"]);
+    // A harness that maps none still shows the group note with its own name.
+    cleanup();
+    wrap(<InstructionsTab agent={agent({ harness: "pi" })} wsId="w1" />);
+    expect(await screen.findByTestId("roles-not-used")).toHaveTextContent("Not used by Pi");
+  });
+
   it("puts model_role_endpoint_mismatch and llm_model_not_allowed on their fields", async () => {
     mockFetch({
       ...base(),
