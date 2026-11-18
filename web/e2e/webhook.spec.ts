@@ -108,8 +108,8 @@ for (const scheme of ["light", "dark"] as const) {
       test("the organization's Apps tab has the switch and limits; Admin › Advanced shows the settings section", async ({ page }) => {
         const { sent } = await openWebhook(page, "/o/acme/apps?tab=apps", scheme);
         await page.getByLabel(/Sends per minute/).fill("10");
-        await page.getByRole("button", { name: "Save changes" }).click();
-        await expect(page.getByText("Settings saved.")).toBeVisible();
+        await page.getByRole("button", { name: "Update outgoing webhooks" }).click();
+        await expect(page.getByText("Outgoing webhook settings updated.")).toBeVisible();
         expect(sent.find((s) => s.method === "PATCH")!.body).toMatchObject({ settings: { outgoing_webhooks_per_minute_max: 10 } });
         await check(page);
         await openWebhook(page, "/admin/apps?tab=advanced", scheme);

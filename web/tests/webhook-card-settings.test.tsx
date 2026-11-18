@@ -87,8 +87,8 @@ describe("the organization's switch and limits", () => {
     expect(sw).toBeChecked();
     fireEvent.click(sw);
     fireEvent.change(screen.getByLabelText(/Sends per minute/), { target: { value: "10" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
-    await screen.findByText("Settings saved.");
+    fireEvent.click(screen.getByRole("button", { name: "Update outgoing webhooks" }));
+    await screen.findByText("Outgoing webhook settings updated.");
     expect(calls.find((c) => c.method === "PATCH")!.body).toEqual({
       settings: { outgoing_webhooks_enabled: false, outgoing_webhooks_per_minute_max: 10, outgoing_webhooks_per_day_max: null },
     });
@@ -98,7 +98,7 @@ describe("the organization's switch and limits", () => {
     expect(screen.getByLabelText("Allow outgoing webhooks in this organization")).not.toBeChecked();
     expect(screen.getByLabelText(/Sends per day/)).toHaveValue("100");
     fireEvent.change(screen.getByLabelText(/Sends per day/), { target: { value: "0" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    fireEvent.click(screen.getByRole("button", { name: "Update outgoing webhooks" }));
     expect(await screen.findByText("Enter a whole number of 1 or more, or leave empty.")).toBeInTheDocument();
     expect(calls.some((c) => c.method === "PATCH")).toBe(false);
   });
@@ -106,12 +106,12 @@ describe("the organization's switch and limits", () => {
     routes["PATCH /v1/orgs/o1"] = () => json(422, { error: { code: "above_instance_ceiling", message: "x" } });
     wrap(<OutgoingWebhooksOrgSettings org={org({})} />);
     fireEvent.change(screen.getByLabelText(/Sends per minute/), { target: { value: "9999" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    fireEvent.click(screen.getByRole("button", { name: "Update outgoing webhooks" }));
     await waitFor(() => expect(screen.getByText("This is above the limit your administrator set for the whole instance.")).toBeInTheDocument());
   });
   it("is read-only for an admin who is not an owner", () => {
     wrap(<OutgoingWebhooksOrgSettings org={org({}, "admin")} />);
     expect(screen.getByLabelText("Allow outgoing webhooks in this organization")).toBeDisabled();
-    expect(screen.queryByRole("button", { name: "Save changes" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Update outgoing webhooks" })).toBeNull();
   });
 });

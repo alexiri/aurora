@@ -83,13 +83,13 @@ export function OutgoingWebhooksOrgSettings({ org }: { org: Org }) {
         ) : null}
         {saved ? (
           <Notice tone="accent" role="status">
-            Settings saved.
+            Outgoing webhook settings updated.
           </Notice>
         ) : null}
         {owner ? (
           <FormActions>
             <Button type="submit" disabled={patch.isPending}>
-              {patch.isPending ? "Saving…" : "Save changes"}
+              {patch.isPending ? "Updating…" : "Update outgoing webhooks"}
             </Button>
           </FormActions>
         ) : null}
