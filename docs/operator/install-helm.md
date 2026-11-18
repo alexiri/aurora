@@ -295,6 +295,20 @@ Chart defaults that you may set in `config`: `server.bind`, `server.trusted_prox
 `runner.ops_bind` (both `0.0.0.0`, acceptable only because the NetworkPolicies block
 sandbox ingress to 4103 and 4106), `hosted.enabled`, `telemetry.log_level`.
 
+### Diagnosing a request the upstream rejects: the gateway wire log
+
+When an upstream answers an Aurora-proxied request differently from the same request sent directly,
+turn on the gateway's wire log: set `config.telemetry.log_level` to `"info,aurora_gateway::wire=debug"`
+and roll the gateway pods (or set `RUST_LOG` on them, which overrides). Each forwarded request then
+logs three lines (`received`, `forwarded`, `response`, with the request's `request_id`) showing the HTTP
+version, authority, path, query parameter names with value lengths, header names, how the body is framed
+(`is_end_stream`, `size_hint`, `Content-Length`, `Transfer-Encoding`), what Aurora injected (marked
+`<injected>`), the status, the protocol negotiated with the upstream and whether Aurora replaced the
+answer. It never logs a credential or any value (only a fixed list of framing headers such as
+`content-length` and `user-agent` carries its value), so it is safe to leave on while you look; turn it
+off again afterwards, as it adds three lines per request. Compare the `forwarded` line with a plain
+`curl -v` of the same request.
+
 ### Sandbox size
 
 Each hosted sandbox gets `config.runner.sandbox_cpus` (default 1) CPUs, `sandbox_memory_mib` (2048), `sandbox_pids` (512) and `home_gib` (10) unless an agent overrides them; requests equal limits, and the sandbox namespace quota still applies. Size them to your nodes: a sandbox that does not fit stays `Unschedulable`, and the runner logs the scheduler's reason when its capacity wait expires.

@@ -375,7 +375,7 @@ NetworkPolicy and its key is a secret root.
 | `retention.conversation_days_max` | — (no ceiling) | api | (phase 2, RFE-010) instance maximum for an org's conversation retention window (tighten-only, 7..3650) |
 | `telemetry.otlp_endpoint` | — | all | optional tracing export (OTLP/HTTP; a base URL gets `/v1/traces` appended). (phase 5, FIX-146, D-232) Request ids, propagation and `x-request-id` work without it; setting it adds the exporter, enables `POST /v1/telemetry/traces` (404 otherwise) and, on Helm, renders the dashboard's tracing switch (`23`). In Kubernetes the collector must also be in `networkPolicy.telemetryTo` (`§Observability`) |
 | `telemetry.sample_ratio` | `1.0` | all (api, gateway, hookhost, runner, relay, connector host, connectors; the dashboard through the chart) | (phase 5, FIX-146, D-232, C-732 (7)) fraction of traces sampled, 0.0–1.0 (anything else, or not a number, refuses startup naming the key); applied by the trace-id rule of C-732 (7) to every root and browser-adopted context, parent-based elsewhere. `0.0` exports no span (server or browser) while log lines still carry `request_id` |
-| `telemetry.log_level` | `info` | all | |
+| `telemetry.log_level` | `info` | all | An `EnvFilter` directive. `"info,aurora_gateway::wire=debug"` turns on the gateway's wire log (names, lengths and framing of each forwarded request; never values; `06 §Telemetry`). |
 
 ### Governance example (corporate LLM accounts only, strict egress)
 
