@@ -1056,11 +1056,42 @@ pub struct Stub {
     pub content: String,
 }
 
+/// (P5-GUIDE-1, C-640) One `agent.guide[]` entry of a submitted manifest. `kind` stays a string so
+/// the linter can name an unknown value (`agent_guide_kind`); `sha256` and `size` are accepted
+/// only so the linter can reject them (`agent_guide_computed_field`): they exist in the snapshot.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GuideEntry {
+    pub file: String,
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sha256: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size: Option<u64>,
+}
+
+impl GuideEntry {
+    /// Whether this entry is a recipe (`kind: recipe`).
+    #[must_use]
+    pub fn is_recipe(&self) -> bool {
+        self.kind.as_deref() == Some("recipe")
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Agent {
+    /// (P5-GUIDE-1, `docs/24 §3.1`) One line of what the app is for; the only plugin text in the
+    /// instruction file. Required when `guide` is present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
     #[serde(default)]
     pub instructions: String,
+    /// (P5-GUIDE-1) Reference files and recipes of `agent/<app_id>/`, in listing order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub guide: Vec<GuideEntry>,
     #[serde(default)]
     pub env: Vec<EnvVar>,
     #[serde(default)]

@@ -31,6 +31,26 @@ fn source_files(dir: &Path) -> Result<Vec<String>> {
         t.sort();
         out.extend(t);
     }
+    // (P5-GUIDE-1, C-640) `agent/<app_id>/<file>`: the agent guide files, one directory per app.
+    // Anything deeper or not a regular file is left out here and the linter says why a listed
+    // file is missing.
+    if let Ok(apps) = std::fs::read_dir(dir.join("agent")) {
+        let mut g = Vec::new();
+        for app in apps.filter_map(|e| e.ok()).filter(|e| e.path().is_dir()) {
+            let app_name = app.file_name().to_string_lossy().into_owned();
+            let Ok(files) = std::fs::read_dir(app.path()) else {
+                continue;
+            };
+            for f in files.filter_map(|e| e.ok()).filter(|e| e.path().is_file()) {
+                g.push(format!(
+                    "agent/{app_name}/{}",
+                    f.file_name().to_string_lossy()
+                ));
+            }
+        }
+        g.sort();
+        out.extend(g);
+    }
     Ok(out)
 }
 

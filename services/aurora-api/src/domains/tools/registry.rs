@@ -45,6 +45,9 @@ pub enum ToolError {
     Unavailable(String),
     /// Any other failure with a model-readable message.
     Failed(String),
+    /// A failure with a code of the tool's own (C-844: `no_person`, `rate_limited`, …); the code
+    /// is a short constant.
+    Coded(&'static str, String),
 }
 
 impl From<DbError> for ToolError {
@@ -66,6 +69,7 @@ impl ToolError {
             Self::InvalidArguments(m) => ("invalid_arguments", m),
             Self::Unavailable(m) => ("tool_unavailable", m),
             Self::Failed(m) => ("tool_failed", m),
+            Self::Coded(c, m) => (c, m),
         };
         WireError {
             code: code_of(code),
@@ -85,6 +89,12 @@ pub trait PlatformTool: Send + Sync {
     /// JSON Schema (`type: object`).
     fn input_schema(&self) -> Value;
     fn available(&self, ctx: &ToolContext) -> bool;
+    /// The tool sends e-mail, so it exists only while the instance mailer is configured (SMTP set,
+    /// not log-only; SET-4's live flag). Decided where the app state is at hand
+    /// ([`catalogue`] and [`Registry::call`]).
+    fn needs_mailer(&self) -> bool {
+        false
+    }
     /// Availability that needs the database (e.g. messaging tools exist only while the agent
     /// has an active channel presence). Checked in addition to [`available`](Self::available)
     /// when the catalogue is rendered ([`Registry::catalogue_for`]) and at call time.
@@ -143,11 +153,13 @@ impl Registry {
             .collect()
     }
 
-    /// [`catalogue`](Self::catalogue) plus the tools' database-backed [`PlatformTool::enabled`].
-    pub async fn catalogue_for(&self, ctx: &ToolContext) -> Vec<ToolDescriptor> {
+    /// [`catalogue`](Self::catalogue) plus the tools' database-backed [`PlatformTool::enabled`];
+    /// `mailer` is whether the instance mailer is configured (tools that
+    /// [need it](PlatformTool::needs_mailer) are absent otherwise).
+    pub async fn catalogue_for(&self, ctx: &ToolContext, mailer: bool) -> Vec<ToolDescriptor> {
         let mut out = Vec::new();
         for t in self.order.iter().filter_map(|n| self.tools.get(n)) {
-            if t.available(ctx) && t.enabled(ctx).await {
+            if (mailer || !t.needs_mailer()) && t.available(ctx) && t.enabled(ctx).await {
                 out.push(ToolDescriptor {
                     name: t.name().to_owned(),
                     description: Some(t.description(ctx)),
@@ -195,7 +207,9 @@ impl Registry {
                 },
             );
         }
-        if !t.available(&ctx.agent) || !t.enabled(&ctx.agent).await {
+        let mailer = ctx.state.auth_live.load().smtp;
+        if (t.needs_mailer() && !mailer) || !t.available(&ctx.agent) || !t.enabled(&ctx.agent).await
+        {
             return fail(ToolError::Unavailable(t.unavailable_reason().into()));
         }
         match tokio::time::timeout(timeout, t.call(ctx, args)).await {
@@ -234,6 +248,9 @@ const WRITE_TOOLS: &[&str] = &[
     "cancel_peer_task",
     "propose_custom_connection",
     "request_app_connection",
+    "calendar_invite",
+    "calendar_invite_update",
+    "calendar_invite_cancel",
 ];
 
 fn is_write_tool(name: &str) -> bool {
@@ -281,17 +298,18 @@ pub fn registry() -> &'static Registry {
 }
 
 /// Catalogue for an agent, as rendered into the home sync inputs (BE-052).
-pub async fn catalogue(pool: &PgPool, agent_id: Uuid) -> Result<Vec<ToolDescriptor>, ApiError> {
-    let a = aurora_db::repo::agents::get(pool, agent_id)
+pub async fn catalogue(state: &AppState, agent_id: Uuid) -> Result<Vec<ToolDescriptor>, ApiError> {
+    let a = aurora_db::repo::agents::get(&state.pool, agent_id)
         .await?
         .ok_or_else(|| ApiError::not_found("Unknown agent."))?;
     let ctx = ToolContext {
-        pool: pool.clone(),
+        pool: state.pool.clone(),
         agent_id,
         workspace_id: a.workspace_id,
         org_id: a.org_id,
     };
-    Ok(registry().catalogue_for(&ctx).await)
+    let mailer = state.auth_live.load().smtp;
+    Ok(registry().catalogue_for(&ctx, mailer).await)
 }
 
 /// Default per-call budget.
@@ -304,6 +322,7 @@ mod eval_classification_tests {
     /// Platform tools with no effect on the world. A new built-in tool must be listed here or in
     /// `WRITE_TOOLS`; otherwise an eval turn (C-868) could reach a write the refusal does not know.
     const READ_TOOLS: &[&str] = &[
+        "calendar_invite_list",
         "conversation_read",
         "conversation_search",
         "find_recipient",

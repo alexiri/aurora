@@ -536,3 +536,264 @@ fn databases_in_render_inputs_become_libpq_files_and_disappear_with_the_grant() 
     p.commit(4).unwrap();
     assert!(!dir.exists());
 }
+
+// ---- (P5-GUIDE-2, C-643) the app folders
+
+/// A generation with the render inputs, an `apps` part and the manifest naming `paths`.
+fn apps_generation(g: u64, apps: &[(&str, &str)], manifest_extra: &[&str]) -> Vec<HomeSync> {
+    let entries: Vec<Value> = apps
+        .iter()
+        .map(|(p, c)| json!({"path": p, "content": c}))
+        .collect();
+    let mut manifest: Vec<Value> = apps.iter().map(|(p, _)| json!({"path": p})).collect();
+    manifest.extend(manifest_extra.iter().map(|p| json!({"path": p})));
+    vec![
+        part(
+            g,
+            0,
+            4,
+            "render_inputs",
+            json!([{"agent": {"name": "Ada", "handle": "ada", "workspace": "Acme"}, "brief": "Be concise."}]),
+        ),
+        part(g, 1, 4, "apps", json!(entries)),
+        part(g, 2, 4, "manifest", json!(manifest)),
+        part(g, 3, 4, "final", json!([])),
+    ]
+}
+
+fn mode(p: &Path) -> u32 {
+    use std::os::unix::fs::PermissionsExt as _;
+    fs::metadata(p).unwrap().permissions().mode() & 0o777
+}
+
+/// Accepted paths install 0444 in 0555 directories, refused paths (a deeper path, a bad id, a bad
+/// name, traversal, an absolute path, the skills directory) install nothing, and a folder that
+/// leaves the manifest is pruned at the next commit.
+#[test]
+fn app_folders_are_installed_read_only_refused_when_malformed_and_pruned() {
+    let d = TempDir::new();
+    let root = d.path();
+    let mut p = projector(root);
+    let good = [
+        (".aurora/apps/gitlab/guide.md", "guide"),
+        (".aurora/apps/gitlab/tools.md", "tools"),
+        (".aurora/apps/gitlab/api.json", "{}"),
+        (".aurora/apps/gitlab/rest-api_v4.md", "ref"),
+        (".aurora/apps/indico/guide.md", "indico"),
+    ];
+    let bad = [
+        ".aurora/apps/gitlab/deeper/guide.md",
+        ".aurora/apps/Bad/guide.md",
+        ".aurora/apps/a/guide.md",
+        ".aurora/apps/gitlab/Guide.md",
+        ".aurora/apps/gitlab/script.sh",
+        ".aurora/apps/gitlab/.hidden.md",
+        ".aurora/apps/../escape.md",
+        ".aurora/apps/guide.md",
+        ".aurora/apps/gitlab",
+        "/etc/passwd",
+        ".aurora/tools.json",
+        ".aurora/apps/gitlab/-x.md",
+    ];
+    let all: Vec<(&str, &str)> = good
+        .iter()
+        .copied()
+        .chain(bad.iter().map(|p| (*p, "x")))
+        .collect();
+    let g = apps_generation(1, &all, &[]);
+    assert!(matches!(
+        apply_all(&mut p, &g),
+        PartOutcome::ReadyToCommit(1)
+    ));
+    p.commit(1).unwrap();
+    for (rel, c) in good {
+        let f = root.join(rel);
+        assert_eq!(fs::read_to_string(&f).unwrap(), c, "{rel}");
+        assert_eq!(mode(&f), 0o444, "{rel}");
+    }
+    assert_eq!(mode(&root.join(".aurora/apps/gitlab")), 0o555);
+    assert_eq!(mode(&root.join(".aurora/apps/indico")), 0o555);
+    assert!(!root.join(".aurora/apps/gitlab/deeper").exists());
+    assert!(!root.join(".aurora/apps/escape.md").exists());
+    assert!(!root.join(".aurora/escape.md").exists());
+    assert!(!root.join(".aurora/tools.json").exists());
+    assert!(!root.join(".aurora/apps/a").exists());
+    assert!(!root.join(".aurora/apps/Bad").exists());
+
+    // Generation 2 keeps one app, changes a file: the other folder is gone, the changed file is
+    // replaced even though it is read-only.
+    let g = apps_generation(2, &[(".aurora/apps/gitlab/guide.md", "guide v2")], &[]);
+    apply_all(&mut p, &g);
+    p.commit(2).unwrap();
+    assert_eq!(
+        fs::read_to_string(root.join(".aurora/apps/gitlab/guide.md")).unwrap(),
+        "guide v2"
+    );
+    assert!(!root.join(".aurora/apps/gitlab/tools.md").exists());
+    assert!(!root.join(".aurora/apps/gitlab/api.json").exists());
+    assert!(!root.join(".aurora/apps/indico").exists());
+
+    // No app at all: the folders are gone.
+    apply_all(&mut p, &apps_generation(3, &[], &[]));
+    p.commit(3).unwrap();
+    assert!(!root.join(".aurora/apps/gitlab").exists());
+}
+
+/// A path of a skills or memory part cannot reach `.aurora/apps`, and an `apps` part cannot reach
+/// skills or memory.
+#[test]
+fn app_paths_and_other_roots_do_not_cross_part_kinds() {
+    let d = TempDir::new();
+    let root = d.path();
+    let mut p = projector(root);
+    let mut g = apps_generation(
+        1,
+        &[
+            (".claude/skills/s/SKILL.md", "skill via apps"),
+            ("memory/m.md", "memory via apps"),
+        ],
+        &[],
+    );
+    g[1] = part(
+        1,
+        1,
+        4,
+        "apps",
+        json!([
+            {"path": ".claude/skills/s/SKILL.md", "content": "skill via apps"},
+            {"path": "memory/m.md", "content": "memory via apps"}
+        ]),
+    );
+    apply_all(&mut p, &g);
+    p.commit(1).unwrap();
+    assert!(!root.join(".claude/skills/s/SKILL.md").exists());
+    assert!(!root.join("memory/m.md").exists());
+
+    let mut g = generation(2, &[], &[]);
+    g[0] = part(
+        2,
+        0,
+        6,
+        "skills",
+        json!([{"path": ".aurora/apps/x1/guide.md", "content": "via skills"}]),
+    );
+    g[1] = part(
+        2,
+        1,
+        6,
+        "memory",
+        json!([{"path": ".aurora/apps/x1/tools.md", "content": "via memory"}]),
+    );
+    apply_all(&mut p, &g);
+    p.commit(2).unwrap();
+    assert!(!root.join(".aurora/apps").exists());
+}
+
+/// Files the agent put in `.aurora/apps` (a symlink in place of a folder) are not followed.
+#[test]
+fn a_symlinked_app_folder_is_replaced_not_followed() {
+    let d = TempDir::new();
+    let root = d.path();
+    let elsewhere = TempDir::new();
+    fs::create_dir_all(root.join(".aurora/apps")).unwrap();
+    std::os::unix::fs::symlink(elsewhere.path(), root.join(".aurora/apps/gitlab")).unwrap();
+    let mut p = projector(root);
+    apply_all(
+        &mut p,
+        &apps_generation(1, &[(".aurora/apps/gitlab/guide.md", "guide")], &[]),
+    );
+    p.commit(1).unwrap();
+    assert!(!elsewhere.path().join("guide.md").exists());
+    assert_eq!(
+        fs::read_to_string(root.join(".aurora/apps/gitlab/guide.md")).unwrap(),
+        "guide"
+    );
+    assert!(
+        !fs::symlink_metadata(root.join(".aurora/apps/gitlab"))
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+}
+
+/// The `.aurora/` content around the folders (tools, render inputs, sync staging, the pg files) is
+/// not touched by them and a sync that changes only the folders leaves the instruction files
+/// byte-identical (so nothing is released for it).
+#[test]
+fn a_sync_that_changes_only_the_folders_keeps_the_instruction_files() {
+    let d = TempDir::new();
+    let root = d.path();
+    let mut p = projector(root);
+    let tools = json!([{"name": "memory_save"}]);
+    let mk = |g: u64, guide: &str| {
+        let mut parts = apps_generation(g, &[(".aurora/apps/gitlab/guide.md", guide)], &[]);
+        parts.insert(1, part(g, 1, 5, "tools", tools.clone()));
+        let n = u32::try_from(parts.len()).unwrap();
+        for (i, s) in parts.iter_mut().enumerate() {
+            s.part_index = u32::try_from(i).unwrap();
+            s.part_count = n;
+        }
+        parts
+    };
+    apply_all(&mut p, &mk(1, "one"));
+    p.commit(1).unwrap();
+    let before = fs::read(root.join("AGENTS.md")).unwrap();
+    let ri_before = fs::read(root.join(".aurora/render_inputs.json")).unwrap();
+    apply_all(&mut p, &mk(2, "two"));
+    p.commit(2).unwrap();
+    assert_eq!(fs::read(root.join("AGENTS.md")).unwrap(), before);
+    assert_eq!(
+        fs::read(root.join(".aurora/render_inputs.json")).unwrap(),
+        ri_before
+    );
+    assert_eq!(
+        fs::read_to_string(root.join(".aurora/apps/gitlab/guide.md")).unwrap(),
+        "two"
+    );
+    assert!(root.join(".aurora/tools.json").exists());
+}
+
+/// (written before the feature; passes before and after) A sync with a part kind this supervisor
+/// does not know and render-input fields it does not know commits, and the instruction file is
+/// exactly what the known fields render.
+#[test]
+fn unknown_part_kinds_and_render_input_fields_are_skipped() {
+    let d = TempDir::new();
+    let root = d.path();
+    let mut p = projector(root);
+    let known = vec![
+        part(
+            1,
+            0,
+            3,
+            "render_inputs",
+            json!([{"agent": {"name": "Ada", "handle": "ada", "workspace": "Acme"},
+                    "brief": "Be concise."}]),
+        ),
+        part(1, 1, 3, "manifest", json!([])),
+        part(1, 2, 3, "final", json!([])),
+    ];
+    apply_all(&mut p, &known);
+    p.commit(1).unwrap();
+    let want = fs::read(root.join("AGENTS.md")).unwrap();
+
+    let d2 = TempDir::new();
+    let mut p2 = projector(d2.path());
+    let with_unknown = vec![
+        part(
+            1,
+            0,
+            4,
+            "render_inputs",
+            json!([{"agent": {"name": "Ada", "handle": "ada", "workspace": "Acme"},
+                    "brief": "Be concise.", "from_the_future": {"a": 1},
+                    "apps": []}]),
+        ),
+        part(1, 1, 4, "from_the_future", json!([{"x": 1}])),
+        part(1, 2, 4, "manifest", json!([])),
+        part(1, 3, 4, "final", json!([])),
+    ];
+    apply_all(&mut p2, &with_unknown);
+    p2.commit(1).unwrap();
+    assert_eq!(fs::read(d2.path().join("AGENTS.md")).unwrap(), want);
+}

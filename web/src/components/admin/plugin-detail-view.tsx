@@ -21,12 +21,15 @@ import {
   type PluginPackage,
 } from "@/lib/api/plugins";
 
+import { AgentGuideSection, packageHasGuide } from "./agent-guide-section";
 import { ViolationList, statusTone } from "./plugins-view";
 
 const SECTIONS = ["hooks", "egress", "context", "claims"] as const;
 // "impact" joins the mandatory review of a pending major upgrade (RFE-022, 09 §10).
 // "conversions" joins it when the version converts agent grants (P4-GRANTS, D-123, 09 §10).
-type Section = (typeof SECTIONS)[number] | "impact" | "conversions";
+// "guide" joins it when the package ships agent guide text (P5-GUIDE-3, 24 §9): agents read it, so approving
+// means having seen it; it is one more section to expand, not a second confirmation.
+type Section = (typeof SECTIONS)[number] | "impact" | "conversions" | "guide";
 
 // Why a version waits for an instance admin although it may look like a routine upgrade (FIX-107).
 const REASON_TEXT: Record<string, string> = {
@@ -113,7 +116,13 @@ export function PluginReview({ plugin }: { plugin: PluginPackage }) {
   const impact = plugin.impact ?? null;
   const majorImpact = impact !== null && (impact.major_upgrade || impact.connections_needing_reauth > 0);
   const converting = impact !== null && (impact.grants_to_convert ?? 0) > 0;
-  const required: Section[] = [...SECTIONS, ...(majorImpact ? (["impact"] as const) : []), ...(converting ? (["conversions"] as const) : [])];
+  const hasGuide = packageHasGuide(plugin);
+  const required: Section[] = [
+    ...SECTIONS,
+    ...(majorImpact ? (["impact"] as const) : []),
+    ...(converting ? (["conversions"] as const) : []),
+    ...(hasGuide ? (["guide"] as const) : []),
+  ];
   const allSeen = required.every((s) => seen.has(s));
 
   const doUninstall = (force: boolean) =>
@@ -333,6 +342,15 @@ export function PluginReview({ plugin }: { plugin: PluginPackage }) {
         </Collapsible>
       </div>
 
+      {hasGuide ? (
+        <div className="space-y-2">
+          <h2 className="font-display text-base font-semibold text-ink">Agent guide</h2>
+          <Collapsible id="guide" title="What agents can read" open={opened.has("guide")} onToggle={onToggle}>
+            <AgentGuideSection plugin={plugin} />
+          </Collapsible>
+        </div>
+      ) : null}
+
       <div className="flex flex-wrap gap-2">
         {pending ? (
           <>
@@ -345,7 +363,7 @@ export function PluginReview({ plugin }: { plugin: PluginPackage }) {
             </Button>
             {!allSeen ? (
               <span className="self-center text-xs text-muted">
-                Expand every permissions section to enable approval.
+                Expand every permissions section{hasGuide ? " and the agent guide" : ""} to enable approval.
               </span>
             ) : null}
             <Button variant="danger" disabled={act.isPending} onClick={() => setRejecting(true)}>

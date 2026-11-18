@@ -2,7 +2,9 @@
 //! offline; validation, compilation and fixture runs reuse the registry and gateway code.
 
 mod cmds;
+mod guide;
 mod hooktest;
+mod openapi;
 mod pack;
 
 use anyhow::Result;
@@ -84,6 +86,39 @@ pub enum PluginCmd {
         #[arg(long)]
         out: PathBuf,
     },
+    /// Render what an agent would find in `.aurora/apps/<app_id>/` for a sample account:
+    /// `guide.md`, `tools.md`, the recipes and the reference files (docs/24 §10).
+    Guide {
+        /// Package archive or source directory.
+        #[arg(default_value = ".")]
+        package: PathBuf,
+        /// One app of the package (default: every app).
+        #[arg(long)]
+        app: Option<String>,
+        /// The sample account's grant: `custom` marks read tools allowed and write tools needing
+        /// approval.
+        #[arg(long, default_value = "custom", value_parser = ["full", "custom"])]
+        access: String,
+        /// Write `<out>/<app_id>/<file>` instead of printing to stdout.
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
+    /// Read a local OpenAPI 3.0/3.1 document and write `agent/<app>/operations.md` and
+    /// `ops-<tag>.md` reference files; print the `guide:` entries and a `tools:` skeleton
+    /// (docs/24 §10). Offline and deterministic.
+    ImportOpenapi {
+        /// The OpenAPI document (JSON or YAML).
+        file: PathBuf,
+        /// The app the files belong to (`agent/<app>/`).
+        #[arg(long)]
+        app: String,
+        /// Host of the skeleton's tools (default: the first `servers[].url`).
+        #[arg(long)]
+        host: Option<String>,
+        /// The package directory (default: the current one).
+        #[arg(long, default_value = ".")]
+        dir: PathBuf,
+    },
     /// Render the setup guide and permissions table.
     Docs {
         package: PathBuf,
@@ -125,6 +160,18 @@ pub fn run(cmd: PluginCmd) -> Result<i32> {
         ),
         PluginCmd::Sign { package, key, out } => cmds::sign(&package, &key, out),
         PluginCmd::Keygen { out } => cmds::keygen(&out),
+        PluginCmd::Guide {
+            package,
+            app,
+            access,
+            out,
+        } => guide::guide(&package, app.as_deref(), &access, out.as_deref()),
+        PluginCmd::ImportOpenapi {
+            file,
+            app,
+            host,
+            dir,
+        } => openapi::import(&file, &app, host.as_deref(), &dir),
         PluginCmd::Docs { package, format } => cmds::docs(&package, &format),
     }
 }

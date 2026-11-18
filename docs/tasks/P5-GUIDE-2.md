@@ -109,3 +109,37 @@ e2e addition. Not `ingest.rs` / `registry.rs` (P5-GUIDE-1).
   normal state after a deploy; that is why the old render-input fields must not change.
 - Suggested agent: `rust-developer` (Sonnet); review by `sonnet-integration-reviewer` against
   C-643..C-645 and C-648 before merge. Size L.
+
+## Completion report (lane `p5-apps`, worker 35, 2026-11-18)
+
+**Adapted to master** (brief of 2026-11-15):
+- `PluginPackage.agent_guides` is filled on the **detail** route only (it reads the stored archive for the
+  digests, as the snapshot compile does); lists and the lifecycle responses carry `[]`, like `impact` is `null`
+  there. `changed` compares with the active version of the package; `operations` is `null` until P5-GUIDE-6.
+- `agent_guide_changed` also rides the automatic activation in `ingest.rs` (the `plugin.activate` row with
+  `auto: true`), not only `lifecycle.rs`, because a package with no widening never goes through approve.
+- The test-only budget is `AppState::guide_sync_max` + `with_guide_sync_max` (like `stream_recheck`).
+- The supervisor renders the index with `render_with(inputs, agent_cli)`; `render` passes `false` (P5-GUIDE-6 plumbs
+  `agent_cli`). The preamble paragraph sits after *Credentials*, only in index mode (C-645).
+- App id grammar in the supervisor is `[a-z][a-z0-9_-]{1,47}` (`manifest/mod.rs`); a file name is the C-640 grammar
+  (`guide.md`, `tools.md`, `api.json` match it). A symlink in place of `.aurora/apps` or an app folder is removed
+  before install (the agent's uid owns `.aurora`).
+- No code anywhere sends `SessionRelease` for a home change, so "a folder-only sync releases no session" is true
+  by construction; the supervisor test pins that the instruction files and render inputs stay byte-identical.
+- `home_app_connections` gained `grant_mode`, `allow_tools`, `ask_tools`, `tenant_host`. The account host is the
+  instance host, else the stored tenant host, else the app's `default_host`.
+- Guard `agent-guide-advisory.sh` has `--self-test` (planted reference fails, clean passes, missing directory
+  fails) and `limits-gaps.allow` lost `AGENT_GUIDE_SYNC_MAX`. Planted-reference run: exit 1 with the file and line.
+- Two existing `home_render_inputs` tests assumed the inline form on the new wire; they now render the index from
+  the wire and the inline form from the wire minus the folder fields (the older-API fallback).
+
+**Not done here:** the kind end-to-end (`fixture-guide` folder under a custom grant, removed on revoke) and the live
+`claude-code` behavioural check: both need the stack; see the lane's batch-gate report. The
+`aurora_home_guide_budget_exceeded_total` increment is not asserted (no metrics test harness for it): the budget
+behaviour is.
+
+**Gate level: per task.** fmt; `cargo clippy -p aurora-protocol -p aurora-db -p aurora-supervisor -p aurora-api
+--all-targets --all-features -- -D warnings` clean; supervisor lib 113 + it 136 green; `aurora-api --test it --
+home plugins permission_matrix openapi skills hosted::` 84 tests (home_agent_guides 6 new, home_render_inputs 4);
+guards rc 0 (schema check included); `UPDATE_OPENAPI=1` + `pnpm -C web gen:api` regenerated. Sync-size numbers: not
+yet measured (machine busy). Deviation: the two coverage-doc rows were edited with a python one-liner.

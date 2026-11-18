@@ -884,14 +884,14 @@ async fn the_tool_is_offered_only_to_an_agent_that_holds_a_grant() {
         c.into_iter().map(|t| t.name).collect()
     };
     let before = names(
-        aurora_api::domains::tools::catalogue(w.h.pool(), w.agent)
+        aurora_api::domains::tools::catalogue(&w.h.state, w.agent)
             .await
             .unwrap(),
     );
     assert!(!before.contains(&"send_as_me".to_owned()), "{before:?}");
     w.ready().await;
     let after = names(
-        aurora_api::domains::tools::catalogue(w.h.pool(), w.agent)
+        aurora_api::domains::tools::catalogue(&w.h.state, w.agent)
             .await
             .unwrap(),
     );

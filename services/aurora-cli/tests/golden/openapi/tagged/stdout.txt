@@ -1,0 +1,19 @@
+# Add under apps[].agent in plugin.yaml (summary is required with a guide):
+guide:
+  - { file: operations.md, title: "Operation index: every operation, grouped by tag" }
+  - { file: ops-items.md, title: "Operations: Items" }
+  - { file: ops-reports.md, title: "Operations: Reports" }
+  - { file: ops-other.md, title: "Operations: other" }
+
+# Catalogue skeleton for apps[]: review overlaps, approvals and `params` classifiers.
+tools:
+  read:
+    items:
+      - { id: get_reports_daily, name: "Daily report", host: api.example.com, path: "/reports/daily", methods: [GET] }
+      - { id: search_a, name: "Search items", host: api.example.com, path: "/a/search", methods: [GET] }
+      - { id: get_status, name: "Service status", host: api.example.com, path: "/status", methods: [GET] }
+      - { id: get_a, name: "Read an item", host: api.example.com, path: "/a/*", methods: [GET] }
+  write:
+    items:
+      - { id: update_a, name: "Replace an item", host: api.example.com, path: "/a/*", methods: [PUT] }
+      - { id: create_a, name: "Create an item", host: api.example.com, path: "/a", methods: [POST] }

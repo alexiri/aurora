@@ -927,6 +927,21 @@ arming conversation.
 - Keep-awake: a busy process or an armed watch holds the sandbox awake within
 `BACKGROUND_CAP` (`11 §Keep-awake`).
 
+## Calendar invitations (phase 5, P5-CALINV, D-274, C-844, SEC-108)
+
+An agent puts an event in a person's calendar by **sending the person an invitation**, never by writing to a calendar: it has no calendar access and holds no calendar credential. The tools (`12 §Phase 0 catalogue`, family Calendar) e-mail a standard iTIP `REQUEST` (iMIP, RFC 6047) that Outlook, Gmail, Apple Calendar and Thunderbird show as a meeting invitation; the person's **Accept** puts it in their calendar and is the approval.
+
+What an agent can do: propose an event (single, all-day or a bounded repeat, with an optional reminder), move it (`update`: same `UID`, `SEQUENCE + 1`), cancel it, and list the invitations it sent to the person it is working for. What it cannot do:
+- **Invite anyone else.** The only recipient is the verified account e-mail of the person the turn runs for: the speaker of the triggering message, or a schedule's creator. A webhook, peer-agent or creator-less schedule turn has no person (`no_person`), and a person without a verified e-mail gets nothing (`no_verified_email`). No argument names an address or an attendee.
+- **Reach another agent's or person's invitations**: `update`, `cancel` and `list` act only on this agent's invitations to this person (`not_found` otherwise).
+- **Send without bound**: 20 messages per person per agent per hour and 60 per person per day across agents (`rate_limited`); a repeat needs `count` or `until`.
+- **Forge the message**: the plain-text body is a fixed template that names the agent as the proposer, the iCalendar part is built by a typed writer whose escaping and folding no agent text can leave (no extra property, component or attendee), and `Subject`/`From` name never carry a line break.
+- **Send from an evaluation**: the three writes are refused in an eval turn (`§Evals` below, C-868).
+
+The tools exist only while the instance mailer is configured (not log-only) and the organization's switch `calendar_invitations.enabled` is on (default on; org `owner`/`admin`, `PATCH /v1/orgs/{org}` `settings.calendar_invitations_enabled`). A mailer failure is `mail_unavailable` and records nothing. Aurora keeps a small row per invitation (`03 §calendar_invitations`: ids, `UID`, `SEQUENCE`, times; **never the description or the location**) that follows the agent, the person and the organization on deletion and the daily retention pass. Every send, update and cancel is an audit event `calendar.invitation.sent|updated|cancelled` with ids only.
+
+Replies: Accept/Decline goes to `email.from` (the organizer is Aurora) and is not read; `RSVP=FALSE` asks clients not to send one. Showing "accepted" to the agent is out of scope.
+
 ## Evals (phase 5, P4-EVAL, D-289..D-294, C-860..C-874, SEC-114..SEC-116)
 
 Owner questions Q-EVAL-1..10: every recommendation accepted (owner, 2026-11-15, D-300); the text below follows them. Briefs: `docs/tasks/P4-EVAL-1.md` … `P4-EVAL-4.md`.

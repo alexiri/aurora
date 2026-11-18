@@ -101,6 +101,102 @@ pub struct OauthClientEntry {
     pub setup_note: Option<String>,
 }
 
+/// (P5-GUIDE-1, C-641) `kind` of a guide file in the snapshot; always present there.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum GuideKind {
+    Reference,
+    Recipe,
+}
+
+/// (P5-GUIDE-1, C-641) A guide file with the digest the core computed from the stored archive.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GuideFile {
+    pub file: String,
+    pub title: String,
+    pub kind: GuideKind,
+    pub sha256: String,
+    pub size: u64,
+}
+
+/// The `agent` block of an app in the snapshot: the manifest's block with the agent guide keys in
+/// their compiled form (`guide[]` carries digests). The submitted manifest type
+/// ([`Agent`]) and this one differ on purpose: both stay strict (`deny_unknown_fields`).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentEntry {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
+    #[serde(default)]
+    pub instructions: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub guide: Vec<GuideFile>,
+    #[serde(default)]
+    pub env: Vec<crate::manifest::EnvVar>,
+    #[serde(default)]
+    pub stubs: Vec<crate::manifest::Stub>,
+    #[serde(default)]
+    pub default_blocklist: Vec<String>,
+}
+
+/// Digests of the guide files of one package: `(app_id, file)` → `(sha256 hex, size)`.
+pub type GuideDigests = BTreeMap<(String, String), (String, u64)>;
+
+/// Compute [`GuideDigests`] from a package archive, as `hooks_digest` is computed (C-641).
+#[must_use]
+pub fn guide_digests(manifest: &Manifest, pkg: &crate::Package) -> GuideDigests {
+    let mut out = GuideDigests::new();
+    for a in &manifest.apps {
+        let Some(ag) = &a.agent else { continue };
+        for g in &ag.guide {
+            if let Some(b) = pkg.file(&format!("agent/{}/{}", a.about.id, g.file)) {
+                out.insert(
+                    (a.about.id.clone(), g.file.clone()),
+                    (hex(&Sha256::digest(b)), b.len() as u64),
+                );
+            }
+        }
+    }
+    out
+}
+
+fn agent_entry(
+    app_id: &str,
+    ag: &Agent,
+    digests: Option<&GuideDigests>,
+) -> Result<AgentEntry, CompileError> {
+    let mut guide = Vec::with_capacity(ag.guide.len());
+    for g in &ag.guide {
+        let (sha256, size) = digests
+            .and_then(|d| d.get(&(app_id.to_owned(), g.file.clone())))
+            .cloned()
+            .ok_or_else(|| CompileError::GuideFileMissing {
+                app_id: app_id.to_owned(),
+                file: g.file.clone(),
+            })?;
+        guide.push(GuideFile {
+            file: g.file.clone(),
+            title: g.title.clone(),
+            kind: if g.is_recipe() {
+                GuideKind::Recipe
+            } else {
+                GuideKind::Reference
+            },
+            sha256,
+            size,
+        });
+    }
+    Ok(AgentEntry {
+        summary: ag.summary.clone(),
+        instructions: ag.instructions.clone(),
+        guide,
+        env: ag.env.clone(),
+        stubs: ag.stubs.clone(),
+        default_blocklist: ag.default_blocklist.clone(),
+    })
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppEntry {
     pub app_id: String,
@@ -115,7 +211,7 @@ pub struct AppEntry {
     pub token: Option<Token>,
     pub tools: Option<Tools>,
     pub approvals: BTreeMap<String, Approval>,
-    pub agent: Option<Agent>,
+    pub agent: Option<AgentEntry>,
     pub database: Option<Database>,
     /// (D-251) the gateway LDAP lane; absent in older snapshots.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -229,6 +325,10 @@ pub enum CompileError {
     UnresolvedConflicts(Vec<ConflictGroup>),
     #[error("serialization failed: {0}")]
     Serialize(String),
+    /// (P5-GUIDE-1) A guide entry whose file digest was not supplied: a package that passed
+    /// validation always has its files.
+    #[error("app `{app_id}` lists guide file `{file}` that the package archive does not carry")]
+    GuideFileMissing { app_id: String, file: String },
 }
 
 fn sorted(v: &[String]) -> Vec<String> {
@@ -239,11 +339,31 @@ fn sorted(v: &[String]) -> Vec<String> {
         .collect()
 }
 
+/// [`compile_with_guides`] for packages without agent guide files (what tests and the gateway
+/// fixtures use).
 pub fn compile(
     packages: &[ActivePackage],
     decisions: &[Decision],
     reserved_hosts: &[String],
     contract: u32,
+) -> Result<CompiledSnapshot, CompileError> {
+    compile_with_guides(
+        packages,
+        decisions,
+        reserved_hosts,
+        contract,
+        &BTreeMap::new(),
+    )
+}
+
+/// Compile the snapshot; `guides` maps a package id to the digests of its guide files
+/// ([`guide_digests`]), computed from the stored archive like `hooks_digest` (C-641).
+pub fn compile_with_guides(
+    packages: &[ActivePackage],
+    decisions: &[Decision],
+    reserved_hosts: &[String],
+    contract: u32,
+    guides: &BTreeMap<String, GuideDigests>,
 ) -> Result<CompiledSnapshot, CompileError> {
     let mut seen = BTreeSet::new();
     let mut app_ids = BTreeSet::new();
@@ -362,7 +482,11 @@ pub fn compile(
                 token: a.token.clone(),
                 tools: a.tools.clone(),
                 approvals: a.approvals.clone(),
-                agent: a.agent.clone(),
+                agent: a
+                    .agent
+                    .as_ref()
+                    .map(|ag| agent_entry(&app_id, ag, guides.get(pid)))
+                    .transpose()?,
                 database: a.database.clone(),
                 ldap: a.ldap.clone(),
                 grants: a.grants,

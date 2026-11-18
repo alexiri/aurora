@@ -18,6 +18,7 @@ clap = { workspace = true }
 aurora-client = { workspace = true }
 aurora-crypto = { workspace = true }
 # the embedded hook-host runtime of `aurora plugin test` (docs/09 §12)
+aurora-core = { workspace = true }
 aurora-hookhost = { workspace = true }
 aurora-policy = { workspace = true }
 aurora-registry = { workspace = true }

@@ -93,6 +93,8 @@ open_vocab! {
     pub enum HomeSyncKind {
         Skills = "skills", Memory = "memory", RenderInputs = "render_inputs",
         Tools = "tools",
+        // (phase 5, P5-GUIDE-2, C-643) The app folders `.aurora/apps/<app_id>/<file>`.
+        Apps = "apps",
         // (phase 4, P4-PRV-1, D-144) The active preview shares; held in supervisor memory only.
         Previews = "previews",
         Manifest = "manifest", Final = "final",

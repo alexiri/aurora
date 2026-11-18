@@ -245,7 +245,7 @@ async fn tools_absent_without_presence() {
     let names = |c: Vec<aurora_protocol::tools::ToolDescriptor>| -> Vec<String> {
         c.into_iter().map(|t| t.name).collect()
     };
-    let before = names(catalogue(w.h.pool(), w.agent).await.unwrap());
+    let before = names(catalogue(&w.h.state, w.agent).await.unwrap());
     assert!(
         NAMES.iter().all(|n| !before.iter().any(|b| b == n)),
         "{before:?}"
@@ -255,7 +255,7 @@ async fn tools_absent_without_presence() {
         .await;
     assert_eq!(v["error"]["code"], "tool_unavailable", "{v}");
     w.presence(w.integ).await;
-    let after = names(catalogue(w.h.pool(), w.agent).await.unwrap());
+    let after = names(catalogue(&w.h.state, w.agent).await.unwrap());
     assert!(
         NAMES.iter().all(|n| after.iter().any(|b| b == n)),
         "{after:?}"
@@ -266,7 +266,7 @@ async fn tools_absent_without_presence() {
         .await
         .unwrap();
     assert!(
-        !names(catalogue(w.h.pool(), w.agent).await.unwrap()).contains(&"send_message".to_owned())
+        !names(catalogue(&w.h.state, w.agent).await.unwrap()).contains(&"send_message".to_owned())
     );
 }
 
