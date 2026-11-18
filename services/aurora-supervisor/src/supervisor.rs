@@ -204,6 +204,10 @@ impl Supervisor {
                 skills_dir: caps.skills_dir.clone(),
                 instruction_files: caps.instruction_files.clone(),
                 pg: cfg.pg,
+                // (C-653) A supervisor-local fact, computed once at start: the wrapper is there.
+                agent_cli: crate::agent_cli::agent_cli_available(std::path::Path::new(
+                    crate::agent_cli::WRAPPER,
+                )),
             }),
             harvester: Harvester::new(&cfg.working_dir),
         }));

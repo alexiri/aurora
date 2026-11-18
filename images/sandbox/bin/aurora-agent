@@ -1,0 +1,6 @@
+#!/bin/sh
+# `aurora-agent` (P5-GUIDE-6, docs/24 §10a, C-653): search, describe and call the operations of the
+# connected apps. It is the `agent` subcommand of the supervisor binary; it holds no credential and
+# sends only through the proxy environment of the shell that runs it. Its presence and exec bit are
+# what the supervisor calls `agent_cli` (the instruction file mentions the command only then).
+exec /usr/local/bin/aurora-supervisor agent "$@"

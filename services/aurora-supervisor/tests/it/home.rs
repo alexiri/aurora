@@ -21,6 +21,7 @@ fn projector(root: &Path) -> HomeProjector {
         skills_dir: Some(".claude/skills".into()),
         instruction_files: vec!["AGENTS.md".into()],
         pg: None,
+        agent_cli: false,
     })
 }
 
@@ -89,6 +90,7 @@ fn codex_projection_renders_agents_md_and_its_own_skills_dir_only() {
         skills_dir: caps.skills_dir.clone(),
         instruction_files: caps.instruction_files.clone(),
         pg: None,
+        agent_cli: false,
     });
     let skill = ".codex/skills/aurora/a/SKILL.md";
     let system = d.path().join(".codex/skills/.system/seeded/SKILL.md");
@@ -487,6 +489,7 @@ fn databases_in_render_inputs_become_libpq_files_and_disappear_with_the_grant() 
         skills_dir: Some(".claude/skills".into()),
         instruction_files: vec!["AGENTS.md".into()],
         pg: Some(3130),
+        agent_cli: false,
     });
     let conn = Uuid::now_v7();
     let with = |g: u64, dbs: Value| -> Vec<HomeSync> {
@@ -549,6 +552,7 @@ fn links_in_render_inputs_become_links_json_and_disappear_with_the_last_link() {
         instruction_files: vec!["AGENTS.md".into()],
         // No database relay: the links file does not depend on it.
         pg: None,
+        agent_cli: false,
     });
     let (a, b) = (Uuid::now_v7(), Uuid::now_v7());
     let with = |g: u64, links: Value| -> Vec<HomeSync> {
@@ -851,4 +855,45 @@ fn unknown_part_kinds_and_render_input_fields_are_skipped() {
     apply_all(&mut p2, &with_unknown);
     p2.commit(1).unwrap();
     assert_eq!(fs::read(d2.path().join("AGENTS.md")).unwrap(), want);
+}
+
+/// (P5-GUIDE-6, C-653) The `aurora-agent` sentences are rendered only when the supervisor found
+/// the wrapper (`agent_cli`); the same render inputs otherwise keep the `tools.md` sentence.
+#[test]
+fn the_aurora_agent_sentences_follow_the_agent_cli_flag() {
+    let render = |agent_cli: bool| -> String {
+        let d = TempDir::new();
+        let mut p = HomeProjector::new(HomeConfig {
+            root: d.path().to_path_buf(),
+            skills_dir: Some(".claude/skills".into()),
+            instruction_files: vec!["AGENTS.md".into()],
+            pg: None,
+            agent_cli,
+        });
+        let mut parts = generation(1, &[], &[]);
+        parts[2] = part(
+            1,
+            2,
+            6,
+            "render_inputs",
+            json!([
+                {"agent": {"name": "Ada", "handle": "ada", "workspace": "Acme"}},
+                {"apps": [{"name": "Demo", "accounts": [], "docs_links": [], "app_id": "demo",
+                           "summary": "Things.", "guide_path": ".aurora/apps/demo/guide.md"}]}
+            ]),
+        );
+        apply_all(&mut p, &parts);
+        p.commit(1).unwrap();
+        fs::read_to_string(d.path().join("AGENTS.md")).unwrap()
+    };
+    let with = render(true);
+    assert!(with.contains("`aurora-agent search <words>`"), "{with}");
+    assert!(
+        with.contains("`aurora-agent call` does both for you"),
+        "{with}"
+    );
+    assert!(!with.contains("`tools.md` lists every operation"));
+    let without = render(false);
+    assert!(!without.contains("aurora-agent"), "{without}");
+    assert!(without.contains("`tools.md` lists every operation"));
 }

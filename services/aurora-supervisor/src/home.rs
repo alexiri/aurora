@@ -26,7 +26,7 @@ use serde::Deserialize;
 use serde_json::{Map, Value};
 
 use crate::harvest::{INDEX_FILE, MEMORY_DIR, seal, verify};
-use crate::instructions::{RenderInputs, render};
+use crate::instructions::{RenderInputs, render_with};
 use crate::pg::PgDatabase;
 
 /// The `databases` of an installed `render_inputs.json`.
@@ -66,6 +66,9 @@ pub struct HomeConfig {
     /// Loopback port of the database relay; when set, the `databases` of the render inputs become
     /// a libpq service file under `.aurora/pg` (`crate::pg`, P2-DBL-2).
     pub pg: Option<u16>,
+    /// (P5-GUIDE-6, C-653) The sandbox has the `aurora-agent` wrapper: the instruction file then
+    /// carries its sentences. Decided by the supervisor at start, never by the API.
+    pub agent_cli: bool,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -501,7 +504,7 @@ impl HomeProjector {
         if let Err(e) = crate::links::write(&self.cfg.root, &crate::links::installed_links(&raw)) {
             tracing::warn!(error = %e, "links.json not written");
         }
-        let text = render(&inputs);
+        let text = render_with(&inputs, self.cfg.agent_cli);
         for name in &self.cfg.instruction_files {
             let Some(rel) = clean_rel(name) else {
                 tracing::warn!("instruction file name refused");

@@ -41,6 +41,9 @@ enum Command {
         #[arg(long, default_value = aurora_supervisor::tools::DEFAULT_SOCKET)]
         socket: PathBuf,
     },
+    /// `aurora-agent` (P5-GUIDE-6, `24 §10a`): list, search, describe and call the operations of
+    /// the connected apps. Installed in the sandbox as `/opt/aurora/bin/aurora-agent`.
+    Agent(aurora_supervisor::agent_cli::AgentArgs),
     /// Hidden: the PTY bootstrap (`12 §Terminal`, FIX-054). The supervisor re-executes
     /// itself to give a terminal shell a controlling terminal without `unsafe` (setsid +
     /// TIOCSCTTY, then exec the shell); not an operator command.
@@ -78,6 +81,7 @@ async fn main() -> ExitCode {
             .await;
             ExitCode::SUCCESS
         }
+        Command::Agent(args) => aurora_supervisor::agent_cli::run(args).await,
         Command::PtyExec {
             notice,
             shell,

@@ -7,6 +7,7 @@
 #![forbid(unsafe_code)]
 
 pub mod adapters;
+pub mod agent_cli;
 pub mod boot;
 pub mod channel;
 pub mod exec;
