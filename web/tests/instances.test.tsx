@@ -5,6 +5,7 @@ import { ConnectDialog } from "@/components/apps/connect-dialog";
 import { InstancesView } from "@/components/apps/instances-view";
 import { OAuthClientsPanel } from "@/components/apps/oauth-clients-panel";
 import { wrap } from "./support/render";
+import { json } from "./support/api";
 
 // The connect flow is a dialog now (D-272).
 const ConnectView = () => <ConnectDialog appId="desk" workspaceId="w1" orgId="o1" onClose={() => {}} />;
@@ -13,9 +14,6 @@ vi.mock("next/navigation", () => ({
   useParams: () => ({ org: "acme", ws: "main", app: "desk" }),
   useSearchParams: () => new URLSearchParams(),
 }));
-
-const json = (status: number, body: unknown) =>
-  new Response(body === null ? null : JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
 const APP = {
   app_id: "desk",

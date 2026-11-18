@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+import { json } from "./support/api";
 
 vi.mock("next/navigation", () => ({
   usePathname: () => "/admin/people",
@@ -10,9 +11,6 @@ vi.mock("next/navigation", () => ({
 }));
 
 import { AdminPeoplePage } from "@/components/admin/admin-topics";
-
-const json = (status: number, body: unknown) =>
-  new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
 const schema = (kind: string, extra: Record<string, unknown> = {}) => ({ kind, min: null, max: null, max_len: null, options: null, item_kind: null, ...extra });
 const base = { locked: false, helm_key: "config.x", list: null, id_field: null, entries: null, secret: null, default: null };

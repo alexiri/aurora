@@ -4,12 +4,11 @@ import { describe, expect, it, vi } from "vitest";
 
 import { Composer } from "@/components/chat/composer";
 import type { TranscriptState } from "@/lib/chat/transcript";
+import { json } from "./support/api";
 
 // P3-018 (RFE-018): the composer sends one `Idempotency-Key` per message; a retry of the same message
 // reuses it (so a lost response cannot duplicate the turn) and a different message never does.
 
-const json = (status: number, body: unknown) =>
-  new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 const state = { events: [], deltas: {}, activity: {}, purged: {}, lastSeq: 0 } as unknown as TranscriptState;
 
 interface Sent { key: string | null; body: { text: string } }

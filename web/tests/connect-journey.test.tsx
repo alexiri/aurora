@@ -18,6 +18,7 @@ import {
 } from "@/components/apps/connect-journey/logic";
 import { ApiError } from "@/lib/api/client";
 import type { ConnectMethod } from "@/lib/api/apps";
+import { json } from "./support/api";
 
 // P5-UX-3 (C-914, `14 §3`): the connect journey: its steps and skips, the Done sentences, the payload of each access
 // choice, blocked tiles and methods, the grant_failed retry and the deep-link entry (an app given, an agent fixed).
@@ -137,9 +138,6 @@ describe("words and payloads", () => {
 });
 
 // ---- the component ----
-
-const json = (status: number, body: unknown) =>
-  new Response(body === null ? null : JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
 class FakeChannel {
   static open = new Set<FakeChannel>();

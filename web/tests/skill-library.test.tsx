@@ -6,6 +6,7 @@ import { SkillsEditor } from "@/components/skills/skills-view";
 import { diffLines } from "@/lib/api/skill-libraries";
 import type { Skill } from "@/lib/api/skills";
 import { wrap } from "./support/render";
+import { json } from "./support/api";
 
 // P4-GSL (D-148; docs/14 Skill libraries, Add from library, update review; docs/18 Dashboard): the
 // libraries page and connect dialog, Add from library, library badges and read-only skills, detach and
@@ -16,8 +17,6 @@ vi.mock("next/navigation", () => ({
   useSearchParams: () => new URLSearchParams(),
 }));
 
-const json = (status: number, body: unknown) =>
-  new Response(body === null ? null : JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 type Handler = (req: Request) => Response | Promise<Response>;
 function mockFetch(routes: Record<string, Handler>) {
   const fn = vi.fn(async (input: Request | string | URL) => {

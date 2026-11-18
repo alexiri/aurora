@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { PreviewsTab, ShareDialog } from "@/components/agents/previews-tab";
 import { wrap } from "./support/render";
+import { json } from "./support/api";
 
 // P4-PRV-1 dashboard tests (docs/18 §Port previews): the tab renders the shares table, the add
 // dialog maps server errors to field messages, and a paused share offers Resume. The tab itself
@@ -10,12 +11,6 @@ import { wrap } from "./support/render";
 // is hosted, so the "absent" cases are covered by that condition.
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn(), replace: vi.fn() }) }));
-
-const json = (status: number, body: unknown) =>
-  new Response(body === null ? null : JSON.stringify(body), {
-    status,
-    headers: { "content-type": "application/json" },
-  });
 
 function mockFetch(routes: Record<string, (req: Request, url: URL) => Response>) {
   const fn = vi.fn(async (input: Request | string | URL) => {

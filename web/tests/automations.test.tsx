@@ -5,12 +5,7 @@ import { OwnerLabel, ReassignPanel } from "@/components/automations/owner-contro
 import { MembersView } from "@/components/org/members-view";
 import { SchedulesTab } from "@/components/schedules/schedules-tab";
 import { wrap } from "./support/render";
-
-const json = (status: number, body: unknown) =>
-  new Response(body === null ? null : JSON.stringify(body), {
-    status,
-    headers: { "content-type": "application/json" },
-  });
+import { json } from "./support/api";
 
 type Call = { method: string; path: string; search: string; body: unknown };
 

@@ -12,9 +12,7 @@ import type { TranscriptEvent } from "@/lib/api/conversations";
 import { effectiveMax, fmtSecs, limitsHint, type ApprovalLimits } from "@/lib/approval-limits";
 import { buildRows } from "@/lib/chat/layout";
 import { applyEvents, emptyTranscript } from "@/lib/chat/transcript";
-
-const json = (status: number, body: unknown) =>
-  new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+import { json } from "./support/api";
 
 const LIMITS: ApprovalLimits = {
   timeout_secs: 300,

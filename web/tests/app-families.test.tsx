@@ -7,6 +7,7 @@ import { AppsTab } from "@/components/apps/apps-tab";
 import { ConnectDialog } from "@/components/apps/connect-dialog";
 import { appDisplayName, productKey, productName } from "@/lib/api/app-name";
 import { wrap } from "./support/render";
+import { json } from "./support/api";
 
 // FIX-135 (D-242, C-744): one catalogue entry per product. Apps of a family are one tile, the connect window asks where the
 // product runs, and every list names an app "<family> · <variant>".
@@ -16,9 +17,6 @@ vi.mock("next/navigation", () => ({
   useSearchParams: () => new URLSearchParams(),
   useRouter: () => ({ replace: vi.fn(), push: vi.fn() }),
 }));
-
-const json = (status: number, body: unknown) =>
-  new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
 const fam = (variant_label: string, instance_bound: boolean) => ({ id: "github", name: "GitHub", variant_label, instance_bound });
 const summary = (app_id: string, name: string, family: ReturnType<typeof fam> | null, n: number) => ({

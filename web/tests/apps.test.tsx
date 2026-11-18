@@ -15,11 +15,9 @@ import {
   type FormField,
 } from "@/lib/api/apps";
 import { wrap } from "./support/render";
+import { json } from "./support/api";
 
 vi.mock("next/navigation", () => ({ useParams: () => ({ org: "o1", ws: "w1" }), useSearchParams: () => new URLSearchParams() }));
-
-const json = (status: number, body: unknown) =>
-  new Response(body === null ? null : JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
 const f = (over: Partial<FormField>): FormField => ({
   name: "x", label: "X", type: "text", store: "credentials", required: false, ...over,

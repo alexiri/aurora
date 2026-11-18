@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+import { json } from "./support/api";
 
 vi.mock("next/navigation", () => ({
   usePathname: () => "/admin/agents",
@@ -15,8 +16,6 @@ import { SettingsSectionForm } from "@/components/admin/settings/settings-sectio
 import type { SettingsSection } from "@/lib/api/settings";
 import { durationWords, valueWords } from "@/lib/settings-words";
 
-const json = (status: number, body: unknown) =>
-  new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 function mockFetch(routes: Record<string, () => Response>) {
   vi.stubGlobal(
     "fetch",

@@ -5,14 +5,9 @@ import { AgentsList } from "@/components/agents-list";
 import { InstructionsTab } from "@/components/agents/instructions-tab";
 import type { Agent } from "@/lib/api/queries";
 import { wrap } from "./support/render";
+import { json } from "./support/api";
 
 vi.mock("next/link", () => ({ default: ({ children }: { children: React.ReactNode }) => <a>{children}</a> }));
-
-const json = (status: number, body: unknown) =>
-  new Response(body === null ? null : JSON.stringify(body), {
-    status,
-    headers: { "content-type": "application/json" },
-  });
 
 const base = {
   id: "a1", org_id: "o1", workspace_id: "w1", handle: "bot", name: "Bot", kind: "byo",

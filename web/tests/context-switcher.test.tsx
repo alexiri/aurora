@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { AppShell } from "@/components/app-shell";
 import { wrap } from "./support/render";
+import { json } from "./support/api";
 
 // FIX-027: the sidebar has two stacked selectors — Organization, then (only with an active
 // organization) Workspace. "All organizations" (instance admins) is the one path to the admin
@@ -19,9 +20,6 @@ vi.mock("next/navigation", () => ({
   usePathname: () => nav.pathname,
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
 }));
-
-const json = (status: number, body: unknown) =>
-  new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
 const now = "2026-11-10T10:00:00Z";
 const org = { id: "o1", slug: "acme", name: "Acme Labs", my_role: "owner", app_posture: "open", external_id: "x", settings: {}, created_at: now };

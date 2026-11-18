@@ -7,6 +7,7 @@ import { SshLine } from "@/components/admin/ssh-line";
 import { SshPage } from "@/components/agents/ssh-page";
 import { ComputerPart } from "@/components/agents/status-rail/parts";
 import { wrap } from "./support/render";
+import { json } from "./support/api";
 
 // P4-SSH-2 dashboard tests (docs/18 §SSH access, docs/14, C-793, C-795): the open-sessions lists on Account › SSH keys and
 // on the agent's SSH page (with the person for someone who can own the agent) and the disconnect confirmation, the Admin ›
@@ -20,9 +21,6 @@ vi.mock("next/link", () => ({
     </a>
   ),
 }));
-
-const json = (status: number, body: unknown) =>
-  new Response(body === null ? null : JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
 type Handler = (req: Request, url: URL) => Response | Promise<Response>;
 function mockFetch(routes: Record<string, Handler>) {

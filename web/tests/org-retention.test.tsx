@@ -3,14 +3,13 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { OrgRetentionForm } from "@/components/org/retention-form";
+import { json } from "./support/api";
 
 interface Call {
   method: string;
   path: string;
   body: unknown;
 }
-const json = (status: number, body: unknown) =>
-  new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
 function mock(routes: Record<string, () => Response>) {
   const calls: Call[] = [];

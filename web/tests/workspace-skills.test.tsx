@@ -5,14 +5,13 @@ import { EffectiveSkillsView, SkillsEditor } from "@/components/skills/skills-vi
 import { WorkspaceSkills } from "@/components/skills/workspace-skills";
 import type { Skill } from "@/lib/api/skills";
 import { wrap } from "./support/render";
+import { json } from "./support/api";
 
 vi.mock("next/navigation", () => ({
   useParams: () => ({ org: "acme", ws: "main" }),
   useSearchParams: () => new URLSearchParams(),
 }));
 
-const json = (status: number, body: unknown) =>
-  new Response(body === null ? null : JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 type Handler = (req: Request) => Response | Promise<Response>;
 function mockFetch(routes: Record<string, Handler>) {
   const fn = vi.fn(async (input: Request | string | URL) => {

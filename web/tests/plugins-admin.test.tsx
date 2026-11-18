@@ -6,12 +6,7 @@ import { PluginReview } from "@/components/admin/plugin-detail-view";
 import { UploadForm } from "@/components/admin/plugins-view";
 import type { HostClaimConflict, PluginPackage } from "@/lib/api/plugins";
 import { wrap } from "./support/render";
-
-const json = (status: number, body: unknown) =>
-  new Response(body === null ? null : JSON.stringify(body), {
-    status,
-    headers: { "content-type": "application/json" },
-  });
+import { json } from "./support/api";
 
 interface Call {
   method: string;

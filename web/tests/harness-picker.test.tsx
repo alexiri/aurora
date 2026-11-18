@@ -3,14 +3,9 @@ import { describe, expect, it, vi } from "vitest";
 
 import { InstructionsTab } from "@/components/agents/instructions-tab";
 import { wrap } from "./support/render";
+import { json } from "./support/api";
 
 // P4-HAR (D-122, docs/14 §Instructions): the harness picker.
-
-const json = (status: number, body: unknown) =>
-  new Response(body === null ? null : JSON.stringify(body), {
-    status,
-    headers: { "content-type": "application/json" },
-  });
 
 function mockFetch(routes: Record<string, (req: Request) => Response | Promise<Response>>) {
   const fn = vi.fn(async (input: Request | string | URL) => {

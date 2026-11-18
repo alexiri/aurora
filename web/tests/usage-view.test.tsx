@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { json } from "./support/api";
 
 vi.mock("next/navigation", () => ({
   usePathname: () => "/x",
@@ -15,7 +16,6 @@ import { presetRange } from "@/lib/usage-format";
 
 // P5-USAGE-2 (C-1000, C-1003, C-1004, C-1006; 14 §Usage): the one view in its three levels.
 
-const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 const z = { turns: 0, turn_seconds: 0, awake_seconds: 0, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0 };
 const c = (o: Partial<typeof z>) => ({ ...z, ...o });
 

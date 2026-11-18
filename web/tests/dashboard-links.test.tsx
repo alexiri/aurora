@@ -5,6 +5,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { json } from "./support/api";
 
 const router = vi.hoisted(() => ({ replace: vi.fn(), push: vi.fn() }));
 const params = vi.hoisted(() => ({ value: { org: "acme", ws: "ops", handle: "a1" } as Record<string, string> }));
@@ -26,8 +27,6 @@ import { AccountsList } from "@/components/accounts/accounts-list";
 import { AGENT_PAGE_IDS } from "@/components/agents/sections";
 import { legacyTarget } from "@/lib/legacy-routes";
 
-const json = (status: number, body: unknown) =>
-  new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 type Handler = (req: Request) => Response | Promise<Response>;
 function mockFetch(routes: Record<string, Handler>) {
   vi.stubGlobal(

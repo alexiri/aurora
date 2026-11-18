@@ -7,8 +7,7 @@ import { describe, expect, it, vi } from "vitest";
 import { ApprovalCard } from "@/components/chat/approval-card";
 import type { TranscriptEvent } from "@/lib/api/conversations";
 import { applyEvents, emptyTranscript } from "@/lib/chat/transcript";
-
-const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+import { json } from "./support/api";
 
 const ev = (seq: number, type: string, payload: Record<string, unknown>): TranscriptEvent => ({ seq, type, ts: "2026-01-01T00:00:00Z", payload });
 

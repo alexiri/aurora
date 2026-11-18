@@ -6,12 +6,7 @@ import { LlmKeyForm } from "@/components/credentials/llm-form";
 import { ERROR_MESSAGES } from "@/lib/api/errors";
 import { buildGenericCreate, buildRecipe, EMPTY_RECIPE_FIELDS, type GenericFormState } from "@/lib/api/secrets";
 import { wrap } from "./support/render";
-
-const json = (status: number, body: unknown) =>
-  new Response(body === null ? null : JSON.stringify(body), {
-    status,
-    headers: { "content-type": "application/json" },
-  });
+import { json } from "./support/api";
 
 function mockFetch(routes: Record<string, (req: Request) => Response | Promise<Response>>) {
   const fn = vi.fn(async (input: Request | string | URL) => {

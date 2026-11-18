@@ -4,11 +4,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { InstructionsTab } from "@/components/agents/instructions-tab";
 import type { Agent } from "@/lib/api/queries";
 import { wrap } from "./support/render";
+import { json } from "./support/api";
 
 vi.mock("next/link", () => ({ default: ({ children }: { children: React.ReactNode }) => <a>{children}</a> }));
-
-const json = (status: number, body: unknown) =>
-  new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
 const agent = (over: Partial<Agent> = {}): Agent =>
   ({

@@ -10,12 +10,12 @@ import { FilesTab } from "@/components/agents/files-tab";
 import { FileViewer } from "@/components/agents/files/viewer/file-viewer";
 import { imageDataUrl, sniffImage, typeGuess } from "@/components/agents/files/viewer/image";
 import { filesTiming, type FileEntry } from "@/lib/api/files";
+import { json } from "./support/api";
 
 // P5-FILES-3 (docs/14 §Files item 6, C-905, SEC-126): the viewer against a mocked API — the dirty marker and guard, Save
 // with If-Match, the conflict dialog's three actions, CRLF kept, New file with If-None-Match: *, the image magic-byte
 // check, `file_not_editable` in words, and read-only mode. The editor is the real CodeMirror (driven through its view).
 
-const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 const err = (status: number, code: string, details?: unknown) => json(status, { error: { code, message: "server words", details } });
 
 const PNG = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13]);

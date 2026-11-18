@@ -4,9 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { RenamesNotice } from "@/components/onboarding/renames-notice";
 import { movedRows, RENAMES_NOTICE, showWhatMoved } from "@/lib/moved";
-
-const json = (status: number, body: unknown) =>
-  new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+import { json } from "./support/api";
 
 const calls: { key: string; body?: unknown }[] = [];
 function mockFetch(routes: Record<string, (body?: unknown) => Response>) {

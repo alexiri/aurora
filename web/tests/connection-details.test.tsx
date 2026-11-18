@@ -3,11 +3,9 @@ import { describe, expect, it, vi } from "vitest";
 
 import { ConnectionDetails } from "@/components/accounts/connection-details";
 import { wrap } from "./support/render";
+import { json } from "./support/api";
 
 vi.mock("next/navigation", () => ({ useParams: () => ({ org: "o1", ws: "w1" }), useSearchParams: () => new URLSearchParams() }));
-
-const json = (status: number, body: unknown) =>
-  new Response(body === null ? null : JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
 // (P5-UX-4) What the old Connections list showed per connection lives under an account row's Technical details.
 describe("connection technical details", () => {

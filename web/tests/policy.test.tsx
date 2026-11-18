@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { wrap } from "./support/render";
+import { type Handler, json, mockFetch } from "./support/api";
 
 vi.mock("next/navigation", () => ({ useSearchParams: () => new URLSearchParams(), useParams: () => ({ org: "acme", ws: "ops" }) }));
 
@@ -18,21 +19,6 @@ import {
   type RuleInput,
   type Simulation,
 } from "@/lib/api/policy";
-
-const json = (status: number, body: unknown) =>
-  new Response(body === null ? null : JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
-
-type Handler = (req: Request) => Response | Promise<Response>;
-function mockFetch(routes: Record<string, Handler>) {
-  const fn = vi.fn(async (input: Request | string | URL) => {
-    const req = input as Request;
-    const url = new URL(req.url, "http://localhost");
-    const h = routes[`${req.method} ${url.pathname}`];
-    return h ? h(req) : json(404, { error: { code: "not_found", message: "nf" } });
-  });
-  vi.stubGlobal("fetch", fn);
-  return fn;
-}
 
 const gen = (over: Partial<PolicyGeneration> = {}): PolicyGeneration => ({
   id: "g1", number: 1, status: "draft", default_action: "none", uncredentialed_default: "none",

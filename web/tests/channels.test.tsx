@@ -1,6 +1,7 @@
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { wrap } from "./support/render";
+import { err, json } from "./support/api";
 
 let search = "token=aui_secret";
 vi.mock("next/navigation", () => ({
@@ -16,9 +17,6 @@ import { ChannelsView } from "@/components/channels/channels-view";
 import { LinkConfirmView } from "@/components/channels/link-confirm-view";
 import { ConnectorsAdminView } from "@/components/connectors/connectors-admin-view";
 
-const json = (status: number, body: unknown) =>
-  new Response(body === null ? null : JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
-const err = (status: number, code: string, message = code) => json(status, { error: { code, message } });
 type Handler = (req: Request, body: unknown) => Response | Promise<Response>;
 interface Rec { key: string; body: unknown; url: string }
 function mockFetch(routes: Record<string, Handler>) {

@@ -7,9 +7,8 @@ import { SkillsEditor } from "@/components/skills/skills-view";
 import { canRedact, meter, type Memory, type MemoryRevision } from "@/lib/api/memory";
 import { buildTree, validateSkillName, validateSkillPath } from "@/lib/api/skills";
 import { wrap } from "./support/render";
+import { json } from "./support/api";
 
-const json = (status: number, body: unknown) =>
-  new Response(body === null ? null : JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 type Handler = (req: Request) => Response | Promise<Response>;
 function mockFetch(routes: Record<string, Handler>) {
   const fn = vi.fn(async (input: Request | string | URL) => {

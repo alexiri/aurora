@@ -1,6 +1,7 @@
 import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { wrap } from "./support/render";
+import { json } from "./support/api";
 
 vi.mock("next/navigation", () => ({
   useSearchParams: () => new URLSearchParams(""),
@@ -10,9 +11,6 @@ vi.mock("next/navigation", () => ({
 }));
 
 import { AgentChannelsTab } from "@/components/channels/agent-channels-tab";
-
-const json = (status: number, body: unknown) =>
-  new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
 function mockFetch(patch: (body: unknown) => Response) {
   const calls: { key: string; body: unknown }[] = [];

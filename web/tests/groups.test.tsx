@@ -6,14 +6,9 @@ import { GroupsView } from "@/components/groups/groups-view";
 import { RuleEditorDialog } from "@/components/policy/rule-editor";
 import { AccessTab } from "@/components/settings/access-tab";
 import { wrap } from "./support/render";
+import { json } from "./support/api";
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn(), replace: vi.fn() }) }));
-
-const json = (status: number, body: unknown) =>
-  new Response(body === null ? null : JSON.stringify(body), {
-    status,
-    headers: { "content-type": "application/json" },
-  });
 
 const ORG = "00000000-0000-4000-8000-000000000001";
 const WS = "00000000-0000-4000-8000-000000000002";

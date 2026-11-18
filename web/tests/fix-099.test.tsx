@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider, useMutation } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { json } from "./support/api";
 
 vi.mock("next/navigation", () => ({
   useParams: () => ({ org: "acme", ws: "ops", handle: "scout" }),
@@ -23,8 +24,6 @@ import { useApprovalsStream } from "@/lib/api/approvals";
 
 // FIX-099 (REVIEW-5 WEBA/WEBX/WEBC): dashboard defects of the agent page, chat and onboarding.
 
-const json = (status: number, body: unknown) =>
-  new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 type Handler = (req: Request) => Response | Promise<Response>;
 function mockFetch(routes: Record<string, Handler>) {
   const calls: Request[] = [];

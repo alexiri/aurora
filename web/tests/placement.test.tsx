@@ -4,9 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { PlacementView } from "@/components/admin/placement-view";
 import { ERROR_MESSAGES } from "@/lib/api/errors";
 import { wrap } from "./support/render";
-
-const json = (status: number, body: unknown) =>
-  new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+import { json } from "./support/api";
 
 const ORG = "00000000-0000-4000-8000-000000000001";
 const KEY = "00000000-0000-4000-8000-000000000009";

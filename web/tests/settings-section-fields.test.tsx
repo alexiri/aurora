@@ -1,6 +1,7 @@
 import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { wrap } from "./support/render";
+import { json } from "./support/api";
 
 vi.mock("next/navigation", () => ({
   usePathname: () => "/admin/internet-access",
@@ -15,8 +16,6 @@ import { SettingsIndexView, groupSections } from "@/components/admin/settings/se
 import { adminRoutes } from "@/lib/routes";
 import { withFields } from "./support/settings-fields";
 
-const json = (status: number, body: unknown) =>
-  new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 type Handler = (req: Request) => Response | Promise<Response>;
 function mockFetch(routes: Record<string, Handler>) {
   const fn = vi.fn(async (input: Request | string | URL) => {

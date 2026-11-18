@@ -10,6 +10,7 @@ import { GiveAccessPanel, type GrantSubject } from "@/components/credentials/giv
 import { GrantForm } from "@/components/grants/grant-form";
 import { ScopeGroups } from "@/components/grants/scope-groups";
 import { initialGrantValue, splitByScopes, type GrantValue, type Tool } from "@/lib/grant-editor";
+import { json } from "./support/api";
 
 afterEach(cleanup);
 
@@ -181,7 +182,6 @@ describe("ScopeGroups", () => {
 });
 
 // ---- Give agents access ----------------------------------------------------------------------------------------------
-const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 let calls: { key: string; body: unknown }[];
 let routes: Record<string, (body: unknown) => Response>;
 beforeEach(() => {

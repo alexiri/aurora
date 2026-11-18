@@ -4,9 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ApprovalsView } from "@/components/approvals/approvals-view";
 import { applyApprovalEvent } from "@/lib/api/approvals";
-
-const json = (status: number, body: unknown) =>
-  new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+import { json } from "./support/api";
 
 const mk = (id: string, over: Record<string, unknown> = {}) => ({
   id, org_id: "o", workspace_id: "w1", status: "pending", method: "POST", host: "api.x.com", path: "/v1",

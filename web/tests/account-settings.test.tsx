@@ -7,12 +7,7 @@ import { AccessTab } from "@/components/settings/access-tab";
 import { OneTimeKeyDialog } from "@/components/account/one-time-key-dialog";
 import type { AdminUser } from "@/lib/api/account";
 import { wrap } from "./support/render";
-
-const json = (status: number, body: unknown) =>
-  new Response(body === null ? null : JSON.stringify(body), {
-    status,
-    headers: { "content-type": "application/json" },
-  });
+import { json } from "./support/api";
 
 function mockFetch(routes: Record<string, () => Response>) {
   vi.stubGlobal(

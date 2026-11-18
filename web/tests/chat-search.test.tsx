@@ -6,10 +6,9 @@ import { ChatTab } from "@/components/agents/chat-tab";
 import { ResultRow } from "@/components/chat/search/search-results";
 import { HighlightedText } from "@/components/ui/highlighted-text";
 import { addChip, extractFilters, inTokenAtEnd, localDayStart, queryOf, tokenize, toSearchParams, type FilterChip } from "@/lib/chat/search-syntax";
+import { json } from "./support/api";
 
 // P5-CHAT-4 part B (D-229, C-727): the syntax parser, the highlight and result row, and the search box in the chat tab.
-
-const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
 afterEach(() => {
   window.history.replaceState(null, "", "/");

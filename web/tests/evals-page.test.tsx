@@ -12,9 +12,7 @@ import { emptyDraft, parseNumber, toPatchBody, validateQuestion } from "@/compon
 import { isPageAvailable } from "@/components/agents/sections";
 import type { EvalQuestion, EvalRun } from "@/lib/api/evals";
 import { wrap } from "./support/render";
-
-const json = (status: number, body: unknown) =>
-  new Response(body === null ? null : JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+import { json } from "./support/api";
 
 type Call = { method: string; path: string; body: unknown };
 

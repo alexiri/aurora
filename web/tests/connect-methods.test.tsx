@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ConnectDialog } from "@/components/apps/connect-dialog";
 import { toolsForMethod, type Tool } from "@/lib/grant-editor";
 import { wrap } from "./support/render";
+import { json } from "./support/api";
 
 // FIX-123 (D-195(a), D-214): one app per service; the ways to authenticate are connect methods, and the connect
 // window asks "How do you want to connect?" with a description and a Recommended badge for each.
@@ -19,9 +20,6 @@ function ConnectView() {
   const reconnect = new URLSearchParams(search).get("reconnect") ?? undefined;
   return <ConnectDialog appId="github" workspaceId="w1" orgId="o1" reconnect={reconnect} onClose={() => {}} />;
 }
-
-const json = (status: number, body: unknown) =>
-  new Response(body === null ? null : JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
 afterEach(() => {
   search = "";

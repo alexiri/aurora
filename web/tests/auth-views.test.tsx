@@ -1,6 +1,7 @@
 import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { wrap } from "./support/render";
+import { json } from "./support/api";
 
 let search = "";
 const replace = vi.fn();
@@ -15,12 +16,6 @@ import { CliView } from "@/components/auth/cli-view";
 import { JoinView } from "@/components/auth/join-view";
 import { LoginView } from "@/components/auth/login-view";
 import { safeNext } from "@/lib/auth/use-unauthorized-redirect";
-
-const json = (status: number, body: unknown) =>
-  new Response(body === null ? null : JSON.stringify(body), {
-    status,
-    headers: { "content-type": "application/json" },
-  });
 
 const instance = {
   version: "1",

@@ -1,6 +1,7 @@
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { wrap } from "./support/render";
+import { err, json } from "./support/api";
 
 vi.mock("next/navigation", () => ({
   useSearchParams: () => new URLSearchParams(""),
@@ -13,9 +14,6 @@ import { ChannelsView } from "@/components/channels/channels-view";
 import { dmUrl } from "@/components/channels/connected-done";
 import { ConnectorAvailableCallout } from "@/components/connectors/available-callout";
 
-const json = (status: number, body: unknown) =>
-  new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
-const err = (status: number, code: string, message = code) => json(status, { error: { code, message } });
 type Handler = (req: Request, body: unknown) => Response | Promise<Response>;
 interface Rec { key: string; body: unknown }
 function mockFetch(routes: Record<string, Handler>) {

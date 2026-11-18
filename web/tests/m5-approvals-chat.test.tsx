@@ -7,14 +7,12 @@ import { ActionApprovalCard, ApprovalsView } from "@/components/approvals/approv
 import type { TranscriptEvent } from "@/lib/api/conversations";
 import { applyEvents, emptyTranscript } from "@/lib/chat/transcript";
 import { wrap } from "./support/render";
+import { err, json } from "./support/api";
 
 vi.mock("@/lib/chat/use-transcript", () => ({
   useTranscript: () => ({ state: { events: [], deltas: {}, activity: {}, lastSeq: 0 }, loading: false, error: null, live: true }),
 }));
 
-const json = (status: number, body: unknown) =>
-  new Response(body === null ? null : JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
-const err = (status: number, code: string, message = code) => json(status, { error: { code, message } });
 type Handler = (req: Request) => Response | Promise<Response>;
 function mockFetch(routes: Record<string, Handler>) {
   const fn = vi.fn(async (input: Request | string | URL, init?: RequestInit) => {

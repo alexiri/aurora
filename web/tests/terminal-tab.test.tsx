@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { AgentPage } from "@/components/agents/agent-page";
 import { wrap } from "./support/render";
+import { json } from "./support/api";
 
 // The Terminal tab (P4-TERM, C-622): tab gating (hosted + `features.terminal` only), the
 // freeze notice, and the CSP's `'wasm-unsafe-eval'` in `script-src` (proxy.ts). The wterm
@@ -83,12 +84,6 @@ const org = {
   frozen: null,
   settings: { previews_enabled: true },
 };
-
-const json = (status: number, body: unknown) =>
-  new Response(body === null ? null : JSON.stringify(body), {
-    status,
-    headers: { "content-type": "application/json" },
-  });
 
 function mockFetch(features: { terminal: boolean }) {
   const fn = vi.fn(async (input: Request | string | URL) => {

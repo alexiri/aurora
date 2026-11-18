@@ -6,14 +6,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AccountsList } from "@/components/accounts/accounts-list";
 import { ConnectDialog } from "@/components/apps/connect-dialog";
 import { wrap } from "./support/render";
+import { json } from "./support/api";
 
 vi.mock("next/navigation", () => ({
   useParams: () => ({ org: "acme", ws: "main" }),
   useSearchParams: () => new URLSearchParams(""),
 }));
 
-const json = (status: number, body: unknown) =>
-  new Response(body === null ? null : JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 type Handler = (req: Request, body: unknown) => Response | Promise<Response>;
 let calls: { key: string; body: unknown }[];
 let routes: Record<string, Handler>;

@@ -3,9 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { OwnerlessBanner } from "@/components/admin/ownerless-banner";
 import { wrap } from "./support/render";
-
-const json = (status: number, body: unknown) =>
-  new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+import { json } from "./support/api";
 
 function mockOverview(body: unknown) {
   vi.stubGlobal(

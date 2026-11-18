@@ -13,9 +13,7 @@ import {
 } from "@/components/credentials/llm-key-modes";
 import { ApiError } from "@/lib/api/client";
 import { wrap } from "./support/render";
-
-const json = (status: number, body: unknown) =>
-  new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+import { json } from "./support/api";
 
 type Handler = (req: Request) => Response | Promise<Response>;
 function mockFetch(routes: Record<string, Handler>) {

@@ -5,14 +5,9 @@ import { ConnectTab } from "@/components/agents/connect-tab";
 import { CreateAgentDialog } from "@/components/agents/create-agent-dialog";
 import { WorkspaceNav } from "@/components/app-shell";
 import { wrap } from "./support/render";
+import { json } from "./support/api";
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ replace: vi.fn() }) }));
-
-const json = (status: number, body: unknown) =>
-  new Response(body === null ? null : JSON.stringify(body), {
-    status,
-    headers: { "content-type": "application/json" },
-  });
 
 function mockFetch(routes: Record<string, () => Response>) {
   const fn = vi.fn(async (input: Request | string | URL) => {

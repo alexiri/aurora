@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ChatPane, ChatTab } from "@/components/agents/chat-tab";
 import { wrap } from "./support/render";
+import { json } from "./support/api";
 
 // D-102 / P2-UI-5: the messaging layout. Behaviours that existed before (RFE-009/010/012/015, follow-ups, Stop,
 // the live line, door chips, `no_model_key`) are covered here against the new markup; the pure grouping,
@@ -24,8 +25,6 @@ vi.mock("@/lib/chat/use-transcript", () => ({
   }),
 }));
 
-const json = (status: number, body: unknown) =>
-  new Response(body === null ? null : JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 const conv = (id: string, kind: string, over: Record<string, unknown> = {}) => ({
   id, agent_id: "a1", kind, external_ref: id, title: null, direct_user_id: null, direct_user: null, origin_conversation_id: null,
   last_seq: 0, app_turn_streak: 0, app_turn_capped: false, active_turn: null, last_activity_at: null, archived_at: null,

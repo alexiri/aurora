@@ -4,9 +4,6 @@ import { describe, expect, it } from "vitest";
 import { IdpRoleBadge } from "@/components/identity/idp-role-badge";
 import { IdpRolesList } from "@/components/identity/idp-roles-list";
 
-const json = (status: number, body: unknown) =>
-  new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
-
 describe("roles from IdP claims (P4-IDP-1)", () => {
   it("badges a role that comes from the IdP", () => {
     render(<IdpRoleBadge value="aurora-admins" />);

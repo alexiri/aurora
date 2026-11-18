@@ -20,9 +20,8 @@ import {
 } from "@/lib/grant-editor";
 import { ApiError } from "@/lib/api/client";
 import { wrap } from "./support/render";
+import { json } from "./support/api";
 
-const json = (status: number, body: unknown) =>
-  new Response(body === null ? null : JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 type Handler = (req: Request, body: unknown) => Response | Promise<Response>;
 interface Call { key: string; body: unknown }
 let calls: Call[];

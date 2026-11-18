@@ -1,6 +1,7 @@
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { wrap } from "./support/render";
+import { err, json } from "./support/api";
 
 vi.mock("next/navigation", () => ({
   useSearchParams: () => new URLSearchParams(""),
@@ -15,9 +16,6 @@ import { AccountChannelsView } from "@/components/channels/account-channels-view
 
 // (P4-UTOK, D-281..D-284, C-853..C-856) Account › Send as me and the owner's "Posts as you" on the Approvals page.
 
-const json = (status: number, body: unknown) =>
-  new Response(body === null ? null : JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
-const err = (status: number, code: string, message = code) => json(status, { error: { code, message } });
 type Handler = (req: Request, body: unknown) => Response | Promise<Response>;
 interface Rec {
   key: string;

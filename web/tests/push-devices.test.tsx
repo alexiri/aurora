@@ -4,12 +4,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { PushDevices } from "@/components/account/push-devices";
 import { bytesToBase64Url, hasPushMarker, PUSH_MARKER_KEY, removeThisDevicePush, resyncPush, setPushMarker } from "@/lib/web-push";
+import { json } from "./support/api";
 
 const KEY = bytesToBase64Url(new Uint8Array(65).fill(4));
 const OTHER_KEY = bytesToBase64Url(new Uint8Array(65).fill(9));
-
-const json = (status: number, body: unknown) =>
-  new Response(body === null ? null : JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
 interface Call {
   method: string;

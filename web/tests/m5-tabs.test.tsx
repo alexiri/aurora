@@ -5,9 +5,8 @@ import { describe, expect, it, vi } from "vitest";
 import { PeersTab } from "@/components/peers/peers-tab";
 import { SchedulesTab } from "@/components/schedules/schedules-tab";
 import { WebhooksTab } from "@/components/webhooks/webhooks-tab";
+import { json } from "./support/api";
 
-const json = (status: number, body: unknown) =>
-  new Response(body === null ? null : JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 const err = (status: number, code: string, message = code, details?: unknown) => json(status, { error: { code, message, details } });
 type Handler = (req: Request) => Response | Promise<Response>;
 function mockFetch(routes: Record<string, Handler>) {

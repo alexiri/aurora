@@ -21,6 +21,7 @@ import {
   type EffectiveGovernance,
 } from "@/lib/api/governance";
 import { wrap } from "./support/render";
+import { type Handler, json, mockFetch } from "./support/api";
 
 // (phase 3, RFE-013, SEC-53) Dashboard: the governance field, the Connect tab's expiry info and
 // the agent-list badges (stale, expiring, expired; owners only).
@@ -28,20 +29,6 @@ import { wrap } from "./support/render";
 vi.mock("next/navigation", () => ({ useRouter: () => ({ replace: vi.fn() }) }));
 
 const ORG = { id: "o1", slug: "acme", name: "Acme", my_role: "owner" } as unknown as Org;
-
-const json = (status: number, body: unknown) =>
-  new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
-type Handler = (req: Request) => Response | Promise<Response>;
-function mockFetch(routes: Record<string, Handler>) {
-  const fn = vi.fn(async (input: Request | string | URL) => {
-    const req = input as Request;
-    const url = new URL(req.url, "http://localhost");
-    const h = routes[`${req.method} ${url.pathname}`];
-    return h ? h(req) : json(404, { error: { code: "not_found", message: "nf" } });
-  });
-  vi.stubGlobal("fetch", fn);
-  return fn;
-}
 
 const NOW = Date.parse("2026-06-01T00:00:00Z");
 const DAY = 86_400_000;

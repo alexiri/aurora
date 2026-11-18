@@ -5,12 +5,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AddPeople, WaitingList, addError, daysLeft, resultSentence } from "@/components/settings/add-people";
 import { optionalNextLinks } from "@/components/onboarding/getting-started";
 import { ApiError } from "@/lib/api/client";
+import { json } from "./support/api";
 
 // (P5-UX-5, C-919, C-920, `14 §10`) Add people: an e-mail and a role, the one-sentence result, the link to send, the
 // organization's admins to ask when an invitation is needed, the roles offered, and the waiting list.
 
-const json = (status: number, body: unknown) =>
-  new Response(body === null ? null : JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 type Handler = (req: Request, body: unknown) => Response | Promise<Response>;
 let calls: { key: string; body: unknown }[];
 let routes: Record<string, Handler>;

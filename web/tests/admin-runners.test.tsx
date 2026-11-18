@@ -1,6 +1,7 @@
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { wrap } from "./support/render";
+import { json, mockFetch } from "./support/api";
 
 vi.mock("next/navigation", () => ({
   usePathname: () => "/admin/runners",
@@ -10,20 +11,6 @@ vi.mock("next/navigation", () => ({
 }));
 
 import { AdminRunnersView } from "@/components/admin/runners-view";
-
-const json = (status: number, body: unknown) =>
-  new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
-type Handler = (req: Request) => Response | Promise<Response>;
-function mockFetch(routes: Record<string, Handler>) {
-  const fn = vi.fn(async (input: Request | string | URL) => {
-    const req = input as Request;
-    const url = new URL(req.url, "http://localhost");
-    const h = routes[`${req.method} ${url.pathname}`];
-    return h ? h(req) : json(404, { error: { code: "not_found", message: "nf" } });
-  });
-  vi.stubGlobal("fetch", fn);
-  return fn;
-}
 
 const runner = {
   id: "r1",

@@ -8,6 +8,7 @@ import { GiveAccessPanel } from "@/components/credentials/give-access";
 import { agentLabel, entryText, preselectAgents, splitGiven } from "@/lib/accounts";
 import type { Account, AgentAccess } from "@/lib/api/accounts";
 import { wrap } from "./support/render";
+import { json } from "./support/api";
 
 // (P5-UX-4, C-917, C-925, C-938) The one list of accounts, the access choice and the actions table.
 
@@ -18,8 +19,6 @@ vi.mock("next/navigation", () => ({
   useSearchParams: () => new URLSearchParams(window.location.search),
 }));
 
-const json = (status: number, body: unknown) =>
-  new Response(body === null ? null : JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 type Handler = (req: Request, body: unknown) => Response | Promise<Response>;
 interface Call { key: string; body: unknown }
 let calls: Call[];

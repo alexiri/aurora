@@ -6,9 +6,7 @@ import { OrgStorageView } from "@/components/org/storage-view";
 import { uploadErrorMessage } from "@/lib/api/attachments";
 import { ApiError } from "@/lib/api/client";
 import { wrap } from "./support/render";
-
-const json = (status: number, body: unknown) =>
-  new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+import { json } from "./support/api";
 
 function mockFetch(routes: Record<string, unknown>) {
   vi.stubGlobal(

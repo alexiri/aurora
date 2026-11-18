@@ -8,6 +8,7 @@ import { SshKeysView } from "@/components/account/ssh-keys-view";
 import { SshPage } from "@/components/agents/ssh-page";
 import { availableSections, isPageAvailable, resolvePage } from "@/components/agents/sections";
 import { wrap } from "./support/render";
+import { json } from "./support/api";
 
 // P4-SSH-1 dashboard tests (docs/18 §SSH access, docs/14 §Account and §Agent page): the keys view (list, add with inline
 // errors, rename, delete confirm, hidden without features.ssh) and the agent's SSH page (certificate download, the empty
@@ -21,9 +22,6 @@ vi.mock("next/link", () => ({
     </a>
   ),
 }));
-
-const json = (status: number, body: unknown) =>
-  new Response(body === null ? null : JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
 type Handler = (req: Request, url: URL) => Response | Promise<Response>;
 function mockFetch(routes: Record<string, Handler>) {
