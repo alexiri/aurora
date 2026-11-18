@@ -1,6 +1,6 @@
 package:
   id: google-workspace
-  version: 1.1.0
+  version: 1.2.0
   contract: 1
   min_core: 0.1.0
   publisher: aurora
@@ -139,6 +139,8 @@ apps:
         show every recipient (To, Cc and Bcc), a preview of the message and the attachment count.
         Deleting mail is not offered as a tool: a connection with a full grant can still call
         DELETE, so do not do it unless the user asked.
+      guide:
+        - { file: api-notes.md, title: "API notes: search, read, send, drafts, labels" }
       env:
         - { name: GMAIL_API_URL, value: "https://gmail.googleapis.com/gmail/v1" }
 
@@ -247,6 +249,8 @@ apps:
         user's main calendar. List events with timeMin and timeMax (RFC 3339) and singleEvents=true to
         expand recurring events. Send JSON bodies with content-type application/json so approvals can
         show what a change does. Free/busy queries and every change are held for approval.
+      guide:
+        - { file: api-notes.md, title: "API notes: events, free/busy, creating and changing events" }
       env:
         - { name: GOOGLE_CALENDAR_API_URL, value: "https://www.googleapis.com/calendar/v3" }
 

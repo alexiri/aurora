@@ -1,6 +1,6 @@
 package:
   id: linear
-  version: 1.1.0
+  version: 1.2.0
   contract: 1
   min_core: 0.1.0
   publisher: aurora
@@ -93,3 +93,5 @@ apps:
         approval. Send one operation per request and name it with operationName so approvals show
         what changes. Page with first/after and pageInfo.endCursor. Mutations fail with a permission
         error when the connection was made with the read scope only.
+      guide:
+        - { file: graphql-notes.md, title: "GraphQL notes: reading, paging, creating and updating issues" }

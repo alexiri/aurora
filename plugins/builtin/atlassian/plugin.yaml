@@ -1,6 +1,6 @@
 package:
   id: atlassian
-  version: 1.2.0
+  version: 1.3.0
   contract: 1
   min_core: 0.1.0
   publisher: aurora
@@ -253,6 +253,8 @@ apps:
         .../wiki/rest/api/search?cql=... Ask for page bodies with ?body-format=storage. Updating a
         page needs the next version number. Send JSON bodies with content-type application/json.
         A 403 or 404 means the connected user cannot see that item.
+      guide:
+        - { file: api-notes.md, title: "API notes: finding and reading pages, search, creating and updating" }
   - about:
       id: jira-dc
       name: Jira Data Center
@@ -429,3 +431,5 @@ apps:
         to another host. A new comment is POST /rest/api/content with type "comment" and a
         container; updating a page needs the next version number. Send JSON bodies with
         content-type application/json. A 403 or 404 means the token's user cannot see that item.
+      guide:
+        - { file: api-notes.md, title: "API notes: finding and reading pages, search, creating and updating" }
