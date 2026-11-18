@@ -1921,11 +1921,18 @@ impl PolicyHandler {
             self.touch(conn.id);
             let fb = self.fallback(&rv, app_match.as_ref(), &ungranted, &host);
             let passthrough = pass_challenge(app_match.as_ref());
-            let echo = inject::url_needles(
-                exec.string_values().map(str::as_bytes),
-                &new_path,
-                query.as_deref(),
-            );
+            // (D-275) A person-pinned server's stages place nothing in the URL (`basic`, `bearer`,
+            // `header` only), and its answers name the account (CalDAV hrefs carry the username the
+            // agent's own URL already holds): nothing there is an echo of an injected value.
+            let echo = if own_server {
+                Vec::new()
+            } else {
+                inject::url_needles(
+                    exec.string_values().map(str::as_bytes),
+                    &new_path,
+                    query.as_deref(),
+                )
+            };
             let hook = self.hook(
                 &rv,
                 ctx,

@@ -145,6 +145,29 @@ async fn the_credential_is_injected_on_the_pinned_origin_only() {
     uncredentialed(&r);
 }
 
+/// CalDAV answers name the account (`/dav/calendars/alice/…` hrefs) and the agent's own URL holds
+/// it too: the username is not an "injected value echoed from the URL" (it was found by the hosted
+/// end-to-end: every PROPFIND of a real server came back 502 `upstream_echoed_credential`).
+#[tokio::test]
+async fn an_answer_naming_the_account_is_not_an_echo() {
+    let (env, _) = start_pinned(own_snapshot(vec![], vec![]), |w, origin| {
+        grant(&pinned(w, "c1", &[origin.to_owned()]))
+    })
+    .await;
+    // The harness upstream echoes the request, path included.
+    let r = call(
+        &env,
+        "PROPFIND",
+        "localhost",
+        "/dav/calendars/alice/work/",
+        "",
+    )
+    .await;
+    assert_eq!(r.status, 200, "{} {}", r.head, r.body);
+    assert!(r.body.contains("/dav/calendars/alice/work/"), "{}", r.body);
+    assert!(!r.body.contains("upstream_echoed_credential"), "{}", r.body);
+}
+
 #[tokio::test]
 async fn another_port_on_the_pinned_host_gets_nothing() {
     let (env, _) = start_pinned(own_snapshot(vec![], vec![]), |w, _| {

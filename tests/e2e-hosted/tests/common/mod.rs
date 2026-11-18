@@ -75,6 +75,10 @@ pub struct Opts {
     /// Only these harnesses are enabled (`hosted.enabled_harnesses`; the first is also the default
     /// harness). Default: `claude-code` and `codex`.
     pub only_harness: Option<String>,
+    /// Do not set `gateway.insecure_loopback_injection`: the transport rule (a credential leaves
+    /// only over TLS to the claimed port, SEC-04/FIX-104) applies to loopback upstreams too
+    /// (P5-CALDAV: the person-pinned servers' full-path TLS check).
+    pub strict_transport: bool,
 }
 
 pub struct Stack {
@@ -245,7 +249,7 @@ log_level = "info"
 internal_bind = "{ops_ip}"
 allowed_private = ["127.0.0.1/32", "127.0.0.2/32"{db_target_allowed}]
 # FIX-104 (D-180): the mock upstreams are plain HTTP on random loopback ports.
-insecure_loopback_injection = true
+insecure_loopback_injection = {insecure_loopback}
 ca_dir = "{ca}"
 advertised_proxy_url = "https://aurora-gateway:4102"
 
@@ -259,6 +263,7 @@ multiplier = 10.0
 [api]
 hookhost_url = "http://127.0.0.1:9"
 "#,
+            insecure_loopback = !o.strict_transport,
             harnesses = match &o.only_harness {
                 Some(h) => format!("enabled_harnesses = [\"{h}\"]\ndefault_harness = \"{h}\""),
                 None => "enabled_harnesses = [\"claude-code\", \"codex\"]".to_owned(),
