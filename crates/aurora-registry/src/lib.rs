@@ -14,6 +14,7 @@ pub mod index;
 pub mod instance;
 pub mod library;
 pub mod manifest;
+pub mod operations;
 pub mod package;
 pub mod signature;
 pub mod snapshot;

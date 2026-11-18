@@ -65,10 +65,11 @@ async fn active_package(
         .and_then(Value::as_array)
         .is_some_and(|a| !a.is_empty());
     // (P5-GUIDE-1, C-641) Guide digests come from the stored archive, as `hooks_digest` does.
-    let has_guide = manifest
-        .apps
-        .iter()
-        .any(|a| a.agent.as_ref().is_some_and(|g| !g.guide.is_empty()));
+    let has_guide = manifest.apps.iter().any(|a| {
+        a.agent
+            .as_ref()
+            .is_some_and(|g| !g.guide.is_empty() || g.operations.is_some())
+    });
     let mut hooks_digest = None;
     let mut guide_digests = GuideDigests::new();
     if declares_hooks || has_guide {

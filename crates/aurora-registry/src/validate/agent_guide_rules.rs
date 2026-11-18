@@ -12,6 +12,8 @@ use crate::package::{AGENT_DIR, Package};
 
 /// Names the core writes into the app's folder; a package cannot ship them.
 pub const RESERVED_NAMES: [&str; 3] = ["guide.md", "tools.md", "api.json"];
+/// (P5-GUIDE-6, C-640) The app id of the platform target of `aurora-agent`.
+pub const RESERVED_APP_ID: &str = "aurora";
 const EXTENSIONS: [&str; 6] = ["md", "txt", "json", "yaml", "tsv", "csv"];
 const TITLE_MAX: usize = 120;
 
@@ -58,12 +60,36 @@ pub fn manifest_rules(ag: &Agent, base: &str, out: &mut Vec<Violation>) {
             ));
         }
     }
-    if !ag.guide.is_empty() && ag.summary.as_deref().is_none_or(|s| s.trim().is_empty()) {
+    if (!ag.guide.is_empty() || ag.operations.is_some())
+        && ag.summary.as_deref().is_none_or(|s| s.trim().is_empty())
+    {
         out.push(Violation::new(
             "agent_summary_required",
             p("/summary"),
-            "agent.summary is required when agent.guide is present",
+            "agent.summary is required when agent.guide or agent.operations is present",
         ));
+    }
+    if let Some(f) = &ag.operations {
+        if RESERVED_NAMES.contains(&f.as_str()) {
+            out.push(Violation::new(
+                "agent_guide_reserved_name",
+                p("/operations"),
+                format!("`{f}` is written by Aurora"),
+            ));
+        } else if !file_name_ok(f) || !f.ends_with(".json") {
+            out.push(Violation::new(
+                "agent_guide_file_name",
+                p("/operations"),
+                format!("`{f}` must match [a-z0-9][a-z0-9_-]{{0,47}}.json"),
+            ));
+        }
+        if ag.guide.iter().any(|g| &g.file == f) {
+            out.push(Violation::new(
+                "agent_operations_listed",
+                p("/operations"),
+                format!("`{f}` is the operations file and cannot also be a guide file"),
+            ));
+        }
     }
     if ag.guide.len() > AGENT_GUIDE_FILES_MAX {
         out.push(Violation::new(
@@ -148,11 +174,23 @@ pub fn archive_rules(m: &Manifest, pkg: &Package, out: &mut Vec<Violation>) {
                 a.about.id.as_str(),
                 a.agent
                     .as_ref()
-                    .map(|ag| ag.guide.iter().map(|g| g.file.as_str()).collect())
+                    .map(|ag| {
+                        ag.guide
+                            .iter()
+                            .map(|g| g.file.as_str())
+                            .chain(ag.operations.as_deref())
+                            .collect()
+                    })
                     .unwrap_or_default(),
             )
         })
         .collect();
+    let operations_of = |app: &str, file: &str| {
+        m.apps
+            .iter()
+            .find(|a| a.about.id == app)
+            .filter(|a| a.agent.as_ref().and_then(|g| g.operations.as_deref()) == Some(file))
+    };
     let mut per_app: BTreeMap<&str, usize> = BTreeMap::new();
     for (path, bytes) in &pkg.files {
         let Some(rest) = path.strip_prefix(AGENT_DIR) else {
@@ -183,6 +221,14 @@ pub fn archive_rules(m: &Manifest, pkg: &Package, out: &mut Vec<Violation>) {
                 "guide files are UTF-8 text without NUL, CR or other control characters and without a byte-order mark",
             ));
         }
+        if let Some(owner) = operations_of(app, file) {
+            // The operations file has its own size limit and linter and does not count towards
+            // the guide-file budget of the app (C-651).
+            if is_guide_text(bytes) {
+                super::agent_operations_rules::rules(owner, path, bytes, out);
+            }
+            continue;
+        }
         if bytes.len() > AGENT_GUIDE_FILE_MAX {
             out.push(Violation::new(
                 "agent_guide_file_too_large",
@@ -203,6 +249,16 @@ pub fn archive_rules(m: &Manifest, pkg: &Package, out: &mut Vec<Violation>) {
     }
     for (i, a) in m.apps.iter().enumerate() {
         let Some(ag) = &a.agent else { continue };
+        if let Some(f) = &ag.operations {
+            let path = format!("{AGENT_DIR}{}/{f}", a.about.id);
+            if !pkg.files.contains_key(&path) {
+                out.push(Violation::new(
+                    "agent_guide_missing_file",
+                    format!("/apps/{i}/agent/operations"),
+                    format!("`{path}` is named by agent.operations but absent from the archive"),
+                ));
+            }
+        }
         for (j, g) in ag.guide.iter().enumerate() {
             let path = format!("{AGENT_DIR}{}/{}", a.about.id, g.file);
             if !pkg.files.contains_key(&path) {

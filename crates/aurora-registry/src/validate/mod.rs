@@ -1,6 +1,7 @@
 //! Validation rules (09 §6): in-manifest rules ([`manifest`]) and full package
 //! rules ([`package`]). `hooks.wasm` world-shape checks: [`hooks_component`].
 pub mod agent_guide_rules;
+pub mod agent_operations_rules;
 mod hooks_component;
 mod library_rules;
 mod package_rules;
@@ -255,6 +256,13 @@ pub fn manifest(m: &Manifest) -> Vec<Violation> {
     let mut out = Vec::new();
     let mut ids = BTreeSet::new();
     for (i, a) in m.apps.iter().enumerate() {
+        if a.about.id == agent_guide_rules::RESERVED_APP_ID {
+            out.push(Violation::new(
+                "app_id_reserved",
+                format!("/apps/{i}/about/id"),
+                "`aurora` is the platform target of `aurora-agent` and cannot be an app id",
+            ));
+        }
         if !ids.insert(a.about.id.as_str()) {
             out.push(Violation::new(
                 "duplicate_app_id",
