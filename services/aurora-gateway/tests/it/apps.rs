@@ -321,6 +321,7 @@ async fn start_with_ca(
 
 /// [`start_with_ca`] in a given world, with the churn-column pool (`touch_pool`) of a real database
 /// (P5-UX-14: account health is written there).
+#[allow(clippy::too_many_arguments)]
 async fn start_in(
     w: World,
     snap: Value,
