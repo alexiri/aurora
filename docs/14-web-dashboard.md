@@ -1308,7 +1308,7 @@ every other topic is owners/admins and is not listed for a member.)
   Upload errors show "Your organization's attachment storage is full" with the
   link to the usage page; expired attachments render as an "Expired by retention"
   chip (a deleted one as "Removed"), never as a link (C-196).
-- **API keys**, **Audit log** (phase 2, RFE-008: a "security-critical only" filter; critical rows are badged), **Settings** (name, slug, members can create
+- **API keys**, **Audit log** (phase 2, RFE-008: a "security-critical only" filter; critical rows are badged; FIX-171, D-373: each row opens a **Details** view — a settings change as before/after, the other recorded detail, source and ids — and the filters `action` and `critical=1` are in the URL, so a link opens the same view; the workspace Audit tab is the same shared panel), **Settings** (name, slug, members can create
   workspaces, limits), **Danger zone** (phase 2, RFE-006: **Freeze organization**
   for owners).
 
@@ -1856,7 +1856,7 @@ each marked added / changed / removed against the active version, under the sent
 use this app can read this text. It is written by the publisher."; a file opens in the shared
 preformatted viewer as plain text, never rendered as Markdown or HTML, long lines scrolling inside
 the viewer only (`24 §9`); reject/disable/uninstall with orphan warnings), **Host
-claims** (conflicts and winners), **Trusted keys**, **Audit** (FIX-125, C-638: `/admin/audit`, the instance audit log — rows without an organization by default, a scope toggle "Instance / All organizations" with an organization filter and column, action-prefix, security-critical, and from/to date filters; the table and filter bar are the shared `AuditPanel` that the org audit page also uses), **Addon sources** (phase 5,
+claims** (conflicts and winners), **Trusted keys**, **Audit** (FIX-125, C-638: `/admin/audit`, the instance audit log — rows without an organization by default, a scope toggle "Instance / All organizations" with an organization filter and column, action-prefix, security-critical, and from/to date filters; the table and filter bar are the shared `AuditPanel` that the org audit page also uses; FIX-171, D-373: rows open a **Details** view with the changes as before/after, the other recorded detail, source and ids, and the filters — `action`, `scope`, `org`, `critical`, `since`, `until` — are in the URL, which the instance-settings e-mail's link relies on), **Addon sources** (phase 5,
 P5-ASRC, D-250: third-party app-package repositories at `/admin/addon-sources` —
 list with key fingerprint and check status, add with a preview/trust review of the
 repo's signing key before anything is registered, "Check now", per-source schedule

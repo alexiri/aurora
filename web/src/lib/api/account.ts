@@ -15,16 +15,14 @@ export type Member = components["schemas"]["Member"];
 export type CreatedKey = components["schemas"]["CreatedKey"];
 export type PatchWorkspaceRequest = components["schemas"]["PatchWorkspaceRequest"];
 
-const retry = (count: number, err: unknown) =>
-  !(err instanceof ApiError && err.status !== undefined && err.status >= 400 && err.status < 500) &&
-  count < 1;
+const retry = (count: number, err: unknown) => !(err instanceof ApiError && err.status !== undefined && err.status >= 400 && err.status < 500) && count < 1;
 
 export const accountKeys = {
   myKeys: ["me", "api-keys"] as const,
   access: (ws: string) => ["workspaces", ws, "access"] as const,
   members: (org: string) => ["orgs", org, "members"] as const,
   wsKeys: (ws: string) => ["workspaces", ws, "api-keys"] as const,
-  audit: (ws: string, action: string) => ["workspaces", ws, "audit", action] as const,
+  audit: (ws: string, action: string, critical = false) => ["workspaces", ws, "audit", action, critical] as const,
   adminUsers: (q: string) => ["admin", "users", q] as const,
 };
 
@@ -33,8 +31,7 @@ export const accountKeys = {
 export function useUpdateMe() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: components["schemas"]["PatchMeRequest"]) =>
-      unwrap(api.PATCH("/v1/me", { body })),
+    mutationFn: (body: components["schemas"]["PatchMeRequest"]) => unwrap(api.PATCH("/v1/me", { body })),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["me"] }),
   });
 }
@@ -47,8 +44,7 @@ export const deleteAccount = () => unwrap(api.DELETE("/v1/me"));
 export function useMyApiKeys() {
   return useQuery({
     queryKey: accountKeys.myKeys,
-    queryFn: () =>
-      fetchAllPages((cursor) => unwrap(api.GET("/v1/me/api-keys", { params: { query: { limit: PAGE_LIMIT, cursor } } }))),
+    queryFn: () => fetchAllPages((cursor) => unwrap(api.GET("/v1/me/api-keys", { params: { query: { limit: PAGE_LIMIT, cursor } } }))),
     retry,
   });
 }
@@ -66,8 +62,7 @@ export function useRevokeApiKey(invalidate: readonly unknown[]) {
 export function usePatchWorkspace(wsId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: PatchWorkspaceRequest) =>
-      unwrap(api.PATCH("/v1/workspaces/{ws}", { params: { path: { ws: wsId } }, body })),
+    mutationFn: (body: PatchWorkspaceRequest) => unwrap(api.PATCH("/v1/workspaces/{ws}", { params: { path: { ws: wsId } }, body })),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["workspaces"] });
       void qc.invalidateQueries({ queryKey: ["orgs"] });
@@ -184,22 +179,21 @@ export function useCreateWorkspaceKey(wsId: string) {
   const qc = useQueryClient();
   return useMutation({
     gcTime: 0,
-    mutationFn: (body: components["schemas"]["CreateKeyRequest"]) =>
-      unwrap(api.POST("/v1/workspaces/{ws}/api-keys", { params: { path: { ws: wsId } }, body })),
+    mutationFn: (body: components["schemas"]["CreateKeyRequest"]) => unwrap(api.POST("/v1/workspaces/{ws}/api-keys", { params: { path: { ws: wsId } }, body })),
     onSuccess: () => qc.invalidateQueries({ queryKey: accountKeys.wsKeys(wsId) }),
   });
 }
 
-export function useAudit(wsId: string, action: string) {
+export function useAudit(wsId: string, action: string, critical = false) {
   return useInfiniteQuery({
-    queryKey: accountKeys.audit(wsId, action),
+    queryKey: accountKeys.audit(wsId, action, critical),
     initialPageParam: undefined as string | undefined,
     queryFn: ({ pageParam }) =>
       unwrap(
         api.GET("/v1/workspaces/{ws}/audit", {
           params: {
             path: { ws: wsId },
-            query: { limit: 50, cursor: pageParam, action: action || undefined },
+            query: { limit: 50, cursor: pageParam, action: action || undefined, critical: critical || undefined },
           },
         }),
       ),

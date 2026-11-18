@@ -1336,7 +1336,8 @@ personal-workspace owners add people this way.
 
 Every state-changing management action writes an `audit_log` row. Actions are
 dotted names `<entity>.<verb>`. Secret values, tokens and credential JSON are
-never written to `metadata`.
+never written to `metadata`. The dashboard shows each row's recorded detail (FIX-171, D-373), and an
+instance-settings change as before/after.
 
 **Two classes (phase 2, RFE-008, D-52).** Phase 0: every audit write was
 best-effort and never failed the action. That is right for high-volume, low-stakes
