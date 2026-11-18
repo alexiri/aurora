@@ -590,6 +590,48 @@ async fn the_sixth_token_is_refused_and_a_down_store_stores_nothing() {
     assert_eq!(n, 0);
 }
 
+/// FIX-167 (D-369, SEC-134): a connector whose pending update adds `user_tokens` is refused the
+/// user-token routes until the update is approved.
+#[tokio::test]
+async fn a_pending_update_keeps_user_tokens_off_until_approved() {
+    let w = W::new().await;
+    sqlx::query("UPDATE connectors SET manifest = manifest || $1 WHERE id = 'chat'")
+        .bind(json!({
+            "_approved": {"capabilities": {"threads": true}},
+            "_widening": ["New capability: user_tokens."],
+        }))
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+    let body = json!({"integration_id": w.integ, "token": CANARY});
+    let (s, v) = w
+        .call(
+            Method::POST,
+            "/v1/me/user-tokens",
+            &w.owner_cookie,
+            Some(body.clone()),
+        )
+        .await;
+    assert_eq!((s, code(&v)), (422, "user_tokens_unsupported"), "{v}");
+    // Approved (the envelope cleared, as `approve` does): the route is no longer refused as
+    // unsupported.
+    sqlx::query(
+        "UPDATE connectors SET manifest = manifest - '_widening' - '_approved' WHERE id = 'chat'",
+    )
+    .execute(w.h.pool())
+    .await
+    .unwrap();
+    let (_, v) = w
+        .call(
+            Method::POST,
+            "/v1/me/user-tokens",
+            &w.owner_cookie,
+            Some(body),
+        )
+        .await;
+    assert_ne!(code(&v), "user_tokens_unsupported", "{v}");
+}
+
 #[tokio::test]
 async fn unsupported_unlinked_and_foreign_requests_are_refused() {
     // The connector does not declare `user_tokens`.

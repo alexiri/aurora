@@ -110,7 +110,7 @@ async fn mirror(
     }
     let manifest = connectors::get(&mut *conn, &integ.connector_id)
         .await?
-        .and_then(|c| c.manifest);
+        .and_then(|c| crate::domains::connectors::effective_manifest(&c));
     let ctx = Ctx::new(integ, manifest);
     let Ok(sender) = serde_json::from_value::<Sender>(link.sender.clone()) else {
         return Ok(());
@@ -363,7 +363,7 @@ pub(super) async fn ctx_of(
     }
     let manifest = connectors::get(&mut *conn, &integ.connector_id)
         .await?
-        .and_then(|c| c.manifest);
+        .and_then(|c| crate::domains::connectors::effective_manifest(&c));
     Ok(Some(Ctx::new(integ, manifest)))
 }
 

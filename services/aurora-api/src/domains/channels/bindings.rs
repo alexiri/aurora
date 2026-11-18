@@ -450,7 +450,7 @@ pub async fn create(
     );
     let manifest = connectors::get(&s.pool, &integ.connector_id)
         .await?
-        .and_then(|r| r.manifest);
+        .and_then(|r| crate::domains::connectors::effective_manifest(&r));
     let ctx = Ctx::new(integ, manifest);
     let mut conn = s
         .pool

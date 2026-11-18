@@ -216,6 +216,52 @@ async fn renamed_required_field_flips_exactly_the_failing_active_connections() {
     assert_eq!(last["by_app"], json!({"up_app": 3}));
 }
 
+/// FIX-167 (09 §10, D-369 step 5): a version held for approval (`breaks_connections`) leaves the
+/// active version running: the compiled registry still serves its app and no connection flips,
+/// until the approval. (`converts_grants`: `grants_custom_only` asserts the grants stay `full`
+/// and the held requests stay held until approval.)
+#[tokio::test]
+async fn a_held_version_leaves_the_active_version_serving() {
+    let h = Harness::new().await;
+    let a = setup(&h).await;
+    install_v1(&a).await;
+    let org = h.org().await;
+    let c = seed(&h, org, "active", Some(&["api_token"]), "1.0.0").await;
+    let v2 = a.upload(&yaml("2.0.0", &[("token_v2", false)], HOST)).await;
+    assert_eq!(
+        (v2["status"].as_str(), v2["status_reason"].as_str()),
+        (Some("pending_approval"), Some("breaks_connections")),
+        "{v2}"
+    );
+    let (_, active) = a
+        .json(Method::GET, "/v1/admin/plugins?status=active", None)
+        .await;
+    let versions: Vec<&str> = active["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|p| p["package_id"] == "up")
+        .filter_map(|p| p["version"].as_str())
+        .collect();
+    assert_eq!(versions, ["1.0.0"], "{active}");
+    let (s, snap) = a
+        .json(Method::GET, "/v1/admin/registry/snapshot", None)
+        .await;
+    assert_eq!(s, 200, "{snap}");
+    let host = snap["hosts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|x| x["app_id"] == "up_app")
+        .unwrap_or_else(|| panic!("the active version's app is not served: {snap}"));
+    assert_eq!(host["claim_status"], "active", "{host}");
+    assert_eq!(
+        row(&h, c).await.0,
+        "active",
+        "no connection flips before approval"
+    );
+}
+
 #[tokio::test]
 async fn kept_fields_and_optional_additions_flip_nothing_but_unknown_legacy_fails_closed() {
     let h = Harness::new().await;

@@ -60,7 +60,7 @@ pub(super) async fn handle(state: &AppState, row: &InboxRow) -> Result<Value, In
     let manifest = connectors::get(pool, &integ.connector_id)
         .await
         .retry()?
-        .and_then(|c| c.manifest);
+        .and_then(|c| crate::domains::connectors::effective_manifest(&c));
     let ctx = send::Ctx::new(integ, manifest);
 
     // 2. Echo guard: this integration's own bots.
