@@ -1,9 +1,9 @@
-import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 
 import { openJourney } from "./support/journey";
 import { overflow } from "./support/open";
+import { serious } from "./support/axe";
 
 // P5-UX-3 (C-914; docs/14 §Agents, accounts and access §3): "Give <Agent> <App>", the connect journey. From the agent's
 // Access tab a token app is given with Read only in one go and the Access tab then lists the account with Read only; an
@@ -13,13 +13,6 @@ import { overflow } from "./support/open";
 
 const SHOTS = "/tmp/aurora-screens/p5-ux-3";
 mkdirSync(SHOTS, { recursive: true });
-
-async function serious(page: Page) {
-  const { violations } = await new AxeBuilder({ page }).analyze();
-  return violations
-    .filter((v) => v.impact === "serious" || v.impact === "critical")
-    .map((v) => `${v.id} (${v.impact}): ${v.nodes.map((n) => n.target.join(" ")).slice(0, 5).join(" | ")}`);
-}
 
 async function check(page: Page, name: string, scheme: string, width: number) {
   expect(await overflow(page), "horizontal page scroll").toBeLessThanOrEqual(0);

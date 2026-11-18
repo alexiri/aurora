@@ -1,22 +1,15 @@
-import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Page } from "@playwright/test";
 
 import { DEFAULT, MINE, openChat } from "./support/chat-mock";
 import { openJourney } from "./support/journey";
 import { id, now, probed } from "./support/mock-api";
 import { overflow, openRoute } from "./support/open";
+import { serious } from "./support/axe";
 
 // P5-UX-14 (D-335, D-350, C-943, C-945; docs/14 §Agents, accounts and access §7), where an account's health shows besides its
 // row: the warning on the connect journey's Done step (a method with no probe is tested once after connecting, a method
 // with a probe is not), the banner above the message box of the agent's conversations, and the workspace Overview's block.
 // Both themes at 1280 px and 390 px, no horizontal scroll, axe (serious and critical) clean.
-
-async function serious(page: Page) {
-  const { violations } = await new AxeBuilder({ page }).analyze();
-  return violations
-    .filter((v) => v.impact === "serious" || v.impact === "critical")
-    .map((v) => `${v.id} (${v.impact}): ${v.nodes.map((n) => n.target.join(" ")).slice(0, 5).join(" | ")}`);
-}
 
 async function check(page: Page) {
   expect(await overflow(page), "horizontal page scroll").toBeLessThanOrEqual(0);

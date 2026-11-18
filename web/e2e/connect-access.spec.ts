@@ -1,9 +1,9 @@
-import AxeBuilder from "@axe-core/playwright";
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 
 import { openJourney } from "./support/journey";
 import { overflow } from "./support/open";
+import { serious } from "./support/axe";
 
 // FIX-133 (D-240) as the connect journey carries it (P5-UX-3, docs/14 §Agents, accounts and access §2–3): the Access step
 // offers Read only (recommended, preselected) / Ask before changes / Change without asking; the choice is sent as the
@@ -12,13 +12,6 @@ import { overflow } from "./support/open";
 
 const SHOTS = "/tmp/aurora-screens/fix-133";
 mkdirSync(SHOTS, { recursive: true });
-
-async function serious(page: Page) {
-  const { violations } = await new AxeBuilder({ page }).analyze();
-  return violations
-    .filter((v) => v.impact === "serious" || v.impact === "critical")
-    .map((v) => `${v.id} (${v.impact}): ${v.nodes.map((n) => n.target.join(" ")).slice(0, 5).join(" | ")}`);
-}
 
 for (const scheme of ["light", "dark"] as const) {
   for (const width of [1280, 390]) {

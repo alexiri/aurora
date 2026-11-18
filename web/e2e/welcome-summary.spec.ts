@@ -1,22 +1,15 @@
-import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Page } from "@playwright/test";
 
 import { openJourney } from "./support/journey";
 import { id, mockApi, readinessEmpty, readinessReady, ws } from "./support/mock-api";
 import { overflow } from "./support/open";
+import { serious } from "./support/axe";
 
 // P5-UX-7 (C-927, C-986; docs/14 §Agents, accounts and access §8 and §9): Welcome's two-step guide and the agent's one
 // summary. A person in an organization that provides an AI key has one step left and a summary that says the agent can't
 // use any app yet; a person with no key adds one and goes straight to Say hello; after giving the agent an app with Ask
 // before changes, Welcome and the Access tab both say that it asks before changing anything there. Both themes at 1280 px
 // and 390 px, no horizontal scroll, axe with no rule disabled.
-
-async function serious(page: Page) {
-  const { violations } = await new AxeBuilder({ page }).analyze();
-  return violations
-    .filter((v) => v.impact === "serious" || v.impact === "critical")
-    .map((v) => `${v.id} (${v.impact}): ${v.nodes.map((n) => n.target.join(" ")).slice(0, 5).join(" | ")}`);
-}
 
 async function check(page: Page) {
   expect(await overflow(page), "horizontal page scroll").toBeLessThanOrEqual(0);

@@ -1,4 +1,3 @@
-import AxeBuilder from "@axe-core/playwright";
 import { expect, type Page, type Route } from "@playwright/test";
 import { createHash } from "node:crypto";
 
@@ -187,12 +186,7 @@ export async function openFiles(page: Page, scheme: Scheme = "light", query = ""
   await expect(page.getByRole("navigation", { name: "Folder path" })).toBeVisible();
 }
 
-export const serious = async (page: Page) => {
-  const { violations } = await new AxeBuilder({ page }).analyze();
-  return violations
-    .filter((v) => v.impact === "serious" || v.impact === "critical")
-    .map((v) => `${v.id} (${v.impact}): ${v.nodes.map((n) => n.target.join(" ")).slice(0, 5).join(" | ")}`);
-};
+export { serious } from "./axe";
 
 export const rowMenu = (page: Page, name: string) => page.getByRole("button", { name: `Actions for ${name}` });
 
