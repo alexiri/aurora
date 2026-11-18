@@ -385,7 +385,7 @@ async fn terminal_models(
     use crate::domains::hosted::model::{self, Selection};
     let allowed = model::allowed_harnesses(s);
     let mut out = TerminalModels::default();
-    for harness in ["claude-code", "codex"] {
+    for harness in TerminalModels::HARNESSES {
         if !allowed.iter().any(|h| h == harness) {
             continue;
         }
@@ -407,13 +407,9 @@ async fn terminal_models(
                 continue;
             }
         };
-        if harness == "codex" {
-            out.codex = Some(entry);
-        } else {
-            out.claude_code = Some(entry);
-        }
+        out.set(harness, Some(entry));
     }
-    (out.claude_code.is_some() || out.codex.is_some()).then_some(out)
+    (!out.is_empty()).then_some(out)
 }
 
 fn proxy_error(code: u16) -> ApiError {

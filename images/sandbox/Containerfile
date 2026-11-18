@@ -69,11 +69,11 @@ ENV PATH=/workspace/.local/bin:/opt/aurora/bin:/usr/local/bin:/usr/bin:/bin
 COPY images/sandbox/etc/profile.d/aurora.sh /etc/profile.d/aurora.sh
 COPY images/sandbox/etc/zshenv /etc/zshenv
 COPY images/sandbox/etc/zshrc /etc/zshrc
-# (FIX-138 item 1b) `claude` and `codex` for the web terminal: wrappers on PATH that source
+# (FIX-138 item 1b, P5-HARN C-1015) `claude`, `codex`, `pi`, `goose` and `opencode` for the web terminal: wrappers on PATH that parse
 # /run/aurora/harness.env (written by the supervisor, no secret), keep their own state under
 # /workspace/.aurora/terminal and exec the pinned binaries; a harness missing from the image or not
 # enabled on the instance prints "not enabled on this instance".
-COPY --chmod=0755 images/sandbox/bin/claude images/sandbox/bin/codex /opt/aurora/bin/
+COPY --chmod=0755 images/sandbox/bin/claude images/sandbox/bin/codex images/sandbox/bin/pi images/sandbox/bin/goose images/sandbox/bin/opencode /opt/aurora/bin/
 WORKDIR /workspace
 
 # ---- base: developer tool set (rebuilt rarely)
@@ -103,10 +103,10 @@ FROM base AS sandbox
 # image without Chromium omits it.
 LABEL org.aurora.capabilities="browser"
 # (phase 4, P4-HAR, D-122) Harness runtimes in this image, a comma list of `claude-code` and
-# `codex`; `--build-arg SANDBOX_HARNESSES=claude-code` omits Codex (a slimmer image). The label
-# `org.aurora.harnesses` tells the runner what is inside (`fake` needs no runtime); an image
-# without the label is read as `claude-code,fake`.
-ARG SANDBOX_HARNESSES="claude-code,codex"
+# `codex`, `pi`, `goose` and `opencode` (phase 5, P5-HARN, D-361); `--build-arg SANDBOX_HARNESSES=claude-code`
+# omits the others (a slimmer image). The label `org.aurora.harnesses` tells the runner what is inside
+# (`fake` needs no runtime); an image without the label is read as `claude-code,fake`.
+ARG SANDBOX_HARNESSES="claude-code,codex,pi,goose,opencode"
 LABEL org.aurora.harnesses="${SANDBOX_HARNESSES},fake"
 # Pinned Claude Code CLI; must match PINNED_VERSION in
 # services/aurora-supervisor/src/adapters/claude_code/mod.rs.
@@ -143,6 +143,60 @@ RUN case ",${SANDBOX_HARNESSES}," in *,codex,*) \
    && install -m 0755 "/tmp/codex-dl/${name}" /opt/aurora/harness/codex/codex \
    && rm -rf /tmp/codex-dl \
    && test "$(/opt/aurora/harness/codex/codex --version)" = "codex-cli ${CODEX_VERSION}" ;; esac
+# (phase 5, P5-HARN, D-361) Pinned Pi coding agent; must match PINNED_VERSION in
+# services/aurora-supervisor/src/adapters/pi/mod.rs. The whole npm tree is pinned by
+# images/sandbox/harness/pi/package-lock.json (`npm ci --ignore-scripts`, integrity-checked); Pi needs
+# Node.js 22.19 or newer, which the base stage's AlmaLinux 10 `nodejs` provides (the build checks it).
+ARG PI_VERSION=1.5.2
+COPY images/sandbox/harness/pi/package.json images/sandbox/harness/pi/package-lock.json /tmp/pi-pin/
+RUN case ",${SANDBOX_HARNESSES}," in *,pi,*) \
+      node -e 'const [a,b]=process.versions.node.split(".").map(Number); process.exit(a>22||(a==22&&b>=19)?0:1)' \
+   && mkdir -p /opt/aurora/harness/pi \
+   && cp /tmp/pi-pin/package.json /tmp/pi-pin/package-lock.json /opt/aurora/harness/pi/ \
+   && (cd /opt/aurora/harness/pi && npm ci --ignore-scripts --no-audit --no-fund) \
+   && test "$(/opt/aurora/harness/pi/node_modules/.bin/pi --version)" = "${PI_VERSION}" ;; esac \
+   && rm -rf /tmp/pi-pin
+# (P5-HARN) Pinned goose (release v${GOOSE_VERSION}, the glibc build); must match PINNED_VERSION in
+# services/aurora-supervisor/src/adapters/goose/mod.rs. Checksum-verified like Codex.
+ARG GOOSE_VERSION=1.59.2
+ARG GOOSE_SHA256_X86_64=c63cf82953e968d84b7542eb38a621dfdb5050b967728ed363517be5cdc666ea
+ARG GOOSE_SHA256_AARCH64=ec2e0aded1e2aba8d310727a5138f2e3cce0769f2611fbe196ed014c31ce370a
+RUN case ",${SANDBOX_HARNESSES}," in *,goose,*) \
+      arch="$(uname -m)"; \
+      case "$arch" in \
+        x86_64) sha="${GOOSE_SHA256_X86_64}" ;; \
+        aarch64) sha="${GOOSE_SHA256_AARCH64}" ;; \
+        *) echo "no pinned goose build for $arch" >&2; exit 1 ;; \
+      esac; \
+      name="goose-${arch}-unknown-linux-gnu"; \
+      mkdir -p /opt/aurora/harness/goose /tmp/goose-dl \
+   && curl -fsSL --retry 3 -o "/tmp/goose-dl/${name}.tar.gz" \
+        "https://github.com/aaif-goose/goose/releases/download/v${GOOSE_VERSION}/${name}.tar.gz" \
+   && echo "${sha}  /tmp/goose-dl/${name}.tar.gz" | sha256sum -c - \
+   && tar -xzf "/tmp/goose-dl/${name}.tar.gz" -C /tmp/goose-dl \
+   && install -m 0755 /tmp/goose-dl/goose /opt/aurora/harness/goose/goose \
+   && rm -rf /tmp/goose-dl \
+   && test "$(/opt/aurora/harness/goose/goose --version | tr -d ' ')" = "${GOOSE_VERSION}" ;; esac
+# (P5-HARN, D-363(b)) Pinned OpenCode on its v1.19.x line (release v${OPENCODE_VERSION}); must match
+# PINNED_VERSION in services/aurora-supervisor/src/adapters/opencode/mod.rs. Checksum-verified.
+ARG OPENCODE_VERSION=1.19.6
+ARG OPENCODE_SHA256_X86_64=47734e08968b30cc22a0bffb6d9feeed76ad4aa743213a12122040392d09a057
+ARG OPENCODE_SHA256_AARCH64=5b68c1f4c5e75b4134e664cc8f36d634d64208d4fcfe5bcf3b48bab699c2dbac
+RUN case ",${SANDBOX_HARNESSES}," in *,opencode,*) \
+      arch="$(uname -m)"; \
+      case "$arch" in \
+        x86_64) sha="${OPENCODE_SHA256_X86_64}"; name="opencode-linux-x64" ;; \
+        aarch64) sha="${OPENCODE_SHA256_AARCH64}"; name="opencode-linux-arm64" ;; \
+        *) echo "no pinned OpenCode build for $arch" >&2; exit 1 ;; \
+      esac; \
+      mkdir -p /opt/aurora/harness/opencode /tmp/opencode-dl \
+   && curl -fsSL --retry 3 -o "/tmp/opencode-dl/${name}.tar.gz" \
+        "https://github.com/anomalyco/opencode/releases/download/v${OPENCODE_VERSION}/${name}.tar.gz" \
+   && echo "${sha}  /tmp/opencode-dl/${name}.tar.gz" | sha256sum -c - \
+   && tar -xzf "/tmp/opencode-dl/${name}.tar.gz" -C /tmp/opencode-dl \
+   && install -m 0755 /tmp/opencode-dl/opencode /opt/aurora/harness/opencode/opencode \
+   && rm -rf /tmp/opencode-dl \
+   && test "$(/opt/aurora/harness/opencode/opencode --version)" = "${OPENCODE_VERSION}" ;; esac
 COPY --from=supervisor-builder /out/aurora-supervisor /usr/local/bin/aurora-supervisor
 # (P4-PRV-2) preview round-trip e2e: a share's start command may run `preview-echo <port>`.
 COPY --from=supervisor-builder /out/preview-echo /usr/local/bin/preview-echo

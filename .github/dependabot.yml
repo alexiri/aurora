@@ -104,6 +104,19 @@ updates:
       # version needs the claude-code conformance run. Bumped by hand; never automatically.
       - dependency-name: "@anthropic-ai/claude-code"
 
+  # --- The sandbox image's Pi coding agent (P5-HARN, D-361) ----------------------------------------
+  - package-ecosystem: npm
+    directory: /images/sandbox/harness/pi
+    schedule: { interval: weekly, day: tuesday, time: "06:30", timezone: Europe/Zurich }
+    open-pull-requests-limit: 1
+    labels: [dependencies, javascript]
+    commit-message: { prefix: "deps(sandbox)" }
+    ignore:
+      # Pinned in two places that must agree: this package.json and PINNED_VERSION in
+      # services/aurora-supervisor/src/adapters/pi/mod.rs; a new version needs the pi conformance run
+      # (and Node.js >= 22.19 in the image). Bumped by hand; never automatically.
+      - dependency-name: "@earendil-works/pi-coding-agent"
+
   # --- GitHub Actions: every workflow action is pinned by commit SHA (OPS-019/020) ---------------
   - package-ecosystem: github-actions
     directory: /

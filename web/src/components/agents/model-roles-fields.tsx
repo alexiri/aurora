@@ -25,6 +25,7 @@ export function ModelRolesFields({
   harnessId,
   harnessName,
   roleless,
+  mapped = null,
   models,
   roles,
   onRoles,
@@ -38,6 +39,8 @@ export function ModelRolesFields({
   harnessName: string;
   /** The harness maps no roles (`GET /v1/harnesses` `model_roles = []`). */
   roleless: boolean;
+  /** The roles the harness maps (`model_roles`); `null` while unknown. A role it does not map says so (C-1016). */
+  mapped?: readonly string[] | null;
   models: { model_id: string; display_name?: string | null }[];
   roles: RoleDraft;
   onRoles: (r: RoleDraft) => void;
@@ -85,9 +88,17 @@ export function ModelRolesFields({
           endpointModel === undefined
             ? "Use the endpoint's setting"
             : `Use the endpoint's setting (${endpointModel ?? "none"})`;
+        // (C-1016) "Not used by <display name>" for whichever role the harness does not map.
+        const unused = mapped !== null && !mapped.includes(role);
         return (
-          <Field key={role} id={id} label={roleLabel(role, harnessId)} error={errors.roles[role]}>
-            <select id={id} className={inputClass} value={roles[role]} disabled={disabled} onChange={(e) => onRoles({ ...roles, [role]: e.target.value })}>
+          <Field
+            key={role}
+            id={id}
+            label={roleLabel(role, harnessId)}
+            error={errors.roles[role]}
+            hint={unused ? `Not used by ${harnessName}.` : undefined}
+          >
+            <select id={id} className={inputClass} value={roles[role]} disabled={disabled || unused} onChange={(e) => onRoles({ ...roles, [role]: e.target.value })}>
               <option value="">{empty}</option>
               {roles[role] && !models.some((m) => m.model_id === roles[role]) ? <option value={roles[role]}>{roles[role]}</option> : null}
               {models.map((m) => (
@@ -107,7 +118,7 @@ export function ModelRolesFields({
       <Field id="a-subagent" label="Subagents use" error={errors.subagent} hint="The model of subagents whose definition names none.">
         <select id="a-subagent" className={inputClass} value={subagent} disabled={disabled} onChange={(e) => onSubagent(e.target.value)}>
           <option value="inherit">Same as the default</option>
-          {ROLES.map((r) => (
+          {ROLES.filter((r) => mapped === null || mapped.includes(r)).map((r) => (
             <option key={r} value={r}>
               {ROLE_LABEL[r]}
             </option>

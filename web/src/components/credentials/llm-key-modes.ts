@@ -154,7 +154,11 @@ export function keyReasonMessage(err: unknown): string | undefined {
 /** Display names of the harness ids an endpoint serves (C-802). */
 export const HARNESS_LABEL: Record<string, string> = {
   claude_code: "Claude Code",
+  "claude-code": "Claude Code",
   codex: "Codex",
+  pi: "Pi",
+  goose: "goose",
+  opencode: "OpenCode",
 };
 
 export const NO_HARNESS =
