@@ -72,7 +72,12 @@ pub struct PolicyHandler {
     /// (P4-LLM-2, C-807) Mints the credential of the minted LLM modes; `None` refuses them (502
     /// `credential_unavailable`, `kind: llm_mint`).
     llm_mint: Option<Arc<crate::llm_mint::LlmMint>>,
+    /// (P5-ICS, D-273) Bodies of secret links, answered after admission (registered with the
+    /// invalidation hub by the binary).
+    link_cache: Arc<crate::seclink::LinkCache>,
 }
+
+mod link;
 
 pub struct PolicyHandlerParts {
     pub resolver: Arc<Resolver>,
@@ -538,7 +543,21 @@ impl PolicyHandler {
             health: None,
             insecure_loopback_injection: false,
             llm_mint: None,
+            link_cache: Arc::new(crate::seclink::LinkCache::default()),
         }
+    }
+
+    /// (P5-ICS) The secret-link body cache (the binary registers it with the invalidation hub).
+    #[must_use]
+    pub fn link_cache(&self) -> Arc<crate::seclink::LinkCache> {
+        self.link_cache.clone()
+    }
+
+    /// (P5-ICS) Replace the secret-link cache (tests use a short TTL / small bound).
+    #[must_use]
+    pub fn with_link_cache(mut self, c: Arc<crate::seclink::LinkCache>) -> Self {
+        self.link_cache = c;
+        self
     }
 
     /// (P4-LLM-2) The LLM credential mint service.
@@ -1095,6 +1114,17 @@ impl PolicyHandler {
         };
         // (P4-011B, C-827) The second pass of a released hold logs under the hold's approval.
         ctx.approval_id = released.and_then(|r| r.approval_id);
+        // (P5-ICS, D-273, SEC-107) A secret-link connection's synthetic host is decided by its own
+        // path (the host is no app's `hosts[]` entry): grant, policy, approval and Read only as for
+        // any tool request, then the lane fetches the stored URL.
+        if let Some(label) = aurora_registry::manifest::SecretLink::id_label(&host) {
+            let conn_id = Uuid::parse_str(label).ok();
+            // The agent's path and query are ignored by the lane and so never logged either.
+            ctx.path = "/".to_owned();
+            return self
+                .link_request(ctx, &identity, conn_id, &method, &headers, released)
+                .await;
+        }
         let rv = match self.resolver.resolve(&identity, &host, port).await {
             Ok(r) => r,
             Err(e) => {
@@ -1930,6 +1960,7 @@ impl PolicyHandler {
                 ldap: crate::ldap::is_ldap_host(&host)
                     .then(|| m.app.ldap.clone())
                     .flatten(),
+                link: None,
             });
         }
         if let Some(Cand::Secret(c)) = &winner {
@@ -2068,6 +2099,7 @@ impl PolicyHandler {
                 response_headers,
                 retry: None,
                 ldap: None,
+                link: None,
             });
         }
         let fb = self.fallback(&rv, app_match.as_ref(), &ungranted, &host);
@@ -2095,6 +2127,7 @@ impl PolicyHandler {
             response_headers,
             retry: None,
             ldap: None,
+            link: None,
         })
     }
 }
@@ -2138,6 +2171,19 @@ impl RequestHandler for PolicyHandler {
                 if let Some(h) = p.hook.take() {
                     h.on_error(&err);
                 }
+                Outcome::Respond(guidance::response(&err))
+            }
+            // (P5-ICS) Nothing on a secret-link host is ever forwarded as received: only the lane's
+            // own answer (`link` set) leaves the decision path.
+            Outcome::Forward(p)
+                if aurora_registry::manifest::SecretLink::id_label(&p.host).is_some()
+                    && p.link.is_none() =>
+            {
+                let err = ApiError::new(
+                    StatusCode::FORBIDDEN,
+                    "link_no_connection",
+                    "No calendar link serves this host.",
+                );
                 Outcome::Respond(guidance::response(&err))
             }
             o => o,
@@ -3053,6 +3099,7 @@ impl Retry for StaleRetry {
             response_headers: HeaderMap::new(),
             retry: None,
             ldap: None,
+            link: None,
         })
     }
 }

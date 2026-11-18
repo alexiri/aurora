@@ -1,0 +1,61 @@
+package:
+  id: ics-calendar
+  version: 1.0.0
+  contract: 1
+  min_core: 0.1.0
+  publisher: aurora
+  name: Calendar link (ICS)
+  description: "Read-only access to any calendar through its secret subscription link (ICS), with no OAuth app: Outlook, Google, iCloud, Proton, Fastmail, Nextcloud, Exchange and more"
+  homepage: https://icalendar.org
+apps:
+  - about:
+      id: ics-calendar
+      name: Calendar link (ICS)
+      description: Let agents read a calendar from its secret ICS link. You give a name and the link; the Aurora gateway fetches exactly that link for the agent, which never sees it. Works with any provider that publishes a calendar link, and needs no OAuth client.
+      category: productivity
+      api_docs: https://icalendar.org/RFC-Specifications/iCalendar-RFC-5545/
+      connect_note:
+        text: "The link works like a password: anyone who has it can read the calendar. Publish only the detail you need (for example busy/free only). To stop access, unpublish or reset the link at your calendar provider. The setup guide says where each provider keeps the link."
+      label_hint: A name for this calendar, for example "Private calendar"
+    credentials:
+      - { name: url, secret: true }
+    metadata:
+      # The link's host, shown on the connection card (not secret); the path and query never are.
+      - { name: host }
+      - { name: name }
+    connect:
+      - id: link
+        kind: fields
+        label: Calendar link
+        description: "A name for the calendar and its secret ICS link (https:// or webcal://). The link is stored encrypted and is never shown again."
+        fields:
+          - name: name
+            label: Name
+            type: text
+            store: metadata
+            required: true
+            placeholder: "Private calendar"
+          - name: url
+            label: Secret ICS link
+            type: secret
+            store: credentials
+            required: true
+            placeholder: "https://calendar.example/ical/…/basic.ics"
+    secret_link: { credential: url, expect_prefix: "BEGIN:VCALENDAR" }
+    tools:
+      read:
+        items:
+          - { id: read_calendar, name: Read the calendar, description: "Downloads the whole calendar (ICS) from its link: events, recurrences and exceptions.", host: "*.link.aurora.internal", path: /, methods: [GET] }
+    agent:
+      instructions: |
+        The calendars you may read are listed in `~/.aurora/links.json`: a list of `name`, `app` and
+        `url`. The `url` is an Aurora address, not the real link: download it with
+        `curl -fsS "<url>" -o /tmp/<name>.ics` once per task and work on that file (the gateway
+        also answers a repeat within 5 minutes from its cache). Never look for the real link.
+        Recurring events must be expanded: use
+        `uv run --no-project --with icalendar==7.3.0 --with recurring-ical-events==3.8.2 python -`
+        with `recurring_ical_events.of(cal).between(start, end)` and print `start–end | summary |
+        location`, converting to the person's time zone (they said it, or ask). An entry titled
+        "Busy" with no details means the link publishes busy/free only. You can read; you cannot
+        change a calendar through this link. `link_not_found` means the link was unpublished or
+        reset: ask the person to reconnect with the new link.

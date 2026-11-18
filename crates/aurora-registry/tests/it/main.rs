@@ -11,4 +11,5 @@ mod ldap;
 mod library;
 mod manifests;
 mod packages;
+mod secret_link;
 mod snapshot;

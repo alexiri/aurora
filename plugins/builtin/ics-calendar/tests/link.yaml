@@ -1,0 +1,19 @@
+# Secret-link lane (docs/06 §Secret-link lane): each case is one request as the gateway sees it. A
+# request to `<connection id>.link.aurora.internal` selects the app's read tool whatever path and
+# query the agent sends (the lane ignores them and fetches the stored URL); only GET and HEAD are
+# served.
+- name: a GET reads the calendar
+  request: { method: GET, url: "https://0190a1b2-0000-7000-8000-000000000001.link.aurora.internal/" }
+  expect: { app: ics-calendar, tool: read_calendar }
+- name: a HEAD is the same read
+  request: { method: HEAD, url: "https://0190a1b2-0000-7000-8000-000000000001.link.aurora.internal/" }
+  expect: { app: ics-calendar, tool: read_calendar }
+- name: the agent's path and query are ignored
+  request: { method: GET, url: "https://0190a1b2-0000-7000-8000-000000000001.link.aurora.internal/other/path?x=1" }
+  expect: { app: ics-calendar, tool: read_calendar }
+- name: "negative read_calendar: a POST is refused"
+  request: { method: POST, url: "https://0190a1b2-0000-7000-8000-000000000001.link.aurora.internal/", body: "x" }
+  expect: { refused: method_not_allowed }
+- name: "negative read_calendar: a DELETE is refused"
+  request: { method: DELETE, url: "https://0190a1b2-0000-7000-8000-000000000001.link.aurora.internal/" }
+  expect: { refused: method_not_allowed }

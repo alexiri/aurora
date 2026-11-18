@@ -1563,8 +1563,12 @@ async fn s20_narration_card_is_created_updated_and_collapsed() -> R {
         ok_data(&r);
     }
     let after = c.find_post(&res.message_ref).await?;
+    // A Markdown platform emphasises the outcome (Mattermost: `**Done** · 1 step · 3 s`).
     assert!(
-        after.text.starts_with("Done"),
+        after
+            .text
+            .trim_start_matches(['*', '_'])
+            .starts_with("Done"),
         "collapsed in place: {:?}",
         after.text
     );

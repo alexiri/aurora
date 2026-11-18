@@ -61,6 +61,20 @@ apps:
       - match: { host: "{instance}" }
         inject:
           - bearer: "{credentials.api_token}"
+  - about: { id: cal, name: Calendar link, description: D, category: productivity }
+    credentials: [ { name: url, secret: true } ]
+    metadata: [ { name: host }, { name: name } ]
+    connect:
+      - id: link
+        kind: fields
+        fields:
+          - { name: name, label: N, type: text, store: metadata, required: true }
+          - { name: url, label: U, type: secret, required: true }
+    secret_link: { credential: url }
+    tools:
+      read:
+        items:
+          - { id: read_calendar, name: Read, host: "*.link.aurora.internal", path: /, methods: [GET] }
 "#;
 
 struct W {
@@ -214,6 +228,8 @@ async fn render_inputs_carry_apps_channels_peers_and_schedules() {
     assert_eq!(apps[0]["name"], "Acme");
     // (P2-DBL-2, C-231) No database app: no libpq services.
     assert_eq!(ri["databases"], json!([]));
+    // (P5-ICS, C-843) No secret-link app: no links.
+    assert_eq!(ri["links"], json!([]));
     assert_eq!(
         apps[0]["accounts"],
         json!([{"id": conn, "label": "work account"}])
@@ -269,6 +285,62 @@ async fn render_inputs_carry_apps_channels_peers_and_schedules() {
     assert!(!text.contains("secret other"));
     assert!(text.contains("- chat: Acme HQ (dedicated, @ada_bot)"));
     assert!(text.contains("- @bob: Bob (your side: ask; their side: allow)"));
+}
+
+/// (P5-ICS, D-273, C-843) `links`: one entry per active, granted connection of a secret-link app,
+/// by name and id; an ungranted or disabled one, and any other app, never appears. Two links
+/// with one name both appear (the supervisor tells them apart by address).
+#[tokio::test]
+async fn render_inputs_list_the_granted_secret_link_connections_by_name_and_id() {
+    let w = world().await;
+    let (a, b, ungranted, disabled, other) = (
+        Uuid::now_v7(),
+        Uuid::now_v7(),
+        Uuid::now_v7(),
+        Uuid::now_v7(),
+        Uuid::now_v7(),
+    );
+    for (id, status, app, label) in [
+        (a, "active", "cal", "Work"),
+        (b, "active", "cal", "Work"),
+        (ungranted, "active", "cal", "Not mine"),
+        (disabled, "disabled", "cal", "Off"),
+        (other, "active", "acme_app", "Acme"),
+    ] {
+        sqlx::query("INSERT INTO app_connections (id, org_id, workspace_id, app_id, package_id, app_version, label, status, credentials_ref) VALUES ($1,$2,$3,$4,'acme','1.0.0',$5,$6,'x')")
+            .bind(id).bind(w.org).bind(w.ws).bind(app).bind(label).bind(status)
+            .execute(w.h.pool()).await.unwrap();
+    }
+    for id in [a, b, disabled, other] {
+        w.sql("INSERT INTO grants (id, workspace_id, agent_id, connection_id, mode) VALUES ($1,$2,$3,$4,'full')", &[Uuid::now_v7(), w.ws, w.agent, id]).await;
+    }
+    let ri = w.render_inputs().await;
+    let mut links: Vec<(String, String, String)> = ri["links"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|l| {
+            (
+                l["connection_id"].as_str().unwrap().to_owned(),
+                l["name"].as_str().unwrap().to_owned(),
+                l["app_id"].as_str().unwrap().to_owned(),
+            )
+        })
+        .collect();
+    links.sort();
+    let mut want = vec![
+        (a.to_string(), "Work".to_owned(), "cal".to_owned()),
+        (b.to_string(), "Work".to_owned(), "cal".to_owned()),
+    ];
+    want.sort();
+    assert_eq!(links, want, "{ri}");
+    for l in ri["links"].as_array().unwrap() {
+        assert_eq!(
+            l.as_object().unwrap().len(),
+            3,
+            "name, app_id, connection_id only: {l}"
+        );
+    }
 }
 
 /// (FIX-144, C-730) A self-hosted account carries where it lives: the registered instance's host,

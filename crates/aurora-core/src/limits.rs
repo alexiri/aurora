@@ -109,6 +109,15 @@ pub const LLM_TOKEN_MINT_FAILURE_HOLD: Duration = Duration::from_secs(5);
 /// (P4-LLM-4, D-268(c)) Request body the gateway buffers to SigV4-sign a Bedrock request; larger → 413
 /// `llm_request_too_large`.
 pub const LLM_SIGN_BODY_MAX: usize = 8 * 1024 * 1024;
+/// (P5-ICS, D-273, C-843) Largest body the gateway reads from a secret link; a larger one is cut
+/// with 502 `link_response_too_large` and never cached.
+pub const SECRET_LINK_RESPONSE_MAX: usize = 20 * 1024 * 1024;
+/// (P5-ICS, D-273(g)) How long a complete `200` body of a secret link is answered from memory.
+pub const SECRET_LINK_CACHE_TTL: Duration = Duration::from_secs(300);
+/// (P5-ICS) Bytes of secret-link bodies one gateway replica keeps (least recently used evicted).
+pub const SECRET_LINK_CACHE_MAX_BYTES: usize = 64 * 1024 * 1024;
+/// (P5-ICS, C-843) Redirect hops the gateway follows for a secret link.
+pub const SECRET_LINK_REDIRECTS_MAX: usize = 3;
 /// (P4-LLM-4, D-261) `aws_assume_role` `session_duration_secs`, in seconds (default 3 600).
 pub const LLM_ASSUME_ROLE_DURATION: std::ops::RangeInclusive<u64> = 900..=43_200;
 /// Minted entries per gateway replica (least recently used evicted).

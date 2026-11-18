@@ -39,6 +39,9 @@ const TOKEN: &str = "aug_good";
 // (D-251) The LDAP lane's pipeline tests share this file's harness.
 #[path = "ldap_lane.rs"]
 mod ldap_lane;
+// (P5-ICS, D-273) So do the secret-link lane's.
+#[path = "link_lane.rs"]
+mod link_lane;
 
 #[path = "account_health.rs"]
 mod account_health;
@@ -92,6 +95,8 @@ const EVAL_CTX: &str = "auc_eval";
 #[derive(Default)]
 struct Rows {
     ws: ScopePolicyRows,
+    /// The organization's rules (default: none).
+    org: ScopePolicyRows,
     secrets: Vec<SecretMetaRow>,
     conns: Vec<AppConnectionRow>,
     /// `(restricted, available)`
@@ -108,8 +113,23 @@ impl PolicySource for Src {
         Ok(if ws.is_some() {
             self.0.lock().unwrap().ws.clone()
         } else {
-            ScopePolicyRows::default()
+            self.0.lock().unwrap().org.clone()
         })
+    }
+    async fn connection(
+        &self,
+        _o: Uuid,
+        _w: Uuid,
+        id: Uuid,
+    ) -> Result<Option<AppConnectionRow>, String> {
+        Ok(self
+            .0
+            .lock()
+            .unwrap()
+            .conns
+            .iter()
+            .find(|c| c.id == id)
+            .cloned())
     }
     async fn secrets(&self, _o: Uuid, _w: Uuid) -> Result<Vec<SecretMetaRow>, String> {
         Ok(self.0.lock().unwrap().secrets.clone())
@@ -141,11 +161,13 @@ impl PolicySource for Src {
     }
 }
 
-struct Null;
+/// Keeps every request-log row (the secret-link tests read them).
+struct Capture(Arc<Mutex<Vec<aurora_db::repo::gateway::RequestLogRow>>>);
 
 #[async_trait]
-impl LogWriter for Null {
-    async fn write(&self, _rows: &[aurora_db::repo::gateway::RequestLogRow]) -> Result<(), String> {
+impl LogWriter for Capture {
+    async fn write(&self, rows: &[aurora_db::repo::gateway::RequestLogRow]) -> Result<(), String> {
+        self.0.lock().unwrap().extend_from_slice(rows);
         Ok(())
     }
 }
@@ -153,6 +175,13 @@ impl LogWriter for Null {
 struct Env {
     proxy: SocketAddr,
     up: SocketAddr,
+    /// The request-log rows written so far (after `log.flush()`).
+    rows: Arc<Mutex<Vec<aurora_db::repo::gateway::RequestLogRow>>>,
+    log: Arc<RequestLog>,
+    /// The handler's secret-link body cache.
+    cache: Arc<aurora_gateway::seclink::LinkCache>,
+    /// The resolver's policy cache: flushed after a test changes the rows.
+    resolve_cache: Arc<aurora_gateway::resolve::ResolveCache>,
 }
 
 async fn upstream(req: Request<Incoming>) -> Result<Response<Full<Bytes>>, Infallible> {
@@ -287,11 +316,12 @@ async fn start_with_ca(
         ws: Uuid::now_v7(),
         agent: Uuid::now_v7(),
     };
-    start_in(w, snap, creds, mk, extra_ca_pem, None, None).await
+    start_in(w, snap, creds, mk, extra_ca_pem, None, None, false).await
 }
 
 /// [`start_with_ca`] in a given world, with the churn-column pool (`touch_pool`) of a real database
 /// (P5-UX-14: account health is written there).
+#[allow(clippy::too_many_arguments)]
 async fn start_in(
     w: World,
     snap: Value,
@@ -300,6 +330,8 @@ async fn start_in(
     extra_ca_pem: Option<String>,
     touch_pool: Option<aurora_db::PgPool>,
     account_health: Option<Arc<aurora_gateway::account_health::AccountHealth>>,
+    // With a `touch_pool`: also give the handler a hold store on that database (approval holds).
+    with_holds: bool,
 ) -> (Env, Arc<Src>, Arc<SnapshotStore>) {
     let mem = Arc::new(MemoryStore::new("mem"));
     for (p, c) in creds {
@@ -335,19 +367,41 @@ async fn start_in(
         .unwrap(),
     );
     let resolver = Arc::new(Resolver::new(src.clone(), llm).with_snapshots(store.clone()));
+    let resolve_cache = resolver.cache();
     let plaintext = Arc::new(PlaintextCache::new(Arc::new(SecretVault::new(reg))));
+    let rows = Arc::new(Mutex::new(Vec::new()));
+    let log = RequestLog::new(Arc::new(Capture(rows.clone())));
+    let holds = if let (true, Some(pool)) = (with_holds, touch_pool.as_ref()) {
+        let (shutdown, rx) = tokio::sync::watch::channel(false);
+        std::mem::forget(shutdown);
+        let hub = aurora_gateway::invalidation::Hub::new();
+        tokio::spawn(hub.clone().run(pool.clone(), rx.clone()));
+        while !hub.is_connected() {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        Some(Arc::new(aurora_gateway::hold::Holds::new(
+            pool.clone(),
+            hub,
+            Uuid::now_v7(),
+            Duration::from_secs(30),
+            Some(rx),
+        )))
+    } else {
+        None
+    };
     let mut handler = PolicyHandler::new(PolicyHandlerParts {
         resolver,
         plaintext,
-        log: RequestLog::new(Arc::new(Null)),
+        log: log.clone(),
         external_url: "https://aurora.test/".into(),
-        holds: None,
+        holds,
         touch_pool,
     })
     .with_insecure_loopback_injection(true);
     if let Some(h) = account_health {
         handler = handler.with_account_health(h);
     }
+    let cache = handler.link_cache();
     let handler = Arc::new(handler);
     let gw = ca::generate("gw").unwrap();
     let pl = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -366,7 +420,18 @@ async fn start_in(
     })
     .unwrap();
     tokio::spawn(p.run(pl, std::future::pending()));
-    (Env { proxy, up }, src, store)
+    (
+        Env {
+            proxy,
+            up,
+            rows,
+            log,
+            cache,
+            resolve_cache,
+        },
+        src,
+        store,
+    )
 }
 
 struct Reply {

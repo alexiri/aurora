@@ -1175,6 +1175,18 @@ impl PlatformDriver for MattermostDriver {
         let token = v["token"].as_str().context("no token")?.to_owned();
         let id = v["id"].as_str().context("no token id")?.to_owned();
         lock(&self.st).person_tokens.insert(token.clone(), id);
+        // With their own token a person posts only where they are a member (Mattermost answers
+        // 403 otherwise). `add_space` joins only the bot, and `post_message` joins the author on
+        // their first post, which a token-only scenario never makes: join the spaces now.
+        let spaces: Vec<String> = lock(&self.st).spaces.values().cloned().collect();
+        for space in spaces {
+            self.admin(
+                Method::POST,
+                &format!("/channels/{space}/members"),
+                Some(json!({"user_id": p.id})),
+            )
+            .await?;
+        }
         Ok(Some(token))
     }
 

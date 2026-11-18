@@ -109,6 +109,10 @@ apps:
 #[path = "account_test.rs"]
 mod account_test;
 
+// (P5-ICS, D-273) The secret-link app's connect.
+#[path = "link_connect.rs"]
+mod link_connect;
+
 struct W {
     h: Harness,
     org: Uuid,
@@ -119,6 +123,11 @@ struct W {
 }
 
 async fn world(hook_url: Option<String>) -> W {
+    world_with(hook_url, YAML, true).await
+}
+
+/// [`world`] with another package manifest (`hooks`: ship the fixture hook component with it).
+async fn world_with(hook_url: Option<String>, yaml: &str, hooks: bool) -> W {
     let oauth = MockOAuth::start().await;
     let h = Harness::with_config(|c| {
         if let Some(u) = hook_url {
@@ -143,9 +152,11 @@ async fn world(hook_url: Option<String>) -> W {
         )
         .await;
     assert_eq!(s, 201, "{v}");
-    let mut b = PackageBuilder::new(YAML);
-    let wasm = hooks_wasm();
-    b.set_file("hooks.wasm", &wasm);
+    let mut b = PackageBuilder::new(yaml);
+    if hooks {
+        let wasm = hooks_wasm();
+        b.set_file("hooks.wasm", &wasm);
+    }
     b.sign(&key, &PackageBuilder::key_id(&key));
     let boundary = "XB";
     let mut body = format!(
