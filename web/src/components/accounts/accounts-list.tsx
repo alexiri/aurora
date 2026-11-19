@@ -17,6 +17,7 @@ import { Menu, MenuContent, MenuItem, MenuTrigger } from "@/components/ui/menu";
 import { accountKeys, useAccounts, type Account } from "@/lib/api/accounts";
 import type { SecretScope } from "@/lib/api/secrets";
 import { useWhoCan } from "@/lib/api/who-can";
+import { useOrg } from "@/lib/api/queries";
 import { splitGiven } from "@/lib/accounts";
 import { needsAttention } from "@/lib/account-health";
 
@@ -27,6 +28,13 @@ import { FreeApps } from "./free-apps";
 export function accountsSentence(total: number, failing: number): string {
   if (failing > 0) return failing === 1 ? "1 account needs you." : `${failing} accounts need you.`;
   return total === 1 ? "1 account." : `${total} accounts.`;
+}
+
+/** (P5-POLISH-9, E2) The organization's Accounts: "1 account, shared with everyone in Users." (an account that needs you comes first). */
+export function orgAccountsSentence(total: number, failing: number, orgName: string | undefined): string {
+  if (failing > 0) return accountsSentence(total, failing);
+  const who = `everyone in ${orgName ?? "the organization"}`;
+  return total === 1 ? `1 account, shared with ${who}.` : `${total} accounts, shared with ${who}.`;
 }
 
 /**
@@ -72,6 +80,7 @@ export function AccountsList({
     "add_account",
   );
 
+  const org = useOrg(scope.kind === "organization" ? orgId : undefined);
   if (accounts.isPending) return <Loading />;
   if (accounts.isError) return <ErrorState error={accounts.error} onRetry={() => accounts.refetch()} />;
   const items = accounts.data.items.filter((a) => (!kind || a.kind === kind) && (!appId || a.app?.app_id === appId));
@@ -133,7 +142,9 @@ export function AccountsList({
       {/* (P5-POLISH-7, D1) A sentence from state; an account that needs you takes precedence. */}
       {!agent && !appId && items.length > 0 ? (
         <p className="text-sm text-ink-2" data-testid="accounts-sentence">
-          {accountsSentence(items.length, items.filter(needsAttention).length)}
+          {scope.kind === "organization"
+            ? orgAccountsSentence(items.length, items.filter(needsAttention).length, org.data?.name)
+            : accountsSentence(items.length, items.filter(needsAttention).length)}
         </p>
       ) : null}
       {agent && addEntries ? (

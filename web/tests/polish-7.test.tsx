@@ -1,7 +1,7 @@
 import { fireEvent, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
-import { accountsSentence } from "@/components/accounts/accounts-list";
+import { accountsSentence, orgAccountsSentence } from "@/components/accounts/accounts-list";
 import { AppsTab, appStatus, isSwitchedOff } from "@/components/apps/apps-tab";
 import { approvalsSentence, mergePending } from "@/components/approvals/approvals-view";
 import { overviewSentence } from "@/components/overview/overview-view";
@@ -85,6 +85,10 @@ describe("accounts sentence", () => {
     expect(accountsSentence(3, 0)).toBe("3 accounts.");
     expect(accountsSentence(3, 1)).toBe("1 account needs you.");
     expect(accountsSentence(3, 2)).toBe("2 accounts need you.");
+  });
+  it("says the organization's accounts are shared with everyone in it", () => {
+    expect(orgAccountsSentence(1, 0, "Users")).toBe("1 account, shared with everyone in Users.");
+    expect(orgAccountsSentence(2, 1, "Users")).toBe("1 account needs you.");
   });
 });
 

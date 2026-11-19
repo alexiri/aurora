@@ -24,11 +24,33 @@ for (const scheme of ["light", "dark"] as const) {
         // The member override is registered after the shared mock (a later `page.route` wins), so open the page by hand.
         await mockApi(page);
         await asMember(page);
+        // A member may not read the organization's accounts (403); the shared key comes from the workspace's list.
+        await page.route("**/v1/orgs/*/accounts", (route) => route.fulfill({ status: 403, contentType: "application/json", body: JSON.stringify({ error: { code: "forbidden", message: "no" } }) }));
+        await page.route("**/v1/workspaces/*/accounts", (route) =>
+          route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({ items: [{ ref: { type: "secret", id: "00000000-0000-4000-8000-000000000062" }, kind: "ai_key", name: "Users AI gateway", scope: "organization", levels: [], health: { state: "not_used" }, agents: [], can: { give_access: false, change_access: false, manage: false } }], next_cursor: null }),
+          }),
+        );
         await page.emulateMedia({ colorScheme: scheme });
         await page.goto("/o/acme/ai-models");
         await expect(page.getByTestId("member-ai-models")).toBeVisible();
+        await expect(page.getByText("Users AI gateway", { exact: true })).toBeVisible();
+        await expect(page.getByText("The organization has no key of its own.")).toHaveCount(0);
         await expect(page.getByRole("button", { name: "Save" })).toHaveCount(0);
         await expect(page.getByLabel("Allowed models")).toHaveCount(0);
+        expect(await overflow(page)).toBeLessThanOrEqual(0);
+        expect(await serious(page)).toEqual([]);
+      });
+
+      test("a member's Agents page is a sentence, not a refusal", async ({ page }) => {
+        await mockApi(page);
+        await asMember(page);
+        await page.emulateMedia({ colorScheme: scheme });
+        await page.goto("/o/acme/agents");
+        await expect(page.getByTestId("member-org-agents")).toBeVisible();
+        await expect(page.getByText("Only organization owners and admins can open this page")).toHaveCount(0);
         expect(await overflow(page)).toBeLessThanOrEqual(0);
         expect(await serious(page)).toEqual([]);
       });
