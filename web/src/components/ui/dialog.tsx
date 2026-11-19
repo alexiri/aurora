@@ -1,7 +1,7 @@
 "use client";
 
 import * as DialogPrimitive from "@radix-ui/react-dialog";
-import { useCallback, type ComponentProps, type ReactNode } from "react";
+import { useCallback, useRef, type ComponentProps, type ReactNode } from "react";
 
 import { cn } from "@/lib/utils";
 
@@ -66,6 +66,19 @@ export function DialogContent({
     },
     [fixedHeight],
   );
+  const bodyRef = useRef<HTMLDivElement>(null);
+  // (P5-POLISH-1 review) Radix focuses the first tabbable element, which is Close (it comes first in the header): a
+  // dialog opened from a menu then shows a focus ring on Close. Focus the body's first field, else the content.
+  const { onOpenAutoFocus, ...contentProps } = props;
+  const openAutoFocus = (event: Event) => {
+    onOpenAutoFocus?.(event);
+    if (event.defaultPrevented) return;
+    event.preventDefault();
+    const field = bodyRef.current?.querySelector<HTMLElement>(
+      "input:not([type=hidden]):not(:disabled), textarea:not(:disabled), select:not(:disabled)",
+    );
+    (field ?? (event.currentTarget as HTMLElement | null))?.focus();
+  };
   return (
     <DialogPrimitive.Portal>
       <DialogPrimitive.Overlay className="fixed inset-0 z-40 bg-scrim" />
@@ -77,7 +90,8 @@ export function DialogContent({
           variant === "sheet" && SHEET,
           className,
         )}
-        {...props}
+        onOpenAutoFocus={openAutoFocus}
+        {...contentProps}
       >
         <div className="shrink-0 px-6 pb-3 pt-6">
           <div className="flex items-start justify-between gap-3">
@@ -104,7 +118,9 @@ export function DialogContent({
           </div>
           {header ? <div className="mt-3">{header}</div> : null}
         </div>
-        <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">{children}</div>
+        <div ref={bodyRef} className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
+          {children}
+        </div>
         {footer ? <div className="shrink-0 border-t border-line px-6 py-3">{footer}</div> : null}
       </DialogPrimitive.Content>
     </DialogPrimitive.Portal>
