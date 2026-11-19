@@ -278,6 +278,10 @@ pub async fn act(
                 .metadata(meta),
         );
     }
+    if activated {
+        // (P5-POLISH-4) A newly active package can make an app ready: re-evaluate every open setup request.
+        crate::domains::app_setup_requests::service::reevaluate(state, None).await;
+    }
     Ok((service::get_row(state, id).await?, flipped))
 }
 

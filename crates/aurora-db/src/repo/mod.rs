@@ -9,6 +9,7 @@ pub mod agent_links;
 pub mod agents;
 pub mod api_keys;
 pub mod app_instances;
+pub mod app_setup_requests;
 pub mod approval_notify;
 pub mod approvals;
 pub mod attachments;

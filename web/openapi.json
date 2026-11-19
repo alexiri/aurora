@@ -23711,6 +23711,185 @@
         ]
       }
     },
+    "/v1/orgs/{org}/app-setup-requests": {
+      "get": {
+        "tags": [
+          "apps"
+        ],
+        "summary": "The organization's app setup requests (`status=open` by default), the latest ask first. Owners and\nadmins only; anyone else gets 404.",
+        "operationId": "listAppSetupRequests",
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "description": "Organization id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "description": "`open` (default) | `resolved` | `declined` | `withdrawn`.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppSetupRequestList"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/orgs/{org}/app-setup-requests/{id}/decline": {
+      "post": {
+        "tags": [
+          "apps"
+        ],
+        "summary": "\"Not now\": closes the request as declined; each asker is told once. Owners and admins only.",
+        "operationId": "declineAppSetupRequest",
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "description": "Organization id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Request id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppSetupRequest"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "already_closed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
     "/v1/orgs/{org}/audit": {
       "get": {
         "tags": [
@@ -35294,6 +35473,172 @@
         ]
       }
     },
+    "/v1/workspaces/{ws}/apps/{app}/setup-request": {
+      "post": {
+        "tags": [
+          "apps"
+        ],
+        "summary": "Ask the organization's owners and admins to make an app ready (C-1030). `can_own` of the workspace.\nIdempotent per person; 409 `app_ready` when the app is ready already; 429 after 20 asks in an hour.",
+        "operationId": "askAppSetup",
+        "parameters": [
+          {
+            "name": "ws",
+            "in": "path",
+            "description": "Workspace id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "app",
+            "in": "path",
+            "description": "App id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppSetupRequest"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "app_ready",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "apps"
+        ],
+        "summary": "Withdraw the caller's ask; the request closes when no asker is left.",
+        "operationId": "withdrawAppSetup",
+        "parameters": [
+          {
+            "name": "ws",
+            "in": "path",
+            "description": "Workspace id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "app",
+            "in": "path",
+            "description": "App id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Withdrawn"
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
     "/v1/workspaces/{ws}/audit": {
       "get": {
         "tags": [
@@ -40188,6 +40533,17 @@
             },
             "description": "The union of what the blocking methods need (empty when the app is switched off)."
           },
+          "requested": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Requested",
+                "description": "(P5-POLISH-4, C-1030) Whether the caller asked an admin to set it up, and how many people did;\nabsent when nobody asked."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "state": {
             "$ref": "#/components/schemas/ReadinessState"
           },
@@ -40217,6 +40573,84 @@
           },
           "custom_only": {
             "type": "boolean"
+          }
+        }
+      },
+      "AppSetupRequest": {
+        "type": "object",
+        "description": "An organization's request for an app to be made ready (C-1030). There is no free text.",
+        "required": [
+          "id",
+          "org_id",
+          "app_id",
+          "app_name",
+          "status",
+          "askers",
+          "needs",
+          "unavailable",
+          "created_at"
+        ],
+        "properties": {
+          "app_id": {
+            "type": "string"
+          },
+          "app_name": {
+            "type": "string"
+          },
+          "askers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Asker"
+            },
+            "description": "The askers; a person who is not an owner or admin of the organization sees only their own ask."
+          },
+          "closed_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "needs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SetupNeed"
+            },
+            "description": "What is missing (C-1029); empty when the app is switched off."
+          },
+          "org_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "status": {
+            "type": "string",
+            "description": "`open` | `resolved` | `declined` | `withdrawn`."
+          },
+          "unavailable": {
+            "type": "boolean",
+            "description": "The app is switched off for the organization."
+          }
+        }
+      },
+      "AppSetupRequestList": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AppSetupRequest"
+            }
           }
         }
       },
@@ -41020,6 +41454,33 @@
           }
         ],
         "description": "(P5-UX-16, C-982) What asked the question: the agent's access, or a rule."
+      },
+      "Asker": {
+        "type": "object",
+        "description": "One person's ask: their display name and where they asked from. Never an e-mail.",
+        "required": [
+          "user_id",
+          "display_name",
+          "workspace_id",
+          "asked_at"
+        ],
+        "properties": {
+          "asked_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "user_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "workspace_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
       },
       "AttachPresenceRequest": {
         "type": "object",
@@ -59161,6 +59622,23 @@
               "null"
             ],
             "format": "int32"
+          }
+        }
+      },
+      "Requested": {
+        "type": "object",
+        "description": "`AppSummary.readiness.requested` (C-1029): whether the caller asked, and how many people did.",
+        "required": [
+          "by_me",
+          "count"
+        ],
+        "properties": {
+          "by_me": {
+            "type": "boolean"
+          },
+          "count": {
+            "type": "integer",
+            "format": "int64"
           }
         }
       },

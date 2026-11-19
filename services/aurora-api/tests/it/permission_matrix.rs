@@ -704,6 +704,27 @@ const ROWS: &[Row] = &[
     // organization view (owner/admin) is covered by it/app_setup.rs.
     r("GET", "/v1/apps/{app}/setup", G::WsOwn, false),
     r("GET", "/v1/apps/{app}/connect-plan", G::WsOwn, false),
+    // (P5-POLISH-4, C-1030, SEC-135) Ask an admin to set an app up: workspace owners ask, anyone with the
+    // workspace may withdraw their own ask, owners and admins read and decline.
+    r(
+        "POST",
+        "/v1/workspaces/{ws}/apps/{app}/setup-request",
+        G::WsOwn,
+        false,
+    ),
+    r(
+        "DELETE",
+        "/v1/workspaces/{ws}/apps/{app}/setup-request",
+        G::WsUse,
+        false,
+    ),
+    r("GET", "/v1/orgs/{org}/app-setup-requests", G::Admin, false),
+    r(
+        "POST",
+        "/v1/orgs/{org}/app-setup-requests/{id}/decline",
+        G::Admin,
+        false,
+    ),
     r("GET", "/v1/connectors", G::Auth, false),
     r("GET", "/v1/connectors/{id}/icon", G::Auth, false),
     r("POST", "/v1/apps/{app}/connect", G::Auth, false),

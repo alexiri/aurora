@@ -6,7 +6,16 @@
  * Plain JavaScript: no imports, no bundler output.
  */
 
-const TYPES = ["approval.pending", "approval.reminder", "approval.digest", "test", "admin_attention"];
+const TYPES = [
+  "approval.pending",
+  "approval.reminder",
+  "approval.digest",
+  "test",
+  "admin_attention",
+  "app_setup_request",
+  "app_setup_resolved",
+  "app_setup_declined",
+];
 const URL_PATTERN = /^\/o\/[A-Za-z0-9._~%/-]+(\?[A-Za-z0-9._~%=&-]*)?$/;
 
 self.addEventListener("install", () => {
@@ -42,6 +51,21 @@ function build(raw) {
       body: "Open Administration to review it.",
       tag: "aurora-admin",
       url: "/admin",
+    };
+  }
+  if (data.type === "app_setup_request" || data.type === "app_setup_resolved" || data.type === "app_setup_declined") {
+    // (P5-POLISH-4, D-386) Fixed text per type; the notice's title only when the device turned names on.
+    const item = text(data.title, 80);
+    const fixed = {
+      app_setup_request: ["Aurora — someone asked for an app", "Open Aurora to set it up or decline."],
+      app_setup_resolved: ["Aurora — an app you asked for is ready", "Give it to your agent from its Access tab."],
+      app_setup_declined: ["Aurora — an app you asked for won't be set up now", "Open Aurora for details."],
+    }[data.type];
+    return {
+      title: item ? "Aurora — " + item : fixed[0],
+      body: fixed[1],
+      tag: "aurora-app-setup",
+      url: URL_PATTERN.test(url) ? url : "/",
     };
   }
   if (data.type === "approval.digest") {
