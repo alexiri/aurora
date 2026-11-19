@@ -4,7 +4,7 @@
 use super::dto::*;
 use super::{EndpointRefusal, check_endpoint, push_unavailable, vapid};
 use crate::app::AppState;
-use crate::audit::{self, AuditActor, AuditEvent, Outcome};
+use crate::audit::{self, AuditEvent};
 use crate::http::auth::{Principal, SessionCaller};
 use aurora_core::limits::PUSH_SUBSCRIPTIONS_PER_USER;
 use aurora_core::secret::Secret;
@@ -147,7 +147,7 @@ fn audit_best_effort(
 ) {
     audit::record(
         state,
-        AuditEvent::new(AuditActor::from_caller(c), action, Outcome::Success)
+        AuditEvent::by(c, action)
             .target("push_subscription", id)
             .metadata(json!({ "subscription_id": id, "label": label, "endpoint_host": host })),
     );

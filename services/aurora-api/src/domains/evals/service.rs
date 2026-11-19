@@ -8,7 +8,7 @@ use super::dto::{
 };
 use super::fingerprint::{self, SkillEntry};
 use crate::app::AppState;
-use crate::audit::{self, AuditActor, AuditEvent, Outcome};
+use crate::audit::{self, AuditEvent};
 use crate::domains::hosted::model::{self, Reason};
 use crate::domains::llm::platform;
 use crate::domains::secrets::gov;
@@ -148,7 +148,7 @@ fn question_audit(
     action: &str,
     meta: serde_json::Value,
 ) -> AuditEvent {
-    AuditEvent::new(AuditActor::from_caller(c), action, Outcome::Success)
+    AuditEvent::by(c, action)
         .org(a.org_id)
         .workspace(a.workspace_id)
         .target("eval_question", id)
@@ -500,11 +500,7 @@ pub async fn put_settings(
     // Ids only, never a secret value (SEC-115, SEC-116).
     audit::commit_critical(
         tx,
-        &AuditEvent::new(
-            AuditActor::from_caller(c),
-            "eval.settings.update",
-            Outcome::Success,
-        )
+        &AuditEvent::by(c, "eval.settings.update")
         .org(a.org_id)
         .workspace(a.workspace_id)
         .target("agent", a.id)

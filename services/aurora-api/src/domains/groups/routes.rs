@@ -29,7 +29,7 @@ pub fn router() -> OpenApiRouter<AppState> {
 }
 
 fn after(p: &Pagination) -> Option<(chrono::DateTime<chrono::Utc>, Uuid)> {
-    p.after.map(|c| (c.t, c.id))
+    p.after_key()
 }
 
 fn if_match(h: &HeaderMap) -> Result<Option<i64>, ApiError> {
@@ -94,10 +94,7 @@ async fn list_groups(
     )
     .await?;
     let page = Page::from_rows(rows, p.limit, |r| (r.created_at, r.id));
-    Ok(Json(Page {
-        items: page.items.into_iter().map(Group::from).collect(),
-        next_cursor: page.next_cursor,
-    }))
+    Ok(Json(page.map(Group::from)))
 }
 
 /// Create a group (org `owner`/`admin`); `source: "idp"` links it to a provider's claim value.
@@ -196,10 +193,7 @@ async fn list_members(
     let p = q.resolve()?;
     let rows = repo::list_members(&s.pool, id, after(&p), p.fetch()).await?;
     let page = Page::from_rows(rows, p.limit, |r| (r.created_at, r.user_id));
-    Ok(Json(Page {
-        items: page.items.into_iter().map(GroupMember::from).collect(),
-        next_cursor: page.next_cursor,
-    }))
+    Ok(Json(page.map(GroupMember::from)))
 }
 
 /// Add a member of the organization to a manual group (idempotent).
@@ -276,10 +270,7 @@ async fn list_group_workspaces(
     let p = q.resolve()?;
     let rows = repo::list_bindings(&s.pool, id, after(&p), p.fetch()).await?;
     let page = Page::from_rows(rows, p.limit, |r| (r.created_at, r.workspace_id));
-    Ok(Json(Page {
-        items: page.items.into_iter().map(GroupBinding::from).collect(),
-        next_cursor: page.next_cursor,
-    }))
+    Ok(Json(page.map(GroupBinding::from)))
 }
 
 /// What deleting the group (or, with `remove_member`, removing that member; with

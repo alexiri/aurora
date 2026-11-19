@@ -799,18 +799,14 @@ pub async fn set_byo_posture(
     let row = workspaces::set_byo_posture(&mut *tx, ws, new.map(ByoPosture::as_str))
         .await?
         .ok_or_else(|| ApiError::not_found("Workspace not found."))?;
-    let ev = crate::audit::AuditEvent::new(
-        crate::audit::AuditActor::from_caller(c),
-        "workspace.byo_posture.update",
-        crate::audit::Outcome::Success,
-    )
-    .org(a.org_id)
-    .workspace(ws)
-    .target("workspace", ws)
-    .metadata(serde_json::json!({
-        "byo_posture": new.map(ByoPosture::as_str),
-        "previous": before.byo_posture,
-    }));
+    let ev = crate::audit::AuditEvent::by(c, "workspace.byo_posture.update")
+        .org(a.org_id)
+        .workspace(ws)
+        .target("workspace", ws)
+        .metadata(serde_json::json!({
+            "byo_posture": new.map(ByoPosture::as_str),
+            "previous": before.byo_posture,
+        }));
     crate::audit::insert_tx(&mut tx, &ev).await.map_err(|e| {
         tracing::error!(error = %e, "workspace.byo_posture.update audit write failed");
         ApiError::unavailable("audit_unavailable", "The audit log is unavailable.")

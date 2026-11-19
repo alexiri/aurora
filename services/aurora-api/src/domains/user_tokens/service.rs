@@ -5,7 +5,7 @@ use super::custody::{self, Discards};
 use super::dto::*;
 use super::end;
 use crate::app::AppState;
-use crate::audit::{self, AuditActor, AuditEvent, Outcome};
+use crate::audit::{self, AuditActor, AuditEvent};
 use crate::domains::channels::inbox::send::Ctx;
 use crate::domains::connectors::ops::{self, CORRELATED_WAIT, CorrelatedError, NewOp};
 use crate::http::auth::{Caller, SessionCaller};
@@ -198,14 +198,10 @@ pub async fn create(
     tx.commit().await.map_err(DbError::from)?;
     audit::record(
         s,
-        AuditEvent::new(
-            AuditActor::from_caller(c),
-            "user_token.create",
-            Outcome::Success,
-        )
-        .org(org)
-        .target("user_token", token_id)
-        .metadata(json!({"integration_id": integ.id})),
+        AuditEvent::by(c, "user_token.create")
+            .org(org)
+            .target("user_token", token_id)
+            .metadata(json!({"integration_id": integ.id})),
     );
     Ok(UserToken::build(row, &[]))
 }
@@ -306,14 +302,10 @@ pub async fn grant(s: &AppState, c: &SessionCaller, id: Uuid, agent: Uuid) -> Re
     if added {
         audit::record(
             s,
-            AuditEvent::new(
-                AuditActor::from_caller(c),
-                "user_token.grant",
-                Outcome::Success,
-            )
-            .org(token.org_id)
-            .target("user_token", id)
-            .metadata(json!({"agent_id": agent})),
+            AuditEvent::by(c, "user_token.grant")
+                .org(token.org_id)
+                .target("user_token", id)
+                .metadata(json!({"agent_id": agent})),
         );
     }
     Ok(())
@@ -341,14 +333,10 @@ pub async fn ungrant(
     if removed {
         audit::record(
             s,
-            AuditEvent::new(
-                AuditActor::from_caller(c),
-                "user_token.ungrant",
-                Outcome::Success,
-            )
-            .org(token.org_id)
-            .target("user_token", id)
-            .metadata(json!({"agent_id": agent})),
+            AuditEvent::by(c, "user_token.ungrant")
+                .org(token.org_id)
+                .target("user_token", id)
+                .metadata(json!({"agent_id": agent})),
         );
     }
     Ok(())

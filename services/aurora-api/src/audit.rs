@@ -108,6 +108,11 @@ impl AuditEvent {
             metadata: json!({}),
         }
     }
+    /// A successful event by the caller `c` (the `AuditEvent::new(AuditActor::from_caller(c), ..,
+    /// Outcome::Success)` every handler wrote).
+    pub fn by(c: &Caller, action: impl Into<String>) -> Self {
+        Self::new(AuditActor::from_caller(c), action, Outcome::Success)
+    }
     #[must_use]
     pub fn org(mut self, id: Uuid) -> Self {
         self.org_id = Some(id);

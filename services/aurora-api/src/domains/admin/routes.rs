@@ -33,8 +33,7 @@ async fn list_users(
 ) -> Result<Json<Page<AdminUser>>, ApiError> {
     let p = Pagination::new(q.limit, q.cursor.as_deref())?;
     let needle = q.q.as_deref().map(str::trim).filter(|v| !v.is_empty());
-    let rows =
-        account::list_users(&s.pool, needle, p.after.map(|c| (c.t, c.id)), p.fetch()).await?;
+    let rows = account::list_users(&s.pool, needle, p.after_key(), p.fetch()).await?;
     let page = Page::from_rows(rows, p.limit, |r| (r.created_at, r.id));
     let ids: Vec<Uuid> = page.items.iter().map(|r| r.id).collect();
     let mut states: std::collections::HashMap<Uuid, IdpRoles> =
@@ -43,19 +42,12 @@ async fn list_users(
             .into_iter()
             .map(|st| (st.user_id, IdpRoles::from(st)))
             .collect();
-    Ok(Json(Page {
-        items: page
-            .items
-            .into_iter()
-            .map(|r| {
-                let id = r.id;
-                let mut u = AdminUser::from(r);
-                u.idp_roles = states.remove(&id);
-                u
-            })
-            .collect(),
-        next_cursor: page.next_cursor,
-    }))
+    Ok(Json(page.map(|r| {
+        let id = r.id;
+        let mut u = AdminUser::from(r);
+        u.idp_roles = states.remove(&id);
+        u
+    })))
 }
 
 /// What needs an instance admin's attention (C-1022): decisions first, then informational items.

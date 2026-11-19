@@ -12,7 +12,7 @@ use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use uuid::Uuid;
 
 use crate::app::AppState;
-use crate::audit::{AuditActor, AuditEvent, Outcome};
+use crate::audit::AuditEvent;
 use crate::domains::conversations::service::load_agent;
 use crate::http::auth::Caller;
 use aurora_core::limits::{
@@ -234,15 +234,11 @@ pub async fn upgrade(
     // never bytes, never the grant value.
     crate::audit::record(
         &s,
-        AuditEvent::new(
-            AuditActor::from_caller(&c),
-            "agent.terminal.open",
-            Outcome::Success,
-        )
-        .org(a.org_id)
-        .workspace(a.workspace_id)
-        .target("agent", a.id)
-        .metadata(serde_json::json!({ "agent": a.id, "workspace": a.workspace_id })),
+        AuditEvent::by(&c, "agent.terminal.open")
+            .org(a.org_id)
+            .workspace(a.workspace_id)
+            .target("agent", a.id)
+            .metadata(serde_json::json!({ "agent": a.id, "workspace": a.workspace_id })),
     );
     // ---- proxy: dial the runner's :4108 with the grant as the bearer, then bridge.
     let endpoint = dial_endpoint(&s, sandbox_id).await?;
@@ -714,20 +710,16 @@ async fn proxy_leg(
     // duration — never bytes, never content (SEC-87).
     crate::audit::record(
         &recheck.s,
-        AuditEvent::new(
-            AuditActor::from_caller(&recheck.c),
-            "agent.terminal.close",
-            Outcome::Success,
-        )
-        .org(recheck.org)
-        .workspace(recheck.workspace)
-        .target("agent", recheck.agent)
-        .metadata(serde_json::json!({
-            "agent": recheck.agent,
-            "workspace": recheck.workspace,
-            "close_code": code,
-            "duration_secs": started.elapsed().as_secs(),
-        })),
+        AuditEvent::by(&recheck.c, "agent.terminal.close")
+            .org(recheck.org)
+            .workspace(recheck.workspace)
+            .target("agent", recheck.agent)
+            .metadata(serde_json::json!({
+                "agent": recheck.agent,
+                "workspace": recheck.workspace,
+                "close_code": code,
+                "duration_secs": started.elapsed().as_secs(),
+            })),
     );
 }
 

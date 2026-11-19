@@ -1,7 +1,7 @@
 use super::dto::*;
 use super::service;
 use crate::app::AppState;
-use crate::audit::{self, AuditActor, AuditEvent, Outcome};
+use crate::audit::{self, AuditActor, AuditEvent};
 use crate::http::auth::{Caller, SessionCaller};
 use crate::http::error::ErrorEnvelope;
 use crate::http::json::{Json, Path, Query};
@@ -23,7 +23,7 @@ pub fn router() -> OpenApiRouter<AppState> {
 }
 
 fn event(c: &Caller, action: &str) -> AuditEvent {
-    AuditEvent::new(AuditActor::from_caller(c), action, Outcome::Success)
+    AuditEvent::by(c, action)
 }
 
 /// List an organization's invitations (owner/admin).
@@ -44,15 +44,12 @@ async fn list_invitations(
         &s.pool,
         org,
         q.status.map(InvitationStatus::as_str),
-        p.after.map(|c| (c.t, c.id)),
+        p.after_key(),
         p.fetch(),
     )
     .await?;
     let page = Page::from_rows(rows, p.limit, |r| (r.created_at, r.id));
-    Ok(Json(Page {
-        items: page.items.into_iter().map(Invitation::from).collect(),
-        next_cursor: page.next_cursor,
-    }))
+    Ok(Json(page.map(Invitation::from)))
 }
 
 /// Invite someone by email (owner/admin). Re-inviting a pending email rotates the token.

@@ -1,7 +1,7 @@
 use super::dto::*;
 use super::service::{self, NewSkill, Owner, Patch};
 use crate::app::AppState;
-use crate::audit::{self, AuditActor, AuditEvent, Outcome};
+use crate::audit::{self, AuditEvent};
 use crate::http::auth::{Caller, require_own};
 use crate::http::error::ErrorEnvelope;
 use crate::http::json::{Json, Path, Query};
@@ -69,7 +69,7 @@ pub(super) async fn authorize(
 }
 
 fn record(c: &Caller, s: &AppState, sk: &SkillRow, action: &str, ws: Option<Uuid>) {
-    let mut ev = AuditEvent::new(AuditActor::from_caller(c), action, Outcome::Success)
+    let mut ev = AuditEvent::by(c, action)
         .org(sk.org_id)
         .target("skill", sk.id)
         .metadata(json!({"name": sk.name, "scope": service::tier_of(sk)}));

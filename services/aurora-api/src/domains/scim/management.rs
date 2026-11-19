@@ -9,7 +9,7 @@
 use super::auth::OrgScim;
 use super::settings;
 use crate::app::AppState;
-use crate::audit::{AuditActor, AuditEvent, Outcome};
+use crate::audit::AuditEvent;
 use crate::http::auth::{Caller, SessionCaller};
 use crate::http::error::ErrorEnvelope;
 use crate::http::json::{Json, Path};
@@ -217,7 +217,7 @@ pub async fn put_settings(
     let next = settings::update_scim_settings(&mut tx, org, p.enabled, domains, p.exclusive)
         .await
         .map_err(dberr)?;
-    let ev = AuditEvent::new(AuditActor::from_caller(&c), "scim.update", Outcome::Success)
+    let ev = AuditEvent::by(&c, "scim.update")
         .org(org)
         .target("organization", org)
         .metadata(json!({
@@ -374,14 +374,10 @@ pub async fn create_token(
     )
     .await
     .map_err(dberr)?;
-    let ev = AuditEvent::new(
-        AuditActor::from_caller(&c),
-        "scim_token.create",
-        Outcome::Success,
-    )
-    .org(org)
-    .target("scim_token", row.id)
-    .metadata(json!({"name": name, "expires_in_days": days}));
+    let ev = AuditEvent::by(&c, "scim_token.create")
+        .org(org)
+        .target("scim_token", row.id)
+        .metadata(json!({"name": name, "expires_in_days": days}));
     crate::audit::commit_critical(tx, &ev).await?;
     Ok((
         StatusCode::CREATED,
@@ -423,14 +419,10 @@ pub async fn revoke_token(
     let mut tx = state.pool.begin().await.map_err(sqlerr)?;
     let revoked = repo::revoke_token(&mut tx, org, id).await.map_err(dberr)?;
     if revoked {
-        let ev = AuditEvent::new(
-            AuditActor::from_caller(&c),
-            "scim_token.revoke",
-            Outcome::Success,
-        )
-        .org(org)
-        .target("scim_token", id)
-        .metadata(json!({}));
+        let ev = AuditEvent::by(&c, "scim_token.revoke")
+            .org(org)
+            .target("scim_token", id)
+            .metadata(json!({}));
         crate::audit::commit_critical(tx, &ev).await?;
     } else {
         tx.commit().await.map_err(sqlerr)?;

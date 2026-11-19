@@ -13,7 +13,7 @@
 use super::dto::{AccountRefType, AccountTestAnswer, AccountTestDetail, AccountTestResult};
 use super::gateway::{Answer, Check};
 use crate::app::AppState;
-use crate::audit::{self, AuditActor, AuditEvent, Outcome};
+use crate::audit::{self, AuditEvent};
 use crate::domains::connect::probe::{self, ProbeCause, Vars};
 use crate::domains::connections::service as connections;
 use crate::domains::plugins::registry;
@@ -95,14 +95,10 @@ pub async fn test(
             AccountRefType::Secret => secret_repo::set_check(&state.pool, id, stored).await?,
         }
     }
-    let mut ev = AuditEvent::new(
-        AuditActor::from_caller(caller),
-        "account.test",
-        Outcome::Success,
-    )
-    .org(org)
-    .target(target, id)
-    .metadata(json!({ "result": out.result, "account": meta }));
+    let mut ev = AuditEvent::by(caller, "account.test")
+        .org(org)
+        .target(target, id)
+        .metadata(json!({ "result": out.result, "account": meta }));
     if let Some(ws) = ws {
         ev = ev.workspace(ws);
     }

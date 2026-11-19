@@ -238,7 +238,7 @@ async fn list_conversations(
             viewer_owns: owns,
             archived: q.archived.unwrap_or(false),
         },
-        p.after.map(|a| (a.t, a.id)),
+        p.after_key(),
         p.fetch(),
     )
     .await?;

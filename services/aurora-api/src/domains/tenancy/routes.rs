@@ -1,7 +1,7 @@
 use super::dto::*;
 use super::service;
 use crate::app::AppState;
-use crate::audit::{self, AuditActor, AuditEvent, Outcome};
+use crate::audit::{self, AuditActor, AuditEvent};
 use crate::domains::agents::dto::Agent;
 use crate::domains::automations::service::{Acting, To, reassign_all};
 use crate::http::auth::{Caller, Principal, SessionCaller, require_own};
@@ -38,7 +38,7 @@ fn ws_role(a: &WorkspaceAuth) -> WorkspaceRole {
 }
 
 fn event(c: &Caller, action: &str) -> AuditEvent {
-    AuditEvent::new(AuditActor::from_caller(c), action, Outcome::Success)
+    AuditEvent::by(c, action)
 }
 
 async fn begin(pool: &PgPool) -> Result<sqlx::Transaction<'static, sqlx::Postgres>, ApiError> {
@@ -52,14 +52,11 @@ fn page_of<R, T>(
     map: impl Fn(R) -> T,
 ) -> Page<T> {
     let page = Page::from_rows(rows, p.limit, key);
-    Page {
-        items: page.items.into_iter().map(map).collect(),
-        next_cursor: page.next_cursor,
-    }
+    page.map(map)
 }
 
 fn after(p: &Pagination) -> Option<(chrono::DateTime<chrono::Utc>, Uuid)> {
-    p.after.map(|c| (c.t, c.id))
+    p.after_key()
 }
 
 // ---- organizations ----
@@ -672,14 +669,7 @@ async fn list_access(
             let dpage = Page::from_rows(drows, dp.limit, |r| (r.created_at, r.user_id));
             (
                 Some(bindings.into_iter().map(Into::into).collect()),
-                Some(Page {
-                    items: dpage
-                        .items
-                        .into_iter()
-                        .map(|r| g::DerivedMemberView::from_row(r, &names))
-                        .collect(),
-                    next_cursor: dpage.next_cursor,
-                }),
+                Some(dpage.map(|r| g::DerivedMemberView::from_row(r, &names))),
             )
         }
         Some(_) => {

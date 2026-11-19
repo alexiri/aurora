@@ -94,20 +94,13 @@ pub async fn list(
         ws,
         q.app_id.as_deref(),
         q.status.as_deref(),
-        p.after.map(|c| (c.t, c.id)),
+        p.after_key(),
         p.fetch(),
     )
     .await?;
     let snap = registry::active_typed(state).await?;
     let page = Page::from_rows(rows, p.limit, |r| (r.created_at, r.id));
-    Ok(Page {
-        items: page
-            .items
-            .into_iter()
-            .map(|r| Connection::new(r, snap.as_ref()))
-            .collect(),
-        next_cursor: page.next_cursor,
-    })
+    Ok(page.map(|r| Connection::new(r, snap.as_ref())))
 }
 
 pub async fn view(state: &AppState, row: ConnectionRow) -> Result<Connection, ApiError> {
@@ -122,8 +115,8 @@ fn event(
     row: &ConnectionRow,
     extra: serde_json::Value,
 ) -> crate::audit::AuditEvent {
-    use crate::audit::{AuditActor, AuditEvent, Outcome};
-    let mut ev = AuditEvent::new(AuditActor::from_caller(caller), action, Outcome::Success)
+    use crate::audit::AuditEvent;
+    let mut ev = AuditEvent::by(caller, action)
         .org(row.org_id)
         .target("connection", row.id)
         .metadata(serde_json::json!({

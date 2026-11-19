@@ -4,7 +4,7 @@ use super::flow::{self, Flow};
 use super::hooks::{Call, Connected, Exchanged, kv};
 use super::probe::{self, Vars};
 use crate::app::AppState;
-use crate::audit::{self, AuditActor, AuditEvent, Outcome};
+use crate::audit::{self, AuditEvent};
 use crate::domains::apps::service::find_app;
 use crate::domains::connections::dto::Connection;
 use crate::domains::grants::dto::ConnectionGrant;
@@ -842,7 +842,7 @@ impl Ctx<'_> {
         } else {
             "connection.create"
         };
-        let mut ev = AuditEvent::new(AuditActor::from_caller(caller), action, Outcome::Success)
+        let mut ev = AuditEvent::by(caller, action)
             .org(n.org_id)
             .target("connection", n.id)
             .metadata(json!({"app_id": n.app_id, "package_id": n.package_id, "label": n.label}));

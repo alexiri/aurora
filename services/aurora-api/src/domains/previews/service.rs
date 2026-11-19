@@ -5,7 +5,7 @@
 //! row; the command text is never audited, only `start_command_set` and a hash prefix.
 use super::dto::*;
 use crate::app::AppState;
-use crate::audit::{self, AuditActor, AuditEvent, Outcome};
+use crate::audit::{self, AuditEvent};
 use crate::domains::conversations::service::notify_work;
 use crate::domains::freeze::service as freeze;
 use crate::http::auth::Caller;
@@ -113,7 +113,7 @@ async fn ensure_org_enabled(conn: &mut PgConnection, org: Uuid) -> Result<(), Ap
 }
 
 pub fn event(c: &Caller, action: &str) -> AuditEvent {
-    AuditEvent::new(AuditActor::from_caller(c), action, Outcome::Success)
+    AuditEvent::by(c, action)
 }
 
 /// The command text is never audited (SEC-80): only that it is set and the first 12 hex

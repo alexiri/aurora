@@ -41,7 +41,7 @@ async fn list_peer_tasks(
         &s.pool,
         agent,
         q.status.as_deref(),
-        p.after.map(|a| (a.t, a.id)),
+        p.after_key(),
         p.fetch(),
     )
     .await?;

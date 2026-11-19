@@ -51,13 +51,7 @@ async fn list_plugins(
     if let Some(st) = q.status.as_deref() {
         service::check_status(st)?;
     }
-    let rows = plugins::list(
-        &s.pool,
-        q.status.as_deref(),
-        p.after.map(|c| (c.t, c.id)),
-        p.fetch(),
-    )
-    .await?;
+    let rows = plugins::list(&s.pool, q.status.as_deref(), p.after_key(), p.fetch()).await?;
     let page = Page::from_rows(rows, p.limit, |r| (r.created_at, r.id));
     let mut items = Vec::with_capacity(page.items.len());
     for r in page.items {
@@ -177,12 +171,9 @@ async fn list_trusted_keys(
     Query(q): Query<PageParams>,
 ) -> Result<Json<Page<TrustedKey>>, ApiError> {
     let p = q.resolve()?;
-    let rows = plugins::list_trusted_keys(&s.pool, p.after.map(|c| (c.t, c.id)), p.fetch()).await?;
+    let rows = plugins::list_trusted_keys(&s.pool, p.after_key(), p.fetch()).await?;
     let page = Page::from_rows(rows, p.limit, |r| (r.created_at, r.id));
-    Ok(Json(Page {
-        items: page.items.into_iter().map(TrustedKey::from).collect(),
-        next_cursor: page.next_cursor,
-    }))
+    Ok(Json(page.map(TrustedKey::from)))
 }
 
 /// Trust a publisher key.
