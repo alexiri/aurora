@@ -5,22 +5,16 @@ import { createContext, useContext, type ReactNode } from "react";
 
 import { cn } from "@/lib/utils";
 
-import { Badge } from "./badge";
-
 export interface Crumb {
   label: string;
   href?: string;
 }
 
-/** Where a page lives (C-962): Administration, an organization, or a workspace of one. */
+/** Where a page lives: Administration, an organization, or a workspace of one. */
 export interface PageLevel {
   kind: "instance" | "org" | "workspace";
   label: string;
 }
-
-const LevelContext = createContext<PageLevel | null>(null);
-/** The app shell provides the level of the page in the URL, so every header carries its badge without a prop. */
-export const PageLevelProvider = LevelContext.Provider;
 
 type Embedded = "off" | "hidden" | "headed";
 const EmbeddedContext = createContext<Embedded>("off");
@@ -33,16 +27,15 @@ export function EmbeddedPage({ children, headed = false }: { children: ReactNode
   return <EmbeddedContext.Provider value={headed ? "headed" : "hidden"}>{children}</EmbeddedContext.Provider>;
 }
 
+/**
+ * D-389: the rail's switcher says where you are, so a header carries no level pill. Only a page reached without the
+ * switcher showing its level passes `level`, and it reads as plain text ("<Org> › <Workspace>") above the title.
+ */
 export function LevelBadge({ level, className }: { level: PageLevel; className?: string }) {
   return (
-    <Badge
-      tone={level.kind === "instance" ? "pending" : "neutral"}
-      data-testid="level-badge"
-      data-level={level.kind}
-      className={cn("max-w-full normal-case tracking-normal", className)}
-    >
-      <span className="truncate">{level.label}</span>
-    </Badge>
+    <p data-testid="level-badge" data-level={level.kind} className={cn("max-w-full truncate text-xs text-muted", className)}>
+      {level.label}
+    </p>
   );
 }
 
@@ -63,12 +56,11 @@ export function PageHeader({
   className?: string;
   /** One-line variant for pages that must fit the viewport: the description sits on the title line. */
   compact?: boolean;
-  /** The level badge; defaults to the level of the page in the URL (the shell provides it). */
+  /** Plain-text level above the title; only for a page the switcher does not place (D-389). */
   level?: PageLevel;
 }) {
-  const inherited = useContext(LevelContext);
   const embedded = useContext(EmbeddedContext);
-  const shown = level ?? inherited;
+  const shown = level;
   if (embedded !== "off") {
     const headed = embedded === "headed";
     if (!headed && !description && !actions) return null;
@@ -101,7 +93,7 @@ export function PageHeader({
         </ol>
       </nav>
     ) : null;
-  const badge = shown ? <LevelBadge level={shown} className="mb-1.5" /> : null;
+  const badge = shown ? <LevelBadge level={shown} className="mb-1" /> : null;
   if (compact) {
     return (
       <header className={cn("mb-2", className)}>

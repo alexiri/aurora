@@ -64,13 +64,18 @@ for (const scheme of ["light", "dark"] as const) {
       ]);
     });
 
-    test("every page header names its level", async ({ page }) => {
+    // D-389: the rail says where you are (the switcher, or Administration's header); no header carries a level pill.
+    test("the rail names the level and no page header carries a pill", async ({ page }) => {
+      const sidebar = page.getByRole("complementary", { name: "Sidebar" });
       await openRoute(page, "/admin/data", scheme);
-      await expect(page.getByTestId("level-badge")).toHaveText("Administration");
+      await expect(sidebar.getByText("You're in")).toBeVisible();
+      await expect(page.getByTestId("level-badge")).toHaveCount(0);
       await openRoute(page, "/o/acme/data", scheme);
-      await expect(page.getByTestId("level-badge")).toHaveText("Acme Labs");
+      await expect(sidebar.getByTestId("scope-switcher")).toContainText("Acme Labs");
+      await expect(page.getByTestId("level-badge")).toHaveCount(0);
       await openRoute(page, "/o/acme/w/main/settings", scheme);
-      await expect(page.getByTestId("level-badge")).toHaveText("Acme Labs › Main workspace");
+      await expect(sidebar.getByTestId("scope-switcher")).toContainText("Main workspace");
+      await expect(page.getByTestId("level-badge")).toHaveCount(0);
     });
   });
 }
