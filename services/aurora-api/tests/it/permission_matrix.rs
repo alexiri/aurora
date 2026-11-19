@@ -718,6 +718,15 @@ const ROWS: &[Row] = &[
         G::WsUse,
         false,
     ),
+    // (P5-APIGAP-2, C-1047) The same with a subject: any member of the workspace asks, lists their own, withdraws.
+    r("POST", "/v1/workspaces/{ws}/requests", G::WsUse, false),
+    r("GET", "/v1/workspaces/{ws}/requests", G::WsUse, false),
+    r(
+        "DELETE",
+        "/v1/workspaces/{ws}/requests/{id}",
+        G::WsUse,
+        false,
+    ),
     r("GET", "/v1/orgs/{org}/app-setup-requests", G::Admin, false),
     r(
         "POST",
@@ -1593,6 +1602,8 @@ fn body_for(method: &str, path: &str, fx: &Fx) -> Value {
         ("POST", "/v1/workspaces/{ws}/access/by-email") => {
             json!({"email": "matrix@example.test", "role": "member"})
         }
+        // (P5-APIGAP-2, C-1047) a subject; any member of the workspace may ask.
+        ("POST", "/v1/workspaces/{ws}/requests") => json!({"subject": "ai_key"}),
         ("PUT", "/v1/admin/host-claims/{group_key}") => {
             json!({"winner_package_id": "x", "winner_app_id": "x", "fingerprint": "x"})
         }

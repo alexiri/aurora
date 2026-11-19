@@ -23,8 +23,11 @@ import { OrgSkills } from "@/components/skills/org-skills";
 import { TopicPage, type TopicTab } from "@/components/topic-page";
 import { EmbeddedPage, PageHeader } from "@/components/ui/page-header";
 import { Section } from "@/components/ui/section";
+import { WhoCan } from "@/components/ui/who-can";
+import { AskAdmin } from "@/components/ask-admin";
 import { useScimSettings } from "@/lib/api/scim";
-import type { Org } from "@/lib/api/queries";
+import { useWorkspaces, type Org } from "@/lib/api/queries";
+import { whoCanFromContacts } from "@/lib/who-can";
 import { UsageView } from "@/components/usage/usage-view";
 import { OutgoingWebhooksOrgSettings } from "@/components/webhook/org-webhook-settings";
 import { type TABS } from "@/lib/routes";
@@ -175,12 +178,30 @@ function DirectoryAwareTopic({ org, slug }: { org: Org; slug: string }) {
 }
 
 export function OrgChatPlatformsPage() {
+  const slug = useOrgSlug();
   return (
-    <AdminTopic>
-      {(org) => (
-        <ChannelsView orgId={org.id} />
-      )}
-    </AdminTopic>
+    <OrgGate slug={slug} allow={ALL_ROLES}>
+      {/* (P5-APIGAP-2, D-399) A member reads who connects a chat platform and can ask them, not a refusal. */}
+      {(org) => (isAdmin(org) ? <ChannelsView orgId={org.id} /> : <MemberChatPlatforms org={org} />)}
+    </OrgGate>
+  );
+}
+
+function MemberChatPlatforms({ org }: { org: Org }) {
+  const workspaces = useWorkspaces(org.id);
+  const who = whoCanFromContacts("org_admin", org.contacts, "connect_chat");
+  return (
+    <div className="max-w-page-narrow space-y-4" data-testid="member-chat-platforms">
+      <PageHeader
+        title="Chat platforms"
+        description={`Owners and admins connect ${org.name} to a chat platform; once they have, agents can be added to its channels.`}
+        className="mb-2"
+      />
+      <div className="flex flex-wrap items-center gap-3 rounded-control bg-subtle px-3 py-2">
+        <WhoCan value={who} lead />
+        <AskAdmin workspaceId={workspaces.data?.items[0]?.id} subject="chat_platform" who={who} />
+      </div>
+    </div>
   );
 }
 

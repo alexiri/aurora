@@ -6063,6 +6063,45 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/workspaces/{ws}/requests": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The caller's own open requests of every subject, each with only their own ask (C-1047). */
+        get: operations["listMySetupRequests"];
+        put?: never;
+        /**
+         * Ask the organization's admins for a chat platform or an AI key (or, with `subject: "app"`, for an app),
+         *     C-1047. Any active member of the workspace. Idempotent per person; 409 `already_available`; 429 after
+         *     20 asks in an hour (all subjects together).
+         */
+        post: operations["askSetupRequest"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/workspaces/{ws}/requests/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Withdraw the caller's ask; the request closes when no asker is left (C-1047). */
+        delete: operations["withdrawSetupRequest"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/workspaces/{ws}/secrets": {
         parameters: {
             query?: never;
@@ -6948,12 +6987,16 @@ export interface components {
         };
         /** @description An organization's request for an app to be made ready (C-1030). There is no free text. */
         AppSetupRequest: {
+            /** @description The app id for `app`; `""` for the other subjects. */
             app_id: string;
+            /** @description The app's name, or the subject's label ("A chat platform", a connector's name, "An AI key"). */
             app_name: string;
             /** @description The askers; a person who is not an owner or admin of the organization sees only their own ask. */
             askers: components["schemas"]["Asker"][];
             /** Format: date-time */
             closed_at?: string | null;
+            /** @description `chat_platform` only: the connector type asked for. */
+            connector_type?: string | null;
             /** Format: date-time */
             created_at: string;
             /** Format: uuid */
@@ -6964,6 +7007,8 @@ export interface components {
             org_id: string;
             /** @description `open` | `resolved` | `declined` | `withdrawn`. */
             status: string;
+            /** @description (C-1047) `app` | `chat_platform` | `ai_key`. */
+            subject: string;
             /** @description The app is switched off for the organization. */
             unavailable: boolean;
         };
@@ -10020,6 +10065,15 @@ export interface components {
             /** Format: uuid */
             id: string;
             name: string;
+        };
+        /** @description `POST /workspaces/{ws}/requests` (C-1047). */
+        NewRequest: {
+            /** @description Subject `app`: the catalogue app id (required). */
+            app_id?: string | null;
+            /** @description Subject `chat_platform`: the connector type id (optional). */
+            connector_type?: string | null;
+            /** @description `app` | `chat_platform` | `ai_key`. */
+            subject: string;
         };
         NonCompliantSecret: {
             /** Format: uuid */
@@ -41750,6 +41804,179 @@ export interface operations {
                 };
             };
             /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    listMySetupRequests: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                ws: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppSetupRequestList"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    askSetupRequest: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                ws: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NewRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppSetupRequest"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description already_available | app_ready */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    withdrawSetupRequest: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                ws: string;
+                /** @description Request id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Withdrawn */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             404: {
                 headers: {
                     [name: string]: unknown;

@@ -522,6 +522,10 @@ pub async fn create(
         discard(state, &ctx, &prepared.vref, prepared.source).await;
         return Err(e);
     }
+    if req.kind == "llm" {
+        // (C-1047) An AI key now exists: askers of one are told (a failure here never undoes the key).
+        crate::domains::app_setup_requests::service::reevaluate(state, Some(scope.org)).await;
+    }
     load(state, id).await
 }
 

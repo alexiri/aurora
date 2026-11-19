@@ -50,6 +50,50 @@ export function useWithdrawSetup(workspaceId: string) {
   );
 }
 
+/** What a setup request asks for (C-1047): `app` has its own routes and hooks above. */
+export type RequestSubject = "chat_platform" | "ai_key";
+
+export const myRequestKeys = {
+  mine: (workspaceId: string) => ["setup-requests", "mine", workspaceId] as const,
+};
+
+/** (P5-APIGAP-2, C-1047) The caller's own open requests of every subject in this workspace's organization. */
+export function useMyRequests(workspaceId: string | undefined) {
+  return useQuery({
+    queryKey: myRequestKeys.mine(workspaceId ?? ""),
+    enabled: !!workspaceId,
+    retry: false,
+    queryFn: async () => (await unwrap(api.GET("/v1/workspaces/{ws}/requests", { params: { path: { ws: workspaceId! } } }))).items,
+  });
+}
+
+/** "Ask <Name>" for a chat platform or an AI key. Idempotent per person; 409 `already_available` when it exists. */
+export function useAskRequest(workspaceId: string) {
+  return useInvalidatingMutation(
+    (a: { subject: RequestSubject; connectorType?: string }) =>
+      unwrap(
+        api.POST("/v1/workspaces/{ws}/requests", {
+          params: { path: { ws: workspaceId } },
+          body: { subject: a.subject, connector_type: a.connectorType },
+        }),
+      ),
+    myRequestKeys.mine(workspaceId),
+    ["workspace-overview", workspaceId],
+  );
+}
+
+/** Withdraws the person's ask by id ("Undo"). */
+export function useWithdrawRequest(workspaceId: string) {
+  return useInvalidatingMutation(
+    async (id: string) => {
+      const { error, response } = await api.DELETE("/v1/workspaces/{ws}/requests/{id}", { params: { path: { ws: workspaceId, id } } });
+      if (error !== undefined || !response.ok) throw ApiError.fromBody(error, response.status);
+    },
+    myRequestKeys.mine(workspaceId),
+    ["workspace-overview", workspaceId],
+  );
+}
+
 /** "Not now": an owner or admin declines; each asker is told once. */
 export function useDeclineSetup(orgId: string) {
   return useInvalidatingMutation(

@@ -394,6 +394,8 @@ pub async fn create(
         remove_failed(s, &row).await;
         return Err(e);
     }
+    // (C-1047) A chat platform is connected: askers of one are told (a failure here never undoes the connection).
+    crate::domains::app_setup_requests::service::reevaluate(s, Some(org)).await;
     let row = repo::get(&s.pool, id)
         .await?
         .ok_or_else(|| ApiError::internal("Integration vanished."))?;

@@ -2257,6 +2257,13 @@ has not expired." / "Aurora could not reach <App> (<host>)." / "<App> answered w
   It closes by itself when the app becomes ready for the asker (each asker is told once and their journey
   offers the app); a person may withdraw it (Undo); **Not now** tells the askers in one sentence who is not
   setting it up.
+- **Asking for a chat platform or an AI key (P5-APIGAP-2, D-399, C-1047).** The same ask, with a subject
+  other than an app. **Ask <Name>** (the first owner or admin; "Asked <Name> · Undo" afterwards, the app
+  journey's control and wording, `useAskRequest`/`AskAdmin`) appears on an agent's **Channels** tab when the
+  organization has no chat platform connected, on **Organization › AI models** for a person without a key or
+  model, and on the organization's **chat platforms** page for a member. The Needs-you card shows the new
+  kinds beside apps: "Bob wants a chat platform" with **Connect a chat platform**, "Bob wants an AI key" with
+  **Add an AI key**, and **Not now**.
 - **Status at the top**, one sentence per way to connect, each with a state chip (Ready / Needs setup /
   Admin only):
   - "People can connect GitHub with a personal access token."

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState, type ReactNode } from "react";
 
+import { AskAdmin } from "@/components/ask-admin";
 import { ByoPanel } from "@/components/governance/byo-panel";
 import { Errors } from "@/components/governance/controls";
 import { ModelsTab } from "@/components/governance/models-tab";
@@ -299,10 +300,11 @@ export function KeysNotice({ eff, org }: { eff: EffectiveGovernance; org: Org })
 }
 
 /** "Owners and admins change these rules. Alice is an owner." (the contacts the server sent), with who to ask. */
-function WhoChangesRules({ org }: { org: Org }) {
+function WhoChangesRules({ org, ask }: { org: Org; ask?: ReactNode }) {
   return (
-    <div className="rounded-control bg-subtle px-3 py-2" data-testid="who-changes">
+    <div className="flex flex-wrap items-center gap-3 rounded-control bg-subtle px-3 py-2" data-testid="who-changes">
       <WhoCan value={whoCanFromContacts("org_admin", org.contacts, "change_this")} lead />
+      {ask}
     </div>
   );
 }
@@ -345,7 +347,15 @@ function MemberAiModels({ org }: { org: Org }) {
           );
         })}
       </ul>
-      <WhoChangesRules org={org} />
+      {/* (P5-APIGAP-2, D-399, C-1047) No key, or no model anyone may use: the person asks an owner or admin for an AI key. */}
+      <WhoChangesRules
+        org={org}
+        ask={
+          keys.length === 0 || endpoints.length === 0 ? (
+            <AskAdmin workspaceId={firstWorkspace} subject="ai_key" who={whoCanFromContacts("org_admin", org.contacts, "add_ai_key")} />
+          ) : undefined
+        }
+      />
     </div>
   );
 }

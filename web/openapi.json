@@ -37754,6 +37754,252 @@
         ]
       }
     },
+    "/v1/workspaces/{ws}/requests": {
+      "get": {
+        "tags": [
+          "apps"
+        ],
+        "summary": "The caller's own open requests of every subject, each with only their own ask (C-1047).",
+        "operationId": "listMySetupRequests",
+        "parameters": [
+          {
+            "name": "ws",
+            "in": "path",
+            "description": "Workspace id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppSetupRequestList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "apps"
+        ],
+        "summary": "Ask the organization's admins for a chat platform or an AI key (or, with `subject: \"app\"`, for an app),\nC-1047. Any active member of the workspace. Idempotent per person; 409 `already_available`; 429 after\n20 asks in an hour (all subjects together).",
+        "operationId": "askSetupRequest",
+        "parameters": [
+          {
+            "name": "ws",
+            "in": "path",
+            "description": "Workspace id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppSetupRequest"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "already_available | app_ready",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/workspaces/{ws}/requests/{id}": {
+      "delete": {
+        "tags": [
+          "apps"
+        ],
+        "summary": "Withdraw the caller's ask; the request closes when no asker is left (C-1047).",
+        "operationId": "withdrawSetupRequest",
+        "parameters": [
+          {
+            "name": "ws",
+            "in": "path",
+            "description": "Workspace id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Request id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Withdrawn"
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
     "/v1/workspaces/{ws}/secrets": {
       "get": {
         "tags": [
@@ -41014,6 +41260,7 @@
         "required": [
           "id",
           "org_id",
+          "subject",
           "app_id",
           "app_name",
           "status",
@@ -41024,10 +41271,12 @@
         ],
         "properties": {
           "app_id": {
-            "type": "string"
+            "type": "string",
+            "description": "The app id for `app`; `\"\"` for the other subjects."
           },
           "app_name": {
-            "type": "string"
+            "type": "string",
+            "description": "The app's name, or the subject's label (\"A chat platform\", a connector's name, \"An AI key\")."
           },
           "askers": {
             "type": "array",
@@ -41042,6 +41291,13 @@
               "null"
             ],
             "format": "date-time"
+          },
+          "connector_type": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`chat_platform` only: the connector type asked for."
           },
           "created_at": {
             "type": "string",
@@ -41065,6 +41321,10 @@
           "status": {
             "type": "string",
             "description": "`open` | `resolved` | `declined` | `withdrawn`."
+          },
+          "subject": {
+            "type": "string",
+            "description": "(C-1047) `app` | `chat_platform` | `ai_key`."
           },
           "unavailable": {
             "type": "boolean",
@@ -51025,6 +51285,34 @@
             "type": "string"
           }
         }
+      },
+      "NewRequest": {
+        "type": "object",
+        "description": "`POST /workspaces/{ws}/requests` (C-1047).",
+        "required": [
+          "subject"
+        ],
+        "properties": {
+          "app_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Subject `app`: the catalogue app id (required)."
+          },
+          "connector_type": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Subject `chat_platform`: the connector type id (optional)."
+          },
+          "subject": {
+            "type": "string",
+            "description": "`app` | `chat_platform` | `ai_key`."
+          }
+        },
+        "additionalProperties": false
       },
       "NonCompliantSecret": {
         "type": "object",
