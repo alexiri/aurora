@@ -1143,6 +1143,37 @@ async fn delete_is_blocked_while_integrations_exist() {
 }
 
 #[tokio::test]
+async fn admin_view_has_icon_matches_the_icon_route() {
+    let w = world().await;
+    let user = w.h.user("u@x.io", false).await;
+    let (_, t) = w.h.good_session(user).await;
+    let uc = cookie(&t);
+    let b64 = base64::engine::general_purpose::STANDARD;
+    let with = w.provision("fake").await;
+    let without = w.provision("silent").await;
+    let mut m = base_manifest("fake");
+    m["about"]["icon_png_b64"] = json!(b64.encode(png_stub(64, 64)));
+    w.register(&with, &m).await;
+    w.register(&without, &base_manifest("silent")).await;
+    // Pending: the route 404s, so has_icon is false even though the manifest has an icon.
+    assert_eq!(w.connector("fake").await["has_icon"], false);
+    w.approve("fake").await;
+    w.approve("silent").await;
+    for (id, has, status) in [("fake", true, 200), ("silent", false, 404)] {
+        assert_eq!(w.connector(id).await["has_icon"], has, "{id}");
+        let (s, _, _) =
+            w.h.send(
+                Method::GET,
+                &format!("/v1/connectors/{id}/icon"),
+                &[("cookie", &uc)],
+                None,
+            )
+            .await;
+        assert_eq!(s, status, "{id}");
+    }
+}
+
+#[tokio::test]
 async fn catalogue_lists_only_active_connectors_with_sanitized_icon() {
     let w = world().await;
     let user = w.h.user("u@x.io", false).await;

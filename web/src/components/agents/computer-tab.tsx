@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { ErrorState, Loading } from "@/components/states";
 import { Badge } from "@/components/ui/badge";
@@ -12,7 +12,8 @@ import { Section } from "@/components/ui/section";
 import { Segmented } from "@/components/ui/segmented";
 import { StatusLine } from "@/components/ui/status-line";
 import { askSentence } from "@/lib/who-can";
-import { useRetrySandbox, useRestartSandbox, useSandbox, useStartFailures } from "@/lib/api/conversations";
+import { useRetrySandbox, useRestartSandbox, useSandbox, useStartFailures, useWakeSandbox } from "@/lib/api/conversations";
+import { durationWords } from "@/lib/settings-words";
 import type { SandboxStartAttempt, StartLogEntry } from "@/lib/api/conversations";
 import { useInstance, useOrg, useResolve } from "@/lib/api/queries";
 import { useParams } from "next/navigation";
@@ -188,6 +189,14 @@ export function ComputerTab({
   const q = useSandbox(agentId);
   const restart = useRestartSandbox(agentId);
   const retry = useRetrySandbox(agentId);
+  const wake = useWakeSandbox(agentId);
+  // (P5-APIGAP-1) After a 202 the button stays pending until the status says starting or running; a start that
+  // never shows (the runner is busy) frees the button again after a minute.
+  useEffect(() => {
+    if (!wake.isSuccess) return;
+    const t = setTimeout(() => wake.reset(), 60_000);
+    return () => clearTimeout(t);
+  }, [wake.isSuccess, wake]);
   const [open, setOpen] = useState(false);
   // (P4-PRV-1) Share… opens the add-share dialog prefilled with a listening port. The action exists
   // only when the org has switched Port previews on (docs/14): the instance flag alone is not enough.
@@ -204,6 +213,10 @@ export function ComputerTab({
   // failed computer of a frozen agent (the recovery would start work: 423).
   const restartBlocked = RESTART_NOT_APPLICABLE.has(v.state) || (v.state === "failed" && frozen);
   const name = agentName ?? "The agent";
+  const asleep = v.state === "stopped" || v.state === "unprovisioned" || v.state === "stopping";
+  const wakePending = wake.isPending || (wake.isSuccess && asleep);
+  // (C-1046) In words, nothing when idle stop is off.
+  const sleepsAfter = v.idle_stop_after_secs ? `Sleeps after ${durationWords(v.idle_stop_after_secs)} of quiet.` : null;
   const missing = [
     ...(terminal ? [] : ["Terminal", "Files"]),
     ...(previewsUsable ? [] : ["Previews"]),
@@ -226,12 +239,17 @@ export function ComputerTab({
           {v.state === "failed"
             ? `${errorCopy(v.failure_code).message} ${v.failure_message ?? ""}`.trim()
             : v.state === "stopped" || v.state === "unprovisioned"
-              ? `It wakes by itself when ${name} needs it and sleeps when there is no work. Its files stay.`
+              ? [`It wakes by itself when ${name} needs it.`, sleepsAfter, "Its files stay."].filter(Boolean).join(" ")
               : v.state === "running"
-                ? "It sleeps by itself when there is no work. Its files stay."
+                ? `${sleepsAfter ?? "It sleeps by itself when there is no work."} Its files stay.`
                 : null}
         </p>
         <div className="flex flex-wrap gap-2">
+          {asleep && !frozen ? (
+            <Button size="sm" disabled={wakePending} onClick={() => wake.mutate(undefined)}>
+              {wakePending ? "Waking…" : "Wake it now"}
+            </Button>
+          ) : null}
           {v.state === "running" ? (
             <Button variant="outline" size="sm" disabled={restart.isPending || restartBlocked} onClick={() => setOpen(true)}>
               Restart
@@ -295,6 +313,7 @@ export function ComputerTab({
         }}
       />
       <ErrorNotice error={restart.error} />
+      <ErrorNotice error={wake.error} />
       {v.restart_to_update ? (
         <Notice role="status">Configuration changed. Restart to update this computer.</Notice>
       ) : null}

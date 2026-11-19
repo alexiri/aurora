@@ -2130,6 +2130,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/agents/{agent}/sandbox/wake": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * (P5-APIGAP-1, D-399, C-1045) Wake a sleeping computer: the same wake demand a terminal open
+         *     sets (`terminal_wake_at`; the due-work start arm starts it), no message needed. 200 when it is
+         *     already starting or running, 202 when a start was requested, 409 `sandbox_failed` (retry is
+         *     the way out), 423 `frozen`, 409 `not_hosted`, 429 past the shared wake budget.
+         */
+        post: operations["wakeAgentSandbox"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/agents/{agent}/schedules": {
         parameters: {
             query?: never;
@@ -7815,6 +7837,8 @@ export interface components {
             /** Format: date-time */
             created_at: string;
             display_name: string;
+            /** @description (C-1044, D-398) True exactly when `GET /v1/connectors/{id}/icon` serves a PNG. */
+            has_icon: boolean;
             /** @description Managed only: reports of hosts seen recently. */
             host_status: components["schemas"]["HostStatusInfo"][];
             id: string;
@@ -13208,6 +13232,12 @@ export interface components {
             boot_id?: string | null;
             failure_code?: string | null;
             failure_message?: string | null;
+            /**
+             * Format: int64
+             * @description (P5-APIGAP-1, C-1046) The idle timeout after which this computer is stopped
+             *     (`hosted.idle_stop_secs`); `null` when idle stop is off (0).
+             */
+            idle_stop_after_secs?: number | null;
             image?: string | null;
             keep_awake_reasons: string[];
             ports: components["schemas"]["SandboxPort"][];
@@ -24220,6 +24250,77 @@ export interface operations {
                 };
             };
             /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    wakeAgentSandbox: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent id */
+                agent: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SandboxView"];
+                };
+            };
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SandboxView"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            423: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             429: {
                 headers: {
                     [name: string]: unknown;

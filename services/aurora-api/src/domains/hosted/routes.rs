@@ -29,6 +29,7 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(get_sandbox))
         .routes(routes!(restart))
         .routes(routes!(retry_sandbox))
+        .routes(routes!(wake_sandbox))
         .routes(routes!(start_failures))
         .routes(routes!(list_models))
         .routes(routes!(model_readiness))
@@ -115,6 +116,11 @@ fn reduce_view(v: &mut SandboxView) {
     }
 }
 
+/// (C-1046) The idle timeout the runner plane applies (`hosted.idle_stop_secs`); 0 is off.
+fn idle_stop_after_secs(s: &AppState) -> Option<u64> {
+    Some(s.ops().hosted.idle_stop_secs).filter(|n| *n > 0)
+}
+
 async fn view(s: &AppState, c: &Caller, a: &AgentRow) -> Result<SandboxView, ApiError> {
     let mut v = view_full(s, a).await?;
     if !can_see_start_detail(s, c, a).await? {
@@ -145,6 +151,7 @@ async fn view_full(s: &AppState, a: &AgentRow) -> Result<SandboxView, ApiError> 
             preview_in_use: false,
             terminal_in_use: false,
             restart_to_update: false,
+            idle_stop_after_secs: idle_stop_after_secs(s),
         });
     };
     let running = matches!(r.state.as_str(), "starting" | "running");
@@ -270,6 +277,7 @@ async fn view_full(s: &AppState, a: &AgentRow) -> Result<SandboxView, ApiError> 
         preview_in_use: r.preview_in_use,
         terminal_in_use: r.terminal_in_use,
         restart_to_update,
+        idle_stop_after_secs: idle_stop_after_secs(s),
     })
 }
 
@@ -384,6 +392,71 @@ async fn retry_sandbox(
 ) -> Result<(StatusCode, Json<SandboxView>), ApiError> {
     let a = hosted_agent(&s, &c, agent).await?;
     retry_failed(&s, &c, &a, "retry").await
+}
+
+/// (P5-APIGAP-1, D-399, C-1045) Wake a sleeping computer: the same wake demand a terminal open
+/// sets (`terminal_wake_at`; the due-work start arm starts it), no message needed. 200 when it is
+/// already starting or running, 202 when a start was requested, 409 `sandbox_failed` (retry is
+/// the way out), 423 `frozen`, 409 `not_hosted`, 429 past the shared wake budget.
+#[utoipa::path(post, path = "/agents/{agent}/sandbox/wake", operation_id = "wakeAgentSandbox", tag = "agents",
+    params(("agent" = Uuid, Path, description = "Agent id")),
+    responses((status = 200, body = SandboxView), (status = 202, body = SandboxView),
+        (status = 404, body = ErrorEnvelope), (status = 409, body = ErrorEnvelope),
+        (status = 423, body = ErrorEnvelope), (status = 429, body = ErrorEnvelope)),
+    security(("session" = []), ("api_key" = [])))]
+async fn wake_sandbox(
+    c: Caller,
+    State(s): State<AppState>,
+    Path(agent): Path<Uuid>,
+) -> Result<(StatusCode, Json<SandboxView>), ApiError> {
+    let a = load_agent(&s, &c, agent).await?;
+    if a.kind != "hosted" {
+        return Err(ApiError::conflict(
+            "not_hosted",
+            "This agent runs elsewhere; it has no computer to wake.",
+        ));
+    }
+    crate::domains::freeze::service::ensure_agent_active_pool(&s, agent).await?;
+    // A hosted agent that has no sandbox row yet (they are healed lazily) is asleep, `unprovisioned`.
+    sqlx::query(
+        "INSERT INTO sandboxes (id, agent_id, state) VALUES (gen_random_uuid(), $1, 'unprovisioned') \
+         ON CONFLICT (agent_id) DO NOTHING",
+    )
+    .bind(agent)
+    .execute(&s.pool)
+    .await
+    .map_err(DbError::from)?;
+    let (sandbox, state): (Uuid, String) =
+        sqlx::query_as("SELECT id, state FROM sandboxes WHERE agent_id = $1")
+            .bind(agent)
+            .fetch_one(&s.pool)
+            .await
+            .map_err(DbError::from)?;
+    match state.as_str() {
+        "starting" | "running" => return Ok((StatusCode::OK, Json(view(&s, &c, &a).await?))),
+        "failed" => {
+            return Err(ApiError::conflict(
+                "sandbox_failed",
+                "The computer's last start failed; use retry.",
+            ));
+        }
+        _ => {}
+    }
+    if !crate::domains::terminal::service::wake_demand(&s, &a, sandbox).await? {
+        return Err(ApiError::rate_limited(
+            60,
+            "The computer was woken too often; try again later.",
+        ));
+    }
+    crate::audit::record(
+        &s,
+        AuditEvent::by(&c, "agent.sandbox_wake")
+            .org(a.org_id)
+            .workspace(a.workspace_id)
+            .target("agent", a.id)
+            .metadata(serde_json::json!({ "previous_state": state })),
+    );
+    Ok((StatusCode::ACCEPTED, Json(view(&s, &c, &a).await?)))
 }
 
 /// (FIX-029, C-610, FIX-049, C-626) The one recovery path from `failed`, shared by

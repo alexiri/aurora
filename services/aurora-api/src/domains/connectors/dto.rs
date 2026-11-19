@@ -229,6 +229,8 @@ pub struct ConnectorAdmin {
     pub secrets: BTreeMap<String, ConnectorSecretInfo>,
     /// Managed only: reports of hosts seen recently.
     pub host_status: Vec<HostStatusInfo>,
+    /// (C-1044, D-398) True exactly when `GET /v1/connectors/{id}/icon` serves a PNG.
+    pub has_icon: bool,
 }
 
 #[derive(Serialize, ToSchema)]

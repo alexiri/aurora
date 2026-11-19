@@ -329,6 +329,20 @@ describe("Connector list", () => {
   });
 });
 
+describe("Connector icon (FIX-183, C-1044)", () => {
+  it("requests the icon only for a connector with has_icon; the monogram tile and no request otherwise", async () => {
+    mockFetch({
+      "GET /v1/admin/connectors": () =>
+        json(200, { items: [{ ...mmConnector, has_icon: true }, { ...selfHosted, has_icon: false }] }),
+    });
+    const { container } = wrap(<ConnectorsAdminView />);
+    await screen.findByText("Self-hosted");
+    const srcs = Array.from(container.querySelectorAll("img")).map((i) => i.getAttribute("src"));
+    expect(srcs).toEqual(["/v1/connectors/mattermost/icon"]);
+    expect(screen.getAllByTestId("app-icon-fallback")).toHaveLength(1);
+  });
+});
+
 describe("Managed connector detail", () => {
   async function openDetail(connector: unknown, fieldsType: unknown, routes: Record<string, Handler> = {}, label = "Base URL") {
     const calls = mockFetch({

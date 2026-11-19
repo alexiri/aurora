@@ -93,13 +93,14 @@ export function ConnectorIcon({
   id,
   name,
   iconB64,
-  hasIcon = true,
+  hasIcon,
   size = 40,
 }: {
   id: string;
   name: string;
   iconB64?: string | null;
-  hasIcon?: boolean;
+  /** (C-1044) `ConnectorAdmin.has_icon`; required so no caller requests an icon that 404s. */
+  hasIcon: boolean;
   size?: number;
 }) {
   const src = iconB64 ? `data:image/png;base64,${iconB64}` : connectorIconUrl(id);

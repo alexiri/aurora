@@ -266,7 +266,7 @@ export function ConnectorDetail({ c, onBack }: { c: ConnectorAdmin; onBack: () =
       <PageHeader
         title={
           <span className="flex flex-wrap items-center gap-3">
-            <ConnectorIcon id={c.id} name={c.display_name} iconB64={type?.icon_png_b64} />
+            <ConnectorIcon id={c.id} name={c.display_name} iconB64={type?.icon_png_b64} hasIcon={c.has_icon} />
             {c.display_name}
           </span>
         }

@@ -73,6 +73,9 @@ pub struct SandboxView {
     /// ("Terminal in use"); the Terminal tab's badge.
     pub terminal_in_use: bool,
     pub restart_to_update: bool,
+    /// (P5-APIGAP-1, C-1046) The idle timeout after which this computer is stopped
+    /// (`hosted.idle_stop_secs`); `null` when idle stop is off (0).
+    pub idle_stop_after_secs: Option<u64>,
 }
 
 /// (FIX-029, C-611) One entry of the boot's start log (`sandboxes.start_log`, C-612).
