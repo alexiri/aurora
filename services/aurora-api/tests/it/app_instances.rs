@@ -3,8 +3,6 @@
 //! every refusal), the probe, connect and BYOC binding, deletion, and the catalogue.
 
 use crate::common::*;
-use aurora_crypto::{SigningKey, generate_signing_key};
-use aurora_registry::builder::PackageBuilder;
 use aurora_testkit::wiremock::matchers::{method, path};
 use aurora_testkit::wiremock::{Mock, MockServer, ResponseTemplate};
 use axum::body::Body;
@@ -99,42 +97,6 @@ struct W {
     outsider: String,
 }
 
-async fn install(h: &Harness, who: &str, yaml: &str, key: &SigningKey) {
-    let mut b = PackageBuilder::new(yaml);
-    b.sign(key, &PackageBuilder::key_id(key));
-    let boundary = "XB";
-    let mut body = format!(
-        "--{boundary}\r\nContent-Disposition: form-data; name=\"package\"; filename=\"p\"\r\nContent-Type: application/gzip\r\n\r\n"
-    )
-    .into_bytes();
-    body.extend_from_slice(&b.build().unwrap());
-    body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
-    let req = Request::builder()
-        .method(Method::POST)
-        .uri("/v1/admin/plugins")
-        .header("cookie", who)
-        .header("origin", ORIGIN)
-        .header(
-            "content-type",
-            format!("multipart/form-data; boundary={boundary}"),
-        )
-        .body(Body::from(body))
-        .unwrap();
-    let res = h.app.clone().oneshot(req).await.unwrap();
-    let v: Value =
-        serde_json::from_slice(&res.into_body().collect().await.unwrap().to_bytes()).unwrap();
-    assert_eq!(v["status"], "pending_approval", "{}", v["violations"]);
-    let (s, _, v) = h
-        .send(
-            Method::POST,
-            &format!("/v1/admin/plugins/{}/approve", v["id"].as_str().unwrap()),
-            &[("cookie", who), ("origin", ORIGIN)],
-            Some(json!({})),
-        )
-        .await;
-    assert_eq!(s, 200, "{v}");
-}
-
 async fn world_with(probe_override: bool) -> W {
     world_cfg(probe_override, None).await
 }
@@ -172,18 +134,9 @@ async fn world_cfg(probe_override: bool, extra_ca: Option<String>) -> W {
     let rootu = h.user("root@x.io", true).await;
     let (_, rt) = h.good_session(rootu).await;
     let root = cookie(&rt);
-    let key: SigningKey = generate_signing_key().unwrap();
-    let (s, _, v) = h
-        .send(
-            Method::POST,
-            "/v1/admin/trusted-keys",
-            &[("cookie", &root), ("origin", ORIGIN)],
-            Some(json!({"publisher": "acme", "name": "k", "public_key": PackageBuilder::key_id(&key)})),
-        )
-        .await;
-    assert_eq!(s, 201, "{v}");
-    install(&h, &root, SELFHOST, &key).await;
-    install(&h, &root, PLAIN, &key).await;
+    let a = crate::plugins_lifecycle::Admin::trust(&h, root.clone()).await;
+    a.install(SELFHOST).await;
+    a.install(PLAIN).await;
     let org = h.org().await;
     let org_b = h.org().await;
     let ws = h.workspace(org).await;

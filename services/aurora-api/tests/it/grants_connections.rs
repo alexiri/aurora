@@ -1,14 +1,9 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use crate::common::*;
-use aurora_crypto::{SigningKey, generate_signing_key};
-use aurora_registry::builder::PackageBuilder;
-use axum::body::Body;
-use http::{Method, Request};
-use http_body_util::BodyExt;
+use http::Method;
 use serde_json::{Value, json};
 use sqlx::postgres::PgListener;
-use tower::ServiceExt;
 use uuid::Uuid;
 
 const YAML: &str = r#"package: { id: acme, version: 1.0.0, contract: 1, min_core: 0.1.0, publisher: acme, name: P }
@@ -64,54 +59,11 @@ async fn world() -> W {
 /// with an owner, a member and one BYO agent (`bot`), the package installed and approved.
 pub(crate) async fn world_with(yaml: &str) -> W {
     let h = Harness::new().await;
-    let root = h.user("root@x.io", true).await;
-    let (_, admin_tok) = h.good_session(root).await;
-    let admin = cookie(&admin_tok);
-    let key: SigningKey = generate_signing_key().unwrap();
-    let hd = [("cookie", admin.as_str()), ("origin", ORIGIN)];
-    let (s, _, v) = h
-        .send(
-            Method::POST,
-            "/v1/admin/trusted-keys",
-            &hd,
-            Some(json!({"publisher": "acme", "name": "k", "public_key": PackageBuilder::key_id(&key)})),
-        )
-        .await;
-    assert_eq!(s, 201, "{v}");
-    let mut b = PackageBuilder::new(yaml);
-    b.sign(&key, &PackageBuilder::key_id(&key));
-    let boundary = "XB";
-    let mut body = format!(
-        "--{boundary}\r\nContent-Disposition: form-data; name=\"package\"; filename=\"p\"\r\nContent-Type: application/gzip\r\n\r\n"
-    )
-    .into_bytes();
-    body.extend_from_slice(&b.build().unwrap());
-    body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
-    let req = Request::builder()
-        .method(Method::POST)
-        .uri("/v1/admin/plugins")
-        .header("cookie", &admin)
-        .header("origin", ORIGIN)
-        .header(
-            "content-type",
-            format!("multipart/form-data; boundary={boundary}"),
-        )
-        .body(Body::from(body))
-        .unwrap();
-    let res = h.app.clone().oneshot(req).await.unwrap();
-    assert_eq!(res.status(), 201);
-    let v: Value =
-        serde_json::from_slice(&res.into_body().collect().await.unwrap().to_bytes()).unwrap();
-    assert_eq!(v["status"], "pending_approval", "{}", v["violations"]);
-    let (s, _, v) = h
-        .send(
-            Method::POST,
-            &format!("/v1/admin/plugins/{}/approve", v["id"].as_str().unwrap()),
-            &hd,
-            Some(json!({})),
-        )
-        .await;
-    assert_eq!(s, 200, "{v}");
+    let _admin = {
+        let a = crate::plugins_lifecycle::setup(&h).await;
+        a.install(yaml).await;
+        a.cookie
+    };
 
     let org = h.org().await;
     let ws = h.workspace(org).await;

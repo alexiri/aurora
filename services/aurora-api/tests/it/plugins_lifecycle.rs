@@ -81,6 +81,21 @@ impl Admin<'_> {
         .await
     }
 
+    /// Uploads the package signed by the trusted key, asserts it is `pending_approval` and approves it
+    /// (the signed + approved install every app test's `world()` starts with; P5-DEDUP-1 T1).
+    pub(crate) async fn install(&self, y: &str) -> Value {
+        self.install_with(y, &[]).await
+    }
+
+    /// [`Self::install`] with extra package files.
+    pub(crate) async fn install_with(&self, y: &str, files: &[(&str, &[u8])]) -> Value {
+        let v = self.upload_with(y, files).await;
+        assert_eq!(v["status"], "pending_approval", "{}", v["violations"]);
+        let (s, a) = self.act(&v["id"], "approve").await;
+        assert_eq!(s, 200, "{a}");
+        v
+    }
+
     pub(crate) async fn status(&self, id: &Value) -> Value {
         self.json(
             Method::GET,
@@ -95,20 +110,28 @@ impl Admin<'_> {
 pub(crate) async fn setup(h: &Harness) -> Admin<'_> {
     let u = h.user("root@x.io", true).await;
     let (_, tok) = h.good_session(u).await;
-    let a = Admin {
-        h,
-        cookie: cookie(&tok),
-        key: generate_signing_key().unwrap(),
-    };
-    let (s, v) = a
-        .json(
-            Method::POST,
-            "/v1/admin/trusted-keys",
-            Some(json!({"publisher": "acme", "name": "k", "public_key": PackageBuilder::key_id(&a.key)})),
-        )
-        .await;
-    assert_eq!(s, 201, "{v}");
-    a
+    Admin::trust(h, cookie(&tok)).await
+}
+
+impl<'a> Admin<'a> {
+    /// An [`Admin`] for an existing instance-admin session, with a fresh signing key it has trusted
+    /// as publisher `acme`.
+    pub(crate) async fn trust(h: &'a Harness, cookie: String) -> Admin<'a> {
+        let a = Admin {
+            h,
+            cookie,
+            key: generate_signing_key().unwrap(),
+        };
+        let (s, v) = a
+            .json(
+                Method::POST,
+                "/v1/admin/trusted-keys",
+                Some(json!({"publisher": "acme", "name": "k", "public_key": PackageBuilder::key_id(&a.key)})),
+            )
+            .await;
+        assert_eq!(s, 201, "{v}");
+        a
+    }
 }
 
 async fn snapshots(h: &Harness) -> i64 {
