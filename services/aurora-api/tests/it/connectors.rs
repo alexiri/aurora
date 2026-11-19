@@ -490,6 +490,112 @@ async fn narrowing_stays_active_and_widening_needs_approval() {
     w.approve("fake").await;
 }
 
+/// (FIX-167 Part B, D-370) A connector that waits for a decision is announced to the instance
+/// admins once per announced digest, in the transaction of the registration, and shows in
+/// `GET /v1/admin/attention` while it waits.
+#[tokio::test]
+async fn a_waiting_connector_is_announced_once_per_digest_and_listed() {
+    let w = world().await;
+    let notices = || async {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM admin_attention_notices WHERE kind = 'connector_approval'",
+        )
+        .fetch_one(w.h.pool())
+        .await
+        .unwrap()
+    };
+    let items = || async {
+        let (s, v) = w.admin(Method::GET, "/v1/admin/attention", None).await;
+        assert_eq!(s, 200, "{v}");
+        // (The world's organization has no owner: that item is not what this test is about.)
+        v["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|i| i["kind"] != "ownerless_org")
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+    let tok = w.provision("fake").await;
+    // First registration: waits as pending_approval; a replay writes no second notice.
+    assert_eq!(
+        w.register(&tok, &base_manifest("fake")).await.0,
+        "pending_approval"
+    );
+    assert_eq!(
+        w.register(&tok, &base_manifest("fake")).await.0,
+        "pending_approval"
+    );
+    assert_eq!(notices().await, 1);
+    let list = items().await;
+    assert_eq!(list.len(), 1, "{list:?}");
+    assert_eq!(list[0]["kind"], "connector_approval");
+    assert_eq!(list[0]["decision"], true);
+    assert_eq!(list[0]["subject_id"], "fake");
+    assert_eq!(list[0]["href"], "/admin/chat-platforms");
+    assert!(
+        list[0]["title"]
+            .as_str()
+            .unwrap()
+            .ends_with("needs your approval")
+    );
+    w.approve("fake").await;
+    assert!(items().await.is_empty());
+
+    // A widened update: the connector keeps running; the update is a new subject.
+    let wide = manifest(
+        "fake",
+        json!({"threads": true, "reactions": true, "files": {"max_bytes": 10}, "edits": true}),
+        json!(["actions", "commands"]),
+        json!([{"name": "token", "label": "Token", "type": "secret"}]),
+    );
+    assert_eq!(w.register(&tok, &wide).await.0, "active");
+    assert_eq!(w.register(&tok, &wide).await.0, "active");
+    assert_eq!(notices().await, 2);
+    let list = items().await;
+    assert_eq!(list.len(), 1, "{list:?}");
+    assert!(
+        list[0]["title"]
+            .as_str()
+            .unwrap()
+            .ends_with("is waiting for approval")
+    );
+    let detail = list[0]["detail"].as_str().unwrap();
+    assert!(
+        detail.contains("keeps running") && detail.contains("edits"),
+        "{detail}"
+    );
+    assert_eq!(
+        aurora_api::domains::admin::attention::notify_once(&w.h.state)
+            .await
+            .unwrap(),
+        2,
+        "the first registration and the update: one mail each, to the one admin"
+    );
+    w.approve("fake").await;
+    assert!(items().await.is_empty());
+
+    // A connector that already waited in `pending_approval` with a baseline when this shipped
+    // becomes `active` at its next registration without a new announcement.
+    let wider = manifest(
+        "fake",
+        json!({"threads": true, "reactions": true, "files": {"max_bytes": 10}, "edits": true, "typing": true}),
+        json!(["actions", "commands"]),
+        json!([{"name": "token", "label": "Token", "type": "secret"}]),
+    );
+    sqlx::query("UPDATE connectors SET status = 'pending_approval' WHERE id = 'fake'")
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(w.register(&tok, &wider).await.0, "active");
+    assert_eq!(
+        notices().await,
+        2,
+        "an item that was already pending is not announced"
+    );
+    assert_eq!(w.connector("fake").await["update_pending"], true);
+}
+
 #[tokio::test]
 async fn replicas_split_integrations_and_take_over_lapsed_leases() {
     let w = world().await;

@@ -463,6 +463,11 @@ async fn fail_check(
         },
     )
     .await?;
+    if let Some(n) = new_fingerprint {
+        // (FIX-167 Part B, D-370) A changed key is a decision item; one notice per new key.
+        crate::domains::admin::attention::notify_key_changed(&mut tx, source.id, &source.name, n)
+            .await?;
+    }
     let mut meta = json!({ "trigger": trigger, "reason": reason });
     if let Some(n) = new_fingerprint {
         meta["old"] = json!(source.key_fingerprint);

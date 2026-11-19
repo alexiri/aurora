@@ -218,6 +218,25 @@ async fn do_register(
             .await
             .map_err(|e| ApiError::internal(e.to_string()))?;
     }
+    // (FIX-167 Part B, D-370) Tell the instance admins once per new decision item, in the
+    // transaction of the state change: a replayed registration finds the notice and writes none.
+    // A connector that already waited in `pending_approval` when this shipped is not "new".
+    let new_first = status == "pending_approval"
+        && (row.status != "pending_approval"
+            || row.manifest_digest.as_deref() != Some(digest_hex.as_str()));
+    let new_update = first_pending && row.status != "pending_approval";
+    if new_first || new_update {
+        crate::domains::admin::attention::notify_connector(
+            &mut tx,
+            &conn.id,
+            &row.display_name,
+            Some(&req.version),
+            &digest_hex,
+            new_update,
+            &widening,
+        )
+        .await?;
+    }
     tx.commit().await.map_err(DbError::from)?;
     Ok(RegisterResponse {
         connector_id: conn.id.clone(),

@@ -123,6 +123,18 @@ describe("push service worker", () => {
     expect(t.options.tag).toBe("aurora-test");
   });
 
+  it("admin_attention: fixed text and /admin; the item's title only when the payload carries it (FIX-167, C-1023)", async () => {
+    const plain = await push(JSON.stringify({ v: 1, type: "admin_attention", url: "/admin", detail: "SECRET-CANARY" }));
+    expect(plain.title).toBe("Aurora — something in Administration needs your decision");
+    expect(plain.options.body).toBe("Open Administration to review it.");
+    expect(plain.options.tag).toBe("aurora-admin");
+    expect(plain.options.data.url).toBe("/admin");
+    expect(JSON.stringify(plain)).not.toContain("SECRET-CANARY");
+    const named = await push(JSON.stringify({ v: 1, type: "admin_attention", url: "https://evil.example", title: "Mattermost 2.0 needs your approval" }));
+    expect(named.title).toBe("Aurora — Mattermost 2.0 needs your approval");
+    expect(named.options.data.url, "the worker never trusts the payload's url for this type").toBe("/admin");
+  });
+
   it("never shows a field outside the payload contract", async () => {
     const s = await push(
       JSON.stringify({ v: 1, type: "approval.pending", approval_id: "ap-5", title: "SECRET-CANARY", body: "SECRET-CANARY", url: "/o/a/w/b/approvals" }),
@@ -140,7 +152,11 @@ describe("push service worker", () => {
     ["/o/../admin", "/"],
     ["/o/a/./b", "/"],
     ["/o//a", "/"],
-    ["/admin", "/"],
+    // (FIX-167, C-1023) Exactly `/admin` is the one non-/o path a notification may open.
+    ["/admin", "/admin"],
+    ["/admin/people", "/"],
+    ["/admin?x=1", "/"],
+    ["/administrator", "/"],
     ["/o/a?x=/evil", "/"],
     [undefined, "/"],
     [42, "/"],

@@ -40,6 +40,7 @@ MUST implement it exactly; any change starts here.
 | default_org_id | uuid null FK→organizations (set null) | |
 | last_login_at | timestamptz null | churn column |
 | approval_email_enabled | bool not null default true | per-user opt-out of approval e-mails (phase 2, RFE-011a; `PATCH /v1/me { approval_email }`) |
+| admin_attention_email_enabled | bool not null default true | (FIX-167 Part B, C-1024) per-user opt-out of the e-mail about new administration decisions; used for instance admins only (`PATCH /v1/me { admin_attention_email }`) |
 | idp_admin_source | text null | (phase 4, P4-IDP-1, D-139) `idp:<provider>:<value>` when the claim sync granted `is_instance_admin`; `null` for a manual, e-mail-list or `bootstrap-admin` flag (those are never revoked by the sync) |
 
 ### `user_idp_roles`
@@ -657,6 +658,18 @@ The gateway database role's column-level `SELECT (id, status, gateway_instance_i
 | user_id | uuid FK→users (cascade) | pk part |
 | workspace_id | uuid FK→workspaces (cascade) | pk part; the workspace whose approvals the connection watches |
 | last_seen_at | timestamptz not null | churn column; live when within `APPROVAL_WATCHER_TTL`; index (workspace_id, last_seen_at) |
+
+### `admin_attention_notices`
+(FIX-167 Part B, D-370, C-1023) One row per (decision item, instance admin): the claim that makes the e-mail and the Web Push of a new item happen once. Written in the transaction of the state change that creates the item (`connectors/plane.rs` registration, `plugins/ingest.rs` and `plugins/registry.rs` for package holds, `addon_sources` for a changed key), with `ON CONFLICT DO NOTHING`, so a replay inserts nothing. Rows are inserted only for active (not disabled) instance admins at that moment.
+| Column | Type | Notes |
+|---|---|---|
+| kind | text CHECK in (`connector_approval`,`package_approval`,`addon_key_changed`,`host_claim_conflict`) | pk part; the informational kinds of `GET /v1/admin/attention` never get a row |
+| subject_id | text | pk part: the connector id (text), or the package row / addon source uuid as text |
+| subject_version | text | pk part: the manifest digest of a connector, the version of a package, the new key fingerprint of a source; a new one is a new subject |
+| user_id | uuid FK→users (cascade) | pk part |
+| title, detail | text not null | the fixed sentences of `14 §Needs your attention` (names and versions only); the e-mail and the title-bearing push read them |
+| mailed_at, pushed_at | timestamptz null | claimed (`now()`) by the e-mail sweeper and the push loop with `FOR UPDATE SKIP LOCKED`, then sent; a null half is open work |
+| index | (created_at) where `mailed_at IS NULL OR pushed_at IS NULL` | the sweepers' work set; rows older than 30 days are pruned hourly |
 
 ### `approval_notifications`
 (phase 2, RFE-011a) One row per (approval, decider) e-mail claim.

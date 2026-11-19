@@ -6,7 +6,7 @@
  * Plain JavaScript: no imports, no bundler output.
  */
 
-const TYPES = ["approval.pending", "approval.reminder", "approval.digest", "test"];
+const TYPES = ["approval.pending", "approval.reminder", "approval.digest", "test", "admin_attention"];
 const URL_PATTERN = /^\/o\/[A-Za-z0-9._~%/-]+(\?[A-Za-z0-9._~%=&-]*)?$/;
 
 self.addEventListener("install", () => {
@@ -33,6 +33,16 @@ function build(raw) {
   const url = typeof data.url === "string" ? data.url : "/";
   if (data.type === "test") {
     return { title: "Aurora — test notification", body: "Notifications work on this device.", tag: "aurora-test", url: "/" };
+  }
+  if (data.type === "admin_attention") {
+    // (FIX-167, C-1023) Fixed text; the item's title only when the device turned names on.
+    const item = text(data.title, 80);
+    return {
+      title: item ? "Aurora — " + item : "Aurora — something in Administration needs your decision",
+      body: "Open Administration to review it.",
+      tag: "aurora-admin",
+      url: "/admin",
+    };
   }
   if (data.type === "approval.digest") {
     const n = Number.isInteger(data.count) && data.count > 0 ? data.count : 0;
@@ -75,6 +85,7 @@ self.addEventListener("push", (event) => {
 });
 
 function safeUrl(u) {
+  if (u === "/admin") return u;
   if (typeof u !== "string" || !URL_PATTERN.test(u)) return "/";
   const path = u.split("?")[0];
   if (path.indexOf("//") !== -1 || u.indexOf("\\") !== -1) return "/";

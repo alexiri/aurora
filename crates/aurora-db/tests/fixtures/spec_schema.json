@@ -43,6 +43,16 @@
       "update_interval",
       "url"
     ],
+    "admin_attention_notices": [
+      "detail",
+      "kind",
+      "mailed_at",
+      "pushed_at",
+      "subject_id",
+      "subject_version",
+      "title",
+      "user_id"
+    ],
     "agent_access_requests": [
       "agent_id",
       "app_id",
@@ -1442,6 +1452,7 @@
       "user_id"
     ],
     "users": [
+      "admin_attention_email_enabled",
       "approval_email_enabled",
       "default_org_id",
       "disabled_at",
@@ -1573,6 +1584,16 @@
       "status": "text not null",
       "update_interval": "text not null",
       "url": "text not null"
+    },
+    "admin_attention_notices": {
+      "detail": "text not null",
+      "kind": "text",
+      "mailed_at": "timestamptz null",
+      "pushed_at": "timestamptz null",
+      "subject_id": "text",
+      "subject_version": "text",
+      "title": "text not null",
+      "user_id": "uuid"
     },
     "agent_access_requests": {
       "agent_id": "uuid",
@@ -2973,6 +2994,7 @@
       "user_id": "uuid not null"
     },
     "users": {
+      "admin_attention_email_enabled": "bool not null",
       "approval_email_enabled": "bool not null",
       "default_org_id": "uuid null",
       "disabled_at": "timestamptz null",

@@ -468,6 +468,21 @@ async fn ingest_inner(
             created: false,
         });
     }
+    if decision.status == "pending_approval" {
+        // (FIX-167 Part B, D-370) A version that waits for a decision: tell the instance admins,
+        // in this transaction (a concurrent identical ingest inserted nothing above and returned).
+        let pkg_name = parsed
+            .as_ref()
+            .map_or(package_id.as_str(), |m| m.package.name.as_str());
+        crate::domains::admin::attention::notify_package(
+            &mut tx,
+            new_id,
+            pkg_name,
+            &version,
+            decision.reason,
+        )
+        .await?;
+    }
     if decision.status != "invalid" {
         if let Some(wasm) = pkg.file(aurora_registry::package::HOOKS_WASM) {
             plugins::put_blob(&mut *tx, &hex(&Sha256::digest(wasm)), "hooks_wasm", wasm).await?;
