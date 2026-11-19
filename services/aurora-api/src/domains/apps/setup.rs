@@ -444,6 +444,10 @@ pub struct AppReadiness {
     /// Who can fix it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub who_can: Option<WhoCan>,
+    /// (P5-POLISH-4, C-1030) Whether the caller asked an admin to set it up, and how many people did;
+    /// absent when nobody asked.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub requested: Option<crate::domains::app_setup_requests::dto::Requested>,
 }
 
 /// The catalogue's readiness of `app`, from the same methods the connect plan returns.
@@ -459,6 +463,7 @@ pub async fn readiness(
             state: ReadinessState::Ready,
             needs: Vec::new(),
             who_can: None,
+            requested: None,
         };
     }
     // The people methods block it; an app with only administrator methods is judged by those.
@@ -487,6 +492,7 @@ pub async fn readiness(
         state: ReadinessState::NeedsAdmin,
         needs,
         who_can,
+        requested: None,
     }
 }
 

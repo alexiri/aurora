@@ -68,11 +68,20 @@ pub enum Kind {
     Test,
     /// (FIX-167 Part B, C-1023) A new decision item waits in Administration.
     AdminAttention,
+    /// (P5-POLISH-4, C-1030) An organization owner or admin: a person asks for an app to be set up.
+    AppSetupRequest,
+    /// (P5-POLISH-4) The asker: the app is ready.
+    AppSetupResolved,
+    /// (P5-POLISH-4) The asker: an owner or admin is not setting the app up now.
+    AppSetupDeclined,
 }
 
 impl Kind {
     fn type_str(self) -> &'static str {
         match self {
+            Self::AppSetupRequest => "app_setup_request",
+            Self::AppSetupResolved => "app_setup_resolved",
+            Self::AppSetupDeclined => "app_setup_declined",
             Self::Pending => "approval.pending",
             Self::Reminder => "approval.reminder",
             Self::Digest => "approval.digest",
@@ -158,6 +167,23 @@ pub fn attention_message(sub: &SubRow, title: &str, subject: &[u8]) -> Result<Me
         "type": Kind::AdminAttention.type_str(),
         "url": "/admin",
     });
+    if sub.show_details {
+        v["title"] = json!(sanitize::one_line(title, 2 * NAME_MAX));
+    }
+    finish_message(v, PUSH_TTL_MAX.as_secs(), "normal", topic(sub.id, subject))
+}
+
+/// (P5-POLISH-4, C-1030, SEC-135) The push of an app setup notice: its type, the dashboard path it opens
+/// and, only on a device that turned names on, the notice's title (an app name and display names, never
+/// anything else). The notification text itself is fixed per type in the service worker.
+pub fn app_setup_message(
+    sub: &SubRow,
+    kind: Kind,
+    href: &str,
+    title: &str,
+    subject: &[u8],
+) -> Result<Message, String> {
+    let mut v = json!({ "v": 1, "type": kind.type_str(), "url": href });
     if sub.show_details {
         v["title"] = json!(sanitize::one_line(title, 2 * NAME_MAX));
     }
@@ -642,6 +668,38 @@ pub async fn sweep_attention(state: &AppState) -> Result<usize, ApiError> {
     Ok(sent)
 }
 
+/// (P5-POLISH-4, D-386) One push per device for every app setup notice since the last sweep: claim the
+/// notice (`pushed_at`), then send. The device's own opt-in decides. Does nothing with push off.
+pub async fn sweep_app_setup(state: &AppState) -> Result<usize, ApiError> {
+    if !state.push.enabled {
+        return Ok(0);
+    }
+    let mut sent = 0;
+    for n in aurora_db::repo::app_setup_requests::claim_push(
+        &state.pool,
+        crate::domains::app_setup_requests::service::PUSH_MAX_AGE.as_secs_f64(),
+        SWEEP_LIMIT,
+    )
+    .await?
+    {
+        if !n.active {
+            continue;
+        }
+        let kind = match n.kind.as_str() {
+            "resolved" => Kind::AppSetupResolved,
+            "declined" => Kind::AppSetupDeclined,
+            _ => Kind::AppSetupRequest,
+        };
+        let devices = deliverable(state, n.user_id).await?;
+        let subject = format!("{}\n{}", n.request_id, n.kind);
+        sent += send_all(state, &devices, |s| {
+            app_setup_message(s, kind, &n.href, &n.title, subject.as_bytes())
+        })
+        .await;
+    }
+    Ok(sent)
+}
+
 async fn refresh_gauges(state: &AppState) {
     match repo::counts_by_state(&state.pool).await {
         Ok(rows) => {
@@ -708,6 +766,9 @@ pub fn spawn(state: AppState) {
             }
             if let Err(e) = sweep_attention(&state).await {
                 tracing::warn!(error = %e.message(), "Web Push administration sweep failed");
+            }
+            if let Err(e) = sweep_app_setup(&state).await {
+                tracing::warn!(error = %e.message(), "Web Push app setup sweep failed");
             }
             if gauges.is_none_or(|t| t.elapsed() >= GAUGE_EVERY) {
                 refresh_gauges(&state).await;
@@ -864,6 +925,28 @@ mod tests {
             ta.bytes()
                 .all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_')
         );
+    }
+
+    /// (P5-POLISH-4, SEC-135) An app setup push carries its type and the dashboard path; the title only on a
+    /// device that opted into names. Nothing else is ever in it.
+    #[test]
+    fn an_app_setup_push_holds_only_its_type_a_path_and_an_opted_in_title() {
+        let path = "/o/acme/apps?tab=apps&app=google-calendar";
+        for (kind, ty) in [
+            (Kind::AppSetupRequest, "app_setup_request"),
+            (Kind::AppSetupResolved, "app_setup_resolved"),
+            (Kind::AppSetupDeclined, "app_setup_declined"),
+        ] {
+            let plain =
+                app_setup_message(&sub(false), kind, path, "Bob wants Calendar", b"x").unwrap();
+            let v: serde_json::Value = serde_json::from_slice(&plain.plaintext).unwrap();
+            assert_eq!(v, json!({"v": 1, "type": ty, "url": path}));
+            let named =
+                app_setup_message(&sub(true), kind, path, "Bob wants Calendar", b"x").unwrap();
+            let v: serde_json::Value = serde_json::from_slice(&named.plaintext).unwrap();
+            assert_eq!(v["title"], "Bob wants Calendar");
+            assert_eq!(v.as_object().unwrap().len(), 4);
+        }
     }
 
     #[test]

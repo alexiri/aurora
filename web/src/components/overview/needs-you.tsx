@@ -6,7 +6,10 @@ import { AccountAttentionItem, useWorkspaceAttention } from "@/components/accoun
 import { ParkedChip } from "@/components/approvals/parked";
 import { AttentionChip } from "@/components/ui/attention-chip";
 import { buttonVariants } from "@/components/ui/button";
+import { SetupRequestItem } from "@/components/overview/setup-request-row";
+import { useOrgSetupRequests } from "@/lib/api/app-setup-requests";
 import { countdown, useCanApprove, useNow, usePendingApprovals } from "@/lib/api/approvals";
+import { useOrg } from "@/lib/api/queries";
 import { cn } from "@/lib/utils";
 
 /**
@@ -14,14 +17,20 @@ import { cn } from "@/lib/utils";
  * agent asked for (for people who may decide) and the accounts that stopped working (with their fix, or who can fix
  * them). Nothing when nothing waits.
  */
-export function NeedsYou({ wsId, base }: { wsId: string; base: string }) {
+export function NeedsYou({ wsId, base, orgId }: { wsId: string; base: string; orgId?: string }) {
   const canApprove = useCanApprove(wsId);
   const pending = usePendingApprovals(wsId, canApprove);
   const broken = useWorkspaceAttention(wsId);
   const clock = useNow(1000);
+  // (P5-POLISH-4, D-386) App setup requests: for the organization's owners and admins only.
+  const org = useOrg(orgId);
+  const isOrgAdmin = org.data?.my_role === "owner" || org.data?.my_role === "admin";
+  const setups = useOrgSetupRequests(orgId, isOrgAdmin);
+  const requests = isOrgAdmin ? (setups.data ?? []) : [];
+  const orgBase = base.split("/w/")[0];
   const approvals = canApprove ? (pending.data?.items ?? []) : [];
   const urgent = approvals.slice(0, 2);
-  const total = approvals.length + broken.length;
+  const total = approvals.length + broken.length + requests.length;
   if (total === 0) return null;
 
   return (
@@ -48,6 +57,7 @@ export function NeedsYou({ wsId, base }: { wsId: string; base: string }) {
         {broken.map((a) => (
           <AccountAttentionItem key={`${a.ref.type}:${a.ref.id}`} account={a} base={base} workspaceId={wsId} />
         ))}
+        {orgId ? requests.map((r) => <SetupRequestItem key={r.id} request={r} orgBase={orgBase} orgId={orgId} />) : null}
       </ul>
     </section>
   );

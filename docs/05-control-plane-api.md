@@ -153,6 +153,7 @@ matrix:
     | `telemetry` | (phase 5, FIX-146, D-232) `POST /v1/telemetry/traces` (instead of `write`, so browser telemetry never spends the budget of real writes) | 60 / min, burst 20 |
     | `check` | (phase 5, P5-UX-14, C-943, SEC-129) `POST /v1/accounts/{type}/{id}/test` | 10 / min, burst 3 |
     | `invite` | (phase 5, P5-UX-5, C-919, SEC-128) `POST /v1/workspaces/{ws}/access/by-email` (per principal; the route also keeps a per-workspace cap of 30 / hour) | 10 / min, burst 5 |
+    | `setup_request` | (phase 5, P5-POLISH-4, C-1030, SEC-135) `POST /v1/workspaces/{ws}/apps/{app}/setup-request` (the 21st ask in an hour is 429 `rate_limited`) | 20 / hour, burst 20 |
     | `org` | every authenticated request touching an org's resources (all principals together) | 3 000 / min, burst 600 |
 
   - **Concurrency cap** for streams: at most `API_STREAMS_PER_PRINCIPAL` (20)

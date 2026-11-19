@@ -132,6 +132,17 @@ async fn list_apps(
             }
             _ => None,
         };
+        let mut asked = match av.view() {
+            Some(view) if q.workspace_id.is_some() => {
+                crate::domains::app_setup_requests::service::requested(
+                    &state,
+                    view.org,
+                    caller.user_id,
+                )
+                .await?
+            }
+            _ => HashMap::new(),
+        };
         let mut accounts = match q.workspace_id {
             Some(ws) => service::accounts_by_app(&state, &caller, ws).await?,
             None => HashMap::new(),
@@ -147,7 +158,9 @@ async fn list_apps(
             }
             let mut item = service::summary(&state, a, p, &av).await;
             if let Some(f) = facts.as_mut() {
-                item.readiness = Some(setup::readiness(f, a, p, available).await);
+                let mut r = setup::readiness(f, a, p, available).await;
+                r.requested = asked.remove(&a.app_id);
+                item.readiness = Some(r);
                 item.accounts = accounts.remove(&a.app_id).unwrap_or_default();
             }
             items.push(item);

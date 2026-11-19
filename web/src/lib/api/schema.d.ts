@@ -3962,6 +3962,43 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/orgs/{org}/app-setup-requests": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The organization's app setup requests (`status=open` by default), the latest ask first. Owners and
+         *     admins only; anyone else gets 404.
+         */
+        get: operations["listAppSetupRequests"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/orgs/{org}/app-setup-requests/{id}/decline": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** "Not now": closes the request as declined; each asker is told once. Owners and admins only. */
+        post: operations["declineAppSetupRequest"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/orgs/{org}/audit": {
         parameters: {
             query?: never;
@@ -5651,6 +5688,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/workspaces/{ws}/apps/{app}/setup-request": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Ask the organization's owners and admins to make an app ready (C-1030). `can_own` of the workspace.
+         *     Idempotent per person; 409 `app_ready` when the app is ready already; 429 after 20 asks in an hour.
+         */
+        post: operations["askAppSetup"];
+        /** Withdraw the caller's ask; the request closes when no asker is left. */
+        delete: operations["withdrawAppSetup"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/workspaces/{ws}/audit": {
         parameters: {
             query?: never;
@@ -6790,6 +6848,7 @@ export interface components {
         AppReadiness: {
             /** @description The union of what the blocking methods need (empty when the app is switched off). */
             needs?: components["schemas"]["SetupNeed"][];
+            requested?: components["schemas"]["Requested"] | null;
             state: components["schemas"]["ReadinessState"];
             who_can?: components["schemas"]["WhoCan"] | null;
         };
@@ -6801,6 +6860,30 @@ export interface components {
         AppRestrictions: {
             block_untooled: boolean;
             custom_only: boolean;
+        };
+        /** @description An organization's request for an app to be made ready (C-1030). There is no free text. */
+        AppSetupRequest: {
+            app_id: string;
+            app_name: string;
+            /** @description The askers; a person who is not an owner or admin of the organization sees only their own ask. */
+            askers: components["schemas"]["Asker"][];
+            /** Format: date-time */
+            closed_at?: string | null;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: uuid */
+            id: string;
+            /** @description What is missing (C-1029); empty when the app is switched off. */
+            needs: components["schemas"]["SetupNeed"][];
+            /** Format: uuid */
+            org_id: string;
+            /** @description `open` | `resolved` | `declined` | `withdrawn`. */
+            status: string;
+            /** @description The app is switched off for the organization. */
+            unavailable: boolean;
+        };
+        AppSetupRequestList: {
+            items: components["schemas"]["AppSetupRequest"][];
         };
         AppSetupStatus: {
             app_id: string;
@@ -7043,6 +7126,16 @@ export interface components {
             rule_name: string;
             /** @description `workspace` | `organization` */
             scope: string;
+        };
+        /** @description One person's ask: their display name and where they asked from. Never an e-mail. */
+        Asker: {
+            /** Format: date-time */
+            asked_at: string;
+            display_name: string;
+            /** Format: uuid */
+            user_id: string;
+            /** Format: uuid */
+            workspace_id: string;
         };
         AttachPresenceRequest: {
             /** @description Values for the connector's `presence_setup.dedicated.fields` (manual setup). */
@@ -12603,6 +12696,12 @@ export interface components {
             turn_id?: string | null;
             /** Format: int32 */
             upstream_status?: number | null;
+        };
+        /** @description `AppSummary.readiness.requested` (C-1029): whether the caller asked, and how many people did. */
+        Requested: {
+            by_me: boolean;
+            /** Format: int64 */
+            count: number;
         };
         ResolveResponse: {
             org: components["schemas"]["OrgSummary"];
@@ -31745,6 +31844,124 @@ export interface operations {
             };
         };
     };
+    listAppSetupRequests: {
+        parameters: {
+            query?: {
+                /** @description `open` (default) | `resolved` | `declined` | `withdrawn`. */
+                status?: string | null;
+            };
+            header?: never;
+            path: {
+                /** @description Organization id */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppSetupRequestList"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    declineAppSetupRequest: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization id */
+                org: string;
+                /** @description Request id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppSetupRequest"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description already_closed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     listOrgAudit: {
         parameters: {
             query?: {
@@ -39729,6 +39946,121 @@ export interface operations {
                 };
             };
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    askAppSetup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                ws: string;
+                /** @description App id */
+                app: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppSetupRequest"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description app_ready */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    withdrawAppSetup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                ws: string;
+                /** @description App id */
+                app: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Withdrawn */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };

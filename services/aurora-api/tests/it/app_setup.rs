@@ -219,7 +219,11 @@ async fn named(h: &Harness, email: &str, name: &str, admin: bool) -> Uuid {
 }
 
 async fn world() -> W {
-    let h = Harness::new().await;
+    world_with(|_| {}).await
+}
+
+async fn world_with(mutate: impl FnOnce(&mut aurora_config::ApiConfig)) -> W {
+    let h = Harness::with_config(mutate).await;
     let root = named(&h, "root@x.io", "Root Admin", true).await;
     let (_, rt) = h.good_session(root).await;
     let root_ck = cookie(&rt);
@@ -784,6 +788,9 @@ async fn an_unknown_placeholder_is_refused_when_the_package_is_uploaded() {
     );
     assert_ne!(v["status"], "pending_approval", "{v}");
 }
+
+#[path = "app_setup_requests.rs"]
+mod requests;
 
 // ---- P5-POLISH-3 (D-388, C-1029): readiness in the catalogue ----
 

@@ -10,6 +10,7 @@ pub mod admin;
 pub mod agent_links;
 pub mod agents;
 pub mod app_instances;
+pub mod app_setup_requests;
 pub mod approvals;
 pub mod apps;
 pub mod attachments;

@@ -686,6 +686,7 @@ pub fn v1_router() -> OpenApiRouter<AppState> {
         .merge(domains::connect::router())
         .merge(domains::oauth_clients::router())
         .merge(domains::app_instances::router())
+        .merge(domains::app_setup_requests::router())
         .merge(domains::availability::router())
         .merge(domains::audit::router())
         .merge(domains::keys::router())
