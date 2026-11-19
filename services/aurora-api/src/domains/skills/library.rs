@@ -244,7 +244,7 @@ pub async fn add(
     .metadata(
         json!({"name": row.name, "tier": service::tier_of(&row), "library_id": lib.id,
             "repo": lib.repo, "path": from.path, "commit_sha": commit,
-            "content_sha256": content::hex(&loaded.content_sha256)}),
+            "content_sha256": content::hex(loaded.content_sha256)}),
     );
     if let Some(w) = workspace {
         ev = ev.workspace(w);

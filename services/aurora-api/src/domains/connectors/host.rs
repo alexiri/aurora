@@ -157,7 +157,7 @@ async fn register(
             accepted.push(json!({
                 "type_id": t.type_id,
                 "manifest": m,
-                "manifest_digest": manifest::hex(&digest),
+                "manifest_digest": manifest::hex(digest),
                 "signed": false,
             }));
             continue;

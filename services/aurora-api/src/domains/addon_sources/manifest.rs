@@ -259,25 +259,18 @@ pub fn parse(bytes: &[u8]) -> Result<Manifest, ManifestError> {
         signing_key: key.to_owned(),
         signing_key_description: raw.signing_key_description,
         addons: raw.addons,
-        digest: hex(&Sha256::digest(bytes)),
+        digest: hex(Sha256::digest(bytes)),
     })
 }
 
-fn hex(b: &[u8]) -> String {
-    use std::fmt::Write;
-    b.iter()
-        .fold(String::with_capacity(b.len() * 2), |mut s, x| {
-            let _ = write!(s, "{x:02x}");
-            s
-        })
-}
+use ::hex::encode as hex;
 
 /// `sha256:<12 hex>` — the fingerprint shown to admins (never the key itself beyond
 /// what registration already stores).
 #[must_use]
 pub fn key_fingerprint(public_key_b64: &str) -> String {
     let d = Sha256::digest(public_key_b64.trim().as_bytes());
-    let h = hex(&d);
+    let h = hex(d);
     format!("sha256:{}", &h[..12])
 }
 

@@ -779,7 +779,7 @@ pub async fn skill_content(
                 })
                 .collect(),
             size: s.size,
-            content_sha256: Some(content::hex(&s.content_sha256)),
+            content_sha256: Some(content::hex(s.content_sha256)),
         }),
     }
 }
