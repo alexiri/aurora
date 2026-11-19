@@ -10,7 +10,8 @@ import { DataTable, Td, Th } from "@/components/ui/data-table";
 import { Notice } from "@/components/ui/notice";
 import { Section } from "@/components/ui/section";
 import { Segmented } from "@/components/ui/segmented";
-import { StatusDot } from "@/components/ui/status-dot";
+import { StatusLine } from "@/components/ui/status-line";
+import { askSentence } from "@/lib/who-can";
 import { errorMessage } from "@/lib/api/errors";
 import { useRetrySandbox, useRestartSandbox, useSandbox, useStartFailures } from "@/lib/api/conversations";
 import type { SandboxStartAttempt, StartLogEntry } from "@/lib/api/conversations";
@@ -164,13 +165,21 @@ function StartLog({ agentId, log }: { agentId: string; log: StartLogEntry[] }) {
 /** States where Restart has nothing to do (the API answers 409 `restart_not_applicable`, C-626). */
 const RESTART_NOT_APPLICABLE = new Set(["stopping", "stopped", "unprovisioned"]);
 
+/** "A", "A and B", "A, B and C". */
+function listWords(items: string[]): string {
+  return items.length <= 1 ? items.join("") : `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
+}
+
 export function ComputerTab({
   agentId,
+  agentName,
   frozen = false,
   terminal = false,
   workspaceId,
 }: {
   agentId: string;
+  /** For the sentences ("Daneel's computer is asleep"). */
+  agentName?: string;
   /** The agent's workspace: the Usage card reads its usage (C-1000). */
   workspaceId?: string;
   frozen?: boolean;
@@ -195,24 +204,52 @@ export function ComputerTab({
   // (FIX-049, C-626) Restart is disabled where it would answer 409 (nothing to restart), and on a
   // failed computer of a frozen agent (the recovery would start work: 423).
   const restartBlocked = RESTART_NOT_APPLICABLE.has(v.state) || (v.state === "failed" && frozen);
-  const tone = v.state === "running" ? "accent" : v.state === "failed" ? "danger" : v.state === "starting" || v.state === "stopping" ? "pending" : "neutral";
+  const name = agentName ?? "The agent";
+  const missing = [
+    ...(terminal ? [] : ["Terminal", "Files"]),
+    ...(previewsUsable ? [] : ["Previews"]),
+    ...(instance.data?.features.ssh === true ? [] : ["SSH"]),
+  ];
   return (
-    <div className="space-y-8">
-      <Section
-        id="computer-state"
-        title="Computer"
-        description={v.image ? `Image: ${v.image}` : undefined}
-        actions={
-          <Button variant="outline" size="sm" disabled={restart.isPending || restartBlocked} onClick={() => setOpen(true)}>
-            Restart
-          </Button>
-        }
-        card
-      >
-        <div className="flex flex-wrap items-center gap-2 text-sm">
-          State: <StatusDot tone={tone}>{v.state}</StatusDot>
+    <div className="space-y-6">
+      {/* (P5-POLISH-6, C5) One sentence for the state, with the action that fits it. */}
+      <section aria-label="Computer" className="space-y-3 rounded-card border border-line bg-surface p-4 shadow-card sm:p-5">
+        <StatusLine tone={v.state === "running" ? "ok" : v.state === "failed" ? "fail" : "idle"} className="text-base" data-testid="computer-state">
+          {v.state === "running"
+            ? `${name}'s computer is awake`
+            : v.state === "starting"
+              ? `${name}'s computer is starting`
+              : v.state === "failed"
+                ? `${name}'s computer couldn't start`
+                : `${name}'s computer is asleep`}
+        </StatusLine>
+        <p className="text-sm text-ink-2">
+          {v.state === "failed"
+            ? `${errorCopy(v.failure_code).message} ${v.failure_message ?? ""}`.trim()
+            : v.state === "stopped" || v.state === "unprovisioned"
+              ? `It wakes by itself when ${name} needs it and sleeps when there is no work. Its files stay.`
+              : v.state === "running"
+                ? "It sleeps by itself when there is no work. Its files stay."
+                : null}
+        </p>
+        <div className="flex flex-wrap gap-2">
+          {v.state === "running" ? (
+            <Button variant="outline" size="sm" disabled={restart.isPending || restartBlocked} onClick={() => setOpen(true)}>
+              Restart
+            </Button>
+          ) : null}
+          {v.state === "failed" && !frozen ? (
+            <Button size="sm" disabled={retry.isPending || !v.retryable} onClick={() => retry.mutate(undefined)}>
+              {retry.isPending || !v.retryable ? "Start in flight…" : "Try again"}
+            </Button>
+          ) : null}
         </div>
-      </Section>
+        {missing.length > 0 ? (
+          <p className="text-sm text-ink-2" data-testid="missing-pages">
+            {listWords(missing)} {missing.length === 1 ? "isn't" : "aren't"} set up on this Aurora. {askSentence({ role: "instance_admin", people: [] })}
+          </p>
+        ) : null}
+      </section>
       {workspaceId ? <UsageCard wsId={workspaceId} org={org} ws={ws} agentId={agentId} /> : null}
       {terminal ? <TerminalShellSection agentId={agentId} /> : null}
       {sharePort !== null ? <ShareDialog agentId={agentId} prefillPort={sharePort} onDone={() => setSharePort(null)} /> : null}
@@ -266,32 +303,16 @@ export function ComputerTab({
       {v.restart_to_update ? (
         <Notice role="status">Configuration changed. Restart to update this computer.</Notice>
       ) : null}
-      {v.state === "failed" ? (
+      {v.state === "failed" && retry.error ? (
         <Notice tone="danger" role="alert">
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-            <span className="min-w-0 flex-1 basis-full sm:basis-auto">
-              {errorCopy(v.failure_code).message} {v.failure_message ?? ""}
-            </span>
-            {/* (FIX-029, C-615) Retry now: disabled "Start in flight…" once the start leaves `failed` (the 202 view parks it in `stopped`). */}
-            {/* (FIX-049, C-615) Hidden on a frozen agent: the API would answer 423. */}
-            {!frozen && (v.retryable || retry.isPending) ? (
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={retry.isPending || !v.retryable}
-                onClick={() => retry.mutate(undefined)}
-              >
-                {retry.isPending || !v.retryable ? "Start in flight…" : "Retry now"}
-              </Button>
-            ) : null}
-          </div>
-          {retry.error ? (
-            <p role="alert" className="mt-1 text-xs">
-              {errorMessage(retry.error)}
-            </p>
-          ) : null}
+          {errorMessage(retry.error)}
         </Notice>
       ) : null}
+      {/* (P5-POLISH-6) The engine's details are collapsed: the last start attempt, the start log, why it is awake, the processes. */}
+      <details className="rounded-card border border-line bg-surface px-4 py-3 shadow-card" data-testid="technical-details">
+        <summary className="cursor-pointer text-sm font-medium text-ink">Technical details</summary>
+        <div className="mt-4 space-y-8">
+      {v.image ? <p className="text-xs text-muted">Image: {v.image}</p> : null}
       {v.start_attempt ? <StartAttempt a={v.start_attempt} /> : null}
       {/* (FIX-029, C-612/C-615) The boot's start log, live while starting, frozen at the failure. */}
       <StartLog agentId={agentId} log={v.start_log} />
@@ -336,6 +357,8 @@ export function ComputerTab({
           <p className="text-sm text-muted">No processes.</p>
         )}
       </Section>
+        </div>
+      </details>
     </div>
   );
 }

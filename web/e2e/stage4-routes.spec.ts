@@ -121,10 +121,12 @@ test.describe("FIX-029 retry and start-log screens", () => {
         await page.setViewportSize({ width, height: 900 });
         await page.emulateMedia({ colorScheme: scheme });
         await page.goto("/o/acme/w/main/agents/daneel?tab=computer");
+        // (P5-POLISH-6) The engine's details are collapsed under Technical details.
+        await page.getByText("Technical details").click();
         await expect(page.getByRole("heading", { name: "Start log" })).toBeVisible();
         expect(await page.evaluate(() => getComputedStyle(document.body).backgroundColor)).toBe(CANVAS[scheme]);
         expect(await overflow(page), "Computer tab overflows horizontally").toBeLessThanOrEqual(0);
-        await expect(page.getByRole("button", { name: "Retry now" })).toBeVisible();
+        await expect(page.getByRole("button", { name: "Try again" })).toBeVisible();
         await page.screenshot({ path: `${RETRY_SHOTS}/computer-failed-${scheme}-${width}.png`, fullPage: true });
       });
     }

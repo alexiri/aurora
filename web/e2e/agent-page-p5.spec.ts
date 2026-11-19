@@ -84,7 +84,7 @@ test.describe("1280×800", () => {
     await expect(strip.getByRole("button", { name: "Expand status panel" })).toBeVisible();
     await expect(strip.getByRole("button")).toHaveCount(6); // expand + the five parts
     await expect(strip.getByRole("button", { name: "Needs you: 2 approvals waiting" })).toBeVisible();
-    await expect(strip.getByRole("button", { name: /^Recent tool calls: some were denied or failed/ })).toBeVisible();
+    await expect(strip.getByRole("button", { name: /^Recent actions: some were denied or failed/ })).toBeVisible();
     await expect(strip.getByRole("button", { name: /^Computer: Sandbox running/ })).toBeVisible();
     expect(await fits(page), "the page scrolls").toBeLessThanOrEqual(0);
     expect(await overflow(page)).toBeLessThanOrEqual(0);
@@ -97,7 +97,7 @@ test.describe("1280×800", () => {
     await strip.getByRole("button", { name: "Expand status panel" }).click();
     const panel = rail(page);
     await expect(panel.getByRole("heading", { name: "Status", level: 2 })).toBeVisible();
-    await expect(panel.getByRole("heading", { level: 3 })).toHaveText(["Needs you2", "Doing now", "Recent tool calls", "Computer", "About"]);
+    await expect(panel.getByRole("heading", { level: 3 })).toHaveText(["Needs you2", "Doing now", "Recent actions", "Computer", "About"]);
     expect(await fits(page), "the page scrolls with the rail open").toBeLessThanOrEqual(0);
     expect(await page.evaluate((k) => window.localStorage.getItem(k), KEY)).toBe("expanded");
     expect(requests.filter((r) => r.startsWith("PUT ") || r.startsWith("PATCH ") || r.startsWith("POST "))).toEqual([]);
@@ -142,7 +142,8 @@ test.describe("1280×800", () => {
       await expect(rail(page).getByRole("heading", { name: "Status", level: 2 })).toBeVisible();
       expect(await serious(page), "expanded").toEqual([]);
       await page.screenshot({ path: `${SHOTS}/expanded-1280-${scheme}.png` });
-      await page.getByRole("tab", { name: "Behaviour" }).click();
+      await page.getByRole("button", { name: "Agent actions" }).click();
+      await page.getByRole("menuitem", { name: /Behaviour/ }).click();
       await expect(page.getByRole("tablist", { name: "Behaviour pages" })).toBeVisible();
       expect(await serious(page), "behaviour").toEqual([]);
     });
@@ -242,7 +243,7 @@ test.describe("phone, 390 px", () => {
     expect(await overflow(page)).toBeLessThanOrEqual(0);
     await banner.click();
     const sheet = page.getByRole("dialog", { name: "Status" });
-    await expect(sheet.getByRole("heading", { level: 3 })).toHaveText(["Needs you2", "Doing now", "Recent tool calls", "Computer", "About"]);
+    await expect(sheet.getByRole("heading", { level: 3 })).toHaveText(["Needs you2", "Doing now", "Recent actions", "Computer", "About"]);
     await page.screenshot({ path: `${SHOTS}/sheet-390.png` });
     await page.keyboard.press("Escape");
     await expect(sheet).toHaveCount(0);

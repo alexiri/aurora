@@ -218,10 +218,12 @@ test.describe("layout, 1280 px", () => {
       await page.screenshot({ path: `${dir}/chat-${scheme}-1280x800.png` });
       expect(await serious(page)).toEqual([]);
       // (D-200) Every section has the same one-line header; Freeze and Delete are in Agent actions.
-      await page.getByRole("tab", { name: "Behaviour" }).click();
+      await page.getByRole("button", { name: "Agent actions" }).click();
+      await page.getByRole("menuitem", { name: /Behaviour/ }).click();
       await expect(page.getByRole("button", { name: "Agent actions" })).toBeVisible();
-      // (P5-MODELS-3) The model field is the default model; roles and the subagent default sit under it.
-      await expect(page.getByLabel("Default model")).toBeVisible();
+      // (P5-POLISH-6) The model field is "Model"; the roles and the subagent default sit under Advanced.
+      await expect(page.getByLabel("Model", { exact: true })).toBeVisible();
+      await page.getByText("Advanced: model roles, effort, agent program").click();
       await expect(page.getByRole("group", { name: "Model roles" })).toBeVisible();
       await expect(page.getByLabel("Subagents use")).toBeVisible();
       await page.screenshot({ path: `${dir}/instructions-${scheme}-1280x800.png` });

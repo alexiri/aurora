@@ -274,7 +274,9 @@ describe("UsageCard on the Computer page", () => {
     );
     await screen.findByText("1.2 M");
     expect(calls.paths.some((p) => p.includes("agent_id=a1"))).toBe(true);
-    expect(screen.getByText("Turn time")).toBeInTheDocument();
+    // Two plain lines, not four tiles (P5-POLISH-6): the turns, then the tokens and the awake time.
+    expect(screen.getByText(/conversation turns/)).toBeInTheDocument();
+    expect(screen.getByText(/tokens · awake/)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "See usage" })).toHaveAttribute("href", "/o/acme/w/main/activity?tab=usage&agent=a1");
   });
 });

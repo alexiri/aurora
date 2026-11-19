@@ -91,7 +91,7 @@ for (const scheme of ["light", "dark"] as const) {
         await expect(list.getByRole("listitem", { name: "Weather API" }).getByText("Website")).toBeVisible();
         await expect(list.getByRole("listitem", { name: "Team key" }).getByText("AI key")).toBeVisible();
         await expect(list.getByRole("listitem", { name: "Weather API" }).getByText("No agent can use this")).toBeVisible();
-        await expect(list.getByRole("listitem", { name: "Product team" }).getByText(/The sign-in to .* expired/)).toBeVisible();
+        await expect(list.getByRole("listitem", { name: "Product team" }).getByText("Sign-in expired")).toBeVisible();
         // No rule id, host pattern or "secret" on a row.
         await expect(list).not.toContainText(/secret|host pattern|rule/i);
         await check(page, "ws-accounts", scheme, width);
@@ -101,8 +101,8 @@ for (const scheme of ["light", "dark"] as const) {
         await mockApi(page);
         await open(page, "/o/acme/w/main/agents/daneel?tab=access", scheme);
         const used = page.getByRole("list", { name: "Accounts Daneel can use" });
-        await expect(used.getByRole("listitem", { name: "acme-bot" }).getByRole("radio", { name: /Read only/ })).toBeChecked();
-        await expect(used.getByText("Daneel thinks with claude-sonnet through this key.")).toBeVisible();
+        await expect(used.getByRole("listitem", { name: "acme-bot" }).getByRole("combobox", { name: /Daneel's access to/ })).toHaveValue("read");
+        await expect(used.getByText(/Daneel thinks with claude-sonnet through this key/)).toBeVisible();
         await expect(page.getByText("Not given to Daneel (1)")).toBeVisible();
         await check(page, "agent-access", scheme, width);
       });
@@ -113,10 +113,11 @@ for (const scheme of ["light", "dark"] as const) {
         const row = page.getByRole("listitem", { name: "platform-prod" });
         // The saved choice is not one of the three: nothing is chosen and the row says how it differs.
         await expect(row.getByText(/3 actions differ/)).toBeVisible();
-        await expect(row.getByRole("radio", { name: /Ask before changes/ })).not.toBeChecked();
+        const select = row.getByRole("combobox", { name: /Daneel's access to/ });
+        await expect(select).toHaveValue("__custom");
         await check(page, "walkthrough-custom", scheme, width);
-        await row.getByText("Ask before changes", { exact: true }).click(); // the card is the label of the (visually hidden) radio
-        await expect(row.getByRole("radio", { name: /Ask before changes/ })).toBeChecked();
+        await select.selectOption("ask");
+        await expect(select).toHaveValue("ask");
         expect(state.puts).toEqual([{ level: "ask" }]);
         await check(page, "walkthrough-ask", scheme, width);
       });

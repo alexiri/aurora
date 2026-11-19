@@ -14,7 +14,7 @@ export function ApprovalPanel({ c }: { c: ConnectorAdmin }) {
   const approve = useApproveConnector();
   const [reviewed, setReviewed] = useState(false);
   return (
-    <Notice tone="pending" className="space-y-3">
+    <Notice tone="pending" id={`approval-${c.id}`} className="space-y-3">
       <h4 className="font-medium">{c.update_pending ? "Update awaiting approval" : "Manifest awaiting approval"}</h4>
       {c.update_pending ? (
         <p>

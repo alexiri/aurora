@@ -88,7 +88,7 @@ for (const scheme of ["light", "dark"] as const) {
         // (P5-UX-7) The account block lives in the Overview's "Needs you" card, beside the approvals.
         const block = page.getByRole("region", { name: /^Needs you/ });
         await expect(block).toContainText("Product team");
-        await expect(block).toContainText("The sign-in to Linear expired");
+        await expect(block).toContainText("Sign-in expired");
         await expect(block.getByRole("link", { name: "Reconnect" })).toHaveAttribute("href", /\/apps\?tab=accounts&reconnect=/);
         await check(page);
       });

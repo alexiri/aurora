@@ -4,11 +4,11 @@ import { useState } from "react";
 
 import { ErrorState } from "@/components/states";
 import { Button } from "@/components/ui/button";
-import { type Account, type AgentAccess, usePutAccess } from "@/lib/api/accounts";
+import { WhoCan } from "@/components/ui/who-can";
+import { type Account, type AgentAccess, type Level, usePutAccess } from "@/lib/api/accounts";
 import { useGrants } from "@/lib/api/policy";
-import { LEVEL_LABEL } from "@/lib/accounts";
+import { isLimited, LEVEL_LABEL, LEVEL_ORDER } from "@/lib/accounts";
 
-import { AccessChoice } from "./access-choice";
 import { ActionsTable } from "./actions-table";
 
 /**
@@ -119,18 +119,44 @@ export function AccessControl({
     );
   }
 
+  // (P5-POLISH-6, C2) One select: the account's levels, Custom… and What exactly? (both open the actions table).
+  const levels = LEVEL_ORDER.filter((l) => account.levels.includes(l));
+  const CUSTOM = "__custom";
+  const EXACTLY = "__exactly";
   return (
-    <div className="w-full space-y-3">
-      <AccessChoice account={account} orgName={orgName} agentName={entry.agent.name} value={level} disabled={put.isPending} onChange={(l) => put.mutate({ agentId: entry.agent.id, connectionId: account.ref.id, body: { level: l } })} />
+    <div className="w-full space-y-2">
+      {levels.length === 1 ? (
+        <p className="text-sm text-ink">{LEVEL_LABEL[levels[0]!]}</p>
+      ) : (
+        <select
+          aria-label={`${entry.agent.name}'s access to ${account.name}`}
+          className="h-9 w-full max-w-xs rounded-control border border-line-strong bg-surface px-2 text-sm text-ink"
+          disabled={put.isPending}
+          value={entry.level === "custom" ? CUSTOM : (level ?? "")}
+          onChange={(e) => {
+            const v = e.target.value;
+            if (v === CUSTOM || v === EXACTLY) setTable(true);
+            else put.mutate({ agentId: entry.agent.id, connectionId: account.ref.id, body: { level: v as Level } });
+          }}>
+          {level === null && entry.level !== "custom" ? <option value="">Choose…</option> : null}
+          {levels.map((l) => (
+            <option key={l} value={l}>
+              {LEVEL_LABEL[l]}
+            </option>
+          ))}
+          <option value={CUSTOM}>Custom…</option>
+          <option value={EXACTLY}>What exactly?</option>
+        </select>
+      )}
+      {isLimited(account) ? (
+        <div className="text-sm text-ink-2">
+          <p>Limited by {orgName ?? "your organization"}.</p>
+          {account.managed_by ? <WhoCan value={account.managed_by} /> : null}
+        </div>
+      ) : null}
       {alwaysList}
       {customNote}
       {put.isError ? <ErrorState error={put.error} /> : null}
-      <div className="flex flex-wrap gap-2">
-        <Button variant="outline" size="sm" onClick={() => setTable(true)}>
-          Custom…
-        </Button>
-        {exactly}
-      </div>
       {details}
     </div>
   );

@@ -132,8 +132,9 @@ export function AccountRow({
                 account.name
               )}
             </h3>
-            <Badge>{kindLabel(account.kind)}</Badge>
-            {shared ? <Badge tone="accent">Shared by {org.data?.name ?? "your organization"}</Badge> : null}
+            {/* One chip per card (D-384): on an agent's page the kind is the list's heading and the sharing is in the line below. */}
+            {agent ? null : <Badge>{kindLabel(account.kind)}</Badge>}
+            {shared && !agent ? <Badge tone="accent">Shared by {org.data?.name ?? "your organization"}</Badge> : null}
           </div>
           <AccountHealth
             account={account}
@@ -156,6 +157,7 @@ export function AccountRow({
             scope={own}
             orgId={orgId}
             contextAgentId={agent?.id}
+            agent={agent}
             onReconnect={onReconnect}
             onTest={runTest}
             replacing={replacing}
@@ -168,8 +170,15 @@ export function AccountRow({
           {mine ? (
             <>
               <AccessControl account={account} entry={mine} workspaceId={ws} canChange={account.can.change_access} startOpen={false} orgName={org.data?.name} />
-              {mine.model ? <p className="text-sm text-ink-2">{agent.name} thinks with {mine.model} through this key.</p> : null}
-              {account.levels.length === 0 && account.can.change_access ? <RemoveOnly account={account} agentId={agent.id} /> : null}
+              {mine.model ? (
+                <p className="text-sm text-ink-2">
+                  {shared ? `Shared by ${org.data?.name ?? "your organization"} · ` : ""}
+                  {agent.name} thinks with {mine.model}
+                  {shared ? "" : " through this key"}
+                </p>
+              ) : shared ? (
+                <p className="text-sm text-ink-2">Shared by {org.data?.name ?? "your organization"}</p>
+              ) : null}
             </>
           ) : account.can.give_access ? (
             <GiveOne account={account} agent={agent} />
@@ -202,18 +211,6 @@ export function AccountRow({
 function InstanceRemoved({ orgId }: { orgId: string }) {
   const who = useWhoCan({ orgId }, "org_admin", "add_instance");
   return <WhoCan value={who} lead />;
-}
-
-function RemoveOnly({ account, agentId }: { account: Account; agentId: string }) {
-  const remove = useRemoveAccess();
-  return (
-    <>
-      {remove.isError ? <ErrorState error={remove.error} /> : null}
-      <Button variant="outline" size="sm" disabled={remove.isPending} onClick={() => remove.mutate({ agentId, account })}>
-        Remove access
-      </Button>
-    </>
-  );
 }
 
 /** An account the agent cannot use yet, on its Access tab: **Give <Agent> access** (read only for an app; `use` otherwise). */

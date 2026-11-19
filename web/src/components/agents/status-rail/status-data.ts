@@ -60,6 +60,11 @@ export function mergeNeeds(
   return items.sort((x, y) => Date.parse(x.deadline) - Date.parse(y.deadline));
 }
 
+/** The request log without the agent's own model calls (a request that names its `llm_model`): thinking is not an action. */
+export function actionsOnly<T extends Pick<RequestLogEntry, "llm_model">>(rows: readonly T[]): T[] {
+  return rows.filter((r) => !r.llm_model);
+}
+
 export interface DecisionBadge {
   label: "Allow" | "Held" | "Deny" | "Failed";
   tone: "accent" | "neutral" | "danger";
@@ -146,7 +151,7 @@ export function useAgentStatus({
   const qc = useQueryClient();
   const gateway = useAgentPendingApprovals(wsId, agentId, canApprove);
   const actions = useAgentPendingActionApprovals(wsId, agentId, canApprove);
-  const activity = useAgentRecentActivity(wsId, agentId, 5);
+  const activity = useAgentRecentActivity(wsId, agentId, 12);
   const sandbox = useSandbox(agentId);
 
   const byId = useMemo(() => new Map(conversations.map((c) => [c.id, c])), [conversations]);
@@ -161,7 +166,9 @@ export function useAgentStatus({
     [canApprove, gateway.data, actions.data, byId],
   );
   const working = useMemo(() => conversations.filter((c) => !!c.active_turn), [conversations]);
-  const recent = useMemo(() => activity.data?.items ?? [], [activity.data]);
+  // (P5-POLISH-6) Only actions in apps and websites: the agent's own model calls (a request that carries the model it
+  // asked for, `llm_model`) are thinking, not an action, and are not listed.
+  const recent = useMemo(() => actionsOnly(activity.data?.items ?? []).slice(0, 5), [activity.data]);
 
   // A turn ended (the open conversation's, or one fewer working conversation): its tool calls are now in the log.
   const runningCount = Math.max(working.length, open.active ? 1 : 0);

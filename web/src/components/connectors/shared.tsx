@@ -2,6 +2,7 @@
 
 import { channelError } from "@/components/channels/shared";
 import { AppIcon } from "@/components/ui/app-icon";
+import { AttentionChip } from "@/components/ui/attention-chip";
 import { Badge } from "@/components/ui/badge";
 import { Notice } from "@/components/ui/notice";
 import { ApiError } from "@/lib/api/client";
@@ -75,10 +76,18 @@ export function ConnectorStatusChip({ c }: { c: ConnectorAdmin }) {
         {s.label}
       </Badge>
       {/* (FIX-167, D-369) A widened update waits while the connector keeps running at the approved level. */}
+      {/* (P5-POLISH-6, D-384) Amber because it needs an admin: its action, Review, takes them to the approval below. */}
       {c.update_pending && c.status !== "pending_approval" ? (
-        <Badge data-testid="update-pending-chip" tone="neutral" className="max-w-full whitespace-normal break-words normal-case tracking-normal">
+        <AttentionChip
+          data-testid="update-pending-chip"
+          className="max-w-full whitespace-normal break-words"
+          action={
+            <a href={`#approval-${c.id}`} className="text-xs font-medium text-link underline">
+              Review
+            </a>
+          }>
           Update waiting for approval
-        </Badge>
+        </AttentionChip>
       ) : null}
     </>
   );

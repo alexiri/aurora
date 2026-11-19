@@ -4,7 +4,6 @@ import Link from "next/link";
 import { useMemo } from "react";
 
 import { Section } from "@/components/ui/section";
-import { StatTile } from "@/components/ui/stat-tile";
 import { useWorkspaceUsage } from "@/lib/api/usage";
 import { wsRoutes } from "@/lib/routes";
 import { compact, duration, exact, presetRange } from "@/lib/usage-format";
@@ -34,11 +33,15 @@ export function UsageCard({ wsId, org, ws, agentId }: { wsId: string; org: strin
           Usage could not be loaded.
         </p>
       ) : (
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-          <StatTile label="Tokens" value={t ? compact(tokens) : "…"} title={t ? exact(tokens) : undefined} />
-          <StatTile label="Turns" value={t ? compact(t.turns) : "…"} title={t ? exact(t.turns) : undefined} />
-          <StatTile label="Turn time" value={t ? duration(t.turn_seconds) : "…"} />
-          <StatTile label="Awake time" value={t ? duration(t.awake_seconds) : "…"} />
+        // (P5-POLISH-6, C5) Two plain lines instead of four tiles.
+        <div className="space-y-1 text-sm text-ink-2">
+          <p>
+            <span className="font-medium text-ink" title={t ? exact(t.turns) : undefined}>{t ? compact(t.turns) : "…"}</span> conversation {t?.turns === 1 ? "turn" : "turns"}
+          </p>
+          <p>
+            <span className="font-medium text-ink" title={t ? exact(tokens) : undefined}>{t ? compact(tokens) : "…"}</span> tokens · awake{" "}
+            <span className="font-medium text-ink">{t ? duration(t.awake_seconds) : "…"}</span>
+          </p>
         </div>
       )}
     </Section>

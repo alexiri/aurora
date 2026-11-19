@@ -3,6 +3,7 @@
 import { useState } from "react";
 
 import { Notice } from "@/components/ui/notice";
+import { useEvalQuestions } from "@/lib/api/evals";
 
 import { WRITES_HELP } from "./copy";
 import { JudgeSection } from "./judge-section";
@@ -28,16 +29,23 @@ export function EvalsTab({
   defaultTimezone?: string;
 }) {
   const [open, setOpen] = useState<{ id: string; compareWith?: string } | null>(null);
+  const questions = useEvalQuestions(agentId);
+  // (P5-POLISH-6, C6) A fresh agent shows one empty state (the Questions section's); Judge, Runs and Schedules appear after the first question.
+  const hasQuestions = (questions.data?.length ?? 0) > 0;
   if (open) {
     return <RunDetail key={open.id} agentId={agentId} runId={open.id} compareWith={open.compareWith} canOwn={canOwn} onBack={() => setOpen(null)} />;
   }
   return (
     <div className="space-y-8">
-      <Notice tone="neutral">{WRITES_HELP}</Notice>
+      {hasQuestions ? <Notice tone="neutral">{WRITES_HELP}</Notice> : null}
       <QuestionsSection agentId={agentId} />
-      <JudgeSection agentId={agentId} canOwn={canOwn} />
-      <RunsSection agentId={agentId} frozen={frozen} onOpen={(id, compareWith) => setOpen({ id, compareWith })} />
-      <SchedulesSection agentId={agentId} defaultTimezone={defaultTimezone} canOwn={canOwn} onRunStarted={(id) => setOpen({ id })} />
+      {hasQuestions ? (
+        <>
+          <JudgeSection agentId={agentId} canOwn={canOwn} />
+          <RunsSection agentId={agentId} frozen={frozen} onOpen={(id, compareWith) => setOpen({ id, compareWith })} />
+          <SchedulesSection agentId={agentId} defaultTimezone={defaultTimezone} canOwn={canOwn} onRunStarted={(id) => setOpen({ id })} />
+        </>
+      ) : null}
     </div>
   );
 }

@@ -116,6 +116,9 @@ describe("Instructions harness picker", () => {
     });
     wrap(<InstructionsTab agent={agent("hosted")} wsId="w1" />);
     await picker();
+    // The save bar appears only after a change (P5-POLISH-6): change the instructions, not the harness.
+    expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
+    fireEvent.change(screen.getByLabelText("Instructions"), { target: { value: "New instructions" } });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(patched).toHaveLength(1));
     expect(patched[0]).not.toHaveProperty("harness");

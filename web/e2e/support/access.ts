@@ -134,7 +134,7 @@ export async function openAccess(page: Page, screen: AccessScreen, scheme: Schem
     const named = { table: "acme-bot", "table-custom-only": "CERN Indico", "table-limited": "AWS prod" }[screen];
     const row = page.getByRole("listitem", { name: named });
     if (screen === "table-limited") await row.getByRole("button", { name: "What exactly?" }).click();
-    else await row.getByRole("button", { name: "Custom…" }).click();
+    else await row.getByRole("combobox", { name: /'s access to / }).selectOption("__custom");
     await row.getByRole("region", { name: /^What Daneel can do in / }).waitFor();
     if (screen !== "table-limited") await row.getByLabel(/: what happens$/).first().waitFor();
   }
