@@ -2,14 +2,15 @@
 
 import { useState, type FormEvent } from "react";
 
-import { errorMessage, fieldErrors } from "@/lib/api/errors";
+import { fieldErrors } from "@/lib/api/errors";
 import type { CreateWorkspaceRequest } from "@/lib/api/queries";
 import { MEMORY_LANGUAGES, timeZones } from "@/lib/nav/landing";
 import { validateNameSlug } from "@/lib/nav/validation";
 
 import { Button } from "./ui/button";
 import { Field, inputClass } from "./ui/field";
-import { Notice } from "./ui/notice";
+import { ErrorNotice } from "./ui/notice";
+import { Select } from "@/components/ui/select";
 
 const ZONES = timeZones();
 
@@ -86,37 +87,13 @@ export function CreateWorkspaceForm({
         />
       </Field>
       <Field id="ws-tz" label="Time zone" error={errs.timezone}>
-        <select
-          id="ws-tz"
-          className={inputClass}
-          value={timezone}
-          onChange={(e) => setTimezone(e.target.value)}
-        >
-          {ZONES.map((z) => (
-            <option key={z} value={z}>
-              {z}
-            </option>
-          ))}
-        </select>
+        <Select id="ws-tz" value={timezone} onChange={setTimezone} options={ZONES.map((z) => ({ value: z, label: z }))} />
       </Field>
       <Field id="ws-lang" label="Memory language" error={errs.memory_language}>
-        <select
-          id="ws-lang"
-          className={inputClass}
-          value={memoryLanguage}
-          onChange={(e) => setMemoryLanguage(e.target.value)}
-        >
-          {MEMORY_LANGUAGES.map((l) => (
-            <option key={l} value={l}>
-              {l}
-            </option>
-          ))}
-        </select>
+        <Select id="ws-lang" value={memoryLanguage} onChange={setMemoryLanguage} options={MEMORY_LANGUAGES.map((l) => ({ value: l, label: l }))} />
       </Field>
       {error && !hasFieldErrors ? (
-        <Notice tone="danger" role="alert">
-          {errorMessage(error)}
-        </Notice>
+        <ErrorNotice error={error} />
       ) : null}
       <div className="flex justify-end">
         <Button type="submit" size="lg" disabled={pending}>

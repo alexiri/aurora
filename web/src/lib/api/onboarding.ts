@@ -47,6 +47,3 @@ export function useAdminSetup(enabled = true) {
     refetchOnWindowFocus: true,
   });
 }
-
-/** Where the Welcome page lives. */
-export const welcomePath = (org: string, ws: string) => `/o/${org}/w/${ws}/welcome`;

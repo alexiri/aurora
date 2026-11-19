@@ -3,13 +3,13 @@
 import { useState, type FormEvent } from "react";
 
 import { ApiError } from "@/lib/api/client";
-import { errorMessage, fieldErrors } from "@/lib/api/errors";
+import { fieldErrors } from "@/lib/api/errors";
 import type { CreateOrgRequest } from "@/lib/api/queries";
 import { validateNameSlug } from "@/lib/nav/validation";
 
 import { Button } from "./ui/button";
 import { Field, inputClass } from "./ui/field";
-import { Notice } from "./ui/notice";
+import { ErrorNotice } from "./ui/notice";
 
 export function CreateOrgForm({
   onSubmit,
@@ -61,9 +61,7 @@ export function CreateOrgForm({
         />
       </Field>
       {error && (forbidden || !Object.values(server).some(Boolean)) ? (
-        <Notice tone="danger" role="alert">
-          {errorMessage(error)}
-        </Notice>
+        <ErrorNotice error={error} />
       ) : null}
       <Button type="submit" size="lg" disabled={pending}>
         {pending ? "Creating…" : "Create organization"}

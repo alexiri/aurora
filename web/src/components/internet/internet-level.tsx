@@ -14,10 +14,11 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { inputClass } from "@/components/ui/field";
 import { MainAction } from "@/components/ui/main-action";
-import { Notice } from "@/components/ui/notice";
+import { Notice, SavedNotice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
 import { ScopeLadder, type LadderBelow } from "@/components/ui/scope-ladder";
 import { Section } from "@/components/ui/section";
+import { Select } from "@/components/ui/select";
 import { WhoCan } from "@/components/ui/who-can";
 import { errorMessage } from "@/lib/api/errors";
 import type { EffectiveGovernance } from "@/lib/api/governance";
@@ -159,21 +160,12 @@ function PolicyDefaults({ state, edit, workspace, orgSlug }: { state: DraftState
         <>
           <label className="block max-w-md text-sm">
             <span className="mb-1.5 block font-medium text-ink">Requests without an account</span>
-            <select aria-label="Requests without an account" className={inputClass} value={state.uncredentialed_default} onChange={(e) => edit({ ...state, uncredentialed_default: e.target.value as DraftState["uncredentialed_default"] })}>
-              <option value="none">Let the organization decide</option>
-              <option value="block">Block</option>
-            </select>
+            <Select aria-label="Requests without an account" value={state.uncredentialed_default} onChange={(v) => edit({ ...state, uncredentialed_default: v as DraftState["uncredentialed_default"] })} options={[{ value: "none", label: "Let the organization decide" }, { value: "block", label: "Block" }]} />
             <span className="mt-1 block text-xs text-muted">Websites on the allow-list stay reachable. A workspace can only tighten what the organization sets.</span>
           </label>
           <label className="block max-w-md text-sm">
             <span className="mb-1.5 block font-medium text-ink">Browser connections (not inspected)</span>
-            <select aria-label="Browser connections (not inspected)" className={inputClass} value={state.open_lane_posture} onChange={(e) => edit({ ...state, open_lane_posture: e.target.value as DraftState["open_lane_posture"] })}>
-              {LANE_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
+            <Select aria-label="Browser connections (not inspected)" value={state.open_lane_posture} onChange={(v) => edit({ ...state, open_lane_posture: v as DraftState["open_lane_posture"] })} options={LANE_OPTIONS.map((o) => ({ value: o.value, label: o.label }))} />
             <span className="mt-1 block text-xs text-muted">Aurora can&apos;t see inside these. A workspace can only tighten what the organization and Administration set.</span>
           </label>
           <section aria-label="Allow-list" className="space-y-2">
@@ -406,11 +398,7 @@ export function InternetLevel(p: InternetLevelProps) {
           ) : null}
         </Notice>
       ) : null}
-      {applied ? (
-        <Notice tone="accent" role="status">
-          Changes applied.
-        </Notice>
-      ) : null}
+      <SavedNotice show={applied}>Changes applied.</SavedNotice>
 
       <CommonChanges scopeWords={workspace ? "workspace" : "organization"} onAdd={(r) => ed.edit({ ...state, rules: [...rules, r] })} />
 

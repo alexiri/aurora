@@ -1225,6 +1225,10 @@ pub struct HomeAppConn {
     /// (P5-CALDAV, D-275) The non-secret metadata `url` (an `own_server` connection's discovered
     /// calendar home); other apps ignore it.
     pub server_url: Option<String>,
+    /// (P5-WEBHOOK-3, C-911) The core-owned configuration of a send-mode secret-link connection
+    /// (an outgoing webhook): non-secret (template, slots, headers with secret *names*); only its
+    /// name, note, method and slots are rendered for the agent.
+    pub config: Option<serde_json::Value>,
 }
 
 /// Active connections the agent holds a grant on, stable order.
@@ -1235,7 +1239,8 @@ pub async fn home_app_connections(
     Ok(sqlx::query_as(
         "SELECT c.id AS connection_id, c.app_id, c.label, ai.host AS instance_host,
                 ai.base_path AS instance_base_path, g.mode AS grant_mode,
-                g.allow_tools, g.ask_tools, c.tenant_host, c.metadata->>'url' AS server_url
+                g.allow_tools, g.ask_tools, c.tenant_host, c.metadata->>'url' AS server_url,
+                c.config
          FROM grants g JOIN app_connections c ON c.id = g.connection_id
          LEFT JOIN app_instances ai ON ai.id = c.instance_id
          WHERE g.agent_id = $1 AND c.status = 'active'

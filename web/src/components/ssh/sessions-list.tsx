@@ -10,8 +10,7 @@ import { EmptyState, ErrorState, Loading } from "@/components/states";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { DataTable, Td, Th } from "@/components/ui/data-table";
-import { Notice } from "@/components/ui/notice";
-import { errorMessage } from "@/lib/api/errors";
+import { ErrorNotice, Notice } from "@/components/ui/notice";
 import { useDisconnectSshSession, type SshSession } from "@/lib/api/ssh";
 import { fmtDate } from "@/lib/utils";
 
@@ -42,11 +41,7 @@ export function SshSessionsList({
   const own = target?.user === undefined || target?.user === null;
   return (
     <>
-      {disconnect.error ? (
-        <Notice tone="danger" role="alert">
-          {errorMessage(disconnect.error)}
-        </Notice>
-      ) : null}
+      <ErrorNotice error={disconnect.error} />
       {disconnect.isSuccess ? (
         <Notice tone="neutral" role="status">
           Disconnecting. The session ends within 30 seconds.

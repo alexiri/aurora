@@ -7,8 +7,8 @@ import { ErrorState, Loading } from "@/components/states";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogClose, DialogContent } from "@/components/ui/dialog";
 import { Field, inputClass } from "@/components/ui/field";
-import { Notice } from "@/components/ui/notice";
-import { errorMessage, fieldErrors } from "@/lib/api/errors";
+import { ErrorNotice, Notice } from "@/components/ui/notice";
+import { fieldErrors } from "@/lib/api/errors";
 import { buildRecipe, recipeToFields, useSecrets, usePatchSecret, type RecipeKind, type Secret, type SecretScope } from "@/lib/api/secrets";
 
 function Form({ scope, secret, onClose }: { scope: SecretScope; secret: Secret; onClose: () => void }) {
@@ -44,7 +44,7 @@ function Form({ scope, secret, onClose }: { scope: SecretScope; secret: Secret; 
           <RecipeFieldsInput idp={id} kind={kind} fields={fields} onKind={setKind} onFields={setFields} />
         </div>
       </details>
-      {patch.error ? <Notice tone="danger" role="alert">{errorMessage(patch.error)}</Notice> : null}
+      <ErrorNotice error={patch.error} />
       <div className="flex justify-end gap-2">
         <DialogClose asChild>
           <Button variant="outline" type="button">Cancel</Button>

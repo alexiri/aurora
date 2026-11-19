@@ -14,7 +14,7 @@ import { CheckboxField } from "@/components/ui/form";
 import { MoreIcon } from "@/components/ui/icons";
 import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from "@/components/ui/menu";
 import { MoreNotShown } from "@/components/ui/more-not-shown";
-import { Notice } from "@/components/ui/notice";
+import { ErrorNotice, Notice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
 import { useAdminDeleteOrg } from "@/lib/api/admin-orgs";
 import { errorMessage } from "@/lib/api/errors";
@@ -62,11 +62,7 @@ function FreezeDialog({ org, open, onOpenChange }: { org: AdminOrg; open: boolea
       <Field id={`freeze-reason-${org.id}`} label="Reason" hint="Shown to the organization's owners.">
         <input id={`freeze-reason-${org.id}`} className={inputClass} value={reason} onChange={(e) => setReason(e.target.value)} />
       </Field>
-      {m.freeze.error ? (
-        <Notice tone="danger" role="alert">
-          {errorMessage(m.freeze.error)}
-        </Notice>
-      ) : null}
+      <ErrorNotice error={m.freeze.error} />
     </FormDialog>
   );
 }

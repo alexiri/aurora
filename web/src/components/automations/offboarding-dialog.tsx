@@ -5,8 +5,7 @@ import { useState, type ReactNode } from "react";
 import { ErrorState, Loading } from "@/components/states";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
-import { Notice } from "@/components/ui/notice";
-import { errorMessage } from "@/lib/api/errors";
+import { ErrorNotice } from "@/components/ui/notice";
 import type { Offboarding, ReassignTarget } from "@/lib/api/automations";
 
 import { OffboardingPrompt } from "./owner-controls";
@@ -54,11 +53,7 @@ export function OffboardingDialog({
             <OffboardingPrompt who={who} data={query.data} candidates={candidates} target={target} onTarget={setTarget} />
           ) : null}
           {extra}
-          {error ? (
-            <Notice tone="danger" role="alert">
-              {errorMessage(error)}
-            </Notice>
-          ) : null}
+          <ErrorNotice error={error} />
           <div className="flex flex-wrap justify-end gap-2">
             <Button variant="outline" onClick={onClose}>
               Cancel

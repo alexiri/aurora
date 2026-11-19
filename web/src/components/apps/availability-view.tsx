@@ -6,9 +6,8 @@ import { ErrorState, Loading } from "@/components/states";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { FormActions } from "@/components/ui/form";
-import { Notice } from "@/components/ui/notice";
+import { ErrorNotice, Notice, SavedNotice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
-import { errorMessage } from "@/lib/api/errors";
 import {
   toggleAllow,
   useApps,
@@ -106,16 +105,8 @@ export function AvailabilityEditor({
       {restricted && allow.filter((e) => e.workspace_id || !known.has(e.app_id)).length > 0 ? (
         <p className="text-xs text-muted">Workspace-specific or unknown entries are kept as they are.</p>
       ) : null}
-      {put.error ? (
-        <Notice tone="danger" role="alert">
-          {errorMessage(put.error)}
-        </Notice>
-      ) : null}
-      {saved ? (
-        <Notice tone="accent" role="status">
-          Saved.
-        </Notice>
-      ) : null}
+      <ErrorNotice error={put.error} />
+      <SavedNotice show={saved}>Saved.</SavedNotice>
       {canEdit ? (
         <FormActions>
           <Button size="lg" disabled={put.isPending} onClick={() => void save()}>

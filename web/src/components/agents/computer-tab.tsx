@@ -7,12 +7,11 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { DataTable, Td, Th } from "@/components/ui/data-table";
-import { Notice } from "@/components/ui/notice";
+import { ErrorNotice, Notice } from "@/components/ui/notice";
 import { Section } from "@/components/ui/section";
 import { Segmented } from "@/components/ui/segmented";
 import { StatusLine } from "@/components/ui/status-line";
 import { askSentence } from "@/lib/who-can";
-import { errorMessage } from "@/lib/api/errors";
 import { useRetrySandbox, useRestartSandbox, useSandbox, useStartFailures } from "@/lib/api/conversations";
 import type { SandboxStartAttempt, StartLogEntry } from "@/lib/api/conversations";
 import { useInstance, useOrg, useResolve } from "@/lib/api/queries";
@@ -295,18 +294,12 @@ export function ComputerTab({
           restart.mutate(undefined, { onSettled: () => setOpen(false) });
         }}
       />
-      {restart.error ? (
-        <Notice tone="danger" role="alert">
-          {errorMessage(restart.error)}
-        </Notice>
-      ) : null}
+      <ErrorNotice error={restart.error} />
       {v.restart_to_update ? (
         <Notice role="status">Configuration changed. Restart to update this computer.</Notice>
       ) : null}
       {v.state === "failed" && retry.error ? (
-        <Notice tone="danger" role="alert">
-          {errorMessage(retry.error)}
-        </Notice>
+        <ErrorNotice error={retry.error} />
       ) : null}
       {/* (P5-POLISH-6) The engine's details are collapsed: the last start attempt, the start log, why it is awake, the processes. */}
       <details className="rounded-card border border-line bg-surface px-4 py-3 shadow-card" data-testid="technical-details">

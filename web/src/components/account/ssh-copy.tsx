@@ -1,18 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
-
 import { Button } from "@/components/ui/button";
+import { useCopy } from "@/lib/use-copy";
 import { cn } from "@/lib/utils";
 
 /** Copy `text` to the clipboard; the button says "Copied" for two seconds. A browser that refuses says so. */
 export function CopyButton({ text, label, className }: { text: string; label: string; className?: string }) {
-  const [state, setState] = useState<"idle" | "copied" | "failed">("idle");
-  useEffect(() => {
-    if (state === "idle") return;
-    const t = setTimeout(() => setState("idle"), 2000);
-    return () => clearTimeout(t);
-  }, [state]);
+  const { state, copy } = useCopy();
   return (
     <>
       <Button
@@ -21,14 +15,7 @@ export function CopyButton({ text, label, className }: { text: string; label: st
         size="sm"
         className={className}
         aria-label={`Copy ${label}`}
-        onClick={() => {
-          const write = navigator.clipboard?.writeText(text);
-          if (!write) return setState("failed");
-          write.then(
-            () => setState("copied"),
-            () => setState("failed"),
-          );
-        }}
+        onClick={() => copy(text)}
       >
         Copy
       </Button>

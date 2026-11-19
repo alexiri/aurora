@@ -6,7 +6,7 @@ import { ErrorState, Loading } from "@/components/states";
 import { Button } from "@/components/ui/button";
 import { Field, inputClass } from "@/components/ui/field";
 import { Form, FormActions } from "@/components/ui/form";
-import { Notice } from "@/components/ui/notice";
+import { Notice, SavedNotice } from "@/components/ui/notice";
 import { ScopeLadder, type LadderAbove } from "@/components/ui/scope-ladder";
 import { errorMessage } from "@/lib/api/errors";
 import { usePutRetentionLimits, useRetention } from "@/lib/api/org";
@@ -121,11 +121,7 @@ export function OrgRetentionForm({ orgId }: { orgId: string }) {
               {serverErr}
             </Notice>
           ) : null}
-          {saved ? (
-            <Notice tone="accent" role="status">
-              Retention saved.
-            </Notice>
-          ) : null}
+          <SavedNotice show={saved}>Retention saved.</SavedNotice>
           <FormActions>
             <Button
               type="button"

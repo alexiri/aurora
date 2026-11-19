@@ -28,10 +28,6 @@ export function configureTelemetry(r: number | null): void {
   }
 }
 
-export function tracingEnabled(): boolean {
-  return ratio !== null;
-}
-
 function load(): Promise<Tracer> {
   loaded ??= import("./tracer").then((m) => {
     m.configure(ratio ?? 0);

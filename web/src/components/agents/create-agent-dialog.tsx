@@ -5,9 +5,9 @@ import { useState, type FormEvent } from "react";
 import { Button } from "@/components/ui/button";
 import { FormDialog } from "@/components/ui/confirm-dialog";
 import { Field, inputClass } from "@/components/ui/field";
-import { Notice } from "@/components/ui/notice";
+import { ErrorNotice, Notice } from "@/components/ui/notice";
 import { useCreateAgent } from "@/lib/api/agents";
-import { errorMessage, fieldErrors } from "@/lib/api/errors";
+import { fieldErrors } from "@/lib/api/errors";
 import { useInstance, useWorkspace } from "@/lib/api/queries";
 
 import { AgentRevealDialog, type Revealed } from "./reveal";
@@ -124,9 +124,7 @@ export function CreateAgentDialog({ wsId }: { wsId: string }) {
               <textarea id="agent-brief" className={inputClass} rows={3} value={brief} onChange={(e) => setBrief(e.target.value)} />
             </Field>
             {create.error && Object.keys(fe).length === 0 ? (
-              <Notice tone="danger" role="alert">
-                {errorMessage(create.error)}
-              </Notice>
+              <ErrorNotice error={create.error} />
             ) : null}
         </div>
       </FormDialog>

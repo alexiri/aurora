@@ -48,6 +48,7 @@ fn sample_account(app: &AppEntry, snap: &Snapshot, access: &str) -> GuideAccount
         host,
         service: app.database.as_ref().map(|_| "sample".to_owned()),
         access,
+        webhook: None,
     }
 }
 

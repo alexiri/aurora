@@ -9,10 +9,11 @@ import { Button } from "@/components/ui/button";
 import { DataTable, Td, Th } from "@/components/ui/data-table";
 import { Field, inputClass } from "@/components/ui/field";
 import { CheckboxField, FormActions } from "@/components/ui/form";
-import { Notice } from "@/components/ui/notice";
+import { LoadMore } from "@/components/ui/load-more";
+import { ErrorNotice, Notice } from "@/components/ui/notice";
 import { ItemList, Section } from "@/components/ui/section";
 import { AnchorSwitch, OwnerLabel, ReassignPanel } from "@/components/automations/owner-controls";
-import { errorMessage, fieldErrors } from "@/lib/api/errors";
+import { fieldErrors } from "@/lib/api/errors";
 import { MainAction } from "@/components/ui/main-action";
 import { useWhoCan } from "@/lib/api/who-can";
 import {
@@ -50,11 +51,7 @@ function Runs({ agentId, id }: { agentId: string; id: string }) {
           ))}
         </tbody>
       </DataTable>
-      {q.hasNextPage ? (
-        <Button variant="outline" disabled={q.isFetchingNextPage} onClick={() => void q.fetchNextPage()}>
-          Load more
-        </Button>
-      ) : null}
+      <LoadMore query={q} />
     </div>
   );
 }
@@ -136,9 +133,7 @@ export function ScheduleForm({
       ) : null}
       {initial ? <CheckboxField id="sch-enabled" label="Enabled" checked={enabled} onChange={setEnabled} /> : null}
       {mut.error && Object.keys(fe).length === 0 ? (
-        <Notice tone="danger" role="alert">
-          {errorMessage(mut.error)}
-        </Notice>
+        <ErrorNotice error={mut.error} />
       ) : null}
       <FormActions className="gap-2">
         <Button type="submit" disabled={pending}>
@@ -191,11 +186,7 @@ function ScheduleRow({ agentId, s, defaultTimezone, wsId, canOwn }: { agentId: s
       {reassigning && wsId ? (
         <ReassignPanel agentId={agentId} wsId={wsId} kind="schedule" id={s.id} name={s.name} creatorId={s.created_by?.id} disabledReason={s.disabled_reason} onClose={() => setReassigning(false)} />
       ) : null}
-      {err ? (
-        <Notice tone="danger" role="alert">
-          {errorMessage(err)}
-        </Notice>
-      ) : null}
+      <ErrorNotice error={err} />
       <div className="flex flex-wrap gap-2">
         <Button size="sm" variant="outline" disabled={run.isPending} onClick={() => run.mutate(s.id)}>
           Run now

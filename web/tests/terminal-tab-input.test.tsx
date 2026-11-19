@@ -2,6 +2,7 @@ import { act, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TerminalTab } from "@/components/agents/terminal-tab";
+import { RecordingSocket } from "./support/terminal";
 
 // The terminal input seam (FIX-054): wterm hands `onData` a *string*; the tab must put it
 // on the wire as UTF-8 **Binary** frames — chunked to `TERMINAL_CHUNK` (16 KiB; the runner
@@ -46,32 +47,12 @@ vi.mock("@/lib/api/conversations", () => ({
 }));
 
 /** A WebSocket stub that records everything the tab sends, in order. */
-class RecordingSocket {
-  static OPEN = 1;
-  static instances: RecordingSocket[] = [];
-  readyState = RecordingSocket.OPEN;
-  binaryType = "blob";
-  sent: Array<Uint8Array | string> = [];
-  onopen: (() => void) | null = null;
-  onmessage: ((ev: unknown) => void) | null = null;
-  onclose: ((ev: unknown) => void) | null = null;
-  constructor(url: string) {
-    expect(url).toBe("/v1/agents/agent-1/terminal");
-    RecordingSocket.instances.push(this);
-    // The tab assigns its handlers synchronously after the constructor; fire open then.
-    queueMicrotask(() => this.onopen?.());
-  }
-  send(data: Uint8Array | string) {
-    this.sent.push(data);
-  }
-  close() {}
-}
-
 const encoder = new TextEncoder();
 
 beforeEach(() => {
   vi.stubGlobal("WebSocket", RecordingSocket as unknown as typeof WebSocket);
   RecordingSocket.instances = [];
+  RecordingSocket.expectUrl = "/v1/agents/agent-1/terminal";
   paneProps = null;
 });
 

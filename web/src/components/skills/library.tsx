@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogClose, DialogContent } from "@/components/ui/dialog";
 import { inputClass } from "@/components/ui/field";
-import { Notice } from "@/components/ui/notice";
+import { ErrorNotice, Notice } from "@/components/ui/notice";
 import { ApiError } from "@/lib/api/client";
 import { errorMessage } from "@/lib/api/errors";
 import {
@@ -207,9 +207,7 @@ export function UpdateReviewDialog({
                 </Button>
               </Notice>
             ) : failed ? (
-              <Notice tone="danger" role="alert">
-                {errorMessage(failed)}
-              </Notice>
+              <ErrorNotice error={failed} />
             ) : null}
             <div className="flex flex-wrap justify-end gap-2">
               <DialogClose asChild>
@@ -270,11 +268,7 @@ export function LibrarySkillActions({ skill, tier, canDecide }: { skill: Skill; 
         ) : null}
       </div>
       {confirm ? <Notice role="status">Detaching makes this an ordinary editable skill. The repository will no longer propose updates to it.</Notice> : null}
-      {detach.error ? (
-        <Notice tone="danger" role="alert">
-          {errorMessage(detach.error)}
-        </Notice>
-      ) : null}
+      <ErrorNotice error={detach.error} />
       <UpdateReviewDialog skill={skill} tier={tier} canDecide={canDecide} open={review} onOpenChange={setReview} />
     </div>
   );
@@ -479,11 +473,7 @@ export function AddFromLibrary({
                     {usage.count + 1} of {budget.skills} skills.
                   </Notice>
                 ) : null}
-                {create.error ? (
-                  <Notice tone="danger" role="alert">
-                    {errorMessage(create.error)}
-                  </Notice>
-                ) : null}
+                <ErrorNotice error={create.error} />
                 <div className="flex justify-end gap-2">
                   <DialogClose asChild>
                     <Button type="button" variant="outline">

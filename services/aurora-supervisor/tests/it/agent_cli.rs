@@ -799,6 +799,223 @@ async fn target_aurora_needs_a_conversation_and_refuses_app_options_first() {
     );
 }
 
+// ---- P5-WEBHOOK-3 (C-911): a webhook is an account-bound operation ----
+
+fn webhook_op() -> Value {
+    op(
+        "send_ops_alerts",
+        "POST",
+        "/",
+        json!({
+            "summary": "Ops alerts — Deploy results.",
+            "tags": ["webhook"],
+            "notes": "Deploy results go here.",
+            "account": "B",
+            "source": "connection",
+            "tool": "send",
+            "params": [{"name": "X-Aurora-Dry-Run", "in": "header", "type": "string", "enum": ["1"],
+                        "description": "Check and show the body without sending"}],
+            "body": {"content_type": "application/json", "fields": [
+                {"name": "text", "required": true, "type": "string", "description": "The message"},
+                {"name": "card", "type": "json"}
+            ]}
+        }),
+    )
+}
+
+async fn webhook_sandbox(m: &Mock, tag: &str) -> Sandbox {
+    let s = sandbox(tag);
+    write_api(
+        &s.apps,
+        "webhook",
+        &api_doc(m.port, 2, json!([webhook_op()])),
+    );
+    s
+}
+
+#[tokio::test]
+async fn a_webhook_call_uses_its_own_account_and_refuses_another() {
+    let m = mock(|_, _| Resp::json(200, &json!({"ok": 1}))).await;
+    let s = webhook_sandbox(&m, "wh-account").await;
+    // Two accounts on the app are no ambiguity: the operation belongs to B.
+    let o = agent_cli::execute(
+        &s.env,
+        &s.apps,
+        call(
+            "webhook",
+            &[
+                "send_ops_alerts",
+                "text=Deploy 42 failed",
+                "card:={\"a\":[1]}",
+            ],
+        ),
+    )
+    .await;
+    assert_eq!(o.code, 0, "{}", o.err);
+    let r = &m.seen()[0];
+    assert_eq!(r.header("x-aurora-connection-id"), Some("c_1"));
+    assert_eq!(
+        serde_json::from_slice::<Value>(&r.body).unwrap(),
+        json!({"text": "Deploy 42 failed", "card": {"a": [1]}})
+    );
+    // Naming the other account is refused before anything is sent.
+    let o = agent_cli::execute(
+        &s.env,
+        &s.apps,
+        set!(
+            call("webhook", &["send_ops_alerts", "text=x"]),
+            account = Some("a".into())
+        ),
+    )
+    .await;
+    assert_eq!(o.code, 2);
+    assert!(o.err.contains("belongs to account B"), "{}", o.err);
+    assert_eq!(m.seen().len(), 1, "nothing sent");
+    // Naming its own account is fine.
+    let o = agent_cli::execute(
+        &s.env,
+        &s.apps,
+        set!(
+            call("webhook", &["send_ops_alerts", "text=x"]),
+            account = Some("B".into())
+        ),
+    )
+    .await;
+    assert_eq!(o.code, 0, "{}", o.err);
+}
+
+#[tokio::test]
+async fn a_json_field_takes_only_colon_equals() {
+    let m = mock(|_, _| Resp::json(200, &json!({"ok": 1}))).await;
+    let s = webhook_sandbox(&m, "wh-json").await;
+    let o = agent_cli::execute(
+        &s.env,
+        &s.apps,
+        call("webhook", &["send_ops_alerts", "text=x", "card={\"a\":1}"]),
+    )
+    .await;
+    assert_eq!(o.code, 2);
+    assert!(o.err.contains("card:=<json>"), "the hint: {}", o.err);
+    assert!(m.seen().is_empty());
+}
+
+#[tokio::test]
+async fn the_dry_run_header_can_be_set_and_nothing_else_of_aurora_can() {
+    let m = mock(|_, _| Resp::json(200, &json!({"dry_run": true, "body": "{}"}))).await;
+    let s = webhook_sandbox(&m, "wh-dry").await;
+    let o = agent_cli::execute(
+        &s.env,
+        &s.apps,
+        call(
+            "webhook",
+            &["send_ops_alerts", "text=x", "X-Aurora-Dry-Run=1"],
+        ),
+    )
+    .await;
+    assert_eq!(o.code, 0, "{}", o.err);
+    let r = &m.seen()[0];
+    assert_eq!(r.header("x-aurora-dry-run"), Some("1"));
+    assert_eq!(r.header("x-aurora-connection-id"), Some("c_1"));
+    // Any other value is refused by the declared enum.
+    let o = agent_cli::execute(
+        &s.env,
+        &s.apps,
+        call(
+            "webhook",
+            &["send_ops_alerts", "text=x", "X-Aurora-Dry-Run=2"],
+        ),
+    )
+    .await;
+    assert_eq!(o.code, 2);
+}
+
+#[tokio::test]
+async fn a_webhook_gateway_refusal_exits_3_and_a_receiver_400_exits_1() {
+    let m = mock(|r, _| {
+        if r.body.windows(4).any(|w| w == b"bad!") {
+            // The receiver's own 400, in its own words.
+            Resp::json(400, &json!({"error": "invalid_payload"}))
+        } else {
+            let mut x = Resp::json(504, &json!({"error": {"code": "webhook_timeout", "message": "The receiver did not answer in time.", "details": {"may_have_been_delivered": true}}}));
+            x.headers.push(("x-aurora-error".into(), "webhook_timeout".into()));
+            x
+        }
+    })
+    .await;
+    let s = webhook_sandbox(&m, "wh-exit").await;
+    let o = agent_cli::execute(
+        &s.env,
+        &s.apps,
+        call("webhook", &["send_ops_alerts", "text=ok"]),
+    )
+    .await;
+    assert_eq!(o.code, 3);
+    assert!(
+        o.err.contains("webhook_timeout") && o.err.contains("may_have_been_delivered: true"),
+        "{}",
+        o.err
+    );
+    let o = agent_cli::execute(
+        &s.env,
+        &s.apps,
+        call("webhook", &["send_ops_alerts", "text=bad!"]),
+    )
+    .await;
+    assert_eq!(o.code, 1);
+    assert!(
+        o.err.contains("HTTP 400") && !o.err.contains("gateway"),
+        "{}",
+        o.err
+    );
+}
+
+#[tokio::test]
+async fn describe_and_search_cover_the_webhook_notes_and_slots() {
+    let m = mock(|_, _| Resp::json(200, &json!({}))).await;
+    let s = webhook_sandbox(&m, "wh-describe").await;
+    let d = agent_cli::execute(
+        &s.env,
+        &s.apps,
+        Verb::Describe {
+            target: "webhook".into(),
+            name: "send_ops_alerts".into(),
+        },
+    )
+    .await;
+    let t = text(&d);
+    assert!(t.contains("notes: Deploy results go here."), "{t}");
+    assert!(t.contains("account: B"), "{t}");
+    assert!(
+        t.contains("text (string, required)") && t.contains("card (json)"),
+        "{t}"
+    );
+    assert!(
+        t.contains("example: aurora-agent call demo send_ops_alerts text=<string>"),
+        "{t}"
+    );
+    assert!(
+        t.contains("dry run (sends nothing):") && t.contains("X-Aurora-Dry-Run=1"),
+        "{t}"
+    );
+    for words in ["deploy", "card"] {
+        let q = agent_cli::execute(
+            &s.env,
+            &s.apps,
+            Verb::Search {
+                words: vec![words.into()],
+                target: None,
+                limit: 10,
+            },
+        )
+        .await;
+        assert!(
+            text(&q).contains("send_ops_alerts"),
+            "{words}: {}",
+            text(&q)
+        );
+    }
+}
+
 #[test]
 fn agent_cli_is_the_wrapper_being_executable() {
     use std::os::unix::fs::PermissionsExt;

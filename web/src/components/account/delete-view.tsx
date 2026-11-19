@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState, type FormEvent } from "react";
+import type { FormEvent } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Notice } from "@/components/ui/notice";
@@ -9,6 +9,7 @@ import { DangerZone } from "@/components/ui/section";
 import { deleteAccount } from "@/lib/api/account";
 import { ApiError } from "@/lib/api/client";
 import { errorMessage } from "@/lib/api/errors";
+import { useAsyncAction } from "@/lib/use-async-action";
 
 export function deleteErrorMessage(err: unknown): string {
   if (err instanceof ApiError && err.code === "last_owner") {
@@ -20,20 +21,10 @@ export function deleteErrorMessage(err: unknown): string {
 /** Phase 1 (RFE-004): delete the account. No re-authentication step (phase 5, FIX-157, D-317). */
 export function DeleteView({ onDeleted }: { onDeleted?: () => void }) {
   const router = useRouter();
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState<unknown>(null);
-
-  async function submit(e: FormEvent) {
+  const { pending, error, run } = useAsyncAction(deleteAccount, onDeleted ?? (() => router.push("/auth/login")));
+  function submit(e: FormEvent) {
     e.preventDefault();
-    setPending(true);
-    setError(null);
-    try {
-      await deleteAccount();
-      (onDeleted ?? (() => router.push("/auth/login")))();
-    } catch (err) {
-      setError(err);
-      setPending(false);
-    }
+    void run();
   }
 
   return (
@@ -42,7 +33,7 @@ export function DeleteView({ onDeleted }: { onDeleted?: () => void }) {
       title="Delete account"
       description="This permanently deletes your account and signs you out everywhere. It cannot be undone."
     >
-      <form onSubmit={(e) => void submit(e)} noValidate className="max-w-md space-y-4">
+      <form onSubmit={submit} noValidate className="max-w-md space-y-4">
         {error !== null ? (
           <Notice tone="danger" role="alert">
             {deleteErrorMessage(error)}

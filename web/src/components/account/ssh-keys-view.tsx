@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { ConfirmDialog, FormDialog } from "@/components/ui/confirm-dialog";
 import { DataTable, Td, Th } from "@/components/ui/data-table";
 import { Field, inputClass } from "@/components/ui/field";
-import { Notice } from "@/components/ui/notice";
+import { ErrorNotice, Notice } from "@/components/ui/notice";
 import { Section } from "@/components/ui/section";
 import { useInstance } from "@/lib/api/queries";
 import { errorMessage } from "@/lib/api/errors";
@@ -166,11 +166,7 @@ export function SshKeysView() {
         description="Public keys you use to connect to your agents over SSH. Aurora checks one against a short-lived certificate each time you connect."
         actions={keys.data.length > 0 ? addButton : undefined}
       >
-        {del.error ? (
-          <Notice tone="danger" role="alert">
-            {errorMessage(del.error)}
-          </Notice>
-        ) : null}
+        <ErrorNotice error={del.error} />
         {keys.data.length === 0 ? (
           <EmptyState
             title="No SSH keys yet"

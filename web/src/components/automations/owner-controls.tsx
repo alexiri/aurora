@@ -5,10 +5,9 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { inputClass } from "@/components/ui/field";
 import { CheckboxField } from "@/components/ui/form";
-import { Notice } from "@/components/ui/notice";
+import { ErrorNotice } from "@/components/ui/notice";
 import { useAccess } from "@/lib/api/account";
 import { useReassignCreator, type Offboarding, type ReassignTarget } from "@/lib/api/automations";
-import { errorMessage } from "@/lib/api/errors";
 
 type Creator = { id: string; display_name: string } | null | undefined;
 
@@ -119,11 +118,7 @@ export function ReassignPanel({
           onChange={setReEnable}
         />
       ) : null}
-      {reassign.error ? (
-        <Notice tone="danger" role="alert">
-          {errorMessage(reassign.error)}
-        </Notice>
-      ) : null}
+      <ErrorNotice error={reassign.error} />
       <div className="flex flex-wrap gap-2">
         <Button type="submit" size="sm" disabled={!user || reassign.isPending}>
           Reassign

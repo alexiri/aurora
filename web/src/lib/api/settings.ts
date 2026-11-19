@@ -25,9 +25,6 @@ export type SettingValues = Record<string, unknown>;
 export function sectionFromSlug(slug: string): string {
   return slug.replace(/-/g, "_");
 }
-export function sectionSlug(section: string): string {
-  return section.replace(/_/g, "-");
-}
 
 const INDEX_KEY = ["admin", "settings"] as const;
 

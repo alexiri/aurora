@@ -7,11 +7,11 @@ import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { DataTable, Td, Th } from "@/components/ui/data-table";
 import { Field, inputClass } from "@/components/ui/field";
-import { Notice } from "@/components/ui/notice";
+import { ErrorNotice } from "@/components/ui/notice";
 import { Section } from "@/components/ui/section";
+import { Select } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import type { components } from "@/lib/api/schema";
-import { errorMessage } from "@/lib/api/errors";
 import {
   useDeleteGroupAccess,
   useGroupImpact,
@@ -40,17 +40,7 @@ function BoundGroup({ wsId, b, canOwn, onError }: { wsId: string; b: GroupAccess
       </Td>
       <Td>
         {canOwn ? (
-          <select
-            aria-label={`Role for group ${b.group.name}`}
-            className={cn(inputClass, "w-36")}
-            value={b.role}
-            disabled={put.isPending}
-            onChange={(e) => put.mutate({ group: b.group.id, role: e.target.value as WorkspaceRole }, { onError })}
-          >
-            <option value="member">member</option>
-            <option value="approver">approver</option>
-            <option value="owner">owner</option>
-          </select>
+          <Select aria-label={`Role for group ${b.group.name}`} value={b.role} disabled={put.isPending} className="w-36" onChange={(v) => put.mutate({ group: b.group.id, role: v as WorkspaceRole }, { onError })} options={[{ value: "member", label: "member" }, { value: "approver", label: "approver" }, { value: "owner", label: "owner" }]} />
         ) : (
           b.role
         )}
@@ -109,25 +99,12 @@ function AddGroup({ wsId, orgId, bound }: { wsId: string; orgId: string; bound: 
           </select>
         </Field>
         <Field id="acc-group-role" label="Role">
-          <select
-            id="acc-group-role"
-            className={cn(inputClass, "w-40 max-w-full")}
-            value={role}
-            onChange={(e) => setRole(e.target.value as WorkspaceRole)}
-          >
-            <option value="member">member</option>
-            <option value="approver">approver</option>
-            <option value="owner">owner</option>
-          </select>
+          <Select id="acc-group-role" value={role} className="w-40 max-w-full" onChange={(v) => setRole(v as WorkspaceRole)} options={[{ value: "member", label: "member" }, { value: "approver", label: "approver" }, { value: "owner", label: "owner" }]} />
         </Field>
         <Button type="submit" disabled={!group || put.isPending} className="sm:mt-label-offset">
           Add
         </Button>
-        {put.error ? (
-          <Notice tone="danger" role="alert" className="basis-full">
-            {errorMessage(put.error)}
-          </Notice>
-        ) : null}
+        <ErrorNotice error={put.error} className="basis-full" />
       </form>
     </Section>
   );
@@ -142,11 +119,7 @@ export function GroupAccess({ wsId, orgId, canOwn, data }: { wsId: string; orgId
     <div className="space-y-6">
       <Section id="acc-groups" title="Groups" description="Groups bound to this workspace and the role each gives its members.">
         <div className="space-y-3">
-          {err ? (
-            <Notice tone="danger" role="alert">
-              {errorMessage(err)}
-            </Notice>
-          ) : null}
+          <ErrorNotice error={err} />
           {bindings.length === 0 ? (
             <p className="text-sm text-ink-2">No group is bound to this workspace.</p>
           ) : (

@@ -3,7 +3,7 @@
 import { ApiError } from "@/lib/api/client";
 import { errorMessage } from "@/lib/api/errors";
 import { Badge } from "@/components/ui/badge";
-import { Notice } from "@/components/ui/notice";
+import { ErrorNotice } from "@/components/ui/notice";
 import type { FormField } from "@/lib/api/connectors";
 
 /** Messages for the M6 error codes (API_CONTRACTS C-31..C-38). */
@@ -46,16 +46,7 @@ export function channelError(err: unknown): string {
 }
 
 export function MutationError({ error }: { error: unknown }) {
-  if (!error) return null;
-  return (
-    <Notice tone="danger" role="alert">
-      {channelError(error)}
-    </Notice>
-  );
-}
-
-export function isStatus(err: unknown, code: string): boolean {
-  return err instanceof ApiError && err.code === code;
+  return <ErrorNotice error={error} format={channelError} />;
 }
 
 const TONE: Record<string, "neutral" | "accent" | "danger"> = {

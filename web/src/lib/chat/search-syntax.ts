@@ -13,9 +13,6 @@ export type ChipKind = FilterChip["kind"];
 export const FROM_VALUES = ["me", "agent", "others"] as const;
 const DATE_KINDS = ["after", "before", "on"] as const;
 
-/** The longest `q` the API takes (C-727); the box keeps typing but says so. */
-export const MAX_QUERY = 200;
-
 /** `YYYY-MM-DD` of a real calendar day → that day's local midnight; otherwise `null` (no rolling `02-30` into March). */
 export function localDayStart(day: string): Date | null {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(day);

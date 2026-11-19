@@ -77,7 +77,7 @@ fn header_forbidden(name: &str) -> bool {
             | "content-length"
             | "transfer-encoding"
             | "connection"
-    ) || n.starts_with("x-aurora-")
+    ) || (n.starts_with("x-aurora-") && n != "x-aurora-dry-run")
         || n.starts_with("proxy-")
 }
 
@@ -122,6 +122,13 @@ fn value_for(p: &Param, args: &[Arg], allow_raw: bool) -> Result<Option<Value>, 
     let mut raw: Option<&Value> = None;
     for a in args.iter().filter(|a| a.name() == p.name) {
         match a {
+            // (C-911) A `json` field is structured: only `name:=<json>` carries it.
+            Arg::Plain(..) if p.ty == "json" => {
+                return Err(format!(
+                    "{0}: this field is JSON; pass it as {0}:=<json> (for example {0}:='\"text\"' or {0}:='{{\"a\":1}}')",
+                    p.name
+                ));
+            }
             Arg::Plain(_, v) => plain.push(v),
             Arg::Raw(_, v) => {
                 if !allow_raw {

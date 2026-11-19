@@ -8,9 +8,10 @@ import { EmptyState, ErrorState, Loading } from "@/components/states";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DataTable, Td, Th } from "@/components/ui/data-table";
-import { inputClass } from "@/components/ui/field";
+import { LoadMore } from "@/components/ui/load-more";
 import { MoreNotShown } from "@/components/ui/more-not-shown";
 import { PageHeader } from "@/components/ui/page-header";
+import { Select } from "@/components/ui/select";
 import { StatusDot } from "@/components/ui/status-dot";
 import { Tabs, tabId, tabPanelId } from "@/components/ui/tabs";
 import {
@@ -312,38 +313,6 @@ export function ActionApprovalCard({
   );
 }
 
-function ActionPending({ wsId }: { wsId: string }) {
-  const q = usePendingActionApprovals(wsId);
-  const decide = useDecideAction(wsId);
-  const [messages, setMessages] = useState<Record<string, string>>({});
-  function onDecide(id: string, decision: Decision) {
-    setMessages((m) => ({ ...m, [id]: "" }));
-    decide.mutate(
-      { id, decision },
-      {
-        onError: (err) =>
-          setMessages((m) => ({ ...m, [id]: actionAlreadyDecided(err) ? "Already decided by someone else." : errorMessage(err) })),
-      },
-    );
-  }
-  if (q.isPending) return <Loading />;
-  if (q.isError) return <ErrorState error={q.error} onRetry={() => void q.refetch()} />;
-  if (q.data.items.length === 0) return <EmptyState title="No pending action approvals" />;
-  return (
-    <ul className="space-y-2">
-      {q.data.items.map((a) => (
-        <ActionApprovalCard
-          key={a.id}
-          a={a}
-          pending={decide.isPending && decide.variables?.id === a.id}
-          message={messages[a.id]}
-          onDecide={(d) => onDecide(a.id, d)}
-        />
-      ))}
-    </ul>
-  );
-}
-
 const ACTION_STATUSES = ["", "approved", "executed", "failed", "rejected", "expired"];
 
 function ActionHistory({ wsId }: { wsId: string }) {
@@ -354,13 +323,7 @@ function ActionHistory({ wsId }: { wsId: string }) {
     <div className="space-y-3">
       <label className="flex max-w-xs items-center gap-2 text-sm">
         Action status
-        <select className={inputClass} value={status} onChange={(e) => setStatus(e.target.value)}>
-          {ACTION_STATUSES.map((s) => (
-            <option key={s} value={s}>
-              {s || "All"}
-            </option>
-          ))}
-        </select>
+        <Select value={status} onChange={setStatus} options={ACTION_STATUSES.map((s) => ({ value: s, label: s || "All" }))} />
       </label>
       {q.isPending ? <Loading /> : null}
       {q.isError ? <ErrorState error={q.error} onRetry={() => void q.refetch()} /> : null}
@@ -394,11 +357,7 @@ function ActionHistory({ wsId }: { wsId: string }) {
           </tbody>
         </DataTable>
       ) : null}
-      {q.hasNextPage ? (
-        <Button variant="outline" disabled={q.isFetchingNextPage} onClick={() => void q.fetchNextPage()}>
-          Load more
-        </Button>
-      ) : null}
+      <LoadMore query={q} />
     </div>
   );
 }
@@ -413,13 +372,7 @@ function HistoryTab({ wsId }: { wsId: string }) {
     <div className="space-y-4">
       <label className="flex max-w-xs items-center gap-2 text-sm">
         Status
-        <select className={inputClass} value={status} onChange={(e) => setStatus(e.target.value)}>
-          {STATUSES.map((s) => (
-            <option key={s} value={s}>
-              {s || "All"}
-            </option>
-          ))}
-        </select>
+        <Select value={status} onChange={setStatus} options={STATUSES.map((s) => ({ value: s, label: s || "All" }))} />
       </label>
       {q.isPending ? <Loading /> : null}
       {q.isError ? <ErrorState error={q.error} onRetry={() => q.refetch()} /> : null}
@@ -464,11 +417,7 @@ function HistoryTab({ wsId }: { wsId: string }) {
           </tbody>
         </DataTable>
       ) : null}
-      {q.hasNextPage ? (
-        <Button variant="outline" disabled={q.isFetchingNextPage} onClick={() => void q.fetchNextPage()}>
-          Load more
-        </Button>
-      ) : null}
+      <LoadMore query={q} />
     </div>
   );
 }

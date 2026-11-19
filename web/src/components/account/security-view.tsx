@@ -3,10 +3,9 @@
 import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
-import { Notice } from "@/components/ui/notice";
+import { ErrorNotice, Notice } from "@/components/ui/notice";
 import { Section } from "@/components/ui/section";
 import { revokeOtherSessions } from "@/lib/api/account";
-import { errorMessage } from "@/lib/api/errors";
 
 /** Phase 1 (RFE-004): there is no password to change; sign-in security is the IdP's. */
 export function SecurityView() {
@@ -39,9 +38,7 @@ export function SecurityView() {
       <Section id="sess" title="Sessions" description="Sign out everywhere else. This browser stays signed in." card>
         <div className="space-y-3">
           {revokeErr !== null ? (
-            <Notice tone="danger" role="alert">
-              {errorMessage(revokeErr)}
-            </Notice>
+            <ErrorNotice error={revokeErr} />
           ) : null}
           {revoked !== null ? (
             <Notice tone="accent" role="status">

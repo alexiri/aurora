@@ -258,6 +258,27 @@ struct AppFolder {
     api_without_reference: Option<String>,
 }
 
+/// (P5-WEBHOOK-3, C-911) The render input of an outgoing-webhook account: name, note, method and
+/// slots, read from the connection's stored configuration. Never the template, headers, URL or
+/// secrets (`GuideWebhook` has no field for them). `None` for any other app, or a configuration
+/// that does not parse (the account is then listed without an operation).
+fn webhook_input(
+    app: &aurora_registry::snapshot::AppEntry,
+    c: &hosted::HomeAppConn,
+) -> Option<aurora_registry::agent_guide::GuideWebhook> {
+    use aurora_registry::manifest::SecretLinkMode;
+    if app.secret_link.as_ref().map(|s| s.mode()) != Some(SecretLinkMode::Send) {
+        return None;
+    }
+    let cfg: aurora_webhook::WebhookConfig = serde_json::from_value(c.config.clone()?).ok()?;
+    Some(aurora_registry::agent_guide::GuideWebhook {
+        name: c.label.clone(),
+        description: cfg.description,
+        method: cfg.method.as_str().to_owned(),
+        slots: cfg.slots,
+    })
+}
+
 /// Renders the folder of one app for one agent from the grant rows of its connections.
 async fn app_folder(
     conn: &mut PgConnection,
@@ -291,6 +312,7 @@ async fn app_folder(
                         ask: c.ask_tools.iter().cloned().collect(),
                     }
                 },
+                webhook: webhook_input(app, c),
             }
         })
         .collect();
@@ -419,9 +441,14 @@ async fn render_inputs(
         links = conns
             .iter()
             .filter(|c| {
-                snap.apps
-                    .iter()
-                    .any(|a| a.app_id == c.app_id && a.secret_link.is_some())
+                // (P5-WEBHOOK-3, C-911) Fetch mode only: a send-mode connection (an outgoing
+                // webhook) is an `aurora-agent` operation, never a link.
+                snap.apps.iter().any(|a| {
+                    a.app_id == c.app_id
+                        && a.secret_link.as_ref().is_some_and(|s| {
+                            s.mode() == aurora_registry::manifest::SecretLinkMode::Fetch
+                        })
+                })
             })
             .map(|c| {
                 json!({

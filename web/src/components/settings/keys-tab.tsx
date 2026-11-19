@@ -7,7 +7,7 @@ import { OneTimeKeyDialog } from "@/components/account/one-time-key-dialog";
 import { ErrorState, Loading } from "@/components/states";
 import { Button } from "@/components/ui/button";
 import { Field, inputClass } from "@/components/ui/field";
-import { Notice } from "@/components/ui/notice";
+import { ErrorNotice } from "@/components/ui/notice";
 import { Section } from "@/components/ui/section";
 import { cn } from "@/lib/utils";
 import {
@@ -16,7 +16,7 @@ import {
   useRevokeApiKey,
   useWorkspaceKeys,
 } from "@/lib/api/account";
-import { errorMessage, fieldErrors } from "@/lib/api/errors";
+import { fieldErrors } from "@/lib/api/errors";
 
 export function KeysTab({ wsId }: { wsId: string }) {
   const keys = useWorkspaceKeys(wsId);
@@ -76,9 +76,7 @@ export function KeysTab({ wsId }: { wsId: string }) {
             Create key
           </Button>
           {create.error && Object.keys(fe).length === 0 ? (
-            <Notice tone="danger" role="alert" className="basis-full">
-              {errorMessage(create.error)}
-            </Notice>
+            <ErrorNotice error={create.error} className="basis-full" />
           ) : null}
         </form>
       </Section>

@@ -5,10 +5,9 @@ import { useState, type FormEvent } from "react";
 import { Button } from "@/components/ui/button";
 import { Field, inputClass } from "@/components/ui/field";
 import { CheckboxField, Form, FormActions } from "@/components/ui/form";
-import { Notice } from "@/components/ui/notice";
+import { ErrorNotice, Notice, SavedNotice } from "@/components/ui/notice";
 import { Section } from "@/components/ui/section";
 import { ApiError } from "@/lib/api/client";
-import { errorMessage } from "@/lib/api/errors";
 import { usePatchOrg } from "@/lib/api/org";
 import type { Org } from "@/lib/api/queries";
 import type { OrgWebhookSettings } from "@/lib/api/webhook";
@@ -32,7 +31,7 @@ export function hasOutgoingWebhookSettings(org: Org): boolean {
 
 function OrgWebhookForm({ org }: { org: Org }) {
   const patch = usePatchOrg(org.id);
-  const s = org.settings as Org["settings"] & OrgWebhookSettings;
+  const s = org.settings;
   const [enabled, setEnabled] = useState(s.outgoing_webhooks_enabled ?? true);
   const [perMinute, setPerMinute] = useState(s.outgoing_webhooks_per_minute_max?.toString() ?? "");
   const [perDay, setPerDay] = useState(s.outgoing_webhooks_per_day_max?.toString() ?? "");
@@ -55,8 +54,7 @@ function OrgWebhookForm({ org }: { org: Org }) {
       outgoing_webhooks_per_minute_max: pm as number | null,
       outgoing_webhooks_per_day_max: pd as number | null,
     };
-    // The generated type of the settings patch has no webhook keys until the API's openapi is regenerated.
-    patch.mutate({ settings } as never, {
+    patch.mutate({ settings }, {
       onSuccess: () => setSaved(true),
       onError: (err) => {
         if (err instanceof ApiError && err.code === "above_instance_ceiling") {
@@ -88,15 +86,9 @@ function OrgWebhookForm({ org }: { org: Org }) {
           </Field>
         </fieldset>
         {patch.error && !ceilingRefused ? (
-          <Notice tone="danger" role="alert">
-            {errorMessage(patch.error)}
-          </Notice>
+          <ErrorNotice error={patch.error} />
         ) : null}
-        {saved ? (
-          <Notice tone="accent" role="status">
-            Outgoing webhook settings updated.
-          </Notice>
-        ) : null}
+        <SavedNotice show={saved}>Outgoing webhook settings updated.</SavedNotice>
         {owner ? (
           <FormActions>
             <Button type="submit" disabled={patch.isPending}>

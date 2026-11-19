@@ -130,10 +130,12 @@ describe("OrgAiModels (P5-IA-3, C-966)", () => {
   it("members see read-only controls and locked labels, and no Save", async () => {
     mockFetch(routes());
     wrap(<OrgAiModels org={{ ...ORG, my_role: "member" }} />);
-    expect(await screen.findByText("Anthropic")).toBeTruthy();
+    // (P5-POLISH-9, D-390) A member reads a summary, never a disabled form.
+    expect(await screen.findByTestId("member-ai-models")).toBeTruthy();
     expect(screen.getAllByText("Set by Administration").length).toBeGreaterThan(0);
+    expect(screen.getByTestId("who-changes")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
-    expect((screen.getByLabelText("Allowed models") as HTMLTextAreaElement).disabled).toBe(true);
+    expect(screen.queryByLabelText("Allowed models")).toBeNull();
   });
 
   it("has one page: no tabs, no Egress, no Apps, no Compliance", async () => {

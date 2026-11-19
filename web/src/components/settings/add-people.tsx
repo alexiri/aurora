@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { CopyValue } from "@/components/ui/copy-value";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Field, inputClass } from "@/components/ui/field";
-import { Notice } from "@/components/ui/notice";
+import { ErrorNotice, Notice } from "@/components/ui/notice";
 import { Section } from "@/components/ui/section";
 import { Segmented } from "@/components/ui/segmented";
 import { ApiError } from "@/lib/api/client";
@@ -222,11 +222,7 @@ export function WaitingList({ wsId, orgId }: { wsId: string; orgId: string }) {
           );
         })}
       </ul>
-      {remove.error ? (
-        <Notice tone="danger" role="alert" className="mt-2">
-          {errorMessage(remove.error)}
-        </Notice>
-      ) : null}
+      <ErrorNotice error={remove.error} className="mt-2" />
     </Section>
   );
 }

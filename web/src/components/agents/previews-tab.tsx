@@ -13,10 +13,11 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { DataTable, Td, Th } from "@/components/ui/data-table";
 import { Field, inputClass } from "@/components/ui/field";
 import { FormDialog } from "@/components/ui/confirm-dialog";
-import { Notice } from "@/components/ui/notice";
+import { ErrorNotice, Notice } from "@/components/ui/notice";
 import { Section } from "@/components/ui/section";
-import { errorMessage, fieldErrors } from "@/lib/api/errors";
+import { fieldErrors } from "@/lib/api/errors";
 import { useSandbox } from "@/lib/api/conversations";
+import { copyLabel, useCopy } from "@/lib/use-copy";
 import {
   useCreatePreview,
   useDeletePreview,
@@ -176,9 +177,7 @@ export function ShareDialog({
         <input id="pv-cwd" className={inputClass} value={cwd} maxLength={200} onChange={(e) => setCwd(e.target.value)} />
       </Field>
       {mut.error && Object.keys(fe).length === 0 ? (
-        <Notice tone="danger" role="alert">
-          {errorMessage(mut.error)}
-        </Notice>
+        <ErrorNotice error={mut.error} />
       ) : null}
     </FormDialog>
   );
@@ -192,17 +191,14 @@ function ShareRow({ agentId, s, frozen }: { agentId: string; s: PreviewShare; fr
   const [confirming, setConfirming] = useState(false);
   const [lastStart, setLastStart] = useState(false);
   const err = del.error ?? start.error ?? upd.error;
+  const urlCopy = useCopy();
   return (
     <tr>
       <Td className="max-w-64">
         <span className="block break-all font-mono text-xs text-ink-2">{s.hostname}</span>
         <span className="mt-1 flex gap-2 text-xs text-muted">
-          <button
-            type="button"
-            className="text-link underline"
-            onClick={() => void navigator.clipboard.writeText(s.url)}
-          >
-            Copy
+          <button type="button" className="text-link underline" onClick={() => urlCopy.copy(s.url)}>
+            {copyLabel(urlCopy.state)}
           </button>
           <a href={s.url} target="_blank" rel="noopener noreferrer" className="text-link underline">
             Open
@@ -303,9 +299,7 @@ function ShareRow({ agentId, s, frozen }: { agentId: string; s: PreviewShare; fr
       </FormDialog>
       {err ? (
         <Td className="border-t border-line">
-          <Notice tone="danger" role="alert">
-            {errorMessage(err)}
-          </Notice>
+          <ErrorNotice error={err} />
         </Td>
       ) : null}
     </tr>

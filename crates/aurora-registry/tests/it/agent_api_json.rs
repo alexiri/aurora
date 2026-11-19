@@ -26,6 +26,7 @@ fn acct(id: &str, host: Option<&str>, access: GrantAccess) -> GuideAccount {
         host: host.map(Into::into),
         service: None,
         access,
+        webhook: None,
     }
 }
 
@@ -142,4 +143,172 @@ fn a_database_app_has_no_api_json() {
     });
     let r = render_with_operations(&s.apps[0], &[], &[], "1", true, None);
     assert!(r.api_json.is_none());
+}
+
+// ---- P5-WEBHOOK-3 (C-911): a webhook is an account-bound operation ----
+
+fn slots(v: serde_json::Value) -> Vec<aurora_webhook::Slot> {
+    serde_json::from_value(v).unwrap()
+}
+
+fn webhook_acct(id: &str, name: &str, notes: &str, s: serde_json::Value) -> GuideAccount {
+    GuideAccount {
+        webhook: Some(aurora_registry::agent_guide::GuideWebhook {
+            name: name.into(),
+            description: notes.into(),
+            method: "POST".into(),
+            slots: slots(s),
+        }),
+        ..acct(id, None, GrantAccess::Full)
+    }
+}
+
+fn all_slots() -> serde_json::Value {
+    serde_json::json!([
+        {"name":"text","type":"string","required":true,"description":"The message","max_length":200},
+        {"name":"level","type":"enum","required":false,"enum":["info","warn"]},
+        {"name":"count","type":"integer","required":false},
+        {"name":"ratio","type":"number","required":false},
+        {"name":"urgent","type":"boolean","required":false},
+        {"name":"tags","type":"string_list","required":false,"max_items":5,"max_length":20},
+        {"name":"card","type":"json","required":false}
+    ])
+}
+
+fn webhook_api(accounts: &[GuideAccount]) -> serde_json::Value {
+    serde_json::from_str(&api(None, accounts)).unwrap()
+}
+
+#[test]
+fn a_webhook_account_is_one_account_bound_operation() {
+    let a = [webhook_acct(
+        "c_1",
+        "Ops alerts",
+        "Deploy results.\nSecond line.",
+        all_slots(),
+    )];
+    insta::assert_snapshot!("api_json_webhook", api(None, &a));
+    let v = webhook_api(&a);
+    let op = v["operations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|o| o["id"] == "send_ops_alerts")
+        .unwrap();
+    assert_eq!(op["account"], "A");
+    assert_eq!(op["notes"], "Deploy results. Second line.");
+    assert_eq!(op["source"], "connection");
+    assert_eq!(op["host"], "c_1.link.aurora.internal");
+    assert_eq!(
+        v["accounts"][0]["base_url"],
+        "https://c_1.link.aurora.internal"
+    );
+    let ty = |n: &str| {
+        op["body"]["fields"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|f| f["name"] == n)
+            .unwrap()["type"]
+            .clone()
+    };
+    assert_eq!(ty("text"), "string");
+    assert_eq!(ty("level"), "string");
+    assert_eq!(ty("count"), "integer");
+    assert_eq!(ty("ratio"), "number");
+    assert_eq!(ty("urgent"), "boolean");
+    assert_eq!(ty("tags"), "array");
+    assert_eq!(ty("card"), "json");
+    assert_eq!(op["params"][0]["name"], "X-Aurora-Dry-Run");
+    assert_eq!(op["params"][0]["enum"][0], "1");
+    // The `send` tool is not listed twice.
+    assert!(
+        v["operations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|o| o["source"] != "catalogue" || o["id"] != "send")
+    );
+}
+
+#[test]
+fn webhook_ids_take_a_suffix_in_account_order_and_every_other_operation_has_null_keys() {
+    let a = [
+        webhook_acct("c_1", "Team X!", "", serde_json::json!([])),
+        webhook_acct("c_2", "team   x", "", serde_json::json!([])),
+        webhook_acct("c_3", "Team X", "", serde_json::json!([])),
+    ];
+    let v: serde_json::Value = serde_json::from_str(&api(Some(OPS), &a)).unwrap();
+    let ids: Vec<&str> = v["operations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|o| o["source"] == "connection")
+        .map(|o| o["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, ["send_team_x", "send_team_x_2", "send_team_x_3"]);
+    for o in v["operations"].as_array().unwrap() {
+        if o["source"] != "connection" {
+            assert!(o["account"].is_null() && o["notes"].is_null(), "{o}");
+        }
+    }
+    // Each operation carries its own letter's access only.
+    let b = v["operations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|o| o["id"] == "send_team_x_2")
+        .unwrap();
+    assert_eq!(b["account"], "B");
+    assert_eq!(b["access"].as_object().unwrap().len(), 1);
+    assert!(b["access"]["B"].is_string());
+}
+
+#[test]
+fn webhook_notes_are_clamped_and_rendering_is_deterministic() {
+    let long = "n".repeat(3000);
+    let a = [webhook_acct("c_1", "Long", &long, serde_json::json!([]))];
+    let v = webhook_api(&a);
+    let op = v["operations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|o| o["id"] == "send_long")
+        .unwrap();
+    assert!(op["notes"].as_str().unwrap().chars().count() <= 1000);
+    assert_eq!(api(None, &a), api(None, &a));
+}
+
+/// The render input has no field for the template, headers, URL or secret values: the type's
+/// serialization is exactly name, description, method, slots; and nothing of a connection's secret
+/// material reaches either file.
+#[test]
+fn the_webhook_render_input_has_no_template_headers_url_or_secret_field() {
+    let w = aurora_registry::agent_guide::GuideWebhook {
+        name: "n".into(),
+        description: "d".into(),
+        method: "POST".into(),
+        slots: vec![],
+    };
+    let v = serde_json::to_value(&w).unwrap();
+    let mut keys: Vec<&str> = v.as_object().unwrap().keys().map(String::as_str).collect();
+    keys.sort_unstable();
+    assert_eq!(keys, ["description", "method", "name", "slots"]);
+}
+
+#[test]
+fn tools_md_lists_each_webhook_with_its_slots_and_a_curl_example() {
+    let s = snapshot_of(&yaml(TOOLS, AGENT, ""), &FILES);
+    let a = [webhook_acct(
+        "c_1",
+        "Ops alerts",
+        "Deploy results.",
+        all_slots(),
+    )];
+    let r = render_with_operations(&s.apps[0], &[], &a, "1", true, None);
+    insta::assert_snapshot!("tools_md_webhook", r.tools_md);
+    assert_eq!(
+        r.tools_md,
+        render_with_operations(&s.apps[0], &[], &a, "1", true, None).tools_md
+    );
 }

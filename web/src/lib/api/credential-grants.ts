@@ -165,20 +165,6 @@ export function useGrantApp(agentId: string) {
   });
 }
 
-/** `DELETE /v1/agents/{agent}/grants/connections/{conn}`. */
-export function useRemoveAgentConnectionGrant(agentId: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async (connectionId: string) => {
-      const { error, response } = await api.DELETE("/v1/agents/{agent}/grants/connections/{conn}", {
-        params: { path: { agent: agentId, conn: connectionId } },
-      });
-      if (error !== undefined || !response.ok) throw ApiError.fromBody(error, response.status);
-    },
-    onSuccess: (_r, connectionId) => invalidateAgentGrant(qc, agentId, connectionId),
-  });
-}
-
 /** The agent id a failed bulk grant names in `details.agent_id`, if any. */
 export function failingAgentId(err: unknown): string | null {
   if (!(err instanceof ApiError)) return null;

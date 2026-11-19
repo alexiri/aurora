@@ -5,12 +5,12 @@ import { useState, type FormEvent } from "react";
 import { EmptyState, ErrorState, Loading } from "@/components/states";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { ConfirmButton } from "@/components/ui/confirm-button";
 import { Field, inputClass } from "@/components/ui/field";
 import { FormActions } from "@/components/ui/form";
-import { Notice } from "@/components/ui/notice";
+import { ErrorNotice, Notice } from "@/components/ui/notice";
 import { ItemList } from "@/components/ui/section";
 import { cn } from "@/lib/utils";
-import { errorMessage } from "@/lib/api/errors";
 import {
   MEMORY_CONTENT_MAX,
   MEMORY_KEY_MAX,
@@ -146,7 +146,6 @@ function MemoryEditor({ agentId, memory, onDone }: { agentId: string; memory?: M
   const [title, setTitle] = useState(memory?.title ?? "");
   const [description, setDescription] = useState(memory?.description ?? "");
   const [content, setContent] = useState(memory?.content ?? "");
-  const [confirmDel, setConfirmDel] = useState(false);
   const [history, setHistory] = useState(false);
   const [err, setErr] = useState("");
   const over = content.length > MEMORY_CONTENT_MAX;
@@ -186,7 +185,7 @@ function MemoryEditor({ agentId, memory, onDone }: { agentId: string; memory?: M
         </Field>
         <SizeMeter label="Content" used={content.length} max={MEMORY_CONTENT_MAX} />
         {err && memory ? <Notice tone="danger" role="alert">{err}</Notice> : null}
-        {failed ? <Notice tone="danger" role="alert">{errorMessage(failed)}</Notice> : null}
+        <ErrorNotice error={failed} />
         <FormActions className="gap-2">
           <Button type="submit" disabled={over || create.isPending || put.isPending}>Save</Button>
           {memory ? (
@@ -194,16 +193,7 @@ function MemoryEditor({ agentId, memory, onDone }: { agentId: string; memory?: M
               <Button type="button" variant="outline" onClick={() => setHistory((h) => !h)} aria-expanded={history}>
                 History
               </Button>
-              {confirmDel ? (
-                <>
-                  <Button type="button" variant="danger" onClick={() => void del.mutateAsync(memory.key).then(() => onDone(null))}>
-                    Confirm delete
-                  </Button>
-                  <Button type="button" variant="ghost" onClick={() => setConfirmDel(false)}>Cancel</Button>
-                </>
-              ) : (
-                <Button type="button" variant="danger" onClick={() => setConfirmDel(true)}>Delete</Button>
-              )}
+              <ConfirmButton type="button" cancelVariant="ghost" onConfirm={() => void del.mutateAsync(memory.key).then(() => onDone(null))} />
             </>
           ) : null}
         </FormActions>
@@ -227,7 +217,7 @@ export function RevisionHistory({ agentId, memory }: { agentId: string; memory: 
       <h3 className="font-display text-base font-semibold text-ink">Revision history</h3>
       {revs.isPending ? <Loading /> : null}
       {revs.isError ? <ErrorState error={revs.error} onRetry={() => revs.refetch()} /> : null}
-      {failed ? <Notice tone="danger" role="alert">{errorMessage(failed)}</Notice> : null}
+      <ErrorNotice error={failed} />
       <ul className="divide-y divide-line">
         {revs.data?.items.map((r) => (
           <li key={r.revision} className="space-y-1 py-3 text-sm first:pt-0 last:pb-0">

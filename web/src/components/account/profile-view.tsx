@@ -11,10 +11,11 @@ import { ThemeSwitch } from "@/components/theme/theme-switch";
 import { Button } from "@/components/ui/button";
 import { Field, inputClass } from "@/components/ui/field";
 import { Form, FormActions } from "@/components/ui/form";
-import { Notice } from "@/components/ui/notice";
+import { ErrorNotice, Notice, SavedNotice } from "@/components/ui/notice";
 import { Section } from "@/components/ui/section";
+import { Select } from "@/components/ui/select";
 import { useUpdateMe } from "@/lib/api/account";
-import { errorMessage, fieldErrors } from "@/lib/api/errors";
+import { fieldErrors } from "@/lib/api/errors";
 import { usePatchOnboarding } from "@/lib/api/onboarding";
 import { useInstance, useSession, type Me } from "@/lib/api/queries";
 import { accountRoutes } from "@/lib/routes";
@@ -62,32 +63,14 @@ function ProfileForm({ me }: { me: Me }) {
         hint="Where you land after signing in."
         error={fe.default_org_id}
       >
-        <select
-          id="acc-org"
-          className={inputClass}
-          value={org}
-          onChange={(e) => setOrg(e.target.value)}
-        >
-          <option value="">No default</option>
-          {me.memberships
+        <Select id="acc-org" value={org} placeholder="No default" onChange={setOrg} options={me.memberships
             .filter((m) => m.status === "active")
-            .map((m) => (
-              <option key={m.org.id} value={m.org.id}>
-                {m.org.name}
-              </option>
-            ))}
-        </select>
+            .map((m) => ({ value: m.org.id, label: m.org.name }))} />
       </Field>
       {update.error && Object.keys(fe).length === 0 ? (
-        <Notice tone="danger" role="alert">
-          {errorMessage(update.error)}
-        </Notice>
+        <ErrorNotice error={update.error} />
       ) : null}
-      {saved ? (
-        <Notice tone="accent" role="status">
-          Profile saved.
-        </Notice>
-      ) : null}
+      <SavedNotice show={saved}>Profile saved.</SavedNotice>
       <FormActions>
         <Button type="submit" size="lg" disabled={update.isPending}>
           {update.isPending ? "Saving…" : "Save changes"}
@@ -201,11 +184,7 @@ function GettingStartedControls() {
           {note}
         </Notice>
       ) : null}
-      {patch.error ? (
-        <Notice tone="danger" role="alert">
-          {errorMessage(patch.error)}
-        </Notice>
-      ) : null}
+      <ErrorNotice error={patch.error} />
     </div>
   );
 }

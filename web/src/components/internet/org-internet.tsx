@@ -6,6 +6,7 @@ import { EgressTab } from "@/components/governance/egress-tab";
 import { InternetLevel, type GovernanceEditor } from "@/components/internet/internet-level";
 import { ErrorState, Loading } from "@/components/states";
 import { Button } from "@/components/ui/button";
+import { LoadMore } from "@/components/ui/load-more";
 import { Notice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
 import { ScopeLadder } from "@/components/ui/scope-ladder";
@@ -128,11 +129,7 @@ function OrgInternetBody({ org, slug, eff, revision: initialRevision, initial }:
           <ErrorState error={query.error} onRetry={() => query.refetch()} />
         ) : (
           <div className="mt-2 flex flex-wrap gap-2">
-            {query.hasNextPage ? (
-              <Button variant="outline" size="sm" disabled={query.isFetchingNextPage} onClick={() => void query.fetchNextPage()}>
-                Show more
-              </Button>
-            ) : null}
+            <LoadMore query={query} label="Show more" size="sm" />
             <Button variant="ghost" size="sm" aria-pressed={all} onClick={() => setAll((a) => !a)}>
               {all ? "Show only workspaces that differ" : "Show all workspaces"}
             </Button>

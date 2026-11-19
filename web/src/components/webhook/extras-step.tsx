@@ -5,6 +5,7 @@ import { Field, inputClass } from "@/components/ui/field";
 import { SecretInput } from "@/components/ui/secret-input";
 import { Notice } from "@/components/ui/notice";
 import { Segmented } from "@/components/ui/segmented";
+import { Select } from "@/components/ui/select";
 import type { EffectiveRate, SigningEdit, WebhookConfig } from "@/lib/api/webhook";
 import { firstMessage, LIMITS, parseRate, SOURCE_WORDS, type Issue } from "@/lib/webhook/logic";
 
@@ -299,10 +300,7 @@ export function ExtrasStep({
       </fieldset>
 
       <Field id="wh-method" label="Method" error={firstMessage(issues, "method")}>
-        <select id="wh-method" className={inputClass} value={config.method} onChange={(e) => onConfig({ ...config, method: e.target.value as "POST" | "PUT" })}>
-          <option value="POST">POST</option>
-          <option value="PUT">PUT</option>
-        </select>
+        <Select id="wh-method" value={config.method} onChange={(v) => onConfig({ ...config, method: v as "POST" | "PUT" })} options={[{ value: "POST", label: "POST" }, { value: "PUT", label: "PUT" }]} />
       </Field>
 
       <fieldset className="space-y-3">

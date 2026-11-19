@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 
 import { mockApi } from "./support/mock-api";
-import { overflow, titled, type Scheme } from "./support/open";
+import { openThemed, overflow } from "./support/open";
 import { serious } from "./support/files";
 
 // P4-SSH-1 (docs/14 §Account › SSH keys and §Agent page › SSH, C-795): the keys page and the agent's SSH page against the
@@ -74,12 +74,7 @@ async function mockSsh(page: Page, over: { terminators?: number; keys?: typeof K
   );
 }
 
-async function open(page: Page, path: string, scheme: Scheme) {
-  await page.emulateMedia({ colorScheme: scheme });
-  await page.goto(path);
-  await expect.poll(() => page.locator("html").getAttribute("data-theme"), { timeout: 20_000 }).toBe(scheme);
-  await titled(page);
-}
+const open = openThemed;
 
 for (const scheme of ["light", "dark"] as const) {
   for (const width of [1280, 390]) {
@@ -148,6 +143,8 @@ for (const scheme of ["light", "dark"] as const) {
       test("Admin › Overview: the SSH line", async ({ page }) => {
         await mockSsh(page);
         await open(page, "/admin", scheme);
+        // (P5-POLISH-10) The SSH line is on the Overview's Health view (the checklist shows until setup is done).
+        await page.getByRole("tablist", { name: "Overview view" }).getByRole("tab", { name: "Health" }).click();
         const line = page.getByTestId("ssh-line");
         await expect(line).toBeVisible();
         await expect(line).toContainText("Terminator up");

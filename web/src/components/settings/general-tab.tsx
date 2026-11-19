@@ -5,9 +5,10 @@ import { useState, type FormEvent } from "react";
 import { Button } from "@/components/ui/button";
 import { Field, inputClass } from "@/components/ui/field";
 import { Form, FormActions } from "@/components/ui/form";
-import { Notice } from "@/components/ui/notice";
+import { ErrorNotice, Notice, SavedNotice } from "@/components/ui/notice";
+import { Select } from "@/components/ui/select";
 import { usePatchWorkspace } from "@/lib/api/account";
-import { errorMessage, fieldErrors } from "@/lib/api/errors";
+import { fieldErrors } from "@/lib/api/errors";
 import type { Workspace } from "@/lib/api/queries";
 import { MEMORY_LANGUAGES, timeZones } from "@/lib/nav/landing";
 
@@ -49,13 +50,7 @@ export function GeneralTab({ workspace, canOwn }: { workspace: Workspace; canOwn
           />
         </Field>
         <Field id="set-tz" label="Time zone" error={fe.timezone}>
-          <select id="set-tz" className={inputClass} value={tz} onChange={(e) => setTz(e.target.value)}>
-            {tzOptions.map((z) => (
-              <option key={z} value={z}>
-                {z}
-              </option>
-            ))}
-          </select>
+          <Select id="set-tz" value={tz} onChange={setTz} options={tzOptions.map((z) => ({ value: z, label: z }))} />
         </Field>
         <Field
           id="set-lang"
@@ -63,30 +58,13 @@ export function GeneralTab({ workspace, canOwn }: { workspace: Workspace; canOwn
           hint="Language used for memory search indexing."
           error={fe.memory_language}
         >
-          <select
-            id="set-lang"
-            className={inputClass}
-            value={lang}
-            onChange={(e) => setLang(e.target.value)}
-          >
-            {langOptions.map((l) => (
-              <option key={l} value={l}>
-                {l}
-              </option>
-            ))}
-          </select>
+          <Select id="set-lang" value={lang} onChange={setLang} options={langOptions.map((l) => ({ value: l, label: l }))} />
         </Field>
       </fieldset>
       {patch.error && Object.keys(fe).length === 0 ? (
-        <Notice tone="danger" role="alert">
-          {errorMessage(patch.error)}
-        </Notice>
+        <ErrorNotice error={patch.error} />
       ) : null}
-      {saved ? (
-        <Notice tone="accent" role="status">
-          Settings saved.
-        </Notice>
-      ) : null}
+      <SavedNotice show={saved}>Settings saved.</SavedNotice>
       {canOwn ? (
         <FormActions>
           <Button type="submit" size="lg" disabled={patch.isPending}>

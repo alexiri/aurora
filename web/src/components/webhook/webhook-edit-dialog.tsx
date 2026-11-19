@@ -6,8 +6,7 @@ import { ErrorState, Loading } from "@/components/states";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Form, FormActions } from "@/components/ui/form";
-import { Notice } from "@/components/ui/notice";
-import { errorMessage } from "@/lib/api/errors";
+import { ErrorNotice } from "@/components/ui/notice";
 import { useWebhookPut, useWebhookView, type WebhookConfig, type WebhookView } from "@/lib/api/webhook";
 import { configIssues, quickIssues, type Issue } from "@/lib/webhook/logic";
 
@@ -116,11 +115,7 @@ function EditForm({ view, connectionId, name, onClose }: { view: WebhookView; co
       ) : (
         <ExtrasStep mode="edit" config={config} onConfig={setConfig} extras={extras} onExtras={setExtras} issues={issues} problems={problems} signingWas={view.signing} effective={view.effective_rate} ceiling={ceiling} />
       )}
-      {error ? (
-        <Notice tone="danger" role="alert">
-          {errorMessage(error)}
-        </Notice>
-      ) : null}
+      <ErrorNotice error={error} />
       <FormActions>
         {step === 1 ? (
           <Button type="button" variant="ghost" onClick={() => setStep(0)}>

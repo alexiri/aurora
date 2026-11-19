@@ -3,10 +3,9 @@
 import { SettingsSectionForm, type SettingsGroup } from "@/components/admin/settings/settings-section-form";
 import { ErrorState, Loading } from "@/components/states";
 import { Button } from "@/components/ui/button";
-import { Notice } from "@/components/ui/notice";
+import { ErrorNotice, Notice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
 import { StatusDot } from "@/components/ui/status-dot";
-import { errorMessage } from "@/lib/api/errors";
 import { useSettingsSection, useTestEmail, type SettingValues } from "@/lib/api/settings";
 
 export const EMAIL_GROUPS: SettingsGroup[] = [
@@ -40,9 +39,7 @@ function TestEmail({ values, dirty }: { values: SettingValues; dirty: boolean })
         </span>
       </div>
       {test.isError ? (
-        <Notice tone="danger" role="alert">
-          {errorMessage(test.error)}
-        </Notice>
+        <ErrorNotice error={test.error} />
       ) : null}
       {test.data ? (
         <div role="status" aria-label="Test e-mail result" className="rounded-control border border-line p-3">

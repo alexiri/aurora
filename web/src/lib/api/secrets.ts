@@ -86,10 +86,6 @@ export function useSetSecretValue(scope: SecretScope, id: string) {
   });
 }
 
-export function useVerifySecret(scope: SecretScope, id: string) {
-  return useInvalidatingMutation(() => unwrap(api.POST("/v1/secrets/{id}/verify", { params: { path: { id } } })), secretKeys.list(scope));
-}
-
 export function useDeleteSecret(scope: SecretScope, id: string) {
   return useInvalidatingMutation(async () => {
     const { error, response } = await api.DELETE("/v1/secrets/{id}", { params: { path: { id } } });

@@ -6,8 +6,9 @@ import { useState } from "react";
 import { ErrorState, Loading } from "@/components/states";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
-import { Notice } from "@/components/ui/notice";
+import { ErrorNotice, Notice } from "@/components/ui/notice";
 import { Section } from "@/components/ui/section";
+import { useCopy } from "@/lib/use-copy";
 import { cn } from "@/lib/utils";
 import {
   agentSnippets,
@@ -16,7 +17,6 @@ import {
   useRegenerateToken,
 } from "@/lib/api/agents";
 import { expiryText, lastUsedText } from "@/lib/api/agent-tokens";
-import { errorMessage } from "@/lib/api/errors";
 import type { Agent } from "@/lib/api/queries";
 
 import { ByoSettings } from "./byo-settings";
@@ -24,22 +24,18 @@ import { AgentRevealDialog, type Revealed } from "./reveal";
 import { TokenBadges } from "./token-badges";
 
 function Snippet({ label, text }: { label: string; text: string }) {
-  const [copied, setCopied] = useState(false);
+  const { state, copy } = useCopy();
   return (
     <div className="space-y-2">
       <p className="text-sm font-medium text-ink">{label}</p>
       <pre className="overflow-auto rounded-control border border-line bg-subtle p-3 font-mono text-xs text-ink">{text}</pre>
       <div className="flex flex-wrap items-center gap-2">
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => void navigator.clipboard?.writeText(text).then(() => setCopied(true))}
-        >
+        <Button variant="outline" size="sm" onClick={() => copy(text)}>
           Copy {label}
         </Button>
-        {copied ? (
-          <span role="status" className="text-sm text-accent-ink">
-            Copied
+        {state !== "idle" ? (
+          <span role="status" className={state === "copied" ? "text-sm text-accent-ink" : "text-sm text-danger-ink"}>
+            {state === "copied" ? "Copied" : "Your browser blocked copying; select the text instead."}
           </span>
         ) : null}
       </div>
@@ -115,16 +111,10 @@ export function ConnectTab({ agent, wsId, canOwn = false }: { agent: Agent; wsId
           busy={regen.isPending}
           onConfirm={() => void regenerate()}
         >
-          {regen.error ? (
-            <Notice tone="danger" role="alert">
-              {errorMessage(regen.error)}
-            </Notice>
-          ) : null}
+          <ErrorNotice error={regen.error} />
         </ConfirmDialog>
         {regen.error && !confirming ? (
-          <Notice tone="danger" role="alert">
-            {errorMessage(regen.error)}
-          </Notice>
+          <ErrorNotice error={regen.error} />
         ) : null}
       </Section>
 
@@ -157,9 +147,7 @@ export function ConnectTab({ agent, wsId, canOwn = false }: { agent: Agent; wsId
 
       <Section id="ca" title="Gateway CA certificate" description="Trust this certificate so the proxy can inspect TLS traffic.">
         {ca.isError ? (
-          <Notice tone="danger" role="alert">
-            {errorMessage(ca.error)}
-          </Notice>
+          <ErrorNotice error={ca.error} />
         ) : (
           <div>
             <a

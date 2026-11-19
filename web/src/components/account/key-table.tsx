@@ -7,9 +7,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { DataTable, Td, Th } from "@/components/ui/data-table";
-import { Notice } from "@/components/ui/notice";
+import { ErrorNotice } from "@/components/ui/notice";
 import type { ApiKey } from "@/lib/api/account";
-import { errorMessage } from "@/lib/api/errors";
 import { fmtDate } from "@/lib/utils";
 
 export { fmtDate };
@@ -42,11 +41,7 @@ export function KeyTable({
   if (keys.length === 0) return <EmptyState title="No API keys" />;
   return (
     <div className="space-y-3">
-      {error ? (
-        <Notice tone="danger" role="alert">
-          {errorMessage(error)}
-        </Notice>
-      ) : null}
+      <ErrorNotice error={error} />
       <DataTable caption="API keys">
         <thead>
           <tr>
