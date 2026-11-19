@@ -119,7 +119,8 @@ for (const scheme of ["light", "dark"] as const) {
 
       const agentScreens: [string, (page: Page) => Promise<void>, FlowOptions][] = [
         ["agent tab: attach with one integration", async (page) => page.getByRole("heading", { name: "Attach this agent to Mattermost" }).waitFor(), { added: true }],
-        ["agent tab: no integration", async (page) => page.getByTestId("no-integration").waitFor(), { added: true, noIntegration: true }],
+        // (P5-POLISH-6, C6) No integration: the whole Channels tab is one empty state.
+        ["agent tab: no integration", async (page) => page.getByText(/isn't in any chat yet/).waitFor(), { added: true, noIntegration: true }],
         ["agent tab: next steps", async (page) => page.getByTestId("next-steps").waitFor(), { added: true, attached: true }],
         [
           "agent tab: add to a channel",

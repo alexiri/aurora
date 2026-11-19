@@ -209,19 +209,21 @@ describe("attach empty states", () => {
     expect(calls.find((c) => c.key === "POST /v1/agents/a1/presences")?.body).toEqual({ integration_id: "i1", mode: "shared" });
   });
 
-  it("no integration: an org admin gets the link to Channels", async () => {
+  // (P5-POLISH-6, C6) No chat integration and no presence: the whole tab is one empty state, and nothing else of the
+  // tab (Presences, bindings, reach, Show progress in chat) is shown.
+  it("no integration: the whole tab is one empty state", async () => {
     setup({}, [], []);
-    wrap(<AgentChannelsTab agentId="a1" orgId="o1" canOwn />);
-    const box = await screen.findByTestId("no-integration");
-    expect(box.textContent).toContain("no chat integration yet");
-    expect(await screen.findByRole("link", { name: "Connect a chat platform" })).toHaveAttribute("href", "/o/acme/chat-platforms");
+    wrap(<AgentChannelsTab agentId="a1" agentName="Daneel" orgId="o1" canOwn />);
+    expect(await screen.findByText("Daneel isn't in any chat yet")).toBeInTheDocument();
+    expect(screen.getByText(/Your organization hasn't connected a chat platform/)).toBeInTheDocument();
+    expect(screen.queryByLabelText("Show progress in chat")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Attach" })).toBeNull();
   });
 
-  it("no integration: a plain member only learns who can create one", async () => {
+  it("no integration: a plain member gets the same empty state and no link to create one", async () => {
     setup({ "GET /v1/orgs/o1": () => json(200, { id: "o1", slug: "acme", name: "Acme", external_id: null, app_posture: "open", settings: {}, my_role: "member", created_at: T }) }, [], []);
     wrap(<AgentChannelsTab agentId="a1" orgId="o1" canOwn />);
-    const box = await screen.findByTestId("no-integration");
-    expect(box.textContent).toContain("organization owner or admin");
+    expect(await screen.findByText("This agent isn't in any chat yet")).toBeInTheDocument();
     await waitFor(() => expect(screen.queryByRole("link", { name: "Connect a chat platform" })).toBeNull());
   });
 });
