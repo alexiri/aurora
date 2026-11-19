@@ -11,6 +11,7 @@ import { DataTable, Td } from "@/components/ui/data-table";
 import { Field, inputClass } from "@/components/ui/field";
 import { SecretInput } from "@/components/ui/secret-input";
 import { CheckboxField, FormActions } from "@/components/ui/form";
+import { LoadMore } from "@/components/ui/load-more";
 import { ErrorNotice, Notice } from "@/components/ui/notice";
 import { ItemList, Section } from "@/components/ui/section";
 import { Select } from "@/components/ui/select";
@@ -47,11 +48,7 @@ function Deliveries({ agentId, id }: { agentId: string; id: string }) {
           ))}
         </tbody>
       </DataTable>
-      {q.hasNextPage ? (
-        <Button variant="outline" disabled={q.isFetchingNextPage} onClick={() => void q.fetchNextPage()}>
-          Load more
-        </Button>
-      ) : null}
+      <LoadMore query={q} />
     </div>
   );
 }

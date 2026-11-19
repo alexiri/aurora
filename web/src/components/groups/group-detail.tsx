@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { DataTable, Td, Th } from "@/components/ui/data-table";
 import { Field, inputClass } from "@/components/ui/field";
+import { LoadMore } from "@/components/ui/load-more";
 import { ErrorNotice, Notice } from "@/components/ui/notice";
 import { matchesFilter, PickerFilter } from "@/components/ui/picker-filter";
 import { PageHeader } from "@/components/ui/page-header";
@@ -232,11 +233,7 @@ function Members({ g, orgId }: { g: Group; orgId: string }) {
             </tbody>
           </DataTable>
         )}
-        {members.hasNextPage ? (
-          <Button variant="outline" disabled={members.isFetchingNextPage} onClick={() => void members.fetchNextPage()}>
-            Load more
-          </Button>
-        ) : null}
+        <LoadMore query={members} />
         <RemoveMemberDialog g={g} orgId={orgId} target={target} onClose={() => setTarget(null)} />
       </div>
     </Section>

@@ -8,6 +8,7 @@ import { EmptyState, ErrorState, Loading } from "@/components/states";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DataTable, Td, Th } from "@/components/ui/data-table";
+import { LoadMore } from "@/components/ui/load-more";
 import { MoreNotShown } from "@/components/ui/more-not-shown";
 import { PageHeader } from "@/components/ui/page-header";
 import { Select } from "@/components/ui/select";
@@ -388,11 +389,7 @@ function ActionHistory({ wsId }: { wsId: string }) {
           </tbody>
         </DataTable>
       ) : null}
-      {q.hasNextPage ? (
-        <Button variant="outline" disabled={q.isFetchingNextPage} onClick={() => void q.fetchNextPage()}>
-          Load more
-        </Button>
-      ) : null}
+      <LoadMore query={q} />
     </div>
   );
 }
@@ -452,11 +449,7 @@ function HistoryTab({ wsId }: { wsId: string }) {
           </tbody>
         </DataTable>
       ) : null}
-      {q.hasNextPage ? (
-        <Button variant="outline" disabled={q.isFetchingNextPage} onClick={() => void q.fetchNextPage()}>
-          Load more
-        </Button>
-      ) : null}
+      <LoadMore query={q} />
     </div>
   );
 }

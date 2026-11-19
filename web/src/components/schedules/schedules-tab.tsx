@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { DataTable, Td, Th } from "@/components/ui/data-table";
 import { Field, inputClass } from "@/components/ui/field";
 import { CheckboxField, FormActions } from "@/components/ui/form";
+import { LoadMore } from "@/components/ui/load-more";
 import { ErrorNotice, Notice } from "@/components/ui/notice";
 import { ItemList, Section } from "@/components/ui/section";
 import { AnchorSwitch, OwnerLabel, ReassignPanel } from "@/components/automations/owner-controls";
@@ -50,11 +51,7 @@ function Runs({ agentId, id }: { agentId: string; id: string }) {
           ))}
         </tbody>
       </DataTable>
-      {q.hasNextPage ? (
-        <Button variant="outline" disabled={q.isFetchingNextPage} onClick={() => void q.fetchNextPage()}>
-          Load more
-        </Button>
-      ) : null}
+      <LoadMore query={q} />
     </div>
   );
 }

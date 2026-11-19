@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { DataTable, Td, Th } from "@/components/ui/data-table";
 import { PageHeader } from "@/components/ui/page-header";
 import { Field, inputClass } from "@/components/ui/field";
+import { LoadMore } from "@/components/ui/load-more";
 import { Select } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { useActivity } from "@/lib/api/approvals";
@@ -149,11 +150,7 @@ export function ActivityView({ wsId, base }: { wsId: string; base: string }) {
           </tbody>
         </DataTable>
       ) : null}
-      {q.hasNextPage ? (
-        <Button variant="outline" disabled={q.isFetchingNextPage} onClick={() => void q.fetchNextPage()}>
-          Load more
-        </Button>
-      ) : null}
+      <LoadMore query={q} />
     </div>
   );
 }

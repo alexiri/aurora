@@ -10,6 +10,7 @@ import { OffboardingDialog } from "@/components/automations/offboarding-dialog";
 import { IdpRoleBadge } from "@/components/identity/idp-role-badge";
 import { DataTable, Td, Th } from "@/components/ui/data-table";
 import { inputClass } from "@/components/ui/field";
+import { LoadMore } from "@/components/ui/load-more";
 import { ErrorNotice, Notice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
 import { Section } from "@/components/ui/section";
@@ -237,15 +238,7 @@ function Members({ orgId, viewer }: { orgId: string; viewer: OrgRole }) {
             </tbody>
         </DataTable>
       )}
-      {members.hasNextPage ? (
-        <Button
-          variant="outline"
-          disabled={members.isFetchingNextPage}
-          onClick={() => void members.fetchNextPage()}
-        >
-          Load more
-        </Button>
-      ) : null}
+      <LoadMore query={members} />
       <OffboardDialog
         orgId={orgId}
         target={target}

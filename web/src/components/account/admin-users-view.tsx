@@ -11,6 +11,7 @@ import { MoreIcon } from "@/components/ui/icons";
 import { Menu, MenuContent, MenuItem, MenuTrigger } from "@/components/ui/menu";
 import { DataTable, Td, Th } from "@/components/ui/data-table";
 import { inputClass } from "@/components/ui/field";
+import { LoadMore } from "@/components/ui/load-more";
 import { ErrorNotice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
 import { useAdminUsers, usePatchAdminUser, type AdminUser } from "@/lib/api/account";
@@ -173,11 +174,7 @@ export function AdminUsersView() {
           complete={q === "" && !users.hasNextPage}
         />
       ) : null}
-      {users.hasNextPage ? (
-        <Button variant="outline" disabled={users.isFetchingNextPage} onClick={() => void users.fetchNextPage()}>
-          Load more
-        </Button>
-      ) : null}
+      <LoadMore query={users} />
     </div>
   );
 }

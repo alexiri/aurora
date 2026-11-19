@@ -5,6 +5,7 @@ import { useState, type FormEvent } from "react";
 import { EmptyState, ErrorState, Loading } from "@/components/states";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { ConfirmButton } from "@/components/ui/confirm-button";
 import { Field, inputClass } from "@/components/ui/field";
 import { FormActions } from "@/components/ui/form";
 import { ErrorNotice, Notice } from "@/components/ui/notice";
@@ -145,7 +146,6 @@ function MemoryEditor({ agentId, memory, onDone }: { agentId: string; memory?: M
   const [title, setTitle] = useState(memory?.title ?? "");
   const [description, setDescription] = useState(memory?.description ?? "");
   const [content, setContent] = useState(memory?.content ?? "");
-  const [confirmDel, setConfirmDel] = useState(false);
   const [history, setHistory] = useState(false);
   const [err, setErr] = useState("");
   const over = content.length > MEMORY_CONTENT_MAX;
@@ -193,16 +193,7 @@ function MemoryEditor({ agentId, memory, onDone }: { agentId: string; memory?: M
               <Button type="button" variant="outline" onClick={() => setHistory((h) => !h)} aria-expanded={history}>
                 History
               </Button>
-              {confirmDel ? (
-                <>
-                  <Button type="button" variant="danger" onClick={() => void del.mutateAsync(memory.key).then(() => onDone(null))}>
-                    Confirm delete
-                  </Button>
-                  <Button type="button" variant="ghost" onClick={() => setConfirmDel(false)}>Cancel</Button>
-                </>
-              ) : (
-                <Button type="button" variant="danger" onClick={() => setConfirmDel(true)}>Delete</Button>
-              )}
+              <ConfirmButton type="button" cancelVariant="ghost" onConfirm={() => void del.mutateAsync(memory.key).then(() => onDone(null))} />
             </>
           ) : null}
         </FormActions>
