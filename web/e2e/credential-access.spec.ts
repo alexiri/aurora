@@ -97,7 +97,8 @@ for (const scheme of ["light", "dark"] as const) {
         await expect(form.getByRole("checkbox", { name: "Daneel can use this key" })).not.toBeChecked();
         await form.getByRole("checkbox", { name: "Giskard can use this key" }).check();
         await check(page, "add-ai-key", scheme, width);
-        await form.getByRole("button", { name: "Add key", exact: true }).click();
+        // (P5-POLISH-11, A1) The buttons are the dialog's footer row.
+        await page.getByRole("dialog", { name: "Add an AI key" }).getByRole("button", { name: "Add key", exact: true }).click();
         await expect(page.getByText("Saved Team key")).toBeVisible();
         expect(posted).toHaveLength(1);
         expect(posted[0].grant).toEqual({ agent_ids: [second.id] });

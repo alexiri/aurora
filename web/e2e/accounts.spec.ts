@@ -154,7 +154,9 @@ for (const scheme of ["light", "dark"] as const) {
         await form.getByLabel("Provider endpoint").selectOption("aigw");
         await form.getByLabel("API key", { exact: true }).fill("sk-not-a-real-key");
         await expect(form.getByRole("checkbox", { name: "Daneel can use this key" })).toBeChecked();
-        await form.getByRole("button", { name: "Add key", exact: true }).click();
+        // (P5-POLISH-11, A1) The buttons are the dialog's footer row, not inside the form.
+        await expect(form.getByRole("button", { name: "Add key", exact: true })).toHaveCount(0);
+        await page.getByRole("dialog", { name: "Add an AI key" }).getByRole("button", { name: "Add key", exact: true }).click();
         await expect(page.getByText("Saved Team key")).toBeVisible();
         // No "Give agents access" second step.
         await expect(page.getByRole("region", { name: "Give agents access" })).toHaveCount(0);
