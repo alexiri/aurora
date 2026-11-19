@@ -12704,6 +12704,101 @@
         ]
       }
     },
+    "/v1/agents/{agent}/sandbox/wake": {
+      "post": {
+        "tags": [
+          "agents"
+        ],
+        "summary": "(P5-APIGAP-1, D-399, C-1045) Wake a sleeping computer: the same wake demand a terminal open\nsets (`terminal_wake_at`; the due-work start arm starts it), no message needed. 200 when it is\nalready starting or running, 202 when a start was requested, 409 `sandbox_failed` (retry is\nthe way out), 423 `frozen`, 409 `not_hosted`, 429 past the shared wake budget.",
+        "operationId": "wakeAgentSandbox",
+        "parameters": [
+          {
+            "name": "agent",
+            "in": "path",
+            "description": "Agent id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxView"
+                }
+              }
+            }
+          },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "423": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
     "/v1/agents/{agent}/schedules": {
       "get": {
         "tags": [
@@ -60965,6 +61060,15 @@
               "string",
               "null"
             ]
+          },
+          "idle_stop_after_secs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "(P5-APIGAP-1, C-1046) The idle timeout after which this computer is stopped\n(`hosted.idle_stop_secs`); `null` when idle stop is off (0).",
+            "minimum": 0
           },
           "image": {
             "type": [

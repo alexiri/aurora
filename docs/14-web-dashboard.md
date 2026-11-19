@@ -436,6 +436,11 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
   tab); on a failed start it reads "Sandbox failed" with the sanitised reason
   (message and code) as the pill's tooltip, and the Computer tab holds the
   full start attempt plus **Retry now** (FIX-029, D-160, C-615).
+  (P5-APIGAP-1, D-399, C-1045/C-1046) The Computer tab's top card for an asleep
+  computer has **Wake it now** (one button, pending until the status says
+  starting or running; errors through the shared notice) and says "Sleeps after
+  n minutes of quiet" in words from `SandboxView.idle_stop_after_secs`, nothing
+  when it is null.
 - **Agent page (phase 5)** (P5-AGENT-2, D-200, D-201; design: the "Agent page
   redesign" canvas, boards "Chosen · Rail expanded", "Chosen · Rail collapsed"
   and "A · Phone"; its "New conversation" button is not part of the design).

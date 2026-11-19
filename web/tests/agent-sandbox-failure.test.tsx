@@ -213,6 +213,47 @@ describe("Computer tab start log and retry (FIX-029)", () => {
     expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
   });
 
+  it("says when the computer sleeps, in words, and nothing when idle stop is off (P5-APIGAP-1, C-1046)", async () => {
+    renderTab({ state: "running", idle_stop_after_secs: 1800 });
+    expect((await screen.findByRole("region", { name: "Computer" })).textContent).toContain("Sleeps after 30 minutes of quiet.");
+    cleanup();
+    renderTab({ state: "stopped", idle_stop_after_secs: 3600 });
+    expect((await screen.findByRole("region", { name: "Computer" })).textContent).toContain("Sleeps after 1 hour of quiet.");
+    cleanup();
+    renderTab({ state: "stopped", idle_stop_after_secs: null });
+    expect((await screen.findByRole("region", { name: "Computer" })).textContent).not.toContain("Sleeps after");
+  });
+
+  it("Wake it now posts the wake, stays pending until the status says starting, and is absent when awake or frozen (C-1045)", async () => {
+    const calls: string[] = [];
+    const base = routes({ state: "stopped" });
+    mockFetch({
+      ...base,
+      "POST /v1/agents/a1/sandbox/wake": async () => {
+        calls.push("wake");
+        // 202: the start is requested, the view still says asleep until the runner claims it.
+        return base["GET /v1/agents/a1/sandbox"]();
+      },
+    });
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <ComputerTab agentId="a1" />
+      </QueryClientProvider>,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Wake it now" }));
+    await waitFor(() => expect(calls).toEqual(["wake"]));
+    const pending = await screen.findByRole("button", { name: "Waking…" });
+    expect((pending as HTMLButtonElement).disabled).toBe(true);
+    cleanup();
+    renderTab({ state: "running" });
+    await screen.findByTestId("computer-state");
+    expect(screen.queryByRole("button", { name: "Wake it now" })).toBeNull();
+    cleanup();
+    renderTab({ state: "stopped" }, true);
+    await screen.findByTestId("computer-state");
+    expect(screen.queryByRole("button", { name: "Wake it now" })).toBeNull();
+  });
+
   it("keeps the engine's details collapsed and says which pages are not set up, and who can turn them on", async () => {
     renderTab({ state: "stopped" });
     const details = (await screen.findByTestId("technical-details")) as HTMLDetailsElement;

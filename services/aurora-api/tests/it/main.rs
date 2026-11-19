@@ -101,6 +101,7 @@ mod previews;
 mod runner_plane;
 mod runner_rig;
 mod sandbox_env;
+mod sandbox_wake;
 mod schedules;
 mod scim_auth;
 mod scim_common;
