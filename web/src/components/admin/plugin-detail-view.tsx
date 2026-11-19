@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useState, type ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -22,14 +23,13 @@ import {
 } from "@/lib/api/plugins";
 
 import { AgentGuideSection, packageHasGuide } from "./agent-guide-section";
-import { ViolationList, statusTone } from "./plugins-view";
+import { ViolationList, packageName, statusTone } from "./plugins-view";
 
-const SECTIONS = ["hooks", "egress", "context", "claims"] as const;
 // "impact" joins the mandatory review of a pending major upgrade (RFE-022, 09 §10).
 // "conversions" joins it when the version converts agent grants (P4-GRANTS, D-123, 09 §10).
 // "guide" joins it when the package ships agent guide text (P5-GUIDE-3, 24 §9): agents read it, so approving
 // means having seen it; it is one more section to expand, not a second confirmation.
-type Section = (typeof SECTIONS)[number] | "impact" | "conversions" | "guide";
+type Section = "hooks" | "egress" | "context" | "claims" | "impact" | "conversions" | "guide";
 
 // Why a version waits for an instance admin although it may look like a routine upgrade (FIX-107).
 const REASON_TEXT: Record<string, string> = {
@@ -45,6 +45,17 @@ const REASON_TEXT: Record<string, string> = {
   identity_mismatch: "The package is not the id and version the addon source's manifest lists.",
   package_id_taken: "This package id already belongs to another source or publisher on this instance.",
 };
+
+/** A reason code as words: "first_install" → "First install". */
+export function reasonLabel(code: string): string {
+  const words = code.replace(/_/g, " ").trim();
+  return words ? words.charAt(0).toUpperCase() + words.slice(1) : code;
+}
+
+/** A host as the manifest writes it, with the `{instance}` placeholder as words. */
+export function hostText(host: string): string {
+  return host.replace(/\{instance\}/g, "your server's address");
+}
 
 function reconnectLine(n: number): string {
   return `${n} ${n === 1 ? "connection" : "connections"} will need reconnecting`;
@@ -94,36 +105,26 @@ const none = <p className="text-muted">None.</p>;
 export function PluginReview({ plugin }: { plugin: PluginPackage }) {
   const act = usePluginAction(plugin.id);
   const uninstall = useUninstallPlugin(plugin.id);
-  const [opened, setOpened] = useState<Set<Section>>(new Set());
+  // (P5-POLISH-10, E5) Every section is open at first; Approve does not wait for the admin to open them.
+  const [closed, setClosed] = useState<Set<Section>>(new Set());
+  const opened = { has: (s: Section) => !closed.has(s) };
+  const router = useRouter();
   const [reason, setReason] = useState("");
   const [rejecting, setRejecting] = useState(false);
   const [liveCount, setLiveCount] = useState<number | null>(null);
   const [uninstalled, setUninstalled] = useState(false);
 
-  const toggle = (s: Section) =>
-    setOpened((prev) => {
+  const onToggle = (s: Section) =>
+    setClosed((prev) => {
       const n = new Set(prev);
       if (n.has(s)) n.delete(s);
       else n.add(s);
       return n;
     });
-  // Gate on "has ever been expanded" so collapsing again does not re-lock.
-  const [seen, setSeen] = useState<Set<Section>>(new Set());
-  const onToggle = (s: Section) => {
-    setSeen((p) => new Set(p).add(s));
-    toggle(s);
-  };
   const impact = plugin.impact ?? null;
   const majorImpact = impact !== null && (impact.major_upgrade || impact.connections_needing_reauth > 0);
   const converting = impact !== null && (impact.grants_to_convert ?? 0) > 0;
   const hasGuide = packageHasGuide(plugin);
-  const required: Section[] = [
-    ...SECTIONS,
-    ...(majorImpact ? (["impact"] as const) : []),
-    ...(converting ? (["conversions"] as const) : []),
-    ...(hasGuide ? (["guide"] as const) : []),
-  ];
-  const allSeen = required.every((s) => seen.has(s));
 
   const doUninstall = (force: boolean) =>
     uninstall.mutate(force, {
@@ -148,6 +149,7 @@ export function PluginReview({ plugin }: { plugin: PluginPackage }) {
   }
 
   const pending = plugin.status === "pending_approval";
+  const appName = packageName(plugin);
   const hooks = plugin.permissions.hooks ?? [];
   const context = plugin.permissions.context ?? [];
   const egress = Object.entries(plugin.permissions.egress ?? {});
@@ -160,10 +162,10 @@ export function PluginReview({ plugin }: { plugin: PluginPackage }) {
       <PageHeader
         title={
           <>
-            {plugin.package_id} <span className="font-mono text-xl font-normal text-muted">{plugin.version}</span>
+            {appName} <span className="font-mono text-xl font-normal text-muted">{plugin.version}</span>
           </>
         }
-        breadcrumb={[{ label: "Apps", href: adminRoutes.apps("apps") },{ label: plugin.package_id }]}
+        breadcrumb={[{ label: "Apps", href: adminRoutes.apps("apps") }, { label: appName }]}
         className="mb-6"
       />
       <Card>
@@ -171,11 +173,13 @@ export function PluginReview({ plugin }: { plugin: PluginPackage }) {
           <dt className="text-muted">Status</dt>
           <dd>
             <Badge tone={statusTone(plugin.status)}>{plugin.status.replace("_", " ")}</Badge>
-            {plugin.status_reason ? <span className="ml-2 text-ink-2">({plugin.status_reason})</span> : null}
+            {plugin.status_reason ? <span className="ml-2 text-ink-2">{reasonLabel(plugin.status_reason)}</span> : null}
             {plugin.status_reason && REASON_TEXT[plugin.status_reason] ? (
               <p className="mt-1 text-ink-2">{REASON_TEXT[plugin.status_reason]}</p>
             ) : null}
           </dd>
+          <dt className="text-muted">Package</dt>
+          <dd className="break-all font-mono text-xs text-ink-2">{plugin.package_id}</dd>
           <dt className="text-muted">Publisher</dt>
           <dd className="text-ink">{plugin.publisher}</dd>
           <dt className="text-muted">Signer</dt>
@@ -307,7 +311,7 @@ export function PluginReview({ plugin }: { plugin: PluginPackage }) {
             <ul className="space-y-1">
               {egress.map(([hook, hosts]) => (
                 <li key={hook}>
-                  <strong>{hook}</strong>: {hosts.join(", ") || "no hosts"}
+                  <strong>{hook}</strong>: {hosts.map(hostText).join(", ") || "no hosts"}
                 </li>
               ))}
             </ul>
@@ -331,7 +335,7 @@ export function PluginReview({ plugin }: { plugin: PluginPackage }) {
             <ul className="list-disc pl-5">
               {plugin.host_claims.map((c) => (
                 <li key={c.claim_key}>
-                  {c.host}
+                  {hostText(c.host)}
                   {c.path_prefix ?? ""} ({c.app_id})
                 </li>
               ))}
@@ -356,16 +360,22 @@ export function PluginReview({ plugin }: { plugin: PluginPackage }) {
           <>
             <Button
               variant="approve"
-              disabled={!allSeen || act.isPending}
-              onClick={() => act.mutate({ action: "approve" })}
+              disabled={act.isPending}
+              onClick={() =>
+                act.mutate(
+                  { action: "approve" },
+                  {
+                    // The toast rides on the list's address; an approval that marks connections for reconnecting stays
+                    // here, where its notice says what happens next.
+                    onSuccess: (res) => {
+                      if ((res?.connections_reauth ?? 0) === 0) router.push(adminRoutes.apps("apps", { approved: appName }));
+                    },
+                  },
+                )
+              }
             >
               Approve
             </Button>
-            {!allSeen ? (
-              <span className="self-center text-xs text-muted">
-                Expand every permissions section{hasGuide ? " and the agent guide" : ""} to enable approval.
-              </span>
-            ) : null}
             <Button variant="danger" disabled={act.isPending} onClick={() => setRejecting(true)}>
               Reject
             </Button>

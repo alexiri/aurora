@@ -124,14 +124,10 @@ for (const width of [1280, 390]) {
 
 test.describe("the review", () => {
   test.use({ viewport: { width: 1280, height: 900 } });
-  test("approval waits for the agent guide section, with no second confirmation", async ({ page }) => {
+  test("the agent guide section is open and approval is enabled, with no second confirmation", async ({ page }) => {
     await open(page, "light");
     const approve = page.getByRole("button", { name: "Approve" });
-    for (const name of [/^▸ Hooks/, /Egress per hook/, /Context variables/, /Host claims/]) {
-      await page.getByRole("button", { name }).click();
-    }
-    await expect(approve).toBeDisabled();
-    await page.getByRole("button", { name: /What agents can read/ }).click();
+    await expect(page.getByRole("button", { name: /What agents can read/ })).toHaveAttribute("aria-expanded", "true");
     await expect(approve).toBeEnabled();
   });
 });
