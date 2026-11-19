@@ -98,7 +98,7 @@ export function HostTokens() {
         </tbody>
       </DataTable>
       {q.data.items.some((t) => t.state === "refused") ? (
-        <Notice tone="pending" className="mt-3">
+        <Notice tone="neutral" className="mt-3">
           The shared bootstrap token is refused because a host token exists. Hosts still using it keep their running connectors
           until they are restarted with their own token.
         </Notice>

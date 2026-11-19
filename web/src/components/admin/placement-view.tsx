@@ -6,8 +6,9 @@ import { useEffect, useState, type FormEvent } from "react";
 import { ErrorState, Loading } from "@/components/states";
 import { Button } from "@/components/ui/button";
 import { DataTable, Td, Th } from "@/components/ui/data-table";
-import { Field, inputClass } from "@/components/ui/field";
-import { CheckboxField, FormActions, FormSection } from "@/components/ui/form";
+import { inputClass } from "@/components/ui/field";
+import { CheckboxField, FormActions } from "@/components/ui/form";
+import { SettingField, SettingsCard, settingControlId } from "@/components/ui/setting-field";
 import { Notice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
 import { Segmented } from "@/components/ui/segmented";
@@ -160,8 +161,8 @@ function PlacementForm({ saved, embedded, onSaved }: { saved: Placement; embedde
         </Notice>
       ) : null}
 
-      <form onSubmit={submit} noValidate className="max-w-3xl space-y-5">
-        <FormSection
+      <form onSubmit={submit} noValidate className="space-y-5">
+        <SettingsCard
           title="Where new users land"
           description={
             <>
@@ -170,15 +171,17 @@ function PlacementForm({ saved, embedded, onSaved }: { saved: Placement; embedde
             </>
           }
         >
-          <Segmented label="Placement mode" value={mode} options={MODES} onChange={setMode} className="flex-wrap" />
-          <p className="text-sm text-ink-2">{MODE_HELP[mode]}</p>
-        </FormSection>
+          <div className="space-y-2 py-4">
+            <Segmented label="Placement mode" value={mode} options={MODES} onChange={setMode} className="flex-wrap" />
+            <p className="text-sm text-ink-2">{MODE_HELP[mode]}</p>
+          </div>
+        </SettingsCard>
 
         {mode === "shared_org" ? (
           <>
-            <FormSection title="Default organization">
-              <Field id="pl-org" label="Organization" error={errs.default_org_id}>
-                <select id="pl-org" className={inputClass} value={orgChoice} onChange={(e) => setOrgChoice(e.target.value)}>
+            <SettingsCard title="Default organization">
+              <SettingField id="pl-org" label="Organization" source="default" error={errs.default_org_id}>
+                <select id={settingControlId("pl-org")} className={inputClass} value={orgChoice} onChange={(e) => setOrgChoice(e.target.value)}>
                   <option value="" disabled>
                     Choose an organization
                   </option>
@@ -189,36 +192,36 @@ function PlacementForm({ saved, embedded, onSaved }: { saved: Placement; embedde
                   ))}
                   <option value={NEW_ORG}>Create a new organization…</option>
                 </select>
-              </Field>
+              </SettingField>
               {creating ? (
-                <Field id="pl-org-name" label="New organization name" hint="You become its owner." error={errs.name}>
+                <SettingField id="pl-org-name" label="New organization name" hint="You become its owner." source="default" error={errs.name}>
                   <input
-                    id="pl-org-name"
+                    id={settingControlId("pl-org-name")}
                     className={inputClass}
                     value={newOrgName}
                     maxLength={80}
                     autoComplete="off"
                     onChange={(e) => setNewOrgName(e.target.value)}
                   />
-                </Field>
+                </SettingField>
               ) : null}
-              <Field id="pl-org-role" label="New users join as">
-                <Select id="pl-org-role" value={orgRole} onChange={(v) => setOrgRole(v as OrgRole)} options={[{ value: "member", label: "Member" }, { value: "admin", label: "Admin" }]} />
-              </Field>
-            </FormSection>
+              <SettingField id="pl-org-role" label="New users join as" source="default">
+                <Select id={settingControlId("pl-org-role")} value={orgRole} onChange={(v) => setOrgRole(v as OrgRole)} options={[{ value: "member", label: "Member" }, { value: "admin", label: "Admin" }]} />
+              </SettingField>
+            </SettingsCard>
 
-            <FormSection
+            <SettingsCard
               title="Shared workspaces"
               description="Workspaces every new user joins. Personal workspaces are never listed here."
             >
               {creating ? (
-                <p className="text-sm text-ink-2">Save once to create the organization, then pick its workspaces.</p>
+                <p className="py-4 text-sm text-ink-2">Save once to create the organization, then pick its workspaces.</p>
               ) : choices.isPending && orgId ? (
                 <Loading />
               ) : (choices.data?.workspaces ?? []).length === 0 ? (
-                <p className="text-sm text-ink-2">This organization has no workspaces to share.</p>
+                <p className="py-4 text-sm text-ink-2">This organization has no workspaces to share.</p>
               ) : (
-                <ul className="space-y-3">
+                <ul className="space-y-3 py-4">
                   {(choices.data?.workspaces ?? []).map((w) => (
                     <li key={w.id} className="flex flex-wrap items-center justify-between gap-2">
                       <CheckboxField
@@ -250,26 +253,29 @@ function PlacementForm({ saved, embedded, onSaved }: { saved: Placement; embedde
                   ))}
                 </ul>
               )}
-            </FormSection>
+            </SettingsCard>
 
-            <FormSection
+            <SettingsCard
               title="Personal workspace"
               description="Each user gets a workspace of their own, with the default agent in it, created at their first sign-in."
             >
-              <CheckboxField id="pl-personal" label="Give every user a workspace of their own" checked={personal} onChange={setPersonal} />
+              <div className="py-4">
+                <CheckboxField id="pl-personal" label="Give every user a workspace of their own" checked={personal} onChange={setPersonal} />
+              </div>
               {personal ? (
                 <>
-                  <Field id="pl-personal-role" label="Their role in it">
-                    <Select id="pl-personal-role" value={personalRole} onChange={(v) => setPersonalRole(v as PersonalRole)} options={[{ value: "owner", label: "Owner" }, { value: "approver", label: "Approver" }, { value: "member", label: "Member" }]} />
-                  </Field>
-                  <Field
+                  <SettingField id="pl-personal-role" label="Their role in it" source="default">
+                    <Select id={settingControlId("pl-personal-role")} value={personalRole} onChange={(v) => setPersonalRole(v as PersonalRole)} options={[{ value: "owner", label: "Owner" }, { value: "approver", label: "Approver" }, { value: "member", label: "Member" }]} />
+                  </SettingField>
+                  <SettingField
                     id="pl-template"
                     label="Workspace address"
+                    source="default"
                     hint="The name people see is the person's own name. The address uses: {sub} {preferred_username} {name} {email_local} {given_name} {family_name} {claim:path}. Separate fallbacks with |."
                     error={errs["personal_workspace/name_template"]}
                   >
                     <input
-                      id="pl-template"
+                      id={settingControlId("pl-template")}
                       className={`${inputClass} font-mono`}
                       value={template}
                       maxLength={200}
@@ -277,18 +283,18 @@ function PlacementForm({ saved, embedded, onSaved }: { saved: Placement; embedde
                       spellCheck={false}
                       onChange={(e) => setTemplate(e.target.value)}
                     />
-                  </Field>
-                  <Field id="pl-sample" label="Try it with a name" hint="Leave empty to use your own profile.">
+                  </SettingField>
+                  <SettingField id="pl-sample" label="Try it with a name" hint="Leave empty to use your own profile." source="default">
                     <input
-                      id="pl-sample"
+                      id={settingControlId("pl-sample")}
                       className={inputClass}
                       value={sample}
                       maxLength={200}
                       autoComplete="off"
                       onChange={(e) => setSample(e.target.value)}
                     />
-                  </Field>
-                  <p role="status" aria-live="polite" className="text-sm text-ink-2" data-testid="placement-preview">
+                  </SettingField>
+                  <p role="status" aria-live="polite" className="py-4 text-sm text-ink-2" data-testid="placement-preview">
                     {preview.isError ? (
                       <span className="text-danger-ink">{errorMessage(preview.error)}</span>
                     ) : preview.data ? (
@@ -307,19 +313,19 @@ function PlacementForm({ saved, embedded, onSaved }: { saved: Placement; embedde
                   </p>
                 </>
               ) : null}
-            </FormSection>
+            </SettingsCard>
 
             {personal ? (
-              <FormSection
+              <SettingsCard
                 title="Starter grants"
                 description="Accounts of the default organization that every new personal workspace's agent receives, so it works on day one."
               >
                 {creating ? (
-                  <p className="text-sm text-ink-2">Save once to create the organization, then pick its accounts.</p>
+                  <p className="py-4 text-sm text-ink-2">Save once to create the organization, then pick its accounts.</p>
                 ) : llm.length + otherSecrets.length + connections.length === 0 ? (
-                  <p className="text-sm text-ink-2">The organization has no accounts of its own yet.</p>
+                  <p className="py-4 text-sm text-ink-2">The organization has no accounts of its own yet.</p>
                 ) : (
-                  <>
+                  <div className="space-y-4 py-4">
                     {[
                       { title: "AI keys", items: llm.map((s) => ({ k: `secret:${s.id}`, name: s.name, hint: "AI key" })) },
                       { title: "Websites", items: otherSecrets.map((s) => ({ k: `secret:${s.id}`, name: s.name, hint: s.kind })) },
@@ -341,9 +347,9 @@ function PlacementForm({ saved, embedded, onSaved }: { saved: Placement; embedde
                           ))}
                         </div>
                       ))}
-                  </>
+                  </div>
                 )}
-              </FormSection>
+              </SettingsCard>
             ) : null}
           </>
         ) : null}

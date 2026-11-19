@@ -5,6 +5,7 @@ import { useQueries } from "@tanstack/react-query";
 
 import { Notice } from "@/components/ui/notice";
 import { buttonVariants } from "@/components/ui/button";
+import { AppIcon } from "@/components/ui/app-icon";
 import { Card } from "@/components/ui/card";
 import { api } from "@/lib/api/client";
 import { appKeys, useApps, type AppSetup } from "@/lib/api/apps";
@@ -51,8 +52,19 @@ export function gapFromSetup(s: AppSetup, pkg?: string): SignInGap | null {
   return { appId: s.app_id, name: s.name, pkg, clientKey: blocked.client_key ?? undefined, tokenOnly: works };
 }
 
-function initials(name: string) {
-  return name.trim().slice(0, 2);
+/** Apps of one package share one sign-in (Google Calendar, Drive, Gmail): one group, in the catalogue's order. */
+export function groupGaps(gaps: SignInGap[]): SignInGap[][] {
+  const groups = new Map<string, SignInGap[]>();
+  for (const g of gaps) {
+    const key = g.pkg ?? g.appId;
+    groups.set(key, [...(groups.get(key) ?? []), g]);
+  }
+  return [...groups.values()];
+}
+
+/** "A", "A and B", "A, B and C". */
+function joinNames(names: string[]): string {
+  return names.length < 2 ? (names[0] ?? "") : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
 }
 
 type Where = { level: "admin"; orgSlug?: string } | { level: "org"; orgSlug: string };
@@ -66,6 +78,7 @@ type Where = { level: "admin"; orgSlug?: string } | { level: "org"; orgSlug: str
 export function SignInGaps({ gaps, where }: { gaps: SignInGap[]; where: Where }) {
   const blocked = gaps.filter((g) => !g.tokenOnly);
   const tokenOnly = gaps.filter((g) => g.tokenOnly);
+  const groups = groupGaps(blocked);
   if (gaps.length === 0) return null;
   const register = (g: SignInGap) => {
     const q = { ...(g.pkg ? { package: g.pkg } : {}), ...(g.clientKey ? { client_key: g.clientKey } : {}) };
@@ -80,25 +93,30 @@ export function SignInGaps({ gaps, where }: { gaps: SignInGap[]; where: Where })
       {blocked.length > 0 ? (
         <Card className="divide-y divide-line p-0">
           <ul aria-label="Apps people can't sign in to yet" className="divide-y divide-line">
-            {blocked.map((g) => (
-              <li key={g.appId} data-app={g.appId} className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3 text-sm">
-                <span aria-hidden="true" className="inline-flex size-9 shrink-0 items-center justify-center rounded-control bg-subtle text-xs font-bold text-ink">
-                  {initials(g.name)}
-                </span>
-                <div className="min-w-0 flex-1">
-                  <p className="font-semibold text-ink">People can&apos;t sign in to {g.name} yet</p>
-                  <p className="text-ink-2">{g.name} has no other way to connect. Register an OAuth client so people can sign in.</p>
-                  {setupPage(g) ? (
-                    <Link href={setupPage(g)!} className="text-sm font-medium text-ink underline underline-offset-2">
-                      How to set up {g.name}
-                    </Link>
-                  ) : null}
-                </div>
-                <Link href={register(g)} className={cn(buttonVariants({ size: "sm" }), "text-on-primary!")}>
-                  Register an OAuth client
-                </Link>
-              </li>
-            ))}
+            {groups.map((group) => {
+              const g = group[0]!;
+              const names = joinNames(group.map((x) => x.name));
+              return (
+                <li key={g.pkg ?? g.appId} data-app={g.appId} data-apps={group.map((x) => x.appId).join(" ")} className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3 text-sm">
+                  <AppIcon appId={g.appId} name={g.name} size={32} />
+                  <div className="min-w-0 flex-1">
+                    <p className="font-semibold text-ink">People can&apos;t sign in to {names} yet</p>
+                    <p className="text-ink-2">
+                      {group.length === 1 ? `${g.name} has no other way to connect.` : "They share one sign-in and have no other way to connect."} Register an OAuth client so
+                      people can sign in.
+                    </p>
+                    {group.length === 1 && setupPage(g) ? (
+                      <Link href={setupPage(g)!} className="text-sm font-medium text-ink underline underline-offset-2">
+                        How to set up {g.name}
+                      </Link>
+                    ) : null}
+                  </div>
+                  <Link href={register(g)} className={cn(buttonVariants({ size: "sm" }), "text-on-primary!")}>
+                    Register an OAuth client
+                  </Link>
+                </li>
+              );
+            })}
           </ul>
         </Card>
       ) : null}

@@ -194,3 +194,10 @@ All paths are under `web/src/`.
 
 Sonnet (`nextjs-developer`). Shared primitives with 41 callers and a CSP fix that needs care; the
 changes are small but must be checked everywhere they show.
+
+## Review fixes (P5-POLISH-11 pass 1, lane `p5-polish-c`, 2026-11-19)
+
+- **Close's focus ring (#1): done.** `DialogContent` handles `onOpenAutoFocus` itself: it focuses the first enabled
+  input, textarea or select of the body, else the dialog; Close is no longer the autofocus target. A caller's own
+  `onOpenAutoFocus` still runs first and wins by `preventDefault()`. Test: `tests/polish-11-review-fixes.test.tsx`
+  (field focused, Close not; no field → the dialog).
