@@ -3,8 +3,11 @@
 import { useState } from "react";
 
 import { EmptyState, ErrorState, Loading } from "@/components/states";
-import { Badge } from "@/components/ui/badge";
+import { Avatar } from "@/components/agent-avatar";
 import { Button } from "@/components/ui/button";
+import { Menu, MenuContent, MenuItem, MenuTrigger } from "@/components/ui/menu";
+import { useMe } from "@/lib/api/queries";
+import { sourceText } from "@/lib/api/groups";
 import { DataTable, Td, Th } from "@/components/ui/data-table";
 import { Field, inputClass } from "@/components/ui/field";
 import { IdpRoleBadge } from "@/components/identity/idp-role-badge";
@@ -28,6 +31,8 @@ import { errorMessage } from "@/lib/api/errors";
 type Role = "owner" | "approver" | "member";
 
 /** One-line explanation of each role (phase 2, RFE-012). */
+const ROLE_LABEL: Record<Role, string> = { owner: "Owner", approver: "Approver", member: "Member" };
+
 export const ROLE_HELP: Record<Role, string> = {
   owner: "Owner: manages the workspace, its access and settings, and can decide approvals.",
   approver: "Approver: chats with agents and can decide approvals.",
@@ -115,8 +120,14 @@ function Row({
   canOwn,
   candidates,
   onError,
+  mine,
+  lastOwner,
 }: {
   b: AccessBinding;
+  /** This row is the viewer's own: no menu and no role change. */
+  mine: boolean;
+  /** The only direct owner: the roles below Owner are not offered. */
+  lastOwner: boolean;
   wsId: string;
   canOwn: boolean;
   candidates: { id: string; label: string }[];
@@ -130,23 +141,28 @@ function Row({
   return (
     <tr>
       <Td>
-        <div className="font-medium">{b.display_name}</div>
-        <div className="text-xs text-muted">{b.email}</div>
+        <div className="flex items-center gap-3">
+          <Avatar name={b.display_name || b.email} tintKey={b.user_id} size={32} />
+          <div className="min-w-0">
+            <div className="font-medium">
+              {b.display_name}
+              {mine ? <span className="ml-1 font-normal text-muted">(you)</span> : null}
+            </div>
+            <div className="text-xs text-muted">{b.email}</div>
+          </div>
+        </div>
       </Td>
       <Td>
         {b.implicit ? (
           <span>
-            owner{" "}
-            <Badge title="Organization owner or admin" className="normal-case tracking-normal">
-              Implicit (org)
-            </Badge>
+            Owner <span className="text-xs text-muted">(organization)</span>
           </span>
         ) : b.idp_value ? (
           <span className="flex flex-wrap items-center gap-1.5">
-            {b.role}
+            {ROLE_LABEL[b.role as Role] ?? b.role}
             <IdpRoleBadge value={b.idp_value} />
           </span>
-        ) : canOwn ? (
+        ) : canOwn && !mine ? (
           <select
             aria-label={`Role for ${b.email}`}
             className={cn(inputClass, "w-36")}
@@ -156,25 +172,30 @@ function Row({
               put.mutate({ user: b.user_id, role: e.target.value as Role }, { onError })
             }
           >
-            <option value="member">member</option>
-            <option value="approver">approver</option>
-            <option value="owner">owner</option>
+            {/* The last owner's role cannot be lowered (the server refuses): the option is not offered. */}
+            {lastOwner ? null : <option value="member">Member</option>}
+            {lastOwner ? null : <option value="approver">Approver</option>}
+            <option value="owner">Owner</option>
           </select>
         ) : (
-          b.role
+          ROLE_LABEL[b.role as Role] ?? b.role
         )}
       </Td>
       <Td className="text-right">
-        {canOwn && !b.implicit && !b.idp_value ? (
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={busy}
-            aria-label={`Remove ${b.email}`}
-            onClick={() => setConfirm(true)}
-          >
-            Remove
-          </Button>
+        {/* (P5-POLISH-7, D6) A … menu; never on your own row, and not for access that comes from the organization or the IdP. */}
+        {canOwn && !b.implicit && !b.idp_value && !mine ? (
+          <Menu>
+            <MenuTrigger asChild>
+              <Button variant="outline" size="sm" disabled={busy} aria-label={`More for ${b.display_name || b.email}`}>
+                <span aria-hidden="true">…</span>
+              </Button>
+            </MenuTrigger>
+            <MenuContent align="end">
+              <MenuItem className="text-danger-ink" onSelect={() => setConfirm(true)} aria-label={`Remove ${b.email}`}>
+                Remove from workspace…
+              </MenuItem>
+            </MenuContent>
+          </Menu>
         ) : null}
         <OffboardingDialog
           open={confirm}
@@ -207,7 +228,10 @@ export function AccessTab({
   orgId,
   canOwn,
   people,
+  personal = false,
 }: {
+  /** A personal workspace has no Groups. */
+  personal?: boolean;
   wsId: string;
   orgId: string;
   canOwn: boolean;
@@ -215,11 +239,14 @@ export function AccessTab({
   people?: { workspacePath: string; initiallyOpen: boolean };
 }) {
   const access = useAccess(wsId);
+  const meId = useMe().data?.user.id;
   const [err, setErr] = useState<unknown>(null);
   if (access.isPending) return <Loading />;
   if (access.isError) return <ErrorState error={access.error} onRetry={() => access.refetch()} />;
   const items = access.data.items;
   const bound = new Set(items.map((b) => b.user_id));
+  const inherited = (access.data.derived_members?.items ?? []).filter((d) => !bound.has(d.user.id));
+  const directOwners = items.filter((b) => b.role === "owner" && !b.implicit).length;
   return (
     <div className="space-y-6">
       {!canOwn ? <Notice role="status">Only workspace owners can change who has access.</Notice> : null}
@@ -234,17 +261,12 @@ export function AccessTab({
           />
         </div>
       ) : null}
-      <ul aria-label="Roles" className="space-y-0.5 text-sm text-ink-2">
-        {(Object.keys(ROLE_HELP) as Role[]).map((r) => (
-          <li key={r}>{ROLE_HELP[r]}</li>
-        ))}
-      </ul>
       {err ? (
         <Notice tone="danger" role="alert">
           {errorMessage(err)}
         </Notice>
       ) : null}
-      {items.length === 0 ? (
+      {items.length === 0 && inherited.length === 0 ? (
         <EmptyState title="No one has access yet" />
       ) : (
         <DataTable caption="People with access to this workspace">
@@ -262,6 +284,8 @@ export function AccessTab({
               <Row
                 key={b.user_id}
                 b={b}
+                mine={b.user_id === meId}
+                lastOwner={b.role === "owner" && !b.implicit && directOwners === 1}
                 wsId={wsId}
                 canOwn={canOwn}
                 candidates={items
@@ -270,12 +294,41 @@ export function AccessTab({
                 onError={setErr}
               />
             ))}
+            {/* (P5-POLISH-7, D6) Access through a group or the organization: a row with the reason, and no menu. */}
+            {inherited.map((d) => (
+              <tr key={`via-${d.user.id}`} data-testid="inherited-row">
+                <Td>
+                  <div className="flex items-center gap-3">
+                    <Avatar name={d.user.display_name || d.user.email} tintKey={d.user.id} size={32} />
+                    <div className="min-w-0">
+                      <div className="font-medium">
+                        {d.user.display_name}
+                        {d.user.id === meId ? <span className="ml-1 font-normal text-muted">(you)</span> : null}
+                      </div>
+                      <div className="text-xs text-muted">{d.user.email}</div>
+                      <div className="text-xs text-ink-2">{d.sources.map((s) => sourceText(s)).join(" · ")}</div>
+                    </div>
+                  </div>
+                </Td>
+                <Td>{ROLE_LABEL[d.role as Role] ?? d.role}</Td>
+                <Td />
+              </tr>
+            ))}
           </tbody>
         </DataTable>
       )}
+      <details className="text-sm text-ink-2">
+        <summary className="cursor-pointer font-medium text-ink">What can each role do?</summary>
+        <ul aria-label="Roles" className="mt-2 space-y-0.5">
+          {(Object.keys(ROLE_HELP) as Role[]).map((r) => (
+            <li key={r}>{ROLE_HELP[r]}</li>
+          ))}
+        </ul>
+      </details>
       {canOwn && people ? <WaitingList wsId={wsId} orgId={orgId} /> : null}
       {canOwn ? <AddBinding wsId={wsId} orgId={orgId} bound={bound} /> : null}
-      <GroupAccess wsId={wsId} orgId={orgId} canOwn={canOwn} data={access.data} />
+      {/* Groups bind people to a shared workspace; a personal workspace has none. */}
+      {personal ? null : <GroupAccess wsId={wsId} orgId={orgId} canOwn={canOwn} data={access.data} />}
     </div>
   );
 }

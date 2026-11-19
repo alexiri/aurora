@@ -78,10 +78,10 @@ describe("AccessTab", () => {
       "GET /v1/orgs/o/members": () => json(200, members),
     });
     wrap(<AccessTab wsId="w" orgId="o" canOwn />);
-    expect(await screen.findByText("Implicit (org)")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Remove bob@x.io" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Remove boss@x.io" })).not.toBeInTheDocument();
-    expect(await screen.findByLabelText("Organization member")).toBeInTheDocument();
+    expect(await screen.findByText("(organization)")).toBeInTheDocument();
+    // Remove is in the row's … menu (D6); organization owners have no menu.
+    expect(screen.getByRole("button", { name: "More for Bob" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "More for Boss" })).not.toBeInTheDocument();    expect(await screen.findByLabelText("Organization member")).toBeInTheDocument();
   });
   it("member sees a read-only list", async () => {
     mockFetch({ "GET /v1/workspaces/w/access": () => json(200, bindings) });
