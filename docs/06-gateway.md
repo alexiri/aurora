@@ -317,6 +317,7 @@ Everything inside a `CONNECT` is attacker-paced, so every phase has a bound (all
 |-------|-------|------------|
 | `TUNNEL_HANDSHAKE_TIMEOUT` | 10 s | the inner TLS handshake of a MITM tunnel (from the `200` to a completed handshake) and the dial of an open-lane tunnel (a slow dial answers 504 `upstream_timeout`) |
 | `TUNNEL_HEADER_TIMEOUT` | 30 s | the head of each request inside a MITM tunnel (hyper's header-read bound, which needs a timer: the inner HTTP builder has one). It also bounds the wait for the next request on a keep-alive HTTP/1 tunnel |
+| `GATEWAY_BODY_IDLE_TIMEOUT` | 60 s (FIX-180, D-395, C-1040) | the body of every proxied request (absolute-form `http://` and inside a MITM tunnel): no body byte for the limit answers `408 request_body_timeout`, closes the HTTP/1 connection and writes the request-log row. An idle limit, not a total one: a slow body that keeps moving continues. Not a setting |
 | `TUNNEL_IDLE_TIMEOUT` | 600 s (the WebSocket idle value) | **every** tunnel kind: open-lane tunnels, MITM tunnels (no bytes in either direction and no request in flight; a request held for approval is in flight, not idle) and upgraded WebSockets |
 | `TUNNEL_PER_CREDENTIAL_MAX` | 64 | concurrent tunnels of one credential; the next `CONNECT` is answered 429 `rate_limited` (`details.limit = "concurrent_tunnels"`, `retry-after: 5`) |
 | `TUNNEL_TOTAL_MAX` | 4096 | concurrent tunnels of the gateway (same answer, `details.scope = "total"`) |
