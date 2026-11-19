@@ -527,6 +527,8 @@ export async function mockApi(
         next_cursor: null,
       });
     }
+    // (FIX-167 Part B, C-1022) Nothing needs the admin by default: the badge stays hidden. `admin-attention.spec.ts` overrides it.
+    if (p === "/v1/admin/attention") return json({ items: [] });
     if (p === "/v1/admin/connectors") return json({ items: [mattermostConnector] });
     if (p === "/v1/admin/connector-types") return json({ host_running: true, items: [mattermostType] });
     // FIX-025 (C-586) + FIX-029 (C-614): the runners admin view and its per-runner failures.

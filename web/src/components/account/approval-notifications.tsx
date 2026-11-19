@@ -54,6 +54,25 @@ export function ApprovalNotifications({ me }: { me: Me }) {
           </span>
         </span>
       </label>
+      {/* (FIX-167 Part B, C-1024) Instance admins only; the push follows the device's own opt-in below. */}
+      {me.user.is_instance_admin ? (
+        <label className="flex items-start gap-2 text-sm">
+          <input
+            type="checkbox"
+            className="mt-1 size-4 accent-accent"
+            checked={me.admin_attention_email}
+            disabled={update.isPending}
+            onChange={(e) => update.mutate({ admin_attention_email: e.target.checked })}
+          />
+          <span>
+            E-mail me when something needs my decision in Administration
+            <span className="block text-xs text-muted">
+              One e-mail for each new connector, app package or key change that waits for you. It names the item and links to
+              Administration, never a setting or a secret.
+            </span>
+          </span>
+        </label>
+      ) : null}
       <label className="flex items-start gap-2 text-sm">
         <input
           type="checkbox"

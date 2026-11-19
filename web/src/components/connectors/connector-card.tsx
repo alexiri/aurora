@@ -49,7 +49,7 @@ export function ConnectorCard({
           </Button>
         ) : (
           <>
-            {c.status === "pending_approval" ? <ApprovalPanel c={c} /> : null}
+            {c.status === "pending_approval" || c.update_pending ? <ApprovalPanel c={c} /> : null}
             <div className="flex flex-wrap gap-2">
               <Button
                 variant="outline"

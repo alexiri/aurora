@@ -15,6 +15,7 @@ import { removeThisDevicePush, usePushResync } from "@/lib/web-push";
 import { accountRoutes, adminRoutes, TOPIC_LABEL, topicHref, orgRoutes, wsRoutes } from "@/lib/routes";
 import { cn } from "@/lib/utils";
 
+import { AttentionBadge } from "./admin/attention-badge";
 import { ApprovalNotifier } from "./approvals/approval-notifier";
 import { FrozenEntityBanner } from "./freeze/frozen-entity-banner";
 import { RenamesNotice } from "./onboarding/renames-notice";
@@ -275,7 +276,10 @@ function UserMenu() {
         {/* C-962: Administration is a labelled entry, here and at the foot of the sidebar, for instance admins. */}
         {me.data?.user.is_instance_admin === true ? (
           <MenuItem asChild>
-            <Link href={adminRoutes.home()}>Administration</Link>
+            <Link href={adminRoutes.home()} className="flex items-center gap-2">
+              <span className="min-w-0 flex-1">Administration</span>
+              <AttentionBadge />
+            </Link>
           </MenuItem>
         ) : null}
         <MenuItem onSelect={onTour}>Show me around</MenuItem>
@@ -453,6 +457,7 @@ function SidebarContent({
               label="Administration"
               icon={ShieldIcon}
               active={inAdmin}
+              badge={<AttentionBadge />}
               tour="administration"
             />
           </ul>

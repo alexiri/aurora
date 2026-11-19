@@ -74,9 +74,17 @@ export function connectorStatus(c: ConnectorAdmin): { label: string; tone: "neut
 export function ConnectorStatusChip({ c }: { c: ConnectorAdmin }) {
   const s = connectorStatus(c);
   return (
-    <Badge data-testid="status-chip" tone={s.tone} className="max-w-full whitespace-normal break-words normal-case tracking-normal">
-      {s.label}
-    </Badge>
+    <>
+      <Badge data-testid="status-chip" tone={s.tone} className="max-w-full whitespace-normal break-words normal-case tracking-normal">
+        {s.label}
+      </Badge>
+      {/* (FIX-167, D-369) A widened update waits while the connector keeps running at the approved level. */}
+      {c.update_pending && c.status !== "pending_approval" ? (
+        <Badge data-testid="update-pending-chip" tone="pending" className="max-w-full whitespace-normal break-words normal-case tracking-normal">
+          Update waiting for approval
+        </Badge>
+      ) : null}
+    </>
   );
 }
 
