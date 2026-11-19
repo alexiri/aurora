@@ -8,7 +8,7 @@ use crate::app::AppState;
 use crate::http::auth::Caller;
 use crate::http::error::ErrorEnvelope;
 use crate::http::json::{Json, Path, Query};
-use crate::http::pagination::{Page, Pagination};
+use crate::http::pagination::Page;
 use aurora_core::ApiError;
 use axum::extract::State;
 use axum::http::StatusCode;
@@ -58,9 +58,8 @@ async fn list_runs(
     Path(agent): Path<Uuid>,
     Query(q): Query<RunListQuery>,
 ) -> Result<Json<Page<EvalRun>>, ApiError> {
-    let p = Pagination::new(q.limit, q.cursor.as_deref())?;
     Ok(Json(
-        runs::list(&s, &c, agent, q.status, q.trigger, p).await?,
+        runs::list(&s, &c, agent, q.status, q.trigger, (q.limit, q.cursor)).await?,
     ))
 }
 
