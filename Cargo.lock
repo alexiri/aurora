@@ -1081,6 +1081,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "aurora-webhook"
+version = "0.1.0"
+dependencies = [
+ "aurora-core",
+ "hex",
+ "hmac 0.13.0",
+ "proptest",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+]
+
+[[package]]
 name = "autocfg"
 version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
