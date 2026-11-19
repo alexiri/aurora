@@ -8,6 +8,7 @@ use super::*;
 use aurora_core::Secret;
 use aurora_crypto::{RingKind, SecretRing};
 use aurora_gateway::account_test::{self, AccountTest};
+use aurora_gateway::guard::Guard;
 use aurora_secrets::{Purpose, SealContext};
 use axum::body::Body;
 use http::{Method, Request};

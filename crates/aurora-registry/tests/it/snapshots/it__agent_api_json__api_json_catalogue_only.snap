@@ -23,11 +23,13 @@ expression: "api(None, &a)"
       "access": {
         "A": "allowed"
       },
+      "account": null,
       "body": null,
       "host": "api.example.test",
       "id": "list_things",
       "items": null,
       "method": "GET",
+      "notes": null,
       "pagination": null,
       "params": [],
       "path": "/v1/things",
@@ -40,11 +42,13 @@ expression: "api(None, &a)"
       "access": {
         "A": "allowed"
       },
+      "account": null,
       "body": null,
       "host": "api.example.test",
       "id": "get_thing",
       "items": null,
       "method": "GET",
+      "notes": null,
       "pagination": null,
       "params": [],
       "path": "/v1/things/*",
@@ -57,11 +61,13 @@ expression: "api(None, &a)"
       "access": {
         "A": "allowed"
       },
+      "account": null,
       "body": null,
       "host": "api.example.test",
       "id": "make_thing",
       "items": null,
       "method": "POST",
+      "notes": null,
       "pagination": null,
       "params": [],
       "path": "/v1/things",

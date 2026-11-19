@@ -196,11 +196,6 @@ impl MockPush {
         *self.inner.standing.lock().expect("standing") = Some(a);
     }
 
-    /// Answer the next request like this (queued in order, before the standing answer).
-    pub fn respond_once(&self, a: Answer) {
-        self.inner.queue.lock().expect("queue").push_back(a);
-    }
-
     pub fn received(&self) -> Vec<Received> {
         self.inner.received.lock().expect("received").clone()
     }

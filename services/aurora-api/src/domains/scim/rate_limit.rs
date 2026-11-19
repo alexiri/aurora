@@ -9,11 +9,9 @@
 use super::error::ScimError;
 use crate::app::AppState;
 use crate::http::apilimit::{Charge, Spec};
-use aurora_core::limits;
 use axum::extract::{Request, State};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
-use std::time::Duration;
 
 /// The rejected-bearer limit of `/v1` (30/min/IP); the SCIM plane applies the same.
 const REJECTED_BEARER_PER_MIN: u32 = 30;
@@ -204,34 +202,4 @@ async fn resolve_for_rate(state: &AppState, headers: &http::HeaderMap) -> RateRe
             RateResolve::Error
         }
     }
-}
-
-/// Seconds per token refill (used by tests).
-pub fn refill_secs(per_minute: u32) -> u64 {
-    Duration::from_secs_f64(60.0 / f64::from(per_minute.max(1)))
-        .as_secs()
-        .max(1)
-}
-
-/// Body size gate (`SCIM_BODY_MAX`, 413). Applied before the JSON extractor.
-pub async fn body_limit_middleware(
-    State(state): State<AppState>,
-    req: Request,
-    next: Next,
-) -> Response {
-    if !state.ops().scim.enabled {
-        return next.run(req).await;
-    }
-    let len = req
-        .headers()
-        .get(http::header::CONTENT_LENGTH)
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.parse::<usize>().ok());
-    if let Some(n) = len
-        && n > limits::SCIM_BODY_MAX
-    {
-        return ScimError::payload_too_large().into_response();
-    }
-    // Chunked or missing length: let the extractor's bounded read enforce the cap.
-    next.run(req).await
 }

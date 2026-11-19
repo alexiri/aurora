@@ -10,7 +10,10 @@ import { ErrorState, Loading } from "@/components/states";
 import { Button } from "@/components/ui/button";
 import { FormActions } from "@/components/ui/form";
 import { Notice } from "@/components/ui/notice";
+import { BotIcon } from "@/components/ui/icons";
 import { ScopeLadder, type LadderAbove } from "@/components/ui/scope-ladder";
+import { WhoCan } from "@/components/ui/who-can";
+import { useAccounts } from "@/lib/api/accounts";
 import { errorMessage } from "@/lib/api/errors";
 import {
   formFromDocument,
@@ -295,12 +298,89 @@ export function KeysNotice({ eff, org }: { eff: EffectiveGovernance; org: Org })
   );
 }
 
+/** "Owners and admins change these rules. Alice is an owner." (the contacts the server sent), with who to ask. */
+function WhoChangesRules({ org }: { org: Org }) {
+  return (
+    <div className="rounded-control bg-subtle px-3 py-2" data-testid="who-changes">
+      <WhoCan value={whoCanFromContacts("org_admin", org.contacts, "change_this")} lead />
+    </div>
+  );
+}
+
+/** The sentence of the member's AI models page: which key the agents use, and whether people may add their own. */
+export function aiModelsSentence(orgName: string, keyNames: string[], workspaceKeysAllowed: boolean): string {
+  if (keyNames.length === 0) return `Agents in ${orgName} use keys you add in your workspace.`;
+  const shown = keyNames.length === 1 ? `the organization's key, ${keyNames[0]}` : `the organization's keys, ${listWords(keyNames)}`;
+  return `Agents in ${orgName} think with ${shown}.${workspaceKeysAllowed ? " You can also add your own key in your workspace." : ""}`;
+}
+
+/** (P5-POLISH-9, D-390, E1) What a member reads on AI models: the sentence, the organization's keys and who changes the rules. */
+function MemberAiModels({ org }: { org: Org }) {
+  const eff = useEffectiveGovernance(org.id);
+  const accounts = useAccounts({ kind: "organization", id: org.id });
+  if (eff.isPending) return <Loading />;
+  if (eff.isError) return <ErrorState error={eff.error} onRetry={() => eff.refetch()} />;
+  const keys = (accounts.data?.items ?? []).filter((a) => a.kind === "ai_key");
+  const endpoints = eff.data.llm.endpoints.filter((e) => e.permitted.value);
+  const workspaceKeys = endpoints.some((e) => e.key_scopes.value.includes("workspace"));
+  return (
+    <div className="space-y-5" data-testid="member-ai-models">
+      <p className="text-base text-ink">{aiModelsSentence(org.name, keys.map((k) => k.name), workspaceKeys)}</p>
+      <ul aria-label="The organization's keys" className="divide-y divide-line overflow-hidden rounded-card border border-line bg-surface shadow-card">
+        {keys.length === 0 ? <li className="px-4 py-3 text-sm text-ink-2">The organization has no key of its own.</li> : null}
+        {keys.map((k) => {
+          const models = endpoints[0]?.allowed_models.value ?? [];
+          return (
+            <li key={k.ref.id} className="flex items-center gap-3 px-4 py-3">
+              <span aria-hidden="true" className="flex size-9 shrink-0 items-center justify-center rounded-control bg-subtle text-ink-2">
+                <BotIcon className="size-5" />
+              </span>
+              <div className="min-w-0">
+                <p className="font-medium text-ink">{k.name}</p>
+                <p className="text-sm text-ink-2">{models.length === 0 ? "Any model the gateway serves" : listWords(models)}</p>
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+      <ScopeLadder above={modelLimitsFromAbove(eff.data)} />
+      <WhoChangesRules org={org} />
+    </div>
+  );
+}
+
+/** (E1) Agents › BYO for a member: one sentence and who changes it. */
+export function byoSentence(posture: string, maxAgeDays: number | null | undefined): string {
+  const who =
+    posture === "disabled"
+      ? "Agents outside Aurora are turned off here."
+      : posture === "enabled"
+        ? "Anyone who can use a workspace can run agents outside Aurora."
+        : "Only workspace owners can run agents outside Aurora.";
+  if (posture === "disabled") return who;
+  return `${who} ${maxAgeDays == null ? "Their tokens never expire unless an owner sets a limit." : `Their tokens last at most ${maxAgeDays} days.`}`;
+}
+
+function MemberByo({ org }: { org: Org }) {
+  const eff = useEffectiveGovernance(org.id);
+  if (eff.isPending) return <Loading />;
+  if (eff.isError) return <ErrorState error={eff.error} onRetry={() => eff.refetch()} />;
+  return (
+    <div className="space-y-5" data-testid="member-byo">
+      <p className="text-base text-ink">{byoSentence(eff.data.byo.posture.value, eff.data.agent_tokens.max_age_days.value)}</p>
+      <WhoChangesRules org={org} />
+    </div>
+  );
+}
+
 /**
  * (P5-IA-3, C-966) The organization's AI models page: the notice for keys that no longer comply, Administration's
  * limits as ladder rows, then the organization's model rules. Members read it.
  */
 export function OrgAiModels({ org }: { org: Org }) {
   const canEdit = org.my_role === "owner" || org.my_role === "admin";
+  // (P5-POLISH-9, D-390) Someone who cannot change the rules reads a summary, never a disabled form.
+  if (!canEdit) return <MemberAiModels org={org} />;
   return (
     <GovernanceForm org={org} canEdit={canEdit} saved="Saved. Existing keys were re-checked against the new rules.">
       {({ form, patch, issues, readOnly, eff }) => (
@@ -324,6 +404,7 @@ export function OrgAiModels({ org }: { org: Org }) {
 /** (P5-IA-3, C-967) Agents › BYO of an organization: Administration's limits above, the organization's own below. */
 export function OrgByo({ org }: { org: Org }) {
   const canEdit = org.my_role === "owner" || org.my_role === "admin";
+  if (!canEdit) return <MemberByo org={org} />;
   return (
     <GovernanceForm org={org} canEdit={canEdit} saved="Saved.">
       {({ form, patch, issues, readOnly, eff }) => (

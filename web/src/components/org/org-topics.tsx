@@ -3,8 +3,7 @@
 import { useParams } from "next/navigation";
 import type { ReactNode } from "react";
 
-import { OrgSignInGaps } from "@/components/admin/sign-in-gaps";
-import { AvailabilityView } from "@/components/apps/availability-view";
+import { OrgAppsTable } from "@/components/apps/org-apps-table";
 import { InstancesView } from "@/components/apps/instances-view";
 import { OAuthClientsPanel } from "@/components/apps/oauth-clients-panel";
 import { ChannelsView } from "@/components/channels/channels-view";
@@ -89,9 +88,8 @@ export function OrgAppsPage() {
               content: (
                 <EmbeddedPage headed>
                   <div className="space-y-6">
-                    {/* (C-924) Above the tab's content, not inside the list. */}
-                    <OrgSignInGaps orgId={org.id} orgSlug={slug} />
-                    <AvailabilityView orgId={org.id} orgSlug={slug} canEdit />
+                    {/* (P5-POLISH-9, E3) One table: status, Set up and a switch per app; the sign-in gaps and the radio are in it. */}
+                    <OrgAppsTable orgId={org.id} orgSlug={slug} canEdit />
                     {/* (P5-WEBHOOK-4, C-913) The organization's switch and limits for Outgoing webhooks. */}
                     <OutgoingWebhooksOrgSettings org={org} />
                   </div>

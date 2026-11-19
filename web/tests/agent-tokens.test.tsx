@@ -158,7 +158,7 @@ describe("governance page: BYO tab", () => {
     wrap(<OrgByo org={ORG} />);
     await screen.findByLabelText("Who may create BYO agents");
     expect(screen.getByTestId("effective-max-age").textContent).toBe("30 days");
-    expect(screen.getByTestId("effective-max-age").parentElement?.textContent).toMatch(/set by instance/);
+    expect(screen.getByTestId("effective-max-age").parentElement?.textContent).toMatch(/set by Administration/);
     expect(screen.getByText(/enforced by instance: 30 days/)).toBeTruthy();
     fireEvent.change(screen.getByLabelText("Maximum token age (days)"), { target: { value: "14" } });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
@@ -242,7 +242,9 @@ describe("governance page: BYO tab", () => {
       "GET /v1/orgs/o1/governance/effective": () => json(200, eff(null, "instance")),
     });
     wrap(<OrgByo org={{ ...ORG, my_role: "member" }} />);
-    await screen.findByLabelText("Who may create BYO agents");
+    // (P5-POLISH-9) A member reads one sentence, never the form.
+    await screen.findByTestId("member-byo");
+    expect(screen.queryByLabelText("Who may create BYO agents")).toBeNull();
     expect(screen.queryByTestId("token-attention")).toBeNull();
     expect(fetchMock.mock.calls.some(([r]) => String((r as Request).url).includes("agent-tokens"))).toBe(false);
   });

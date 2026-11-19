@@ -63,7 +63,8 @@ describe("empty states on the agent's pages", () => {
 
   it("Channels: with no chat platform the whole tab is one empty state and none of the sections show", async () => {
     mockFetch({
-      "GET /v1/connectors": () => json(200, { items: [] }),
+      // No integration the agent could be attached to (the organization's, not the instance's connector types).
+      "GET /v1/agents/a1/presence-options": page(),
       "GET /v1/agents/a1/presences": page(),
     });
     wrap(<AgentChannelsTab agentId="a1" agentName="Daneel" orgId="o1" canOwn wsId="w1" />);

@@ -3,8 +3,9 @@ import { expect, test } from "@playwright/test";
 import { mockWithTerminal } from "./support/terminal";
 import { CANVAS, overflow, type Scheme } from "./support/open";
 
-// FIX-129 + P5-AGENT-2 (D-200, docs/14 §Agent page (phase 5)): the agent page is five sections (Chat · Behaviour ·
-// Triggers · Computer · Access) with a segmented row of pages inside a section that has several. Every page id of
+// FIX-129 + P5-AGENT-2 (D-200, docs/14 §Agent page (phase 5)): the agent page is five sections with a segmented row of
+// pages inside a section that has several; since P5-POLISH-6 (D-380) Chat · Triggers · Computer are tabs and Behaviour
+// and Access open from the Agent actions menu. Every page id of
 // `?tab=` still opens its page, at 390, 768, 1280 and 1920 px, both themes: the page does not scroll
 // horizontally. The API is mocked.
 
@@ -33,6 +34,17 @@ async function mockAgent(page: import("@playwright/test").Page) {
   await page.route("**/v1/agents/*/effective", (route) =>
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ credentials: [], tools: [] }) }),
   );
+  // (P5-POLISH-6) The Channels page shows its sections (and the progress switch) only when the organization has a chat
+  // integration: one the agent can be attached to.
+  await page.route("**/v1/agents/*/presence-options", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        items: [{ integration_id: "i1", connector_id: "mattermost", connector_name: "Mattermost", tenant_label: "chat.example.com", modes: ["shared"], presence_setup: {}, attached: false }],
+      }),
+    }),
+  );
 }
 
 const tablistOverflow = (page: import("@playwright/test").Page) =>
@@ -52,7 +64,14 @@ for (const scheme of ["light", "dark"] as const satisfies readonly Scheme[]) {
           await page.goto(`/o/acme/w/main/agents/daneel?tab=${tab}`);
           await expect.poll(() => page.locator("html").getAttribute("data-theme"), { timeout: 20_000 }).toBe(scheme);
           const sections = page.getByRole("tablist", { name: "Agent sections" });
-          await expect(sections.getByRole("tab", { selected: true }), `${tab}: its section is selected`).toHaveText(section);
+          if (section === "Behaviour" || section === "Access") {
+            // (P5-POLISH-6, D-380) Behaviour and Access open from the Agent actions menu: no section tab is selected and
+            // the page carries its own heading.
+            await expect(page.getByRole("heading", { level: 2, name: section }), `${tab}: its page heading`).toBeVisible();
+            await expect(sections.getByRole("tab", { selected: true }), `${tab}: no section tab is selected`).toHaveCount(0);
+          } else {
+            await expect(sections.getByRole("tab", { selected: true }), `${tab}: its section is selected`).toHaveText(section);
+          }
           await page.waitForLoadState("networkidle");
           expect(await page.evaluate(() => getComputedStyle(document.body).backgroundColor)).toBe(CANVAS[scheme]);
           expect(await overflow(page), `${tab} @${width}: the page scrolls sideways`).toBeLessThanOrEqual(0);
@@ -85,7 +104,8 @@ test.describe("agent page width", () => {
     await mockAgent(page);
     await page.goto("/o/acme/w/main/agents/daneel");
     const sections = page.getByRole("tablist", { name: "Agent sections" });
-    await expect(sections.getByRole("tab")).toHaveText(["Chat", "Behaviour", "Triggers", "Computer", "Access"]);
+    // (P5-POLISH-6, D-380) Three section tabs; Behaviour and Access are in the Agent actions menu.
+    await expect(sections.getByRole("tab")).toHaveText(["Chat", "Triggers", "Computer"]);
     await expect(sections.getByRole("tab", { name: "Chat" })).toHaveAttribute("aria-selected", "true");
     await sections.getByRole("tab", { name: "Triggers" }).click();
     await expect(page).toHaveURL(/tab=schedules/);

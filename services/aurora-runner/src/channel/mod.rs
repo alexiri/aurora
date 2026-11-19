@@ -591,12 +591,6 @@ impl ChannelServer {
             .ok_or(HubError::NotConnected)?
             .push_stream_data(data)
     }
-
-    /// (P4-TERM, W19) Sends one binary terminal data message (tag `0x02`) on that boot's
-    /// channel — the same queues as the stream data.
-    pub async fn send_terminal_data(&self, r: &ChannelRef, data: Vec<u8>) -> Result<(), HubError> {
-        self.send_stream_data(r, data).await
-    }
 }
 
 /// Encodes an unsequenced `stream.*` frame (`seq: 0, ack: 0`, `16 §W18`).

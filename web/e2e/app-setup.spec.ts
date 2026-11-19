@@ -72,17 +72,17 @@ for (const scheme of ["light", "dark"] as const) {
         await expect(page.getByTestId("setup-can-do")).toContainText("Open an issue with a title and a body.");
       });
 
-      test("an organization admin switches to only the apps switched on below, on the Apps tab, with one Save", async ({ page }) => {
+      test("an organization admin switches an app off on the Apps tab: the choice saves at once, no Save (P5-POLISH-9)", async ({ page }) => {
         await openRoute(page, "/o/acme/apps?tab=apps", scheme);
-        await expect(page.getByLabel("People can connect every app")).toBeChecked();
-        await expect(page.getByRole("switch", { name: "GitHub" })).toHaveCount(0);
-        await page.getByLabel("People can connect only the apps switched on below").check();
-        await page.getByRole("switch", { name: "GitHub" }).check();
+        const githubSwitch = page.getByRole("switch", { name: "People may connect GitHub" });
+        await expect(githubSwitch).toBeChecked();
         const put = page.waitForRequest((r) => r.method() === "PUT" && r.url().endsWith("/app-availability"));
         // Not a pointer click: at 390 px the dev server's own indicator (nextjs-portal) covers the bottom-left of the page.
-        await page.getByRole("button", { name: "Save" }).dispatchEvent("click");
-        expect((await put).postDataJSON()).toEqual({ posture: "restricted", allow: [{ app_id: "github" }] });
-        await expect(page.getByText("Saved.")).toBeVisible();
+        await githubSwitch.dispatchEvent("click");
+        const body = (await put).postDataJSON() as { posture: string; allow: { app_id: string }[] };
+        expect(body.posture).toBe("restricted");
+        expect(body.allow.map((e) => e.app_id)).not.toContain("github");
+        await expect(page.getByRole("button", { name: "Save" })).toHaveCount(0);
       });
 
       test("Administration's catalogue entry links to the OAuth clients of the app, with its form open", async ({ page }) => {

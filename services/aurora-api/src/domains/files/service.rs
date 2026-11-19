@@ -429,12 +429,6 @@ async fn open_session(s: &AppState, a: &Authed) -> Result<Arc<Sftp>, ApiError> {
         .map_err(open_error)
 }
 
-/// Forget a person's session (after a failure that proved it dead).
-pub fn drop_session(user: Uuid, agent: Uuid) {
-    let mut g = pool().lock().unwrap_or_else(|e| e.into_inner());
-    g.remove(&(user, agent));
-}
-
 // ----------------------------------------------------------- redemption (runner plane)
 
 /// `POST /v1/runner/preview-streams/open` with `kind: "files"` (C-901, `16 §W21`): consume the

@@ -1,0 +1,159 @@
+---
+source: crates/aurora-registry/tests/it/agent_api_json.rs
+expression: "api(None, &a)"
+---
+{
+  "accounts": [
+    {
+      "base_url": "https://c_1.link.aurora.internal",
+      "connection_id": "c_1",
+      "grant": "full",
+      "label": "Label c_1",
+      "letter": "A"
+    }
+  ],
+  "app": {
+    "id": "demo-app",
+    "name": "Demo app",
+    "version": "1.2.3"
+  },
+  "format": "aurora.app-api/1",
+  "operations": [
+    {
+      "access": {
+        "A": "allowed"
+      },
+      "account": "A",
+      "body": {
+        "content_type": "application/json",
+        "fields": [
+          {
+            "description": "The message; at most 200 characters",
+            "name": "text",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "enum": [
+              "info",
+              "warn"
+            ],
+            "name": "level",
+            "type": "string"
+          },
+          {
+            "name": "count",
+            "type": "integer"
+          },
+          {
+            "name": "ratio",
+            "type": "number"
+          },
+          {
+            "name": "urgent",
+            "type": "boolean"
+          },
+          {
+            "description": "at most 20 characters; at most 5 items",
+            "name": "tags",
+            "type": "array"
+          },
+          {
+            "name": "card",
+            "type": "json"
+          }
+        ]
+      },
+      "host": "c_1.link.aurora.internal",
+      "id": "send_ops_alerts",
+      "items": null,
+      "method": "POST",
+      "notes": "Deploy results. Second line.",
+      "pagination": null,
+      "params": [
+        {
+          "description": "Check and show the body without sending",
+          "enum": [
+            "1"
+          ],
+          "in": "header",
+          "name": "X-Aurora-Dry-Run",
+          "type": "string"
+        }
+      ],
+      "path": "/",
+      "source": "connection",
+      "summary": "Ops alerts — Deploy results.",
+      "tags": [
+        "webhook"
+      ],
+      "tool": "send"
+    },
+    {
+      "access": {
+        "A": "allowed"
+      },
+      "account": null,
+      "body": null,
+      "host": "api.example.test",
+      "id": "list_things",
+      "items": null,
+      "method": "GET",
+      "notes": null,
+      "pagination": null,
+      "params": [],
+      "path": "/v1/things",
+      "source": "catalogue",
+      "summary": "List things",
+      "tags": [],
+      "tool": "list_things"
+    },
+    {
+      "access": {
+        "A": "allowed"
+      },
+      "account": null,
+      "body": null,
+      "host": "api.example.test",
+      "id": "get_thing",
+      "items": null,
+      "method": "GET",
+      "notes": null,
+      "pagination": null,
+      "params": [],
+      "path": "/v1/things/*",
+      "source": "catalogue",
+      "summary": "Get a thing",
+      "tags": [],
+      "tool": "get_thing"
+    },
+    {
+      "access": {
+        "A": "allowed"
+      },
+      "account": null,
+      "body": null,
+      "host": "api.example.test",
+      "id": "make_thing",
+      "items": null,
+      "method": "POST",
+      "notes": null,
+      "pagination": null,
+      "params": [],
+      "path": "/v1/things",
+      "source": "catalogue",
+      "summary": "Make a thing",
+      "tags": [],
+      "tool": "make_thing"
+    }
+  ],
+  "recipes": [
+    {
+      "file": "make-and-check.md",
+      "title": "Make a thing and check it"
+    }
+  ],
+  "untooled": {
+    "A": "allowed"
+  }
+}

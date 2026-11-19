@@ -120,6 +120,13 @@ describe("reassign panel", () => {
   });
 });
 
+/** (P5-POLISH-9, D6) Remove and Suspend are in the row's … menu: open it for Alice, then pick the item. */
+async function pickMenu(item: string) {
+  const trigger = await screen.findByRole("button", { name: /^More for Alice/ });
+  fireEvent.keyDown(trigger, { key: "Enter" });
+  fireEvent.click(await screen.findByRole("menuitem", { name: item }));
+}
+
 describe("members offboarding", () => {
   const members = {
     items: [
@@ -142,7 +149,7 @@ describe("members offboarding", () => {
       "DELETE /v1/orgs/o1/members/u1": () => json(204, null),
     });
     wrap(<MembersView orgId="o1" viewer="owner" />);
-    fireEvent.click(await screen.findByRole("button", { name: "Remove alice@x.io" }));
+    await pickMenu("Remove alice@x.io");
     expect(await screen.findByText(/Removing Alice disables these 2 schedules and webhooks/)).toBeInTheDocument();
     expect(screen.getByText("Daily digest")).toBeInTheDocument();
     expect(screen.getByText("Deploy hook")).toBeInTheDocument();
@@ -160,7 +167,7 @@ describe("members offboarding", () => {
       "PATCH /v1/orgs/o1/members/u1": () => json(200, members.items[0]),
     });
     wrap(<MembersView orgId="o1" viewer="owner" />);
-    fireEvent.click(await screen.findByRole("button", { name: "Suspend alice@x.io" }));
+    await pickMenu("Suspend alice@x.io");
     await screen.findByText(/Removing Alice disables/);
     expect(calls.some((c) => c.method === "PATCH")).toBe(false);
     fireEvent.change(screen.getByLabelText("Reassign to"), { target: { value: "workspace" } });
@@ -176,7 +183,7 @@ describe("members offboarding", () => {
         json(422, { error: { code: "new_creator_unauthorized", message: "The new creator must be an active member who can use the workspace." } }),
     });
     wrap(<MembersView orgId="o1" viewer="owner" />);
-    fireEvent.click(await screen.findByRole("button", { name: "Remove alice@x.io" }));
+    await pickMenu("Remove alice@x.io");
     await screen.findByText(/Removing Alice disables/);
     fireEvent.change(screen.getByLabelText("Reassign to"), { target: { value: "u2" } });
     fireEvent.click(screen.getByRole("button", { name: "Remove member" }));
@@ -198,7 +205,7 @@ describe("members offboarding", () => {
       "DELETE /v1/orgs/o1/members/u1": () => json(204, null),
     });
     wrap(<MembersView orgId="o1" viewer="owner" />);
-    fireEvent.click(await screen.findByRole("button", { name: "Remove alice@x.io" }));
+    await pickMenu("Remove alice@x.io");
     expect(await screen.findByText(/2 BYO agents they created/)).toBeInTheDocument();
   });
 
@@ -209,7 +216,7 @@ describe("members offboarding", () => {
       "DELETE /v1/orgs/o1/members/u1": () => json(204, null),
     });
     wrap(<MembersView orgId="o1" viewer="owner" />);
-    fireEvent.click(await screen.findByRole("button", { name: "Remove alice@x.io" }));
+    await pickMenu("Remove alice@x.io");
     await screen.findByText(/Removing Alice disables/);
     expect(screen.queryByText(/BYO agent/)).not.toBeInTheDocument();
   });

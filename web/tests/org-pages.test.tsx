@@ -51,12 +51,12 @@ describe("role-change options", () => {
     const { unmount } = render(
       <table><tbody><MemberRow m={m("member")} viewer="owner" onRole={noop} onStatus={noop} onRemove={noop} /></tbody></table>,
     );
-    expect(screen.getByRole("option", { name: "owner" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Owner" })).toBeInTheDocument();
     unmount();
     render(
       <table><tbody><MemberRow m={m("member")} viewer="admin" onRole={noop} onStatus={noop} onRemove={noop} /></tbody></table>,
     );
-    expect(screen.queryByRole("option", { name: "owner" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "Owner" })).not.toBeInTheDocument();
   });
 
   it("admin sees no controls on an owner row", () => {
@@ -83,7 +83,26 @@ describe("role-change options", () => {
     );
     expect(screen.getByText("Waiting for first sign-in")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Reactivate|Suspend/ })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Remove/ })).toBeInTheDocument();
+    // Remove is in the … menu (D6).
+    expect(screen.getByRole("button", { name: /^More for/ })).toBeInTheDocument();
+  });
+
+  it("(P5-POLISH-9, D6) your own row has no menu and no role change, the last owner cannot be lowered, active members have no status chip", () => {
+    render(
+      <table>
+        <tbody>
+          <MemberRow m={m("owner")} viewer="owner" mine onRole={noop} onStatus={noop} onRemove={noop} />
+          <MemberRow m={{ ...m("owner"), email: "sam@x.io", display_name: "Sam", user_id: "u9" }} viewer="owner" lastOwner onRole={noop} onStatus={noop} onRemove={noop} />
+        </tbody>
+      </table>,
+    );
+    expect(screen.getByText("(you)")).toBeInTheDocument();
+    expect(screen.queryByLabelText(`Role for ${m("owner").email}`)).toBeNull();
+    const sam = screen.getByLabelText("Role for sam@x.io");
+    expect(Array.from((sam as HTMLSelectElement).options).map((o) => o.textContent)).toEqual(["Owner"]);
+    expect(screen.queryByText("Active")).toBeNull();
+    // Only Sam's row (not yours) has a menu.
+    expect(screen.getAllByRole("button", { name: /^More for/ })).toHaveLength(1);
   });
 });
 

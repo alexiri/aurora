@@ -70,10 +70,6 @@ impl Guarded {
         }
     }
 
-    pub fn inner_backend(&self) -> &'static str {
-        self.inner.backend()
-    }
-
     fn gate(&self) -> Gate {
         self.core.gate()
     }

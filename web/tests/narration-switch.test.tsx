@@ -23,6 +23,13 @@ function mockFetch(patch: (body: unknown) => Response) {
       const body = text ? (JSON.parse(text) as unknown) : null;
       calls.push({ key, body });
       if (key === "PATCH /v1/agents/a1") return patch(body);
+      // (P5-POLISH-6) The switch shows only when the organization has a chat integration: give the agent one to
+      // attach to (without it the tab becomes one empty state as soon as the queries load).
+      if (key === "GET /v1/agents/a1/presence-options") {
+        return json(200, {
+          items: [{ integration_id: "i1", connector_id: "mattermost", connector_name: "Mattermost", tenant_label: "chat.example.com", modes: ["shared"], presence_setup: {}, attached: false }],
+        });
+      }
       if (input.method === "GET") return json(200, { items: [] });
       return json(404, { error: { code: "not_found", message: "not_found" } });
     }),
