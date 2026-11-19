@@ -35,7 +35,7 @@ function capitalize(s: string) {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
-export function MemoryTab({ agentId, memoryLanguage }: { agentId: string; memoryLanguage?: string }) {
+export function MemoryTab({ agentId, memoryLanguage, agentName }: { agentId: string; memoryLanguage?: string; agentName?: string }) {
   const list = useMemories(agentId);
   const [q, setQ] = useState("");
   const search = useMemorySearch(agentId, q);
@@ -43,6 +43,21 @@ export function MemoryTab({ agentId, memoryLanguage }: { agentId: string; memory
   const [creating, setCreating] = useState(false);
   const items = list.data?.items ?? [];
   const current = items.find((m) => m.key === selected);
+
+  // (P5-POLISH-6, C6) No memory yet: the whole tab is one empty state with its one action, and no "Select a memory" pane.
+  if (list.data && items.length === 0 && !creating) {
+    return (
+      <EmptyState
+        title={`${agentName ?? "This agent"} doesn't remember anything yet`}
+        when="It saves notes here as you work together. You can also write one yourself."
+        action={
+          <Button type="button" onClick={() => { setCreating(true); setSelected(null); }}>
+            New memory
+          </Button>
+        }
+      />
+    );
+  }
 
   return (
     <div className="space-y-4">

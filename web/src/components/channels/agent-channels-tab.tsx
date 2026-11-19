@@ -32,6 +32,7 @@ import {
 import { usePatchAgent } from "@/lib/api/agents";
 import { dedicatedFields, formFields, useConnectors, type ConnectorInfo } from "@/lib/api/connectors";
 import { useOrg } from "@/lib/api/queries";
+import { useWhoCan } from "@/lib/api/who-can";
 import { orgRoutes } from "@/lib/routes";
 import { cn } from "@/lib/utils";
 
@@ -429,17 +430,34 @@ function NarrationSwitch({ wsId, agentId, value, canOwn }: { wsId?: string; agen
 
 export function AgentChannelsTab({
   agentId,
+  agentName,
   orgId,
   canOwn,
   wsId,
   narrationCards = false,
 }: {
   agentId: string;
+  agentName?: string;
   orgId?: string;
   canOwn: boolean;
   wsId?: string;
   narrationCards?: boolean;
 }) {
+  const connectors = useConnectors();
+  const presences = usePresences(agentId);
+  const who = useWhoCan({ orgId }, "org_admin", "connect_app");
+  // (P5-POLISH-6, C6) No chat platform is connected and the agent is attached nowhere: the whole tab is one empty state.
+  // Presences, Space bindings, Reach requests and Show progress in chat appear only when there is an integration.
+  if (connectors.data && connectors.data.items.length === 0 && presences.data && presences.data.items.length === 0) {
+    const name = agentName ?? "This agent";
+    return (
+      <EmptyState
+        title={`${name} isn't in any chat yet`}
+        when={`Your organization hasn't connected a chat platform. Once it has, you can add ${name} to channels here.`}
+        ask={{ whoCan: who, canAct: false }}
+      />
+    );
+  }
   return (
     <div className="space-y-8">
       <NarrationSwitch wsId={wsId} agentId={agentId} value={narrationCards} canOwn={canOwn} />

@@ -264,7 +264,17 @@ export function WebhooksTab({ agentId, wsId, canOwn }: { agentId: string; wsId?:
       }
     >
       {creating ? <WebhookForm agentId={agentId} canOwn={canOwn} onDone={() => setCreating(false)} onSecret={(url, name) => setShown({ url, name })} /> : null}
-      {q.data.items.length === 0 && !creating ? <EmptyState title="No webhooks">A webhook gives an external system a URL that wakes the agent.</EmptyState> : null}
+      {q.data.items.length === 0 && !creating ? (
+        <EmptyState
+          title="No webhooks"
+          when="A webhook gives an external system a URL that wakes the agent."
+          action={
+            <Button size="sm" onClick={() => setCreating(true)}>
+              New webhook
+            </Button>
+          }
+        />
+      ) : null}
       {q.data.items.length > 0 ? (
         <ItemList aria-label="Webhook list">
           {q.data.items.map((w) => (

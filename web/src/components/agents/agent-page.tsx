@@ -292,7 +292,7 @@ export function AgentPage() {
               onStatusSheetOpenChange={setStatusOpen}
             />
           ) : null}
-          {tab === "memory" && !byo ? <MemoryTab agentId={agent.id} memoryLanguage={workspace.data?.memory_language} /> : null}
+          {tab === "memory" && !byo ? <MemoryTab agentId={agent.id} agentName={agent.name} memoryLanguage={workspace.data?.memory_language} /> : null}
           {tab === "skills" && !byo && workspace.data ? <SkillsTab agentId={agent.id} orgId={workspace.data.org_id} /> : null}
           {tab === "evals" && !byo ? <EvalsTab agentId={agent.id} frozen={agent.frozen !== null} canOwn={canOwn} defaultTimezone={workspace.data?.timezone} /> : null}
           {tab === "schedules" && !byo ?<SchedulesTab agentId={agent.id} defaultTimezone={workspace.data?.timezone} wsId={workspace.data?.id} canOwn={canOwn} /> : null}
@@ -301,6 +301,7 @@ export function AgentPage() {
           {tab === "channels" && !byo && workspace.data ? (
             <AgentChannelsTab
               agentId={agent.id}
+              agentName={agent.name}
               orgId={workspace.data.org_id}
               canOwn={workspace.data.my_role === "owner"}
               wsId={workspace.data.id}
