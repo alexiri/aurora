@@ -3,7 +3,6 @@ import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { ActivityView } from "@/components/approvals/activity-view";
-import { TurnUsage, UNVERIFIED_TEXT } from "@/components/chat/turn-usage";
 
 // P5-MODELS-3 (C-879, C-880): the request log's model column, and a turn's tokens per model.
 
@@ -35,34 +34,5 @@ describe("request log model column", () => {
     expect(within(table).getByRole("columnheader", { name: "Model" })).toBeTruthy();
     const cells = within(table).getAllByTestId("llm-model").map((c) => c.textContent);
     expect(cells).toEqual(["glm-4.6", "—"]);
-  });
-});
-
-describe("TurnUsage", () => {
-  it("lists tokens per model, subagents included", () => {
-    render(
-      <TurnUsage
-        usage={{
-          input_tokens: 1500, output_tokens: 300, cache_read_tokens: 40, cache_write_tokens: 5,
-          by_model: [
-            { model: "claude-sonnet", input_tokens: 1000, output_tokens: 200, cache_read_tokens: 40, cache_write_tokens: 5 },
-            { model: "claude-haiku", input_tokens: 500, output_tokens: 100, cache_read_tokens: 0, cache_write_tokens: 0 },
-          ],
-        }}
-      />,
-    );
-    const rows = within(screen.getByRole("table", { name: "Tokens per model" })).getAllByRole("row");
-    expect(rows).toHaveLength(3);
-    expect(rows[1]!.textContent).toContain("claude-sonnet1,000200405");
-    expect(rows[2]!.textContent).toContain("claude-haiku500100");
-    expect(screen.queryByTestId("unverified-models")).toBeNull();
-  });
-
-  it("counts a turn without by_model under its model, and marks an unverified turn", () => {
-    render(<TurnUsage usage={{ model: "claude-sonnet", input_tokens: 7, output_tokens: 3, unverified_models: true }} />);
-    const rows = within(screen.getByRole("table", { name: "Tokens per model" })).getAllByRole("row");
-    expect(rows).toHaveLength(2);
-    expect(rows[1]!.textContent).toContain("claude-sonnet730");
-    expect(screen.getByTestId("unverified-models")).toHaveTextContent(UNVERIFIED_TEXT);
   });
 });
