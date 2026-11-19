@@ -16,7 +16,7 @@ import { CreateGroupDialog } from "./create-group-dialog";
 
 export function OrgRoleChip({ role }: { role: Group["org_role"] }) {
   if (!role) return <span className="text-muted">—</span>;
-  return <Badge tone={role === "admin" ? "pending" : "neutral"}>{role}</Badge>;
+  return <Badge tone={"neutral"}>{role}</Badge>;
 }
 
 export function GroupsView({ orgId, orgSlug }: { orgId: string; orgSlug: string }) {

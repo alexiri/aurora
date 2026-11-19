@@ -2,6 +2,7 @@
 
 import { TokenBadges } from "@/components/agents/token-badges";
 import { Badge } from "@/components/ui/badge";
+import { Switch } from "@/components/ui/switch";
 import { Card } from "@/components/ui/card";
 import { Field, inputClass } from "@/components/ui/field";
 import { ItemList, ListRow } from "@/components/ui/section";
@@ -187,12 +188,10 @@ export function ByoPanel({
           not identity.
         </p>
         <label className="flex items-start gap-2 text-sm text-ink">
-          <input
-            type="checkbox"
-            className="mt-0.5 size-4 shrink-0 accent-accent"
+          <Switch
             checked={b.requireContext || b.requireContextLocked}
             disabled={readOnly || b.requireContextLocked || b.instanceOff}
-            onChange={(e) => set({ requireContext: e.target.checked })}
+            onCheckedChange={(v) => set({ requireContext: v })}
           />
           <span>
             Require context credentials

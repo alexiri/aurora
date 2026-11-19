@@ -14,7 +14,7 @@ const CHANGE_LABEL: Record<Change, string> = { added: "Added", changed: "Changed
 
 function ChangeBadge({ change }: { change: Change | undefined }) {
   if (!change) return null;
-  return <Badge tone={change === "removed" ? "danger" : "pending"}>{CHANGE_LABEL[change]}</Badge>;
+  return <Badge tone={change === "removed" ? "danger" : change === "added" ? "accent" : "neutral"}>{CHANGE_LABEL[change]}</Badge>;
 }
 
 /** Whether an app's guide has anything an agent could read. */
@@ -106,14 +106,14 @@ function AppGuide({ plugin, guide }: { plugin: PluginPackage; guide: PluginAgent
         <>
           <p>
             <span className="text-xs font-semibold uppercase tracking-label text-muted">Summary</span>{" "}
-            {changed?.summary ? <Badge tone="pending">Changed</Badge> : null}
+            {changed?.summary ? <Badge>Changed</Badge> : null}
             <br />
             {guide.summary ? <span className="break-words text-ink">{guide.summary}</span> : <span className="text-muted">No summary: the app description is used.</span>}
           </p>
           {guide.instructions.trim() !== "" ? (
             <div>
               <h5 className="text-xs font-semibold uppercase tracking-label text-muted">
-                Essentials {changed?.instructions ? <Badge tone="pending">Changed</Badge> : null}
+                Essentials {changed?.instructions ? <Badge>Changed</Badge> : null}
               </h5>
               <TextViewer label={`Essentials of ${name}`} text={guide.instructions} className="mt-1 max-h-48" />
             </div>

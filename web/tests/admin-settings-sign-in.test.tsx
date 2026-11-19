@@ -90,7 +90,7 @@ describe("Admin › Settings › Sign-in (SET-4)", () => {
     const list = screen.getByRole("list", { name: "Identity providers" });
     const rows = within(list).getAllByRole("listitem");
     expect(rows).toHaveLength(2);
-    expect(within(rows[0]!).getByText("Managed by Helm")).toBeTruthy();
+    expect(within(rows[0]!).getByText("Set in Helm")).toBeTruthy();
     expect(within(rows[0]!).getByText("You signed in with this")).toBeTruthy();
     expect(within(rows[0]!).queryByRole("button", { name: /Edit|Remove/ })).toBeNull();
     expect(within(rows[1]!).getByRole("button", { name: "Edit corp" })).toBeTruthy();

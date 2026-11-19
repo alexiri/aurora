@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import type { AgentPageId } from "@/components/agents/sections";
-import { Badge } from "@/components/ui/badge";
+import { AttentionChip } from "@/components/ui/attention-chip";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { ActivityIcon, BookIcon, CheckCircleIcon, ChevronLeftIcon, ChevronRightIcon, MonitorIcon, WrenchIcon } from "@/components/ui/icons";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -55,7 +55,7 @@ function StatusParts({ ctx, idPrefix, onShow }: { ctx: RailContext; idPrefix: st
             <CheckCircleIcon />,
             <>
               Needs you
-              {status.needs.length > 0 ? <Badge tone="pending">{status.needs.length}</Badge> : null}
+              {status.needs.length > 0 ? <AttentionChip actionId={`${idPrefix}-needs-list`}>{status.needs.length}</AttentionChip> : null}
             </>,
             <NeedsYouList
               needs={status.needs}
@@ -188,9 +188,9 @@ export function StatusRail({
             <button type="button" aria-label={labels.needs} className={iconButton}>
               <CheckCircleIcon width={20} height={20} />
               {status.needs.length > 0 ? (
-                <Badge tone="pending" aria-hidden="true" className="absolute -right-1 -top-1 px-1.5 tabular-nums">
+                <AttentionChip actionId="status-rail-needs" aria-hidden="true" className="absolute -right-1 -top-1 px-1.5 tabular-nums">
                   {status.needs.length}
-                </Badge>
+                </AttentionChip>
               ) : null}
             </button>
           </PopoverTrigger>

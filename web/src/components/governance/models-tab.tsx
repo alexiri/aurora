@@ -1,6 +1,7 @@
 "use client";
 
 import { Errors, Locked, PostureSelect, TextArea } from "@/components/governance/controls";
+import { Switch } from "@/components/ui/switch";
 import { KEY_SCOPES, issuesUnder, type EndpointForm, type GovForm, type GovIssues } from "@/lib/api/governance";
 
 /** The organization's model rules (C-966): the AI key posture and, for each endpoint, what it permits. */
@@ -32,7 +33,7 @@ export function ModelsTab({ form, patch, issues, readOnly }: { form: GovForm; pa
               {e.display_name} <span className="font-mono text-xs font-normal text-muted">{e.id}</span>
             </legend>
             <label className="flex items-center gap-2 text-sm font-medium text-ink">
-              <input type="checkbox" className="size-4 accent-accent" checked={e.allowed} disabled={dis || e.locked.permitted} onChange={(ev) => setEp(i, { allowed: ev.target.checked })} />
+              <Switch checked={e.allowed} disabled={dis || e.locked.permitted} onCheckedChange={(v) => setEp(i, { allowed: v })} />
               Permitted
               {e.locked.permitted ? <Locked /> : null}
             </label>

@@ -175,7 +175,7 @@ export function AdminOrgsView() {
                 <Td>
                   <div className="flex flex-wrap gap-1">
                     {o.frozen ? <Badge tone="danger">Frozen</Badge> : null}
-                    {o.ownerless ? <Badge tone="pending">No owner</Badge> : null}
+                    {o.ownerless ? <Badge>No owner</Badge> : null}
                   </div>
                 </Td>
                 <Td className="text-right">

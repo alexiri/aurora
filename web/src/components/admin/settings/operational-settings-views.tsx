@@ -11,13 +11,14 @@ import {
 } from "@/components/admin/settings/settings-section-form";
 import { ErrorState, Loading } from "@/components/states";
 import { Badge } from "@/components/ui/badge";
+import { LockPill } from "@/components/ui/lock-pill";
 import { Button } from "@/components/ui/button";
 import { DataTable, Td, Th } from "@/components/ui/data-table";
 import { inputClass } from "@/components/ui/field";
-import { FormSection } from "@/components/ui/form";
 import { Notice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
-import { SettingField, settingControlId } from "@/components/ui/setting-field";
+import { SettingField, SettingsCard, settingControlId } from "@/components/ui/setting-field";
+import { Unavailable } from "@/components/ui/unavailable";
 import { useSettingsSection, useSettingsSections, type SettingsSection } from "@/lib/api/settings";
 
 /*
@@ -159,6 +160,7 @@ function OperationalView({
   sectionId,
   page,
   notice,
+  unavailable,
   controls,
   below,
   bare = false,
@@ -166,6 +168,8 @@ function OperationalView({
   sectionId: string;
   page: OperationalPage;
   notice?: (s: SettingsSection) => ReactNode;
+  /** A card when the deployment lacks the feature: it replaces the form (the settings cannot take effect). */
+  unavailable?: (s: SettingsSection) => ReactNode;
   controls?:
     | Record<string, (ctx: SettingControlCtx) => ReactNode>
     | ((s: SettingsSection) => Record<string, (ctx: SettingControlCtx) => ReactNode>);
@@ -177,6 +181,7 @@ function OperationalView({
   if (q.isPending) return <Loading />;
   if (q.isError) return <ErrorState error={q.error} onRetry={() => q.refetch()} />;
   const section = q.data;
+  const missing = unavailable ? unavailable(section) : null;
   return (
     <div className={bare ? "space-y-6" : "max-w-page space-y-6"}>
       {bare ? null : (
@@ -187,14 +192,16 @@ function OperationalView({
         />
       )}
       {notice ? notice(section) : null}
-      <SettingsSectionForm
-        key={section.generation}
-        section={section}
-        groups={page.groups}
-        controls={typeof controls === "function" ? controls(section) : controls}
-        onReload={() => void q.refetch()}
-      />
-      {below ? below(section) : null}
+      {missing ?? (
+        <SettingsSectionForm
+          key={section.generation}
+          section={section}
+          groups={page.groups}
+          controls={typeof controls === "function" ? controls(section) : controls}
+          onReload={() => void q.refetch()}
+        />
+      )}
+      {missing ? null : below ? below(section) : null}
     </div>
   );
 }
@@ -210,6 +217,7 @@ function OperationalStack({
     sectionId: string;
     page: OperationalPage;
     notice?: (s: SettingsSection) => ReactNode;
+    unavailable?: (s: SettingsSection) => ReactNode;
     controls?: (s: SettingsSection) => Record<string, (ctx: SettingControlCtx) => ReactNode>;
     below?: (s: SettingsSection) => ReactNode;
   }[];
@@ -219,14 +227,19 @@ function OperationalStack({
   if (failed?.isError) return <ErrorState error={failed.error} onRetry={() => void Promise.all(qs.map((q) => q.refetch()))} />;
   const sections = qs.map((q) => q.data);
   if (sections.some((s) => !s)) return <Loading />;
+  // A part whose feature is missing shows its card and no form; the other parts keep their one Save.
+  const missing = parts.map((p, i) => p.unavailable?.(sections[i] as SettingsSection) ?? null);
+  const shown = parts.flatMap((p, i) => (missing[i] ? [] : [{ p, s: sections[i] as SettingsSection }]));
   return (
-    <SettingsStackForm
-      parts={parts.map((p, i) => {
-        const s = sections[i] as SettingsSection;
-        return { section: s, groups: p.page.groups, controls: p.controls?.(s), above: p.notice?.(s), below: p.below?.(s) };
-      })}
-      onReload={() => void Promise.all(qs.map((q) => q.refetch()))}
-    />
+    <div className="space-y-6">
+      {missing.map((m, i) => (m ? <div key={parts[i]!.sectionId}>{m}</div> : null))}
+      {shown.length > 0 ? (
+        <SettingsStackForm
+          parts={shown.map(({ p, s }) => ({ section: s, groups: p.page.groups, controls: p.controls?.(s), above: p.notice?.(s), below: p.below?.(s) }))}
+          onReload={() => void Promise.all(qs.map((q) => q.refetch()))}
+        />
+      ) : null}
+    </div>
   );
 }
 
@@ -255,7 +268,7 @@ export function RunnersTable({ section }: { section: SettingsSection }) {
   const runners = runnersOf(section);
   const choices = harnessChoices(section.fields);
   return (
-    <FormSection
+    <SettingsCard
       title="Runners and sandbox sizes"
       description={
         <>
@@ -265,6 +278,7 @@ export function RunnersTable({ section }: { section: SettingsSection }) {
         </>
       }
     >
+      <div className="py-4">
       {runners.length === 0 ? (
         <p className="text-sm text-ink-2">No runner has registered yet.</p>
       ) : (
@@ -295,7 +309,8 @@ export function RunnersTable({ section }: { section: SettingsSection }) {
           </tbody>
         </DataTable>
       )}
-    </FormSection>
+      </div>
+    </SettingsCard>
   );
 }
 
@@ -370,13 +385,15 @@ function availableOf(section: SettingsSection): boolean {
   return (section.extra as { available?: boolean } | null | undefined)?.available === true;
 }
 
-function terminalNotice(s: SettingsSection): ReactNode {
+/** (P5-POLISH-2, D-392) One card instead of a notice over a disabled form: the settings render only when they can take effect. */
+function terminalUnavailable(s: SettingsSection): ReactNode {
   return availableOf(s) ? null : (
-    <Notice tone="pending" role="status" className="max-w-3xl">
-      This deployment does not provide the terminal&apos;s wiring (the runner&apos;s stream listener and the network flows to it), so
-      the terminal cannot be turned on here. Set <code className="font-mono">terminal.enabled: true</code> in your Helm values, then
-      come back.
-    </Notice>
+    <Unavailable
+      title="The web terminal isn't available on this Aurora"
+      fixer="An operator installs it."
+      guide={<>Guide: “Terminal”. Set <code className="font-mono">terminal.enabled: true</code> in your Helm values.</>}>
+      This deployment does not provide the terminal&apos;s wiring (the runner&apos;s stream listener and the network flows to it).
+    </Unavailable>
   );
 }
 
@@ -386,12 +403,14 @@ export function ScimSettingsView() {
     <OperationalView
       sectionId="scim"
       page={SCIM_PAGE}
-      notice={(s) =>
+      unavailable={(s) =>
         availableOf(s) ? null : (
-          <Notice tone="pending" role="status" className="max-w-3xl">
-            This deployment does not route <code className="font-mono">/scim/v2</code> to Aurora, so directory sync cannot be turned
-            on here. Set <code className="font-mono">scim.enabled: true</code> in your Helm values, then come back.
-          </Notice>
+          <Unavailable
+            title="Directory sync isn't available on this Aurora"
+            fixer="An operator installs it."
+            guide={<>Guide: “Directory sync”. Set <code className="font-mono">scim.enabled: true</code> in your Helm values.</>}>
+            This deployment does not route <code className="font-mono">/scim/v2</code> to Aurora.
+          </Unavailable>
         )
       }
     />
@@ -405,7 +424,7 @@ export function TerminalSettingsView({ bare = false }: { bare?: boolean }) {
       bare={bare}
       sectionId="terminal"
       page={TERMINAL_PAGE}
-      notice={terminalNotice}
+      unavailable={terminalUnavailable}
     />
   );
 }
@@ -415,7 +434,7 @@ export function ComputersView() {
   return (
     <OperationalStack
       parts={[
-        { sectionId: "terminal", page: TERMINAL_PAGE, notice: terminalNotice },
+        { sectionId: "terminal", page: TERMINAL_PAGE, unavailable: terminalUnavailable },
         { sectionId: "previews", page: PREVIEWS_PAGE, notice: () => previewsNotice(true) },
       ]}
     />
@@ -482,7 +501,7 @@ export function RateClassesControl({ ctx }: { ctx: SettingControlCtx }) {
             <li key={`h-${e.id}`} className="flex flex-wrap items-center gap-2 rounded-control border border-line p-2 text-sm">
               <span className="font-medium text-ink">{e.id}</span>
               <code className="font-mono text-xs text-ink-2">{JSON.stringify(e.value)}</code>
-              <Badge tone="pending">Managed by Helm</Badge>
+              <LockPill owner="Set in Helm" />
             </li>
           ))}
           {own.map((e, i) => {

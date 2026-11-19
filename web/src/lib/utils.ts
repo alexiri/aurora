@@ -1,12 +1,14 @@
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
 
+import { formatWhen } from "./format-date";
+
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-/** A timestamp in the browser's locale, or `empty` ("—" by default) when there is none. */
-export const fmtDate = (s?: string | null, empty = "—") => (s ? new Date(s).toLocaleString() : empty);
+/** (P5-POLISH-2) A time as `formatWhen` says it ("5 min ago", "18 Nov"), or `empty` ("—" by default) when there is none. */
+export const fmtDate = (s?: string | null, empty = "—") => formatWhen(s, { empty });
 
 /** "1 agent", "3 agents"; `many` defaults to `one` + "s". */
 export const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;

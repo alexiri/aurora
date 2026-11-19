@@ -16,7 +16,7 @@ import { counts, customBody, groupOf, initialDecisions, type Decision, type Tool
 import { orgRoutes, wsRoutes } from "@/lib/routes";
 
 const DECISION_LABEL: Record<Decision, string> = { allow: "Allowed", ask: "Asks you", block: "Blocked" };
-const DECISION_TONE: Record<Decision, "neutral" | "pending" | "danger"> = { allow: "neutral", ask: "pending", block: "danger" };
+const DECISION_TONE: Record<Decision, "neutral" | "danger"> = { allow: "neutral", ask: "neutral", block: "danger" };
 
 /** The table's starting choices: the saved ones; an `act` choice allows everything; a fresh `custom_only` account allows reads (C-410). */
 export function startingDecisions(

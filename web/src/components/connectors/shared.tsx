@@ -50,13 +50,13 @@ export function ManagedBadge({ managed }: { managed: boolean }) {
 
 /** A managed type accepted without a signature under `plugins.allow_unsigned` (development only, D-142). */
 export function UnsignedBadge() {
-  return <Badge tone="pending">Unsigned (development)</Badge>;
+  return <Badge>Unsigned (development)</Badge>;
 }
 
 /** Status of a connector for humans: managed ones wait for the host, show its error, or run. */
-export function connectorStatus(c: ConnectorAdmin): { label: string; tone: "neutral" | "accent" | "pending" | "danger" } {
+export function connectorStatus(c: ConnectorAdmin): { label: string; tone: "neutral" | "accent" | "danger" } {
   if (c.status === "disabled") return { label: "Disabled", tone: "neutral" };
-  if (c.status === "pending_approval") return { label: "Needs approval", tone: "pending" };
+  if (c.status === "pending_approval") return { label: "Needs approval", tone: "neutral" };
   const failing = c.host_status.find((h) => h.state === "error");
   if (c.managed && failing) {
     return { label: failing.message ? `Error: ${failing.message}` : "Error", tone: "danger" };
@@ -76,7 +76,7 @@ export function ConnectorStatusChip({ c }: { c: ConnectorAdmin }) {
       </Badge>
       {/* (FIX-167, D-369) A widened update waits while the connector keeps running at the approved level. */}
       {c.update_pending && c.status !== "pending_approval" ? (
-        <Badge data-testid="update-pending-chip" tone="pending" className="max-w-full whitespace-normal break-words normal-case tracking-normal">
+        <Badge data-testid="update-pending-chip" tone="neutral" className="max-w-full whitespace-normal break-words normal-case tracking-normal">
           Update waiting for approval
         </Badge>
       ) : null}

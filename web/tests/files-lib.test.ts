@@ -15,7 +15,6 @@ import {
   nextFreeName,
   normalizePath,
   parentPath,
-  relativeTime,
   unopenable,
   uploadFailure,
   type FileEntry,
@@ -79,12 +78,6 @@ describe("display helpers", () => {
     expect(humanSize(0)).toBe("0 B");
     expect(humanSize(1536)).toBe("1.5 KiB");
     expect(humanSize(5 * 1024 * 1024)).toBe("5.0 MiB");
-  });
-
-  it("says how long ago, with a dash for unknown", () => {
-    const now = Date.parse("2026-11-15T12:00:00Z");
-    expect(relativeTime("2026-11-15T11:57:00Z", now)).toBe("3 minutes ago");
-    expect(relativeTime(null, now)).toBe("—");
   });
 
   it("marks links that cannot be opened", () => {

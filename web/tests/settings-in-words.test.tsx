@@ -125,7 +125,7 @@ describe("Settings in words (C-972, D-341)", () => {
     wrap(<SettingsSectionForm section={readOnly} onReload={() => undefined} />);
     expect(screen.getByTestId("approvals.timeout_secs-current").textContent).toBe("15 minutes");
     expect(screen.getByTestId("email.smtp_password-current").textContent).toBe("Set");
-    expect(screen.getByText("Helm")).toBeTruthy();
+    expect(screen.getByText("Set in Helm")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
     expect(document.querySelector("form")).toBeNull();
     expect(document.body.textContent).toContain("Change them in your Helm values");

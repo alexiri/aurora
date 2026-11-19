@@ -7,6 +7,7 @@ import { EndpointDialog, HelmEndpointDialog, PROVIDER_LABEL } from "@/components
 import type { SettingControlCtx } from "@/components/admin/settings/settings-section-form";
 import { HARNESS_LABEL } from "@/components/credentials/llm-key-modes";
 import { Badge } from "@/components/ui/badge";
+import { LockPill } from "@/components/ui/lock-pill";
 import { Button } from "@/components/ui/button";
 import { CheckboxField } from "@/components/ui/form";
 import { Notice } from "@/components/ui/notice";
@@ -241,7 +242,7 @@ export function EndpointsControl({
           <div className="flex flex-wrap items-center gap-2">
             <span className="font-medium text-ink">{e.id}</span>
             <Badge>{label(String(v.provider ?? ""))}</Badge>
-            <Badge tone="pending">Managed by Helm</Badge>
+            <LockPill owner="Set in Helm" />
           </div>
           {hostOf(v.base_url) ? <p className="break-all text-xs text-ink-2">{hostOf(v.base_url)}</p> : null}
           <HarnessLine harnesses={harnesses?.[e.id]} />

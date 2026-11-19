@@ -156,7 +156,7 @@ describe("rail data helpers", () => {
   it("labels request-log rows: an error_code reads Failed, a denial Deny", () => {
     expect(decisionBadge({ decision: "allow", error_code: null })).toEqual({ label: "Allow", tone: "accent" });
     expect(decisionBadge({ decision: "approved", error_code: null }).label).toBe("Allow");
-    expect(decisionBadge({ decision: "approval_expired", error_code: null })).toEqual({ label: "Held", tone: "pending" });
+    expect(decisionBadge({ decision: "approval_expired", error_code: null })).toEqual({ label: "Held", tone: "neutral" });
     expect(decisionBadge({ decision: "blocked", error_code: null }).label).toBe("Deny");
     expect(decisionBadge({ decision: "default_denied", error_code: null }).label).toBe("Deny");
     expect(decisionBadge({ decision: "allow", error_code: "upstream_timeout" })).toEqual({ label: "Failed", tone: "danger" });
@@ -164,7 +164,7 @@ describe("rail data helpers", () => {
     expect(hasProblem([{ decision: "allow", error_code: null }, { decision: "blocked", error_code: null }])).toBe(true);
   });
   it("shares the sandbox labels and failure tooltip with the header pill", () => {
-    expect(sandboxLook({ state: "starting", failure_message: null, failure_code: null })).toEqual({ tone: "pending", label: "Sandbox starting", title: undefined });
+    expect(sandboxLook({ state: "starting", failure_message: null, failure_code: null })).toEqual({ tone: "neutral", label: "Sandbox starting", title: undefined });
     expect(sandboxLook({ state: "failed", failure_message: "no runner", failure_code: "pod_failed" })).toMatchObject({
       tone: "danger", label: "Sandbox failed", title: "no runner (pod_failed)",
     });
