@@ -32,7 +32,7 @@ export function hasOutgoingWebhookSettings(org: Org): boolean {
 
 function OrgWebhookForm({ org }: { org: Org }) {
   const patch = usePatchOrg(org.id);
-  const s = org.settings as Org["settings"] & OrgWebhookSettings;
+  const s = org.settings;
   const [enabled, setEnabled] = useState(s.outgoing_webhooks_enabled ?? true);
   const [perMinute, setPerMinute] = useState(s.outgoing_webhooks_per_minute_max?.toString() ?? "");
   const [perDay, setPerDay] = useState(s.outgoing_webhooks_per_day_max?.toString() ?? "");
@@ -55,8 +55,7 @@ function OrgWebhookForm({ org }: { org: Org }) {
       outgoing_webhooks_per_minute_max: pm as number | null,
       outgoing_webhooks_per_day_max: pd as number | null,
     };
-    // The generated type of the settings patch has no webhook keys until the API's openapi is regenerated.
-    patch.mutate({ settings } as never, {
+    patch.mutate({ settings }, {
       onSuccess: () => setSaved(true),
       onError: (err) => {
         if (err instanceof ApiError && err.code === "above_instance_ceiling") {

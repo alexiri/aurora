@@ -397,7 +397,7 @@ describe("Send test", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
     const confirm = await screen.findByRole("dialog", { name: /Send a test to alerts/ });
-    expect(within(confirm).getByText("This really calls the webhook. The receiver will act on it.")).toBeInTheDocument();
+    expect(within(confirm).getByText("This really calls the webhook. The receiver will act on it. A test sent here goes out now; an agent's send waits for your approval.")).toBeInTheDocument();
     // Nothing was sent by pressing Send.
     expect(calls.filter((c) => c.method === "POST")).toHaveLength(1);
     fireEvent.click(within(confirm).getByRole("button", { name: "Send" }));
