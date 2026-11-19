@@ -54,16 +54,16 @@ const MEMBER = { give_access: false, change_access: false, manage: false };
 const app = (over: Record<string, unknown> = {}): Account =>
   ({
     ref: { type: "connection", id: "c1" }, kind: "app", name: "AWS prod", scope: "workspace", levels: ["read", "ask", "act"],
-    app: { app_id: "aws", name: "AWS", custom_only: false }, health: { state: "unknown", last_used_at: null }, agents: [entry()], can: OWNER, ...over,
+    app: { app_id: "aws", name: "AWS", custom_only: false }, health: { state: "not_used", last_used_at: null }, agents: [entry()], can: OWNER, ...over,
   }) as Account;
 const website = (over: Record<string, unknown> = {}): Account =>
   ({
-    ref: { type: "secret", id: "s1" }, kind: "website", name: "Stripe API", scope: "workspace", levels: [], health: { state: "unknown" },
+    ref: { type: "secret", id: "s1" }, kind: "website", name: "Stripe API", scope: "workspace", levels: [], health: { state: "not_used" },
     agents: [entry({ level: "use" })], can: OWNER, ...over,
   }) as Account;
 const aiKey = (over: Record<string, unknown> = {}): Account =>
   ({
-    ref: { type: "secret", id: "s2" }, kind: "ai_key", name: "Team key", scope: "workspace", levels: [], health: { state: "unknown" },
+    ref: { type: "secret", id: "s2" }, kind: "ai_key", name: "Team key", scope: "workspace", levels: [], health: { state: "not_used" },
     agents: [entry({ level: "use" })], can: OWNER, ...over,
   }) as Account;
 

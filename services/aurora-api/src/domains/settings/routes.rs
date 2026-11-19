@@ -19,6 +19,7 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(preview))
         .routes(routes!(governance_orgs))
         .routes(routes!(llm_endpoint_test))
+        .routes(routes!(llm_endpoint_warnings))
         .routes(routes!(sign_in_provider_test))
         .routes(routes!(email_test))
 }
@@ -69,6 +70,57 @@ async fn llm_endpoint_test(
     Json(req): Json<super::endpoint_test::EndpointTestRequest>,
 ) -> Result<Json<super::endpoint_test::EndpointTestResult>, ApiError> {
     Ok(Json(super::endpoint_test::run(&s, req).await?))
+}
+
+/// (P5-POLISH-3, D-385, C-1034) A role an endpoint leaves unset (or not allowed), for the endpoint's row in
+/// Administration › AI models.
+#[derive(Debug, serde::Serialize, utoipa::ToSchema)]
+pub struct EndpointRoleWarning {
+    /// `large` | `medium` | `small`.
+    pub role: String,
+    /// `role_unset` | `role_not_allowed`.
+    pub warning: String,
+}
+
+/// An endpoint with at least one role warning.
+#[derive(Debug, serde::Serialize, utoipa::ToSchema)]
+pub struct EndpointWarnings {
+    pub endpoint_id: String,
+    pub roles: Vec<EndpointRoleWarning>,
+}
+
+/// Which model roles each configured LLM endpoint leaves unset, from the same resolution as an agent's
+/// turn (C-1034). Only endpoints with at least one warning are listed; agents' own overrides are not
+/// considered. Instance admins only.
+#[utoipa::path(get, path = "/admin/llm-endpoint-warnings", operation_id = "adminListLlmEndpointWarnings",
+    tag = "admin",
+    responses((status = 200, body = Vec<EndpointWarnings>), (status = 403, body = ErrorEnvelope)),
+    security(("session" = [])))]
+async fn llm_endpoint_warnings(
+    _c: InstanceAdmin,
+    State(s): State<AppState>,
+) -> Result<Json<Vec<EndpointWarnings>>, ApiError> {
+    let harness = s.ops().hosted.default_harness.clone();
+    let llm = s.llm();
+    let out = llm
+        .endpoints()
+        .iter()
+        .filter_map(|ep| {
+            let roles: Vec<EndpointRoleWarning> =
+                crate::domains::hosted::model::endpoint_role_warnings(ep, &harness)
+                    .into_iter()
+                    .map(|(role, warning)| EndpointRoleWarning {
+                        role: role.to_owned(),
+                        warning: warning.to_owned(),
+                    })
+                    .collect();
+            (!roles.is_empty()).then(|| EndpointWarnings {
+                endpoint_id: ep.id.clone(),
+                roles,
+            })
+        })
+        .collect();
+    Ok(Json(out))
 }
 
 /// Where organizations stand against the instance governance ceiling (C-778): effective postures

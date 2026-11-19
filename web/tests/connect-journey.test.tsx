@@ -180,7 +180,7 @@ const PLAN = { app_id: "github", available: true, suggested_method: "token", met
 const CONN = { id: "c9", scope: "workspace", app_id: "github", scopes: [], missing_scopes: [], label: "me", status: "active", access: "read" };
 const ACCOUNT = {
   ref: { type: "connection", id: "c1" }, kind: "app", name: "GitHub · bob-builder", scope: "workspace", levels: ["read", "ask", "act"],
-  app: { app_id: "github", name: "GitHub", custom_only: false }, health: { state: "unknown" }, agents: [], connected_by: { name: "Bob" }, given: false,
+  app: { app_id: "github", name: "GitHub", custom_only: false }, health: { state: "not_used" }, agents: [], connected_by: { name: "Bob" }, given: false,
   can: { give_access: true, change_access: true, manage: true },
 };
 const WHO = { action: "set_up_oauth", role: "org_admin", people: [{ id: "u1", name: "Ada Lovelace" }], you_can: false };

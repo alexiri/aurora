@@ -546,16 +546,52 @@ impl RoleResolution {
 
 /// Whether a role model may be sent: a valid id (SEC-122), allowed for the org and on a static list when the
 /// endpoint has one.
-fn role_usable(eff: &EffectiveGovernance, ep: &Endpoint, model: &str) -> bool {
+fn role_usable(allowed: &dyn Fn(&str) -> bool, ep: &Endpoint, model: &str) -> bool {
     aurora_core::model_id::validate_model_id(model)
-        && model_ok(eff, &ep.id, model)
+        && allowed(model)
         && (ep.models.is_empty() || ep.models.iter().any(|m| m == model))
+}
+
+/// (P5-POLISH-3, C-1034) The roles an endpoint leaves unset or not allowed, as the instance's admin sees
+/// them: the same resolution as an agent's turn on the endpoint (`resolve_roles`) with no agent roles and
+/// only the endpoint's own allow-list (no organization is involved). `(role, warning)` pairs in role order;
+/// `role_not_served` needs a key's listing and is therefore never reported here.
+pub fn endpoint_role_warnings(ep: &Endpoint, harness: &str) -> Vec<(&'static str, &'static str)> {
+    let allowed =
+        |m: &str| ep.allowed_models.is_empty() || ep.allowed_models.iter().any(|a| a == m);
+    let r = resolve_roles_with(&allowed, ep, harness, "", None, "inherit", None);
+    ROLES
+        .iter()
+        .zip(r.roles.iter())
+        .filter_map(|(role, v)| v.warning.map(|w| (*role, w)))
+        .collect()
 }
 
 /// The one role resolution (`08 §Model roles`): the agent's stamped role, then the endpoint's, then none;
 /// the allow-list applies at selection; an agent role that is not usable is dropped, never re-pointed.
 fn resolve_roles(
     eff: &EffectiveGovernance,
+    ep: &Endpoint,
+    harness: &str,
+    default_model: &str,
+    agent_roles: Option<&Value>,
+    subagent_model: &str,
+    listing: Option<&KeyListing>,
+) -> RoleResolution {
+    let allowed = |m: &str| model_ok(eff, &ep.id, m);
+    resolve_roles_with(
+        &allowed,
+        ep,
+        harness,
+        default_model,
+        agent_roles,
+        subagent_model,
+        listing,
+    )
+}
+
+fn resolve_roles_with(
+    allowed: &dyn Fn(&str) -> bool,
     ep: &Endpoint,
     harness: &str,
     default_model: &str,
@@ -576,7 +612,7 @@ fn resolve_roles(
             .and_then(|v| v.get(*role))
             .and_then(Value::as_str)
         {
-            if stamped == Some(ep.id.as_str()) && role_usable(eff, ep, m) {
+            if stamped == Some(ep.id.as_str()) && role_usable(allowed, ep, m) {
                 views[i] = RoleView {
                     model_id: Some(m.to_owned()),
                     source: "agent",
@@ -591,7 +627,7 @@ fn resolve_roles(
             continue;
         }
         match ep_roles.get(*role) {
-            Some(m) if role_usable(eff, ep, m) => {
+            Some(m) if role_usable(allowed, ep, m) => {
                 views[i] = RoleView {
                     model_id: Some(m.clone()),
                     source: "endpoint",

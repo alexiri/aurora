@@ -28,7 +28,7 @@ export async function openJourney(page: Page, path: string, scheme: Scheme) {
       const name = appId === "github" ? "GitHub" : appId;
       extraAccounts.push({
         ref: { type: "connection", id: id(500) }, kind: "app", name: "acme-prod", scope: "workspace", levels: ["read", "ask", "act"],
-        app: { app_id: appId, name, custom_only: false }, health: { state: "unknown" }, agents: [{ ...who, level }], can, given: true,
+        app: { app_id: appId, name, custom_only: false }, health: { state: "not_used" }, agents: [{ ...who, level }], can, given: true,
       });
       return json({
         kind: "connected", connection: { id: id(500), scope: "workspace", app_id: appId, scopes: [], missing_scopes: [], label: "acme", status: "active" },
@@ -40,7 +40,7 @@ export async function openJourney(page: Page, path: string, scheme: Scheme) {
       saved.push({ path: p, method: m, body });
       const name = String(body.name ?? "Website");
       extraAccounts.push({
-        ref: { type: "secret", id: id(501) }, kind: "website", name, scope: "workspace", levels: [], health: { state: "unknown" },
+        ref: { type: "secret", id: id(501) }, kind: "website", name, scope: "workspace", levels: [], health: { state: "not_used" },
         agents: [{ ...who, level: "use" }], can, given: true,
       });
       return json({ id: id(501), name, kind: "generic", scope: "workspace", created_at: new Date().toISOString() });

@@ -251,7 +251,7 @@ describe("AccessTab", () => {
     name: "Stripe",
     scope: "workspace",
     levels: [],
-    health: { state: "unknown" },
+    health: { state: "not_used" },
     agents: [],
     can: { give_access: true, change_access: true, manage: true },
     ...over,

@@ -1,6 +1,6 @@
 package:
   id: aws-keys
-  version: 2.1.0
+  version: 2.2.0
   contract: 1
   min_core: 0.1.0
   publisher: aurora
@@ -22,6 +22,8 @@ apps:
       id: aws-keys
       name: AWS
       description: Work with S3 buckets and objects and query EC2, through an assumed IAM role or with an IAM access key pair
+      summary: S3 buckets and objects and EC2 details in your AWS account.
+      first_prompt: "Which S3 buckets do we have?"
       category: cloud
       api_docs: https://docs.aws.amazon.com/AmazonS3/latest/API/Welcome.html
       web_hosts: [console.aws.amazon.com]

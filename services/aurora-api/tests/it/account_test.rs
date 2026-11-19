@@ -95,7 +95,8 @@ async fn test_it(w: &W, who: &str, id: Uuid) -> (u16, Value) {
 
 async fn stored(w: &W, id: Uuid) -> (Option<String>, bool) {
     sqlx::query_as(
-        "SELECT last_check_result, last_check_at IS NOT NULL FROM app_connections WHERE id = $1",
+        "SELECT last_test_result, last_test_at IS NOT NULL FROM app_connections WHERE id = $1 \
+         AND last_check_at IS NULL AND last_ok_at IS NULL AND last_error_at IS NULL",
     )
     .bind(id)
     .fetch_one(w.h.pool())
@@ -156,7 +157,7 @@ async fn a_member_cannot_test_an_account() {
 async fn a_working_account_is_ok_stored_audited_and_shown_in_the_list() {
     let gw = FakeGateway::new("ok");
     let (w, id) = connected(&gw).await;
-    assert_eq!(health(&w, id).await["state"], "unknown");
+    assert_eq!(health(&w, id).await["state"], "not_used");
     let (s, v) = test_it(&w, &w.owner, id).await;
     assert_eq!(s, 200, "{v}");
     assert_eq!(v["result"], "ok", "{v}");
@@ -166,9 +167,53 @@ async fn a_working_account_is_ok_stored_audited_and_shown_in_the_list() {
     assert_eq!(stored(&w, id).await, (Some("ok".to_owned()), true));
     let a = wait_audit(&w, "account.test").await;
     assert_eq!(a["result"], "ok");
+    // (D-383, C-1033) A passed Test is shown next to the state, never as the account working: only an
+    // agent's real call does that.
     let h = health(&w, id).await;
-    assert_eq!(h["state"], "ok");
-    assert!(h["checked_at"].is_string());
+    assert_eq!(h["state"], "not_used", "{h}");
+    assert_eq!(h["test"]["result"], "ok", "{h}");
+    assert!(h["test"]["at"].is_string());
+    assert!(
+        h["last_ok_at"].is_null() && h["last_error_at"].is_null(),
+        "{h}"
+    );
+}
+
+/// Real use decides the state: a failed agent call shows `failing` until a later success, and a passed Test
+/// changes neither (C-1033, D-383).
+#[tokio::test]
+async fn a_failed_call_stays_failing_through_a_passed_test_until_a_real_success() {
+    let gw = FakeGateway::new("ok");
+    let (w, id) = connected(&gw).await;
+    sqlx::query(
+        "UPDATE app_connections SET last_error_at = now(), last_error = 'rejected' WHERE id = $1",
+    )
+    .bind(id)
+    .execute(w.h.pool())
+    .await
+    .unwrap();
+    let h = health(&w, id).await;
+    assert_eq!(
+        (h["state"].as_str(), h["detail"].as_str()),
+        (Some("failing"), Some("token")),
+        "{h}"
+    );
+    assert_eq!(h["last_error"], "rejected");
+
+    // The Test passes, and the account still fails: nothing an agent did has shown otherwise.
+    let (_, v) = test_it(&w, &w.owner, id).await;
+    assert_eq!(v["result"], "ok", "{v}");
+    let h = health(&w, id).await;
+    assert_eq!(h["state"], "failing", "{h}");
+    assert_eq!(h["test"]["result"], "ok", "{h}");
+
+    // A later real success (the gateway's write) turns it to working.
+    sqlx::query("UPDATE app_connections SET last_ok_at = now() WHERE id = $1")
+        .bind(id)
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(health(&w, id).await["state"], "working");
 }
 
 #[tokio::test]
@@ -182,10 +227,11 @@ async fn a_token_the_app_refuses_is_rejected_with_the_status_and_no_body() {
     assert_eq!(v["detail"]["status"], 401, "{v}");
     assert_eq!(v["detail"]["host"], "api.acme.example", "{v}");
     assert_eq!(stored(&w, id).await.0.as_deref(), Some("rejected"));
+    // The Test result is the Test's, apart from use: no agent has called through the account.
     let h = health(&w, id).await;
-    assert_eq!(h["state"], "rejected");
-    // The word for what the app refuses, never a raw reason.
-    assert_eq!(h["detail"], "token");
+    assert_eq!(h["state"], "not_used");
+    assert_eq!(h["test"]["result"], "rejected", "{h}");
+    assert!(h["detail"].is_null(), "{h}");
     // The answer says nothing the provider sent, nor the credential.
     let text = v.to_string();
     assert!(!text.contains("nope") && !text.contains("fine"), "{text}");
@@ -213,11 +259,8 @@ async fn a_provider_failure_is_unexpected_and_an_unroutable_host_is_unreachable(
     assert_eq!(v["result"], "unreachable", "{v}");
     assert_eq!(v["detail"]["host"], "api.acme.example", "{v}");
     let h = health(&w, id).await;
-    assert_eq!(h["state"], "unreachable");
-    assert_eq!(
-        h["detail"], "api.acme.example",
-        "the line names the host: {h}"
-    );
+    assert_eq!(h["state"], "not_used");
+    assert_eq!(h["test"]["result"], "unreachable", "{h}");
 }
 
 #[tokio::test]
@@ -281,7 +324,7 @@ async fn a_disabled_account_and_an_unknown_type_are_not_tested() {
 async fn health_in_the_list_never_shows_the_raw_reason_and_the_status_wins() {
     let gw = FakeGateway::new("ok");
     let (w, id) = connected(&gw).await;
-    sqlx::query("UPDATE app_connections SET status = 'reauth_required', status_reason = 'invalid_grant: raw upstream text', last_check_at = now(), last_check_result = 'ok' WHERE id = $1")
+    sqlx::query("UPDATE app_connections SET status = 'reauth_required', status_reason = 'invalid_grant: raw upstream text', last_ok_at = now() WHERE id = $1")
         .bind(id)
         .execute(w.h.pool())
         .await

@@ -1,6 +1,6 @@
 package:
   id: notion
-  version: 1.1.0
+  version: 1.2.0
   contract: 1
   min_core: 0.1.0
   publisher: aurora
@@ -23,6 +23,8 @@ apps:
       id: notion
       name: Notion
       description: Search and read pages, databases, blocks, comments and users in a Notion workspace, and create or update pages, append blocks and comment when you allow it
+      summary: Pages, databases and comments in your Notion workspace.
+      first_prompt: "Find my Notion pages about the roadmap."
       category: productivity
       api_docs: https://developers.notion.com/reference/intro
       web_hosts: [www.notion.so]
