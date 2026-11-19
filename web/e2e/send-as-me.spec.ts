@@ -1,7 +1,7 @@
 import { expect, test, type Page, type Route } from "@playwright/test";
 
 import { mockApi } from "./support/mock-api";
-import { overflow, titled, type Scheme } from "./support/open";
+import { openThemed, overflow } from "./support/open";
 import { serious } from "./support/files";
 
 // P4-UTOK (docs/14 §Account › Send as me, C-853..C-856): the token list, the Add token dialog (masked input, help text), the
@@ -42,12 +42,7 @@ async function mockSend(page: Page, over: { tokens?: unknown[]; sends?: unknown[
   await page.route("**/v1/me/user-token-approvals**", (route) => reply(route, { items: over.sends ?? [SEND] }));
 }
 
-async function open(page: Page, path: string, scheme: Scheme) {
-  await page.emulateMedia({ colorScheme: scheme });
-  await page.goto(path);
-  await expect.poll(() => page.locator("html").getAttribute("data-theme"), { timeout: 20_000 }).toBe(scheme);
-  await titled(page);
-}
+const open = openThemed;
 
 for (const scheme of ["light", "dark"] as const) {
   for (const width of [1280, 390]) {

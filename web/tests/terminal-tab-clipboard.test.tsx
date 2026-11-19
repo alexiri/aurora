@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TerminalTab } from "@/components/agents/terminal-tab";
+import { RecordingSocket } from "./support/terminal";
 
 // Copy and paste in the terminal pane (FIX-156, C-622). wterm's own key handler reads `e.key === "v"` for paste, so
 // Ctrl+Shift+V reached the shell as ^V; Ctrl+Shift+C without a selection was an interrupt; the OSC 52 confirmation
@@ -50,25 +51,6 @@ vi.mock("@wterm/react", async () => {
   };
 });
 vi.mock("@/lib/api/conversations", () => ({ useSandbox: () => ({ data: { state: "running" } }) }));
-
-class RecordingSocket {
-  static OPEN = 1;
-  static instances: RecordingSocket[] = [];
-  readyState = RecordingSocket.OPEN;
-  binaryType = "blob";
-  sent: Array<Uint8Array | string> = [];
-  onopen: (() => void) | null = null;
-  onmessage: ((ev: unknown) => void) | null = null;
-  onclose: ((ev: unknown) => void) | null = null;
-  constructor() {
-    RecordingSocket.instances.push(this);
-    queueMicrotask(() => this.onopen?.());
-  }
-  send(data: Uint8Array | string) {
-    this.sent.push(data);
-  }
-  close() {}
-}
 
 /** jsdom has neither `DataTransfer` nor `ClipboardEvent`: the two fields `pasteInto` and the stub use. */
 class FakeDataTransfer {
