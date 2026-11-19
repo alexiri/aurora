@@ -4,8 +4,7 @@ import { useState, type FormEvent } from "react";
 
 import { EmptyState } from "@/components/states";
 import { Button } from "@/components/ui/button";
-import { Notice } from "@/components/ui/notice";
-import { errorMessage } from "@/lib/api/errors";
+import { ErrorNotice } from "@/components/ui/notice";
 import { useAcceptSecret, useRejectSecret, type Secret, type SecretScope } from "@/lib/api/secrets";
 
 import { ValueInput } from "./value-input";
@@ -47,7 +46,7 @@ function Proposal({ scope, secret, canOwn }: { scope: SecretScope; secret: Secre
           </div>
         </form>
       ) : null}
-      {err ? <Notice tone="danger" role="alert">{errorMessage(err)}</Notice> : null}
+      <ErrorNotice error={err} />
     </li>
   );
 }

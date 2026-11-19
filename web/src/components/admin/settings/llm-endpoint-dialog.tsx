@@ -6,9 +6,8 @@ import { Button } from "@/components/ui/button";
 import { FormDialog } from "@/components/ui/confirm-dialog";
 import { Dialog, DialogClose, DialogContent } from "@/components/ui/dialog";
 import { Field, inputClass } from "@/components/ui/field";
-import { Notice } from "@/components/ui/notice";
+import { ErrorNotice, Notice } from "@/components/ui/notice";
 import { StatusDot } from "@/components/ui/status-dot";
-import { errorMessage } from "@/lib/api/errors";
 import { useTestLlmEndpoint, type LlmEndpointTestResult } from "@/lib/api/settings";
 import { MODEL_ID_PATTERN, ROLES, type Role } from "@/lib/model-roles";
 
@@ -469,9 +468,7 @@ export function EndpointDialog({
         <span className="text-xs text-muted">One request to the models path with no credential. Nothing is saved.</span>
       </div>
       {test.isError ? (
-        <Notice tone="danger" role="alert">
-          {errorMessage(test.error)}
-        </Notice>
+        <ErrorNotice error={test.error} />
       ) : null}
       {result ? <TestOutcome r={result} /> : null}
     </FormDialog>

@@ -11,7 +11,7 @@ import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Field, inputClass } from "@/components/ui/field";
 import { SecretInput } from "@/components/ui/secret-input";
 import { Form, FormActions } from "@/components/ui/form";
-import { Notice } from "@/components/ui/notice";
+import { ErrorNotice, Notice } from "@/components/ui/notice";
 import { appDisplayName } from "@/lib/api/app-name";
 import { errorMessage } from "@/lib/api/errors";
 import {
@@ -229,7 +229,7 @@ function CreateForm({
         </Field>
       ) : null}
       {selected ? <DefinitionInputs def={selected.def} values={values} onChange={setValues} /> : null}
-      {create.error ? <Notice tone="danger" role="alert">{errorMessage(create.error)}</Notice> : null}
+      <ErrorNotice error={create.error} />
       <FormActions>
         <Button
           type="submit"
@@ -324,7 +324,7 @@ export function ClientRow({
             <p className="text-sm text-ink-2">No field definition is available for this client.</p>
           )}
           <p className="text-xs text-muted">Secret values are never shown. Enter a new value to replace one.</p>
-          {patch.error ? <Notice tone="danger" role="alert">{errorMessage(patch.error)}</Notice> : null}
+          <ErrorNotice error={patch.error} />
           <FormActions>
             <Button type="submit" size="sm" disabled={patch.isPending}>Save</Button>
             <Button type="button" size="sm" variant="outline" onClick={() => setMode("none")}>Cancel</Button>

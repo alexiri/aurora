@@ -18,7 +18,7 @@ import { inputClass } from "@/components/ui/field";
 import { SecretInput } from "@/components/ui/secret-input";
 import { FormActions } from "@/components/ui/form";
 import { LockPill } from "@/components/ui/lock-pill";
-import { Notice } from "@/components/ui/notice";
+import { ErrorNotice, Notice } from "@/components/ui/notice";
 import { ItemList, ListRow } from "@/components/ui/section";
 import { SettingField, SettingsCard, settingControlId } from "@/components/ui/setting-field";
 import { Switch } from "@/components/ui/switch";
@@ -335,9 +335,7 @@ export function SettingsStackForm({
               </Notice>
             ) : null}
             {error && !["stale_revision", "setting_locked", "settings_invalid"].includes(code ?? "") ? (
-              <Notice tone="danger" role="alert">
-                {errorMessage(error)}
-              </Notice>
+              <ErrorNotice error={error} />
             ) : null}
             {code === "settings_invalid" ? (
               <Notice tone="danger" role="alert">

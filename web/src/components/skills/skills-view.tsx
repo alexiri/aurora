@@ -8,8 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Field, inputClass } from "@/components/ui/field";
 import { CheckboxField } from "@/components/ui/form";
-import { Notice } from "@/components/ui/notice";
-import { errorMessage } from "@/lib/api/errors";
+import { ErrorNotice, Notice } from "@/components/ui/notice";
 import type { BudgetTier } from "@/lib/api/skill-libraries";
 import { AddFromLibrary, LibraryBadge, LibraryManagedNotice, LibrarySkillActions, PendingUpdatesNotice } from "./library";
 import {
@@ -157,7 +156,7 @@ function CreateSkill({ scope, onDone }: { scope: SkillScope; onDone: (id: string
       </Field>
       <SizeMeter label="Body" used={body.length} max={SKILL_BODY_MAX} />
       {err && !err.includes("lowercase") && !err.includes("reserved") ? <Notice tone="danger" role="alert">{err}</Notice> : null}
-      {create.error ? <Notice tone="danger" role="alert">{errorMessage(create.error)}</Notice> : null}
+      <ErrorNotice error={create.error} />
       <Button type="submit" size="lg" disabled={create.isPending}>Create skill</Button>
     </form>
   );
@@ -241,7 +240,7 @@ function SkillEditor({ scope, skill, readOnly = false, onDeleted }: { scope: Ski
         </Field>
         <SizeMeter label="Body" used={body.length} max={SKILL_BODY_MAX} />
         <CheckboxField id="skill-enabled" label="Enabled" checked={enabled} disabled={readOnly} onChange={setEnabled} />
-        {failed ? <Notice tone="danger" role="alert">{errorMessage(failed)}</Notice> : null}
+        <ErrorNotice error={failed} />
         {readOnly ? null : (
           <div className="flex flex-wrap gap-2">
             <Button type="submit" size="lg" disabled={bodyOver || update.isPending}>Save</Button>
@@ -297,7 +296,7 @@ function SkillFiles({ scope, skill, readOnly = false }: { scope: SkillScope; ski
       <h3 className="font-display text-base font-semibold text-ink">Files</h3>
       <SizeMeter label="Total size" used={skill.total_size} max={SKILL_TOTAL_MAX} />
       {skill.files.length === 0 ? <p className="text-sm text-muted">No extra files.</p> : <FileTree nodes={buildTree(skill.files)} readOnly={readOnly} onDelete={(p) => del.mutate(p)} onReplace={replace} />}
-      {del.error || put.error ? <Notice tone="danger" role="alert">{errorMessage(del.error ?? put.error)}</Notice> : null}
+      {del.error || put.error ? <ErrorNotice error={del.error ?? put.error} /> : null}
       {readOnly ? null : <form onSubmit={(e) => void add(e)} noValidate className="space-y-3 rounded-card border border-line bg-surface p-4 shadow-card">
         <Field id="sf-path" label="File path" hint="Relative, for example scripts/run.sh" error={err || undefined}>
           <input id="sf-path" className={inputClass} value={path} onChange={(e) => setPath(e.target.value)} />

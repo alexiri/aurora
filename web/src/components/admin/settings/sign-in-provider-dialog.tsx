@@ -8,9 +8,8 @@ import { FormDialog } from "@/components/ui/confirm-dialog";
 import { Dialog, DialogClose, DialogContent } from "@/components/ui/dialog";
 import { Field, inputClass } from "@/components/ui/field";
 import { SecretInput } from "@/components/ui/secret-input";
-import { Notice } from "@/components/ui/notice";
+import { ErrorNotice, Notice } from "@/components/ui/notice";
 import { StatusDot } from "@/components/ui/status-dot";
-import { errorMessage } from "@/lib/api/errors";
 import { useTestProvider, type ProviderTestResult } from "@/lib/api/settings";
 
 type Entry = Record<string, unknown>;
@@ -499,9 +498,7 @@ export function ProviderDialog({
         <span className="text-xs text-muted">Fetches the provider&apos;s discovery document. Nothing is saved and no secret is sent.</span>
       </div>
       {test.isError ? (
-        <Notice tone="danger" role="alert">
-          {errorMessage(test.error)}
-        </Notice>
+        <ErrorNotice error={test.error} />
       ) : null}
       {result ? <Discovery r={result} /> : null}
     </FormDialog>

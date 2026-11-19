@@ -9,10 +9,9 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DataTable, Td, Th } from "@/components/ui/data-table";
 import { inputClass } from "@/components/ui/field";
-import { Notice } from "@/components/ui/notice";
+import { ErrorNotice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
 import { useAdminUsers, usePatchAdminUser, type AdminUser } from "@/lib/api/account";
-import { errorMessage } from "@/lib/api/errors";
 import { useSession } from "@/lib/api/queries";
 
 import { fmtDate } from "./key-table";
@@ -105,9 +104,7 @@ export function UsersTable({
                 </div>
                 {isSelf ? <p className="text-xs text-muted">This is you.</p> : null}
                 {err?.id === u.id ? (
-                  <Notice tone="danger" role="alert" className="max-w-xs p-2 text-xs">
-                    {errorMessage(err.error)}
-                  </Notice>
+                  <ErrorNotice error={err.error} className="max-w-xs p-2 text-xs" />
                 ) : null}
               </Td>
             </tr>

@@ -4,9 +4,8 @@ import { useState, type FormEvent } from "react";
 
 import { FormDialog } from "@/components/ui/confirm-dialog";
 import { Field, inputClass } from "@/components/ui/field";
-import { Notice } from "@/components/ui/notice";
+import { ErrorNotice } from "@/components/ui/notice";
 import { useDeleteAgent } from "@/lib/api/agents";
-import { errorMessage } from "@/lib/api/errors";
 
 /**
  * Delete agent (D-200: opened from the page's Agent actions menu; the Delete zone under Instructions is gone). The
@@ -57,11 +56,7 @@ export function DeleteAgentDialog({
       <Field id="del-agent" label="Agent handle" hint={`Type ${handle} to confirm.`}>
         <input id="del-agent" className={inputClass} value={confirm} autoComplete="off" onChange={(e) => setConfirm(e.target.value)} />
       </Field>
-      {del.error ? (
-        <Notice tone="danger" role="alert">
-          {errorMessage(del.error)}
-        </Notice>
-      ) : null}
+      <ErrorNotice error={del.error} />
     </FormDialog>
   );
 }

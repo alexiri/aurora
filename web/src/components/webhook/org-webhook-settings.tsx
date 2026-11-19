@@ -5,10 +5,9 @@ import { useState, type FormEvent } from "react";
 import { Button } from "@/components/ui/button";
 import { Field, inputClass } from "@/components/ui/field";
 import { CheckboxField, Form, FormActions } from "@/components/ui/form";
-import { Notice } from "@/components/ui/notice";
+import { ErrorNotice, Notice } from "@/components/ui/notice";
 import { Section } from "@/components/ui/section";
 import { ApiError } from "@/lib/api/client";
-import { errorMessage } from "@/lib/api/errors";
 import { usePatchOrg } from "@/lib/api/org";
 import type { Org } from "@/lib/api/queries";
 import type { OrgWebhookSettings } from "@/lib/api/webhook";
@@ -88,9 +87,7 @@ function OrgWebhookForm({ org }: { org: Org }) {
           </Field>
         </fieldset>
         {patch.error && !ceilingRefused ? (
-          <Notice tone="danger" role="alert">
-            {errorMessage(patch.error)}
-          </Notice>
+          <ErrorNotice error={patch.error} />
         ) : null}
         {saved ? (
           <Notice tone="accent" role="status">

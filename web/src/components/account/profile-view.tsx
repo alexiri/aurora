@@ -11,10 +11,10 @@ import { ThemeSwitch } from "@/components/theme/theme-switch";
 import { Button } from "@/components/ui/button";
 import { Field, inputClass } from "@/components/ui/field";
 import { Form, FormActions } from "@/components/ui/form";
-import { Notice } from "@/components/ui/notice";
+import { ErrorNotice, Notice } from "@/components/ui/notice";
 import { Section } from "@/components/ui/section";
 import { useUpdateMe } from "@/lib/api/account";
-import { errorMessage, fieldErrors } from "@/lib/api/errors";
+import { fieldErrors } from "@/lib/api/errors";
 import { usePatchOnboarding } from "@/lib/api/onboarding";
 import { useInstance, useSession, type Me } from "@/lib/api/queries";
 import { accountRoutes } from "@/lib/routes";
@@ -79,9 +79,7 @@ function ProfileForm({ me }: { me: Me }) {
         </select>
       </Field>
       {update.error && Object.keys(fe).length === 0 ? (
-        <Notice tone="danger" role="alert">
-          {errorMessage(update.error)}
-        </Notice>
+        <ErrorNotice error={update.error} />
       ) : null}
       {saved ? (
         <Notice tone="accent" role="status">
@@ -201,11 +199,7 @@ function GettingStartedControls() {
           {note}
         </Notice>
       ) : null}
-      {patch.error ? (
-        <Notice tone="danger" role="alert">
-          {errorMessage(patch.error)}
-        </Notice>
-      ) : null}
+      <ErrorNotice error={patch.error} />
     </div>
   );
 }

@@ -9,9 +9,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DataTable, Td, Th } from "@/components/ui/data-table";
 import { Field, inputClass } from "@/components/ui/field";
-import { Notice } from "@/components/ui/notice";
+import { ErrorNotice, Notice } from "@/components/ui/notice";
 import { Section } from "@/components/ui/section";
-import { errorMessage } from "@/lib/api/errors";
 import { useHostTokens, useIssueHostToken, useRevokeHostToken } from "@/lib/api/connectors";
 
 /**
@@ -112,9 +111,7 @@ export function HostTokens() {
           <input id="host-token-types" className={inputClass} value={types} onChange={(e) => setTypes(e.target.value)} required />
         </Field>
         {issue.isError ? (
-          <Notice tone="danger" role="alert">
-            {errorMessage(issue.error)}
-          </Notice>
+          <ErrorNotice error={issue.error} />
         ) : null}
         <div>
           <Button type="submit" disabled={issue.isPending}>

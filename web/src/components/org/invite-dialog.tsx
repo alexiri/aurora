@@ -5,9 +5,9 @@ import { useState, type FormEvent } from "react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTrigger } from "@/components/ui/dialog";
 import { Field, inputClass } from "@/components/ui/field";
-import { Notice } from "@/components/ui/notice";
+import { ErrorNotice } from "@/components/ui/notice";
 import { cn } from "@/lib/utils";
-import { errorMessage, fieldErrors } from "@/lib/api/errors";
+import { fieldErrors } from "@/lib/api/errors";
 import { useCreateInvitation, validateInvite } from "@/lib/api/org";
 import { useWorkspaces } from "@/lib/api/queries";
 
@@ -88,9 +88,7 @@ export function InviteForm({ orgId, onDone }: { orgId: string; onDone: () => voi
         </fieldset>
       ) : null}
       {create.error && Object.keys(fe).length === 0 ? (
-        <Notice tone="danger" role="alert">
-          {errorMessage(create.error)}
-        </Notice>
+        <ErrorNotice error={create.error} />
       ) : null}
       <div className="flex justify-end">
         <Button type="submit" size="lg" disabled={create.isPending}>

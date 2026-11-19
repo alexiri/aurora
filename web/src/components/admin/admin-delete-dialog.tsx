@@ -4,8 +4,7 @@ import { useState, type FormEvent, type ReactNode } from "react";
 
 import { FormDialog } from "@/components/ui/confirm-dialog";
 import { Field, inputClass } from "@/components/ui/field";
-import { Notice } from "@/components/ui/notice";
-import { errorMessage } from "@/lib/api/errors";
+import { ErrorNotice } from "@/components/ui/notice";
 
 /**
  * The danger dialog of Admin › Organizations (P5-ADMDEL, docs/14 §Instance administration): names what
@@ -77,9 +76,7 @@ export function AdminDeleteDialog({
     >
       <div className="space-y-2 text-sm text-ink-2">{consequences}</div>
       {error !== null ? (
-        <Notice tone="danger" role="alert">
-          {errorMessage(error)}
-        </Notice>
+        <ErrorNotice error={error} />
       ) : null}
       <Field id={inputId} label={`Type ${slug} to confirm`}>
         <input

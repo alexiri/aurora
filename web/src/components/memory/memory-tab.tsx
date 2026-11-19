@@ -7,10 +7,9 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Field, inputClass } from "@/components/ui/field";
 import { FormActions } from "@/components/ui/form";
-import { Notice } from "@/components/ui/notice";
+import { ErrorNotice, Notice } from "@/components/ui/notice";
 import { ItemList } from "@/components/ui/section";
 import { cn } from "@/lib/utils";
-import { errorMessage } from "@/lib/api/errors";
 import {
   MEMORY_CONTENT_MAX,
   MEMORY_KEY_MAX,
@@ -186,7 +185,7 @@ function MemoryEditor({ agentId, memory, onDone }: { agentId: string; memory?: M
         </Field>
         <SizeMeter label="Content" used={content.length} max={MEMORY_CONTENT_MAX} />
         {err && memory ? <Notice tone="danger" role="alert">{err}</Notice> : null}
-        {failed ? <Notice tone="danger" role="alert">{errorMessage(failed)}</Notice> : null}
+        <ErrorNotice error={failed} />
         <FormActions className="gap-2">
           <Button type="submit" disabled={over || create.isPending || put.isPending}>Save</Button>
           {memory ? (
@@ -227,7 +226,7 @@ export function RevisionHistory({ agentId, memory }: { agentId: string; memory: 
       <h3 className="font-display text-base font-semibold text-ink">Revision history</h3>
       {revs.isPending ? <Loading /> : null}
       {revs.isError ? <ErrorState error={revs.error} onRetry={() => revs.refetch()} /> : null}
-      {failed ? <Notice tone="danger" role="alert">{errorMessage(failed)}</Notice> : null}
+      <ErrorNotice error={failed} />
       <ul className="divide-y divide-line">
         {revs.data?.items.map((r) => (
           <li key={r.revision} className="space-y-1 py-3 text-sm first:pt-0 last:pb-0">

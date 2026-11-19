@@ -10,11 +10,10 @@ import { OffboardingDialog } from "@/components/automations/offboarding-dialog";
 import { IdpRoleBadge } from "@/components/identity/idp-role-badge";
 import { DataTable, Td, Th } from "@/components/ui/data-table";
 import { inputClass } from "@/components/ui/field";
-import { Notice } from "@/components/ui/notice";
+import { ErrorNotice, Notice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
 import { Section } from "@/components/ui/section";
 import { cn } from "@/lib/utils";
-import { errorMessage } from "@/lib/api/errors";
 import {
   canManageMember,
   roleOptions,
@@ -199,11 +198,7 @@ function Members({ orgId, viewer }: { orgId: string; viewer: OrgRole }) {
 
   return (
     <div className="space-y-3">
-      {err ? (
-        <Notice tone="danger" role="alert">
-          {errorMessage(err)}
-        </Notice>
-      ) : null}
+      <ErrorNotice error={err} />
       {items.length === 0 ? (
         <EmptyState title="No members" />
       ) : (
@@ -285,11 +280,7 @@ function Invitations({ orgId }: { orgId: string }) {
   if (items.length === 0) return <EmptyState title="No pending invitations" />;
   return (
     <div className="space-y-3">
-      {cancel.error ? (
-        <Notice tone="danger" role="alert">
-          {errorMessage(cancel.error)}
-        </Notice>
-      ) : null}
+      <ErrorNotice error={cancel.error} />
       <DataTable caption="Pending invitations">
         <thead>
           <tr>

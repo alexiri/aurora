@@ -7,7 +7,7 @@ import { FormDialog } from "@/components/ui/confirm-dialog";
 import { Field, inputClass } from "@/components/ui/field";
 import { MoreIcon } from "@/components/ui/icons";
 import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from "@/components/ui/menu";
-import { Notice } from "@/components/ui/notice";
+import { ErrorNotice, Notice } from "@/components/ui/notice";
 import { errorMessage } from "@/lib/api/errors";
 import { authorityRank, type Frozen } from "@/lib/api/freeze";
 
@@ -202,11 +202,7 @@ export function FreezeControl({
             onChange={(e) => setReason(e.target.value)}
           />
         </Field>
-        {freeze.error ? (
-          <Notice tone="danger" role="alert">
-            {errorMessage(freeze.error)}
-          </Notice>
-        ) : null}
+        <ErrorNotice error={freeze.error} />
       </FormDialog>
     </>
   );

@@ -6,8 +6,8 @@ import { useState, type FormEvent } from "react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTrigger } from "@/components/ui/dialog";
 import { Field, inputClass } from "@/components/ui/field";
-import { Notice } from "@/components/ui/notice";
-import { errorMessage, fieldErrors } from "@/lib/api/errors";
+import { ErrorNotice, Notice } from "@/components/ui/notice";
+import { fieldErrors } from "@/lib/api/errors";
 import { useCreateGroup, type CreateGroupRequest } from "@/lib/api/groups";
 import { orgRoutes } from "@/lib/routes";
 import { useInstance } from "@/lib/api/queries";
@@ -136,9 +136,7 @@ function CreateForm({ orgId, orgSlug, onDone }: { orgId: string; orgSlug: string
         </Notice>
       ) : null}
       {create.error && Object.keys(fe).length === 0 ? (
-        <Notice tone="danger" role="alert">
-          {errorMessage(create.error)}
-        </Notice>
+        <ErrorNotice error={create.error} />
       ) : null}
       <div className="flex justify-end">
         <Button type="submit" size="lg" disabled={create.isPending}>

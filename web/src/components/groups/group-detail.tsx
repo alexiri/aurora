@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { DataTable, Td, Th } from "@/components/ui/data-table";
 import { Field, inputClass } from "@/components/ui/field";
-import { Notice } from "@/components/ui/notice";
+import { ErrorNotice, Notice } from "@/components/ui/notice";
 import { matchesFilter, PickerFilter } from "@/components/ui/picker-filter";
 import { PageHeader } from "@/components/ui/page-header";
 import { Section } from "@/components/ui/section";
@@ -121,11 +121,7 @@ function RemoveMemberDialog({
     >
       <div className="space-y-3">
         <ImpactSummary query={impact} />
-        {change.error ? (
-          <Notice tone="danger" role="alert">
-            {errorMessage(change.error)}
-          </Notice>
-        ) : null}
+        <ErrorNotice error={change.error} />
       </div>
     </ConfirmDialog>
   );
@@ -189,11 +185,7 @@ function Members({ g, orgId }: { g: Group; orgId: string }) {
             </Button>
           </form>
         ) : null}
-        {change.error ? (
-          <Notice tone="danger" role="alert">
-            {errorMessage(change.error)}
-          </Notice>
-        ) : null}
+        <ErrorNotice error={change.error} />
         {items.length === 0 ? (
           <EmptyState title="No members" />
         ) : (
@@ -279,11 +271,7 @@ function OrgRole({ g, orgId }: { g: Group; orgId: string }) {
             ? `Members of this group act as ${g.org_role} in the whole organization, including every workspace.`
             : "No organization role. Owner can never be given to a group."}
         </p>
-        {patch.error ? (
-          <Notice tone="danger" role="alert">
-            {errorMessage(patch.error)}
-          </Notice>
-        ) : null}
+        <ErrorNotice error={patch.error} />
         <ConfirmDialog
           open={pending !== null}
           onOpenChange={(o) => !o && setPending(null)}
@@ -320,11 +308,7 @@ function Workspaces({ g, orgId }: { g: Group; orgId: string }) {
   return (
     <Section id="grp-ws" title="Workspace access" description={ROLE_HELP}>
       <div className="space-y-3">
-        {err ? (
-          <Notice tone="danger" role="alert">
-            {errorMessage(err)}
-          </Notice>
-        ) : null}
+        <ErrorNotice error={err} />
         {items.length === 0 ? (
           <EmptyState title="Not bound to any workspace" />
         ) : (
@@ -470,11 +454,7 @@ function DeleteGroup({ g, orgId, orgSlug }: { g: Group; orgId: string; orgSlug: 
         >
           <div className="space-y-3">
             <ImpactSummary query={impact} />
-            {del.error ? (
-              <Notice tone="danger" role="alert">
-                {errorMessage(del.error)}
-              </Notice>
-            ) : null}
+            <ErrorNotice error={del.error} />
           </div>
         </ConfirmDialog>
       </div>

@@ -9,7 +9,7 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { DataTable, Td, Th } from "@/components/ui/data-table";
 import { Dialog, DialogClose, DialogContent } from "@/components/ui/dialog";
 import { Field, inputClass } from "@/components/ui/field";
-import { Notice } from "@/components/ui/notice";
+import { ErrorNotice, Notice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
 import { Section } from "@/components/ui/section";
 import { EmptyState, ErrorState, Loading } from "@/components/states";
@@ -29,7 +29,6 @@ import {
   type AddonSourceCheckResult,
   type Interval,
 } from "@/lib/api/addon-sources";
-import { errorMessage } from "@/lib/api/errors";
 
 function Fingerprint({ value, label = "Signing key fingerprint" }: { value: string; label?: string }) {
   const [copied, setCopied] = useState(false);
@@ -150,9 +149,7 @@ export function AddSourceDialog({ open, onOpenChange }: { open: boolean; onOpenC
             What a repository publishes is described in the add-on repository format documentation.
           </p>
           {preview.isError ? (
-            <Notice tone="danger" role="alert">
-              {errorMessage(preview.error)}
-            </Notice>
+            <ErrorNotice error={preview.error} />
           ) : null}
           {!p ? (
             <div className="flex justify-end">
@@ -205,9 +202,7 @@ export function AddSourceDialog({ open, onOpenChange }: { open: boolean; onOpenC
               <IntervalSelect id="addon-interval" value={interval} onChange={setIntervalValue} />
             </Field>
             {add.isError ? (
-              <Notice tone="danger" role="alert">
-                {errorMessage(add.error)}
-              </Notice>
+              <ErrorNotice error={add.error} />
             ) : null}
             <div className="flex flex-wrap justify-end gap-2">
               <DialogClose asChild>
@@ -259,9 +254,7 @@ function ConfirmKeyDialog({ source, onClose }: { source: AddonSource | null; onC
               publisher <code>{source.publisher}</code> to the new key, and the repository is checked again.
             </Notice>
             {confirm.isError ? (
-              <Notice tone="danger" role="alert">
-                {errorMessage(confirm.error)}
-              </Notice>
+              <ErrorNotice error={confirm.error} />
             ) : null}
             <div className="flex flex-wrap justify-end gap-2">
               <DialogClose asChild>
@@ -317,9 +310,7 @@ function ScheduleDialog({ source, onClose }: { source: AddonSource | null; onClo
             </Field>
             <p className="text-xs text-muted">“Check now” works whatever the schedule is.</p>
             {update.isError ? (
-              <Notice tone="danger" role="alert">
-                {errorMessage(update.error)}
-              </Notice>
+              <ErrorNotice error={update.error} />
             ) : null}
             <div className="flex flex-wrap justify-end gap-2">
               <DialogClose asChild>
@@ -403,9 +394,7 @@ export function AddonSourcesView() {
         </Notice>
       ) : null}
       {check.isError ? (
-        <Notice tone="danger" role="alert">
-          {errorMessage(check.error)}
-        </Notice>
+        <ErrorNotice error={check.error} />
       ) : null}
       <Section id="addon-list" title="Sources">
         {q.isPending ? <Loading /> : null}
@@ -520,9 +509,7 @@ export function AddonSourcesView() {
         onConfirm={() => removing && remove.mutate(removing.id, { onSuccess: () => setRemoving(null) })}
       >
         {remove.isError ? (
-          <Notice tone="danger" role="alert" className="mb-2">
-            {errorMessage(remove.error)}
-          </Notice>
+          <ErrorNotice error={remove.error} className="mb-2" />
         ) : null}
       </ConfirmDialog>
     </div>

@@ -10,9 +10,8 @@ import { ChoiceCards } from "@/components/ui/choice-cards";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Field, inputClass } from "@/components/ui/field";
 import { Form, FormActions } from "@/components/ui/form";
-import { Notice } from "@/components/ui/notice";
+import { ErrorNotice, Notice } from "@/components/ui/notice";
 import { appDisplayName } from "@/lib/api/app-name";
-import { errorMessage } from "@/lib/api/errors";
 import { useMe } from "@/lib/api/queries";
 import { adminRoutes } from "@/lib/routes";
 import {
@@ -350,7 +349,7 @@ function ConnectForm({
           Your browser blocked the sign-in window. Allow pop-ups for this site, then try again.
         </Notice>
       ) : null}
-      {submitError ? <Notice tone="danger" role="alert">{errorMessage(submitError)}</Notice> : null}
+      <ErrorNotice error={submitError} />
       <FormActions>
         <Button type="submit" size="lg" disabled={busy || !method}>
           {busy

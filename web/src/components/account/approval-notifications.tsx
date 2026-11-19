@@ -4,9 +4,8 @@ import { useState, useSyncExternalStore } from "react";
 
 import { PushDevices } from "@/components/account/push-devices";
 import { Button } from "@/components/ui/button";
-import { Notice } from "@/components/ui/notice";
+import { ErrorNotice, Notice } from "@/components/ui/notice";
 import { useUpdateMe } from "@/lib/api/account";
-import { errorMessage } from "@/lib/api/errors";
 import type { Me } from "@/lib/api/queries";
 import {
   enableBrowserNotifications,
@@ -94,11 +93,7 @@ export function ApprovalNotifications({ me }: { me: Me }) {
           Notifications are blocked for this site. Allow them in the browser settings, then try again.
         </Notice>
       ) : null}
-      {update.error ? (
-        <Notice tone="danger" role="alert">
-          {errorMessage(update.error)}
-        </Notice>
-      ) : null}
+      <ErrorNotice error={update.error} />
       {browser ? (
         <Button type="button" variant="ghost" size="sm" onClick={() => void toggleBrowser(false)}>
           Turn off browser notifications

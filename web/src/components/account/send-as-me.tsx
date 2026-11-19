@@ -13,7 +13,7 @@ import { Dialog, DialogClose, DialogContent } from "@/components/ui/dialog";
 import { Field, inputClass } from "@/components/ui/field";
 import { SecretInput } from "@/components/ui/secret-input";
 import { CheckboxField } from "@/components/ui/form";
-import { Notice } from "@/components/ui/notice";
+import { ErrorNotice, Notice } from "@/components/ui/notice";
 import { Section } from "@/components/ui/section";
 import { errorMessage } from "@/lib/api/errors";
 import type { UserLink } from "@/lib/api/channels";
@@ -168,11 +168,7 @@ function GrantDialog({
             ))}
           </ul>
         )}
-        {grant.error ? (
-          <Notice tone="danger" role="alert" className="mt-3">
-            {errorMessage(grant.error)}
-          </Notice>
-        ) : null}
+        <ErrorNotice error={grant.error} className="mt-3" />
         <div className="mt-4 flex justify-end">
           <DialogClose asChild>
             <Button variant="outline">Done</Button>
@@ -275,11 +271,7 @@ export function SendAsMeSection({ links, agents }: { links: UserLink[]; agents: 
         actions={tokens.data.length > 0 ? addButton : undefined}
       >
         <div className="space-y-3">
-          {revoke.error ? (
-            <Notice tone="danger" role="alert">
-              {errorMessage(revoke.error)}
-            </Notice>
-          ) : null}
+          <ErrorNotice error={revoke.error} />
           {tokens.data.length === 0 ? (
             <EmptyState
               title="Agents post as themselves unless you add a token."

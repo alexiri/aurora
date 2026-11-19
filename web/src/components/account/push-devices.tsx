@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ConfirmDialog, FormDialog } from "@/components/ui/confirm-dialog";
 import { Field, inputClass } from "@/components/ui/field";
-import { Notice } from "@/components/ui/notice";
+import { ErrorNotice, Notice } from "@/components/ui/notice";
 import { errorMessage } from "@/lib/api/errors";
 import {
   pushKeys,
@@ -173,11 +173,7 @@ function DeviceRow({
           Test notification sent to {row.label}. If it does not arrive, check the browser&apos;s notification settings.
         </Notice>
       ) : null}
-      {error ? (
-        <Notice tone="danger" role="alert">
-          {errorMessage(error)}
-        </Notice>
-      ) : null}
+      <ErrorNotice error={error} />
     </li>
   );
 }
@@ -283,11 +279,7 @@ export function PushDevices() {
       ) : (
         <TurnOn config={config.data} onDone={refresh} />
       )}
-      {list.error ? (
-        <Notice tone="danger" role="alert">
-          {errorMessage(list.error)}
-        </Notice>
-      ) : null}
+      <ErrorNotice error={list.error} />
       {rows.length > 0 ? (
         <ul className="divide-y divide-line" aria-label="Devices that receive approval notifications">
           {rows.map((r) => (

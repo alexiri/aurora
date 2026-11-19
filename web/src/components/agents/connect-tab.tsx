@@ -6,7 +6,7 @@ import { useState } from "react";
 import { ErrorState, Loading } from "@/components/states";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
-import { Notice } from "@/components/ui/notice";
+import { ErrorNotice, Notice } from "@/components/ui/notice";
 import { Section } from "@/components/ui/section";
 import { cn } from "@/lib/utils";
 import {
@@ -16,7 +16,6 @@ import {
   useRegenerateToken,
 } from "@/lib/api/agents";
 import { expiryText, lastUsedText } from "@/lib/api/agent-tokens";
-import { errorMessage } from "@/lib/api/errors";
 import type { Agent } from "@/lib/api/queries";
 
 import { ByoSettings } from "./byo-settings";
@@ -115,16 +114,10 @@ export function ConnectTab({ agent, wsId, canOwn = false }: { agent: Agent; wsId
           busy={regen.isPending}
           onConfirm={() => void regenerate()}
         >
-          {regen.error ? (
-            <Notice tone="danger" role="alert">
-              {errorMessage(regen.error)}
-            </Notice>
-          ) : null}
+          <ErrorNotice error={regen.error} />
         </ConfirmDialog>
         {regen.error && !confirming ? (
-          <Notice tone="danger" role="alert">
-            {errorMessage(regen.error)}
-          </Notice>
+          <ErrorNotice error={regen.error} />
         ) : null}
       </Section>
 
@@ -157,9 +150,7 @@ export function ConnectTab({ agent, wsId, canOwn = false }: { agent: Agent; wsId
 
       <Section id="ca" title="Gateway CA certificate" description="Trust this certificate so the proxy can inspect TLS traffic.">
         {ca.isError ? (
-          <Notice tone="danger" role="alert">
-            {errorMessage(ca.error)}
-          </Notice>
+          <ErrorNotice error={ca.error} />
         ) : (
           <div>
             <a

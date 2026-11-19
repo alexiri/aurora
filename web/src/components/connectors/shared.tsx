@@ -4,7 +4,7 @@ import { channelError } from "@/components/channels/shared";
 import { AppIcon } from "@/components/ui/app-icon";
 import { AttentionChip } from "@/components/ui/attention-chip";
 import { Badge } from "@/components/ui/badge";
-import { Notice } from "@/components/ui/notice";
+import { ErrorNotice } from "@/components/ui/notice";
 import { ApiError } from "@/lib/api/client";
 import { connectorIconUrl, type ConnectorAdmin } from "@/lib/api/connectors";
 import { fieldErrors } from "@/lib/api/errors";
@@ -24,12 +24,7 @@ export function connectorError(err: unknown): string {
 }
 
 export function ConnectorError({ error }: { error: unknown }) {
-  if (!error) return null;
-  return (
-    <Notice tone="danger" role="alert">
-      {connectorError(error)}
-    </Notice>
-  );
+  return <ErrorNotice error={error} format={connectorError} />;
 }
 
 /**

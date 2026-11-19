@@ -13,7 +13,7 @@ import { DataTable, Td, Th } from "@/components/ui/data-table";
 import { Dialog, DialogClose, DialogContent } from "@/components/ui/dialog";
 import { Field, inputClass } from "@/components/ui/field";
 import { CheckboxField, Form, FormActions } from "@/components/ui/form";
-import { Notice } from "@/components/ui/notice";
+import { ErrorNotice, Notice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
 import { Section } from "@/components/ui/section";
 import { errorMessage } from "@/lib/api/errors";
@@ -324,9 +324,7 @@ export function OrgDirectoryView({ org, isOwner }: { org: { id: string; slug: st
   if (settings.isPending) return null;
   if (settings.error) {
     return (
-      <Notice tone="danger" role="alert">
-        {errorMessage(settings.error)}
-      </Notice>
+      <ErrorNotice error={settings.error} />
     );
   }
   const s = settings.data;

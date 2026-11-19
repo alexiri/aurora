@@ -4,8 +4,7 @@ import { useState } from "react";
 
 import { ScopeGroups } from "@/components/grants/scope-groups";
 import { Button } from "@/components/ui/button";
-import { Notice } from "@/components/ui/notice";
-import { errorMessage } from "@/lib/api/errors";
+import { ErrorNotice, Notice } from "@/components/ui/notice";
 import { useApp, useConnections, usePatchConnection, type Connection, type CredScope } from "@/lib/api/apps";
 
 /**
@@ -75,11 +74,7 @@ export function ConnectionDetails({ scope, id, canManage }: { scope: Exclude<Cre
       {lost.length ? (
         <p className="text-xs text-pending-ink">Not injecting for {lost.map((i) => `${i.host} (claimed by ${i.lost_to_app_id})`).join(", ")}</p>
       ) : null}
-      {patch.error ? (
-        <Notice tone="danger" role="alert">
-          {errorMessage(patch.error)}
-        </Notice>
-      ) : null}
+      <ErrorNotice error={patch.error} />
     </div>
   );
 }

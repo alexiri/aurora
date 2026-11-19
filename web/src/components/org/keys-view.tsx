@@ -7,12 +7,12 @@ import { OneTimeKeyDialog } from "@/components/account/one-time-key-dialog";
 import { ErrorState, Loading } from "@/components/states";
 import { Button } from "@/components/ui/button";
 import { Field, inputClass } from "@/components/ui/field";
-import { Notice } from "@/components/ui/notice";
+import { ErrorNotice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
 import { Section } from "@/components/ui/section";
 import { cn } from "@/lib/utils";
 import { useRevokeApiKey } from "@/lib/api/account";
-import { errorMessage, fieldErrors } from "@/lib/api/errors";
+import { fieldErrors } from "@/lib/api/errors";
 import { orgKeys, useCreateOrgKey, useOrgKeys } from "@/lib/api/org";
 
 export function OrgKeysView({ orgId }: { orgId: string }) {
@@ -74,9 +74,7 @@ export function OrgKeysView({ orgId }: { orgId: string }) {
             Create key
           </Button>
           {create.error && Object.keys(fe).length === 0 ? (
-            <Notice tone="danger" role="alert" className="basis-full">
-              {errorMessage(create.error)}
-            </Notice>
+            <ErrorNotice error={create.error} className="basis-full" />
           ) : null}
         </form>
       </Section>

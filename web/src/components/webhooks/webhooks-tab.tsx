@@ -11,10 +11,10 @@ import { DataTable, Td } from "@/components/ui/data-table";
 import { Field, inputClass } from "@/components/ui/field";
 import { SecretInput } from "@/components/ui/secret-input";
 import { CheckboxField, FormActions } from "@/components/ui/form";
-import { Notice } from "@/components/ui/notice";
+import { ErrorNotice, Notice } from "@/components/ui/notice";
 import { ItemList, Section } from "@/components/ui/section";
 import { AnchorSwitch, OwnerLabel, ReassignPanel } from "@/components/automations/owner-controls";
-import { errorMessage, fieldErrors } from "@/lib/api/errors";
+import { fieldErrors } from "@/lib/api/errors";
 import {
   useCreateWebhook,
   useDeleteWebhook,
@@ -132,9 +132,7 @@ export function WebhookForm({
         <CheckboxField id="wh-anchored" label="Anchor to workspace (outlives any single member)" checked={anchored} onChange={setAnchored} />
       ) : null}
       {mut.error && Object.keys(fe).length === 0 ? (
-        <Notice tone="danger" role="alert">
-          {errorMessage(mut.error)}
-        </Notice>
+        <ErrorNotice error={mut.error} />
       ) : null}
       <FormActions className="gap-2">
         <Button type="submit" disabled={mut.isPending}>
@@ -186,11 +184,7 @@ function WebhookRow({ agentId, w, onSecret, wsId, canOwn }: { agentId: string; w
       {reassigning && wsId ? (
         <ReassignPanel agentId={agentId} wsId={wsId} kind="webhook" id={w.id} name={w.name} creatorId={w.created_by?.id} disabledReason={w.disabled_reason} onClose={() => setReassigning(false)} />
       ) : null}
-      {err ? (
-        <Notice tone="danger" role="alert">
-          {errorMessage(err)}
-        </Notice>
-      ) : null}
+      <ErrorNotice error={err} />
       <div className="flex flex-wrap gap-2">
         <Button size="sm" variant="outline" onClick={() => setEditing(true)}>
           Edit

@@ -6,12 +6,12 @@ import { useEffect, useState, type FormEvent } from "react";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Field, inputClass } from "@/components/ui/field";
-import { Notice } from "@/components/ui/notice";
+import { ErrorNotice } from "@/components/ui/notice";
 import { SwitchField } from "@/components/ui/switch";
 import { useHarnesses, usePatchAgent } from "@/lib/api/agents";
 import { ApiError } from "@/lib/api/client";
 import { useModelReadiness } from "@/lib/api/credential-grants";
-import { errorMessage, fieldErrors } from "@/lib/api/errors";
+import { fieldErrors } from "@/lib/api/errors";
 import { useModels } from "@/lib/api/conversations";
 import { useMe, type Agent } from "@/lib/api/queries";
 import { errorTarget, ROLES } from "@/lib/model-roles";
@@ -284,9 +284,7 @@ export function InstructionsTab({ agent, wsId }: { agent: Agent; wsId: string })
           </div>
         </details>
         {patch.error && Object.keys(fe).length === 0 && !hasRoleError(roleErrors) ? (
-          <Notice tone="danger" role="alert">
-            {errorMessage(patch.error)}
-          </Notice>
+          <ErrorNotice error={patch.error} />
         ) : null}
         {saved ? (
           <p role="status" className="text-sm text-accent-ink">

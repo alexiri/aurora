@@ -10,12 +10,11 @@ import { Button } from "@/components/ui/button";
 import { ConfirmDialog, FormDialog } from "@/components/ui/confirm-dialog";
 import { DataTable, Td, Th } from "@/components/ui/data-table";
 import { Field, inputClass } from "@/components/ui/field";
-import { Notice } from "@/components/ui/notice";
+import { ErrorNotice, Notice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
 import { StatusDot } from "@/components/ui/status-dot";
 import { ApiError } from "@/lib/api/client";
 import { useApps, useConnections } from "@/lib/api/apps";
-import { errorMessage } from "@/lib/api/errors";
 import { orgRoutes } from "@/lib/routes";
 import {
   shortSha,
@@ -86,11 +85,7 @@ function LibraryTable({ orgId, slug, items }: { orgId: string; slug: string; ite
   const total = (l: SkillLibrary) => (l.skill_counts ? l.skill_counts.agent + l.skill_counts.workspace + l.skill_counts.org : 0);
   return (
     <div className="space-y-3">
-      {failed ? (
-        <Notice tone="danger" role="alert">
-          {errorMessage(failed)}
-        </Notice>
-      ) : null}
+      <ErrorNotice error={failed} />
       <DataTable caption="Skill libraries">
         <thead>
           <tr>
@@ -250,11 +245,7 @@ function ConnectDialog({ orgId, open, onOpenChange }: { orgId: string; open: boo
           {err}
         </Notice>
       ) : null}
-      {create.error ? (
-        <Notice tone="danger" role="alert">
-          {errorMessage(create.error)}
-        </Notice>
-      ) : null}
+      <ErrorNotice error={create.error} />
     </FormDialog>
   );
 }

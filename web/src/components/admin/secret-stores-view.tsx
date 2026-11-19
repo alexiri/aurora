@@ -10,7 +10,7 @@ import { ConfirmDialog, FormDialog } from "@/components/ui/confirm-dialog";
 import { DataTable, Td, Th } from "@/components/ui/data-table";
 import { Field, inputClass } from "@/components/ui/field";
 import { SecretInput } from "@/components/ui/secret-input";
-import { Notice } from "@/components/ui/notice";
+import { ErrorNotice, Notice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
 import { ItemList, ListRow, Section } from "@/components/ui/section";
 import { StatusDot } from "@/components/ui/status-dot";
@@ -246,9 +246,7 @@ function StoreDialog({
         <span className="text-xs text-muted">Signs in and writes, reads and removes a probe value. Nothing is saved.</span>
       </div>
       {test.isError ? (
-        <Notice tone="danger" role="alert">
-          {errorMessage(test.error)}
-        </Notice>
+        <ErrorNotice error={test.error} />
       ) : null}
       {result ? <TestOutcome result={result} /> : null}
       <WriteError error={put.error} onReload={onClose} />

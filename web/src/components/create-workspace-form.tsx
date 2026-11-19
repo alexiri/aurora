@@ -2,14 +2,14 @@
 
 import { useState, type FormEvent } from "react";
 
-import { errorMessage, fieldErrors } from "@/lib/api/errors";
+import { fieldErrors } from "@/lib/api/errors";
 import type { CreateWorkspaceRequest } from "@/lib/api/queries";
 import { MEMORY_LANGUAGES, timeZones } from "@/lib/nav/landing";
 import { validateNameSlug } from "@/lib/nav/validation";
 
 import { Button } from "./ui/button";
 import { Field, inputClass } from "./ui/field";
-import { Notice } from "./ui/notice";
+import { ErrorNotice } from "./ui/notice";
 
 const ZONES = timeZones();
 
@@ -114,9 +114,7 @@ export function CreateWorkspaceForm({
         </select>
       </Field>
       {error && !hasFieldErrors ? (
-        <Notice tone="danger" role="alert">
-          {errorMessage(error)}
-        </Notice>
+        <ErrorNotice error={error} />
       ) : null}
       <div className="flex justify-end">
         <Button type="submit" size="lg" disabled={pending}>

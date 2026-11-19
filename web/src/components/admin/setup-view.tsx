@@ -12,10 +12,9 @@ import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { CheckboxField } from "@/components/ui/form";
-import { Notice } from "@/components/ui/notice";
+import { ErrorNotice, Notice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
 import { StatusDot } from "@/components/ui/status-dot";
-import { errorMessage } from "@/lib/api/errors";
 import { onboardingKeys, useAdminSetup, type SetupCheck, type SetupStatus, type SetupStep } from "@/lib/api/onboarding";
 import { formatBytes } from "@/lib/api/attachments";
 import { useAdminStorage } from "@/lib/api/org";
@@ -225,11 +224,7 @@ function StarterSwitch({ placement, secretId, onChanged }: { placement: Placemen
       {!usable ? (
         <p className="text-sm text-ink-2">Save a shared organization with personal workspaces in the step above to turn this on.</p>
       ) : null}
-      {save.error ? (
-        <Notice tone="danger" role="alert">
-          {errorMessage(save.error)}
-        </Notice>
-      ) : null}
+      <ErrorNotice error={save.error} />
     </div>
   );
 }
@@ -254,11 +249,7 @@ function BackfillOffer({ waiting }: { waiting: number }) {
       <Button variant="outline" size="sm" disabled={backfill.isPending} onClick={() => backfill.mutate()}>
         Also give it to the {waiting} {waiting === 1 ? "person" : "people"} who signed in before
       </Button>
-      {backfill.error ? (
-        <Notice tone="danger" role="alert">
-          {errorMessage(backfill.error)}
-        </Notice>
-      ) : null}
+      <ErrorNotice error={backfill.error} />
     </div>
   );
 }
