@@ -7738,6 +7738,8 @@ export interface components {
             /** Format: date-time */
             created_at: string;
             display_name: string;
+            /** @description (C-1044, D-398) True exactly when `GET /v1/connectors/{id}/icon` serves a PNG. */
+            has_icon: boolean;
             /** @description Managed only: reports of hosts seen recently. */
             host_status: components["schemas"]["HostStatusInfo"][];
             id: string;

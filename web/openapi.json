@@ -43534,7 +43534,8 @@
           "created_at",
           "managed",
           "secrets",
-          "host_status"
+          "host_status",
+          "has_icon"
         ],
         "properties": {
           "approved_at": {
@@ -43571,6 +43572,10 @@
           },
           "display_name": {
             "type": "string"
+          },
+          "has_icon": {
+            "type": "boolean",
+            "description": "(C-1044, D-398) True exactly when `GET /v1/connectors/{id}/icon` serves a PNG."
           },
           "host_status": {
             "type": "array",
