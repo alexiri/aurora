@@ -23,14 +23,7 @@ const ARM_LIMIT: i64 = 8;
 const GATE_NOTICE_MAX: usize = 8 * 1024;
 
 fn clip(s: &str, max: usize) -> &str {
-    if s.len() <= max {
-        return s;
-    }
-    let mut e = max;
-    while !s.is_char_boundary(e) {
-        e -= 1;
-    }
-    &s[..e]
+    &s[..s.floor_char_boundary(max)]
 }
 
 /// Prompt behind the header the model sees.

@@ -84,14 +84,7 @@ pub async fn prepare(
 
 /// `s` cut to at most `max` bytes, at a character boundary.
 fn cut_bytes(s: &str, max: usize) -> &str {
-    if s.len() <= max {
-        return s;
-    }
-    let mut end = max;
-    while !s.is_char_boundary(end) {
-        end -= 1;
-    }
-    &s[..end]
+    &s[..s.floor_char_boundary(max)]
 }
 
 /// The one user message: question, criteria and the answer cut at `EVAL_JUDGE_INPUT_MAX`.

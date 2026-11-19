@@ -377,11 +377,7 @@ fn clip(s: &str, max: usize) -> (&str, bool) {
     if s.len() <= max {
         return (s, false);
     }
-    let mut e = max;
-    while !s.is_char_boundary(e) {
-        e -= 1;
-    }
-    (&s[..e], true)
+    (&s[..s.floor_char_boundary(max)], true)
 }
 
 /// The turn text: owner instructions, then the payload in a fenced, clamped block labelled as

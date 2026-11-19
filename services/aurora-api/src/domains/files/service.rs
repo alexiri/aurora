@@ -671,11 +671,7 @@ fn audit(s: &AppState, c: &Caller, a: &AgentRow, action: &str, meta: serde_json:
 
 /// Paths in audit metadata are cut at 1,024 bytes on a char boundary (C-906).
 fn clip(p: &str) -> String {
-    let mut end = p.len().min(1024);
-    while !p.is_char_boundary(end) {
-        end -= 1;
-    }
-    p[..end].to_owned()
+    p[..p.floor_char_boundary(1024)].to_owned()
 }
 
 // ------------------------------------------------------------------------------ operations

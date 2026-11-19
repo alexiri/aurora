@@ -317,14 +317,7 @@ pub struct NewMessage<'a> {
 }
 
 fn clip(s: &str, max_bytes: usize) -> &str {
-    if s.len() <= max_bytes {
-        return s;
-    }
-    let mut end = max_bytes;
-    while !s.is_char_boundary(end) {
-        end -= 1;
-    }
-    &s[..end]
+    &s[..s.floor_char_boundary(max_bytes)]
 }
 
 /// `text` bound; empty text is allowed only when files are attached (C-726).
