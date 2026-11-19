@@ -143,7 +143,9 @@ export function AppsTab({ workspaceId, orgId, canOwn }: { workspaceId: string; o
   const products = [...grouped.values()]
     .map((m) => [...m].sort((x, y) => Number(!!x.family?.instance_bound) - Number(!!y.family?.instance_bound)))
     // Apps switched off for the organization are not listed.
-    .filter((m) => !isSwitchedOff(m));
+    .filter((m) => !isSwitchedOff(m))
+    // (P5-POLISH-11) By display name, not by package id.
+    .sort((a, b) => appDisplayName(a[0]!).localeCompare(appDisplayName(b[0]!)));
   return (
     <>
       {connecting && (!target || !target.available || !canOwn) ? (

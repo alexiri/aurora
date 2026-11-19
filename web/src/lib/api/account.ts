@@ -104,7 +104,7 @@ export function useAccess(wsId: string, enabled = true) {
 }
 
 /** Org member list; 403 for plain members (the picker is then hidden). */
-export function useOrgMembers(orgId: string | undefined) {
+export function useOrgMembers(orgId: string | undefined, enabled = true) {
   return useQuery({
     queryKey: accountKeys.members(orgId ?? ""),
     queryFn: () =>
@@ -115,7 +115,7 @@ export function useOrgMembers(orgId: string | undefined) {
           }),
         ),
       ),
-    enabled: !!orgId,
+    enabled: !!orgId && enabled,
     retry: false,
   });
 }

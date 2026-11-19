@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, type ChangeEvent, type FormEvent } from "react";
+import { useId, useState, type ChangeEvent, type FormEvent, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 
 import { Button } from "@/components/ui/button";
 import { Loading } from "@/components/states";
@@ -79,6 +80,12 @@ function KeyFileInput({ id, value, onChange }: { id: string; value: string; onCh
   );
 }
 
+/** The dialog's footer row for `LlmKeyForm`: pass `footer` to `DialogContent` and `target` to the form. */
+export function useFooterSlot(): { footer: ReactNode; target: HTMLElement | null } {
+  const [target, setTarget] = useState<HTMLElement | null>(null);
+  return { footer: <div ref={setTarget} className="flex flex-wrap justify-end gap-2" />, target };
+}
+
 export function LlmKeyForm({
   scope,
   orgId,
@@ -86,7 +93,13 @@ export function LlmKeyForm({
   onSaved,
   submitLabel = "Add LLM key",
   onCancel,
+  footerTarget,
 }: {
+  /**
+   * Inside a dialog: the element of the dialog's footer row (`useFooterSlot`). The form then has no card of its own and
+   * its Cancel and submit buttons render in that row. `null` while the row is not mounted; `undefined` outside a dialog.
+   */
+  footerTarget?: HTMLElement | null;
   /** The submit button's words ("Add key" in the Add an AI key dialog). */
   submitLabel?: string;
   /** Adds a Cancel button before the submit button (the dialog's). */
@@ -98,6 +111,7 @@ export function LlmKeyForm({
   /** Agents ticked in the "Give agents access" step that follows (the getting-started guide: the workspace's own agent). */
   preselect?: string[];
 }) {
+  const formId = useId();
   const providers = useLlmProviders(orgId);
   const org = useOrg(orgId);
   const create = useCreateSecret(scope);
@@ -201,7 +215,12 @@ export function LlmKeyForm({
   const noHarness = Boolean(endpoint) && endpoint?.harnesses !== undefined && endpoint.harnesses.length === 0;
   return (
     <div className="space-y-3">
-      <Form onSubmit={(e) => void submit(e)} noValidate className="rounded-card border border-line bg-surface p-4 shadow-card sm:p-5" aria-label="New LLM key">
+      <Form
+        id={formId}
+        onSubmit={(e) => void submit(e)}
+        noValidate
+        className={footerTarget !== undefined ? "max-w-none" : "rounded-card border border-line bg-surface p-4 shadow-card sm:p-5"}
+        aria-label="New LLM key">
         <Field id="l-name" label="Name">
           <input id="l-name" className={inputClass} value={name} onChange={(e) => setName(e.target.value)} />
         </Field>
@@ -341,16 +360,35 @@ export function LlmKeyForm({
             {clientErr || keyReasonMessage(create.error) || errorMessage(create.error)}
           </Notice>
         ) : null}
-        <FormActions>
-          {onCancel ? (
-            <Button type="button" variant="outline" size="lg" onClick={onCancel}>
-              Cancel
+        {footerTarget !== undefined ? (
+          // (P5-POLISH-11, A1) In a dialog the buttons are the dialog's footer row, outside the scrolling body.
+          footerTarget
+            ? createPortal(
+                <>
+                  {onCancel ? (
+                    <Button type="button" variant="outline" onClick={onCancel}>
+                      Cancel
+                    </Button>
+                  ) : null}
+                  <Button type="submit" form={formId} disabled={create.isPending || !scopeOk}>
+                    {create.isPending ? "Verifying…" : submitLabel}
+                  </Button>
+                </>,
+                footerTarget,
+              )
+            : null
+        ) : (
+          <FormActions>
+            {onCancel ? (
+              <Button type="button" variant="outline" size="lg" onClick={onCancel}>
+                Cancel
+              </Button>
+            ) : null}
+            <Button type="submit" size="lg" disabled={create.isPending || !scopeOk}>
+              {create.isPending ? "Verifying…" : submitLabel}
             </Button>
-          ) : null}
-          <Button type="submit" size="lg" disabled={create.isPending || !scopeOk}>
-            {create.isPending ? "Verifying…" : submitLabel}
-          </Button>
-        </FormActions>
+          </FormActions>
+        )}
       </Form>
     </div>
   );

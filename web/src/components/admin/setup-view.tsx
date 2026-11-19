@@ -6,7 +6,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState, type ReactNode } from "react";
 
 import { ConnectorAvailableCallout } from "@/components/connectors/available-callout";
-import { LlmKeyForm } from "@/components/credentials/llm-form";
+import { LlmKeyForm, useFooterSlot } from "@/components/credentials/llm-form";
 import { ErrorState, Loading } from "@/components/states";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -144,15 +144,17 @@ function AiKeyDialog({ open, onOpenChange, onSaved }: { open: boolean; onOpenCha
   const placement = usePlacement();
   const savePlacement = useSavePlacement();
   const org = placement.data?.default_org ?? null;
+  const { footer, target } = useFooterSlot();
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent size="lg" title="Add an organization AI key" description={org ? `Every new agent in ${org.name} gets this key.` : undefined}>
+      <DialogContent size="lg" title="Add an organization AI key" description={org ? `Every new agent in ${org.name} gets this key.` : undefined} footer={footer}>
         {org ? (
           <LlmKeyForm
             scope={{ kind: "organization", id: org.id }}
             orgId={org.id}
             submitLabel="Add key"
             onCancel={() => onOpenChange(false)}
+            footerTarget={target}
             onSaved={(secret) => {
               const p = placement.data;
               if (p && startersAllowed(p)) {

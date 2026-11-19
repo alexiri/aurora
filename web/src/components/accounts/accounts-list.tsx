@@ -9,7 +9,7 @@ import { OrgConnectJourney } from "@/components/apps/connect-journey/org-journey
 import { useUrlDialog } from "@/components/apps/use-url-dialog";
 import { Notice } from "@/components/ui/notice";
 import { appKeys, useConnectChannel } from "@/lib/api/apps";
-import { LlmKeyForm } from "@/components/credentials/llm-form";
+import { LlmKeyForm, useFooterSlot } from "@/components/credentials/llm-form";
 import { EmptyState, ErrorState, Loading } from "@/components/states";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
@@ -24,9 +24,34 @@ import { AccountRow } from "./account-row";
 import { FreeApps } from "./free-apps";
 
 /** "3 accounts." / "1 account needs you." / "2 accounts need you." */
-export function accountsSentence(total: number, failing: number): string {
+export function accountsSentence(total: number, failing: number, soleAgent?: string): string {
   if (failing > 0) return failing === 1 ? "1 account needs you." : `${failing} accounts need you.`;
-  return total === 1 ? "1 account." : `${total} accounts.`;
+  const count = total === 1 ? "1 account." : `${total} accounts.`;
+  // (D1) "2 accounts. Daneel uses both." when one agent uses all of them.
+  return soleAgent ? `${count} ${soleAgent} uses ${total === 1 ? "it" : total === 2 ? "both" : "all of them"}.` : count;
+}
+
+/** The one agent that uses every account of the list, or `undefined` (none, several, or an account nobody uses). */
+export function soleAgentOf(items: Pick<Account, "agents">[]): string | undefined {
+  const names = new Set<string>();
+  for (const a of items) {
+    if (a.agents.length === 0) return undefined;
+    for (const e of a.agents) names.add(e.agent.id);
+  }
+  if (names.size !== 1) return undefined;
+  return items[0]?.agents[0]?.agent.name;
+}
+
+/** (P5-POLISH-11, A1) Add an AI key: the form without its own card, Cancel and Add key in the dialog's footer row. */
+function AddKeyDialog({ scope, orgId, agentId, onClose }: { scope: SecretScope; orgId: string; agentId?: string; onClose: () => void }) {
+  const { footer, target } = useFooterSlot();
+  return (
+    <Dialog open onOpenChange={(o) => (o ? null : onClose())}>
+      <DialogContent size="lg" title="Add an AI key" footer={footer}>
+        <LlmKeyForm scope={scope} orgId={orgId} preselect={agentId ? [agentId] : undefined} submitLabel="Add key" onCancel={onClose} footerTarget={target} />
+      </DialogContent>
+    </Dialog>
+  );
 }
 
 /**
@@ -131,12 +156,15 @@ export function AccountsList({
         </Notice>
       ) : null}
       {/* (P5-POLISH-7, D1) A sentence from state; an account that needs you takes precedence. */}
+      {/* The sentence and **Add** share one line (the mockup); a phone wraps Add below. */}
       {!agent && !appId && items.length > 0 ? (
-        <p className="text-sm text-ink-2" data-testid="accounts-sentence">
-          {accountsSentence(items.length, items.filter(needsAttention).length)}
-        </p>
-      ) : null}
-      {agent && addEntries ? (
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="min-w-0 flex-1 text-sm text-ink-2" data-testid="accounts-sentence">
+            {accountsSentence(items.length, items.filter(needsAttention).length, scope.kind === "workspace" ? soleAgentOf(items) : undefined)}
+          </p>
+          {addEntries ? <div className="flex flex-wrap items-center gap-2">{addEntries}</div> : null}
+        </div>
+      ) : agent && addEntries ? (
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 className="font-display text-base font-semibold text-ink">Apps and accounts</h2>
           <div className="flex flex-wrap items-center gap-2">{addEntries}</div>
@@ -145,13 +173,7 @@ export function AccountsList({
         <div className="flex flex-wrap items-center justify-end gap-2">{addEntries}</div>
       ) : null}
       {/* (P5-POLISH-7, D1) Add an AI key is a dialog like every other add, not a card inside the page. */}
-      {addingKey ? (
-        <Dialog open onOpenChange={(o) => (o ? null : setAddingKey(false))}>
-          <DialogContent size="lg" title="Add an AI key">
-            <LlmKeyForm scope={scope} orgId={orgId} preselect={agent ? [agent.id] : undefined} submitLabel="Add key" onCancel={() => setAddingKey(false)} />
-          </DialogContent>
-        </Dialog>
-      ) : null}
+      {addingKey ? <AddKeyDialog scope={scope} orgId={orgId} agentId={agent?.id} onClose={() => setAddingKey(false)} /> : null}
       {items.length === 0 && appId ? (
         <p className="text-sm text-ink-2">No accounts of this app {scope.kind === "workspace" ? "in this workspace" : "for the whole organization"} yet.</p>
       ) : items.length === 0 ? (

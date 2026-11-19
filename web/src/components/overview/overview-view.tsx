@@ -18,7 +18,10 @@ import { useWorkspaceAttention } from "@/components/accounts/attention";
 import { buttonVariants } from "@/components/ui/button";
 import { useMeOnboarding } from "@/lib/api/onboarding";
 import { useActivity, useApprovalsStream, useCanApprove, useNow, usePendingApprovals } from "@/lib/api/approvals";
-import { useAgents, useResolve, useWorkspace } from "@/lib/api/queries";
+import { actionsOnly } from "@/components/agents/status-rail/status-data";
+import { useAccounts } from "@/lib/api/accounts";
+import { useOrgSetupRequests } from "@/lib/api/app-setup-requests";
+import { useAgents, useOrg, useResolve, useWorkspace } from "@/lib/api/queries";
 import { ago } from "@/lib/utils";
 
 /** "2 things need you." / "Daneel is ready. Nothing needs you." (the Overview board's sentence, from real state). */
@@ -26,6 +29,24 @@ export function overviewSentence(needs: number, agentNames: string[]): string {
   if (needs > 0) return needs === 1 ? "1 thing needs you." : `${needs} things need you.`;
   if (agentNames.length === 0) return "No agents yet. Add one to get started.";
   return `${agentNames.length === 1 ? `${agentNames[0]} is ready.` : "Your agents are ready."} Nothing needs you.`;
+}
+
+/**
+ * (P5-POLISH-11, D5) One activity row in words: "Daneel used create issue in Team tracker." / "Daneel reached
+ * api.example.com." — never `POST host/path`. A call that was not let through reads "tried to".
+ */
+export function activityLine(
+  e: { decision: string; tool_id?: string | null; host: string },
+  agent: string,
+  account?: string,
+): string {
+  const let_through = e.decision === "allow" || e.decision === "approved";
+  const verb = let_through ? "" : "tried to ";
+  if (e.tool_id) {
+    const tool = e.tool_id.replace(/[._-]+/g, " ").trim();
+    return `${agent} ${verb}${let_through ? "used" : "use"} ${tool}${account ? ` in ${account}` : ""}.`;
+  }
+  return `${agent} ${verb}${let_through ? "reached" : "reach"} ${e.host}.`;
 }
 
 function LiveIndicator({ wsId }: { wsId: string }) {
@@ -73,14 +94,20 @@ function OverviewBody({
   const activity = useActivity(wsId, { agent: "", decision: "", host: "" });
   const now = useNow(30_000);
   const base = `/o/${org}/w/${ws}`;
-  const recent = (activity.data?.pages[0]?.items ?? []).slice(0, 6);
+  // The agent's own model calls are thinking, not an action (as in the status rail): not listed.
+  const recent = actionsOnly(activity.data?.pages[0]?.items ?? []).slice(0, 6);
+  const accountNames = new Map((useAccounts({ kind: "workspace", id: wsId }).data?.items ?? []).map((a) => [a.ref.id, a.name]));
   const byId = new Map(agents.data?.items.map((a) => [a.id, a]) ?? []);
 
   // (P5-POLISH-7, D5) The sentence comes from state: what needs the person, else that the agent is ready.
   const pendingApprovals = usePendingApprovals(wsId, canApprove);
   const broken = useWorkspaceAttention(wsId);
   const onboarding = useMeOnboarding();
-  const needs = (canApprove ? (pendingApprovals.data?.items?.length ?? 0) : 0) + broken.length;
+  // (P5-POLISH-11) The same items as the Needs you panel below: app setup requests count too (owners and admins only).
+  const orgData = useOrg(orgId);
+  const isOrgAdmin = orgData.data?.my_role === "owner" || orgData.data?.my_role === "admin";
+  const setups = useOrgSetupRequests(orgId, isOrgAdmin);
+  const needs = (canApprove ? (pendingApprovals.data?.items?.length ?? 0) : 0) + broken.length + (isOrgAdmin ? (setups.data?.length ?? 0) : 0);
   const list = agents.data?.items ?? [];
   const sentence = overviewSentence(needs, list.map((a) => a.name));
   // The guide shows here only after Welcome has stopped being the landing page (it is seen), so never on both pages.
@@ -142,11 +169,7 @@ function OverviewBody({
                     <Badge tone={decisionTone(e.decision)}>{e.decision}</Badge>
                     <span className="ml-auto text-xs text-muted">{ago(e.ts, now)}</span>
                   </div>
-                  <p className="break-all font-mono text-xs text-ink-2">
-                    {e.method} {e.host}
-                    {e.path}
-                  </p>
-                  <p className="text-xs text-muted">{byId.get(e.agent_id)?.name ?? "—"}</p>
+                  <p className="text-ink">{activityLine(e, byId.get(e.agent_id)?.name ?? "An agent", e.connection_id ? accountNames.get(e.connection_id) : undefined)}</p>
                 </li>
               ))}
             </ul>

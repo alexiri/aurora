@@ -1,10 +1,10 @@
 import { fireEvent, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
-import { accountsSentence } from "@/components/accounts/accounts-list";
+import { accountsSentence, soleAgentOf } from "@/components/accounts/accounts-list";
 import { AppsTab, appStatus, isSwitchedOff } from "@/components/apps/apps-tab";
 import { approvalsSentence, mergePending } from "@/components/approvals/approvals-view";
-import { overviewSentence } from "@/components/overview/overview-view";
+import { activityLine, overviewSentence } from "@/components/overview/overview-view";
 import { json } from "./support/api";
 import { wrap } from "./support/render";
 
@@ -85,6 +85,25 @@ describe("accounts sentence", () => {
     expect(accountsSentence(3, 0)).toBe("3 accounts.");
     expect(accountsSentence(3, 1)).toBe("1 account needs you.");
     expect(accountsSentence(3, 2)).toBe("2 accounts need you.");
+  });
+
+  it("says which agent uses them when one agent uses every account", () => {
+    expect(accountsSentence(2, 0, "Daneel")).toBe("2 accounts. Daneel uses both.");
+    expect(accountsSentence(1, 0, "Daneel")).toBe("1 account. Daneel uses it.");
+    expect(accountsSentence(3, 0, "Daneel")).toBe("3 accounts. Daneel uses all of them.");
+    expect(accountsSentence(2, 1, "Daneel")).toBe("1 account needs you.");
+    const use = (...ids: string[]) => ({ agents: ids.map((id) => ({ agent: { id, name: id === "a1" ? "Daneel" : "Giskard" } })) }) as never;
+    expect(soleAgentOf([use("a1"), use("a1")])).toBe("Daneel");
+    expect(soleAgentOf([use("a1"), use("a2")])).toBeUndefined();
+    expect(soleAgentOf([use("a1"), use()])).toBeUndefined();
+  });
+});
+
+describe("overview activity line", () => {
+  it("is a sentence, not a request line", () => {
+    expect(activityLine({ decision: "allow", tool_id: "create_issue", host: "api.x.io" }, "Daneel", "Team tracker")).toBe("Daneel used create issue in Team tracker.");
+    expect(activityLine({ decision: "allow", tool_id: null, host: "api.x.io" }, "Daneel")).toBe("Daneel reached api.x.io.");
+    expect(activityLine({ decision: "blocked", tool_id: null, host: "evil.io" }, "Daneel")).toBe("Daneel tried to reach evil.io.");
   });
 });
 
