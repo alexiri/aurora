@@ -188,3 +188,11 @@ All paths are under `web/src/`.
 ## Suggested agent/model and reason
 
 Sonnet (`nextjs-developer`). Navigation used on every page; keyboard and accessibility matter.
+
+## Completion report — review pass 1 (P5-POLISH-11)
+
+- **#1 done.** The switcher menu is sized to `--radix-popover-content-available-height` (no fixed 24 rem), and the search
+  box is sticky, so it stays in view after the drill-in.
+- **#2 done.** A personal workspace's avatar is its owner's initial (viewer's display name for your own).
+- Gates: typecheck, `context-switcher` vitest (22 passed), Playwright `p5-polish-8-switcher.spec.ts` (+ connect-journey)
+  37 passed.

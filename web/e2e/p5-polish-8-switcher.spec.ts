@@ -63,6 +63,13 @@ for (const scheme of ["light", "dark"] as const) {
       await sw.getByRole("button").click();
       const search = page.getByPlaceholder("Find a workspace or organization");
       await expect(search).toBeFocused();
+      // D4: the menu is sized to the room there is: it ends inside the viewport and the search box is in view.
+      const box = await page.getByRole("dialog", { name: "Switch workspace or organization" }).boundingBox();
+      expect(box).not.toBeNull();
+      expect(box!.y + box!.height).toBeLessThanOrEqual(900);
+      await expect(search).toBeInViewport();
+      // D4: a personal workspace's avatar is its owner's initial, not the "Y" of "Your workspace".
+      await expect(page.getByRole("link", { name: /Your workspace/ }).first()).toContainText("A");
       await expect(page.getByRole("link", { name: "All 8 in Acme Labs" })).toHaveAttribute("href", "/o/acme");
       await expect(page.getByRole("button", { name: "Northwind · 4 workspaces" })).toBeVisible();
       const { violations } = await new AxeBuilder({ page }).analyze();
