@@ -1,0 +1,47 @@
+{
+  "id": "ntfy-json",
+  "name": "ntfy (JSON)",
+  "suggest_for_hosts": ["ntfy.sh"],
+  "secret_value_names": ["topic"],
+  "config": {
+    "version": 1,
+    "method": "POST",
+    "content_type": "application/json",
+    "template": "{\"topic\": \"{{secret:topic}}\", \"title\": {{title}}, \"message\": {{message}}, \"priority\": {{priority}}, \"tags\": {{tags}}}",
+    "slots": [
+      {
+        "name": "message",
+        "type": "string",
+        "required": true,
+        "description": "The notification text.",
+        "max_length": 4000
+      },
+      {
+        "name": "title",
+        "type": "string",
+        "required": false,
+        "description": "A title shown above the text.",
+        "max_length": 250
+      },
+      {
+        "name": "priority",
+        "type": "integer",
+        "required": false,
+        "description": "1 (min) to 5 (max); 3 is the default."
+      },
+      {
+        "name": "tags",
+        "type": "string_list",
+        "required": false,
+        "description": "Tags or emoji short codes (for example warning, tada).",
+        "max_items": 10,
+        "max_length": 40
+      }
+    ],
+    "headers": [],
+    "description": "",
+    "signing": false,
+    "rate": { "per_minute": null, "per_day": null },
+    "preset": "ntfy-json"
+  }
+}

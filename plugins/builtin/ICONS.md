@@ -35,6 +35,7 @@ Monograms: rounded tile in `--subtle`/`--line-strong` with the letter in `--prim
 | `microsoft-365` | monogram "M" | none | n/a | n/a | monogram, dark theme colours |
 | `ics-calendar` | monogram "ICS" on a neutral calendar tile (it spans vendors, D-273) | none | n/a | n/a | monogram, dark theme colours |
 | `caldav` | the `ics-calendar` neutral calendar tile (same files; it spans vendors, D-275) | none | n/a | n/a | same as `ics-calendar` |
+| `webhook` | neutral tile with an outgoing arrow (it spans every receiver, D-320; drawn in the dashboard's own tokens, no brand artwork) | none | n/a | n/a | same tile in dark theme colours |
 | `aws-keys` | official vendor source (AWS), see below | none | n/a | see below | AWS's own dark-squid-ink tile |
 | `indico` | official vendor source (Indico repository), see below | none | n/a | see below | same file as light |
 

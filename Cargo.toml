@@ -10,6 +10,7 @@ members = [
   "crates/aurora-policy",
   "crates/aurora-sqlclass",
   "crates/aurora-registry",
+  "crates/aurora-webhook",
   "crates/aurora-llm",
   "crates/aurora-summary",
   "crates/aurora-protocol",

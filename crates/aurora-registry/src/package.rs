@@ -82,6 +82,11 @@ fn allowed_path(p: &str) -> bool {
             .split_once('/')
             .is_some_and(|(app, file)| !app.is_empty() && !file.is_empty() && !file.contains('/'));
     }
+    // (P5-WEBHOOK-1, C-909) `presets/<file>.json`: one level; the name grammar and the listed-iff-
+    // present rule are the linter's (`webhook`).
+    if let Some(f) = p.strip_prefix("presets/") {
+        return crate::manifest::preset_file_ok(f);
+    }
     p.strip_prefix("tests/")
         .and_then(|n| n.strip_suffix(".yaml"))
         .is_some_and(|stem| !stem.is_empty() && !stem.contains('/'))
@@ -152,7 +157,7 @@ impl Package {
                 let agent_dir = d == "agent"
                     || d.strip_prefix(AGENT_DIR)
                         .is_some_and(|app| !app.is_empty() && !app.contains('/'));
-                if !matches!(d, "assets" | "docs" | "tests") && !agent_dir {
+                if !matches!(d, "assets" | "docs" | "tests" | "presets") && !agent_dir {
                     out.push(v("path_unknown", &name, "path not allowed in a package"));
                 }
                 continue;

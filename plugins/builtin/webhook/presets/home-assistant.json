@@ -1,0 +1,24 @@
+{
+  "id": "home-assistant",
+  "name": "Home Assistant",
+  "secret_value_names": [],
+  "config": {
+    "version": 1,
+    "method": "POST",
+    "content_type": "application/json",
+    "template": "{{payload}}",
+    "slots": [
+      {
+        "name": "payload",
+        "type": "json",
+        "required": true,
+        "description": "The JSON object the automation's webhook trigger receives (available as trigger.json)."
+      }
+    ],
+    "headers": [],
+    "description": "",
+    "signing": false,
+    "rate": { "per_minute": null, "per_day": null },
+    "preset": "home-assistant"
+  }
+}

@@ -1,0 +1,23 @@
+[package]
+name = "aurora-webhook"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+# Pure: no IO, no async, no database. The API, the gateway and `aurora-agent` share this one
+# implementation of C-909's model (P5-WEBHOOK-1).
+[dependencies]
+aurora-core = { workspace = true }
+hmac = { workspace = true }
+hex = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
