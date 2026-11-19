@@ -48,6 +48,16 @@ const apps = PACKAGES.map((p) => ({
   },
   // (P4-GSL) the built-in GitHub and GitLab packages declare a `library` block.
   serves_library: p.id === "github" || p.id === "gitlab",
+  // (P5-POLISH-3/5, C-1029) The catalogue says which apps wait for an admin (no sign-in app registered), what they need and
+  // who can fix it, and the accounts of the app the workspace has; the journey groups from this alone.
+  summary: p.description,
+  accounts: [] as unknown[],
+  readiness: ["google-workspace", "microsoft-365", "notion", "linear", "sentry"].includes(p.id)
+    ? {
+        state: "needs_admin", needs: ["oauth_client"],
+        who_can: { action: "register_oauth_client", role: "org_admin", people: [{ name: "Ada Lovelace" }], you_can: false },
+      }
+    : { state: "ready" },
 }));
 
 const connection = (n: number, appId: string, label: string) => ({
@@ -593,6 +603,11 @@ export async function mockApi(
           id: "token", kind: "fields", access_levels: [], default_scopes: [], recommended: false, label: "Personal access token",
           scopes: [{ scope: "repo", name: "Repositories", access: "write" }, { scope: "read:org", name: "Read your organizations", access: "read" }],
           scope_presets: { read: ["read:org"], write: ["repo", "read:org"] },
+          // (P5-POLISH-3, C-1031) What to tick on GitHub's fine-grained token form, per access.
+          permission_hints: [
+            { level: "read", label: "Read only", hints: ["Contents · Read", "Issues · Read", "Pull requests · Read", "Metadata · Read"] },
+            { level: "write", label: "Read and write", hints: ["Contents · Read and write", "Issues · Read and write", "Pull requests · Read and write", "Metadata · Read"] },
+          ],
           description: "Acts as you, on everything your account can reach. The quickest way to start for personal use; a fine-grained token can be limited to chosen repositories.",
           fields: [{ name: "access_token", label: "Personal access token", type: "secret", store: "credentials", required: true, placeholder: "Fine-grained or classic personal access token", help_url: "https://github.com/settings/personal-access-tokens" }],
         },
@@ -603,9 +618,10 @@ export async function mockApi(
         },
       ];
       // (P5-UX-2/3) Every method also carries the audience, the scope presets per access and the values to show.
-      const full = connect.map((m) => ({ probe_scopes: [], audience: "person", scope_presets: { read: [], write: [] }, show_context: [], has_probe: probed.has(m.id), ...m }));
+      const full = connect.map((m) => ({ probe_scopes: [], audience: "person", scope_presets: { read: [], write: [] }, show_context: [], permission_hints: [], has_probe: probed.has(m.id), ...m }));
       return json({
         ...apps.find((x) => x.app_id === a.id), connect: full, credentials: [], hosts: [], metadata: [],
+        first_prompt: "Which pull requests are waiting for my review?",
         // (P5-UX-9, C-946) The OAuth client definitions say which connect methods use them.
         oauth_clients: ["github", "linear", "gitlab"].includes(a.id)
           ? [{

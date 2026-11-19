@@ -2165,6 +2165,22 @@ One `Dialog` (`size="lg"`) titled **"Give <Agent> an app"**, or **"Give <Agent> 
 known. It always ends with an account **and** the agent's access to it, made in one request, so the
 agent can use the app the moment the dialog says "Done".
 
+**(P5-POLISH-5, D-388) The frame and the steps, as built.** A sheet: full screen below 640 px, a 600 px
+panel above, so the title, the steps and the footer never move between steps; the footer is **Back** on
+the left (absent on the first step) and the step's one action on the right; Done is **Close** at the left
+edge, **Another app** and **Try it in chat**. The title is "Give <Agent> an app" on the App step and
+"<App> for <Agent>" after it (no host; the Sign in step shows the deployment of a family). The App step is
+built from `GET /v1/apps` alone (`readiness`, `accounts`, `summary`): a search field, **Ready to connect**
+(alphabetical, **Another website or API** last), **Already connected** ("<App> · connected, <Agent> can't
+use it yet", **Give access**) and **Needs an admin first** (the reason in one line, **Ask <Name>**, then
+"Asked just now…" with **Undo**). The Sign in step numbers a token's steps (create it, "Give it these
+permissions, for <access>" from `permission_hints`, paste it); a failure is said under its field in words
+and **the typed values stay, secrets included** (component state only, masked, never stored; this changes
+P5-UX-3's "typed values that are not secret survive"); a choice of ways ("Sign in with:") appears only when
+more than one works, **More options** holds scopes, the OAuth client and the server. Done names the account
+and the access ("Daneel can now read Team calendar", "Read only. You can change this on Daneel's Access tab."),
+shows the package's `first_prompt` and **Try it in chat** opens the agent's chat with `?draft=` (C-1035).
+
 **What the buttons say.** One rule, so that one flow has one name:
 
 | Where the person is | Button | Opens |

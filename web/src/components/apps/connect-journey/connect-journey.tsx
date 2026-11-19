@@ -10,12 +10,12 @@ import { WorkspaceAgents } from "@/components/credentials/give-access";
 import { ErrorState, Loading } from "@/components/states";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { ChoiceCards } from "@/components/ui/choice-cards";
-import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { ArrowLeftIcon, CheckIcon } from "@/components/ui/icons";
 import { Notice } from "@/components/ui/notice";
-import { LEVEL_ORDER, preselectAgents } from "@/lib/accounts";
+import { LEVEL_LABEL, LEVEL_ORDER, preselectAgents } from "@/lib/accounts";
 import { savedButText } from "@/lib/account-health";
 import { accountKeys, useAccounts, usePutAccess, useTestAccount, type Account, type Level } from "@/lib/api/accounts";
-import { appDisplayName } from "@/lib/api/app-name";
+import { appDisplayName, productName } from "@/lib/api/app-name";
 import { useApp, useConnectPlan, type AppDetail } from "@/lib/api/apps";
 import { errorMessage } from "@/lib/api/errors";
 import { useAgents, useOrg as useOrgById } from "@/lib/api/queries";
@@ -24,8 +24,10 @@ import { cn } from "@/lib/utils";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { AppStep, type AppChoice } from "./app-step";
+import { BackNext, JourneyFrame, StepFooter } from "./frame";
 import {
   doneSentence,
+  journeyTitle,
   levelsForApp,
   nextStep,
   prevStep,
@@ -51,28 +53,18 @@ interface DoneState {
   customOnly?: boolean;
   scopes?: string[];
   methodId?: string;
+  /** The account's name ("Team calendar"), which Done names. */
+  accountName?: string;
+  /** The package's suggested first question (C-1031); Done offers it as an unsent chat draft (C-1035). */
+  firstPrompt?: string | null;
 }
 
 function names(list: string[]): string {
   return list.length <= 1 ? (list[0] ?? "") : `${list.slice(0, -1).join(", ")} and ${list[list.length - 1]}`;
 }
 
-function Footer({ onBack, onNext, nextLabel = "Next", nextDisabled, busy }: { onBack?: () => void; onNext?: () => void; nextLabel?: string; nextDisabled?: boolean; busy?: boolean }) {
-  return (
-    <div className="flex flex-wrap justify-end gap-2 pt-2">
-      {onBack ? (
-        <Button type="button" variant="ghost" onClick={onBack}>
-          Back
-        </Button>
-      ) : null}
-      {onNext ? (
-        <Button type="button" size="lg" disabled={nextDisabled || busy} onClick={onNext}>
-          {busy ? "Saving…" : nextLabel}
-        </Button>
-      ) : null}
-    </div>
-  );
-}
+/** Back on the left, the step's one action on the right, in the frame's footer (D-388). */
+const Footer = BackNext;
 
 function Steps({ steps, current }: { steps: StepId[]; current: StepId }) {
   const at = steps.indexOf(current);
@@ -118,8 +110,11 @@ export function ConnectJourney({
   const [stepState, setStepState] = useState<StepId>("app");
   // After the app is chosen the next step waits for what decides it (the app, the accounts, the agents).
   const [advancing, setAdvancing] = useState(!!appId);
+  // "Give access" on the App step: straight to the Access step with that account chosen (C-980).
+  const [give, setGive] = useState(false);
   const setStep = (s: StepId) => {
     setAdvancing(false);
+    setGive(false);
     setStepState(s);
   };
   const [picked, setPicked] = useState<Set<string> | null>(null);
@@ -179,7 +174,7 @@ export function ConnectJourney({
   const steps = stepsOf(shape);
 
   const ready = choice?.kind === "website" ? !agents.isPending : !!choice && !!app && !accounts.isPending && !agents.isPending;
-  const step: StepId = advancing && ready ? stepAfterApp(shape) : stepState;
+  const step: StepId = advancing && ready ? (give && steps.includes("access") ? "access" : stepAfterApp(shape)) : stepState;
   useEffect(() => {
     if (step !== "done" || !done || done.kind !== "connection" || tested.current === done.accountId) return;
     tested.current = done.accountId;
@@ -210,18 +205,13 @@ export function ConnectJourney({
 
   const appName = app ? appDisplayName(app) : "";
   const agentWord = names(chosenAgents.map((a) => a.name));
-  const title =
-    choice?.kind === "website"
-      ? agentWord
-        ? `Give ${agentWord} a website`
-        : "Connect a website"
-      : appName
-        ? agentWord
-          ? `Give ${agentWord} ${appName}`
-          : `Connect ${appName}`
-        : agentWord
-          ? `Give ${agentWord} an app`
-          : "Connect an app or website";
+  // The title carries no host: "Give Daneel an app", then "GitHub for Daneel" (the Sign in step shows the deployment).
+  const title = journeyTitle({
+    step,
+    app: app ? productName(app) : undefined,
+    agent: agent?.name ?? agentWord,
+    website: choice?.kind === "website",
+  });
 
   function back() {
     const p = prevStep(shape, step);
@@ -246,6 +236,8 @@ export function ConnectJourney({
         missing: [],
         level: levels.length > 0 ? effective : null,
         appId: target.app?.app_id,
+        accountName: target.name,
+        firstPrompt: app?.first_prompt ?? null,
       });
       setStep("done");
     } catch (err) {
@@ -272,6 +264,8 @@ export function ConnectJourney({
       customOnly,
       scopes: r.scopes,
       methodId: r.methodId,
+      accountName: r.accountName,
+      firstPrompt: app?.first_prompt ?? null,
     });
     setStep("done");
   };
@@ -305,9 +299,17 @@ export function ConnectJourney({
       <AppStep
         workspaceId={workspaceId}
         orgId={orgId}
+        agent={agent}
         onPick={(c) => {
           setChoice(c);
           setAccount(null);
+          setGive(false);
+          setAdvancing(true);
+        }}
+        onGive={(id, accountId) => {
+          setChoice({ kind: "app", appId: id });
+          setAccount(accountId);
+          setGive(true);
           setAdvancing(true);
         }}
       />
@@ -427,8 +429,13 @@ export function ConnectJourney({
     const granted = done.granted.map((id) => agentList.find((a) => a.id === id)).filter((a): a is AgentRef => !!a);
     const who = names(granted.map((a) => a.name));
     const first = granted[0];
+    const accountName = done.accountName ?? done.name;
+    const accessTab = first && org && ws ? wsRoutes(org, ws).agent(first.handle ?? first.id, { tab: "access" }) : null;
+    // (C-1035) The suggested first question opens as an unsent draft in a new conversation; at most 500 characters.
+    const prompt = done.firstPrompt?.trim() ? done.firstPrompt.trim().slice(0, 500) : null;
+    const chat = first && org && ws ? wsRoutes(org, ws).agent(first.handle ?? first.id, prompt ? { draft: prompt } : undefined) : null;
     body = (
-      <div role="status" className="space-y-3 text-sm">
+      <div role="status" className="space-y-4 text-sm">
         {done.grantFailed ? (
           <>
             <p className="font-medium text-ink">
@@ -443,43 +450,70 @@ export function ConnectJourney({
             </Button>
           </>
         ) : (
-          <p className="text-base font-medium text-ink">
-            {doneSentence({ agent: who, app: done.name, level: done.level, agentChosen: granted.length > 0 })}
-          </p>
+          <div className="flex flex-col items-center gap-3 pt-2 text-center">
+            <span aria-hidden="true" className="inline-flex size-12 items-center justify-center rounded-full bg-accent-soft text-accent-ink">
+              <CheckIcon className="size-6" />
+            </span>
+            <p className="text-base font-semibold text-ink">
+              {doneSentence({ agent: who, app: granted.length > 0 ? accountName : done.name, level: done.level, agentChosen: granted.length > 0 })}
+            </p>
+            {granted.length > 0 ? (
+              <p className="text-ink-2">
+                {done.level ? `${LEVEL_LABEL[done.level]}. ` : ""}You can change this on{" "}
+                {accessTab ? (
+                  <Link href={accessTab} onClick={onClose} className="font-medium text-link underline">
+                    {who}&apos;s Access tab
+                  </Link>
+                ) : (
+                  `${who}'s Access tab`
+                )}
+                .
+              </p>
+            ) : null}
+          </div>
         )}
         {warning ? <Notice tone="pending" role="alert">{warning}</Notice> : null}
         {done.missing.length > 0 ? <Notice tone="pending">Some requested permissions were not granted: {done.missing.join(", ")}.</Notice> : null}
-        {!done.grantFailed ? (
-          <div className="flex flex-wrap gap-2 pt-1">
-            {first && org && ws ? (
-              <Link className={buttonVariants({ size: "sm" })} href={wsRoutes(org, ws).agent(first.handle ?? first.id)} onClick={onClose}>
-                Open chat
-              </Link>
-            ) : null}
-            {first ? (
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => {
-                  setChoice(null);
-                  setDone(null);
-                  setPicked(null);
-                  setAccount(null);
-                  setStep("app");
-                }}
-              >
-                Give {who} another app
-              </Button>
-            ) : (
-              <Button size="sm" onClick={() => setGiving(true)}>
-                Give access
-              </Button>
-            )}
-            <Button size="sm" variant="ghost" onClick={onClose}>
-              Done
-            </Button>
+        {!done.grantFailed && prompt && first ? (
+          <div className="rounded-control bg-subtle p-3">
+            <p className="text-xs font-semibold uppercase tracking-wider text-muted">Try it</p>
+            <p className="mt-1 text-ink">&ldquo;{prompt}&rdquo;</p>
           </div>
         ) : null}
+        <StepFooter>
+          <Button type="button" variant="ghost" onClick={onClose}>
+            Close
+          </Button>
+          {!done.grantFailed ? (
+            <>
+              <span className="flex-1" />
+              {first ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    setChoice(null);
+                    setDone(null);
+                    setPicked(null);
+                    setAccount(null);
+                    setStep("app");
+                  }}
+                >
+                  Another app
+                </Button>
+              ) : (
+                <Button type="button" variant="outline" onClick={() => setGiving(true)}>
+                  Give access
+                </Button>
+              )}
+              {chat ? (
+                <Link className={cn(buttonVariants({ size: "lg" }), "max-[560px]:order-first max-[560px]:w-full")} href={chat} onClick={onClose}>
+                  {prompt ? "Try it in chat" : "Open chat"}
+                </Link>
+              ) : null}
+            </>
+          ) : null}
+        </StepFooter>
         {giving ? (
           <AccessDialog
             open
@@ -503,16 +537,30 @@ export function ConnectJourney({
     body = <Loading />;
   }
 
+  const shown = steps.filter((s) => s !== "agent" || !agent);
+  const previous = prevStep(shape, step);
   return (
-    <Dialog open onOpenChange={(o) => (o ? null : onClose())}>
-      <DialogContent
-        size="lg"
-        title={title}
-        data-testid="ws-connect-journey"
-        header={step !== "done" ? <Steps steps={steps.filter((s) => s !== "agent" || !agent)} current={step} /> : null}>
-        {body}
-      </DialogContent>
-    </Dialog>
+    <JourneyFrame
+      title={title}
+      testId="ws-connect-journey"
+      stepper={<Steps steps={shown} current={step} />}
+      footer={step !== "app"}
+      onClose={onClose}
+      back={
+        previous && step !== "done" ? (
+          <button
+            type="button"
+            aria-label="Back"
+            onClick={back}
+            className="inline-flex size-9 items-center justify-center rounded-control text-ink-2 hover:bg-subtle hover:text-ink sm:hidden pointer-coarse:size-11"
+          >
+            <ArrowLeftIcon className="size-5" />
+          </button>
+        ) : null
+      }
+    >
+      {body}
+    </JourneyFrame>
   );
 }
 

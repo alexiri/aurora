@@ -23,11 +23,11 @@ const NEW_ACCOUNT_TEST = `/v1/accounts/connection/${id(500)}/test`;
 async function connectGitHub(page: Page) {
   await page.getByRole("button", { name: "Give Daneel an app" }).first().click();
   const dialog = page.getByTestId("ws-connect-journey");
-  await dialog.getByRole("button", { name: /^GitHub/ }).click();
+  await dialog.getByRole("button", { name: "GitHub", exact: true }).click();
   await dialog.getByRole("button", { name: "Next" }).click();
   await dialog.getByLabel("Personal access token", { exact: true }).fill("not-a-real-token");
   await dialog.getByRole("button", { name: "Connect", exact: true }).click();
-  await expect(dialog.getByText("Daneel can now read GitHub.")).toBeVisible();
+  await expect(dialog.getByText("Daneel can now read acme.")).toBeVisible();
   return dialog;
 }
 
@@ -50,7 +50,7 @@ for (const scheme of ["light", "dark"] as const) {
         await expect(dialog.getByRole("alert")).toHaveText("Saved, but GitHub could not be reached (db.platform.example.org). Check the address or test again.");
         expect(tests).toBe(1);
         // The account is kept: the success sentence and the next steps stay.
-        await expect(dialog.getByRole("link", { name: "Open chat" })).toBeVisible();
+        await expect(dialog.getByRole("link", { name: "Try it in chat" })).toBeVisible();
         await check(page);
       });
 
@@ -63,7 +63,7 @@ for (const scheme of ["light", "dark"] as const) {
           return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ result: "unreachable", checked_at: now }) });
         });
         const dialog = await connectGitHub(page);
-        await expect(dialog.getByRole("link", { name: "Open chat" })).toBeVisible();
+        await expect(dialog.getByRole("link", { name: "Try it in chat" })).toBeVisible();
         await expect(dialog.getByRole("alert")).toHaveCount(0);
         expect(tests).toBe(0);
       });
