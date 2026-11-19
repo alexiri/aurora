@@ -51,7 +51,7 @@ function Links({ agentId }: { agentId: string }) {
   const q = useAgentLinks(agentId);
   if (q.isPending) return <Loading />;
   if (q.isError) return <ErrorState error={q.error} onRetry={() => void q.refetch()} />;
-  if (q.data.items.length === 0) return <EmptyState title="No agent links">Links let this agent hand tasks to other agents.</EmptyState>;
+  if (q.data.items.length === 0) return <p className="text-sm text-ink-2">No agent links yet. Links let this agent hand tasks to other agents.</p>;
   return (
     <ItemList aria-label="Agent links">
       {q.data.items.map((l) => (
@@ -71,7 +71,7 @@ function Tasks({ agentId }: { agentId: string }) {
   const q = usePeerTasks(agentId);
   if (q.isPending) return <Loading />;
   if (q.isError) return <ErrorState error={q.error} onRetry={() => void q.refetch()} />;
-  if (q.data.items.length === 0) return <EmptyState title="No peer tasks" />;
+  if (q.data.items.length === 0) return <p className="text-sm text-ink-2">No peer tasks yet.</p>;
   return (
     <ItemList aria-label="Peer tasks">
       {q.data.items.map((t) => (
@@ -95,6 +95,16 @@ function Tasks({ agentId }: { agentId: string }) {
 }
 
 export function PeersTab({ agentId }: { agentId: string }) {
+  const links = useAgentLinks(agentId);
+  const tasks = usePeerTasks(agentId);
+  // (P5-POLISH-11, C6) Nothing in either list is one empty state, not two stacked.
+  if (links.data && tasks.data && links.data.items.length === 0 && tasks.data.items.length === 0) {
+    return (
+      <EmptyState title="No agent links">
+        Links let this agent hand tasks to other agents and accept tasks from them. Tasks they exchange appear here.
+      </EmptyState>
+    );
+  }
   return (
     <div className="space-y-8">
       <Section id="agent-links" title="Agent links" description="Other agents this agent may hand tasks to or accept tasks from.">

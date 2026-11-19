@@ -22,7 +22,7 @@ export function levelSentence(level: Level, agent: string): string {
 }
 
 /** What one agent's entry says in the row: "Daneel · Read only". */
-export function entryText(entry: AgentAccess): string {
+export function entryText(entry: AgentAccess, account?: Pick<Account, "ref" | "levels">): string {
   switch (entry.level) {
     case "read":
     case "ask":
@@ -31,7 +31,8 @@ export function entryText(entry: AgentAccess): string {
     case "custom":
       return `${entry.agent.name} · Custom`;
     case "use":
-      return entry.agent.name;
+      // A read-only app has no levels and the grant level `use`: the pill still says "Read only".
+      return account?.ref.type === "connection" && account.levels.length === 0 ? `${entry.agent.name} · Read only` : entry.agent.name;
   }
 }
 

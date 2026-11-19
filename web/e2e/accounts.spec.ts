@@ -87,9 +87,11 @@ for (const scheme of ["light", "dark"] as const) {
         await mockApi(page);
         await open(page, "/o/acme/w/main/apps?tab=accounts", scheme);
         const list = page.getByRole("list", { name: "Accounts" });
-        await expect(list.getByRole("listitem", { name: "acme-bot" }).getByText("App")).toBeVisible();
+        // (P5-POLISH-6) An app and an AI key carry a tile, not a kind chip; only a website says what it is.
+        await expect(list.getByRole("listitem", { name: "acme-bot" }).getByText("App", { exact: true })).toHaveCount(0);
         await expect(list.getByRole("listitem", { name: "Weather API" }).getByText("Website")).toBeVisible();
-        await expect(list.getByRole("listitem", { name: "Team key" }).getByText("AI key")).toBeVisible();
+        await expect(list.getByRole("listitem", { name: "Team key" }).getByText("AI key", { exact: true })).toHaveCount(0);
+        await expect(list.getByRole("listitem", { name: "Team key" }).getByText("AI", { exact: true })).toBeVisible();
         await expect(list.getByRole("listitem", { name: "Weather API" }).getByText("No agent can use this")).toBeVisible();
         await expect(list.getByRole("listitem", { name: "Product team" }).getByText("Sign-in expired")).toBeVisible();
         // No rule id, host pattern or "secret" on a row.
