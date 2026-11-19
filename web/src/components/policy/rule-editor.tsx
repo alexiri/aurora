@@ -2,6 +2,7 @@
 
 import { useState, type FormEvent } from "react";
 
+import { ToolChecklist } from "@/components/grants/tool-checklist";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
@@ -176,24 +177,13 @@ function AppTargetFields({ value, onChange }: { value: Extract<Target, { type: "
         options={(apps.data?.items ?? []).map((a) => ({ value: a.app_id, label: a.name }))}
       />
       {value.app_id ? (
-        <fieldset className="space-y-1 text-sm">
-          <legend className="text-xs text-muted">Tools (none ticked = every tool of the app)</legend>
-          {app.isPending ? <p className="text-xs text-muted">Loading tools…</p> : null}
-          {tools.map((t) => (
-            <label key={t.id} className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                checked={picked.includes(t.id)}
-                onChange={(e) => {
-                  const next = e.target.checked ? [...picked, t.id] : picked.filter((x) => x !== t.id);
-                  onChange({ type: "app", app_id: value.app_id, tools: next.length ? next : null });
-                }}
-              />
-              <span>{t.name}</span>
-              {t.approval === "ask" ? <Badge tone="accent">asks first by default</Badge> : null}
-            </label>
-          ))}
-        </fieldset>
+        <ToolChecklist
+          legend="Tools (none ticked = every tool of the app)"
+          loading={app.isPending}
+          items={tools}
+          picked={picked}
+          onChange={(next) => onChange({ type: "app", app_id: value.app_id, tools: next.length ? next : null })}
+        />
       ) : null}
     </div>
   );
