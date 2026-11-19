@@ -308,8 +308,3 @@ export function fieldErrors(err: unknown): Record<string, string> {
 /** A react-query `retry` predicate: one retry, and none after a definitive client error (4xx). */
 export const retryUnlessClientError = (count: number, err: unknown) =>
   !(err instanceof ApiError && err.status !== undefined && err.status >= 400 && err.status < 500) && count < 1;
-
-/** Text for a `reauth_error` code on a page that started a re-authentication (unknown codes get a generic line). */
-export function reauthErrorMessage(code: string): string {
-  return Object.hasOwn(ERROR_MESSAGES, code) ? ERROR_MESSAGES[code]! : "Re-authentication failed. Please try again.";
-}

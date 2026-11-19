@@ -12,12 +12,6 @@ export function appDisplayName(app: NamedApp): string {
   return app.family ? `${app.family.name} · ${app.family.variant_label}` : app.name;
 }
 
-/** The deployment when it is a server of the person's own: "GitHub · Enterprise Server (ghe.example.org)". */
-export function appInstanceName(app: NamedApp, host?: string | null): string {
-  const n = appDisplayName(app);
-  return host ? `${n} (${host})` : n;
-}
-
 /** The catalogue's grouping key: one product per family, each app on its own otherwise. */
 export function productKey(app: NamedApp & { app_id: string }): string {
   return app.family ? `family:${app.family.id}` : `app:${app.app_id}`;

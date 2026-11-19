@@ -45,14 +45,6 @@ export function saveDraft(userId: string, convId: string, d: Draft): void {
   }
 }
 
-export function clearDraft(userId: string, convId: string): void {
-  try {
-    window.localStorage.removeItem(draftKey(userId, convId));
-  } catch {
-    /* ignored */
-  }
-}
-
 /** Sign-out: every draft of every user on this browser goes. */
 export function clearDrafts(): void {
   try {

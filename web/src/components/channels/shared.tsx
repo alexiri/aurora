@@ -54,10 +54,6 @@ export function MutationError({ error }: { error: unknown }) {
   );
 }
 
-export function isStatus(err: unknown, code: string): boolean {
-  return err instanceof ApiError && err.code === code;
-}
-
 const TONE: Record<string, "neutral" | "accent" | "danger"> = {
   active: "accent",
   approved: "accent",

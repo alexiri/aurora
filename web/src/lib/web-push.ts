@@ -116,12 +116,6 @@ async function currentRegistration(): Promise<ServiceWorkerRegistration | undefi
   return navigator.serviceWorker.getRegistration("/");
 }
 
-/** The browser's current subscription, if the worker is registered and subscribed. */
-export async function currentSubscription(): Promise<PushSubscription | null> {
-  const reg = await currentRegistration();
-  return reg ? reg.pushManager.getSubscription() : null;
-}
-
 function body(sub: PushSubscription, vapid: string) {
   const j = sub.toJSON();
   return {

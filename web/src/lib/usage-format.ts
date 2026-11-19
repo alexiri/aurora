@@ -30,8 +30,6 @@ export function duration(seconds: number): string {
 
 export type RangeId = "7d" | "30d" | "90d" | "custom";
 export const RANGE_DAYS = { "7d": 7, "30d": 30, "90d": 90 } as const;
-/** `USAGE_RANGE_MAX_DAYS` (C-1000). */
-export const MAX_RANGE_DAYS = 366;
 
 /** A UTC date as `YYYY-MM-DD`. */
 export const isoDay = (d: Date): string => d.toISOString().slice(0, 10);

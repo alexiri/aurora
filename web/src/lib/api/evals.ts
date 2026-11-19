@@ -157,12 +157,3 @@ export function usePatchEvalSchedule(agent: string) {
 export function useDeleteEvalSchedule(agent: string) {
   return useInvalidatingMutation((id: string) => unwrap(api.DELETE("/v1/eval-schedules/{id}", { params: { path: { id } } })), evalKeys.schedules(agent));
 }
-
-export function useEvalFingerprint(agent: string, enabled = true) {
-  return useQuery({
-    queryKey: evalKeys.fingerprint(agent),
-    enabled,
-    queryFn: () => unwrap(api.GET("/v1/agents/{agent}/eval-fingerprint", { params: { path: { agent } } })),
-    retry: false,
-  });
-}

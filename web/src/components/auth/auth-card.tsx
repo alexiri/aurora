@@ -61,6 +61,3 @@ export function Notice({ children }: { children: ReactNode }) {
     </NoticeBox>
   );
 }
-
-export const LOG_MODE_NOTICE =
-  "Email delivery is not configured; the link was written to the server log.";

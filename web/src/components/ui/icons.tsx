@@ -55,7 +55,6 @@ export const PlusIcon = make(<><path d="M12 5v14M5 12h14"/></>);
 export const PaperclipIcon = make(<><path d="M20 11.5l-8 8a5 5 0 01-7-7l9-9a3.5 3.5 0 015 5l-9 9a2 2 0 01-3-3l8-8"/></>);
 export const SendIcon = make(<><path d="M21 3L10 14M21 3l-7 18-4-7-7-4z"/></>);
 export const ClockIcon = make(<><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></>);
-export const PlugsIcon = make(<><path d="M4 12h6M14 12h6M10 8v8M14 8v8"/></>);
 export const LinkIcon = make(<><path d="M10 14a4 4 0 005.7 0l3-3a4 4 0 00-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 00-5.7 0l-3 3A4 4 0 0011 18.7l1-1"/></>);
 export const CheckIcon = make(<><path d="M5 12l5 5 9-10"/></>);
 export const WrenchIcon = make(<><path d="M14.5 6.5a4 4 0 005 5L20 12l-8 8a2.1 2.1 0 01-3-3l8-8z"/><path d="M14.5 6.5l3 3"/></>);
