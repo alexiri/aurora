@@ -13,6 +13,8 @@ import { CheckboxField } from "@/components/ui/form";
 import { Notice } from "@/components/ui/notice";
 import { ItemList, ListRow } from "@/components/ui/section";
 import { SettingField, settingControlId } from "@/components/ui/setting-field";
+import { StatusLine } from "@/components/ui/status-line";
+import { useLlmEndpointWarnings, type EndpointWarnings } from "@/lib/api/llm-endpoint-warnings";
 import { ROLE_LABEL, ROLES } from "@/lib/model-roles";
 import { adminRoutes } from "@/lib/routes";
 
@@ -144,7 +146,7 @@ function hostOf(url: unknown): string {
   return typeof url === "string" ? url : "";
 }
 
-/** The harnesses an endpoint serves as `Badge`s, or the notice that it serves none (D-260(a), C-811). */
+/** The harnesses an endpoint serves as one plain line, or the notice that it serves none (D-260(a), C-811). */
 function HarnessLine({ harnesses }: { harnesses: string[] | undefined }) {
   if (harnesses === undefined) return null;
   if (harnesses.length === 0) {
@@ -155,17 +157,60 @@ function HarnessLine({ harnesses }: { harnesses: string[] | undefined }) {
     );
   }
   return (
-    <div role="group" className="flex flex-wrap items-center gap-1.5" aria-label="Harnesses this endpoint serves">
-      {harnesses.map((h) => (
-        <Badge key={h}>{HARNESS_LABEL[h] ?? h}</Badge>
-      ))}
+    <p className="text-xs text-ink-2" aria-label="Harnesses this endpoint serves">
+      Works with {harnesses.map((h) => HARNESS_LABEL[h] ?? h).join(", ")}
+    </p>
+  );
+}
+
+/** An endpoint's kind as plain text ("LiteLLM gateway"), not a chip. */
+const KIND_LABEL: Record<string, string> = { litellm: "LiteLLM gateway" };
+const kindLabel = (p: string): string => KIND_LABEL[p] ?? label(p);
+
+/** "Large, Medium and Small" */
+function roleList(roles: string[]): string {
+  const names = roles.map((r) => ROLE_LABEL[r as keyof typeof ROLE_LABEL] ?? r);
+  return names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}` : (names[0] ?? "");
+}
+
+/**
+ * (P5-POLISH-10, C-1034, D-385) The endpoint's role warning, once, with its fix. A dashboard endpoint gets the amber line and
+ * **Set roles** (opens its editor); a Helm one cannot be changed here, so the line is neutral and says where.
+ */
+function RoleWarningLine({ id, helm, warnings, onSetRoles }: { id: string; helm: boolean; warnings: EndpointWarnings[]; onSetRoles?: () => void }) {
+  const w = warnings.find((x) => x.endpoint_id === id);
+  if (!w || w.roles.length === 0) return null;
+  const roles = roleList(w.roles.map((r) => r.role));
+  if (helm) {
+    return (
+      <div data-testid="endpoint-role-warning">
+        <StatusLine tone="idle" className="text-xs">
+          Agents may ask for a model this endpoint doesn&apos;t serve. Set the {roles} {w.roles.length === 1 ? "role" : "roles"} in the Helm values under{" "}
+          <code className="font-mono">llm.endpoints.{id}.roles</code>.
+        </StatusLine>
+      </div>
+    );
+  }
+  return (
+    <div data-testid="endpoint-role-warning">
+      <StatusLine
+        tone="attention"
+        className="text-xs"
+        action={
+          <Button type="button" size="sm" variant="outline" aria-label={`Set roles of ${id}`} onClick={onSetRoles}>
+            Set roles
+          </Button>
+        }
+      >
+        Agents may ask for a model this endpoint doesn&apos;t serve: set the {roles} {w.roles.length === 1 ? "role" : "roles"}.
+      </StatusLine>
     </div>
   );
 }
 
 /**
- * (phase 5, P5-MODELS-3, C-875) The roles an endpoint names, or "Roles from the provider" for Anthropic, or the notice
- * that agents will ask for Claude model names when a non-Anthropic endpoint names none.
+ * (phase 5, P5-MODELS-3, C-875) The roles an endpoint names, or "Roles from the provider" for Anthropic. An endpoint
+ * that names none says nothing here: its warning is `RoleWarningLine`, from the server (C-1034, D-385).
  */
 function RolesLine({ entry }: { entry: Record<string, unknown> }) {
   const roles = (entry.model_roles ?? {}) as Record<string, unknown>;
@@ -178,11 +223,7 @@ function RolesLine({ entry }: { entry: Record<string, unknown> }) {
     );
   }
   if (entry.provider === "anthropic") return <p className="text-xs text-ink-2">Roles from the provider</p>;
-  return (
-    <Notice tone="pending" role="status" className="max-w-xl text-xs" data-testid="no-roles-notice">
-      Agents on this endpoint will ask for Claude model names for subagents and background work. Set the roles.
-    </Notice>
-  );
+  return null;
 }
 
 /** The endpoints: Helm entries read-only ("Managed by Helm"), dashboard entries editable and removable. */
@@ -205,6 +246,7 @@ export function EndpointsControl({
     (s.entries ?? []).some((e) => e.id === id && e.source === "dashboard" && e.warnings?.includes("needs_allowed_private"));
   const own = ctx.own;
   const helmIds = helm.map((e) => e.id);
+  const roleWarnings = useLlmEndpointWarnings().data ?? [];
   const enabled = enabledNow(ctx, enabledEffective);
   const providers = available.filter((p) => enabled.includes(p));
   const [editing, setEditing] = useState<{ index: number | null } | null>(null);
@@ -241,12 +283,13 @@ export function EndpointsControl({
         <div className="min-w-0 space-y-1">
           <div className="flex flex-wrap items-center gap-2">
             <span className="font-medium text-ink">{e.id}</span>
-            <Badge>{label(String(v.provider ?? ""))}</Badge>
             <LockPill owner="Set in Helm" />
           </div>
+          <p className="text-xs text-ink-2">{kindLabel(String(v.provider ?? ""))}</p>
           {hostOf(v.base_url) ? <p className="break-all text-xs text-ink-2">{hostOf(v.base_url)}</p> : null}
           <HarnessLine harnesses={harnesses?.[e.id]} />
           <RolesLine entry={v} />
+          <RoleWarningLine id={e.id} helm warnings={roleWarnings} />
         </div>
       </ListRow>,
     );
@@ -272,15 +315,16 @@ export function EndpointsControl({
         <div className="min-w-0 space-y-1">
           <div className="flex flex-wrap items-center gap-2">
             <span className="font-medium text-ink">{id}</span>
-            <Badge>{label(String(e.provider ?? ""))}</Badge>
-            <Badge tone="accent">Dashboard</Badge>
-            {bad ? <Badge tone="danger">Needs attention</Badge> : null}
-            {needsPrivate(id) ? (
+            {/* At most one chip: a problem with the entry, else none. */}
+            {bad ? (
+              <Badge tone="danger">Needs attention</Badge>
+            ) : needsPrivate(id) ? (
               <Link href={adminRoutes.sectionPage("limits", "gateway.allowed_private")} className="rounded-control focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent">
                 <Badge tone="danger">Private address not allowed</Badge>
               </Link>
             ) : null}
           </div>
+          <p className="text-xs text-ink-2">{kindLabel(String(e.provider ?? ""))}</p>
           {hostOf(e.base_url) ? <p className="break-all text-xs text-ink-2">{hostOf(e.base_url)}</p> : null}
           {needsPrivate(id) ? (
             <p className="text-xs text-ink-2">
@@ -289,6 +333,7 @@ export function EndpointsControl({
           ) : null}
           <HarnessLine harnesses={harnesses?.[id]} />
           <RolesLine entry={e} />
+          <RoleWarningLine id={id} helm={false} warnings={roleWarnings} onSetRoles={() => setEditing({ index: i })} />
           {bad ? (
             <ul className="list-disc pl-5 text-xs text-danger-ink">
               {Object.entries(errs).map(([f, m]) => (
