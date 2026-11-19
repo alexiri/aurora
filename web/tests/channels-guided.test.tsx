@@ -69,7 +69,7 @@ function base(extra: Record<string, Handler>, opts: { connectors?: unknown[]; av
 describe("Channels: blocked states name the next actor", () => {
   it.each([
     ["not_added", "An instance administrator needs to add Mattermost first."],
-    ["waiting_for_host", "waiting for the connector host. The operator must start it."],
+    ["waiting_for_host", "Mattermost is added, but its connector isn't running"],
     ["disabled", "Mattermost is disabled. An instance administrator can enable it."],
     ["needs_approval", "needs an instance administrator's approval"],
   ])("%s, as a plain member: says what is wrong and who to ask", async (state, text) => {
@@ -109,6 +109,16 @@ describe("Channels: blocked states name the next actor", () => {
     wrap(<ChannelsView orgId="o1" />);
     expect(await screen.findByRole("link", { name: /Administration › Chat platforms/ })).toHaveAttribute("href", "/admin/chat-platforms");
     expect(screen.getByTestId("blocked-mattermost").textContent).not.toContain("Ask:");
+  });
+
+  it("waiting for the host, as an instance admin: one card with the platform's name, never the raw id or an 'instance administrator' sentence (E6)", async () => {
+    base({}, { availability: { items: [{ type_id: "fake", name: "fake", setup_state: "waiting_for_host", icon_url: null }], instance_admins: [] }, admin: true });
+    wrap(<ChannelsView orgId="o1" />);
+    const card = await screen.findByTestId("blocked-fake");
+    expect(within(card).getByRole("region", { name: "Fake is added, but its connector isn't running" })).toBeInTheDocument();
+    expect(card.textContent).not.toContain("instance administrator");
+    expect(card.textContent).not.toContain("operator must start");
+    expect(within(card).getByRole("link", { name: /Administration › Chat platforms/ })).toHaveAttribute("href", "/admin/chat-platforms");
   });
 
   it("nothing announced: names the administrators instead of a dead end", async () => {
