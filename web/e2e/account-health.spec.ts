@@ -76,11 +76,11 @@ for (const scheme of ["light", "dark"] as const) {
         await mockAccounts(page);
         await open(page, "/o/acme/w/main/apps?tab=accounts", scheme);
         const pg = page.getByRole("listitem", { name: "analytics" });
-        await expect(pg.getByText("Could not be reached (db.platform.example.org)")).toBeVisible();
-        await expect(pg.getByRole("button", { name: "Test" })).toBeVisible();
+        await expect(pg.getByText(/it could not be reached \(db\.platform\.example\.org\)/)).toBeVisible();
+        await expect(pg.getByRole("button", { name: "Try again" })).toBeVisible();
         const aws = page.getByRole("listitem", { name: "platform-prod" });
-        await expect(aws.getByText("The sign-in to AWS expired")).toBeVisible();
-        await expect(aws.getByRole("button", { name: "Reconnect" })).toBeVisible();
+        await expect(aws.getByText("Sign-in expired")).toBeVisible();
+        await expect(aws.getByRole("button", { name: "Sign in again" })).toBeVisible();
         await check(page);
       });
 
@@ -89,13 +89,13 @@ for (const scheme of ["light", "dark"] as const) {
         await open(page, "/o/acme/w/main/apps?tab=accounts", scheme);
         const pg = page.getByRole("listitem", { name: "analytics" });
         await pg.getByRole("button", { name: "More for analytics" }).click();
-        await page.getByRole("menuitem", { name: "Test" }).click();
+        await page.getByRole("menuitem", { name: "Test the connection" }).click();
         await expect.poll(() => state.tests).toBe(1);
-        await expect(pg.getByText("Could not be reached (db.platform.example.org)")).toBeVisible();
+        await expect(pg.getByText(/it could not be reached \(db\.platform\.example\.org\)/)).toBeVisible();
         // The sign-in of the other account expired: it is fixed by Reconnect, there is nothing to test.
         const aws = page.getByRole("listitem", { name: "platform-prod" });
         await aws.getByRole("button", { name: "More for platform-prod" }).click();
-        await expect(page.getByRole("menuitem", { name: "Test" })).toHaveCount(0);
+        await expect(page.getByRole("menuitem", { name: "Test the connection" })).toHaveCount(0);
         await page.keyboard.press("Escape");
         await check(page);
       });

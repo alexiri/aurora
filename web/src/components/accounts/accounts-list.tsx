@@ -122,7 +122,14 @@ export function AccountsList({
               : `${target.name} cannot be reconnected here.`}
         </Notice>
       ) : null}
-      {addEntries ? <div className="flex flex-wrap items-center justify-end gap-2">{addEntries}</div> : null}
+      {agent && addEntries ? (
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="font-display text-base font-semibold text-ink">Apps and accounts</h2>
+          <div className="flex flex-wrap items-center gap-2">{addEntries}</div>
+        </div>
+      ) : addEntries ? (
+        <div className="flex flex-wrap items-center justify-end gap-2">{addEntries}</div>
+      ) : null}
       {addingKey ? (
         <div className="rounded-card border border-line bg-surface p-4">
           <LlmKeyForm scope={scope} orgId={orgId} preselect={agent ? [agent.id] : undefined} />
