@@ -96,6 +96,11 @@ pub enum AskedBy {
         /// `workspace` | `organization`
         scope: String,
     },
+    /// (P5-TOOLASK, C-1043) The app's own default for the tool asked: no rule or access choice did.
+    Package {
+        app_id: Option<String>,
+        tool_id: Option<String>,
+    },
 }
 
 /// (C-982) Only on the answer of an Always allow.

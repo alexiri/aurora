@@ -206,6 +206,14 @@ builtin package fills `summary` and `first_prompt` for each app and the hints of
 token screen asks for permissions (GitHub, GitHub Enterprise Server, GitLab, Sentry, Indico), citing the
 service's documentation in its `docs/setup.md`.
 
+**Ask first by default (P5-TOOLASK, D-397, C-1042).** A tool of the `write` group may carry
+`approval: ask` (the only value; absent = no default; additive in contract 1, absent from the package
+hash of every package that does not use it). On a `read` tool it is `tool_approval_read`. The gateway
+holds the request unless a rule that names the tool allows it or any rule blocks it (`07 §A package's
+default of Ask`); the tool row in the account's actions table says "Asks first (app default)" and
+choosing Allowed there is the workspace's override. Built-in users: `caldav`
+(`send_scheduling_message`, 1.2.0) and `webhook` (`send`). It never widens: `widens()` ignores it.
+
 **Tool scopes (FIX-136, D-241, C-741).** `tools[].scopes: [scope ids]` (any of; absent = no
 requirement) names the scopes a tool needs; each must be declared by one of the app's connect
 methods (`oauth2` `scopes`, or a `fields` method's new `scopes`), else `tool_scope_unknown`. A
@@ -872,13 +880,11 @@ host lookup); both are absent when no app has the section, so existing snapshot 
 Fixtures give the connection's `metadata.hosts` and send the request to a pinned origin. The reference
 package is `caldav` (`plugins/builtin/caldav`).
 
-*Open item (P5-CALDAV): `send_scheduling_message` has no "Ask by default".* The manifest has no
-per-tool default (a grant is a level: read / ask / act, or a custom list), so the tool is an ordinary
-write tool of the package: a connection with write access at the Ask level asks for it, one at the
-Act level (or a custom grant that allows it) lets the agent post to the server's scheduling outbox,
-which emails the attendees, without asking. A workspace that wants approval for it whatever the
-level gives the agent a **custom grant** on that connection with `send_scheduling_message` in
-`ask_tools`. A per-tool default would be a new manifest key; it is not built.
+**`send_scheduling_message` asks first by default** (P5-TOOLASK, D-397, C-1042, C-1043): the tool
+carries `approval: ask`, so posting to the server's scheduling outbox (it emails the attendees) is
+held for a person's approval at every level, **including Act**; only a custom grant that lists the
+tool in `allow_tools` (Allowed in the actions table) or an organization/workspace rule that names it
+lets the agent send without asking, and any block still wins (`07 §A package's default of Ask`).
 
 **`slots` summary** (phase 5, P5-WEBHOOK-2, C-910): the approval of a send to an outgoing webhook is built
 by the gateway from the **checked slot values** (`aurora_summary::slots::summary`), not by a manifest

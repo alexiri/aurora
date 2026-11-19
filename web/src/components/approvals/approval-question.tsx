@@ -106,6 +106,11 @@ export function ApprovalQuestion({ approval: a, now, onDecide, pending, message,
           .
         </p>
       ) : null}
+      {a.asked_by?.kind === "package" ? (
+        <p className="text-sm text-ink-2" data-testid="asked-by-package">
+          This app asks before this action.
+        </p>
+      ) : null}
       {a.context_label ? (
         <p className="text-xs text-muted" data-testid="context-label">
           Run: {a.context_label}

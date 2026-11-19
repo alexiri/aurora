@@ -14,6 +14,22 @@ for (const scheme of ["light", "dark"] as const) {
     test.describe(`${scheme} theme, ${width} px`, () => {
       test.use({ viewport: { width, height: width === 1280 ? 900 : 844 } });
 
+      // P5-TOOLASK (C-1042, C-1043): an action its app asks about first by default says so, and Allowed is the override.
+      test("an action the app asks about first by default says so and can be overridden with Allowed", async ({ page }) => {
+        await openAccess(page, "table", scheme);
+        const region = page.getByRole("listitem", { name: "acme-bot" }).getByRole("region", { name: /^What Daneel can do in GitHub/ });
+        const merge = region.getByRole("listitem").filter({ hasText: "Merge a pull request" });
+        await expect(merge.getByText(/Asks first \(app default\)/)).toBeVisible();
+        await expect(merge.getByLabel("Merge a pull request: what happens")).toHaveValue("ask");
+        // Only that action carries the note.
+        await expect(region.getByText(/Asks first \(app default\)/)).toHaveCount(1);
+        await merge.getByLabel("Merge a pull request: what happens").selectOption("allow");
+        await expect(merge.getByLabel("Merge a pull request: what happens")).toHaveValue("allow");
+        expect(await overflow(page)).toBeLessThanOrEqual(0);
+        const { violations } = await new AxeBuilder({ page }).analyze();
+        expect(violations.filter((v) => v.impact === "serious" || v.impact === "critical").map((v) => v.id)).toEqual([]);
+      });
+
       test("an organization's Read only limit shows the changes as Blocked, Limited by Acme", async ({ page }) => {
         await openAccess(page, "table-limited", scheme);
         const region = page.getByRole("listitem", { name: "AWS prod" }).getByRole("region", { name: /^What Daneel can do in AWS/ });

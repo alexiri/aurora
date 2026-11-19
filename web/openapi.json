@@ -41449,6 +41449,33 @@
                 "description": "`workspace` | `organization`"
               }
             }
+          },
+          {
+            "type": "object",
+            "description": "(P5-TOOLASK, C-1043) The app's own default for the tool asked: no rule or access choice did.",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "app_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "package"
+                ]
+              },
+              "tool_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
           }
         ],
         "description": "(P5-UX-16, C-982) What asked the question: the agent's access, or a rule."
@@ -64509,6 +64536,13 @@
           "scopes"
         ],
         "properties": {
+          "approval": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "(P5-TOOLASK, D-397, C-1042) The package's default for the tool: `ask` (held for approval\nunless a workspace or organization rule allows it) or `null`."
+          },
           "connect_methods": {
             "type": "array",
             "items": {

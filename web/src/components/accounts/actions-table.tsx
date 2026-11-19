@@ -25,7 +25,9 @@ export function startingDecisions(
   saved: { mode: "full" | "custom"; allow_tools: string[]; ask_tools: string[] } | undefined,
   customOnly: boolean,
 ): Record<string, Decision> {
-  if (saved?.mode === "full" || (!saved && entry?.level === "act")) return Object.fromEntries(tools.map((t) => [t.id, "allow" as Decision]));
+  // (P5-TOOLASK, C-1043) An Act choice allows everything except what its app asks about first; choosing Allowed on such an action is the override.
+  if (saved?.mode === "full" || (!saved && entry?.level === "act"))
+    return Object.fromEntries(tools.map((t) => [t.id, (t.approval === "ask" ? "ask" : "allow") as Decision]));
   const d = initialDecisions(tools, saved);
   if (!saved && customOnly) for (const t of tools) if (groupOf(t) === "read") d[t.id] = "allow";
   return d;
@@ -88,6 +90,16 @@ const GROUPS = [
   { id: "read", label: "Looking things up" },
   { id: "write", label: "Changing things" },
 ] as const;
+
+/** (P5-TOOLASK, C-1042) The app's own default for an action that acts on other people: it asks first until a workspace says Allowed. */
+function AsksFirst({ tool, canChange }: { tool: { approval?: string | null }; canChange: boolean }) {
+  if (tool.approval !== "ask") return null;
+  return (
+    <p className="text-xs text-muted">
+      Asks first (app default).{canChange ? " Choose Allowed to let the agent do it without asking." : null}
+    </p>
+  );
+}
 
 /** The read-only table: the chip says what happens; a reason sentence and the agent's own choice follow it when something else decided. */
 function Groups({ rows, account, agentName }: { rows: AppAccessTool[]; account: Account; agentName: string }) {
@@ -239,6 +251,7 @@ function Editor({
                     <div className="min-w-0 flex-1 basis-56">
                       <p className="text-sm font-medium text-ink">{t.name}</p>
                       {t.description ? <p className="text-sm text-ink-2">{t.description}</p> : null}
+                      <AsksFirst tool={t} canChange />
                       <details className="mt-1 text-xs text-muted">
                         <summary className="cursor-pointer">Technical details</summary>
                         <p className="mt-1 break-all">

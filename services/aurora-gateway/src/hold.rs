@@ -151,6 +151,9 @@ pub struct HoldRequest<'a> {
     /// Redacted, without query.
     pub path: &'a str,
     pub rule: Option<(Uuid, &'a str)>,
+    /// (P5-TOOLASK, C-1043) Held because the tool's package default is `ask` (no rule decided):
+    /// the row's reason names the app.
+    pub package_ask: bool,
     /// (FIX-084) The app connection whose credential the request would use; recorded on the row
     /// so that revoking that grant or connection abandons the pending approval.
     pub connection_id: Option<Uuid>,
@@ -164,6 +167,8 @@ pub struct HoldRequest<'a> {
     /// requiring rules of both scopes); `None` = no preference, the default timeout applies.
     pub rule_timeout_secs: Option<u32>,
 }
+
+use aurora_policy::eval::PACKAGE_ASK_REASON;
 
 fn millis(d: Duration) -> u64 {
     u64::try_from(d.as_millis()).unwrap_or(u64::MAX)
@@ -580,7 +585,10 @@ impl Holds {
             app_id: r.app_id.map(clip),
             tool_id: r.tool_id.map(clip),
             rule_logical_id: r.rule.map(|x| x.0),
-            rule_name: r.rule.map(|x| x.1.to_owned()),
+            rule_name: r
+                .rule
+                .map(|x| x.1.to_owned())
+                .or_else(|| r.package_ask.then(|| PACKAGE_ASK_REASON.to_owned())),
             summary,
             batch_id: r.batch.batch_id.as_deref().map(clip),
             batch_label: r.batch.batch_label.as_deref().map(clip),

@@ -126,6 +126,10 @@ impl RateCounter for MemoryCounter {
     }
 }
 
+/// (P5-TOOLASK, C-1043) The `rule_name` an approval carries when it was held by a package's
+/// `approval: ask` default (no rule decided; `rule_logical_id` is null).
+pub const PACKAGE_ASK_REASON: &str = "This app asks before this action";
+
 /// A counter increment the caller must apply after an allow/needs_approval verdict.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct RateLimitHit {
@@ -204,6 +208,9 @@ pub struct Decision {
     pub workspace_matched: Option<MatchedRule>,
     pub trace: Trace,
     hits: Vec<RateLimitHit>,
+    /// (P5-TOOLASK, C-1043) `NeedsApproval` because the matched tool's package default is `ask`
+    /// and no rule allowed it: the approval's reason is the app, not a rule.
+    pub package_ask: bool,
 }
 
 impl Decision {
@@ -480,6 +487,32 @@ pub fn evaluate(
         }
         (_, wv) => (wv.unwrap_or(Verdict::Allow), Some(ScopeKind::Workspace)),
     };
+    // (P5-TOOLASK, D-397, C-1043) A tool whose package default is `ask` is held unless a rule of
+    // either scope explicitly allows *that tool* (the matched allow rule names it in a target's
+    // `tools`: a custom grant, Always allow; a whole-connection `full` grant or a broad network
+    // allow does not choose for this tool). A block (any layer) is stricter and already decided.
+    let explicit_allow = |p: &ScopePolicy, s: &ScopeTrace| {
+        s.via == Via::Rule
+            && s.verdict == Some(Verdict::Allow)
+            && s.matched.as_ref().is_some_and(|m| {
+                facts.tool_id.as_deref().is_some_and(|tool| {
+                    p.ordered_rules
+                        .iter()
+                        .find(|r| r.logical_id == m.logical_id)
+                        .is_some_and(|r| r.targets.iter().any(|t| t.names_tool(tool)))
+                })
+            })
+    };
+    let package_ask = verdict == Verdict::Allow
+        && facts.tool_tags.ask_default
+        && !facts.connect_time
+        && !explicit_allow(org, &o.trace)
+        && !explicit_allow(ws, &w.trace);
+    let verdict = if package_ask {
+        Verdict::NeedsApproval
+    } else {
+        verdict
+    };
     let hits = if matches!(verdict, Verdict::Allow | Verdict::NeedsApproval) {
         o.hit.into_iter().chain(w.hit).collect()
     } else {
@@ -506,5 +539,6 @@ pub fn evaluate(
             decided_by,
         },
         hits,
+        package_ask,
     }
 }

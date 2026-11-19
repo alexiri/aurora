@@ -1336,6 +1336,17 @@ fn method_rules(cx: &mut Ctx<'_>) {
                         );
                     }
                 }
+                // (P5-TOOLASK, C-1042) A read tool cannot default to Ask.
+                if it.approval.is_some() && gname != "write" {
+                    cx.v(
+                        "tool_approval_read",
+                        &format!("/tools/{gname}/items/{j}/approval"),
+                        format!(
+                            "tool `{}` is in the read group: `approval: ask` is for write tools only",
+                            it.id
+                        ),
+                    );
+                }
                 // (FIX-136, D-241) A tool's `scopes` are ids some connect method declares.
                 for s in &it.scopes {
                     if !app

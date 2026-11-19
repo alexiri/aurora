@@ -301,6 +301,7 @@ async fn a_database_outage_parks_and_consumes_nothing() {
                 host: "127.0.0.1",
                 path: "/items",
                 rule: None,
+                package_ask: false,
                 connection_id: None,
                 app_id: None,
                 tool_id: None,

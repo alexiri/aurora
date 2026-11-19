@@ -313,6 +313,7 @@ pub fn tools(a: &AppEntry) -> Vec<Tool> {
                 scopes: Vec::new(),
                 graphql: None,
                 git: None,
+                approval: None,
             });
         }
         for i in &g.items {
@@ -329,6 +330,7 @@ pub fn tools(a: &AppEntry) -> Vec<Tool> {
                 scopes: i.scopes.clone(),
                 graphql: i.graphql.as_ref().map(s),
                 git: i.git.as_ref().map(s),
+                approval: i.approval.as_ref().map(s),
             });
         }
     }

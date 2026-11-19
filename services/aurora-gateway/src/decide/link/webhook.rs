@@ -335,6 +335,7 @@ impl PolicyHandler {
                     host: &host,
                     path: "/",
                     rule: ctx.rule.as_ref().map(|(i, n)| (*i, n.as_str())),
+                    package_ask: d.package_ask,
                     connection_id: Some(conn_id),
                     app_id: ctx.app_id.as_deref(),
                     tool_id: ctx.tool_id.as_deref(),

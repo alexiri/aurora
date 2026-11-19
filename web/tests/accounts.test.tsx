@@ -300,6 +300,34 @@ describe("the actions table", () => {
     expect(decide(undefined, undefined, false)).toEqual({ get: "block", merge: "block", push: "block" });
   });
 
+  it("(P5-TOOLASK) an action its app asks about first starts as Asks you even under Act; the override is choosing Allowed", () => {
+    const withDefault = tools.map((t) => (t.id === "push" ? { ...t, approval: "ask" } : { ...t, approval: null }));
+    expect(startingDecisions(withDefault as never, { level: "act" }, undefined, false)).toEqual({ get: "allow", merge: "allow", push: "ask" });
+    expect(startingDecisions(withDefault as never, undefined, saved("full", [], []), false)).toEqual({ get: "allow", merge: "allow", push: "ask" });
+    // A custom grant that lists the action as allowed is the workspace's explicit override.
+    expect(startingDecisions(withDefault as never, { level: "custom" } as never, saved("custom", ["get", "push"], []), false).push).toBe("allow");
+  });
+
+  it("(P5-TOOLASK) the row says Asks first (app default) and offers Allowed as the override", async () => {
+    const asked = tools.map((t) => (t.id === "push" ? { ...t, approval: "ask" } : t));
+    routes["GET /v1/apps/aws"] = () => json(200, { app_id: "aws", name: "AWS", tools: asked });
+    routes["GET /v1/agents/a1/grants"] = () => json(200, { secrets: [], connections: [{ connection_id: "c1", mode: "full", allow_tools: [], ask_tools: [], ask_timeout_secs: null }], converted_by_app: [] });
+    routes["PUT /v1/agents/a1/grants/connections/c1"] = () => json(200, {});
+    routes["GET /v1/workspaces/w1/accounts"] = () => json(200, { items: [], next_cursor: null });
+    routes["GET /v1/agents/a1/apps/aws/access"] = () => json(200, ACCESS);
+    wrap(<AccessControl account={app()} entry={entry({ level: "act" })} workspaceId="w1" canChange />);
+    fireEvent.click(await screen.findByRole("button", { name: "What exactly?" }));
+    const dlg = await screen.findByRole("region", { name: /What Daneel can do in AWS/ });
+    // Only the action with the app default says so.
+    expect(within(dlg).getAllByText(/Asks first \(app default\)/)).toHaveLength(1);
+    const select = within(dlg).getByLabelText("Push a commit: what happens") as HTMLSelectElement;
+    expect(select.value).toBe("ask");
+    expect((within(dlg).getByLabelText("Merge a pull request: what happens") as HTMLSelectElement).value).toBe("allow");
+    // Allowed is the override: saved as a custom grant that names the action.
+    fireEvent.change(select, { target: { value: "allow" } });
+    expect(select.value).toBe("allow");
+  });
+
   async function openTable(e: AgentAccess, a: Account = app()) {
     routes["GET /v1/apps/aws"] = () => json(200, { app_id: "aws", name: "AWS", tools });
     routes["GET /v1/agents/a1/grants"] = () =>

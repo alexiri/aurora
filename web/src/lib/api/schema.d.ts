@@ -7128,6 +7128,11 @@ export interface components {
             rule_name: string;
             /** @description `workspace` | `organization` */
             scope: string;
+        } | {
+            app_id?: string | null;
+            /** @enum {string} */
+            kind: "package";
+            tool_id?: string | null;
         };
         AttachPresenceRequest: {
             /** @description Values for the connector's `presence_setup.dedicated.fields` (manual setup). */
@@ -14188,6 +14193,11 @@ export interface components {
             stale: boolean;
         };
         Tool: {
+            /**
+             * @description (P5-TOOLASK, D-397, C-1042) The package's default for the tool: `ask` (held for approval
+             *     unless a workspace or organization rule allows it) or `null`.
+             */
+            approval?: string | null;
             /** @description (FIX-123, D-214) Connect method ids the tool works with; empty = every method. */
             connect_methods: string[];
             description?: string | null;

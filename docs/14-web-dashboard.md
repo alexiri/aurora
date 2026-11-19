@@ -2153,6 +2153,10 @@ No row shows a rule id, a host pattern or the word "secret".
   Allowed, Asks you or Blocked. People who may change the access can change any line there. The same
   table opens from **Custom…** under the choices in the journey and the picker.
   - Under Ask before changes, setting a change to Allowed is the same as Always allow.
+  - An action its app asks about first by default (P5-TOOLASK, C-1042) says "Asks first (app
+    default)" under its name and starts as Asks you even under Act; choosing Allowed is the override.
+    Read-only lines and the Access review show the reason "The app asks before this action.", and the
+    approval card says "This app asks before this action." (no rule, so no Always allow there).
   - Any other difference from a level shows the choice as **Custom** ("Custom: 2 actions differ from Ask
     before changes").
   - Methods and host patterns are under **Technical details**.
