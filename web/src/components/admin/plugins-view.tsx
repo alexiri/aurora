@@ -13,18 +13,14 @@ import { Notice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
 import { EmptyState, ErrorState, Loading } from "@/components/states";
 import { checkSummary, useAddonSources, useCheckAllAddonSources } from "@/lib/api/addon-sources";
-import { ApiError } from "@/lib/api/client";
-import { errorMessage } from "@/lib/api/errors";
+import { errorDetail, errorMessage } from "@/lib/api/errors";
 import { usePlugins, useUploadPlugin, type PluginViolation } from "@/lib/api/plugins";
 import { adminRoutes } from "@/lib/routes";
 
 const STATUSES = ["", "pending_approval", "active", "disabled", "rejected", "superseded", "invalid"];
 
 export function violationsOf(err: unknown): PluginViolation[] {
-  if (!(err instanceof ApiError)) return [];
-  const d = err.details;
-  if (typeof d !== "object" || d === null || !("violations" in d)) return [];
-  const v = (d as { violations: unknown }).violations;
+  const v = errorDetail(err, "violations");
   return Array.isArray(v) ? (v as PluginViolation[]) : [];
 }
 

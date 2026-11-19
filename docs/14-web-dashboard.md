@@ -104,8 +104,8 @@ them, starts there.
 - **The look it sets** (on top of this section, not instead of it): a navy navigation rail in both
   themes (a dark-theme island carrying the dark lockup, a scope switcher and the topics of
   §Information architecture); every topic page opening with a sentence that says what is true now; the
-  access choice drawn as one three-way switch everywhere; amber for anything that needs a person, teal
-  for allowed, works and selected. Colours, type, radii and spacing stay the tokens of this section.
+  access choice drawn as one three-way switch everywhere; amber for anything that needs a person (since
+  D-384: only where that person has an action), teal for allowed, works and selected. Colours, type, radii and spacing stay the tokens of this section.
 - **Shared classes:** the canvas's `aurora-ui.css` uses only the tokens; each class names a primitive
   to build once in `web/src/components/ui` (or `components/accounts`) and reuse. Do not copy the
   canvas's HTML or class names into the code.
@@ -116,6 +116,30 @@ them, starts there.
   canvas of §Agent page (phase 5) as their reference.
 - **Keeping it current:** a spec change that changes a screen updates its board in the same change
   (the canvas is edited by whoever owns the spec batch).
+
+**UX fixes (phase 5, P5-POLISH, D-380..D-393).** UX review 4 walked the finished redesign
+(<https://claude.ai/artifact/33oHaXQpCU3oSVRVmgtY5Z>, 100 screens) and the owner accepted thirty
+before/after proposals, **“Aurora UX fixes”** (<https://claude.ai/artifact/WXbcpcrkbCLuxMSurpkuQW>,
+IDs A1..F3, with the owner's comments applied). It is the reference for the P5-POLISH briefs and,
+where it differs from a canvas board, wins over the board. Workers who cannot open artifacts read the
+copy at `/home/alex/orca/workspaces/aurora/design-ux-fixes/` (`after/<id>.png` renders every mockup,
+`before/` the screenshots, `README.txt` the layout). Precedence: this document and `API_CONTRACTS.md`,
+then the brief, then the mockup. Yellow dashed labels in a mockup are commentary, not design. Rules it
+adds to this section, for every screen:
+- **Dialogs** are three rows (header with title, close and an optional stepper; body, the only part
+  that scrolls; footer with Back on the left and the step's one action on the right). Below 640 px a
+  multi-step dialog is a full-screen sheet. No sticky header (D-393).
+- **Amber** (the pending styles) only on an item with an action for the viewer. Who owns or locks a
+  value is a neutral **lock pill** ("Set by Users", "Set in Helm") that names who can change it on
+  hover. At most one chip per card, sentence case; a thing's kind is its icon (D-384).
+- **Health lines** say only what a real call proved: "Worked 5 min ago", "Failed 2 min ago: <reason>"
+  with its fix, "Not used yet"; a test shows as "Test passed …", never as working (D-383).
+- **Members** see a sentence and who can change it, never an owner's form with disabled controls
+  (D-390). An unavailable feature is one **Unavailable** card, never a disabled form (D-392).
+- **Settings** are full-width cards of rows: label and help left, control right, switches for
+  booleans, one guide link per card (D-392).
+- **Focus** is one ring from `:focus-visible`; a container with a focused field changes its border;
+  menus and popovers have no outline (D-393).
 
 **Scope: the whole dashboard.** This section is the dashboard's visual
 identity, not a restyle of individual screens. **Every** screen MUST follow
@@ -440,6 +464,15 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
     (C-506) and `?c=<id>` open what they open today; the section is derived from
     the page. A hosted agent opens on Chat, a BYO agent on Instructions. The
     Delete zone under Instructions is removed (Delete is in Agent actions).
+  - (phase 5, P5-POLISH-6, D-382, C-1036) **Behaviour and Access are configuration, reached from the …
+    menu.** The tab bar shows **Chat · Triggers · Computer** (BYO: Computer). The … menu (Agent
+    actions) lists **Behaviour** ("Name, instructions, model, memory, skills"), **Access** ("Apps,
+    accounts and the AI key it uses"), a separator, **Freeze <Agent>** ("Pauses it until you unfreeze
+    it") and **Delete <Agent>…** (danger). On a Behaviour or Access page no tab is selected, the …
+    button is marked, and under the header a back link **Chat**, the page name and one sentence name
+    the page; Behaviour keeps its Instructions · Memory · Skills · Evals row. `?tab=` ids are
+    unchanged. A BYO agent (no Chat) opens on Behaviour as before. This replaces the five-section order
+    above wherever they disagree.
   - (phase 5, P4-NARR, D-279, C-852) **Show progress in chat** is a switch on the agent's **Channels**
     page (Triggers section), bound to `narration_cards` (off by default). Help text: "Posts one message
     per reply that lists the steps the agent takes, updated as they run and shrunk to one line when the answer
@@ -1078,6 +1111,11 @@ guides keep working.
 
 **Administration entry and level** (C-962):
 - **Administration** is a labelled link at the foot of the sidebar and in the account menu.
+- (FIX-167 Part B, D-370, C-1022) For instance admins the entry carries the **count of items that need
+  attention** as a `Badge` (`pending` tone, "3" with the visually hidden text "need your attention"), in
+  the sidebar and in the account menu. The count is `GET /v1/admin/attention`'s item count, fetched on
+  load, on window focus and every 5 minutes. A failed fetch, or no item, shows no badge and never an
+  error. Nobody else fetches it.
 - The org switcher lists organizations only; "All organizations" is gone.
 - Every page header carries a level badge: **Administration**, **<org>** or **<org> › <workspace>**.
 - An instance admin acting in an org sees the org's pages exactly as its owner would.
@@ -1315,7 +1353,7 @@ every other topic is owners/admins and is not listed for a member.)
   Upload errors show "Your organization's attachment storage is full" with the
   link to the usage page; expired attachments render as an "Expired by retention"
   chip (a deleted one as "Removed"), never as a link (C-196).
-- **API keys**, **Audit log** (phase 2, RFE-008: a "security-critical only" filter; critical rows are badged), **Settings** (name, slug, members can create
+- **API keys**, **Audit log** (phase 2, RFE-008: a "security-critical only" filter; critical rows are badged; FIX-171, D-373: each row opens a **Details** view — a settings change as before/after, the other recorded detail, source and ids — and the filters `action` and `critical=1` are in the URL, so a link opens the same view; the workspace Audit tab is the same shared panel), **Settings** (name, slug, members can create
   workspaces, limits), **Danger zone** (phase 2, RFE-006: **Freeze organization**
   for owners).
 
@@ -1347,7 +1385,12 @@ every other topic is owners/admins and is not listed for a member.)
   - **Instructions** — name, brief, avatar, harness (phase 4, P4-HAR: a picker from
     `/v1/harnesses`, shown only when more than one is enabled; unavailable ones are disabled
     with "no runner offers this"; changing it asks for confirmation: "Starts fresh sessions for
-    every conversation of this agent; the transcript is kept"; refused while a turn runs), model (from
+    every conversation of this agent; the transcript is kept"; refused while a turn runs). With one
+    harness enabled the field is its display name as read-only text (the id while the list loads),
+    with "Your administrator chooses which programs agents can run." and, for instance admins, a
+    link to Administration › Agents › Defaults (FIX-172, D-374). **Create agent offers no harness**:
+    a new agent gets `hosted.default_harness` and changing it is an advanced setting here (D-374).
+    The agent also has a model (from
     `/v1/agents/{a}/models`), effort, proactive messaging mode.
     (phase 5, P5-MODELS-3, D-302, D-303, C-876) The model field is labelled **Default model**, with the
     help text "The model the agent starts with. It may use other allowed models on the same endpoint,
@@ -1825,8 +1868,13 @@ Approvals, Retention & storage, Skills, Directory sync, Previews, Terminal, Limi
 - **Keyed lists** (OIDC providers, secret stores, LLM endpoints, rate-limit class overrides) are an
   `ItemList` of entries, each with a source `Badge` ("Managed by Helm" for locked entries, which open
   read-only), edited in a `FormDialog`; an id already used by a Helm entry is shown as an error on
-  the dialog's id field (`entry_id_in_helm`); **whole lists** (allow-lists, CIDRs, harnesses) are one field edited as
-  a list, locked as a whole.
+  the dialog's id field (`entry_id_in_helm`); **whole lists** (allow-lists, CIDRs) are one field edited as
+  a list, locked as a whole. **Harnesses** (FIX-172, D-374, C-1028) are never typed: Agents › Defaults › Hosted
+  agents shows `hosted.enabled_harnesses` as a checkbox group by display name (a sentence under each), limited to
+  what registered runners offer (`extra.offered_harnesses`; an unticked one no runner offers is disabled, a ticked
+  one shows a warning, and with no runner registered a `Notice` says offers cannot be checked), and
+  `hosted.default_harness` as a select of the ticked ones (unticking the default moves it to the first ticked, with a
+  hint). Values that are not choices (`fake`) are kept and shown as "Also enabled". The runners table reads names.
 - (phase 5, P4-LLM spec batch, D-260, D-262, C-811) **LLM endpoints**: the endpoint dialog shows
   the chosen provider's own fields (OpenAI organization/project; Azure resource URL and
   deployment names; Bedrock region and optional VPC endpoint URL; Vertex project and location;
@@ -1864,7 +1912,7 @@ each marked added / changed / removed against the active version, under the sent
 use this app can read this text. It is written by the publisher."; a file opens in the shared
 preformatted viewer as plain text, never rendered as Markdown or HTML, long lines scrolling inside
 the viewer only (`24 §9`); reject/disable/uninstall with orphan warnings), **Host
-claims** (conflicts and winners), **Trusted keys**, **Audit** (FIX-125, C-638: `/admin/audit`, the instance audit log — rows without an organization by default, a scope toggle "Instance / All organizations" with an organization filter and column, action-prefix, security-critical, and from/to date filters; the table and filter bar are the shared `AuditPanel` that the org audit page also uses), **Addon sources** (phase 5,
+claims** (conflicts and winners), **Trusted keys**, **Audit** (FIX-125, C-638: `/admin/audit`, the instance audit log — rows without an organization by default, a scope toggle "Instance / All organizations" with an organization filter and column, action-prefix, security-critical, and from/to date filters; the table and filter bar are the shared `AuditPanel` that the org audit page also uses; FIX-171, D-373: rows open a **Details** view with the changes as before/after, the other recorded detail, source and ids, and the filters — `action`, `scope`, `org`, `critical`, `since`, `until` — are in the URL, which the instance-settings e-mail's link relies on), **Addon sources** (phase 5,
 P5-ASRC, D-250: third-party app-package repositories at `/admin/addon-sources` —
 list with key fingerprint and check status, add with a preview/trust review of the
 repo's signing key before anything is registered, "Check now", per-source schedule
@@ -1913,7 +1961,9 @@ operator docs — because the gateway refuses every credential of such an organi
 
 The Connectors page lists every connector as a card: icon and name, **Managed** or
 **Self-hosted** badge, status chip (`Waiting for the connector host` / `Running` /
-`Error` with the host's message / `Needs approval` / `Disabled`), the number of integrations,
+`Error` with the host's message / `Needs approval` / `Disabled`; (FIX-167, D-369) a connector whose
+widened update waits shows `Running` **and** a second chip, **Update waiting for approval**, and its card
+and detail view show the manifest diff with the existing **Approve manifest** step), the number of integrations,
 and for managed ones the hosts reporting it. The primary action is **Add connector**:
 1. **Choose a type**: cards from `GET /v1/admin/connector-types` (icon, name, publisher,
    version, short description from the setup guide; types already added are shown as added).
@@ -2344,6 +2394,23 @@ most frequent thing a person does in Aurora. It must be quick to read and quick 
   - The editor toolbar wraps; tab bars show no stray scrollbar; labels never double "(optional)"; help
     links are text, never raw URLs.
   - The admin landing never flashes "You are not in an organization yet".
+- **Administration › Overview** opens, in both modes, with **Needs your attention** (FIX-167 Part B, D-370,
+  C-1022; none of it when `GET /v1/admin/attention` has no item, is loading or failed). It is a
+  `pending`-toned panel like **Needs you** below. Each item shows its **title**, its **detail**, "Since
+  <date>" and one button to its `href`: **Review** (a decision) or **Open** (information). Decisions come
+  first, oldest first. The sentences are fixed and filled with names and versions only:
+  | Kind | Title | Detail |
+  |---|---|---|
+  | `connector_approval`, first registration | "<name> needs your approval" | "This connector registered for the first time and does nothing until you approve it." |
+  | `connector_approval`, update | "<name> <version> is waiting for approval" | "It keeps running at the level you approved; only what is new waits. It adds: <reasons>." |
+  | `package_approval` | "<name> <version> needs your approval" | by reason: `first_install` "A new app package. Review what it asks for before it is switched on."; `addon_update` "An update from an add-on source. Review it before it is switched on."; `permissions_widened` "It asks for more than the approved version. The approved version keeps running."; `publisher_changed` "Its publisher differs from the approved version."; `builtin_id_reserved` "It uses the id of a built-in app package."; `version_downgrade` "It is older than the approved version."; `breaks_connections` "Switching it on would make some connections sign in again. The approved version keeps running."; `converts_grants` "Switching it on would convert some agents' full access grants to custom ones. The approved version keeps running." |
+  | `addon_key_changed` | "<source>: signing key changed" | "The source now signs with a different key. Nothing from it is ingested until you confirm the new key." |
+  | `host_claim_conflict` | "<name> <version> conflicts with another app package" | "Two app packages claim the same host. One of them waits until you choose which wins." |
+  | `connector_down` | "<name> is not running" | "Its connector host reports an error." or "No connector host has reported it for more than 90 seconds." |
+  | `ownerless_org` | "The organization <slug> has no owner" | "Its <n> active member(s) cannot use the gateway until someone is made an owner." |
+
+  The ownerless-organization banner (FIX-050) stays. Built from the shared `Card`-less panel pattern,
+  tokens only: both themes, no horizontal scroll at 390 px, axe clean.
 - **Administration › Overview** is the setup checklist until setup is complete, then a health page built
   from the same facts:
   - runners, the gateway and AI endpoints;
@@ -2516,7 +2583,9 @@ workspaces' conversations; limits by repository or project inside an account.
   and the sanitized title, `tag = approval id` (no duplicates), and clicking it
   focuses the tab at the Approvals page. This is **not** Web Push: it needs an open
   tab. Account also has the "E-mail me approvals
-  nobody is watching" switch (`approval_email`).
+  nobody is watching" switch (`approval_email`). (FIX-167 Part B, C-1024) Instance admins also see
+  "E-mail me when something needs my decision in Administration" (`admin_attention_email`, default on);
+  the device's Web Push opt-in below decides the push for that item.
 - **Web Push (phase 5 (D-138, moved from phase 4), RFE-011b, D-134, SEC-75, SEC-76)**: shown only when `GET /v1/push/config`
   says `available` (the operator set `push.enabled`). **Account → Notifications** gets a
   **"Notify this device when an approval needs me, even when Aurora is closed"** card built from the

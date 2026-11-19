@@ -4,15 +4,7 @@ import { useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { RefreshLimited } from "@/lib/api/org";
-
-function updatedAgo(iso: string, now: number): string {
-  const s = Math.max(0, Math.floor((now - new Date(iso).getTime()) / 1000));
-  if (s < 60) return "just now";
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m} min ago`;
-  const h = Math.floor(m / 60);
-  return h < 24 ? `${h} h ago` : `${Math.floor(h / 24)} d ago`;
-}
+import { ago } from "@/lib/utils";
 
 interface Refresher {
   mutate: () => void;
@@ -37,7 +29,7 @@ export function StorageFreshness({ computedAt, refresh }: { computedAt: string; 
   const otherError = err && !(err instanceof RefreshLimited);
   return (
     <div className="flex flex-wrap items-center gap-3 text-sm text-ink-2">
-      <span>Updated {updatedAgo(computedAt, now)}</span>
+      <span>Updated {ago(computedAt, now)}</span>
       <Button type="button" variant="outline" size="sm" disabled={refresh.isPending || limited} onClick={() => refresh.mutate()}>
         {refresh.isPending ? "Refreshing…" : "Refresh"}
       </Button>

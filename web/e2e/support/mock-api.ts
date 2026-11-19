@@ -247,6 +247,7 @@ export async function mockApi(
       return json({ user, memberships: [{ org, status: "active", workspaces: [{ ...ws, personal: false }] }], default_org_id: id(1), client_address: "203.0.113.7" });
     }
     // P4-ONB-2: onboarding progress (seen, so `/` stays on the workspace), the guide's readiness and the setup wizard.
+    if (p === "/v1/me/user-tokens") return json({ tokens: [] });
     if (p === "/v1/me/onboarding") return json({ welcome_seen: true, guide_dismissed: [], tour_completed_at: null });
     if (/^\/v1\/agents\/[^/]+\/model-readiness$/.test(p)) return json(readinessReady);
     // FIX-029 (C-611) + P4-PRV-1: ONE sandbox view — running with port 3000 listening (the
@@ -476,10 +477,17 @@ export async function mockApi(
       if (p.endsWith("/agents")) {
         return sec("agents", "Agents & sandboxes", [
           { ...k, key: "agents.default_name", value: "Daneel", default: "Daneel", schema: sch("string", { max_len: 100 }) },
+          { ...k, key: "hosted.default_harness", value: "claude-code", default: "claude-code", schema: sch("string", { max_len: 64 }) },
           { ...k, key: "hosted.enabled_harnesses", value: ["claude-code"], default: ["claude-code"], schema: sch("list", { item_kind: "string" }) },
           { ...k, key: "hosted.idle_stop_secs", value: 1800, source: "helm", locked: true, helm_key: "config.hosted.idle_stop_secs", default: 1800, schema: sch("int") },
           { ...k, key: "hosted.turn_ceiling_secs", value: 21600, default: 21600, schema: sch("int") },
-        ], { runners: [{ id: id(40), name: "main", sandbox_memory_mib: 4096, sandbox_cpus: 2, sandbox_pids: 512, home_gib: 5, max_sandboxes: 7, harnesses: ["claude-code"] }] });
+        ], {
+          runners: [
+            { id: id(40), name: "main", sandbox_memory_mib: 4096, sandbox_cpus: 2, sandbox_pids: 512, home_gib: 5, max_sandboxes: 7, harnesses: ["claude-code", "codex"] },
+            { id: id(41), name: "second", sandbox_memory_mib: 4096, sandbox_cpus: 2, sandbox_pids: 512, home_gib: 5, max_sandboxes: 7, harnesses: ["claude-code", "goose"] },
+          ],
+          offered_harnesses: ["claude-code", "codex", "goose"],
+        });
       }
       if (p.endsWith("/terminal")) {
         return sec("terminal", "Terminal", [
@@ -527,6 +535,8 @@ export async function mockApi(
         next_cursor: null,
       });
     }
+    // (FIX-167 Part B, C-1022) Nothing needs the admin by default: the badge stays hidden. `admin-attention.spec.ts` overrides it.
+    if (p === "/v1/admin/attention") return json({ items: [] });
     if (p === "/v1/admin/connectors") return json({ items: [mattermostConnector] });
     if (p === "/v1/admin/connector-types") return json({ host_running: true, items: [mattermostType] });
     // FIX-025 (C-586) + FIX-029 (C-614): the runners admin view and its per-runner failures.

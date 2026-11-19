@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { useId, useState, type ReactNode } from "react";
 
 import { fmtDate } from "@/components/account/key-table";
 import { EmptyState, ErrorState, Loading } from "@/components/states";
@@ -10,6 +10,8 @@ import { DataTable, Td, Th } from "@/components/ui/data-table";
 import { inputClass } from "@/components/ui/field";
 import { PageHeader } from "@/components/ui/page-header";
 import type { components } from "@/lib/api/schema";
+
+import { AuditDetail } from "./audit-detail";
 
 export type AuditEntry = components["schemas"]["AuditEntry"] & { org_slug?: string | null };
 
@@ -43,6 +45,7 @@ export function AuditPanel({
   onFilters,
   extraFilters,
   showOrg = false,
+  headed = true,
 }: {
   title: string;
   description: string;
@@ -52,20 +55,21 @@ export function AuditPanel({
   onFilters: (f: AuditFilters) => void;
   extraFilters?: ReactNode;
   showOrg?: boolean;
+  /** False where the page around it already has the heading (the workspace tab). */
+  headed?: boolean;
 }) {
   const [input, setInput] = useState(filters.action);
   const items = feed.data?.pages.flatMap((p) => p.items) ?? [];
   return (
     <div className="max-w-page space-y-4">
-      <PageHeader title={title} description={description} className="mb-2" />
+      {headed ? <PageHeader title={title} description={description} className="mb-2" /> : null}
       <form
         role="search"
         className="flex flex-wrap items-center gap-x-4 gap-y-2"
         onSubmit={(e) => {
           e.preventDefault();
           onFilters({ ...filters, action: input.trim() });
-        }}
-      >
+        }}>
         <input
           aria-label="Filter by action"
           placeholder={placeholder}
@@ -100,27 +104,14 @@ export function AuditPanel({
               {showOrg ? <Th>Organization</Th> : null}
               <Th>Target</Th>
               <Th>Outcome</Th>
+              <Th>
+                <span className="sr-only">Details</span>
+              </Th>
             </tr>
           </thead>
           <tbody>
             {items.map((e) => (
-              <tr key={e.id}>
-                <Td className="whitespace-nowrap text-ink-2">{fmtDate(e.created_at)}</Td>
-                <Td>{e.actor_label}</Td>
-                <Td>
-                  <span className="font-mono text-xs">{e.action}</span>
-                  {e.critical ? (
-                    <Badge tone="accent" className="ml-2">
-                      Critical
-                    </Badge>
-                  ) : null}
-                </Td>
-                {showOrg ? (
-                  <Td className="text-ink-2">{e.org_id ? (e.org_slug ?? e.org_id) : "Instance"}</Td>
-                ) : null}
-                <Td className="text-ink-2">{e.target_kind ? `${e.target_kind} ${e.target_id ?? ""}` : "—"}</Td>
-                <Td>{e.outcome}</Td>
-              </tr>
+              <AuditRow key={e.id} e={e} showOrg={showOrg} columns={showOrg ? 7 : 6} />
             ))}
           </tbody>
         </DataTable>
@@ -131,5 +122,45 @@ export function AuditPanel({
         </Button>
       ) : null}
     </div>
+  );
+}
+
+/** One row and, when opened, its detail row underneath (D-373). Opening refetches nothing: the entry already has it. */
+function AuditRow({ e, showOrg, columns }: { e: AuditEntry; showOrg: boolean; columns: number }) {
+  const [open, setOpen] = useState(false);
+  const panelId = useId();
+  return (
+    <>
+      <tr>
+        <Td className="whitespace-nowrap text-ink-2">{fmtDate(e.created_at)}</Td>
+        <Td>{e.actor_label}</Td>
+        <Td>
+          <span className="font-mono text-xs">{e.action}</span>
+          {e.critical ? (
+            <Badge tone="accent" className="ml-2">
+              Critical
+            </Badge>
+          ) : null}
+        </Td>
+        {showOrg ? <Td className="text-ink-2">{e.org_id ? (e.org_slug ?? e.org_id) : "Instance"}</Td> : null}
+        <Td className="text-ink-2">{e.target_kind ? `${e.target_kind} ${e.target_id ?? ""}` : "—"}</Td>
+        <Td>{e.outcome}</Td>
+        <Td className="text-right">
+          <Button variant="outline" size="sm" aria-expanded={open} aria-controls={panelId} onClick={() => setOpen(!open)}>
+            Details<span className="sr-only"> of {e.action}</span>
+          </Button>
+        </Td>
+      </tr>
+      {open ? (
+        <tr id={panelId}>
+          <Td colSpan={columns} className="bg-canvas">
+            {/* Limited to the visible width of the scrolling table region, so a long value wraps instead of widening it. */}
+            <div className="sticky left-0 w-[min(100%,calc(100vw-4rem))]">
+              <AuditDetail entry={e} />
+            </div>
+          </Td>
+        </tr>
+      ) : null}
+    </>
   );
 }

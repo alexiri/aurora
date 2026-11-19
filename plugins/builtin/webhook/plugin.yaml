@@ -1,0 +1,80 @@
+package:
+  id: webhook
+  version: 1.0.0
+  contract: 1
+  min_core: 0.1.0
+  publisher: aurora
+  name: Outgoing webhook
+  description: "Let agents trigger an external webhook (Slack, Discord, Mattermost, Google Chat, Teams, ntfy, Home Assistant, IFTTT, n8n, Zapier or your own service) without ever seeing its secret URL: the agent fills in only the blanks of a message template you write"
+  homepage: https://en.wikipedia.org/wiki/Webhook
+apps:
+  - about:
+      id: webhook
+      name: Outgoing webhook
+      description: Let agents call a webhook you set up. You give a name and the secret webhook URL, and describe the message the receiver expects with blanks the agent fills in. The Aurora gateway sends exactly that message to exactly that URL; the agent never sees the URL, can change nothing but the blanks, and each send asks you first unless you allow it.
+      category: communication
+      api_docs: https://en.wikipedia.org/wiki/Webhook
+      connect_note:
+        text: "The webhook URL works like a password: anyone who has it can post to the receiver. To stop access, delete or regenerate the webhook at the receiver, then reconnect. The setup guide says where each receiver shows the URL."
+      label_hint: A name for this webhook, for example "Ops alerts"
+    credentials:
+      - { name: url, secret: true }
+    metadata:
+      # The URL's host, shown on the connection card (not secret); the path and query never are.
+      - { name: host }
+      - { name: name }
+    connect:
+      - id: link
+        kind: fields
+        label: Webhook URL
+        description: "A name for the webhook and its secret URL (https://). The URL is stored encrypted and is never shown again. Nothing is sent when you connect."
+        fields:
+          - name: name
+            label: Name
+            type: text
+            store: metadata
+            required: true
+            placeholder: "Ops alerts"
+          - name: url
+            label: Secret webhook URL
+            type: secret
+            store: credentials
+            required: true
+            placeholder: "https://hooks.example.com/services/…"
+    secret_link:
+      credential: url
+      mode: send
+      presets:
+        - slack.json
+        - mattermost.json
+        - google-chat.json
+        - discord.json
+        - teams-workflow.json
+        - ntfy-json.json
+        - home-assistant.json
+        - generic-json.json
+        - ifttt.json
+    tools:
+      write:
+        items:
+          - { id: send, name: Send to the webhook, description: "Sends the message you defined for this webhook to its URL, with the values the agent fills in. Asks you first by default.", host: "*.link.aurora.internal", path: /, methods: [POST] }
+    approvals:
+      # The summary lists the slot values by name; the `slots` decoder (C-910) that builds it
+      # arrives with the gateway send path (P5-WEBHOOK-2). Until then the title is all it shows.
+      send:
+        title: send a message to a webhook
+    agent:
+      summary: "Send a message to a webhook the person set up; you fill in only its slots."
+      instructions: |
+        Each webhook the person connected is an operation of the `webhook` target. Find them with
+        `aurora-agent list webhook`, read one with `aurora-agent describe webhook <operation>` (its
+        notes say when to use it, its fields are the slots) and send with
+        `aurora-agent call webhook <operation> field=value`. Follow the notes: use a webhook only
+        for what they say, and send once per event. When unsure of the payload, add the dry run
+        (header `X-Aurora-Dry-Run: 1`): it checks the values and shows the body without sending.
+        You control only the slot values; never look for the URL, the template or the secrets.
+        A `webhook_timeout` means the message may have been delivered: do not resend without asking
+        the person. An answer with the header `X-Aurora-Error` is the gateway refusing (an invalid
+        slot, a rate limit, a blocked destination), not the receiver's reply; the receiver's own 4xx
+        is a bad payload on its side. `link_not_found` means the webhook was deleted or regenerated:
+        ask the person to reconnect with the new URL.

@@ -136,6 +136,37 @@ for (const scheme of ["light", "dark"] as const) {
         expect(await axeClean(page)).toEqual([]);
       });
 
+      // FIX-172 (D-374): the programs are ticked by name, limited to what runners offer; the default is picked from them.
+      test("the agents page ticks harnesses by name and saves their ids", async ({ page }) => {
+        let put: Record<string, unknown> | null = null;
+        await openRoute(page, "/admin/agents?tab=defaults", scheme);
+        // Registered after the mock, so these answer first (the last route wins).
+        await page.route("**/v1/admin/settings/agents/preview", (route) =>
+          route.fulfill({
+            json: { generation: 2, diff: [], loosening: [], affected_orgs: [], affected_orgs_total: 0, warnings: [] },
+          }),
+        );
+        await page.route("**/v1/admin/settings/agents", async (route) => {
+          if (route.request().method() !== "PUT") return route.fallback();
+          put = route.request().postDataJSON() as Record<string, unknown>;
+          return route.fallback();
+        });
+        const group = page.getByRole("group", { name: "Programs agents may run" });
+        await expect(group.getByLabel("Claude Code")).toBeChecked();
+        // Only what a runner offers can be ticked; the names are words, never ids.
+        await expect(group.getByLabel("Pi")).toBeDisabled();
+        await expect(group.getByLabel("OpenCode")).toBeDisabled();
+        await group.getByLabel("goose").check();
+        const pick = page.getByLabel("Program new agents use");
+        await expect(pick.locator("option")).toHaveText(["Claude Code", "goose"]);
+        await pick.selectOption("goose");
+        expect(await overflow(page)).toBeLessThanOrEqual(0);
+        expect(await axeClean(page)).toEqual([]);
+        await page.getByRole("button", { name: "Save", exact: true }).click();
+        await expect.poll(() => put).not.toBeNull();
+        expect(put).toMatchObject({ values: { "hosted.enabled_harnesses": ["claude-code", "goose"], "hosted.default_harness": "goose" } });
+      });
+
       test("the terminal page explains a missing deployment wiring", async ({ page }) => {
         await openRoute(page, "/admin/settings/terminal", scheme);
         await expect(page).toHaveURL(/\/admin\/agents\?tab=computers$/);

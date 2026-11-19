@@ -4,6 +4,7 @@ mod action_approvals;
 mod activity;
 mod addons;
 mod admin;
+mod admin_attention;
 mod admin_delete;
 mod admin_overview_previews;
 mod agent_token_age;

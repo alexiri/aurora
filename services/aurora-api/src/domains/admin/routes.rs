@@ -17,6 +17,7 @@ pub fn router() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(list_users))
         .routes(routes!(patch_user))
+        .routes(routes!(attention))
         .merge(super::secret_stores::router())
 }
 
@@ -55,6 +56,17 @@ async fn list_users(
             .collect(),
         next_cursor: page.next_cursor,
     }))
+}
+
+/// What needs an instance admin's attention (C-1022): decisions first, then informational items.
+#[utoipa::path(get, path = "/admin/attention", operation_id = "adminAttention", tag = "admin",
+    responses((status = 200, body = AttentionList), (status = 403, body = ErrorEnvelope)),
+    security(("session" = [])))]
+async fn attention(
+    _c: InstanceAdmin,
+    State(s): State<AppState>,
+) -> Result<Json<AttentionList>, ApiError> {
+    Ok(Json(super::attention::list(&s).await?))
 }
 
 /// Grant/revoke instance-admin, disable/enable a user.

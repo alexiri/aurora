@@ -361,7 +361,7 @@ by the owner 2026-11-15, D-318), see *S3-compatible blob store* under §Other la
   start time per phase (metric, Admin › Runners); start the agent's sandbox on the first keystroke in its
   composer (a wake demand like the terminal's, which never evicts, never waits for capacity, is budgeted
   per agent and person, and parks after a short grace); pre-created homes only if the measurement shows
-  a need. Companions in phase 5: FIX-175 (image pre-pulled on every sandbox node, D-378) and FIX-174
+  a need. Companions, moved to phase 6 with it (owner, 2026-11-19): FIX-175 (image pre-pulled on every sandbox node, D-378) and FIX-174
   (`sandbox-min` on the minimal base, D-377). **Owner answers (D-379):** the first keystroke, on by
   default, measurement and warm-on-intent together at the beginning of phase 6, pre-created homes or a
   generic pool only after the measurements.

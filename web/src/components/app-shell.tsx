@@ -3,28 +3,31 @@
 import * as DialogPrimitive from "@radix-ui/react-dialog";
 import Link from "next/link";
 import { useParams, usePathname, useRouter } from "next/navigation";
-import { useCallback, useId, useState, type ComponentType, type ReactNode, type SVGProps } from "react";
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore, type ComponentType, type ReactNode, type SVGProps } from "react";
 
 import { usePendingApprovals } from "@/lib/api/approvals";
 import { clearDrafts } from "@/components/chat/composer/drafts";
-import { logout, useMe, useOrg, useOrgs, useResolve, useWorkspace, useWorkspaces } from "@/lib/api/queries";
+import { logout, useMe, useOrg, useResolve, useWorkspace } from "@/lib/api/queries";
 import { visibleTopics } from "@/lib/api/roles";
 import { loginUrl, useUnauthorizedRedirect } from "@/lib/auth/use-unauthorized-redirect";
 import { showWhatMoved } from "@/lib/moved";
 import { removeThisDevicePush, usePushResync } from "@/lib/web-push";
-import { accountRoutes, adminRoutes, TOPIC_LABEL, topicHref, orgRoutes, wsRoutes } from "@/lib/routes";
+import { accountRoutes, adminRoutes, TOPIC_LABEL, topicHref, wsRoutes } from "@/lib/routes";
 import { cn } from "@/lib/utils";
 
+import { AttentionBadge } from "./admin/attention-badge";
 import { ApprovalNotifier } from "./approvals/approval-notifier";
 import { FrozenEntityBanner } from "./freeze/frozen-entity-banner";
+import { ScopeSwitcher } from "./nav/scope-switcher";
 import { RenamesNotice } from "./onboarding/renames-notice";
 import { Tour } from "./onboarding/tour";
 import { startTour } from "./onboarding/tour-events";
 import { ThemeSwitch } from "./theme/theme-switch";
-import { Avatar, tintFor } from "./agent-avatar";
+import { Avatar } from "./agent-avatar";
 import { AuroraLogo } from "./ui/aurora-logo";
 import {
   ActivityIcon,
+  ArrowLeftIcon,
   BotIcon,
   BookIcon,
   BuildingIcon,
@@ -34,6 +37,7 @@ import {
   KeyIcon,
   LinkIcon,
   LockIcon,
+  LogOutIcon,
   MenuIcon,
   MessageIcon,
   PlugIcon,
@@ -47,8 +51,7 @@ import {
   UsersIcon,
   XIcon,
 } from "./ui/icons";
-import { Menu, MenuContent, MenuItem, MenuLabel, MenuTrigger } from "./ui/menu";
-import { PageLevelProvider, type PageLevel } from "./ui/page-header";
+import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from "./ui/menu";
 
 type IconType = ComponentType<SVGProps<SVGSVGElement>>;
 
@@ -87,149 +90,6 @@ function NavItem({
   );
 }
 
-/**
- * FIX-027: one sidebar select control (an uppercase caption above a one-line menu trigger).
- * The caption is the control's label (`aria-labelledby` names the caption, the avatar's
- * initial and the value, so the accessible name contains every visible token — WCAG 2.5.3);
- * there is no aria-label.
- */
-function SidebarSelect({
-  caption,
-  placeholder,
-  value,
-  avatar,
-  testId,
-  children,
-}: {
-  caption: string;
-  /** Shown when nothing is the current scope. */
-  placeholder: string;
-  /** The current scope's name, or undefined for the placeholder look. */
-  value?: string;
-  avatar?: { name: string; tintKey?: string };
-  testId: string;
-  children: ReactNode;
-}) {
-  const id = useId();
-  return (
-    <div data-testid={testId} className="space-y-1.5">
-      <p id={`${id}-caption`} className="px-1 text-label font-semibold uppercase tracking-label text-muted">
-        {caption}
-      </p>
-      <Menu>
-        <MenuTrigger asChild>
-          <button
-            type="button"
-            // The accessible name names the caption, the avatar's initial and the value, so it
-            // contains every visible token (WCAG 2.5.3, axe `label-content-name-mismatch` —
-            // the initial chip is visible on screen, so the name must include it). The
-            // placeholder state has no name yet: its "?" chip stays out of the name.
-            aria-labelledby={
-              avatar && value !== undefined
-                ? `${id}-caption ${id}-avatar ${id}-value`
-                : `${id}-caption ${id}-value`
-            }
-            className="flex min-h-11 w-full items-center gap-2.5 rounded-control border border-line bg-surface px-2.5 py-1.5 text-left hover:bg-subtle"
-          >
-            {avatar && value !== undefined ? (
-              <span
-                id={`${id}-avatar`}
-                className={cn(
-                  "inline-flex size-7 shrink-0 items-center justify-center rounded-full text-xs font-semibold uppercase",
-                  tintFor(avatar.tintKey ?? avatar.name),
-                )}
-              >
-                {avatar.name.trim().charAt(0) || "?"}
-              </span>
-            ) : null}
-            {/* The explicit space keeps the chip's initial a separate visible token (JSX
-                would otherwise fuse "A" + "Acme" into "AAcme"); flexbox drops whitespace-only
-                runs, so the visual layout is unchanged. */}
-            {avatar && value !== undefined ? " " : null}
-            <span
-              id={`${id}-value`}
-              className="min-w-0 flex-1 truncate text-sm font-semibold text-ink"
-            >
-              {value ?? placeholder}
-            </span>
-            <ChevronsUpDownIcon className="size-4 shrink-0 text-muted" />
-          </button>
-        </MenuTrigger>
-        <MenuContent className="w-[var(--radix-dropdown-menu-trigger-width)] min-w-60">{children}</MenuContent>
-      </Menu>
-    </div>
-  );
-}
-
-/** FIX-027: organizations on every page. It lists organizations only (C-962): Administration has its own entry. */
-function OrgSelector({ orgSlug }: { orgSlug?: string }) {
-  const orgs = useOrgs();
-  const resolved = useResolve(orgSlug);
-  const org = orgs.data?.items.find((o) => o.slug === orgSlug);
-  // /v1/resolve also names an org the person has no membership row for (an admin visiting it).
-  const orgName = org?.name ?? resolved.data?.org.name ?? orgSlug;
-  return (
-    <SidebarSelect
-      caption="Organization"
-      placeholder="Select organization"
-      value={orgName}
-      avatar={{ name: orgName ?? "?", tintKey: orgSlug }}
-      testId="org-selector"
-    >
-      <MenuLabel>Organizations</MenuLabel>
-      {orgs.isPending ? <MenuItem disabled>Loading…</MenuItem> : null}
-      {orgs.isError ? <MenuItem disabled>Could not load organizations</MenuItem> : null}
-      {orgs.data?.items.map((o) => (
-        <MenuItem key={o.id} asChild>
-          <Link href={orgRoutes(o.slug).home()} className={cn(o.slug === orgSlug && "font-semibold")}>
-            {o.name}
-          </Link>
-        </MenuItem>
-      ))}
-    </SidebarSelect>
-  );
-}
-
-/** FIX-027: the current organization's workspaces — rendered only where an organization is active. */
-function WorkspaceSelector({ orgSlug, wsSlug, pathname }: { orgSlug: string; wsSlug?: string; pathname: string }) {
-  const resolved = useResolve(orgSlug);
-  const workspaces = useWorkspaces(resolved.data?.org.id);
-  const ws = workspaces.data?.items.find((w) => w.slug === wsSlug);
-  // (C-923) The person's own personal workspace reads "<name> (personal)".
-  const mine = useMe().data?.memberships?.find((m) => m.org.slug === orgSlug)?.workspaces ?? [];
-  const label = (w: { slug: string; name: string }) => (mine.some((x) => x.slug === w.slug && x.personal === true) ? `${w.name} (personal)` : w.name);
-  const atRoot = !pathname.startsWith(`${orgRoutes(orgSlug).base}/w/`);
-  return (
-    <SidebarSelect
-      caption="Workspace"
-      placeholder={atRoot ? "All workspaces" : (wsSlug ?? "?")}
-      value={atRoot ? "All workspaces" : ws ? label(ws) : undefined}
-      testId="workspace-selector"
-    >
-      <MenuLabel>Workspaces</MenuLabel>
-      {workspaces.isPending ? <MenuItem disabled>Loading…</MenuItem> : null}
-      {workspaces.isError ? <MenuItem disabled>Could not load workspaces</MenuItem> : null}
-      {workspaces.data?.items.length === 0 ? <MenuItem disabled>No workspaces</MenuItem> : null}
-      {workspaces.data?.items.map((w) => (
-        <MenuItem key={w.id} asChild>
-          <Link href={wsRoutes(orgSlug, w.slug).home()} className={cn(w.slug === wsSlug && "font-semibold")}>
-            {label(w)}
-          </Link>
-        </MenuItem>
-      ))}
-      <MenuItem asChild>
-        <Link
-          href={orgRoutes(orgSlug).home()}
-          data-active={atRoot ? "true" : undefined}
-          className={cn(atRoot && "font-semibold")}
-        >
-          All workspaces…
-        </Link>
-      </MenuItem>
-    </SidebarSelect>
-  );
-}
-
 function UserMenu() {
   const me = useMe();
   const router = useRouter();
@@ -251,13 +111,14 @@ function UserMenu() {
       window.location.assign(loginUrl("/"));
     }
   }
+  const itemClass = "gap-2.5";
   return (
     <Menu>
       <MenuTrigger asChild>
         <button
           type="button"
           className="flex min-h-11 w-full items-center gap-2.5 rounded-control px-2.5 py-1.5 text-left hover:bg-subtle"
-          // No aria-label: the name comes from the visible text (WCAG 2.5.3, see the sidebar selects).
+          // No aria-label: the name comes from the visible text (WCAG 2.5.3).
         >
           <Avatar name={name ?? "?"} tintKey={me.data?.user.email} size={28} />
           <span className="min-w-0 flex-1">
@@ -267,20 +128,46 @@ function UserMenu() {
           <ChevronsUpDownIcon className="size-4 shrink-0 text-muted" />
         </button>
       </MenuTrigger>
-      <MenuContent align="start" side="top" className="w-[var(--radix-dropdown-menu-trigger-width)] min-w-56">
-        {me.data ? <MenuLabel>{me.data.user.email}</MenuLabel> : null}
-        <MenuItem asChild>
-          <Link href={accountRoutes.profile}>Your account</Link>
+      <MenuContent align="start" side="top" className="w-[var(--radix-dropdown-menu-trigger-width)] min-w-60">
+        {me.data ? (
+          <div className="flex items-center gap-2.5 px-2 py-2">
+            <Avatar name={me.data.user.display_name} tintKey={me.data.user.email} size={32} />
+            <div className="min-w-0">
+              <p className="truncate text-sm font-semibold text-ink">{me.data.user.display_name}</p>
+              <p className="truncate text-xs text-muted">{me.data.user.email}</p>
+            </div>
+          </div>
+        ) : null}
+        <MenuSeparator />
+        <MenuItem asChild className={itemClass}>
+          <Link href={accountRoutes.profile}>
+            <UserIcon className="size-4 shrink-0 text-muted" />
+            Your account
+          </Link>
         </MenuItem>
         {/* C-962: Administration is a labelled entry, here and at the foot of the sidebar, for instance admins. */}
         {me.data?.user.is_instance_admin === true ? (
-          <MenuItem asChild>
-            <Link href={adminRoutes.home()}>Administration</Link>
+          <MenuItem asChild className={itemClass}>
+            <Link href={adminRoutes.home()}>
+              <ShieldIcon className="size-4 shrink-0 text-muted" />
+              <span className="min-w-0 flex-1">Administration</span>
+              <AttentionBadge />
+            </Link>
           </MenuItem>
         ) : null}
-        <MenuItem onSelect={onTour}>Show me around</MenuItem>
-        <MenuItem onSelect={showWhatMoved}>What moved</MenuItem>
-        <MenuItem onSelect={() => void onLogout()}>Sign out</MenuItem>
+        <MenuItem onSelect={onTour} className={itemClass}>
+          <HomeIcon className="size-4 shrink-0 text-muted" />
+          Show me around
+        </MenuItem>
+        <MenuItem onSelect={showWhatMoved} className={itemClass}>
+          <ScrollIcon className="size-4 shrink-0 text-muted" />
+          What moved
+        </MenuItem>
+        <MenuSeparator />
+        <MenuItem onSelect={() => void onLogout()} className={itemClass}>
+          <LogOutIcon className="size-4 shrink-0 text-muted" />
+          Sign out
+        </MenuItem>
       </MenuContent>
     </Menu>
   );
@@ -409,6 +296,75 @@ function AdminNavList({ pathname }: { pathname: string }) {
   );
 }
 
+/** Where Administration's "Back to <Org>" goes: the organization and workspace you came from (this tab only). */
+const RETURN_KEY = "aurora.admin-return";
+interface ReturnTo {
+  href: string;
+  name: string;
+}
+const noopSubscribe = () => () => {};
+function readRawReturn(): string | null {
+  try {
+    return window.sessionStorage.getItem(RETURN_KEY);
+  } catch {
+    return null;
+  }
+}
+/** An internal path only: starts with one "/", no scheme, no protocol-relative "//", no backslash. */
+export function isInternalPath(href: string): boolean {
+  return href.startsWith("/") && !href.startsWith("//") && !href.includes("\\") && !/^[a-z][a-z0-9+.-]*:/i.test(href);
+}
+
+export function parseReturn(raw: string | null): ReturnTo | null {
+  try {
+    const v: unknown = raw ? JSON.parse(raw) : null;
+    if (v && typeof v === "object" && "href" in v && "name" in v && typeof v.href === "string" && typeof v.name === "string" && isInternalPath(v.href)) {
+      return { href: v.href, name: v.name };
+    }
+  } catch {
+    // Storage is blocked: fall back to the first workspace.
+  }
+  return null;
+}
+
+/** Remember the organization page the person is on, so Administration can send them back to it. */
+function useRememberReturn(orgSlug: string | undefined, wsSlug: string | undefined, orgName: string | undefined, active: boolean) {
+  useEffect(() => {
+    if (!active || !orgSlug || !orgName) return;
+    try {
+      const href = wsSlug ? wsRoutes(orgSlug, wsSlug).home() : `/o/${orgSlug}`;
+      window.sessionStorage.setItem(RETURN_KEY, JSON.stringify({ href, name: orgName }));
+    } catch {
+      // Storage is blocked: nothing is remembered.
+    }
+  }, [active, orgSlug, wsSlug, orgName]);
+}
+
+/** E8: Administration's rail — back to where you came from, the level header, the admin topics; no switcher. */
+function AdminRailHeader() {
+  const me = useMe();
+  // Session storage is the external store (null on the server, so the first render matches).
+  const raw = useSyncExternalStore(noopSubscribe, readRawReturn, () => null);
+  const stored = useMemo(() => parseReturn(raw), [raw]);
+  const first = me.data?.memberships?.find((m) => m.workspaces.length > 0);
+  const fallback: ReturnTo | null = first
+    ? { href: wsRoutes(first.org.slug, first.workspaces[0]!.slug).home(), name: first.org.name ?? first.org.slug }
+    : null;
+  const back = stored ?? fallback ?? { href: "/", name: "Aurora" };
+  return (
+    <div className="space-y-3">
+      <Link href={back.href} className="flex min-h-9 items-center gap-2 rounded-control px-2.5 py-1.5 text-sm text-ink-2 hover:bg-subtle hover:text-ink">
+        <ArrowLeftIcon className="size-4 shrink-0 text-muted" />
+        <span className="min-w-0 truncate">Back to {back.name}</span>
+      </Link>
+      <div className="px-2.5">
+        <p className="text-label font-semibold uppercase tracking-label text-muted">You&apos;re in</p>
+        <p className="font-display text-base font-semibold text-ink">Administration</p>
+      </div>
+    </div>
+  );
+}
+
 function SidebarContent({
   orgSlug,
   wsSlug,
@@ -425,21 +381,22 @@ function SidebarContent({
   // The admin navigation is for instance admins only (the page guard already refuses everyone else; the nav must not
   // advertise it to a signed-in member who typed an /admin path, WEBA-11).
   const isInstanceAdmin = useMe().data?.user.is_instance_admin === true;
+  const resolved = useResolve(orgSlug);
+  useRememberReturn(orgSlug, wsSlug, resolved.data?.org.name, !inAdmin);
+  const adminRail = inAdmin && isInstanceAdmin;
   return (
     <div className="flex h-full min-h-0 flex-col gap-4 p-4">
       <Link href="/" className="block self-start rounded-md" aria-label="Aurora home">
         <AuroraLogo className="h-9.5 w-auto" />
       </Link>
-      {/* FIX-027: two stacked selects on every page — organization, then (only with an active
-          organization) its workspaces. Administration is its own entry in the footer (C-962). */}
-      <OrgSelector orgSlug={orgSlug} />
-      {orgSlug ? <WorkspaceSelector orgSlug={orgSlug} wsSlug={wsSlug} pathname={pathname} /> : null}
+      {/* D-389: one switcher says where you are (workspace, then organization). Administration has no switcher: its own header. */}
+      {adminRail ? <AdminRailHeader /> : <ScopeSwitcher orgSlug={orgSlug} wsSlug={wsSlug} />}
       <div className="min-h-0 flex-1 overflow-y-auto">
         {base ? (
           <WorkspaceNav base={base} wsId={wsId} pathname={pathname} />
         ) : orgSlug ? (
           <OrgNav orgSlug={orgSlug} pathname={pathname} />
-        ) : inAdmin && isInstanceAdmin ? (
+        ) : adminRail ? (
           <AdminNavList pathname={pathname} />
         ) : pathname.startsWith("/account") ? (
           <AccountNavList pathname={pathname} />
@@ -453,6 +410,7 @@ function SidebarContent({
               label="Administration"
               icon={ShieldIcon}
               active={inAdmin}
+              badge={<AttentionBadge />}
               tour="administration"
             />
           </ul>
@@ -482,15 +440,12 @@ export function AppShell({ children }: { children: ReactNode }) {
   const resolved = useResolve(orgSlug, wsSlug).data;
   const wsId = resolved?.workspace?.id;
   const side = { orgSlug, wsSlug, wsId, pathname };
-  // C-962: the level badge every page header carries (Administration, <org> or <org> › <workspace>).
-  const orgName = resolved?.org.name ?? orgSlug;
-  const level: PageLevel | null = pathname.startsWith("/admin")
-    ? { kind: "instance", label: "Administration" }
-    : orgSlug && wsSlug
-      ? { kind: "workspace", label: `${orgName} › ${resolved?.workspace?.name ?? wsSlug}` }
-      : orgSlug
-        ? { kind: "org", label: orgName ?? orgSlug }
-        : null;
+  // The switcher's menu lives in a portal outside the drawer: close the drawer when the page changes.
+  const [seenPath, setSeenPath] = useState(pathname);
+  if (seenPath !== pathname) {
+    setSeenPath(pathname);
+    setNavOpen(false);
+  }
 
   // (FIX-138) The standalone terminal window has no app chrome: it is a pane that fills the browser window.
   if (/^\/o\/[^/]+\/w\/[^/]+\/agents\/[^/]+\/terminal\/?$/.test(pathname)) return <>{children}</>;
@@ -552,7 +507,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           <ApprovalNotifier />
           <FrozenEntityBanner />
           <RenamesNotice />
-          <PageLevelProvider value={level}>{children}</PageLevelProvider>
+          {children}
         </main>
         <Tour setNavOpen={tourNavOpen} />
       </div>

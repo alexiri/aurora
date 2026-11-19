@@ -14,6 +14,9 @@ const ARBITRARY = /\[(#|[0-9.]+(px|rem|em|%)|(min|max|calc|clamp)\()/;
 
 /** file (relative to `web/`) → [substring of the offending line, reason]. */
 const ALLOWED: Record<string, [string, string][]> = {
+  "src/components/audit/audit-panel.tsx": [
+    ["w-[min(100%,calc(100vw-4rem))]", "an opened row's detail is as wide as the page, not the table (FIX-171): a long value wraps instead of widening the scrolling table"],
+  ],
   "src/components/ui/dialog.tsx": [
     ["max-h-[calc(100dvh-2rem)]", "the dialog never exceeds the viewport minus a 1 rem gutter"],
     ["w-[min(", "the `size` map: each width is capped at the viewport minus a 1 rem gutter (the only place)"],

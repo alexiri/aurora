@@ -7,10 +7,12 @@ import { CreateWorkspaceDialog } from "@/components/create-workspace-dialog";
 import { EmptyState, ErrorState, Loading } from "@/components/states";
 import { PageHeader } from "@/components/ui/page-header";
 import { ItemList, ListRow, Section } from "@/components/ui/section";
-import { useResolve, useWorkspaces } from "@/lib/api/queries";
+import { useMe, useResolve, useWorkspaces } from "@/lib/api/queries";
+import { workspaceDisplayName } from "@/lib/workspace-name";
 
 export default function OrgPage() {
   const { org } = useParams<{ org: string }>();
+  const me = useMe();
   const resolved = useResolve(org);
   const workspaces = useWorkspaces(resolved.data?.org.id);
 
@@ -40,7 +42,7 @@ export default function OrgPage() {
                   href={`/o/${org}/w/${w.slug}`}
                   className="flex min-w-0 flex-1 flex-wrap items-center justify-between gap-x-3 gap-y-1 px-4 py-3 hover:bg-subtle"
                 >
-                  <span className="font-medium text-ink">{w.name}</span>
+                  <span className="font-medium text-ink">{workspaceDisplayName(w, me.data?.user)}</span>
                   <span className="font-mono text-sm text-muted">{w.slug}</span>
                 </Link>
               </ListRow>

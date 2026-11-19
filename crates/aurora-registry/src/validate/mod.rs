@@ -24,8 +24,9 @@ use crate::Violation;
 use crate::manifest::{
     Access, App, CONNECTION_HOST, Connect, FieldType, Finalize, FormField, Hook, HostRule,
     INSTANCE_HOST, Inject, LDAP_MAX_ATTRIBUTES, LDAP_MAX_ENTRIES, Ldap, Manifest, OwnServer, Probe,
-    ProbeMethod, SECRET_LINK_HOST_SUFFIX, SECRET_LINK_PREFIX_MAX, SECRET_LINK_TOOL_HOST,
-    SecretLink, Source, Store, TokenKind, Transform, UrlOrTemplate,
+    ProbeMethod, SECRET_LINK_HOST_SUFFIX, SECRET_LINK_PREFIX_MAX, SECRET_LINK_PRESETS_MAX,
+    SECRET_LINK_TOOL_HOST, SecretLink, SecretLinkMode, Source, Store, TokenKind, Transform,
+    UrlOrTemplate, preset_file_ok,
 };
 use crate::template::{CONTEXT_VARS, Declared, Place, Template};
 
@@ -980,7 +981,18 @@ fn secret_link_rules(app: &App, s: &SecretLink, cx: &mut Ctx<'_>) {
             "the credential must be declared with `secret: true` and not be optional",
         ),
     }
+    let send = s.mode() == SecretLinkMode::Send;
+    if send {
+        send_mode_rules(app, s, cx);
+    } else if s.presets.is_some() {
+        cx.v(
+            "secret_link_presets_mode",
+            "/secret_link/presets",
+            "presets belong to `mode: send`",
+        );
+    }
     if let Some(p) = &s.expect_prefix
+        && !send
         && (p.is_empty()
             || p.chars().count() > SECRET_LINK_PREFIX_MAX
             || p.chars().any(char::is_control))
@@ -1010,6 +1022,9 @@ fn secret_link_rules(app: &App, s: &SecretLink, cx: &mut Ctx<'_>) {
             "/secret_link",
             "a secret-link app is not also a database, LDAP, instance-bound or token app",
         );
+    }
+    if send {
+        return;
     }
     if let Some(t) = &app.tools {
         for (gname, g) in [("read", &t.read), ("write", &t.write)] {
@@ -1042,6 +1057,81 @@ fn secret_link_rules(app: &App, s: &SecretLink, cx: &mut Ctx<'_>) {
         }
     }
 }
+/// (P5-WEBHOOK-1, D-320, C-909) The extra shape of a send-mode secret-link app (an outgoing
+/// webhook): the URL is its only declared credential (the core adds the secret values and the
+/// signing secret to the sealed credential), no read at connect, exactly one `write` tool that posts
+/// to `*.link.aurora.internal` `/`, and well-formed preset names.
+fn send_mode_rules(app: &App, s: &SecretLink, cx: &mut Ctx<'_>) {
+    if s.expect_prefix.is_some() {
+        cx.v(
+            "secret_link_send_expect_prefix",
+            "/secret_link/expect_prefix",
+            "a send-mode secret link reads nothing at connect: no expect_prefix",
+        );
+    }
+    if app.credentials.iter().any(|c| c.name != s.credential) {
+        cx.v(
+            "secret_link_mode",
+            "/credentials",
+            "a send-mode secret-link app declares only the URL credential",
+        );
+    }
+    let tool_msg = "a send-mode secret link has exactly one tool: a `write` tool with methods POST or PUT on `*.link.aurora.internal` `/`";
+    let mut total = 0;
+    if let Some(t) = &app.tools {
+        for (gname, g) in [("read", &t.read), ("write", &t.write)] {
+            let Some(g) = g else { continue };
+            total += g.items.len() + usize::from(g.wildcard.is_some());
+            if g.wildcard.is_some() {
+                cx.v(
+                    "secret_link_send_tool",
+                    &format!("/tools/{gname}/wildcard"),
+                    tool_msg,
+                );
+            }
+            for (j, it) in g.items.iter().enumerate() {
+                let p = format!("/tools/{gname}/items/{j}");
+                if gname != "write" {
+                    cx.v("secret_link_send_tool", &p, tool_msg);
+                }
+                if it.methods.is_empty()
+                    || !it
+                        .methods
+                        .iter()
+                        .all(|m| m.eq_ignore_ascii_case("POST") || m.eq_ignore_ascii_case("PUT"))
+                {
+                    cx.v("secret_link_send_tool", &format!("{p}/methods"), tool_msg);
+                }
+                if !it.host.eq_ignore_ascii_case(SECRET_LINK_TOOL_HOST) || it.path != "/" {
+                    cx.v("secret_link_send_tool", &format!("{p}/host"), tool_msg);
+                }
+            }
+        }
+    }
+    if total != 1 {
+        cx.v("secret_link_send_tool", "/tools", tool_msg);
+    }
+    if let Some(files) = &s.presets {
+        if files.len() > SECRET_LINK_PRESETS_MAX {
+            cx.v(
+                "webhook_preset_invalid",
+                "/secret_link/presets",
+                format!("at most {SECRET_LINK_PRESETS_MAX} presets"),
+            );
+        }
+        let mut seen = BTreeSet::new();
+        for (i, f) in files.iter().enumerate() {
+            if !preset_file_ok(f) || !seen.insert(f.as_str()) {
+                cx.v(
+                    "webhook_preset_invalid",
+                    &format!("/secret_link/presets/{i}"),
+                    "a preset is a unique file name like `first-preset.json` (lowercase letters, digits, `-`)",
+                );
+            }
+        }
+    }
+}
+
 /// (D-251) The shape of an LDAP app (`docs/09 §3 ldap`): a plain public server name, LDAPS, a
 /// subtree, a bounded attribute allow-list, one synthetic host entry and nothing that carries a
 /// credential — the lane binds anonymously and can only search.

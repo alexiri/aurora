@@ -74,6 +74,20 @@ mod dialect_tests {
     }
 
     #[test]
+    fn harness_choices_in_the_settings_words_equal_the_table_without_fake() {
+        let table: Vec<(&str, &str)> = HARNESSES
+            .iter()
+            .filter(|(id, _)| *id != "fake")
+            .copied()
+            .collect();
+        let choices: Vec<(&str, &str)> = aurora_config::HARNESS_CHOICES
+            .iter()
+            .map(|c| (c.value, c.label))
+            .collect();
+        assert_eq!(choices, table);
+    }
+
+    #[test]
     fn new_harnesses_serve_chat_only_endpoints_and_the_registry_matches_config() {
         use Dialect::{AnthropicMessages as A, OpenaiChat as C, OpenaiResponses as R};
         // `openai_chat`-only endpoints are usable by an enabled harness for the first time.

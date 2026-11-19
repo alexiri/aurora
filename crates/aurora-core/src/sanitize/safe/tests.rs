@@ -172,6 +172,46 @@ fn typed_neutral_tokens_never_form_but_mentions_pass_through() {
     assert_eq!(md("ping @alex and @here-ish"), "ping @alex and @here-ish");
 }
 
+/// FIX-178: a later step escapes the closing `>` of a defanged token (`<\u{200B}@here\>`); the next
+/// pass strips the break and must put it back, so the output is a fixed point for the raw and the
+/// escaped spelling of every typed token, and no `<` is ever directly followed by a token.
+#[test]
+fn defanged_tokens_are_a_fixed_point_raw_and_escaped() {
+    for t in [
+        "@here>",
+        "@HERE>",
+        "@user:U1>",
+        "@bot:B1>",
+        "@here\\>",
+        "@Here\\>",
+        "@user:U1\\>",
+        "@bot:B1\\>",
+        "#space:C1>",
+        "#space:C1\\>",
+    ] {
+        for src in [
+            format!("<{t}"),
+            format!("hi <{t} there"),
+            format!("\\<{t}"),
+            format!("<!-- c --> [ <{t} ![j](data:x)"),
+            format!("`<{t}`"),
+        ] {
+            let once = md(&src);
+            assert_eq!(md(&once), once, "{src:?} -> {once:?}");
+            let low = once.to_ascii_lowercase();
+            for bare in ["<@here", "<@user:", "<@bot:", "<#space:"] {
+                assert!(!low.contains(bare), "{src:?} -> {once:?}");
+            }
+        }
+    }
+}
+
+#[test]
+fn fix_178_minimal_case() {
+    let once = md("<!-- c --> [ <@here> ![j](data:x)");
+    assert_eq!(md(&once), once);
+}
+
 #[test]
 fn broadcast_here_only_in_prose_at_word_boundaries() {
     for (src, want) in [

@@ -1,0 +1,40 @@
+{
+  "id": "ifttt",
+  "name": "IFTTT Webhooks",
+  "suggest_for_hosts": ["maker.ifttt.com"],
+  "secret_value_names": [],
+  "config": {
+    "version": 1,
+    "method": "POST",
+    "content_type": "application/json",
+    "template": "{\"value1\": {{value1}}, \"value2\": {{value2}}, \"value3\": {{value3}}}",
+    "slots": [
+      {
+        "name": "value1",
+        "type": "string",
+        "required": false,
+        "description": "The first ingredient of the applet (Value1).",
+        "max_length": 1000
+      },
+      {
+        "name": "value2",
+        "type": "string",
+        "required": false,
+        "description": "The second ingredient of the applet (Value2).",
+        "max_length": 1000
+      },
+      {
+        "name": "value3",
+        "type": "string",
+        "required": false,
+        "description": "The third ingredient of the applet (Value3).",
+        "max_length": 1000
+      }
+    ],
+    "headers": [],
+    "description": "",
+    "signing": false,
+    "rate": { "per_minute": null, "per_day": null },
+    "preset": "ifttt"
+  }
+}

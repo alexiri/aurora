@@ -105,4 +105,8 @@ TERMINAL_PTY_OPEN_TIMEOUT no-row
 TERMINALS_PER_AGENT no-row
 TERMINALS_PER_USER no-row
 TERMINAL_WAKE_WAIT no-row
+# P5-WEBHOOK-1 adds the outgoing-webhook limits; the gateway send path (P5-WEBHOOK-2) reads these three:
+WEBHOOK_VALUES_MAX unread
+WEBHOOK_RESPONSE_MAX unread
+WEBHOOK_TIMEOUT unread
 # P5-UX spec step (2026-11-15, D-325): P5-UX-5 adds these:

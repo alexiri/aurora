@@ -26,6 +26,7 @@ import {
   useSkillLibraries,
   type SkillLibrary,
 } from "@/lib/api/skill-libraries";
+import { fmtDate } from "@/lib/utils";
 
 const STATUS: Record<string, { tone: "accent" | "neutral" | "pending" | "danger"; label: string }> = {
   active: { tone: "accent", label: "Active" },
@@ -33,10 +34,6 @@ const STATUS: Record<string, { tone: "accent" | "neutral" | "pending" | "danger"
   error: { tone: "danger", label: "Error" },
   over_budget: { tone: "pending", label: "Pending updates over budget" },
 };
-
-function when(iso: string | null | undefined): string {
-  return iso ? new Date(iso).toLocaleString() : "Never";
-}
 
 /** Skills → Libraries (docs/14, D-148): connect a repository as a source of skills; org owners and admins. */
 export function SkillLibrariesPage() {
@@ -132,7 +129,7 @@ function LibraryTable({ orgId, slug, items }: { orgId: string; slug: string; ite
                   ) : null}
                   {l.last_head_sha ? <p className="mt-1 font-mono text-xs text-muted">{shortSha(l.last_head_sha)}</p> : null}
                 </Td>
-                <Td className="whitespace-nowrap text-xs">{when(l.last_refresh_at)}</Td>
+                <Td className="whitespace-nowrap text-xs">{fmtDate(l.last_refresh_at, "Never")}</Td>
                 <Td className="text-xs">
                   {l.skill_counts ? `${l.skill_counts.agent} agent · ${l.skill_counts.workspace} workspace · ${l.skill_counts.org} org` : "—"}
                 </Td>

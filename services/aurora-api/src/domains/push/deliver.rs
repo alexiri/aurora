@@ -66,6 +66,8 @@ pub enum Kind {
     Reminder,
     Digest,
     Test,
+    /// (FIX-167 Part B, C-1023) A new decision item waits in Administration.
+    AdminAttention,
 }
 
 impl Kind {
@@ -75,6 +77,7 @@ impl Kind {
             Self::Reminder => "approval.reminder",
             Self::Digest => "approval.digest",
             Self::Test => "test",
+            Self::AdminAttention => "admin_attention",
         }
     }
 }
@@ -144,6 +147,21 @@ pub fn digest_message(sub: &SubRow, w: &Waiting, count: usize) -> Result<Message
         "url": path_of(w, false),
     });
     finish_message(v, TTL_SHORT_SECS, "normal", topic(sub.id, b"digest"))
+}
+
+/// (FIX-167 Part B, C-1023) The push of a new administration decision item: its type, the fixed
+/// url `/admin` and, only on a device that turned names on, the item's title (names and versions,
+/// never a detail, a setting or a secret). The notification text itself is fixed (C-835).
+pub fn attention_message(sub: &SubRow, title: &str, subject: &[u8]) -> Result<Message, String> {
+    let mut v = json!({
+        "v": 1,
+        "type": Kind::AdminAttention.type_str(),
+        "url": "/admin",
+    });
+    if sub.show_details {
+        v["title"] = json!(sanitize::one_line(title, 2 * NAME_MAX));
+    }
+    finish_message(v, PUSH_TTL_MAX.as_secs(), "normal", topic(sub.id, subject))
 }
 
 /// The "test" push: nothing but its type.
@@ -595,6 +613,35 @@ pub async fn sweep_once(state: &AppState) -> Result<usize, ApiError> {
     Ok(sent)
 }
 
+/// (FIX-167 Part B, D-370, C-1023) One push per device of each administrator for every decision
+/// item that first appeared since the last sweep: claim the notice (`pushed_at`), then send. The
+/// device's own opt-in decides (a device that never turned push on has no subscription); the
+/// e-mail switch does not apply. Does nothing with push off. Returns the pushes attempted.
+pub async fn sweep_attention(state: &AppState) -> Result<usize, ApiError> {
+    if !state.push.enabled {
+        return Ok(0);
+    }
+    let mut sent = 0;
+    for n in aurora_db::repo::admin_attention::claim_push(
+        &state.pool,
+        crate::domains::admin::attention::PUSH_MAX_AGE.as_secs_f64(),
+        SWEEP_LIMIT,
+    )
+    .await?
+    {
+        if !n.is_admin {
+            continue;
+        }
+        let devices = deliverable(state, n.user_id).await?;
+        let subject = format!("{}\n{}\n{}", n.kind, n.subject_id, n.subject_version);
+        sent += send_all(state, &devices, |s| {
+            attention_message(s, &n.title, subject.as_bytes())
+        })
+        .await;
+    }
+    Ok(sent)
+}
+
 async fn refresh_gauges(state: &AppState) {
     match repo::counts_by_state(&state.pool).await {
         Ok(rows) => {
@@ -658,6 +705,9 @@ pub fn spawn(state: AppState) {
             }
             if let Err(e) = sweep_once(&state).await {
                 tracing::warn!(error = %e.message(), "Web Push sweep failed");
+            }
+            if let Err(e) = sweep_attention(&state).await {
+                tracing::warn!(error = %e.message(), "Web Push administration sweep failed");
             }
             if gauges.is_none_or(|t| t.elapsed() >= GAUGE_EVERY) {
                 refresh_gauges(&state).await;

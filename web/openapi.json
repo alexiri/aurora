@@ -1371,6 +1371,60 @@
         ]
       }
     },
+    "/v1/admin/attention": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "What needs an instance admin's attention (C-1022): decisions first, then informational items.",
+        "operationId": "adminAttention",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AttentionList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
     "/v1/admin/audit": {
       "get": {
         "tags": [
@@ -40905,6 +40959,74 @@
           }
         }
       },
+      "AttentionItem": {
+        "type": "object",
+        "description": "One thing that needs an instance admin: a fixed sentence filled with names and versions.",
+        "required": [
+          "kind",
+          "subject_id",
+          "title",
+          "detail",
+          "since",
+          "href",
+          "decision"
+        ],
+        "properties": {
+          "decision": {
+            "type": "boolean",
+            "description": "The administrator has to decide (approve, reject, choose); informational items are `false`."
+          },
+          "detail": {
+            "type": "string"
+          },
+          "href": {
+            "type": "string",
+            "description": "The dashboard page that resolves it."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/AttentionKind"
+          },
+          "since": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the item first appeared (or the row last changed, for an item that predates the notice table)."
+          },
+          "subject_id": {
+            "type": "string",
+            "description": "The connector id, the package or source id, or the organization slug."
+          },
+          "title": {
+            "type": "string"
+          }
+        }
+      },
+      "AttentionKind": {
+        "type": "string",
+        "description": "(FIX-167 Part B, C-1022) What an item of `GET /v1/admin/attention` is about.",
+        "enum": [
+          "connector_approval",
+          "package_approval",
+          "addon_key_changed",
+          "host_claim_conflict",
+          "connector_down",
+          "ownerless_org"
+        ]
+      },
+      "AttentionList": {
+        "type": "object",
+        "description": "`GET /v1/admin/attention` (C-1022): decisions first, oldest first; computed on read.",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AttentionItem"
+            }
+          }
+        }
+      },
       "AuditEntry": {
         "type": "object",
         "required": [
@@ -48788,10 +48910,15 @@
         "required": [
           "user",
           "approval_email",
+          "admin_attention_email",
           "memberships",
           "groups"
         ],
         "properties": {
+          "admin_attention_email": {
+            "type": "boolean",
+            "description": "(FIX-167 Part B, C-1024) E-mail me when something new needs an instance admin's decision\n(default `true`; the dashboard shows it to instance admins only)."
+          },
           "approval_email": {
             "type": "boolean",
             "description": "(phase 2, RFE-011a) E-mail me approvals nobody is watching (default `true`)."
@@ -55339,6 +55466,13 @@
       "PatchMeRequest": {
         "type": "object",
         "properties": {
+          "admin_attention_email": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "(FIX-167 Part B, C-1024) Opt in or out of the e-mail about new administration decisions.\nStored for anyone, used only for an instance admin."
+          },
           "approval_email": {
             "type": [
               "boolean",

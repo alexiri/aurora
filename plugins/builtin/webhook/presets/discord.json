@@ -1,0 +1,26 @@
+{
+  "id": "discord",
+  "name": "Discord",
+  "suggest_for_hosts": ["discord.com", "discordapp.com"],
+  "secret_value_names": [],
+  "config": {
+    "version": 1,
+    "method": "POST",
+    "content_type": "application/json",
+    "template": "{\"content\": {{content}}}",
+    "slots": [
+      {
+        "name": "content",
+        "type": "string",
+        "required": true,
+        "description": "The message, in Discord Markdown. At most 2,000 characters.",
+        "max_length": 2000
+      }
+    ],
+    "headers": [],
+    "description": "",
+    "signing": false,
+    "rate": { "per_minute": null, "per_day": null },
+    "preset": "discord"
+  }
+}

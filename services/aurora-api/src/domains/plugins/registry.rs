@@ -155,6 +155,18 @@ async fn compile_active(
                             false,
                         )
                         .await?;
+                        // (FIX-167 Part B) A claim waiting for a winner is a decision item.
+                        let pkg_name = r.manifest["package"]["name"]
+                            .as_str()
+                            .unwrap_or(&r.package_id);
+                        crate::domains::admin::attention::notify_package(
+                            conn,
+                            r.id,
+                            pkg_name,
+                            &r.version,
+                            Some("claim_conflict"),
+                        )
+                        .await?;
                         audit::record(
                             state,
                             AuditEvent::new(

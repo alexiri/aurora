@@ -1,0 +1,25 @@
+{
+  "id": "mattermost",
+  "name": "Mattermost",
+  "secret_value_names": [],
+  "config": {
+    "version": 1,
+    "method": "POST",
+    "content_type": "application/json",
+    "template": "{\"text\": {{text}}}",
+    "slots": [
+      {
+        "name": "text",
+        "type": "string",
+        "required": true,
+        "description": "The message, in Markdown.",
+        "max_length": 16000
+      }
+    ],
+    "headers": [],
+    "description": "",
+    "signing": false,
+    "rate": { "per_minute": null, "per_day": null },
+    "preset": "mattermost"
+  }
+}

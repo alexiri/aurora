@@ -1059,8 +1059,13 @@ fn defang_tokens(s: &str) -> String {
         let at = i + p;
         out.push_str(&s[i..at + 1]);
         let tail = &s[at + 1..];
+        // FIX-178: a later step may have backslash-escaped a character of the token (`<@here\>`,
+        // `<\#space:`); the break must come back after the input cleaning stripped it, or the
+        // output is not a fixed point. Matching with the backslashes left out defangs a superset.
         let low: String = tail
             .chars()
+            .take(12)
+            .filter(|&c| c != '\\')
             .take(8)
             .collect::<String>()
             .to_ascii_lowercase();

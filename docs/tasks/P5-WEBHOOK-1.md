@@ -127,3 +127,110 @@ D-320, C-909, C-912 (constants), SEC-127. No migration in this brief.
 ## Suggested agent/model and reason
 `rust-developer` (Sonnet). A self-contained parser, renderer and validator with heavy unit tests, plus
 a registry extension modelled on P5-ICS's.
+
+## Completion report
+**Commits** (branch `alexiri/p5-agent`): `6b0f2d14` (the crate, limits, workspace member) and the
+registry/package/docs commit that carries this report.
+
+**Crate `aurora-webhook`** (pure; deps `aurora-core`, `serde`, `serde_json`, `hmac`, `sha2`, `hex`;
+dev `proptest`; no new external crate):
+- `model`: `WebhookConfig`, `Slot`, `SlotType`, `HeaderTemplate`, `Rate`, `WebhookPreset`, `Method`,
+  `ContentType` (`deny_unknown_fields`; `version` must be 1 at deserialization), `FieldError`,
+  `SlotError`/`Rule`, `SecretValues` (Debug redacted), `Rendered`, `RenderError`.
+- `validate(config, secret_value_names) -> Result<CompiledConfig, Vec<FieldError>>` with every C-909
+  code: `template_json`, `template_syntax`, `placeholder_unknown`, `slot_unused`, `secret_unused`,
+  `slot_name`, `slot_duplicate`, `slot_type_content_type`, `slot_limits`, `optional_slot_at_root`,
+  `schema_unsupported`, `header_name_denied`, `header_placeholder`, `rate_above_ceiling` (static
+  maxima 600/min and 100,000/day only; the live ceiling is the API's), `too_large`. The template is
+  parsed once into an AST (a JSON-aware parser for `{{…}}` in value and string positions).
+- `check_values(compiled, &Value) -> Result<CheckedValues, SlotError>`: rules `missing`, `unknown`,
+  `type`, `max_length` (Unicode scalar values), `max_items`, `enum`, `schema` (own validator of the C-909
+  subset, `schema.rs`). A `null` counts as left out.
+- `render` / `render_masked`: one pass over the AST; JSON (`serde_json` for values, string-content
+  escaping inside literals, members/elements of left-out optionals dropped), form (percent-encoding,
+  `string_list` repeats the key, left-out optional pair dropped), text (UTF-8). `sign(secret, t, body)`.
+- Constants `WEBHOOK_*` in `limits.rs`. `Cargo.lock` changes only by the new workspace member
+  (`aurora-webhook`) and `aurora-registry`'s dependency on it; `Cargo.toml`: the member line only (the registry takes a `path` dependency).
+
+**Choices where C-909 is silent** (all stricter, none loosens a rule; tell me if you want another):
+1. `render` returns `Result<Rendered, RenderError>` (not a bare `Rendered`): `TooLarge` (body over
+   `WEBHOOK_BODY_MAX`), `MissingSecret`, `HeaderValue` (a secret with CR/LF/control characters would
+   enter a header). The caller maps them (413 `rendered_too_large`, 502, 502).
+2. A `json`/`string_list` slot inside a JSON string literal, a `json` slot in a form value, a
+   `string_list` anywhere in a text body or inside a larger form value → `slot_type_content_type`; a
+   `string_list` may be a whole form value (repeats the key).
+3. A placeholder in a JSON object key → `template_json`. A form pair without `=`, an empty pair, a
+   placeholder in a key → `template_syntax`. Form constants are used as typed (not re-encoded).
+4. Duplicate header names → `slot_duplicate`; more than 4 headers → `too_large`; a header value over 2 KiB
+   → `too_large`; control characters in a header value → `template_syntax`.
+5. `json` slot value `null` = left out (so a required one is `missing`); an `integer` must be a JSON integer
+   (`3.0` is `type`).
+6. `rate` is checked only against the static maxima; a zero is the API's to refuse.
+
+**Registry**: `secret_link.mode` (`fetch` default, `send`; unknown value = parse error) and `presets: [file]`
+(`SecretLinkMode`, `preset_file_ok`, `PRESETS_DIR`); a send-mode app declares only the URL credential
+(`secret_link_mode`), no `expect_prefix` (`secret_link_send_expect_prefix`), exactly one `write` tool with
+methods ⊆ {POST, PUT} on `*.link.aurora.internal` `/` (`secret_link_send_tool`); presets in `fetch` mode
+→ `secret_link_presets_mode`; names/count/duplicates and the archive rules (listed file present, no
+unlisted `presets/*.json`, JSON shape, unique id, name, ≤ 8 plain DNS `suggest_for_hosts`, and
+`aurora_webhook::validate(config, secret_value_names)`) → `webhook_preset_invalid` (`webhook.rs`,
+called from `validate::package`). `Package` accepts `presets/<file>.json`. `webhook::presets(manifest, pkg)`
+loads the validated presets per send-mode app. The ICS package is unchanged and still valid (its
+manifest and snapshot bytes do not change: `mode`/`presets` are skipped when absent).
+
+**Package `plugins/builtin/webhook`**: app *Outgoing webhook* (category `communication`), one `fields` method
+(`name` metadata, `url` secret), one tool `send` (`write`, `POST`, `*.link.aurora.internal` `/`), nine
+presets (`slack`, `mattermost`, `google-chat`, `discord`, `teams-workflow`, `ntfy-json`,
+`home-assistant`, `generic-json`, `ifttt`), setup guide (receiver URL locations with each receiver's
+documentation link, "the URL is a password", revoking, signing with Python and Node snippets, no
+retries and `X-Aurora-Delivery`), the agent snippet (1,017 characters), fixtures `tests/send.yaml`,
+a neutral icon pair (rendered with `rsvg-convert`, recorded in `ICONS.md`). The Python and Node
+snippets were run against the unit vector (`whsec_test`, `t=1700000000`, `{"text":"hello"}` →
+`4de4482f…9e80`, also checked with `openssl dgst`): valid → true, altered body → false, stale `t` → false.
+
+**Not done / for you**
+- **Receiver formats were written from my knowledge of each receiver's documented payload; I did not
+  re-fetch the live documentation pages** (no web access in this lane). The setup guide links each
+  receiver's documentation; worth a human re-check before release (Teams Workflows' Adaptive Card shape and
+  the IFTTT `…/json/with/key/…` URL are the two most likely to drift).
+- **Default Ask**: the manifest has no per-tool default mechanism (P5-TOOLASK, D-397, adds it, queued
+  after P5-WEBHOOK-2). The package has an interim `approvals.send` with only a title (the check requires a
+  template and a fixture asserting its title); P5-WEBHOOK-2's `slots` decoder replaces the body.
+- **Presets in the snapshot**: not added. Putting them in the snapshot would change `compile_with_guides`'
+  signature and its API/CLI callers (P5-WEBHOOK-2 territory); instead `aurora_registry::webhook::presets`
+  reads them from the stored archive, which is how the API can serve `GET …/webhook-presets` "from the
+  installed package version". Say if you want them in the snapshot proper.
+- **`aurora plugin test` "recorded upstream receives the rendered body"**: the fixture runner is the
+  gateway's `check-snapshot`. I made its secret-link case send-mode aware (POST/PUT served, other methods
+  `method_not_allowed`, tool identified by the request's method, the approval summary template applied to
+  the body: `check_snapshot.rs`), so the fixtures classify. Rendering a body and answering it from a
+  recorded upstream needs the gateway send path and the connection's stored config (P5-WEBHOOK-2), so it is
+  not here.
+- Files outside "Owns" I had to touch, each minimal: `services/aurora-cli/src/plugin/pack.rs` (pack
+  `presets/*.json`; without it the package cannot be built), `services/aurora-gateway/src/check_snapshot.rs`
+  (above), `docs/02-engineering-conventions.md` (the limits row the `limits-readers` guard requires),
+  `scripts/guards/limits-gaps.allow` (three `unread` entries until P5-WEBHOOK-2 reads them),
+  `plugins/builtin/README.md`/`ICONS.md`. `docs/09 §3.4` documents the send mode. A "built-in catalogue
+  list" does not exist as a file I could find (no list names `ics-calendar` outside its package, docs and
+  tests), so there was nothing to add.
+- P5-TOOLASK's registry part and this commit both touch `crates/aurora-registry/src/manifest/model.rs`
+  (`SecretLink` only here); P5-POLISH-3 serialization is yours to arrange.
+
+**Gates** (each through `heavy.sh`; the first two runs predate the two-slot change):
+- `cargo test -p aurora-webhook` (proptest 300 cases each, once at `PROPTEST_CASES=3000`): 33 passed.
+- `cargo nextest run -p aurora-webhook -p aurora-registry`: 199 passed (webhook 33, registry unit + `it` incl.
+  15 new in `webhook`/`secret_link`); `-p aurora-webhook -p aurora-registry -p aurora-cli`: 244 passed;
+  `-p aurora-gateway --lib`: 88 passed. **Not run:** the gateway's and core's `tests/it` suites and
+  `aurora-api` (a `check_snapshot` link-case edit and a constants edit; no DB was used in this lane).
+- `SKIP_CARGO=1 bash scripts/plugins/check-builtin.sh webhook ics-calendar`: `ok webhook`, `ok ics-calendar`
+  (after `cargo build -p aurora-cli -p aurora-gateway`).
+- `cargo clippy -p aurora-webhook -p aurora-registry -p aurora-core -p aurora-cli -p aurora-gateway
+  --all-targets --all-features -- -D warnings`: clean. Not the whole workspace.
+- `cargo fmt --all --check` clean; `bash scripts/guards/run-all.sh` exit 0 (it first failed on two things I
+  fixed: an integration name in a linter message, and the limits rows); `python3 scripts/extract-schema.py
+  --check` up to date.
+- `cargo deny check`: **advisories FAILED, bans/licenses/sources ok**: `wasmtime 50.0.1` (RUSTSEC / GHSA-wvgq-g5hf-6gm6,
+  fix ≥ 50.0.2), reached through `aurora-hookhost` → `aurora-cli`. It is not from this change (my `Cargo.lock` diff
+  adds only `aurora-webhook`); it is the CI Watcher's `cargo update -p wasmtime`.
+- The tests that prove the behaviour are new tests (no earlier code path); the injection tests, the
+  per-code failing configs and the vectors assert specific outputs, so each fails on a wrong implementation.

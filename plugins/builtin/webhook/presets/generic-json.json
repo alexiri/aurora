@@ -1,0 +1,24 @@
+{
+  "id": "generic-json",
+  "name": "Generic JSON",
+  "secret_value_names": [],
+  "config": {
+    "version": 1,
+    "method": "POST",
+    "content_type": "application/json",
+    "template": "{{payload}}",
+    "slots": [
+      {
+        "name": "payload",
+        "type": "json",
+        "required": true,
+        "description": "The JSON body to send."
+      }
+    ],
+    "headers": [],
+    "description": "",
+    "signing": false,
+    "rate": { "per_minute": null, "per_day": null },
+    "preset": "generic-json"
+  }
+}

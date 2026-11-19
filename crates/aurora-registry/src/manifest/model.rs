@@ -1148,8 +1148,53 @@ pub struct SecretLink {
     /// Name of the declared `secret: true` credential that holds the URL.
     pub credential: String,
     /// What the body must start with at connect (≤ 64 characters), e.g. `BEGIN:VCALENDAR`.
+    /// Refused in `send` mode (there is no read at connect).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expect_prefix: Option<String>,
+    /// (P5-WEBHOOK-1, D-320, C-909) `fetch` (default): the gateway reads the stored URL.
+    /// `send`: the gateway posts the person's rendered template to it (an outgoing webhook).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<SecretLinkMode>,
+    /// (C-909) `send` mode: archive files `presets/<file>`, each a `WebhookPreset` JSON. Refused in
+    /// `fetch` mode.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub presets: Option<Vec<String>>,
+}
+
+/// (P5-WEBHOOK-1, C-909) What a secret-link app does with its URL.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SecretLinkMode {
+    #[default]
+    Fetch,
+    Send,
+}
+
+/// Most presets one send-mode app lists.
+pub const SECRET_LINK_PRESETS_MAX: usize = 20;
+/// Archive directory of the webhook preset files (`presets/<file>.json`).
+pub const PRESETS_DIR: &str = "presets/";
+
+impl SecretLink {
+    /// The effective mode (`fetch` when absent).
+    #[must_use]
+    pub fn mode(&self) -> SecretLinkMode {
+        self.mode.unwrap_or_default()
+    }
+}
+
+/// A preset file name: `^[a-z0-9][a-z0-9-]{0,40}\.json$`.
+#[must_use]
+pub fn preset_file_ok(f: &str) -> bool {
+    let Some(stem) = f.strip_suffix(".json") else {
+        return false;
+    };
+    let b = stem.as_bytes();
+    !b.is_empty()
+        && b.len() <= 41
+        && (b[0].is_ascii_lowercase() || b[0].is_ascii_digit())
+        && b.iter()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == b'-')
 }
 
 /// (phase 5, P5-CALDAV, D-275, C-845, SEC-109) "the person points their own credential at a server

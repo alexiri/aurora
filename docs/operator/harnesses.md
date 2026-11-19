@@ -15,9 +15,10 @@ The design is in [docs/12 §Harness selection and adapter contract](../12-superv
 [§Adapters pi, goose and opencode](../12-supervisor-harness.md#adapters-pi-goose-and-opencode-phase-5-p5-harn-d-361-d-362-sec-133);
 decisions D-122, D-153, D-361, D-362 and D-363.
 
-(Phase 5, SET-5.) The list is an instance setting: **Administration › Agents › Defaults › Hosted agents**. It can only name
-harnesses a registered runner reports (otherwise the save is refused with `harness_not_available`), and the runners' harnesses
-are shown on the same page. `config.hosted.enabled_harnesses` in Helm locks it as a whole.
+(Phase 5, SET-5.) The list is an instance setting: tick the harness under **Administration › Agents › Defaults › Hosted
+agents**, then choose the default. Programs are shown by name, and only those a registered runner reports can be ticked
+(otherwise the save is refused with `harness_not_available`); the runners' harnesses are shown on the same page.
+`config.hosted.enabled_harnesses` in Helm locks the list as a whole.
 
 ## The harnesses at a glance
 
@@ -122,6 +123,17 @@ agent's own model through the same machine proxy and gateway as a turn, keeps it
 `/workspace/.aurora/terminal/<harness>` (never the agent harness's), and prints "not enabled on
 this instance" (exit 127) when its harness is not enabled or not in the image. When the agent has
 no usable model for it, it prints why and exits 1.
+
+The terminal behaves like a turn: approvals and the harness's own sandbox are **off** (the Aurora
+sandbox and gateway are the boundary), so `claude`, `codex` and `goose` run tools without asking, as
+`opencode` and `pi` already do. A person can opt back in on the command line, and their choice is
+never overridden:
+
+| Harness | Ask again with |
+|---------|----------------|
+| `claude` | `claude --permission-mode default` (or `plan`, `acceptEdits`) |
+| `codex` | `codex -a on-request -s workspace-write` (or `-c approval_policy=…`) |
+| `goose` | `GOOSE_MODE=approve goose` (or save a mode with `goose configure`) |
 
 ## Failures you may see
 

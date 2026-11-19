@@ -7,6 +7,7 @@ import { CheckboxField } from "@/components/ui/form";
 import { FormDialog } from "@/components/ui/confirm-dialog";
 import { Dialog, DialogClose, DialogContent } from "@/components/ui/dialog";
 import { Field, inputClass } from "@/components/ui/field";
+import { SecretInput } from "@/components/ui/secret-input";
 import { Notice } from "@/components/ui/notice";
 import { StatusDot } from "@/components/ui/status-dot";
 import { errorMessage } from "@/lib/api/errors";
@@ -339,13 +340,11 @@ export function ProviderDialog({
           <div id="op-secret" className="space-y-2">
             {secretStatus ? <p className="text-sm text-ink-2">{secretStatus}</p> : null}
             {d.secretMode === "replace" ? (
-              <input
+              <SecretInput
                 aria-label="Client secret: new value"
-                type="password"
-                autoComplete="off"
-                className={inputClass}
+                revealLabel="client secret"
                 value={d.secret}
-                onChange={(e) => set("secret", e.target.value)}
+                onChange={(v) => set("secret", v)}
               />
             ) : (
               <Button type="button" size="sm" variant="outline" onClick={() => setD((x) => ({ ...x, secretMode: "replace", secret: "" }))}>

@@ -23,7 +23,8 @@ for (const scheme of ["light", "dark"] as const) {
       test(`${s.name}: sidebar screenshot, themed, no horizontal scroll`, async ({ page }, testInfo) => {
         await openShell(page, s.path, scheme);
         const sidebar = page.getByRole("complementary", { name: "Sidebar" });
-        await expect(sidebar.getByTestId("org-selector").getByRole("button")).toBeVisible();
+        // D-389: the switcher (workspace and organization); Administration's rail has its own header instead.
+        await expect(s.name === "admin" ? sidebar.getByText("You're in") : sidebar.getByTestId("scope-switcher")).toBeVisible();
         // Settle before the picture: web fonts loaded, no pending animation frame.
         await page.evaluate(async () => {
           await document.fonts.ready;

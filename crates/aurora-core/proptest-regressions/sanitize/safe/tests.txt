@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 05890c51e076b9a1c9f218644ffaa4408790b4f782093cce10a860e6be9d6c98 # FIX-178: defanged `<@here>` whose `>` a later step escapes

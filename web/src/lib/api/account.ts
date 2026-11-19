@@ -22,7 +22,7 @@ export const accountKeys = {
   access: (ws: string) => ["workspaces", ws, "access"] as const,
   members: (org: string) => ["orgs", org, "members"] as const,
   wsKeys: (ws: string) => ["workspaces", ws, "api-keys"] as const,
-  audit: (ws: string, action: string) => ["workspaces", ws, "audit", action] as const,
+  audit: (ws: string, action: string, critical = false) => ["workspaces", ws, "audit", action, critical] as const,
   adminUsers: (q: string) => ["admin", "users", q] as const,
 };
 
@@ -56,8 +56,7 @@ export function useRevokeApiKey(invalidate: readonly unknown[]) {
 export function usePatchWorkspace(wsId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: PatchWorkspaceRequest) =>
-      unwrap(api.PATCH("/v1/workspaces/{ws}", { params: { path: { ws: wsId } }, body })),
+    mutationFn: (body: PatchWorkspaceRequest) => unwrap(api.PATCH("/v1/workspaces/{ws}", { params: { path: { ws: wsId } }, body })),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["workspaces"] });
       void qc.invalidateQueries({ queryKey: ["orgs"] });
@@ -174,22 +173,21 @@ export function useCreateWorkspaceKey(wsId: string) {
   const qc = useQueryClient();
   return useMutation({
     gcTime: 0,
-    mutationFn: (body: components["schemas"]["CreateKeyRequest"]) =>
-      unwrap(api.POST("/v1/workspaces/{ws}/api-keys", { params: { path: { ws: wsId } }, body })),
+    mutationFn: (body: components["schemas"]["CreateKeyRequest"]) => unwrap(api.POST("/v1/workspaces/{ws}/api-keys", { params: { path: { ws: wsId } }, body })),
     onSuccess: () => qc.invalidateQueries({ queryKey: accountKeys.wsKeys(wsId) }),
   });
 }
 
-export function useAudit(wsId: string, action: string) {
+export function useAudit(wsId: string, action: string, critical = false) {
   return useInfiniteQuery({
-    queryKey: accountKeys.audit(wsId, action),
+    queryKey: accountKeys.audit(wsId, action, critical),
     initialPageParam: undefined as string | undefined,
     queryFn: ({ pageParam }) =>
       unwrap(
         api.GET("/v1/workspaces/{ws}/audit", {
           params: {
             path: { ws: wsId },
-            query: { limit: 50, cursor: pageParam, action: action || undefined },
+            query: { limit: 50, cursor: pageParam, action: action || undefined, critical: critical || undefined },
           },
         }),
       ),

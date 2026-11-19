@@ -4,7 +4,6 @@ import Link from "next/link";
 import { useState, type FormEvent } from "react";
 
 import { AdminDeleteDialog } from "@/components/admin/admin-delete-dialog";
-import { fmtDate } from "@/components/account/key-table";
 import { ErrorState, Loading } from "@/components/states";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -21,8 +20,7 @@ import { useAdminDeleteOrg } from "@/lib/api/admin-orgs";
 import { errorMessage } from "@/lib/api/errors";
 import { adminRoutes } from "@/lib/routes";
 import { useAdminFreezeOrg, useAdminOrgs, type AdminOrg } from "@/lib/api/freeze";
-
-const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+import { fmtDate, plural } from "@/lib/utils";
 
 /** What an organization delete removes, with the counts (docs/14 §Instance administration). */
 export function OrgDeleteConsequences({ org }: { org: Pick<AdminOrg, "name" | "workspace_count" | "agent_count" | "member_count"> }) {

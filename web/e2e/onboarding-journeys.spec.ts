@@ -88,7 +88,7 @@ test("1. fresh instance: the admin walks the setup wizard to a working chat", as
   const form = llm.getByRole("form", { name: "New LLM key" });
   await form.getByLabel("Name").fill("Mock LLM");
   await form.getByLabel("Provider endpoint").selectOption(ENDPOINT_ID);
-  await form.getByLabel("API key").fill(MOCK_KEY);
+  await form.getByLabel("API key", { exact: true }).fill(MOCK_KEY);
   await form.getByRole("button", { name: "Add LLM key" }).click();
   // The key is saved when the wizard shows it from the server's state: the form gives way to the starter
   // switch ("Saved …" is transient — the Setup query refetch replaces the form as soon as the key exists).

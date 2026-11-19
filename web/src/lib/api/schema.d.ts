@@ -227,6 +227,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/admin/attention": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** What needs an instance admin's attention (C-1022): decisions first, then informational items. */
+        get: operations["adminAttention"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/admin/audit": {
         parameters: {
             query?: never;
@@ -7007,6 +7024,32 @@ export interface components {
              */
             turn_id?: string | null;
         };
+        /** @description One thing that needs an instance admin: a fixed sentence filled with names and versions. */
+        AttentionItem: {
+            /** @description The administrator has to decide (approve, reject, choose); informational items are `false`. */
+            decision: boolean;
+            detail: string;
+            /** @description The dashboard page that resolves it. */
+            href: string;
+            kind: components["schemas"]["AttentionKind"];
+            /**
+             * Format: date-time
+             * @description When the item first appeared (or the row last changed, for an item that predates the notice table).
+             */
+            since: string;
+            /** @description The connector id, the package or source id, or the organization slug. */
+            subject_id: string;
+            title: string;
+        };
+        /**
+         * @description (FIX-167 Part B, C-1022) What an item of `GET /v1/admin/attention` is about.
+         * @enum {string}
+         */
+        AttentionKind: "connector_approval" | "package_approval" | "addon_key_changed" | "host_claim_conflict" | "connector_down" | "ownerless_org";
+        /** @description `GET /v1/admin/attention` (C-1022): decisions first, oldest first; computed on read. */
+        AttentionList: {
+            items: components["schemas"]["AttentionItem"][];
+        };
         AuditEntry: {
             action: string;
             /** Format: uuid */
@@ -9409,6 +9452,11 @@ export interface components {
             name: string;
         };
         Me: {
+            /**
+             * @description (FIX-167 Part B, C-1024) E-mail me when something new needs an instance admin's decision
+             *     (default `true`; the dashboard shows it to instance admins only).
+             */
+            admin_attention_email: boolean;
             /** @description (phase 2, RFE-011a) E-mail me approvals nobody is watching (default `true`). */
             approval_email: boolean;
             /**
@@ -11363,6 +11411,11 @@ export interface components {
             status?: components["schemas"]["SettableStatus"] | null;
         };
         PatchMeRequest: {
+            /**
+             * @description (FIX-167 Part B, C-1024) Opt in or out of the e-mail about new administration decisions.
+             *     Stored for anyone, used only for an instance admin.
+             */
+            admin_attention_email?: boolean | null;
             /** @description (phase 2, RFE-011a) Opt in or out of approval e-mails. */
             approval_email?: boolean | null;
             /**
@@ -15274,6 +15327,51 @@ export interface operations {
             };
             /** @description instance_already_wide or instance_host_shared */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminAttention: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AttentionList"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

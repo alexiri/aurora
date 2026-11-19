@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Field, inputClass } from "@/components/ui/field";
+import { SecretInput } from "@/components/ui/secret-input";
 import { Form, FormActions } from "@/components/ui/form";
 import { Notice } from "@/components/ui/notice";
 import { appDisplayName } from "@/lib/api/app-name";
@@ -119,15 +120,24 @@ function DefinitionInputs({
         const id = `ocf-${def.client_key}-${f.name}`;
         return (
           <Field key={f.name} id={id} label={f.label}>
-            <input
-              id={id}
-              className={inputClass}
-              type={f.secret ? "password" : "text"}
-              autoComplete="off"
-              placeholder={existing && f.secret ? "Leave blank to keep the stored value" : ""}
-              value={values[f.name] ?? ""}
-              onChange={(e) => onChange({ ...values, [f.name]: e.target.value })}
-            />
+            {f.secret ? (
+              <SecretInput
+                id={id}
+                revealLabel={f.label}
+                placeholder={existing ? "Leave blank to keep the stored value" : ""}
+                value={values[f.name] ?? ""}
+                onChange={(v) => onChange({ ...values, [f.name]: v })}
+              />
+            ) : (
+              <input
+                id={id}
+                className={inputClass}
+                type="text"
+                autoComplete="off"
+                value={values[f.name] ?? ""}
+                onChange={(e) => onChange({ ...values, [f.name]: e.target.value })}
+              />
+            )}
           </Field>
         );
       })}

@@ -90,3 +90,5 @@ export const FolderIcon = make(<><path d="M3 6.5A1.5 1.5 0 014.5 5H10l2 2.5h7.5A
 export const FileTextIcon = make(<><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4M9 12h6M9 16h6"/></>);
 export const ImageIcon = make(<><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="1.5"/><path d="M21 16l-5-5-8 8"/></>);
 export const UploadIcon = make(<><path d="M12 16V5M7 9l5-5 5 5M5 20h14"/></>);
+export const LogOutIcon = make(<><path d="M10 4H5v16h5"/><path d="M9 12h11M16 8l4 4-4 4"/></>);
+export const ArrowRightIcon = make(<><path d="M5 12h14M13 6l6 6-6 6"/></>);

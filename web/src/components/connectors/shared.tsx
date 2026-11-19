@@ -8,10 +8,6 @@ import { ApiError } from "@/lib/api/client";
 import { connectorIconUrl, type ConnectorAdmin } from "@/lib/api/connectors";
 import { fieldErrors } from "@/lib/api/errors";
 
-export const count = (n: number, noun: string) => `${n} ${noun}${n === 1 ? "" : "s"}`;
-
-export const fmtWhen = (s?: string | null) => (s ? new Date(s).toLocaleString() : "—");
-
 const MESSAGES: Record<string, string> = {
   connector_exists: "A connector with this id already exists.",
   unknown_connector_type: "No running connector host offers this type any more.",
@@ -74,9 +70,17 @@ export function connectorStatus(c: ConnectorAdmin): { label: string; tone: "neut
 export function ConnectorStatusChip({ c }: { c: ConnectorAdmin }) {
   const s = connectorStatus(c);
   return (
-    <Badge data-testid="status-chip" tone={s.tone} className="max-w-full whitespace-normal break-words normal-case tracking-normal">
-      {s.label}
-    </Badge>
+    <>
+      <Badge data-testid="status-chip" tone={s.tone} className="max-w-full whitespace-normal break-words normal-case tracking-normal">
+        {s.label}
+      </Badge>
+      {/* (FIX-167, D-369) A widened update waits while the connector keeps running at the approved level. */}
+      {c.update_pending && c.status !== "pending_approval" ? (
+        <Badge data-testid="update-pending-chip" tone="pending" className="max-w-full whitespace-normal break-words normal-case tracking-normal">
+          Update waiting for approval
+        </Badge>
+      ) : null}
+    </>
   );
 }
 

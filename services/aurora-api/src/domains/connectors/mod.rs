@@ -20,7 +20,7 @@ pub mod inbox;
 mod ingest;
 mod link;
 mod managed;
-mod manifest;
+pub(crate) mod manifest;
 pub mod ops;
 mod plane;
 mod routes;

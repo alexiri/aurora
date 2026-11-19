@@ -90,6 +90,53 @@ pub struct ListUsersQuery {
     pub cursor: Option<String>,
 }
 
+/// (FIX-167 Part B, C-1022) What an item of `GET /v1/admin/attention` is about.
+#[derive(Serialize, ToSchema, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AttentionKind {
+    /// A connector waiting for its first approval, or running while an update waits.
+    ConnectorApproval,
+    /// A package version in `pending_approval`.
+    PackageApproval,
+    /// An add-on source whose signing key changed.
+    AddonKeyChanged,
+    /// Two packages claim the same host; one waits for a winner.
+    HostClaimConflict,
+    /// A managed connector whose hosts report `error` or that no host reports (not a decision).
+    ConnectorDown,
+    /// An organization without an active owner (not a decision).
+    OwnerlessOrg,
+}
+
+impl AttentionKind {
+    /// Decision items are e-mailed and pushed once when they first appear.
+    pub fn is_decision(self) -> bool {
+        !matches!(self, Self::ConnectorDown | Self::OwnerlessOrg)
+    }
+}
+
+/// One thing that needs an instance admin: a fixed sentence filled with names and versions.
+#[derive(Serialize, ToSchema)]
+pub struct AttentionItem {
+    pub kind: AttentionKind,
+    /// The connector id, the package or source id, or the organization slug.
+    pub subject_id: String,
+    pub title: String,
+    pub detail: String,
+    /// When the item first appeared (or the row last changed, for an item that predates the notice table).
+    pub since: DateTime<Utc>,
+    /// The dashboard page that resolves it.
+    pub href: String,
+    /// The administrator has to decide (approve, reject, choose); informational items are `false`.
+    pub decision: bool,
+}
+
+/// `GET /v1/admin/attention` (C-1022): decisions first, oldest first; computed on read.
+#[derive(Serialize, ToSchema)]
+pub struct AttentionList {
+    pub items: Vec<AttentionItem>,
+}
+
 #[derive(Deserialize, ToSchema)]
 pub struct PatchAdminUserRequest {
     pub is_instance_admin: Option<bool>,

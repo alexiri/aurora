@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { ConfirmDialog, FormDialog } from "@/components/ui/confirm-dialog";
 import { DataTable, Td, Th } from "@/components/ui/data-table";
 import { Field, inputClass } from "@/components/ui/field";
+import { SecretInput } from "@/components/ui/secret-input";
 import { Notice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
 import { ItemList, ListRow, Section } from "@/components/ui/section";
@@ -222,13 +223,12 @@ function StoreDialog({
         label="Secret id"
         hint={sealed ? "Set. Leave empty to keep it; type a new one to replace it." : "Sealed when saved; it is never shown again."}
       >
-        <input
+        <SecretInput
           id="ss-secret-id"
-          type="password"
+          revealLabel="Secret id"
           autoComplete="new-password"
-          className={inputClass}
           value={d.secretId}
-          onChange={(e) => set("secretId", e.target.value)}
+          onChange={(v) => set("secretId", v)}
           placeholder={sealed ? "••••••••" : ""}
         />
       </Field>

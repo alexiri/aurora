@@ -547,7 +547,7 @@ export function Composer({
           </div>
         </div>
         <div className="mt-1 flex items-center gap-1 md:gap-1.5">
-          <label className="inline-flex size-11 shrink-0 cursor-pointer items-center justify-center rounded-control text-ink-2 hover:bg-subtle hover:text-ink focus-within:outline focus-within:outline-2 focus-within:outline-accent md:size-9">
+          <label className="inline-flex size-11 shrink-0 cursor-pointer items-center justify-center rounded-control text-ink-2 hover:bg-subtle hover:text-ink has-[:focus-visible]:outline has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-accent md:size-9">
             <PaperclipIcon width={18} height={18} />
             <span className="sr-only">Attach</span>
             <input

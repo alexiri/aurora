@@ -118,6 +118,21 @@ pub const SECRET_LINK_CACHE_TTL: Duration = Duration::from_secs(300);
 pub const SECRET_LINK_CACHE_MAX_BYTES: usize = 64 * 1024 * 1024;
 /// (P5-ICS, C-843) Redirect hops the gateway follows for a secret link.
 pub const SECRET_LINK_REDIRECTS_MAX: usize = 3;
+/// (P5-WEBHOOK, D-320, C-909, C-912) Largest stored outgoing-webhook configuration (the JSON of
+/// `app_connections.config`).
+pub const WEBHOOK_CONFIG_MAX: usize = 32 * 1024;
+/// (C-909) Largest body template.
+pub const WEBHOOK_TEMPLATE_MAX: usize = 16 * 1024;
+/// (C-909) Most slots one webhook declares.
+pub const WEBHOOK_SLOTS_MAX: usize = 20;
+/// (C-910) Largest slot-values body an agent sends (413 `values_too_large`).
+pub const WEBHOOK_VALUES_MAX: usize = 64 * 1024;
+/// (C-910) Largest rendered body (413 `rendered_too_large`).
+pub const WEBHOOK_BODY_MAX: usize = 256 * 1024;
+/// (C-910) Most of the receiver's answer the agent gets (`X-Aurora-Truncated: 1` beyond).
+pub const WEBHOOK_RESPONSE_MAX: usize = 64 * 1024;
+/// (C-910) Time-out of one outgoing-webhook request; there is no retry.
+pub const WEBHOOK_TIMEOUT: Duration = Duration::from_secs(15);
 /// (P4-LLM-4, D-261) `aws_assume_role` `session_duration_secs`, in seconds (default 3 600).
 pub const LLM_ASSUME_ROLE_DURATION: std::ops::RangeInclusive<u64> = 900..=43_200;
 /// Minted entries per gateway replica (least recently used evicted).

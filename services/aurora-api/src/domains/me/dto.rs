@@ -57,6 +57,9 @@ pub struct Me {
     pub default_org_id: Option<Uuid>,
     /// (phase 2, RFE-011a) E-mail me approvals nobody is watching (default `true`).
     pub approval_email: bool,
+    /// (FIX-167 Part B, C-1024) E-mail me when something new needs an instance admin's decision
+    /// (default `true`; the dashboard shows it to instance admins only).
+    pub admin_attention_email: bool,
     /// (P2-FU-1, C-195) The caller's own client address as this API resolves it: the socket peer,
     /// or the rightmost untrusted `X-Forwarded-For` hop when the peer is in
     /// `server.trusted_proxies`. A hint for allow-lists; the gateway may see another address
@@ -79,4 +82,8 @@ pub struct PatchMeRequest {
     /// (phase 2, RFE-011a) Opt in or out of approval e-mails.
     #[serde(default)]
     pub approval_email: Option<bool>,
+    /// (FIX-167 Part B, C-1024) Opt in or out of the e-mail about new administration decisions.
+    /// Stored for anyone, used only for an instance admin.
+    #[serde(default)]
+    pub admin_attention_email: Option<bool>,
 }

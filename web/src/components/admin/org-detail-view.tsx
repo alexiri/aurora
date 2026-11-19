@@ -5,7 +5,6 @@ import { useState } from "react";
 
 import { AdminDeleteDialog } from "@/components/admin/admin-delete-dialog";
 import { OrgDeleteConsequences } from "@/components/admin/orgs-view";
-import { fmtDate } from "@/components/account/key-table";
 import { ErrorState, Loading } from "@/components/states";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -16,8 +15,7 @@ import { PageHeader } from "@/components/ui/page-header";
 import { Section } from "@/components/ui/section";
 import { adminRoutes } from "@/lib/routes";
 import { useAdminDeleteOrg, useAdminDeleteWorkspace, useAdminOrg, useAdminOrgWorkspaces, type AdminOrgWorkspace } from "@/lib/api/admin-orgs";
-
-const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+import { fmtDate, plural } from "@/lib/utils";
 
 function WorkspaceRow({ ws, onDeleted }: { ws: AdminOrgWorkspace; onDeleted: (msg: string) => void }) {
   const [open, setOpen] = useState(false);

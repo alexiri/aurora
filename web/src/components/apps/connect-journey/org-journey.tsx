@@ -195,16 +195,21 @@ export function OrgConnectJourney({ orgId, appId, onClose }: { orgId: string; ap
   const title = appName ? `Connect ${appName} for ${orgName}` : `Connect an app or website for ${orgName}`;
   return (
     <Dialog open onOpenChange={(o) => (o ? null : onClose())}>
-      <DialogContent size="lg" title={title} data-testid="org-connect-journey">
-        {current !== "done" ? (
-          <ol className="mb-4 flex gap-1.5 text-xs font-semibold uppercase tracking-wider" aria-label="Steps">
-            {steps.map((s) => (
-              <li key={s} aria-current={s === current ? "step" : undefined} className={cn("flex-1 border-t-4 pt-1.5", s === current ? "border-accent text-ink" : "border-line text-muted")}>
-                {ORG_STEP_LABEL[s]}
-              </li>
-            ))}
-          </ol>
-        ) : null}
+      <DialogContent
+        size="lg"
+        title={title}
+        data-testid="org-connect-journey"
+        header={
+          current !== "done" ? (
+            <ol className="flex gap-1.5 text-xs font-semibold uppercase tracking-wider" aria-label="Steps">
+              {steps.map((s) => (
+                <li key={s} aria-current={s === current ? "step" : undefined} className={cn("flex-1 border-t-4 pt-1.5", s === current ? "border-accent text-ink" : "border-line text-muted")}>
+                  {ORG_STEP_LABEL[s]}
+                </li>
+              ))}
+            </ol>
+          ) : null
+        }>
         {body}
       </DialogContent>
     </Dialog>
