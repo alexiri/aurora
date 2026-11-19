@@ -24,6 +24,8 @@ vi.mock("@/lib/api/conversations", () => ({
   useSandbox: () => ({ data: sandbox, isPending: false, isError: false }),
   useRestartSandbox: () => ({ isPending: false, error: null, mutate: vi.fn() }),
   useRetrySandbox: () => ({ isPending: false, error: null, mutate: vi.fn() }),
+  // (P5-APIGAP-1) The Computer page's Wake button.
+  useWakeSandbox: () => ({ isPending: false, error: null, mutate: vi.fn() }),
   useStartFailures: () => ({ data: { items: [] } }),
 }));
 vi.mock("@/lib/api/queries", () => ({
