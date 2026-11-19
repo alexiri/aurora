@@ -6676,6 +6676,11 @@ export interface components {
             credentials: components["schemas"]["CredentialInfo"][];
             description: string;
             family?: components["schemas"]["AppFamily"] | null;
+            /**
+             * @description (P5-POLISH-3, D-387, C-1031) A question a person could send to try the app; the journey's Done
+             *     step opens it as a chat draft.
+             */
+            first_prompt?: string | null;
             has_dark_icon: boolean;
             hosts: components["schemas"]["HostInfo"][];
             instances?: components["schemas"]["AppInstances"] | null;
@@ -6687,6 +6692,8 @@ export interface components {
             package_version: string;
             /** @description (phase 4, P4-GSL) as on `AppSummary`. */
             serves_library: boolean;
+            /** @description (P5-POLISH-3, C-1031) As on `AppSummary`. */
+            summary?: string | null;
             tools: components["schemas"]["Tool"][];
         };
         /**
@@ -6826,6 +6833,11 @@ export interface components {
              *     library (the dashboard offers its org-scoped connections when connecting a repository).
              */
             serves_library: boolean;
+            /**
+             * @description (P5-POLISH-3, D-387, C-1029, C-1031) The manifest's `about.summary`: one plain sentence cards show
+             *     whole; `null` when the package has none (clients then clamp `description`, never cutting mid-word).
+             */
+            summary?: string | null;
         };
         Approval: {
             agent?: components["schemas"]["ApprovalAgent"] | null;
@@ -7308,6 +7320,8 @@ export interface components {
              *     chooser; `null` = the window falls back to the kind.
              */
             label?: string | null;
+            /** @description (P5-POLISH-3, D-387, C-1031) The permissions to tick on the app's token screen, per access level. */
+            permission_hints: components["schemas"]["LevelHints"][];
             /**
              * @description (FIX-136) For a `fields` method: the read scopes whose probe prefills the declaration
              *     ("Which scopes did you give this token?"); the others are asked without a prefill.
@@ -9276,6 +9290,16 @@ export interface components {
          * @enum {string}
          */
         Level: "read" | "ask" | "act";
+        /**
+         * @description (P5-POLISH-3, D-387, C-1031) The permissions to tick on the app's own token screen for one access level, in
+         *     the app's own words ("Contents · Read"). For a token method the levels are the journey's `read` and `write`.
+         */
+        LevelHints: {
+            hints: string[];
+            label: string;
+            /** @description The access level's id (`read` | `write` for a token method). */
+            level: string;
+        };
         LibraryCatalogue: {
             /** @description The commit the listing was read at: quote it when adding. */
             commit_sha: string;
@@ -10967,6 +10991,8 @@ export interface components {
                 /** @description `pending_approval` | `active` | `superseded` | `rejected` | `disabled` | `invalid`. */
                 status: string;
                 status_reason?: string | null;
+                /** @description (C-1032, C-1031) The first app's `about.summary`, for the list's one-line description. */
+                summary?: string | null;
                 /** @description (P5-ASRC, C-600) a manifest version of the same package is newer than this row. */
                 update_available?: boolean;
                 version: string;
@@ -11876,6 +11902,8 @@ export interface components {
             /** @description `pending_approval` | `active` | `superseded` | `rejected` | `disabled` | `invalid`. */
             status: string;
             status_reason?: string | null;
+            /** @description (C-1032, C-1031) The first app's `about.summary`, for the list's one-line description. */
+            summary?: string | null;
             /** @description (P5-ASRC, C-600) a manifest version of the same package is newer than this row. */
             update_available?: boolean;
             version: string;
@@ -13250,6 +13278,8 @@ export interface components {
             kind: string;
             label: string;
             needs: components["schemas"]["SetupNeed"][];
+            /** @description (P5-POLISH-3, D-387, C-1031) The permissions to tick on the app's token screen, per access level. */
+            permission_hints: components["schemas"]["LevelHints"][];
             /** @description The method works for people here. */
             ready: boolean;
             recommended: boolean;

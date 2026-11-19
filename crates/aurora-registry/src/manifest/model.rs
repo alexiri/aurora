@@ -311,6 +311,15 @@ pub struct About {
     pub web_hosts: Vec<String>,
     pub connect_note: Option<ConnectNote>,
     pub label_hint: Option<String>,
+    /// (P5-POLISH-3, D-387, C-1031) One plain sentence, 1 to 100 characters, saying what an agent can do
+    /// with the app; cards show it whole instead of cutting `description`. Presentation only: changing it
+    /// never widens permissions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
+    /// (P5-POLISH-3, D-387, C-1031) A question a person could send to try the app, 1 to 120 characters
+    /// ("What's on my calendar this week?"); the journey's Done step opens it as a chat draft.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_prompt: Option<String>,
     /// (FIX-135, D-242) The product this app is a deployment of, shared with the other apps of
     /// the package that are the same product elsewhere (a vendor's hosted service and its
     /// self-hosted server): the catalogue and every picker show one product. Presentation only;
@@ -437,6 +446,16 @@ impl Connect {
         })
     }
 
+    /// (P5-POLISH-3, C-1031) The method's access levels: an OAuth method's account choices, a token
+    /// method's `read` / `write` choices with their `permission_hints` (none for a hook).
+    pub fn access_levels(&self) -> &[AccessLevel] {
+        match self {
+            Self::Oauth2(c) => &c.access_levels,
+            Self::Fields(c) => &c.access_levels,
+            Self::Hook(_) => &[],
+        }
+    }
+
     /// The method the connect window preselects (at most one per app).
     pub fn recommended(&self) -> bool {
         match self {
@@ -524,6 +543,11 @@ pub struct AccessLevel {
     pub label: String,
     #[serde(default)]
     pub authorize_params: BTreeMap<String, String>,
+    /// (P5-POLISH-3, D-387, C-1031) The permissions to tick on the app's own token screen for this
+    /// level, in the app's own words ("Contents · Read"): 1 to 60 characters each, at most 12. On a
+    /// `fields` (token) method the levels are the journey's choices, `read` and `write`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub permission_hints: Vec<String>,
 }
 
 /// (P5-UX-2, C-956) Who a connect method is for.
@@ -612,6 +636,10 @@ pub struct FieldsConnect {
     /// (P5-UX-2, C-956) Scopes of the journey's "Read only" and "Read and change" choices.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scope_presets: Option<ScopePresets>,
+    /// (P5-POLISH-3, C-1031) The journey's `read` and `write` choices with the token permissions to
+    /// tick for each (`permission_hints`); no other id.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub access_levels: Vec<AccessLevel>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub token: Option<Token>,
     /// (P5-UX-13, C-942) Values the person copies into the other service.

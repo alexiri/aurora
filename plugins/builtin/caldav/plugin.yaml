@@ -1,6 +1,6 @@
 package:
   id: caldav
-  version: 1.0.0
+  version: 1.1.0
   contract: 1
   min_core: 0.1.0
   publisher: aurora
@@ -12,6 +12,8 @@ apps:
       id: caldav
       name: CalDAV calendar
       description: Let agents read and change a calendar on a CalDAV server you choose. You give the server address, your username and an app password; the Aurora gateway adds the password to the agent's requests, so the agent never sees it. Works with iCloud, Fastmail, Nextcloud, mailbox.org, Posteo and any other CalDAV server, with no OAuth app.
+      summary: Events on your iCloud, Fastmail, Nextcloud or other CalDAV calendar.
+      first_prompt: "What's on my calendar this week?"
       category: productivity
       api_docs: https://datatracker.ietf.org/doc/html/rfc4791
       connect_note:

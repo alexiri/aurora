@@ -82,6 +82,8 @@ pub struct SetupMethod {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub who_can: Option<WhoCan>,
     pub scope_presets: MethodScopePresets,
+    /// (P5-POLISH-3, D-387, C-1031) The permissions to tick on the app's token screen, per access level.
+    pub permission_hints: Vec<super::dto::LevelHints>,
 }
 
 /// An OAuth client by reference: never its id (the provider's), its secret or its fields.
@@ -404,6 +406,7 @@ impl<'a> Facts<'a> {
                 client_key,
                 who_can,
                 scope_presets: presets(c),
+                permission_hints: super::service::permission_hints(c),
             });
         }
         methods

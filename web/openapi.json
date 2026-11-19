@@ -39851,6 +39851,13 @@
               }
             ]
           },
+          "first_prompt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "(P5-POLISH-3, D-387, C-1031) A question a person could send to try the app; the journey's Done\nstep opens it as a chat draft."
+          },
           "has_dark_icon": {
             "type": "boolean"
           },
@@ -39901,6 +39908,13 @@
           "serves_library": {
             "type": "boolean",
             "description": "(phase 4, P4-GSL) as on `AppSummary`."
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "(P5-POLISH-3, C-1031) As on `AppSummary`."
           },
           "tools": {
             "type": "array",
@@ -40313,6 +40327,13 @@
           "serves_library": {
             "type": "boolean",
             "description": "(phase 4, P4-GSL, D-149) the app declares a `library` block: it can serve a git skill\nlibrary (the dashboard offers its org-scoped connections when connecting a repository)."
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "(P5-POLISH-3, D-387, C-1029, C-1031) The manifest's `about.summary`: one plain sentence cards show\nwhole; `null` when the package has none (clients then clamp `description`, never cutting mid-word)."
           }
         }
       },
@@ -41800,6 +41821,7 @@
           "probe_scopes",
           "audience",
           "scope_presets",
+          "permission_hints",
           "show_context",
           "has_probe"
         ],
@@ -41863,6 +41885,13 @@
               "null"
             ],
             "description": "(FIX-123, D-214) Short name for the connect window's \"How do you want to connect?\"\nchooser; `null` = the window falls back to the kind."
+          },
+          "permission_hints": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LevelHints"
+            },
+            "description": "(P5-POLISH-3, D-387, C-1031) The permissions to tick on the app's token screen, per access level."
           },
           "probe_scopes": {
             "type": "array",
@@ -48239,6 +48268,30 @@
           "act"
         ]
       },
+      "LevelHints": {
+        "type": "object",
+        "description": "(P5-POLISH-3, D-387, C-1031) The permissions to tick on the app's own token screen for one access level, in\nthe app's own words (\"Contents · Read\"). For a token method the levels are the journey's `read` and `write`.",
+        "required": [
+          "level",
+          "label",
+          "hints"
+        ],
+        "properties": {
+          "hints": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "label": {
+            "type": "string"
+          },
+          "level": {
+            "type": "string",
+            "description": "The access level's id (`read` | `write` for a token method)."
+          }
+        }
+      },
       "LibraryCatalogue": {
         "type": "object",
         "required": [
@@ -53788,6 +53841,13 @@
                     "null"
                   ]
                 },
+                "summary": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "(C-1032, C-1031) The first app's `about.summary`, for the list's one-line description."
+                },
                 "update_available": {
                   "type": "boolean",
                   "description": "(P5-ASRC, C-600) a manifest version of the same package is newer than this row."
@@ -56897,6 +56957,13 @@
               "string",
               "null"
             ]
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "(C-1032, C-1031) The first app's `about.summary`, for the list's one-line description."
           },
           "update_available": {
             "type": "boolean",
@@ -61240,7 +61307,8 @@
           "recommended",
           "ready",
           "needs",
-          "scope_presets"
+          "scope_presets",
+          "permission_hints"
         ],
         "properties": {
           "audience": {
@@ -61274,6 +61342,13 @@
             "items": {
               "$ref": "#/components/schemas/SetupNeed"
             }
+          },
+          "permission_hints": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LevelHints"
+            },
+            "description": "(P5-POLISH-3, D-387, C-1031) The permissions to tick on the app's token screen, per access level."
           },
           "ready": {
             "type": "boolean",

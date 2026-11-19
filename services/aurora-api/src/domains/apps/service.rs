@@ -156,6 +156,7 @@ pub async fn summary(state: &AppState, a: &AppEntry, p: &PackageEntry, av: &Avai
             instance_bound: a.instances.is_some(),
         }),
         credential_free: aurora_registry::credential_free::entry_is_credential_free(a),
+        summary: a.about.summary.clone(),
         readiness: None,
         accounts: Vec::new(),
     }
@@ -194,6 +195,35 @@ fn field(f: &manifest::FormField) -> FormField {
     }
 }
 
+/// An OAuth method's account choices (the connect window's access level). A token method's levels are the
+/// journey's `read` and `write` and are not account choices: they only carry `permission_hints`.
+fn access_levels(c: &Connect) -> Vec<AccessLevel> {
+    match c {
+        Connect::Oauth2(o) => o
+            .access_levels
+            .iter()
+            .map(|l| AccessLevel {
+                id: l.id.clone(),
+                label: l.label.clone(),
+            })
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// (C-1031) The token permissions to tick per access level, for the levels that give some.
+pub fn permission_hints(c: &Connect) -> Vec<LevelHints> {
+    c.access_levels()
+        .iter()
+        .filter(|l| !l.permission_hints.is_empty())
+        .map(|l| LevelHints {
+            level: l.id.clone(),
+            label: l.label.clone(),
+            hints: l.permission_hints.clone(),
+        })
+        .collect()
+}
+
 fn method(c: &Connect) -> ConnectMethod {
     let empty = |id: &str, kind: &str, fields: Vec<FormField>| ConnectMethod {
         id: id.to_owned(),
@@ -210,6 +240,7 @@ fn method(c: &Connect) -> ConnectMethod {
         probe_scopes: Vec::new(),
         audience: super::setup::audience_of(c),
         scope_presets: super::setup::presets(c),
+        permission_hints: permission_hints(c),
         show_context: c.show_context().to_vec(),
         has_probe: match c {
             Connect::Oauth2(o) => o.probe.is_some(),
@@ -245,14 +276,7 @@ fn method(c: &Connect) -> ConnectMethod {
                 })
                 .collect(),
             default_scopes: o.default_scopes.clone(),
-            access_levels: o
-                .access_levels
-                .iter()
-                .map(|l| AccessLevel {
-                    id: l.id.clone(),
-                    label: l.label.clone(),
-                })
-                .collect(),
+            access_levels: access_levels(c),
             client_key: Some(o.client.clone()),
             callback: Some(s(&o.callback)),
             ..empty(&o.id, "oauth2", o.fields.iter().map(field).collect())
@@ -373,6 +397,8 @@ pub async fn detail(
         serves_library: sm.serves_library,
         family: sm.family,
         credential_free: sm.credential_free,
+        summary: sm.summary,
+        first_prompt: a.about.first_prompt.clone(),
         api_docs: a.about.api_docs.clone(),
         connect_note: a.about.connect_note.as_ref().map(|n| ConnectNote {
             text: n.text.clone(),

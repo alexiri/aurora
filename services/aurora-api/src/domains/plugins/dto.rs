@@ -133,6 +133,8 @@ pub struct PluginPackage {
     pub reaches: Vec<String>,
     /// (C-1032) How many more hosts there are than `reaches` lists.
     pub reaches_more: u32,
+    /// (C-1032, C-1031) The first app's `about.summary`, for the list's one-line description.
+    pub summary: Option<String>,
     /// (P5-ASRC, C-600) the addon source's name at read time (never stored).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_name: Option<String>,
@@ -267,8 +269,13 @@ impl PluginPackage {
             other => other,
         }
         .to_owned();
+        let summary = manifest
+            .iter()
+            .flat_map(|m| &m.apps)
+            .find_map(|a| a.about.summary.clone());
         Self {
             origin,
+            summary,
             reaches: hosts,
             reaches_more,
             apps: manifest

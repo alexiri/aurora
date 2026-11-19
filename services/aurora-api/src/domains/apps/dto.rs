@@ -50,6 +50,9 @@ pub struct AppSummary {
     /// instances or database; every connect method is a `fields` method with no fields): an agent
     /// is given access in one step. Derived from the installed manifest, not stored.
     pub credential_free: bool,
+    /// (P5-POLISH-3, D-387, C-1029, C-1031) The manifest's `about.summary`: one plain sentence cards show
+    /// whole; `null` when the package has none (clients then clamp `description`, never cutting mid-word).
+    pub summary: Option<String>,
     /// (P5-POLISH-3, D-388, C-1029) Whether the connect journey can start now for the caller; only in the
     /// catalogue list with a `workspace_id` (`null` otherwise).
     pub readiness: Option<super::setup::AppReadiness>,
@@ -133,6 +136,16 @@ pub struct AccessLevel {
     pub label: String,
 }
 
+/// (P5-POLISH-3, D-387, C-1031) The permissions to tick on the app's own token screen for one access level, in
+/// the app's own words ("Contents · Read"). For a token method the levels are the journey's `read` and `write`.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct LevelHints {
+    /// The access level's id (`read` | `write` for a token method).
+    pub level: String,
+    pub label: String,
+    pub hints: Vec<String>,
+}
+
 #[derive(Debug, Serialize, ToSchema)]
 pub struct ConnectMethod {
     pub id: String,
@@ -159,6 +172,8 @@ pub struct ConnectMethod {
     pub audience: super::setup::MethodAudience,
     /// (P5-UX-2, C-956) The scopes of "Read only" and "Read and change", already defaulted.
     pub scope_presets: super::setup::MethodScopePresets,
+    /// (P5-POLISH-3, D-387, C-1031) The permissions to tick on the app's token screen, per access level.
+    pub permission_hints: Vec<LevelHints>,
     /// (P5-UX-13, C-942) Values the person copies into the other service, shown with Copy above
     /// the method's fields: `org_external_id` (the AWS role's trust policy).
     pub show_context: Vec<String>,
@@ -241,6 +256,11 @@ pub struct AppDetail {
     pub available: bool,
     pub connection_count: i64,
     pub has_dark_icon: bool,
+    /// (P5-POLISH-3, C-1031) As on `AppSummary`.
+    pub summary: Option<String>,
+    /// (P5-POLISH-3, D-387, C-1031) A question a person could send to try the app; the journey's Done
+    /// step opens it as a chat draft.
+    pub first_prompt: Option<String>,
     /// (phase 4, P4-GRANTS, D-123, C-414) the manifest's `grants` flags.
     pub app_restrictions: crate::domains::grants::dto::AppRestrictions,
     /// (phase 4, P4-GSL) as on `AppSummary`.

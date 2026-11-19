@@ -132,6 +132,8 @@ about:
   id: gmail                     # immutable app id, globally unique across packages
   name: Gmail
   description: Read and send email
+  summary: Messages, threads and labels in your Gmail.        # optional, 1-100 chars, one plain sentence (P5-POLISH-3, C-1031)
+  first_prompt: "Summarize my unread emails from today."      # optional, 1-120 chars: a question a person could send to try the app
   category: communication       # open vocabulary for UI grouping
   api_docs: https://developers.google.com/gmail/api
   api_spec: https://…/openapi.json      # optional
@@ -190,6 +192,20 @@ metadata:                       # stored in clear, non-secret
     - { name: subdomain, label: Host, type: text, store: tenant_host, required: true, placeholder: "acme.zendesk.com" }
   probe: { … }                  # optional, names the account
 ```
+**Text for people (P5-POLISH-3, D-387, C-1031).** `about.summary` (1 to 100 characters, one plain sentence;
+cards show it whole instead of cutting `description`), `about.first_prompt` (1 to 120 characters; the
+connect journey's Done step opens it as an unsent chat draft) and `access_levels[].permission_hints` (at
+most 12 entries of 1 to 60 characters each: the permissions a person ticks on the app's own token screen
+for that level, in the app's words, e.g. `"Contents · Read"`) are optional and checked at ingest
+(`about_text_invalid`, `permission_hints_invalid`, `access_level_duplicate`). On a `fields` (token) method
+`access_levels` holds the journey's choices, `read` and `write` (`access_level_unknown` otherwise), and only
+carries hints: it is not an account choice like an `oauth2` method's levels. They are exposed on
+`GET /v1/apps/{app}` (`summary`, `first_prompt`, `connect[].permission_hints`) and the connect plan's methods.
+All three are presentation: a version that only adds or changes them widens nothing (no re-approval). Every
+builtin package fills `summary` and `first_prompt` for each app and the hints of each token method whose
+token screen asks for permissions (GitHub, GitHub Enterprise Server, GitLab, Sentry, Indico), citing the
+service's documentation in its `docs/setup.md`.
+
 **Tool scopes (FIX-136, D-241, C-741).** `tools[].scopes: [scope ids]` (any of; absent = no
 requirement) names the scopes a tool needs; each must be declared by one of the app's connect
 methods (`oauth2` `scopes`, or a `fields` method's new `scopes`), else `tool_scope_unknown`. A

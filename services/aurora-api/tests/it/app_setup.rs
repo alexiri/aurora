@@ -39,7 +39,7 @@ oauth_clients:
       - { name: client_id, label: Client ID }
       - { name: client_secret, label: Secret, secret: true }
 apps:
-  - about: { id: ghlike, name: GH Like, description: D, category: dev }
+  - about: { id: ghlike, name: GH Like, description: D, category: dev, summary: Repositories and issues on GH Like., first_prompt: "Which issues are open?" }
     credentials:
       - { name: access_token, secret: true, optional: true }
       - { name: refresh_token, secret: true, optional: true }
@@ -69,6 +69,9 @@ apps:
       - id: token
         kind: fields
         label: Personal token
+        access_levels:
+          - { id: read, label: Read only, permission_hints: ["Contents · Read", "Issues · Read"] }
+          - { id: write, label: Read and write, permission_hints: ["Contents · Read and write", "Issues · Read and write"] }
         fields:
           - { name: access_token, label: Token, type: secret, required: true }
     hosts:
@@ -925,6 +928,63 @@ async fn a_switched_off_app_is_hidden_from_a_member_and_shown_to_an_admin_as_una
     assert_eq!(lin["readiness"]["who_can"]["action"], "allow_app");
     assert_eq!(lin["readiness"]["who_can"]["you_can"], true);
     assert_eq!(item(&list, "ghlike")["readiness"]["state"], "ready");
+}
+
+/// (P5-POLISH-3, D-387, C-1031) The package's text for people reaches the clients: `summary` on the catalogue,
+/// `summary`, `first_prompt` and the token permissions per level on the app, and the same hints on the connect
+/// plan's methods. A token method's levels are not account choices (`access_levels` stays an OAuth thing).
+#[tokio::test]
+async fn package_text_summary_first_prompt_and_permission_hints_are_served() {
+    let w = world().await;
+    let (_, list) = w.catalogue(&w.member).await;
+    assert_eq!(
+        item(&list, "ghlike")["summary"],
+        "Repositories and issues on GH Like."
+    );
+    assert!(item(&list, "lin")["summary"].is_null());
+
+    let (s, d) = w
+        .call(&w.member, Method::GET, "/v1/apps/ghlike", None)
+        .await;
+    assert_eq!(s, 200, "{d}");
+    assert_eq!(d["summary"], "Repositories and issues on GH Like.");
+    assert_eq!(d["first_prompt"], "Which issues are open?");
+    let token = method_of(&d["connect"], "token");
+    assert_eq!(
+        token["permission_hints"],
+        json!([
+            {"level": "read", "label": "Read only", "hints": ["Contents · Read", "Issues · Read"]},
+            {"level": "write", "label": "Read and write", "hints": ["Contents · Read and write", "Issues · Read and write"]},
+        ]),
+        "{token}"
+    );
+    assert_eq!(token["access_levels"], json!([]), "not an account choice");
+    assert_eq!(
+        method_of(&d["connect"], "oauth")["permission_hints"],
+        json!([])
+    );
+
+    let (_, plan) = w
+        .call(
+            &w.ws_owner,
+            Method::GET,
+            &format!("/v1/apps/ghlike/connect-plan?{}", w.ws_q()),
+            None,
+        )
+        .await;
+    assert_eq!(
+        method(&plan, "token")["permission_hints"],
+        token["permission_hints"]
+    );
+}
+
+fn method_of<'a>(methods: &'a Value, id: &str) -> &'a Value {
+    methods
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["id"] == id)
+        .unwrap_or_else(|| panic!("{id}: {methods}"))
 }
 
 #[tokio::test]
