@@ -104,7 +104,10 @@ pub const SECURITY_CRITICAL_ACTIONS: &[&str] = &[
     "user.admit_by_claim",
     "user.delete",
     "workspace_access.remove",
+    // (P5-APIGAP-4, D-399, SEC-138) one person suspended in or restored to one workspace
+    "workspace_access.restore",
     "workspace_access.set",
+    "workspace_access.suspend",
     // (P5-UX-5, D-325, SEC-128) a workspace owner adds a person by e-mail: bound at once, or a pending row that a
     // sign-in applies (or the owner removes)
     "workspace.access.grant",

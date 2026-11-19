@@ -1549,6 +1549,7 @@
       "idp_role",
       "idp_source",
       "role",
+      "status",
       "user_id",
       "workspace_id"
     ],
@@ -3128,6 +3129,7 @@
       "idp_role": "text null",
       "idp_source": "text null",
       "role": "text",
+      "status": "text not null",
       "user_id": "uuid",
       "workspace_id": "uuid"
     },

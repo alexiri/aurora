@@ -536,6 +536,26 @@ has an `active` membership in its org **and** (the user's org role is `owner` or
 `admin` **or** a `workspace_access` row exists). `can_own(user, workspace)` is
 the same with workspace role `owner` (or org owner/admin).
 
+**Suspended in one workspace** (phase 5, P5-APIGAP-4, D-399, C-1051, SEC-138). A
+workspace owner can suspend a person's direct binding in that workspace
+(`workspace_access.status = suspended`; `PATCH /v1/workspaces/{ws}/access/{user}`). The
+organization-wide suspension (*Roles*), scoped to one workspace: the person is a
+non-member of **that** workspace for every check, so "a `workspace_access` row exists"
+above means an **active** row, and a suspended person also derives nothing from their
+groups' bindings on that workspace. An effective org owner or admin keeps the implicit
+owner role (the org role outranks a workspace owner) and cannot be suspended in a
+workspace (409 `implicit_access`); nobody can suspend themselves, an IdP-claimed binding
+or the last active owner. The suspension ends at once: the person's queued and live
+speaker turns in the workspace end `aborted` (`user_suspended`), gateways drop their
+identities (`user` scope) and their open streams re-authorize; terminal, SSH, Files and
+preview sessions end at their next access re-check. It keeps the binding and role, their
+sessions (other workspaces and orgs are unaffected), API keys (refused, not revoked),
+and everything they own. Restoring sets the row `active` again. Audit:
+`workspace_access.suspend|restore` (critical). The single SQL definition is the
+`effective_workspace_access` view; the gateway role's `can_use` restates it, and a
+source-scan guard (`aurora-db` `membership_queries`) lists every other raw reader of the
+binding tables.
+
 **`can_approve`** (phase 2, RFE-012, D-55): `can_approve(user, workspace)` is the
 same with workspace role `owner` **or** `approver` (or org owner/admin). The
 hierarchy is `can_own ⊂ can_approve ⊂ can_use`. A plain `member` chats with the
@@ -1380,7 +1400,7 @@ strings are the ones the API already used and are listed in `SECURITY_CRITICAL_A
 | Policy | `policy.publish`, `policy.rollback` (org and workspace) |
 | Plugins and registry | `plugin.approve\|reject\|disable\|enable\|uninstall`, `plugin.supersede` (FIX-123: connections of a superseded app moved to its successor, counts only), `trusted_key.add\|remove`, `host_claim.decide`, (phase 5, P5-ASRC, D-250, C-608; all security-critical) `addon_source.add\|update\|remove\|check`, `addon.ingest` |
 | Approval decisions | `approval.decide`, `approval.batch_decide`, `action_approval.decide`, `reach.decide`, `agent_link.decide` (whatever the door: dashboard, API, channel click) |
-| Roles and membership | `org_member.add\|role_change\|suspend\|reactivate\|remove`, `org.transfer_ownership`, `invitation.create\|accept\|cancel`, `workspace_access.put\|delete`, `user.instance_admin_grant\|revoke`, `user.disable\|enable`, `user.delete` |
+| Roles and membership | `org_member.add\|role_change\|suspend\|reactivate\|remove`, `org.transfer_ownership`, `invitation.create\|accept\|cancel`, `workspace_access.put\|delete`, (phase 5, P5-APIGAP-4) `workspace_access.suspend\|restore` (emitted as written), `user.instance_admin_grant\|revoke`, `user.disable\|enable`, `user.delete` |
 | Previews (phase 4, P4-PRV-1) | `preview.share.create\|update\|delete`, `org.previews.update` (emitted as written; `11 §Port previews`) |
 | Calendar invitations (phase 5, P5-CALINV, D-274, SEC-108) | `calendar.invitation.sent\|updated\|cancelled` (best-effort rows, actor kind `agent`; metadata is ids only: `agent_id`, `person_id`, `conversation_id`, `sequence`; no title, address, description or location; `10 §Calendar invitations`) |
 | Skill library (phase 4, P4-GSL) | `skill_library.create\|update\|delete`, `skill.library.add`, `skill.library.update_apply`, `skill.library.update_reject`, `skill.library.detach` (emitted as written; the proposal row `skill.library.update_proposed` is a best-effort system row; `10 §Skills`) |

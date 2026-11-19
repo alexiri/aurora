@@ -42,6 +42,32 @@ impl MemberStatus {
     }
 }
 
+/// (P5-APIGAP-4, C-1051) A workspace binding's status: `suspended` grants nothing in that
+/// workspace (SEC-138).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum AccessStatus {
+    Active,
+    Suspended,
+}
+
+impl AccessStatus {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Active => "active",
+            Self::Suspended => "suspended",
+        }
+    }
+    fn parse(s: &str) -> Self {
+        // Fail closed: anything but `active` reads as suspended (the CHECK allows only these two).
+        if s == "active" {
+            Self::Active
+        } else {
+            Self::Suspended
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum WorkspaceRole {
@@ -281,6 +307,13 @@ pub struct AccessBinding {
     pub implicit: bool,
     /// (phase 4, P4-IDP-1, C-514) The IdP role value behind this binding; `null` when manual.
     pub idp_value: Option<String>,
+    /// (phase 5, P5-APIGAP-4, C-1050) When the direct binding was created; `null` for an implicit
+    /// row without one (the org role's start is not recorded).
+    pub joined_at: Option<DateTime<Utc>>,
+    /// (phase 5, P5-APIGAP-4, C-1051) `suspended`: the person has no access to this workspace
+    /// (direct or through a group) until restored. An `implicit` row's access comes from the org
+    /// role and is not affected.
+    pub status: AccessStatus,
 }
 
 impl From<AccessRow> for AccessBinding {
@@ -292,6 +325,8 @@ impl From<AccessRow> for AccessBinding {
             role: parse_ws_role(&a.role),
             implicit: a.implicit,
             idp_value: a.idp_value,
+            joined_at: a.joined_at,
+            status: AccessStatus::parse(&a.status),
         }
     }
 }
@@ -397,6 +432,13 @@ pub struct PatchWorkspaceRequest {
 #[derive(Deserialize, ToSchema)]
 pub struct PutAccessRequest {
     pub role: WorkspaceRole,
+}
+
+/// (phase 5, P5-APIGAP-4, C-1051) `PATCH /workspaces/{ws}/access/{user}`: suspend or restore.
+#[derive(Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PatchAccessRequest {
+    pub status: AccessStatus,
 }
 
 #[derive(Serialize, ToSchema)]

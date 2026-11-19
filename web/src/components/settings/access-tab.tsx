@@ -4,7 +4,10 @@ import { useState } from "react";
 
 import { EmptyState, ErrorState, Loading } from "@/components/states";
 import { Avatar } from "@/components/agent-avatar";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { formatExact, formatWhen } from "@/lib/format-date";
 import { Menu, MenuContent, MenuItem, MenuTrigger } from "@/components/ui/menu";
 import { useMe, useOrg } from "@/lib/api/queries";
 import { sourceText } from "@/lib/api/groups";
@@ -21,6 +24,7 @@ import {
   useDeleteAccess,
   useOrgMembers,
   usePutAccess,
+  useSetAccessStatus,
   type AccessBinding,
 } from "@/lib/api/account";
 import { OffboardingDialog } from "@/components/automations/offboarding-dialog";
@@ -103,6 +107,48 @@ function AddBinding({
   );
 }
 
+/** "Joined 18 Nov" (C-1050); the exact time is the cell's tooltip. */
+export function joinedText(at: string): string {
+  return `Joined ${formatWhen(at)}`;
+}
+
+/** What a suspension stops and what it keeps (C-1051), in the words of the confirmation. */
+export const SUSPEND_STOPS =
+  "Until you restore them, they can't open this workspace, chat with its agents, use their computers (terminal, SSH or files) or decide its approvals, and what they started here stops now.";
+export const SUSPEND_KEEPS = "They keep their role and everything they made here. Their other workspaces aren't affected.";
+
+export function SuspendDialog({
+  open,
+  who,
+  busy,
+  error,
+  onClose,
+  onConfirm,
+}: {
+  open: boolean;
+  who: string;
+  busy: boolean;
+  error: unknown;
+  onClose: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <ConfirmDialog
+      open={open}
+      onOpenChange={(o) => (o ? undefined : onClose())}
+      title={`Suspend ${who} in this workspace?`}
+      description={SUSPEND_STOPS}
+      confirmLabel="Suspend"
+      danger
+      busy={busy}
+      onConfirm={onConfirm}
+    >
+      <p className="text-sm text-ink-2">{SUSPEND_KEEPS}</p>
+      <ErrorNotice error={error} className="mt-3" />
+    </ConfirmDialog>
+  );
+}
+
 function Row({
   b,
   wsId,
@@ -126,21 +172,31 @@ function Row({
 }) {
   const put = usePutAccess(wsId);
   const del = useDeleteAccess(wsId);
-  const busy = put.isPending || del.isPending;
+  const status = useSetAccessStatus(wsId);
+  const busy = put.isPending || del.isPending || status.isPending;
   const [confirm, setConfirm] = useState(false);
+  const [confirmSuspend, setConfirmSuspend] = useState(false);
   const offboarding = useWorkspaceOffboarding(wsId, confirm ? b.user_id : null);
+  const who = b.display_name || b.email;
+  // (P5-APIGAP-4, C-1051) An implicit row's access comes from the organization: a stored suspension does not apply to it.
+  const suspended = b.status === "suspended" && !b.implicit;
   return (
-    <tr>
+    <tr data-testid={`access-row-${b.user_id}`}>
       <Td>
         <div className="flex items-center gap-3">
-          <Avatar name={b.display_name || b.email} tintKey={b.user_id} size={32} />
+          <Avatar name={who} tintKey={b.user_id} size={32} />
           <div className="min-w-0">
-            <div className="font-medium">
-              {b.display_name}
-              {mine ? <span className="ml-1 font-normal text-muted">(you)</span> : null}
+            <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 font-medium">
+              <span>
+                {b.display_name}
+                {mine ? <span className="ml-1 font-normal text-muted">(you)</span> : null}
+              </span>
+              {suspended ? <Badge tone="neutral">Suspended</Badge> : null}
             </div>
             <div className="text-xs text-muted">{b.email}</div>
             {b.implicit ? <div className="text-xs text-ink-2">Has access as an owner of {orgName ?? "the organization"}</div> : null}
+            {/* Narrow screens have no Joined column: the date is a line under the person. */}
+            {b.joined_at ? <div className="text-xs text-muted sm:hidden">{joinedText(b.joined_at)}</div> : null}
           </div>
         </div>
       </Td>
@@ -172,22 +228,51 @@ function Row({
           ROLE_LABEL[b.role as Role] ?? b.role
         )}
       </Td>
+      <Td className="hidden whitespace-nowrap text-ink-2 sm:table-cell">
+        {b.joined_at ? <span title={formatExact(b.joined_at)}>{formatWhen(b.joined_at)}</span> : <span className="text-muted">—</span>}
+      </Td>
       <Td className="text-right">
         {/* (P5-POLISH-7, D6) A … menu; never on your own row, and not for access that comes from the organization or the IdP. */}
         {canOwn && !b.implicit && !b.idp_value && !mine ? (
           <Menu>
             <MenuTrigger asChild>
-              <Button variant="outline" size="sm" disabled={busy} aria-label={`More for ${b.display_name || b.email}`}>
+              <Button variant="outline" size="sm" disabled={busy} aria-label={`More for ${who}`}>
                 <span aria-hidden="true">…</span>
               </Button>
             </MenuTrigger>
             <MenuContent align="end">
+              {/* (P5-APIGAP-4, C-1051) Suspend asks first and says what stops; Restore gives access back at once. */}
+              {suspended ? (
+                <MenuItem
+                  onSelect={() => status.mutate({ user: b.user_id, status: "active" }, { onError })}
+                  aria-label={`Restore ${b.email}`}
+                >
+                  Restore access
+                </MenuItem>
+              ) : (
+                <MenuItem onSelect={() => setConfirmSuspend(true)} aria-label={`Suspend ${b.email}`}>
+                  Suspend…
+                </MenuItem>
+              )}
               <MenuItem className="text-danger-ink" onSelect={() => setConfirm(true)} aria-label={`Remove ${b.email}`}>
                 Remove from workspace…
               </MenuItem>
             </MenuContent>
           </Menu>
         ) : null}
+        <SuspendDialog
+          open={confirmSuspend}
+          who={who}
+          busy={status.isPending}
+          error={status.error}
+          onClose={() => {
+            setConfirmSuspend(false);
+            status.reset();
+          }}
+          onConfirm={() =>
+            status.mutate({ user: b.user_id, status: "suspended" }, { onSuccess: () => setConfirmSuspend(false) })
+          }
+        />
         <OffboardingDialog
           open={confirm}
           title="Remove access?"
@@ -243,7 +328,7 @@ export function AccessTab({
   );
   const bound = new Set(items.map((b) => b.user_id));
   const inherited = (access.data.derived_members?.items ?? []).filter((d) => !bound.has(d.user.id));
-  const directOwners = items.filter((b) => b.role === "owner" && !b.implicit).length;
+  const directOwners = items.filter((b) => b.role === "owner" && !b.implicit && b.status !== "suspended").length;
   return (
     <div className="space-y-6">
       {!canOwn ? <Notice role="status">Only workspace owners can change who has access.</Notice> : null}
@@ -256,6 +341,7 @@ export function AccessTab({
             <tr>
               <Th>Person</Th>
               <Th>Role</Th>
+              <Th className="hidden sm:table-cell">Joined</Th>
               <Th>
                 <span className="sr-only">Actions</span>
               </Th>
@@ -290,10 +376,14 @@ export function AccessTab({
                       </div>
                       <div className="text-xs text-muted">{d.user.email}</div>
                       <div className="text-xs text-ink-2">{d.sources.map((s) => sourceText(s)).join(" · ")}</div>
+                      {d.joined_at ? <div className="text-xs text-muted sm:hidden">{joinedText(d.joined_at)}</div> : null}
                     </div>
                   </div>
                 </Td>
                 <Td>{ROLE_LABEL[d.role as Role] ?? d.role}</Td>
+                <Td className="hidden whitespace-nowrap text-ink-2 sm:table-cell">
+                  {d.joined_at ? <span title={formatExact(d.joined_at)}>{formatWhen(d.joined_at)}</span> : <span className="text-muted">—</span>}
+                </Td>
                 <Td />
               </tr>
             ))}

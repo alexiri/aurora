@@ -818,6 +818,13 @@ const ROWS: &[Row] = &[
         false,
     ),
     r("PUT", "/v1/workspaces/{ws}/access/{user}", G::WsOwn, false),
+    // (P5-APIGAP-4, C-1051) suspend/restore; the body restores (a no-op on the active victim).
+    r(
+        "PATCH",
+        "/v1/workspaces/{ws}/access/{user}",
+        G::WsOwn,
+        false,
+    ),
     r(
         "DELETE",
         "/v1/workspaces/{ws}/access/{user}",
@@ -1703,6 +1710,7 @@ fn body_for(method: &str, path: &str, fx: &Fx) -> Value {
         ("POST", "/v1/orgs/{org}/workspaces") => json!({"name": "Matrix extra"}),
         ("POST", "/v1/secrets/{id}/accept") => json!({"value": "v"}),
         ("PUT", "/v1/workspaces/{ws}/access/{user}") => json!({"role": "member"}),
+        ("PATCH", "/v1/workspaces/{ws}/access/{user}") => json!({"status": "active"}),
         ("PUT", "/v1/schedules/{id}/creator" | "/v1/webhooks/{id}/creator") => {
             json!({"user_id": fx.victim})
         }

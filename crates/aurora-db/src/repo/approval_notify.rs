@@ -217,12 +217,15 @@ pub async fn deciders_with(
              SELECT m.user_id FROM org_members m \
              JOIN workspace_access wa ON wa.user_id = m.user_id AND wa.workspace_id = $2 \
              WHERE m.org_id = $1 AND m.status = 'active' AND wa.role IN ('owner', 'approver') \
+               AND wa.status = 'active' \
              UNION \
              SELECT gm.user_id FROM group_workspace_access b \
              JOIN group_members gm ON gm.group_id = b.group_id AND gm.org_id = b.org_id \
              JOIN org_members m ON m.org_id = gm.org_id AND m.user_id = gm.user_id \
                   AND m.status = 'active' \
-             WHERE b.org_id = $1 AND b.workspace_id = $2 AND b.role IN ('owner', 'approver')), \
+             WHERE b.org_id = $1 AND b.workspace_id = $2 AND b.role IN ('owner', 'approver') \
+               AND NOT EXISTS (SELECT 1 FROM workspace_access s WHERE s.workspace_id = $2 \
+                                 AND s.user_id = gm.user_id AND s.status = 'suspended')), \
          recipients AS ( \
              SELECT user_id FROM explicit \
              UNION \

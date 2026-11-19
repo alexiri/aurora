@@ -198,11 +198,37 @@ pub async fn abort_turns(
     org: Uuid,
     user: Uuid,
 ) -> Result<Vec<(Uuid, Uuid)>, ApiError> {
+    abort_speaker_turns(conn, org, None, user, &DEPROVISIONED).await
+}
+
+/// Why a speaker's turns end: the notice code (also the turn's `error_code`), the notice text and
+/// the turn's error message.
+pub struct TurnEnd {
+    pub code: &'static str,
+    pub notice: &'static str,
+    pub message: &'static str,
+}
+
+const DEPROVISIONED: TurnEnd = TurnEnd {
+    code: "user_deprovisioned",
+    notice: ABORT_NOTICE,
+    message: "The speaker was deactivated in this organization.",
+};
+
+/// [`abort_turns`] for the speaker turns of `user` in `org`, or only in workspace `ws` (P5-APIGAP-4,
+/// C-1051: a workspace suspension), ended with `end`. Returns the pairs to flush after commit.
+pub async fn abort_speaker_turns(
+    conn: &mut PgConnection,
+    org: Uuid,
+    ws: Option<Uuid>,
+    user: Uuid,
+    end: &TurnEnd,
+) -> Result<Vec<(Uuid, Uuid)>, ApiError> {
     let mut flush = Vec::new();
     // Ending a turn promotes its `joining` follow-ups into queued turns; repeat until none
     // remain (the freeze's pattern).
     for _ in 0..50 {
-        let turns = active_speaker_turns(conn, org, user).await?;
+        let turns = active_speaker_turns(conn, org, ws, user).await?;
         if turns.is_empty() {
             break;
         }
@@ -214,15 +240,15 @@ pub async fn abort_turns(
                 conversation,
                 Some(turn),
                 "notice",
-                &json!({"code": "user_deprovisioned", "text": ABORT_NOTICE}),
+                &json!({"code": end.code, "text": end.notice}),
             )
             .await?;
             if lifecycle::finish(
                 conn,
                 turn,
                 "aborted",
-                Some("user_deprovisioned"),
-                Some("The speaker was deactivated in this organization."),
+                Some(end.code),
+                Some(end.message),
                 None,
             )
             .await?
@@ -245,6 +271,7 @@ pub async fn abort_turns(
 async fn active_speaker_turns(
     conn: &mut PgConnection,
     org: Uuid,
+    ws: Option<Uuid>,
     user: Uuid,
 ) -> Result<Vec<(Uuid, Uuid)>, ApiError> {
     Ok(sqlx::query_as(
@@ -252,12 +279,14 @@ async fn active_speaker_turns(
          JOIN conversations c ON c.id = t.conversation_id
          JOIN workspaces w ON w.id = c.workspace_id
          WHERE w.org_id = $1 AND t.speaker_user_id = $2
+           AND ($4::uuid IS NULL OR w.id = $4)
            AND t.role = 'turn' AND t.status IN ('queued','dispatched','running')
          ORDER BY t.created_at LIMIT $3",
     )
     .bind(org)
     .bind(user)
     .bind(ABORT_ROUND)
+    .bind(ws)
     .fetch_all(&mut *conn)
     .await
     .map_err(aurora_db::DbError::from)?)
